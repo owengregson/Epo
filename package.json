@@ -9,14 +9,18 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "start:ui": "electron src/electron/main.js",
     "test": "jest"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "electron": "^31.2.1",
     "node-schedule": "^2.1.1",
     "puppeteer": "^22.8.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "yargs": "^17.7.2"
   },
   "devDependencies": {
