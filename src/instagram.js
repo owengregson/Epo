@@ -100,21 +100,18 @@ class InstagramClient {
       if (!dialog) {
         return [];
       }
-      const scrollBox = dialog.querySelector('div div');
+      const scrollBox = Array.from(dialog.querySelectorAll('div')).find(
+        (element) => element.scrollHeight > element.clientHeight,
+      ) || dialog;
       const usernames = new Set();
 
       let lastHeight = 0;
+      let lastSize = 0;
       let unchangedCount = 0;
-      while (unchangedCount < 3) {
+      while (unchangedCount < 5) {
         scrollBox.scrollTop = scrollBox.scrollHeight;
         await new Promise((resolve) => setTimeout(resolve, 1000));
         const newHeight = scrollBox.scrollHeight;
-        if (newHeight === lastHeight) {
-          unchangedCount += 1;
-        } else {
-          unchangedCount = 0;
-          lastHeight = newHeight;
-        }
         dialog.querySelectorAll('a').forEach((anchor) => {
           const href = anchor.getAttribute('href') || '';
           if (href.startsWith('/') && href.length > 1) {
@@ -124,6 +121,14 @@ class InstagramClient {
             }
           }
         });
+        const size = usernames.size;
+        if (newHeight === lastHeight && size === lastSize) {
+          unchangedCount += 1;
+        } else {
+          unchangedCount = 0;
+          lastHeight = newHeight;
+          lastSize = size;
+        }
       }
 
       return Array.from(usernames);
@@ -136,21 +141,53 @@ class InstagramClient {
     await this.page.goto(`${INSTAGRAM_BASE}/${username}/`, { waitUntil: 'networkidle2' });
     await this.page.waitForSelector('header', { timeout: 15000 });
     const count = await this.page.evaluate(() => {
-      const link = Array.from(document.querySelectorAll('a')).find((anchor) => {
+      const extractNumber = (value) => {
+        if (!value) {
+          return null;
+        }
+        const parsed = parseInt(value.replace(/[^\d]/g, ''), 10);
+        return Number.isFinite(parsed) ? parsed : null;
+      };
+
+      const header = document.querySelector('header');
+      if (!header) {
+        return null;
+      }
+      const link = Array.from(header.querySelectorAll('a')).find((anchor) => {
         return anchor.href.includes('/following');
       });
-      if (!link) {
-        return null;
+      if (link) {
+        const span = link.querySelector('span');
+        const value = span?.getAttribute('title') || span?.textContent;
+        const parsed = extractNumber(value);
+        if (parsed !== null) {
+          return parsed;
+        }
       }
-      const span = link.querySelector('span');
-      if (!span) {
-        return null;
+
+      const listItems = Array.from(header.querySelectorAll('ul li'));
+      for (const item of listItems) {
+        const text = item.textContent || '';
+        if (!text.toLowerCase().includes('following')) {
+          continue;
+        }
+        const span = item.querySelector('span[title]') || item.querySelector('span');
+        const parsed = extractNumber(span?.getAttribute('title') || span?.textContent);
+        if (parsed !== null) {
+          return parsed;
+        }
       }
-      const value = span.getAttribute('title') || span.textContent;
-      if (!value) {
-        return null;
+
+      const meta = document.querySelector('meta[property=\"og:description\"]');
+      if (meta) {
+        const match = meta.getAttribute('content')?.match(/([\\d,.]+)\\s+Following/i);
+        const parsed = extractNumber(match ? match[1] : null);
+        if (parsed !== null) {
+          return parsed;
+        }
       }
-      return parseInt(value.replace(/,/g, ''), 10);
+
+      return null;
     });
 
     if (!Number.isFinite(count)) {
