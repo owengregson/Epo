@@ -1,8 +1,11 @@
 const fs = require('fs');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const logger = require('./utils/logger');
 
 const INSTAGRAM_BASE = 'https://www.instagram.com';
+
+puppeteer.use(StealthPlugin());
 
 class InstagramClient {
   constructor({ cookiesPath, headless, slowMo }) {
@@ -17,9 +20,17 @@ class InstagramClient {
     this.browser = await puppeteer.launch({
       headless: this.headless,
       slowMo: this.slowMo,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+      ],
     });
     this.page = await this.browser.newPage();
+    await this.page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    );
+    await this.page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
     await this.page.setViewport({ width: 1280, height: 800 });
   }
 
@@ -95,44 +106,68 @@ class InstagramClient {
     await followersLink.click();
     await this.page.waitForSelector('div[role="dialog"]', { timeout: 15000 });
 
-    const followers = await this.page.evaluate(async () => {
-      const dialog = document.querySelector('div[role="dialog"]');
-      if (!dialog) {
-        return [];
-      }
-      const scrollBox = Array.from(dialog.querySelectorAll('div')).find(
-        (element) => element.scrollHeight > element.clientHeight,
-      ) || dialog;
-      const usernames = new Set();
+    const dialog = await this.page.waitForSelector('div[role="dialog"]', { timeout: 15000 });
+    const scrollBoxHandle = await this.page.evaluateHandle((dialogEl) => {
+      const candidates = Array.from(dialogEl.querySelectorAll('div'));
+      const scrollable = candidates
+        .map((element) => ({
+          element,
+          style: window.getComputedStyle(element),
+        }))
+        .filter(
+          ({ element, style }) =>
+            element.scrollHeight > element.clientHeight &&
+            ['auto', 'scroll'].includes(style.overflowY),
+        )
+        .sort((a, b) => b.element.scrollHeight - a.element.scrollHeight)[0];
+      return (scrollable && scrollable.element) || dialogEl;
+    }, dialog);
 
-      let lastHeight = 0;
-      let lastSize = 0;
-      let unchangedCount = 0;
-      while (unchangedCount < 5) {
-        scrollBox.scrollTop = scrollBox.scrollHeight;
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const newHeight = scrollBox.scrollHeight;
-        dialog.querySelectorAll('a').forEach((anchor) => {
+    let unchangedCount = 0;
+    let lastSize = 0;
+    while (unchangedCount < 5) {
+      const usernames = await this.page.evaluate((dialogEl) => {
+        const handles = new Set();
+        const anchors = dialogEl.querySelectorAll('a[href^="/"]');
+        anchors.forEach((anchor) => {
           const href = anchor.getAttribute('href') || '';
-          if (href.startsWith('/') && href.length > 1) {
+          if (/^\\/[^/]+\\/$/.test(href)) {
             const handle = href.replace(/\//g, '');
             if (handle) {
-              usernames.add(handle);
+              handles.add(handle);
             }
           }
         });
-        const size = usernames.size;
-        if (newHeight === lastHeight && size === lastSize) {
-          unchangedCount += 1;
-        } else {
-          unchangedCount = 0;
-          lastHeight = newHeight;
-          lastSize = size;
-        }
+        return Array.from(handles);
+      }, dialog);
+
+      if (usernames.length === lastSize) {
+        unchangedCount += 1;
+      } else {
+        unchangedCount = 0;
+        lastSize = usernames.length;
       }
 
-      return Array.from(usernames);
-    });
+      await this.page.evaluate((scrollEl) => {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      }, scrollBoxHandle);
+      await this.page.waitForTimeout(1000);
+    }
+
+    const followers = await this.page.evaluate((dialogEl) => {
+      const handles = new Set();
+      const anchors = dialogEl.querySelectorAll('a[href^="/"]');
+      anchors.forEach((anchor) => {
+        const href = anchor.getAttribute('href') || '';
+        if (/^\\/[^/]+\\/$/.test(href)) {
+          const handle = href.replace(/\//g, '');
+          if (handle) {
+            handles.add(handle);
+          }
+        }
+      });
+      return Array.from(handles);
+    }, dialog);
 
     return followers;
   }
@@ -153,41 +188,34 @@ class InstagramClient {
       if (!header) {
         return null;
       }
-      const link = Array.from(header.querySelectorAll('a')).find((anchor) => {
-        return anchor.href.includes('/following');
-      });
-      if (link) {
-        const span = link.querySelector('span');
-        const value = span?.getAttribute('title') || span?.textContent;
-        const parsed = extractNumber(value);
-        if (parsed !== null) {
-          return parsed;
-        }
-      }
 
       const listItems = Array.from(header.querySelectorAll('ul li'));
-      for (const item of listItems) {
-        const text = item.textContent || '';
-        if (!text.toLowerCase().includes('following')) {
-          continue;
-        }
-        const span = item.querySelector('span[title]') || item.querySelector('span');
-        const parsed = extractNumber(span?.getAttribute('title') || span?.textContent);
-        if (parsed !== null) {
-          return parsed;
-        }
+      const followingItem = listItems.find((item) =>
+        (item.textContent || '').toLowerCase().includes('following'),
+      );
+      if (!followingItem) {
+        return null;
       }
 
-      const meta = document.querySelector('meta[property=\"og:description\"]');
-      if (meta) {
-        const match = meta.getAttribute('content')?.match(/([\\d,.]+)\\s+Following/i);
-        const parsed = extractNumber(match ? match[1] : null);
-        if (parsed !== null) {
-          return parsed;
+      const spans = Array.from(followingItem.querySelectorAll('span'));
+      const labelSpan = spans.find((span) =>
+        (span.textContent || '').toLowerCase().includes('following'),
+      );
+      let numberSpan = null;
+      if (labelSpan) {
+        const labelIndex = spans.indexOf(labelSpan);
+        if (labelIndex > 0) {
+          numberSpan = spans[labelIndex - 1];
         }
       }
+      if (!numberSpan) {
+        numberSpan =
+          followingItem.querySelector('span[title]') ||
+          spans.find((span) => /\\d/.test(span.textContent || ''));
+      }
 
-      return null;
+      const value = numberSpan?.getAttribute('title') || numberSpan?.textContent;
+      return extractNumber(value);
     });
 
     if (!Number.isFinite(count)) {
