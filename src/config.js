@@ -8,8 +8,6 @@ const buildConfig = (overrides = {}) => {
   const minFollowingCount = Number(process.env.PEANUT_MIN_FOLLOWING_COUNT || 600);
 
   return {
-    username: process.env.INSTAGRAM_USERNAME,
-    password: process.env.INSTAGRAM_PASSWORD,
     target: process.env.INSTAGRAM_TARGET,
     cookiesPath: resolvePath(process.env.PEANUT_COOKIES_PATH || 'cookies.json'),
     statePath: resolvePath(process.env.PEANUT_STATE_PATH || 'state.json'),
