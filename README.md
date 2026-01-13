@@ -28,7 +28,7 @@ npm install
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill in your credentials:
+Copy `.env.example` to `.env` and set your target:
 
 ```bash
 cp .env.example .env
@@ -38,8 +38,6 @@ Environment variables:
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `INSTAGRAM_USERNAME` | Instagram username | — |
-| `INSTAGRAM_PASSWORD` | Instagram password | — |
 | `INSTAGRAM_TARGET` | Target username | — |
 | `PEANUT_COOKIES_PATH` | Path to cookies file | `cookies.json` |
 | `PEANUT_STATE_PATH` | Path to state file | `state.json` |
@@ -55,6 +53,8 @@ Environment variables:
 ```bash
 npm start -- --target someuser
 ```
+
+On first run (or when cookies expire), Peanut opens a browser window so you can log in manually and complete any 2FA prompts. Cookies are saved afterward for reuse.
 
 ### Options
 
@@ -72,7 +72,7 @@ npm start -- --target someuser --dry-run
 
 ## How it Works
 
-1. **Login & Cookies**: Peanut opens Instagram, uses saved cookies if present, otherwise logs in using the provided credentials.
+1. **Login & Cookies**: Peanut opens Instagram, uses saved cookies if present, otherwise opens a manual login window so you can sign in and complete 2FA.
 2. **Follower Collection**: The bot opens the follower modal and scrolls until all followers are loaded, then collects usernames.
 3. **Following Count**: For each follower, it reads the “Following” count from their profile.
 4. **Sorting**: Followers are sorted descending by `followingCount`.

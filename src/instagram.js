@@ -5,9 +5,7 @@ const logger = require('./utils/logger');
 const INSTAGRAM_BASE = 'https://www.instagram.com';
 
 class InstagramClient {
-  constructor({ username, password, cookiesPath, headless, slowMo }) {
-    this.username = username;
-    this.password = password;
+  constructor({ cookiesPath, headless, slowMo }) {
     this.cookiesPath = cookiesPath;
     this.headless = headless;
     this.slowMo = slowMo;
@@ -51,13 +49,20 @@ class InstagramClient {
   }
 
   async login() {
-    logger.info('Logging in to Instagram.');
+    logger.info('Waiting for manual Instagram login in the opened browser.');
     await this.page.goto(`${INSTAGRAM_BASE}/accounts/login/`, { waitUntil: 'networkidle2' });
-    await this.page.waitForSelector('input[name="username"]', { timeout: 15000 });
-    await this.page.type('input[name="username"]', this.username, { delay: 50 });
-    await this.page.type('input[name="password"]', this.password, { delay: 50 });
-    await this.page.click('button[type="submit"]');
-    await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+    await this.page.waitForFunction(
+      () => {
+        const path = window.location.pathname;
+        return !path.startsWith('/accounts/login') && !path.startsWith('/challenge');
+      },
+      { polling: 1000, timeout: 0 },
+    );
+
+    const loggedIn = await this.isLoggedIn();
+    if (!loggedIn) {
+      throw new Error('Manual login did not complete successfully.');
+    }
     await this.saveCookies();
   }
 

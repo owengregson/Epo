@@ -35,9 +35,6 @@ const parseArgs = () => yargs(hideBin(process.argv))
   .argv;
 
 const ensureCredentials = (config) => {
-  if (!config.username || !config.password) {
-    throw new Error('Missing INSTAGRAM_USERNAME or INSTAGRAM_PASSWORD.');
-  }
   if (!config.target) {
     throw new Error('Missing target username. Set INSTAGRAM_TARGET or pass --target.');
   }
@@ -117,8 +114,6 @@ const run = async () => {
 
   let state = loadState(config.statePath, config.target);
   const client = new InstagramClient({
-    username: config.username,
-    password: config.password,
     cookiesPath: config.cookiesPath,
     headless: config.headless,
     slowMo: config.slowMo,
