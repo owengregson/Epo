@@ -7,12 +7,14 @@ let botService = null;
 
 const createWindow = () => {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 1100,
-    minHeight: 720,
-    backgroundColor: '#0b0f1a',
+    width: 1400,
+    height: 900,
+    minWidth: 1000,
+    minHeight: 700,
+    backgroundColor: '#0a0d14',
     show: false,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 20, y: 20 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
