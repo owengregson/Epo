@@ -1,8 +1,10 @@
-const fs = require('fs');
+import * as fs from 'fs';
+import { AppState } from '../types';
 
-const createEmptyState = (target) => ({
+export const createEmptyState = (target: string): AppState => ({
   target,
   generatedAt: new Date().toISOString(),
+  scrapeCursor: null,
   followerList: [],
   nextFollowIndex: 0,
   followQueue: [],
@@ -11,25 +13,19 @@ const createEmptyState = (target) => ({
   lastDailyPlan: null,
 });
 
-const loadState = (filePath, target) => {
+export const loadState = (filePath: string, target: string): AppState => {
   if (!fs.existsSync(filePath)) {
     return createEmptyState(target);
   }
   const raw = fs.readFileSync(filePath, 'utf-8');
-  const parsed = JSON.parse(raw);
+  const parsed = JSON.parse(raw) as Partial<AppState>;
   return {
     ...createEmptyState(target),
     ...parsed,
-    target: target || parsed.target,
+    target: target || parsed.target || '',
   };
 };
 
-const saveState = (filePath, state) => {
+export const saveState = (filePath: string, state: AppState): void => {
   fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
-};
-
-module.exports = {
-  createEmptyState,
-  loadState,
-  saveState,
 };
