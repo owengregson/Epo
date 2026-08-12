@@ -169,7 +169,9 @@ test('at hard ceiling: no actions run and due records are NOT dropped', async ()
   store.upsertFollowRecord(rec({ accountPk: '6', state: 'queued' }));
   store.upsertFollowRecord(rec({ accountPk: '7', state: 'unfollow_queued', unfollowDueAt: T0 }));
 
-  await sched.tick();
+  // The Engine gates on the ceiling BEFORE calling nextDue/execute; here we assert
+  // that advancing timers alone (the only thing safe at the ceiling) touches no actions.
+  sched.advanceTimers(clock.now());
 
   expect(actions.followCalls).toEqual([]);
   expect(actions.unfollowCalls).toEqual([]);
@@ -178,4 +180,108 @@ test('at hard ceiling: no actions run and due records are NOT dropped', async ()
   expect(active).toEqual(['6', '7']);
   expect(store.getFollowRecord('6')!.state).toBe('queued');
   expect(store.getFollowRecord('7')!.state).toBe('unfollow_queued');
+});
+
+// ── The three-method split (§3.2) ──────────────────────────────────────────────
+
+test('advanceTimers applies timeouts and holds with ZERO calls to actions', async () => {
+  const { store, clock, actions, sched } = makeHarness({ cfg: { maxWaitForFollowbackMs: 1000 } });
+  // A pending_followback whose max wait has elapsed, and a held-out followed_back.
+  store.upsertFollowRecord(rec({ accountPk: 'p', state: 'pending_followback', followedAt: T0 }));
+  store.upsertFollowRecord(
+    rec({ accountPk: 'h', state: 'followed_back', followedBackAt: T0, holdUntil: T0 + 500 }),
+  );
+
+  clock.advance(1000);
+  sched.advanceTimers(clock.now());
+
+  expect(store.getFollowRecord('p')!.state).toBe('unfollow_queued');
+  expect(store.getFollowRecord('p')!.unfollowDueAt).toBe(T0 + 1000);
+  expect(store.getFollowRecord('h')!.state).toBe('unfollow_queued');
+  expect(store.getFollowRecord('h')!.unfollowDueAt).toBe(T0 + 1000);
+  // No Instagram traffic whatsoever from the timer step.
+  expect(actions.followCalls).toEqual([]);
+  expect(actions.unfollowCalls).toEqual([]);
+});
+
+test('nextDue prefers unfollow_queued over queued when both exist', () => {
+  const { store, clock, sched } = makeHarness();
+  store.upsertFollowRecord(rec({ accountPk: 'q1', state: 'queued' }));
+  store.upsertFollowRecord(rec({ accountPk: 'u1', state: 'unfollow_queued', unfollowDueAt: T0 }));
+
+  const due = sched.nextDue(clock.now());
+  expect(due?.accountPk).toBe('u1');
+  expect(due?.state).toBe('unfollow_queued');
+});
+
+test('nextDue orders unfollow_queued by unfollowDueAt then accountPk', () => {
+  const { store, clock, sched } = makeHarness();
+  // Two share the earliest due time → accountPk breaks the tie ('a' < 'b').
+  store.upsertFollowRecord(rec({ accountPk: 'b', state: 'unfollow_queued', unfollowDueAt: T0 + 10 }));
+  store.upsertFollowRecord(rec({ accountPk: 'a', state: 'unfollow_queued', unfollowDueAt: T0 + 10 }));
+  store.upsertFollowRecord(rec({ accountPk: 'z', state: 'unfollow_queued', unfollowDueAt: T0 + 5 }));
+
+  // Earliest unfollowDueAt wins regardless of pk order.
+  expect(sched.nextDue(clock.now())?.accountPk).toBe('z');
+});
+
+test('nextDue orders queued by accountPk and returns null when nothing is actionable', () => {
+  const { store, clock, sched } = makeHarness();
+  expect(sched.nextDue(clock.now())).toBeNull();
+
+  store.upsertFollowRecord(rec({ accountPk: 'm', state: 'queued' }));
+  store.upsertFollowRecord(rec({ accountPk: 'a', state: 'queued' }));
+  // Non-actionable states are ignored entirely.
+  store.upsertFollowRecord(rec({ accountPk: 'x', state: 'pending_followback', followedAt: T0 }));
+
+  expect(sched.nextDue(clock.now())?.accountPk).toBe('a');
+});
+
+test('execute performs exactly ONE action and transitions only that record', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  seedUsername(store, 'a', 'usera');
+  seedUsername(store, 'b', 'userb');
+  store.upsertFollowRecord(rec({ accountPk: 'a', state: 'queued' }));
+  store.upsertFollowRecord(rec({ accountPk: 'b', state: 'queued' }));
+
+  const due = sched.nextDue(clock.now())!;
+  await sched.execute(due, clock.now());
+
+  // One action, on exactly the one due record; the other is untouched.
+  expect(actions.followCalls).toEqual(['usera']);
+  expect(store.getFollowRecord('a')!.state).toBe('pending_followback');
+  expect(store.getFollowRecord('a')!.followedAt).toBe(T0);
+  expect(store.getFollowRecord('b')!.state).toBe('queued');
+});
+
+test('execute is a no-op (no action) on a non-actionable record', async () => {
+  const { store, clock, actions, sched } = makeHarness();
+  const held = rec({ accountPk: 'h', state: 'followed_back', followedBackAt: T0, holdUntil: T0 + 999 });
+  store.upsertFollowRecord(held);
+
+  await sched.execute(held, clock.now());
+
+  expect(actions.followCalls).toEqual([]);
+  expect(actions.unfollowCalls).toEqual([]);
+  expect(store.getFollowRecord('h')!.state).toBe('followed_back');
+});
+
+test('advanceTimers + nextDue + execute matches the old tick end-state (hold → unfollowed)', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  seedUsername(store, 'r', 'userr');
+  store.observeEdge(OWN, 'r', 'follows', true, T0); // we currently follow them
+  store.upsertFollowRecord(
+    rec({ accountPk: 'r', state: 'followed_back', followedBackAt: T0, holdUntil: T0 + 500 }),
+  );
+
+  clock.advance(500); // now === holdUntil
+  // Explicit Engine-style sequence.
+  sched.advanceTimers(clock.now());
+  const due = sched.nextDue(clock.now())!;
+  await sched.execute(due, clock.now());
+
+  // Same end-state the single-pass tick used to produce: unfollowed + edge removed.
+  expect(actions.unfollowCalls).toEqual(['userr']);
+  expect(store.getFollowRecord('r')!.state).toBe('unfollowed');
+  expect(store.getEdge(OWN, 'r', 'follows')?.status).toBe('removed');
 });

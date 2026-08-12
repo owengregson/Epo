@@ -62,9 +62,18 @@ export interface ChurnDeps {
  *   → (fail, retries exhausted)    abandoned
  * ```
  *
- * `tick()` performs exactly one pass and is deterministic given the injected clock.
- * The critical safety invariant (fixing the old silent-drop bug): when the rate
- * governor is closed, due records are LEFT IN PLACE, never discarded.
+ * The scheduler is split into three responsibilities so the Engine runtime (§3.1)
+ * can pace Instagram actions one-at-a-time with a human delay between each:
+ *
+ * - {@link advanceTimers} — the no-IG state transitions (timeouts + holds).
+ * - {@link nextDue} — pick the single most-due record needing IG traffic.
+ * - {@link execute} — perform that ONE record's action (no delay inside).
+ *
+ * Gating (hard ceiling / active hours) is the Engine's job: it decides *when* to
+ * call these; the scheduler only decides *what* happens next and applies it. The
+ * critical safety invariant (fixing the old silent-drop bug) is preserved: a
+ * record is never discarded — if the Engine's gate is closed it simply never
+ * calls {@link execute}, leaving the record in place.
  */
 export class ChurnScheduler {
   private readonly store: KnowledgeStore;
@@ -83,37 +92,17 @@ export class ChurnScheduler {
     this.cfg = deps.cfg ?? CHURN_DEFAULTS;
   }
 
-  /** One lifecycle pass: timer transitions first, then rate-gated Instagram actions. */
-  async tick(): Promise<void> {
-    const now = this.clock.now();
-
-    // 1. Timer transitions — pure state moves, no Instagram traffic. Always run.
-    this.applyTimerTransitions(now);
-
-    // 2. Rate gate. If we may not act, leave every queued/due record untouched.
-    if (this.rate.atHardCeiling()) {
-      log.debug('churn: hard ceiling reached, deferring actions this tick');
-      return;
-    }
-    if (!this.rate.withinActiveHours()) {
-      log.debug('churn: outside active hours, deferring actions this tick');
-      return;
-    }
-
-    // Reclaimed slots (unfollows) are processed before new follows (§3.4 ordering).
-    await this.processUnfollows(now);
-    if (this.rate.atHardCeiling()) {
-      log.debug('churn: hard ceiling reached after unfollows, skipping follows this tick');
-      return;
-    }
-    await this.processFollows(now);
-  }
-
   /**
-   * Move records whose timers have elapsed into `unfollow_queued`. No Instagram
-   * actions occur here, so this runs regardless of the rate gate.
+   * Apply the timer-driven state transitions that need NO Instagram traffic:
+   *
+   * - `pending_followback` with `now - followedAt ≥ maxWaitForFollowbackMs`
+   *   → `unfollow_queued` (`unfollowDueAt = now`): no follow-back in time, reclaim the slot.
+   * - `followed_back` with `now ≥ holdUntil`
+   *   → `unfollow_queued` (`unfollowDueAt = now`): the hold elapsed.
+   *
+   * Cheap and side-effect-free beyond the store; makes zero calls to `actions`.
    */
-  private applyTimerTransitions(now: number): void {
+  advanceTimers(now: number = this.clock.now()): void {
     // No follow-back within the max wait → reclaim the slot.
     for (const rec of this.store.followRecordsByState('pending_followback')) {
       if (rec.followedAt === undefined) continue;
@@ -134,85 +123,135 @@ export class ChurnScheduler {
     }
   }
 
-  /** Execute queued follows, re-checking the hard ceiling between each action. */
-  private async processFollows(now: number): Promise<void> {
-    for (const rec of this.store.followRecordsByState('queued')) {
-      if (this.rate.atHardCeiling()) {
-        log.debug('churn: hard ceiling reached mid-tick, stopping follows', {
-          remainingPk: rec.accountPk,
-        });
-        return;
-      }
-      const username = this.store.getAccount(rec.accountPk)?.username;
-      if (username === undefined) {
-        log.warn('churn: skipping follow, unknown username for account', { pk: rec.accountPk });
-        continue;
-      }
+  /**
+   * Return the single most-due record needing Instagram traffic, or `null` if none.
+   *
+   * Ordering (§3.2): reclaimed slots first — `unfollow_queued` records are preferred
+   * over `queued`, so we free capacity before spending it on new follows. Within
+   * `unfollow_queued`, order by `unfollowDueAt` ascending then `accountPk`; `queued`
+   * records order by `accountPk`. This method does NOT check the ceiling/active-hours
+   * (the Engine gates before calling) and does NOT act.
+   */
+  nextDue(now: number = this.clock.now()): FollowRecord | null {
+    void now; // parity with the other methods; no time-based filtering here.
 
-      let ok = false;
-      try {
-        ({ ok } = await this.actions.follow(username));
-      } catch (err) {
-        log.error('churn: follow action threw', {
-          pk: rec.accountPk,
-          username,
-          error: String(err),
-        });
-        ok = false;
-      }
+    const unfollows = this.store.followRecordsByState('unfollow_queued');
+    if (unfollows.length > 0) {
+      return unfollows.sort((a, b) => {
+        const da = a.unfollowDueAt ?? 0;
+        const db = b.unfollowDueAt ?? 0;
+        if (da !== db) return da - db;
+        return a.accountPk < b.accountPk ? -1 : a.accountPk > b.accountPk ? 1 : 0;
+      })[0];
+    }
 
-      if (ok) {
-        this.store.recordAction(rec.accountPk, 'follow', 'ok', now);
-        this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
-        if (this.ownPk !== undefined) {
-          this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', true, now);
-        }
-        log.info('churn: followed', { pk: rec.accountPk, username });
-      } else {
-        this.store.recordAction(rec.accountPk, 'follow', 'fail', now);
-        this.retryOrAbandon(rec, 'follow');
-      }
+    const queued = this.store.followRecordsByState('queued');
+    if (queued.length > 0) {
+      return queued.sort((a, b) =>
+        a.accountPk < b.accountPk ? -1 : a.accountPk > b.accountPk ? 1 : 0,
+      )[0];
+    }
+
+    return null;
+  }
+
+  /**
+   * Perform exactly ONE record's Instagram action and apply its result. No delay is
+   * incurred here — the Engine paces between calls. `queued` records are followed;
+   * `unfollow_queued` records are unfollowed. Any other state is a no-op.
+   *
+   * On success: record the action in the ledger, transition the record, and (when
+   * `ownPk` is known) observe the directed edge. On failure: record the failed
+   * action and bump `retryCount`, abandoning once `maxRetries` is exceeded.
+   */
+  async execute(rec: FollowRecord, now: number = this.clock.now()): Promise<void> {
+    if (rec.state === 'queued') {
+      await this.executeFollow(rec, now);
+    } else if (rec.state === 'unfollow_queued') {
+      await this.executeUnfollow(rec, now);
+    } else {
+      log.warn('churn: execute called on a non-actionable record', {
+        pk: rec.accountPk,
+        state: rec.state,
+      });
     }
   }
 
-  /** Execute queued unfollows, re-checking the hard ceiling between each action. */
-  private async processUnfollows(now: number): Promise<void> {
-    for (const rec of this.store.followRecordsByState('unfollow_queued')) {
-      if (this.rate.atHardCeiling()) {
-        log.debug('churn: hard ceiling reached mid-tick, stopping unfollows', {
-          remainingPk: rec.accountPk,
-        });
-        return;
-      }
-      const username = this.store.getAccount(rec.accountPk)?.username;
-      if (username === undefined) {
-        log.warn('churn: skipping unfollow, unknown username for account', { pk: rec.accountPk });
-        continue;
-      }
+  /**
+   * Thin convenience for callers that want a single lifecycle step without the Engine:
+   * advance timers, take at most ONE due record, and execute it. The three methods above
+   * are the real API; this never loops over all records.
+   */
+  async tick(): Promise<void> {
+    const now = this.clock.now();
+    this.advanceTimers(now);
+    const rec = this.nextDue(now);
+    if (rec) await this.execute(rec, now);
+  }
 
-      let ok = false;
-      try {
-        ({ ok } = await this.actions.unfollow(username));
-      } catch (err) {
-        log.error('churn: unfollow action threw', {
-          pk: rec.accountPk,
-          username,
-          error: String(err),
-        });
-        ok = false;
-      }
+  /** Follow one `queued` record; on success move to `pending_followback`. */
+  private async executeFollow(rec: FollowRecord, now: number): Promise<void> {
+    const username = this.store.getAccount(rec.accountPk)?.username;
+    if (username === undefined) {
+      log.warn('churn: skipping follow, unknown username for account', { pk: rec.accountPk });
+      return;
+    }
 
-      if (ok) {
-        this.store.recordAction(rec.accountPk, 'unfollow', 'ok', now);
-        this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
-        if (this.ownPk !== undefined) {
-          this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', false, now);
-        }
-        log.info('churn: unfollowed', { pk: rec.accountPk, username });
-      } else {
-        this.store.recordAction(rec.accountPk, 'unfollow', 'fail', now);
-        this.retryOrAbandon(rec, 'unfollow');
+    let ok = false;
+    try {
+      ({ ok } = await this.actions.follow(username));
+    } catch (err) {
+      log.error('churn: follow action threw', {
+        pk: rec.accountPk,
+        username,
+        error: String(err),
+      });
+      ok = false;
+    }
+
+    if (ok) {
+      this.store.recordAction(rec.accountPk, 'follow', 'ok', now);
+      this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
+      if (this.ownPk !== undefined) {
+        this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', true, now);
       }
+      log.info('churn: followed', { pk: rec.accountPk, username });
+    } else {
+      this.store.recordAction(rec.accountPk, 'follow', 'fail', now);
+      this.retryOrAbandon(rec, 'follow');
+    }
+  }
+
+  /** Unfollow one `unfollow_queued` record; on success move to `unfollowed`. */
+  private async executeUnfollow(rec: FollowRecord, now: number): Promise<void> {
+    const username = this.store.getAccount(rec.accountPk)?.username;
+    if (username === undefined) {
+      log.warn('churn: skipping unfollow, unknown username for account', { pk: rec.accountPk });
+      return;
+    }
+
+    let ok = false;
+    try {
+      ({ ok } = await this.actions.unfollow(username));
+    } catch (err) {
+      log.error('churn: unfollow action threw', {
+        pk: rec.accountPk,
+        username,
+        error: String(err),
+      });
+      ok = false;
+    }
+
+    if (ok) {
+      this.store.recordAction(rec.accountPk, 'unfollow', 'ok', now);
+      this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
+      if (this.ownPk !== undefined) {
+        this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', false, now);
+      }
+      log.info('churn: unfollowed', { pk: rec.accountPk, username });
+    } else {
+      this.store.recordAction(rec.accountPk, 'unfollow', 'fail', now);
+      this.retryOrAbandon(rec, 'unfollow');
     }
   }
 
