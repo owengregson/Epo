@@ -1,10 +1,11 @@
 /**
- * InstagramAdapter — the versioned facade over the three adapter roles.
+ * InstagramAdapter — the versioned facade over the two DOM/URL-touching roles.
  *
- * - `reader`  : network-response parsing (built by a parallel task; wired in
- *               during integration — left as an optional slot here).
  * - `actor`   : the ONLY DOM-touching code (follow / unfollow / scroll).
  * - `sentinel`: block / challenge / logged-out detection.
+ *
+ * The Reader (network-response parsing) is NOT held here: it is pure and stateless,
+ * so the composition root (Wave 4) and the rim hold the real `Reader` directly (E2).
  *
  * `adapterVersion` echoes the field-notes capture provenance so the app can log
  * which Instagram surface these selectors were verified against.
@@ -18,13 +19,6 @@ export class InstagramAdapter {
   readonly actor: Actor;
   readonly sentinel: Sentinel;
   readonly adapterVersion: string = ADAPTER_VERSION;
-
-  /**
-   * The Reader is implemented by a parallel task. It is left as an optional
-   * slot so this facade type-checks and constructs standalone; integration
-   * assigns it once available. Typed loosely on purpose (no reader.ts import).
-   */
-  reader?: unknown;
 
   constructor(tab: AdapterTab) {
     this.actor = new Actor(tab);
