@@ -31,7 +31,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 /** The followers-dialog operations the scraper needs. `Actor` satisfies this. */
 export interface FollowersActor {
   openFollowersDialog(targetUsername: string): Promise<void>;
-  scrollFollowers(): Promise<void>;
+  /** Scrolls the dialog to load more; returns `false` when there is nothing to scroll. */
+  scrollFollowers(): Promise<boolean>;
 }
 
 /** Construction dependencies. `clock`/`scrollWaitMs` are optional (tests shrink them). */
@@ -138,6 +139,10 @@ export class FollowersPageReader {
     try {
       // The dialog is opened here (navigation fires profile-info + the first page).
       await this.actor.openFollowersDialog(targetUsername);
+      // Let the FIRST followers page load + parse before the scroll loop begins —
+      // the initial page arrives shortly after the modal opens, and small lists may
+      // never need a scroll at all.
+      await sleep(this.scrollWaitMs);
 
       let stagnantRounds = 0;
       for (let round = 0; round < maxRounds; round++) {

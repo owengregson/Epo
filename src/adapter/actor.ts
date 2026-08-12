@@ -216,15 +216,23 @@ export class Actor {
    * heuristic (largest scrollable descendant of the dialog). Throws
    * {@link AdapterStaleError} if no scroll container is found.
    */
-  async scrollFollowers(): Promise<void> {
+  async scrollFollowers(): Promise<boolean> {
+    // Best-effort: a small follower list that fits in the modal has NO scrollable
+    // container (nothing overflows), and the list may not be hydrated on the first
+    // attempt. Either way there is simply nothing to scroll — return `false`, do
+    // NOT throw. Throwing here would abort the whole collect and discard followers
+    // that already loaded from the initial page. The collect loop retries across
+    // rounds and stops when nothing new arrives.
     const res = await this.tab.evaluate<ScrollResult>(this.scrollFollowersScript());
     if (!res || !res.found) {
-      throw new AdapterStaleError('actor.scrollFollowers', SCROLL_CONTAINER_HEURISTIC);
+      logger.debug('actor.scrollFollowers: no scroll container (list fits or not yet hydrated)');
+      return false;
     }
     logger.debug('actor.scrollFollowers', {
       scrollHeight: res.scrollHeight,
       scrollTop: res.scrollTop,
     });
+    return true;
   }
 
   // -------------------------------------------------------------------------

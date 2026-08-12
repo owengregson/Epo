@@ -85,12 +85,12 @@ describe('Actor health-checks throw AdapterStaleError on absent selectors', () =
     expect((err as AdapterStaleError).component).toBe('actor.openFollowersDialog');
   });
 
-  test('scrollFollowers: no scroll container -> actor.scrollFollowers / heuristic', async () => {
+  test('scrollFollowers: no scroll container -> returns false (best-effort, never throws)', async () => {
     const tab = new FakeTab();
-    const err = await rejection(fastActor(tab).scrollFollowers());
-    expect(err).toBeInstanceOf(AdapterStaleError);
-    expect((err as AdapterStaleError).component).toBe('actor.scrollFollowers');
-    expect((err as AdapterStaleError).selector).toBe(SCROLL_CONTAINER_HEURISTIC);
+    // A small list that fits (or an un-hydrated list) has no scrollable container;
+    // scrolling is best-effort, so this must resolve `false` rather than throwing —
+    // throwing would abort collection and discard already-loaded followers.
+    await expect(fastActor(tab).scrollFollowers()).resolves.toBe(false);
   });
 });
 
