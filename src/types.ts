@@ -42,6 +42,11 @@ export type ResponseHandler = (response: TabResponse) => void;
 /** Disposer returned by subscription helpers; idempotent. */
 export type Unsubscribe = () => void;
 
+import type { EngineStatus } from '@/engine/engine';
+
+// Re-export so the renderer can name the Engine's status shape from one place.
+export type { EngineStatus };
+
 // ---------------------------------------------------------------------------
 // Structured log stream (main -> renderer)
 // ---------------------------------------------------------------------------
@@ -75,18 +80,15 @@ export interface ActionResult {
   reason?: string;
 }
 
-/** Snapshot of engine + governor state for the control shell header. */
-export interface FoundationStatus {
+/**
+ * The full status snapshot the main process emits to (and serves) the renderer:
+ * the Engine's own projection (§5) plus the login flag the header needs. Before
+ * the dependency graph is built (pre-login) the Engine fields carry their idle
+ * defaults and `loggedIn` is false.
+ */
+export interface PeanutStatus extends EngineStatus {
+  /** True once the persisted IG session has a `ds_user_id` cookie. */
   loggedIn: boolean;
-  currentUrl: string;
-  actionsToday: number;
-  remainingToday: number;
-  dailyHardCeiling: number;
-  dailyOperatingRate: number;
-  /** True once today's actions reach the hard ceiling (uncrossable in code). */
-  atHardCeiling: boolean;
-  /** Requests still available in the current rolling request-budget window. */
-  requestBudgetRemaining: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,11 +102,22 @@ export type IpcInvokeChannel =
   | 'foundation:followOne'
   | 'foundation:unfollowOne'
   | 'foundation:status'
+  | 'engine:start'
+  | 'engine:pause'
+  | 'engine:resume'
+  | 'engine:stop'
+  | 'engine:status'
   | 'tab:show'
   | 'tab:hide';
 
+/** Payload pushed on each renderer-facing event channel. */
+export interface PeanutEventPayloads {
+  log: LogEntry;
+  status: PeanutStatus;
+}
+
 /** Channels pushed from the main process to the renderer. */
-export type PeanutEventChannel = 'log';
+export type PeanutEventChannel = keyof PeanutEventPayloads;
 
 // ---------------------------------------------------------------------------
 // The bridge exposed on `window.peanut` by the preload script
@@ -112,23 +125,39 @@ export type PeanutEventChannel = 'log';
 
 export interface PeanutBridge {
   /** Open Instagram in the embedded tab (login is performed by the user). */
-  login(): Promise<void>;
+  login(): Promise<PeanutStatus>;
   /** Read a target account's followers into the knowledge graph. */
   readFollowers(target: string): Promise<ReadFollowersResult>;
   /** Follow a single account by username via a human-like DOM click. */
   followOne(username: string): Promise<ActionResult>;
   /** Unfollow a single account by username via a human-like DOM click. */
   unfollowOne(username: string): Promise<ActionResult>;
-  /** Fetch a status snapshot for the control-shell header. */
-  status(): Promise<FoundationStatus>;
+  /** Fetch a status snapshot for the control shell. */
+  status(): Promise<PeanutStatus>;
+  /** Start the automated engine loop (builds the graph if needed). */
+  startEngine(): Promise<PeanutStatus>;
+  /** Pause the engine between actions. */
+  pauseEngine(): Promise<PeanutStatus>;
+  /** Resume a paused engine. */
+  resumeEngine(): Promise<PeanutStatus>;
+  /** Stop the engine loop (aborts in-flight sleeps). */
+  stopEngine(): Promise<PeanutStatus>;
+  /** Fetch the engine status snapshot (same projection as {@link status}). */
+  engineStatus(): Promise<PeanutStatus>;
   /** Reveal the embedded Instagram tab. */
   showTab(): Promise<void>;
   /** Hide the embedded Instagram tab. */
   hideTab(): Promise<void>;
-  /** Subscribe to a push channel (e.g. the streaming log). */
-  on(channel: PeanutEventChannel, cb: (payload: LogEntry) => void): void;
+  /** Subscribe to a push channel (the streaming log or pushed status). */
+  on<C extends PeanutEventChannel>(
+    channel: C,
+    cb: (payload: PeanutEventPayloads[C]) => void,
+  ): void;
   /** Unsubscribe a previously-registered listener (no leaks). */
-  off(channel: PeanutEventChannel, cb: (payload: LogEntry) => void): void;
+  off<C extends PeanutEventChannel>(
+    channel: C,
+    cb: (payload: PeanutEventPayloads[C]) => void,
+  ): void;
 }
 
 declare global {

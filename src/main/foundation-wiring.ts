@@ -1,17 +1,21 @@
 /**
- * Foundation wiring — the Phase 1 composition root.
+ * Foundation — the Peanut v3 composition root (Wave 4).
  *
- * This is where the four independently-built pieces of the foundation meet:
+ * This is where the whole dependency graph is assembled and the Engine runs. The
+ * graph is built LAZILY: nothing is constructed until the user is logged in and
+ * `ownPk` (the `ds_user_id` cookie) is resolvable, at which point the graph is
+ * built once and cached. The IPC handlers (`src/main/ipc.ts`) delegate straight to
+ * the async methods here:
  *
- *   embedded tab  ──▶  Instagram Adapter (Reader / Actor / Sentinel)
- *                          │
- *                          ▼
- *                    KnowledgeStore  ◀──  Governors (rate cap + request budget)
+ *   - Engine controls: start / pause / resume / stop / status.
+ *   - Manual live-gate ops: login, readFollowers, followOne, unfollowOne — these
+ *     reuse the SAME rim (`FollowerAcquisition` / `ChurnActions`) the Engine uses,
+ *     so there is exactly one scraping/acting implementation (§6).
  *
- * The IPC handlers (`src/main/ipc.ts`) delegate straight to the async methods on
- * `Foundation`. Nothing here touches SQL (that stays behind `KnowledgeStore`) or
- * the DOM (that stays behind the Actor). All failures are logged AND surfaced as
- * typed results — never a silent `catch {}`.
+ * The pure engine components stay behind their ports; every live/timing concern is
+ * confined to the rim and the Engine. No handler-facing method throws across the
+ * IPC boundary: fallible work returns a typed result and logs on failure (never a
+ * silent `catch {}`).
  */
 
 import { app, session } from 'electron';
@@ -21,57 +25,43 @@ import { InstagramTab, IG_HOME_URL, IG_PARTITION } from '@/adapter/tab';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
 import { KnowledgeStore } from '@/store/knowledge-store';
-import { SystemClock, type Clock } from '@/governors/clock';
-import { RateGovernor, type RateGovernorConfig } from '@/governors/rate-governor';
-import { RequestBudget, type RequestBudgetConfig } from '@/governors/request-budget';
-import type { Observation } from '@/store/types';
-import type { Result } from '@/utils/result';
+import { SystemClock } from '@/governors/clock';
+import { RateGovernor } from '@/governors/rate-governor';
+import { RequestBudget } from '@/governors/request-budget';
+import { installRequestMetering } from '@/rim/request-metering';
+import { FollowersPageReader } from '@/rim/followers-page-reader';
+import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
+import { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
+import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
+import { ChurnScheduler } from '@/engine/churn-scheduler';
+import { Scanner } from '@/engine/scanner';
+import { FollowbackWatcher, type OwnFollowersSource } from '@/engine/followback-watcher';
+import { ChainController, type TargetDiscovery } from '@/engine/chain-controller';
+import { createEngine, type Engine, type EngineStatus } from '@/engine/engine';
+import type { FollowerAcquisition } from '@/rim/types';
+import {
+  loadSettings,
+  toRateGovernorConfig,
+  toRequestBudgetConfig,
+  toChurnConfig,
+  toScorerConfig,
+  toScannerConfig,
+  toFollowbackConfig,
+  toChainConfig,
+} from '@/settings/settings';
 import * as logger from '@/utils/logger';
-import type {
-  ActionResult,
-  FoundationStatus,
-  ReadFollowersResult,
-} from '@/types';
-
-// --- Safety defaults (Global Constraints §9) --------------------------------
-// These are the durable ceilings the whole foundation is gated behind. They
-// become Settings values in Phase 3; for the gate they live here as constants.
-
-const RATE_GOVERNOR_DEFAULTS: RateGovernorConfig = {
-  dailyHardCeiling: 50,
-  dailyOperatingRate: 25,
-  minDelayMs: 180_000,
-  maxDelayMs: 420_000,
-  jitterPercent: 30,
-  activeHoursStart: 8,
-  activeHoursEnd: 22,
-};
-
-const REQUEST_BUDGET_DEFAULTS: RequestBudgetConfig = {
-  maxRequestsPerWindow: 200,
-  windowMs: 3_600_000,
-};
-
-/** Bounded followers-scroll loop tuning (readFollowers). */
-const READ_FOLLOWERS = {
-  /** Hard cap on scroll rounds so a live read is always bounded. */
-  maxPages: 5,
-  /** Pause after each scroll so the paginated `followers/` request lands. */
-  scrollWaitMs: 2000,
-  /** Stop after this many consecutive rounds that yield no new accounts. */
-  stagnantLimit: 2,
-} as const;
+import type { ActionResult, PeanutStatus, ReadFollowersResult } from '@/types';
 
 const IG_DB_FILE = 'peanut.db';
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const IG_SETTINGS_FILE = 'peanut-settings.json';
+/** Instagram's public web app id — required for the private JSON API to answer. */
+const IG_APP_ID = '936619743392459';
 
 /**
- * A small, case-insensitive username → numeric-pk memory, populated from parsed
- * observations. Account identity is the pk (never the username), so ledger
- * entries and edges prefer the pk; callers fall back to the username as the key
- * only when the pk has not yet been observed.
+ * A small, case-insensitive username → numeric-pk memory. Account identity is the
+ * pk (never the username); this is retained as a standalone, cleanly unit-testable
+ * helper (it has no live/Electron dependencies).
  */
 export class PkRegistry {
   private readonly byUsername = new Map<string, string>();
@@ -88,58 +78,299 @@ export class PkRegistry {
 
 export interface FoundationDeps {
   tab: InstagramTab;
+  /** Push each fresh status projection to the renderer (main wires this to IPC). */
+  onStatus?: (status: PeanutStatus) => void;
+}
+
+/** The lazily-built dependency graph, cached once `ownPk` is resolvable. */
+interface BuiltGraph {
+  store: KnowledgeStore;
+  engine: Engine;
+  acquisition: FollowerAcquisition;
+  churnActions: AdapterBackedChurnActions;
+  requestMeteringUnsub: () => void;
+  ownPk: string;
 }
 
 export class Foundation {
   private readonly tab: InstagramTab;
-  private readonly store: KnowledgeStore;
-  private readonly clock: Clock;
-  private readonly rateGovernor: RateGovernor;
-  private readonly requestBudget: RequestBudget;
-  private readonly adapter: InstagramAdapter;
-  private readonly reader: Reader;
-  private readonly pks = new PkRegistry();
+  private readonly onStatusCb?: (status: PeanutStatus) => void;
+  private graph: BuiltGraph | null = null;
   private ownPkCache: string | null = null;
 
   constructor(deps: FoundationDeps) {
     this.tab = deps.tab;
-    this.store = new KnowledgeStore(
-      path.join(app.getPath('userData'), IG_DB_FILE),
-    );
-    this.clock = new SystemClock();
-    this.rateGovernor = new RateGovernor(
-      this.store,
-      this.clock,
-      RATE_GOVERNOR_DEFAULTS,
-    );
-    this.requestBudget = new RequestBudget(
-      this.store,
-      this.clock,
-      REQUEST_BUDGET_DEFAULTS,
-    );
-    this.adapter = new InstagramAdapter(this.tab);
-    this.reader = new Reader();
-    // Wire the REAL Reader into the facade's optional slot.
-    this.adapter.reader = this.reader;
-    logger.info('foundation ready', { adapterVersion: this.adapter.adapterVersion });
+    this.onStatusCb = deps.onStatus;
+    logger.info('foundation created (graph deferred until login)');
   }
 
   // -------------------------------------------------------------------------
-  // Login / identity
+  // Login / identity / lazy build
   // -------------------------------------------------------------------------
 
-  /** Open Instagram in the embedded tab; the user completes login there. */
-  async login(): Promise<FoundationStatus> {
+  /** True once the persistent IG session carries a `ds_user_id` cookie. */
+  async isLoggedIn(): Promise<boolean> {
+    return (await this.resolveOwnPk()) !== null;
+  }
+
+  /**
+   * Build the dependency graph exactly once, after login. Returns whether a graph
+   * exists afterwards: `false` when not logged in (nothing to build yet), `true`
+   * once built (idempotent — a second call is a no-op).
+   */
+  async ensureBuilt(): Promise<boolean> {
+    if (this.graph) return true;
+    const ownPk = await this.resolveOwnPk();
+    if (ownPk === null) return false;
+    const ownUsername = await this.resolveOwnUsername();
+    this.graph = this.build(ownPk, ownUsername);
+    logger.info('foundation: dependency graph built', {
+      ownPk,
+      ownUsername: ownUsername ?? '(unknown)',
+    });
+    return true;
+  }
+
+  /**
+   * Open Instagram in the embedded tab; the user completes login there. If the
+   * persisted session is already logged in, the graph is built here too so the
+   * first status reflects a live engine.
+   */
+  async login(): Promise<PeanutStatus> {
     this.tab.show();
-    await this.tab.goto(IG_HOME_URL);
+    try {
+      await this.tab.goto(IG_HOME_URL);
+    } catch (e) {
+      logger.error('foundation.login: navigation failed', { error: String(e) });
+    }
+    await this.ensureBuilt();
     return this.status();
   }
+
+  // -------------------------------------------------------------------------
+  // Engine controls (build-if-needed)
+  // -------------------------------------------------------------------------
+
+  /** Start the automated loop — fire-and-forget (never awaits the loop). */
+  async startEngine(): Promise<PeanutStatus> {
+    if (!(await this.ensureBuilt()) || this.graph === null) {
+      return this.notBuiltStatus(await this.isLoggedIn());
+    }
+    // Fire-and-forget: `start()` resolves only when the loop exits; do NOT await.
+    void this.graph.engine.start().catch((e: unknown) => {
+      logger.error('foundation: engine loop errored', { error: String(e) });
+    });
+    return this.builtStatus();
+  }
+
+  /** Pause the engine between actions. */
+  async pauseEngine(): Promise<PeanutStatus> {
+    if (!(await this.ensureBuilt()) || this.graph === null) {
+      return this.notBuiltStatus(await this.isLoggedIn());
+    }
+    this.graph.engine.pause();
+    return this.builtStatus();
+  }
+
+  /** Resume a paused engine. */
+  async resumeEngine(): Promise<PeanutStatus> {
+    if (!(await this.ensureBuilt()) || this.graph === null) {
+      return this.notBuiltStatus(await this.isLoggedIn());
+    }
+    this.graph.engine.resume();
+    return this.builtStatus();
+  }
+
+  /** Stop the engine loop (aborts in-flight sleeps). */
+  async stopEngine(): Promise<PeanutStatus> {
+    if (!(await this.ensureBuilt()) || this.graph === null) {
+      return this.notBuiltStatus(await this.isLoggedIn());
+    }
+    this.graph.engine.stop();
+    return this.builtStatus();
+  }
+
+  // -------------------------------------------------------------------------
+  // Manual live-gate ops (build-if-needed; same rim the Engine uses — §6)
+  // -------------------------------------------------------------------------
+
+  /** Read a target's followers into the knowledge graph via the shared rim. */
+  async readFollowers(target: string): Promise<ReadFollowersResult> {
+    if (!(await this.ensureBuilt()) || this.graph === null) {
+      logger.warn('foundation.readFollowers: not logged in, skipping', { target });
+      return { target, observed: 0 };
+    }
+    try {
+      const { observed } = await this.graph.acquisition.acquire(target);
+      return { target, observed };
+    } catch (e) {
+      logger.error('foundation.readFollowers: failed', { target, error: String(e) });
+      return { target, observed: 0 };
+    }
+  }
+
+  /** Follow one account via the shared rim `ChurnActions`. */
+  async followOne(username: string): Promise<ActionResult> {
+    return this.act('follow', username);
+  }
+
+  /** Unfollow one account via the shared rim `ChurnActions`. */
+  async unfollowOne(username: string): Promise<ActionResult> {
+    return this.act('unfollow', username);
+  }
+
+  private async act(
+    action: 'follow' | 'unfollow',
+    username: string,
+  ): Promise<ActionResult> {
+    if (!(await this.ensureBuilt()) || this.graph === null) {
+      logger.warn('foundation.act: not logged in, skipping', { action, username });
+      return { ok: false, username, reason: 'not-logged-in' };
+    }
+    try {
+      const { ok } =
+        action === 'follow'
+          ? await this.graph.churnActions.follow(username)
+          : await this.graph.churnActions.unfollow(username);
+      return ok ? { ok: true, username } : { ok: false, username, reason: 'action-failed' };
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      logger.error('foundation.act: failed', { action, username, error: reason });
+      return { ok: false, username, reason };
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Status
+  // -------------------------------------------------------------------------
+
+  /** Engine status when built; a minimal idle status otherwise. */
+  async status(): Promise<PeanutStatus> {
+    if (this.graph) return this.builtStatus();
+    return this.notBuiltStatus(await this.isLoggedIn());
+  }
+
+  /** Close the engine + store on window teardown. Idempotent. */
+  dispose(): void {
+    if (this.graph) {
+      this.graph.engine.stop();
+      this.graph.requestMeteringUnsub();
+      this.graph.store.close();
+      this.graph = null;
+    }
+    logger.info('foundation disposed');
+  }
+
+  // -------------------------------------------------------------------------
+  // Graph construction (Wave 4 §2/§3) — the exact composition, built once.
+  // -------------------------------------------------------------------------
+
+  private build(ownPk: string, ownUsername: string | undefined): BuiltGraph {
+    const userData = app.getPath('userData');
+    const store = new KnowledgeStore(path.join(userData, IG_DB_FILE));
+    const clock = new SystemClock();
+    const settings = loadSettings(path.join(userData, IG_SETTINGS_FILE));
+
+    const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
+    const budget = new RequestBudget(store, clock, toRequestBudgetConfig(settings));
+
+    // The adapter owns the single Actor + Sentinel instances the whole rim shares;
+    // the Reader is pure and held directly (E2 — no dead adapter.reader slot).
+    const adapter = new InstagramAdapter(this.tab);
+    const actor = adapter.actor;
+    const sentinel = adapter.sentinel;
+    const reader = new Reader();
+
+    // R2: one budget spend per real IG response, from the tab's onResponse pipeline.
+    const requestMeteringUnsub = installRequestMetering(this.tab, budget, reader);
+
+    const pageReader = new FollowersPageReader({ tab: this.tab, reader, actor });
+
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      budget,
+      sentinel,
+      ownPk,
+    });
+    const churnActions = new AdapterBackedChurnActions({
+      adapter,
+      budget,
+      store,
+      ownPk,
+      dryRun: settings.dryRun,
+    });
+
+    // Own-followers source needs our username; degrade gracefully to an empty
+    // source when it could not be resolved (follow-back sweeps then no-op).
+    const ownFollowersSource: OwnFollowersSource = ownUsername
+      ? new AdapterBackedOwnFollowersSource({ pageReader, ownUsername, budget, sentinel })
+      : {
+          nextPage: async () => ({ pks: [], cursor: null, hasMore: false }),
+        };
+    const ownFollowersTarget = new AdapterBackedOwnFollowersTargetSource({ store, ownPk });
+
+    const churn = new ChurnScheduler({
+      store,
+      clock,
+      rate,
+      actions: churnActions,
+      ownPk,
+      cfg: toChurnConfig(settings),
+    });
+    const scanner = new Scanner({
+      store,
+      scorerCfg: toScorerConfig(settings),
+      cfg: toScannerConfig(settings),
+    });
+    const followback = new FollowbackWatcher({
+      store,
+      clock,
+      ownPk,
+      followers: ownFollowersSource,
+      cfg: toFollowbackConfig(settings),
+    });
+
+    // Real discovery is deferred (arch §7); the own-followers fallback carries the chain.
+    const discovery: TargetDiscovery = { discover: async () => [] };
+    const chain = new ChainController({
+      store,
+      ownPk,
+      discovery,
+      ownFollowers: ownFollowersTarget,
+      cfg: toChainConfig(settings),
+    });
+
+    const engine = createEngine({
+      store,
+      clock,
+      rate,
+      requestBudget: budget,
+      sentinel,
+      churn,
+      scanner,
+      chain,
+      followback,
+      acquisition,
+      settings,
+      onStatus: (s) => this.emit(s),
+      onHalt: (reason) => {
+        logger.warn('foundation: engine halted', { reason });
+      },
+    });
+
+    return { store, engine, acquisition, churnActions, requestMeteringUnsub, ownPk };
+  }
+
+  // -------------------------------------------------------------------------
+  // Identity resolution
+  // -------------------------------------------------------------------------
 
   /**
    * The logged-in account's numeric pk, read from the persistent session's
    * `ds_user_id` cookie (that value IS the account pk). Cached once resolved.
    */
-  async ownPk(): Promise<string | null> {
+  private async resolveOwnPk(): Promise<string | null> {
     if (this.ownPkCache) return this.ownPkCache;
     try {
       const cookies = await session
@@ -152,268 +383,75 @@ export class Foundation {
       }
       return null;
     } catch (e) {
-      logger.warn('foundation.ownPk: cookie read failed', { error: String(e) });
+      logger.warn('foundation.resolveOwnPk: cookie read failed', { error: String(e) });
       return null;
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Reads
-  // -------------------------------------------------------------------------
-
   /**
-   * Read a target's followers into the knowledge graph.
-   *
-   * Registers a response interceptor that, for each followers-list page the tab
-   * captures, parses observations and writes them via `store.observe(...)`. The
-   * target's own pk is resolved best-effort from the `web_profile_info` response
-   * that fires on profile nav; once known, a `follower → target (follows)` edge
-   * is recorded for every observed follower. A bounded scroll loop drives the
-   * pagination, gated by the request budget, and stops on the page cap or when
-   * no new accounts arrive for two consecutive rounds.
+   * Best-effort own username via the private `current_user` endpoint (the pinned
+   * desktop UA lets this JSON API answer). Returns `undefined` on any failure so
+   * own-followers features degrade gracefully rather than breaking the build.
    */
-  async readFollowers(target: string): Promise<ReadFollowersResult> {
-    const sentinel = await this.adapter.sentinel.check();
-    if (sentinel !== 'ok') {
-      logger.warn('foundation.readFollowers: sentinel blocked', { target, sentinel });
-      return { target, observed: 0 };
-    }
-
-    const observedPks = new Set<string>();
-    const edgedPks = new Set<string>();
-    const pending: Promise<void>[] = [];
-    let targetPk: string | null = null;
-
-    const linkEdge = (followerPk: string): void => {
-      if (targetPk && !edgedPks.has(followerPk)) {
-        edgedPks.add(followerPk);
-        this.store.observeEdge(followerPk, targetPk, 'follows', true, this.clock.now());
-      }
-    };
-
-    const unsubscribe = this.tab.onResponse((resp) => {
-      const kind = this.reader.matchEndpoint(resp.url);
-      if (kind !== 'followers-list' && kind !== 'profile-info') return;
-      pending.push(
-        resp
-          .getBody()
-          .then((body) => {
-            if (kind === 'profile-info') {
-              const obs = this.reader.parseProfileInfo(body, this.clock.now());
-              if (!obs) return;
-              this.remember(obs);
-              this.store.observe(obs);
-              if (
-                obs.fields.username &&
-                obs.fields.username.toLowerCase() === target.toLowerCase()
-              ) {
-                targetPk = obs.accountPk;
-                // Back-fill edges for followers observed before we knew the target pk.
-                for (const pk of observedPks) linkEdge(pk);
-              }
-              return;
-            }
-            // followers-list
-            const parsed = this.reader.parseFollowersList(body, this.clock.now());
-            for (const obs of parsed.observations) {
-              observedPks.add(obs.accountPk);
-              this.remember(obs);
-              this.store.observe(obs);
-              linkEdge(obs.accountPk);
-            }
-          })
-          .catch((e) => {
-            logger.warn('foundation.readFollowers: body/parse failed', {
-              url: resp.url,
-              error: String(e),
-            });
-          }),
-      );
-    });
-
+  private async resolveOwnUsername(): Promise<string | undefined> {
     try {
-      await this.adapter.actor.openFollowersDialog(target);
-
-      let stagnantRounds = 0;
-      for (let page = 0; page < READ_FOLLOWERS.maxPages; page++) {
-        if (!this.requestBudget.canSpend()) {
-          logger.warn('foundation.readFollowers: request budget exhausted', { target });
-          break;
-        }
-        const before = observedPks.size;
-        this.requestBudget.spend();
-        await this.adapter.actor.scrollFollowers();
-        await sleep(READ_FOLLOWERS.scrollWaitMs);
-        if (observedPks.size === before) {
-          stagnantRounds += 1;
-          if (stagnantRounds >= READ_FOLLOWERS.stagnantLimit) break;
-        } else {
-          stagnantRounds = 0;
-        }
-      }
-    } catch (e) {
-      logger.error('foundation.readFollowers: failed', { target, error: String(e) });
-    } finally {
-      // Drain any in-flight body parses so the count and edges are complete.
-      await Promise.allSettled(pending);
-      unsubscribe();
-    }
-
-    logger.info('foundation.readFollowers: done', {
-      target,
-      observed: observedPks.size,
-      edges: edgedPks.size,
-    });
-    return { target, observed: observedPks.size };
-  }
-
-  // -------------------------------------------------------------------------
-  // Actions (manual single-shot: ceiling + sentinel + budget only)
-  // -------------------------------------------------------------------------
-
-  /**
-   * Follow one account. Gated by Sentinel (bail if blocked), the durable hard
-   * ceiling, and the request budget. The long inter-action human delay is NOT
-   * applied here — that belongs to the Phase-2 churn scheduler; manual single
-   * actions only enforce ceiling + sentinel + budget.
-   */
-  async followOne(username: string): Promise<ActionResult> {
-    return this.act(username, 'follow', true);
-  }
-
-  /** Unfollow one account — symmetric to {@link followOne}. */
-  async unfollowOne(username: string): Promise<ActionResult> {
-    return this.act(username, 'unfollow', false);
-  }
-
-  private async act(
-    username: string,
-    action: 'follow' | 'unfollow',
-    edgeActive: boolean,
-  ): Promise<ActionResult> {
-    const sentinel = await this.adapter.sentinel.check();
-    if (sentinel !== 'ok') {
-      logger.warn('foundation.action: sentinel blocked', { username, action, sentinel });
-      return { ok: false, username, reason: `sentinel:${sentinel}` };
-    }
-    if (this.rateGovernor.atHardCeiling()) {
-      logger.warn('foundation.action: daily hard ceiling reached', { username, action });
-      return { ok: false, username, reason: 'daily-hard-ceiling' };
-    }
-
-    // The Actor navigates to the profile, which fires web_profile_info; capture
-    // it so the target pk (for the real-pk edge) and profile stats are recorded.
-    const ownPk = await this.ownPk();
-    this.requestBudget.spend();
-    const capture = this.captureProfiles();
-
-    let result: Result<void> | null = null;
-    let thrown: unknown = null;
-    try {
-      result =
-        action === 'follow'
-          ? await this.adapter.actor.follow(username)
-          : await this.adapter.actor.unfollow(username);
-    } catch (e) {
-      thrown = e;
-    } finally {
-      await capture.stop();
-    }
-
-    const now = this.clock.now();
-    const targetPk = this.pks.lookup(username);
-    const ledgerKey = targetPk ?? username;
-
-    if (thrown !== null) {
-      const reason = thrown instanceof Error ? thrown.message : String(thrown);
-      logger.error('foundation.action: actor threw', { username, action, error: reason });
-      this.store.recordAction(ledgerKey, action, 'fail', now);
-      return { ok: false, username, reason };
-    }
-
-    if (result && result.ok) {
-      this.store.recordAction(ledgerKey, action, 'ok', now);
-      if (ownPk && targetPk) {
-        this.store.observeEdge(ownPk, targetPk, 'follows', edgeActive, now);
-      } else {
-        logger.warn('foundation.action: edge not recorded (unknown pk)', {
-          username,
-          action,
-          hasOwnPk: ownPk !== null,
-          hasTargetPk: targetPk !== null,
-        });
-      }
-      logger.info('foundation.action: ok', { username, action, ledgerKey });
-      return { ok: true, username };
-    }
-
-    const reason = result ? result.reason : 'unknown-actor-result';
-    logger.warn('foundation.action: actor reported failure', { username, action, reason });
-    this.store.recordAction(ledgerKey, action, 'fail', now);
-    return { ok: false, username, reason };
-  }
-
-  /**
-   * Subscribe to profile-info responses for the duration of one action so the
-   * target's pk (and profile stats) land in the store/registry. Returns a
-   * `stop()` that drains in-flight parses and unsubscribes.
-   */
-  private captureProfiles(): { stop: () => Promise<void> } {
-    const pending: Promise<void>[] = [];
-    const unsubscribe = this.tab.onResponse((resp) => {
-      if (this.reader.matchEndpoint(resp.url) !== 'profile-info') return;
-      pending.push(
-        resp
-          .getBody()
-          .then((body) => {
-            const obs = this.reader.parseProfileInfo(body, this.clock.now());
-            if (!obs) return;
-            this.remember(obs);
-            this.store.observe(obs);
-          })
-          .catch((e) => {
-            logger.warn('foundation.captureProfiles: parse failed', {
-              url: resp.url,
-              error: String(e),
+      const username = await this.tab.evaluate<string | null>(
+        `(async () => {
+          try {
+            const res = await fetch('/api/v1/accounts/current_user/', {
+              headers: { 'x-ig-app-id': '${IG_APP_ID}' },
+              credentials: 'include',
             });
-          }),
+            if (!res.ok) return null;
+            const data = await res.json();
+            return data && data.user && data.user.username ? data.user.username : null;
+          } catch (e) {
+            return null;
+          }
+        })()`,
       );
-    });
-    return {
-      stop: async (): Promise<void> => {
-        await Promise.allSettled(pending);
-        unsubscribe();
-      },
-    };
+      if (typeof username === 'string' && username.length > 0) return username;
+      logger.warn('foundation.resolveOwnUsername: current_user returned no username');
+      return undefined;
+    } catch (e) {
+      logger.warn('foundation.resolveOwnUsername: evaluate failed', { error: String(e) });
+      return undefined;
+    }
   }
 
   // -------------------------------------------------------------------------
-  // Status
+  // Status projection helpers
   // -------------------------------------------------------------------------
 
-  /** A snapshot derived from the store, governors, and tab for the control shell. */
-  async status(): Promise<FoundationStatus> {
-    const ownPk = await this.ownPk();
+  private emit(status: EngineStatus): void {
+    this.onStatusCb?.({ ...status, loggedIn: this.graph !== null });
+  }
+
+  private builtStatus(): PeanutStatus {
+    // Only called when `this.graph` is set (post-build).
+    const graph = this.graph;
+    if (graph === null) return this.notBuiltStatus(true);
+    return { ...graph.engine.status(), loggedIn: true };
+  }
+
+  private notBuiltStatus(loggedIn: boolean): PeanutStatus {
     return {
-      loggedIn: ownPk !== null,
-      currentUrl: this.tab.currentUrl(),
-      actionsToday: this.rateGovernor.actionsToday(),
-      remainingToday: this.rateGovernor.remainingToday(),
-      dailyHardCeiling: RATE_GOVERNOR_DEFAULTS.dailyHardCeiling,
-      dailyOperatingRate: RATE_GOVERNOR_DEFAULTS.dailyOperatingRate,
-      atHardCeiling: this.rateGovernor.atHardCeiling(),
-      requestBudgetRemaining: this.requestBudget.remaining(),
+      state: 'idle',
+      currentTargetPk: null,
+      currentTargetUsername: null,
+      chainIndex: null,
+      actionsToday: 0,
+      remainingToday: 0,
+      atHardCeiling: false,
+      requestBudgetRemaining: 0,
+      queued: 0,
+      pendingFollowback: 0,
+      followedBackHeld: 0,
+      unfollowDue: 0,
+      lastStep: null,
+      lastSentinel: null,
+      lastActionAt: null,
+      loggedIn,
     };
-  }
-
-  /** Record an observation's pk/username pairing for later ledger/edge keys. */
-  private remember(obs: Observation): void {
-    this.pks.remember(obs.fields.username, obs.accountPk);
-  }
-
-  /** Close the knowledge store. Call on window teardown. */
-  dispose(): void {
-    this.store.close();
-    logger.info('foundation disposed');
   }
 }
