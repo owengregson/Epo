@@ -1,0 +1,60 @@
+{
+  "users": [
+    {
+      "strong_id__": "1000000001",
+      "pk": 1000000001,
+      "pk_id": "1000000001",
+      "username": "user_001",
+      "full_name": "Test User 2",
+      "is_private": false,
+      "is_verified": false,
+      "profile_pic_url": "",
+      "profile_pic_id": "1000000002",
+      "has_anonymous_profile_picture": false,
+      "account_badges": [],
+      "id": "1000000001",
+      "fbid_v2": 1000000003,
+      "latest_reel_media": 0,
+      "third_party_downloads_enabled": 1
+    },
+    {
+      "strong_id__": "1000000004",
+      "pk": 1000000004,
+      "pk_id": "1000000004",
+      "username": "user_003",
+      "full_name": "Test User 4",
+      "is_private": false,
+      "is_verified": false,
+      "profile_pic_url": "",
+      "profile_pic_id": "1000000005",
+      "has_anonymous_profile_picture": false,
+      "account_badges": [],
+      "id": "1000000004",
+      "fbid_v2": 1000000006,
+      "latest_reel_media": 1786507005,
+      "third_party_downloads_enabled": 0
+    },
+    {
+      "strong_id__": "1000000007",
+      "pk": 1000000007,
+      "pk_id": "1000000007",
+      "username": "user_005",
+      "full_name": "Test User 6",
+      "is_private": true,
+      "is_verified": false,
+      "profile_pic_url": "",
+      "profile_pic_id": "1000000008",
+      "has_anonymous_profile_picture": false,
+      "account_badges": [],
+      "id": "1000000007",
+      "fbid_v2": 1000000009,
+      "latest_reel_media": 0,
+      "third_party_downloads_enabled": 0
+    }
+  ],
+  "big_list": false,
+  "next_max_id": null,
+  "page_size": 3,
+  "friend_requests": {},
+  "status": "ok"
+}
