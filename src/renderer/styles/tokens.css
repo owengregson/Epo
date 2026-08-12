@@ -1,0 +1,39 @@
+/*
+ * Peanut v3 — design tokens (Fable spec §1).
+ * "Instrument panel, not app": monotone graphite with whitish-silver / brushed-metal
+ * accents and one restrained shine. Desktop Electron → dark is primary and fixed.
+ * These values are the spec's palette verbatim; do not retune them here.
+ */
+
+:root {
+  /* Surfaces (graphite, back-to-front) */
+  --bg: #0d0d0f;
+  --surface: #141417;
+  --elevated: #1b1b1f;
+  --border: #26262b;
+  --border-strong: #33333a;
+
+  /* Text */
+  --text: #ececee;
+  --muted: #9a9aa2;
+  --faint: #66666e;
+
+  /* Metal accents — used sparingly (hairlines, active states, the running pulse) */
+  --silver: #c9ccd1;
+  --chrome: #eef1f4;
+  --live: #d8dde3;   /* near-white steel: the single "live/go" accent */
+  --warn: #d8b768;   /* muted brass */
+  --danger: #c96a6a;
+
+  /* The only "shine": a 1px top highlight on raised surfaces. Nothing glows. */
+  --highlight: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  /* A very low-contrast brushed sheen for the primary control + status pill. */
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 42%, rgba(0, 0, 0, 0.12) 100%);
+
+  --radius: 7px;
+  --radius-sm: 5px;
+
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui,
+    'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}

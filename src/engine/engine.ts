@@ -172,6 +172,8 @@ interface CurrentTarget {
 export class Engine {
   private readonly deps: EngineDeps;
   private readonly sleepFn: SleepFn;
+  /** Live settings — swapped by {@link applySettings} when the user saves changes. */
+  private settings: Settings;
 
   private engineState: EngineState = 'idle';
   private runAbort = new AbortController();
@@ -204,6 +206,17 @@ export class Engine {
   constructor(deps: EngineDeps) {
     this.deps = deps;
     this.sleepFn = deps.sleep ?? defaultSleep;
+    this.settings = deps.settings;
+  }
+
+  /**
+   * Swap the Engine's own settings-derived knobs at runtime (seed, active-hours,
+   * follow-back cadence, low-water). The governor/component configs are reloaded
+   * separately by the composition root; this only covers what the Engine reads
+   * directly. Applied between steps, so an in-flight iteration is never torn.
+   */
+  applySettings(settings: Settings): void {
+    this.settings = settings;
   }
 
   /** The state as a wide type — sidesteps literal narrowing across awaits. */
@@ -372,7 +385,7 @@ export class Engine {
     if (current === null) return this.halt('no-current-target'); // unreachable guard
 
     // 6. Follow-back sweep on its slow cadence.
-    const sweepDueMs = this.deps.settings.followbackSweepHours * MS_PER_HOUR;
+    const sweepDueMs = this.settings.followbackSweepHours * MS_PER_HOUR;
     if (now - this.lastSweepAt >= sweepDueMs) {
       await this.deps.followback.check();
       this.lastSweepAt = now;
@@ -384,7 +397,7 @@ export class Engine {
     const queuedForTarget = this.queuedCountFor(current.pk);
     const unqueuedCandidates = this.deps.store.candidatePksForTarget(current.pk).length;
     if (
-      queuedForTarget < this.deps.settings.lowWaterCandidates &&
+      queuedForTarget < this.settings.lowWaterCandidates &&
       (!this.acquiredThisCycle || unqueuedCandidates > 0)
     ) {
       await this.acquireAndPlan(current);
@@ -447,7 +460,7 @@ export class Engine {
    * cannot be resolved (there is nothing safe to do without a target).
    */
   private async bootstrapSeedTarget(): Promise<StepResult> {
-    const seed = this.deps.settings.seed.trim();
+    const seed = this.settings.seed.trim();
     if (seed === '') return this.halt('seed-missing');
 
     const { targetPk } = await this.deps.acquisition.acquire(seed);
@@ -547,7 +560,7 @@ export class Engine {
   private msUntilActiveWindow(): number {
     const now = this.deps.clock.now();
     const next = new Date(now);
-    next.setHours(this.deps.settings.activeHoursStart, 0, 0, 0);
+    next.setHours(this.settings.activeHoursStart, 0, 0, 0);
     if (next.getTime() <= now) next.setDate(next.getDate() + 1);
     return next.getTime() - now;
   }

@@ -42,13 +42,19 @@ interface RankedCandidate {
  */
 export class Scanner {
   private readonly store: KnowledgeStore;
-  private readonly scorerCfg?: ScorerConfig;
-  private readonly cfg: ScannerConfig;
+  private scorerCfg?: ScorerConfig;
+  private cfg: ScannerConfig;
 
   constructor(deps: { store: KnowledgeStore; scorerCfg?: ScorerConfig; cfg?: ScannerConfig }) {
     this.store = deps.store;
     this.scorerCfg = deps.scorerCfg;
     this.cfg = deps.cfg ?? SCANNER_DEFAULTS;
+  }
+
+  /** Swap the live config (scanner + scorer) in place when Settings change at runtime. */
+  applyConfig(cfg: ScannerConfig, scorerCfg?: ScorerConfig): void {
+    this.cfg = cfg;
+    if (scorerCfg !== undefined) this.scorerCfg = scorerCfg;
   }
 
   /**

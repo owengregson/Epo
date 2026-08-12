@@ -12,12 +12,16 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
 import type {
   ActionResult,
+  ChainTargetView,
+  FollowState,
   PeanutBridge,
   PeanutEventChannel,
   PeanutEventPayloads,
   PeanutStatus,
+  QueueListResult,
   ReadFollowersResult,
 } from '@/types';
+import type { Settings } from '@/settings/settings';
 
 /** Renderer-facing channel -> underlying IPC channel. */
 const EVENT_CHANNELS: Record<PeanutEventChannel, string> = {
@@ -80,6 +84,12 @@ const bridge: PeanutBridge = {
   resumeEngine: (): Promise<PeanutStatus> => ipcRenderer.invoke('engine:resume'),
   stopEngine: (): Promise<PeanutStatus> => ipcRenderer.invoke('engine:stop'),
   engineStatus: (): Promise<PeanutStatus> => ipcRenderer.invoke('engine:status'),
+  chainList: (): Promise<ChainTargetView[]> => ipcRenderer.invoke('chain:list'),
+  queueList: (state: FollowState): Promise<QueueListResult> =>
+    ipcRenderer.invoke('queue:list', state),
+  getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
+  updateSettings: (partial: Partial<Settings>): Promise<Settings> =>
+    ipcRenderer.invoke('settings:update', partial),
   showTab: () => ipcRenderer.invoke('tab:show'),
   hideTab: () => ipcRenderer.invoke('tab:hide'),
   on,

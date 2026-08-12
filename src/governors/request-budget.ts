@@ -15,8 +15,13 @@ export class RequestBudget {
   constructor(
     private readonly store: KnowledgeStore,
     private readonly clock: Clock,
-    private readonly cfg: RequestBudgetConfig,
+    private cfg: RequestBudgetConfig,
   ) {}
+
+  /** Swap the live config in place (used when Settings are updated at runtime). */
+  applyConfig(cfg: RequestBudgetConfig): void {
+    this.cfg = cfg;
+  }
 
   private usedInWindow(): number {
     return this.store.requestCountSince(this.clock.now() - this.cfg.windowMs);

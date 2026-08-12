@@ -43,9 +43,13 @@ export type ResponseHandler = (response: TabResponse) => void;
 export type Unsubscribe = () => void;
 
 import type { EngineStatus } from '@/engine/engine';
+import type { Target, FollowState } from '@/store/types';
+import type { Settings } from '@/settings/settings';
 
 // Re-export so the renderer can name the Engine's status shape from one place.
-export type { EngineStatus };
+// These are all TYPE-ONLY re-exports — no runtime code crosses into the renderer,
+// so the dependency-free contract above still holds.
+export type { EngineStatus, Target, FollowState, Settings };
 
 // ---------------------------------------------------------------------------
 // Structured log stream (main -> renderer)
@@ -92,6 +96,42 @@ export interface PeanutStatus extends EngineStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Read-only list projections (renderer -> main, via invoke) — §5
+// ---------------------------------------------------------------------------
+
+/** Per-target yield, computed on demand from follow_records + edges (§3.5). */
+export interface TargetYield {
+  total: number;
+  followedBack: number;
+  followBackRate: number;
+  poolSize: number;
+  mutualOverlap: number;
+}
+
+/** A chain target augmented with its account username and computed yield. */
+export interface ChainTargetView extends Target {
+  username: string | null;
+  yield: TargetYield;
+}
+
+/** One follow_record row joined to its account, for a queue lifecycle tab. */
+export interface QueueRow {
+  pk: string;
+  username: string | null;
+  ratio: number | null;
+  isPrivate: boolean | null;
+  followedAt?: number;
+  holdUntil?: number;
+  unfollowDueAt?: number;
+}
+
+/** A capped page of queue rows plus whether rows beyond the cap were dropped. */
+export interface QueueListResult {
+  rows: QueueRow[];
+  truncated: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Channel names — kept as string-literal unions so both sides stay in sync
 // ---------------------------------------------------------------------------
 
@@ -107,6 +147,10 @@ export type IpcInvokeChannel =
   | 'engine:resume'
   | 'engine:stop'
   | 'engine:status'
+  | 'chain:list'
+  | 'queue:list'
+  | 'settings:get'
+  | 'settings:update'
   | 'tab:show'
   | 'tab:hide';
 
@@ -144,6 +188,14 @@ export interface PeanutBridge {
   stopEngine(): Promise<PeanutStatus>;
   /** Fetch the engine status snapshot (same projection as {@link status}). */
   engineStatus(): Promise<PeanutStatus>;
+  /** The chain lineage: every target with its username and computed yield. */
+  chainList(): Promise<ChainTargetView[]>;
+  /** A capped page of follow_records in one lifecycle state, joined to accounts. */
+  queueList(state: FollowState): Promise<QueueListResult>;
+  /** The persisted settings object. */
+  getSettings(): Promise<Settings>;
+  /** Merge a partial into settings, persist, and reload the live engine configs. */
+  updateSettings(partial: Partial<Settings>): Promise<Settings>;
   /** Reveal the embedded Instagram tab. */
   showTab(): Promise<void>;
   /** Hide the embedded Instagram tab. */

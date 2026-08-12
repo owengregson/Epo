@@ -72,7 +72,12 @@ export class ChainController {
   private readonly ownPk: string;
   private readonly discovery: TargetDiscovery;
   private readonly ownFollowers: OwnFollowersTargetSource;
-  private readonly cfg: ChainConfig;
+  private cfg: ChainConfig;
+
+  /** Swap the live config in place (used when Settings are updated at runtime). */
+  applyConfig(cfg: ChainConfig): void {
+    this.cfg = cfg;
+  }
 
   constructor(deps: ChainDeps) {
     this.store = deps.store;

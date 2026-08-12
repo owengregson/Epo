@@ -1,252 +1,132 @@
 /** @jsx h */
 import { h, Fragment } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import type { LogEntry, PeanutStatus } from '@/types';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import type { Settings } from '@/types';
+import { useEngineStatus } from './hooks/useEngineStatus';
+import { useToasts } from './hooks/useToasts';
+import { ControlBar } from './components/ControlBar';
+import { ChainPanel } from './components/ChainPanel';
+import { RatePanel } from './components/RatePanel';
+import { QueuePanel } from './components/QueuePanel';
+import { ActivityLog } from './components/ActivityLog';
+import { SettingsPanel } from './components/SettingsPanel';
 
-const MAX_LOG_LINES = 500;
+/**
+ * The dashboard shell (spec §6): owns the one engine-status subscription and the
+ * toast layer, wires the control handlers (each shows pending + a typed failure
+ * toast), and stacks the seven panels. No panel owns more than its own state.
+ */
+export function App(): h.JSX.Element {
+  const status = useEngineStatus();
+  const toasts = useToasts();
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
 
-function ts(at: number): string {
-  const d = new Date(at);
-  return d.toLocaleTimeString(undefined, { hour12: false });
-}
-
-export function App() {
-  const [target, setTarget] = useState('');
-  const [username, setUsername] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<PeanutStatus | null>(null);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const logEndRef = useRef<HTMLDivElement | null>(null);
-
-  // Subscribe to the streaming log; unsubscribe on unmount (no listener leaks).
+  // Canonical settings — loaded once for the dry-run indicator and the rate meters;
+  // the settings panel edits a draft and reports saves back through onSaved.
   useEffect(() => {
-    const onLog = (entry: LogEntry): void => {
-      setLogs((prev) => {
-        const next = prev.concat(entry);
-        return next.length > MAX_LOG_LINES
-          ? next.slice(next.length - MAX_LOG_LINES)
-          : next;
+    let alive = true;
+    window.peanut
+      .getSettings()
+      .then((s) => {
+        if (alive) setSettings(s);
+      })
+      .catch(() => {
+        // best-effort; the settings panel shows its own loading state
       });
-    };
-    window.peanut.on('log', onLog);
     return () => {
-      window.peanut.off('log', onLog);
+      alive = false;
     };
   }, []);
 
-  // Subscribe to pushed engine status (§5 — pushed on every transition, not polled).
-  useEffect(() => {
-    const onStatus = (next: PeanutStatus): void => setStatus(next);
-    window.peanut.on('status', onStatus);
-    return () => {
-      window.peanut.off('status', onStatus);
-    };
-  }, []);
-
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ block: 'end' });
-  }, [logs]);
-
-  const refreshStatus = useCallback(async () => {
-    try {
-      setStatus(await window.peanut.status());
-    } catch {
-      // status is best-effort; failures already surface via the log stream
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshStatus();
-  }, [refreshStatus]);
-
-  const run = useCallback(
-    async (action: () => Promise<void>) => {
-      setBusy(true);
+  const runControl = useCallback(
+    async (name: string, label: string, fn: () => Promise<unknown>) => {
+      setPending(name);
       try {
-        await action();
+        await fn();
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        toasts.push('error', `${label} failed: ${reason}`);
       } finally {
-        setBusy(false);
-        void refreshStatus();
+        setPending(null);
       }
     },
-    [refreshStatus],
+    [toasts],
   );
 
-  const onLogin = () => run(async () => void (await window.peanut.login()));
-  const onStart = () => run(async () => void (await window.peanut.startEngine()));
-  const onPause = () => run(async () => void (await window.peanut.pauseEngine()));
-  const onStop = () => run(async () => void (await window.peanut.stopEngine()));
-  const onRead = () =>
-    run(async () => {
-      const t = target.trim();
-      if (!t) return;
-      await window.peanut.readFollowers(t);
-    });
-  const onFollow = () =>
-    run(async () => {
-      const u = username.trim();
-      if (!u) return;
-      await window.peanut.followOne(u);
-    });
-  const onUnfollow = () =>
-    run(async () => {
-      const u = username.trim();
-      if (!u) return;
-      await window.peanut.unfollowOne(u);
-    });
+  const onStart = useCallback(
+    () => void runControl('start', 'Start', () => window.peanut.startEngine()),
+    [runControl],
+  );
+  const onStop = useCallback(
+    () => void runControl('stop', 'Stop', () => window.peanut.stopEngine()),
+    [runControl],
+  );
+  const onPauseResume = useCallback(() => {
+    const paused = status?.state === 'paused';
+    void runControl('pauseResume', paused ? 'Resume' : 'Pause', () =>
+      paused ? window.peanut.resumeEngine() : window.peanut.pauseEngine(),
+    );
+  }, [runControl, status?.state]);
+  const onLogin = useCallback(
+    () => void runControl('login', 'Log in', () => window.peanut.login()),
+    [runControl],
+  );
+
+  const loggedOut = status !== null && !status.loggedIn;
 
   return (
-    <div class="shell">
-      <header class="shell__header">
-        <div class="brand">
-          <span class="brand__mark" />
-          <span class="brand__name">Peanut</span>
-        </div>
-        <div class="status" data-online={status?.loggedIn ? 'true' : 'false'}>
-          <span class="status__dot" />
-          <span class="status__label">
-            {status?.loggedIn ? 'Session active' : 'Signed out'}
-          </span>
-        </div>
-      </header>
+    <div class="app">
+      <ControlBar
+        status={status}
+        pending={pending}
+        dryRun={settings?.dryRun ?? false}
+        onStart={onStart}
+        onPauseResume={onPauseResume}
+        onStop={onStop}
+      />
 
-      <section class="panel">
-        <div class="metrics">
-          <div class="metric">
-            <span class="metric__value">{status?.actionsToday ?? '—'}</span>
-            <span class="metric__label">Actions today</span>
+      <div class="app__scroll">
+        {loggedOut ? (
+          <div class="signin">
+            <div class="signin__title">Not signed in</div>
+            <p class="signin__body">
+              Open Instagram in the tab on the right and log in. The engine builds
+              itself the moment your session is live.
+            </p>
+            <button
+              class="btn btn--primary"
+              disabled={pending === 'login'}
+              onClick={onLogin}
+            >
+              {pending === 'login' ? 'Opening…' : 'Open Instagram'}
+            </button>
           </div>
-          <div class="metric">
-            <span class="metric__value">{status?.remainingToday ?? '—'}</span>
-            <span class="metric__label">Remaining</span>
-          </div>
-          <div class="metric">
-            <span class="metric__value">
-              {status?.requestBudgetRemaining ?? '—'}
-            </span>
-            <span class="metric__label">Req budget</span>
-          </div>
-        </div>
-      </section>
+        ) : null}
 
-      <section class="panel">
-        <div class="actions">
-          <button class="btn btn--primary" disabled={busy} onClick={onStart}>
-            Start engine
-          </button>
-          <button
-            class="btn"
-            disabled={busy || status?.state !== 'running'}
-            onClick={onPause}
-          >
-            Pause
-          </button>
-          <button
-            class="btn"
-            disabled={busy || (status?.state !== 'running' && status?.state !== 'paused')}
-            onClick={onStop}
-          >
-            Stop
-          </button>
-        </div>
-        <div class="engine-status">
-          <span class="engine-status__state" data-state={status?.state ?? 'idle'}>
-            {status?.state ?? 'idle'}
-          </span>
-          <span class="engine-status__line">
-            target {status?.currentTargetUsername ?? status?.currentTargetPk ?? '—'} ·{' '}
-            {status?.actionsToday ?? 0}/{(status?.actionsToday ?? 0) + (status?.remainingToday ?? 0)} today ·{' '}
-            {status?.remainingToday ?? 0} left · q{status?.queued ?? 0} p
-            {status?.pendingFollowback ?? 0} h{status?.followedBackHeld ?? 0} u
-            {status?.unfollowDue ?? 0}
-          </span>
-        </div>
-      </section>
+        <ChainPanel status={status} />
+        <RatePanel status={status} settings={settings} />
+        <QueuePanel status={status} />
+        <ActivityLog />
+        <SettingsPanel settings={settings} onSaved={setSettings} toasts={toasts} />
+      </div>
 
-      <section class="panel">
-        <label class="field">
-          <span class="field__label">Target account</span>
-          <input
-            class="field__input"
-            type="text"
-            placeholder="username to read followers from"
-            value={target}
-            onInput={(e) =>
-              setTarget((e.target as HTMLInputElement).value)
-            }
-          />
-        </label>
-        <div class="actions">
-          <button class="btn btn--primary" disabled={busy} onClick={onLogin}>
-            Login / Open Instagram
-          </button>
-          <button
-            class="btn"
-            disabled={busy || !target.trim()}
-            onClick={onRead}
-          >
-            Read followers
-          </button>
-        </div>
-      </section>
-
-      <section class="panel">
-        <label class="field">
-          <span class="field__label">Action target</span>
-          <input
-            class="field__input"
-            type="text"
-            placeholder="username to follow / unfollow"
-            value={username}
-            onInput={(e) =>
-              setUsername((e.target as HTMLInputElement).value)
-            }
-          />
-        </label>
-        <div class="actions">
-          <button
-            class="btn"
-            disabled={busy || !username.trim()}
-            onClick={onFollow}
-          >
-            Follow one
-          </button>
-          <button
-            class="btn"
-            disabled={busy || !username.trim()}
-            onClick={onUnfollow}
-          >
-            Unfollow one
-          </button>
-        </div>
-      </section>
-
-      <section class="panel panel--log">
-        <div class="log__header">
-          <span class="log__title">Activity</span>
-          <button class="btn btn--ghost" onClick={() => setLogs([])}>
-            Clear
-          </button>
-        </div>
-        <div class="log">
-          {logs.length === 0 ? (
-            <div class="log__empty">No activity yet.</div>
-          ) : (
-            logs.map((entry, i) => (
-              <div
-                key={i}
-                class="log__line"
-                data-level={entry.level}
+      {toasts.toasts.length > 0 ? (
+        <div class="toasts" role="status" aria-live="polite">
+          {toasts.toasts.map((t) => (
+            <div key={t.id} class="toast" data-kind={t.kind}>
+              <span class="toast__msg">{t.message}</span>
+              <button
+                class="toast__close"
+                aria-label="Dismiss"
+                onClick={() => toasts.dismiss(t.id)}
               >
-                <span class="log__time">{ts(entry.at)}</span>
-                <span class="log__level">{entry.level}</span>
-                <span class="log__msg">{entry.message}</span>
-              </div>
-            ))
-          )}
-          <div ref={logEndRef} />
+                ×
+              </button>
+            </div>
+          ))}
         </div>
-      </section>
+      ) : null}
     </div>
   );
 }
