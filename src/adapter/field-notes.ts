@@ -108,6 +108,15 @@ export const SELECTORS = {
    */
   followersLink: (username: string): string => `a[href="/${username}/followers/" i]`,
   /**
+   * Re-verified 2026-08-12 against live DOM: the followers/following COUNTS in the
+   * profile header are now `<a href="#">` that open the modal via JS — NOT
+   * `/<user>/followers/` links (that selector can never match). So the followers
+   * control is located by TEXT: an anchor/button whose text names "followers"
+   * (and NOT "following"; note `\bfollowers?\b` does not match "following").
+   */
+  followersStatText: /\bfollowers?\b/i,
+  followingStatText: /\bfollowing\b/i,
+  /**
    * Profile action button. Live capture (2026-08-12) confirms it renders inside a
    * semantic `<header>` on current Instagram, so this stays the PRIMARY anchor.
    * Its textContent LEADS with the state word but may include icon alt text

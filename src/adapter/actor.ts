@@ -184,34 +184,26 @@ export class Actor {
    * the dialog never appears.
    */
   async openFollowersDialog(targetUsername: string): Promise<void> {
-    // PRIMARY (Task-E-proven): navigating to the `/<user>/followers/` route opens
-    // the followers modal on logged-in desktop web. This sidesteps the obfuscated,
-    // drift-prone followers *link* selector entirely. Land on the profile first for
-    // context, then the followers route, then wait for the dialog.
     await this.tab.goto(this.profileUrl(targetUsername));
-    await this.tab.goto(`${this.profileUrl(targetUsername)}followers/`);
 
-    let present = await this.waitFor<DialogResult>(
+    // The followers stat is an a[href="#"] that opens the modal via JS (verified
+    // live 2026-08-12), so locate it by TEXT and click. Retry through `waitFor`
+    // for SPA hydration.
+    const clicked = await this.waitFor<ClickResult>(
+      () => this.tab.evaluate<ClickResult>(this.clickFollowersLinkScript(targetUsername)),
+      (r) => Boolean(r && r.clicked),
+    );
+    if (!clicked || !clicked.clicked) {
+      throw new AdapterStaleError(
+        'actor.openFollowersDialog',
+        String(SELECTORS.followersStatText),
+      );
+    }
+
+    const present = await this.waitFor<DialogResult>(
       () => this.tab.evaluate<DialogResult>(this.dialogPresentScript()),
       (r) => Boolean(r && r.present),
     );
-
-    // FALLBACK: if navigation didn't surface the modal, click the followers link
-    // from the profile page (A1: retry through `waitFor` for hydration).
-    if (!present) {
-      await this.tab.goto(this.profileUrl(targetUsername));
-      const clicked = await this.waitFor<ClickResult>(
-        () => this.tab.evaluate<ClickResult>(this.clickFollowersLinkScript(targetUsername)),
-        (r) => Boolean(r && r.clicked),
-      );
-      if (clicked && clicked.clicked) {
-        present = await this.waitFor<DialogResult>(
-          () => this.tab.evaluate<DialogResult>(this.dialogPresentScript()),
-          (r) => Boolean(r && r.present),
-        );
-      }
-    }
-
     if (!present) {
       throw new AdapterStaleError('actor.openFollowersDialog', SELECTORS.dialog);
     }
@@ -391,14 +383,33 @@ export class Actor {
 })()`;
   }
 
-  /** In-page script: click the followers link that opens the modal. */
-  private clickFollowersLinkScript(target: string): string {
-    const selector = SELECTORS.followersLink(target);
+  /**
+   * In-page script: click the followers-count control that opens the modal.
+   *
+   * On current Instagram the followers stat is an `<a href="#">` opened via JS
+   * (not `/<user>/followers/`), so we locate it by TEXT — the anchor/button whose
+   * text names "followers" (and not "following") — searching the profile header
+   * first, then main, then the body. We click the nearest clickable ancestor.
+   */
+  private clickFollowersLinkScript(_target: string): string {
+    const followers = regexLiteral(SELECTORS.followersStatText);
+    const following = regexLiteral(SELECTORS.followingStatText);
     return `(() => {
-  const el = document.querySelector(${JSON.stringify(selector)});
-  if (!el) return { clicked: false };
-  el.click();
-  return { clicked: true };
+  const RXF = ${JSON.stringify(followers)};
+  const RXG = ${JSON.stringify(following)};
+  const followers = new RegExp(RXF.source, RXF.flags);
+  const following = new RegExp(RXG.source, RXG.flags);
+  const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
+  const isFollowers = (t) => followers.test(t) && !following.test(t);
+  const clickableOf = (el) => el.closest('a, button, [role="button"], [role="link"]') || el;
+  const scopes = [document.querySelector('header'), document.querySelector('main'), document.body].filter(Boolean);
+  for (const scope of scopes) {
+    const cands = scope.querySelectorAll('a, [role="link"], [role="button"], button');
+    for (const el of cands) {
+      if (isFollowers(norm(el.textContent))) { clickableOf(el).click(); return { clicked: true }; }
+    }
+  }
+  return { clicked: false };
 })()`;
   }
 
