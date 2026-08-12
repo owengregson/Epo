@@ -108,6 +108,18 @@ export class Reader {
   }
 
   /**
+   * Pull the target pk out of a `friendships/<pk>/followers/` URL. The
+   * followers-list body carries the follower rows but not the target's own pk,
+   * so acquisition derives the follower→target edge from this URL the first
+   * time a page matches (profile-info is enrichment only). Mirrors
+   * {@link extractPkFromUrl}; returns `null` on a non-matching URL.
+   */
+  extractTargetPkFromFollowersUrl(url: string): string | null {
+    const match = /\/friendships\/(\d+)\/followers\//.exec(url);
+    return match ? match[1] : null;
+  }
+
+  /**
    * Parse one paginated followers page into observations plus the resume
    * cursor. Returns a typed empty result on no-match.
    */

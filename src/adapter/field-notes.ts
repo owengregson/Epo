@@ -101,14 +101,27 @@ export const JSON_PATHS = {
 export const SELECTORS = {
   /** The followers/following modal. */
   dialog: '[role="dialog"]',
-  /** Profile link that opens the followers modal (logged-in web). */
-  followersLink: (username: string): string => `a[href="/${username}/followers/"]`,
   /**
-   * Profile action button lives in the profile header as a `<button type="button">`.
+   * Profile link that opens the followers modal (logged-in web). The username
+   * slug is matched case-insensitively (CSS `i` flag) so a differing-casing slug
+   * from a caller still resolves the same anchor.
+   */
+  followersLink: (username: string): string => `a[href="/${username}/followers/" i]`,
+  /**
+   * Profile action button. Live capture (2026-08-12) confirms it renders inside a
+   * semantic `<header>` on current Instagram, so this stays the PRIMARY anchor.
    * Its textContent LEADS with the state word but may include icon alt text
    * (observed: "FollowingDown chevron icon"), so match the leading word only.
    */
   profileActionButtonRole: 'header button, header [role="button"]',
+  /**
+   * Defensive fallback anchor used only when the primary yields no state-text
+   * match — tolerates a future layout change that moves the button out of the
+   * `<header>` without breaking the verified path. Still matched by TEXT, never
+   * by class; the first state-matching button in document order wins.
+   */
+  profileActionButtonRoleFallback:
+    'main button, main [role="button"], button, [role="button"]',
   followText: /^\s*follow(\s|$)/i,
   followingText: /^\s*following/i,
   requestedText: /^\s*requested/i,

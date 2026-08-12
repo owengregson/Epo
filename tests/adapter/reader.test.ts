@@ -69,6 +69,25 @@ describe('Reader.extractPkFromUrl', () => {
   });
 });
 
+describe('Reader.extractTargetPkFromFollowersUrl', () => {
+  test('extracts the numeric id from a real followers URL', () => {
+    expect(
+      r.extractTargetPkFromFollowersUrl(
+        'https://www.instagram.com/api/v1/friendships/17841400000/followers/?count=12',
+      ),
+    ).toBe('17841400000');
+  });
+
+  test('returns null on a non-matching URL', () => {
+    expect(
+      r.extractTargetPkFromFollowersUrl(
+        'https://www.instagram.com/api/v1/friendships/show_many/',
+      ),
+    ).toBeNull();
+    expect(r.extractTargetPkFromFollowersUrl('https://example.com/')).toBeNull();
+  });
+});
+
 describe('Reader.parseFollowersList', () => {
   test('extracts users + cursor + hasMore from a real followers page', () => {
     const out = r.parseFollowersList(followersPage1, AT);
