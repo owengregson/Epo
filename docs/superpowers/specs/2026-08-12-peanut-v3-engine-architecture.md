@@ -198,6 +198,9 @@ uses (no duplicated scraping/acting logic). The Engine is the automated driver o
 
 Build order (each a precise, testable task; no design latitude):
 
+0. **Adapter hardening** — A1–A4 (§10): Actor initial-lookup `waitFor`, broaden the button anchor off
+   `<header>`, post-click state verification, `Reader.extractTargetPkFromFollowersUrl`, case-tolerant
+   followers link. Adapter-only, unit-tested. Independent — runs first/parallel; unblocks the live gate.
 1. **ChurnScheduler split** — `advanceTimers` / `nextDue` / `execute` per §3.2. Refactor + tests. (Pure.)
 2. **Settings + config projections** — `Settings`, `DEFAULT_SETTINGS`, `toXConfig` mappers, JSON
    persistence. (Pure + a small store-adjacent file.)
@@ -213,6 +216,52 @@ Build order (each a precise, testable task; no design latitude):
 Live validation of the whole loop happens at/after the Phase-1 gate, on top of the same verified rim.
 
 ---
+
+## 10. Hardening requirements folded from the adversarial review
+
+The bottom-up integration (`foundation-wiring`) and the un-live-tested adapter carried real defects. In
+the new architecture each is OWNED by a specific rim component, not patched in place:
+
+**Adapter (fix in place — precise, independent of the Engine):**
+- **A1 (was HIGH-2):** `Actor.follow/unfollow/openFollowersDialog` must wrap the *initial* control lookup
+  in the existing `waitFor` retry (SPA hydration means the button/link isn't in the DOM at `goto`
+  resolve). No initial `evaluate` may assume the control is present on the first try.
+- **A2 (was HIGH-3):** the profile action button must NOT be scoped to a semantic `<header>` (Instagram
+  renders it in a `<div>`/`<section>`). Broaden `profileActionButtonRole` to locate the button by its
+  state-text regex across the profile root (whole document, filtered to `button, [role="button"]`), still
+  never by class. This selector is a mandatory item on the live-DevTools gate.
+- **A3 (was MEDIUM-5):** after a click, `Actor` must poll the button until it reads the expected
+  post-state (`Following`/`Requested` after follow; `Follow` after unfollow) before returning `ok`;
+  otherwise a typed failure. No success-on-unverified-click.
+- **A4 (was HIGH-1 support + LOW):** add `Reader.extractTargetPkFromFollowersUrl(url)` →
+  `/friendships/(\d+)/followers/`. Make `SELECTORS.followersLink` tolerant of username casing.
+
+**Rim / `FollowerAcquisition` (the relocated `readFollowers`, §2/§6):**
+- **R1 (was HIGH-1):** derive `targetPk` from the followers-list URL (A4) the first time a page matches;
+  profile-info is enrichment only. Follower→target edges must never depend on an optional request.
+- **R2 (was HIGH-4):** the `RequestBudget` is incremented from the tab's `onResponse` pipeline — one
+  `spend()` per real Instagram response — so `requestBudgetRemaining` reflects true volume. Acquisition
+  and every action check `canSpend()` before proceeding.
+- **R3 (was MEDIUM-6):** re-run `Sentinel.check()` at the top of each scroll round; break on non-`ok`.
+- **R4 (was MEDIUM-7):** persist `next_max_id` per target and prefer cursor-driven pagination to
+  re-scrolling; at minimum store it for cross-session resume (kills the dead-cursor debt).
+- **R5 (was MEDIUM-8):** drain correctly — `unsubscribe()` first, then loop `allSettled` until no new
+  in-flight parses remain, before returning `observed`.
+
+**Rim / `ChurnActions`:**
+- **C1 (was HIGH-4 / MEDIUM-5):** gate on `canSpend()` + `atHardCeiling()` + `Sentinel.check()` before a
+  single action; rely on A3's verified post-state so the ledger/edge only record real transitions.
+- **C2 (was LOW):** observe our OWN account (from `ownPk` + a one-time profile read) so `ownPk`-anchored
+  edges have a real `accounts` endpoint; use `pk` as the single ledger identity (never the username
+  fallback once `ownPk` is known).
+
+**Engine / lifecycle:**
+- **E1 (was LOW/spec §163):** the Engine's `AbortSignal` makes pause/stop instant — replaces the
+  "bounded loops only" mitigation.
+- **E2 (was LOW):** align `PeanutBridge.login()`'s type with the `FoundationStatus` the main process
+  returns; drop the dead `InstagramAdapter.reader?` slot (the Engine/rim hold the real Reader).
+
+These are acceptance criteria for §8's tasks, not a separate backlog.
 
 ## 9. What does NOT change
 
