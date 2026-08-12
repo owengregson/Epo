@@ -104,6 +104,149 @@ describe('Actor tolerates an already-satisfied state (idempotent, no throw)', ()
   });
 });
 
+/**
+ * A fake that classifies the in-page script by a stable token and returns
+ * scripted values per call — enough to exercise the Actor's initial-lookup
+ * retry (A1) and post-click verification (A3) without a real DOM. The find/act
+ * script is tagged by `const OP =`; the state probe by `actor:probe-state`.
+ */
+class ScriptTab implements AdapterTab {
+  gotoCalls: string[] = [];
+  findCalls = 0;
+  probeCalls = 0;
+
+  constructor(
+    private readonly opts: {
+      find: (call: number) => unknown;
+      probe?: (call: number) => unknown;
+      confirm?: unknown;
+    },
+  ) {}
+
+  async goto(url: string): Promise<void> {
+    this.gotoCalls.push(url);
+  }
+
+  async evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T> {
+    const src = String(fnOrString);
+    if (src.includes('actor:probe-state')) {
+      const r = this.opts.probe
+        ? this.opts.probe(++this.probeCalls)
+        : { found: false, state: 'unknown' };
+      return r as T;
+    }
+    if (src.includes('const OP =')) {
+      return this.opts.find(++this.findCalls) as T;
+    }
+    if (src.includes('confirmed')) {
+      return (this.opts.confirm ?? { confirmed: true }) as T;
+    }
+    return null as T;
+  }
+
+  currentUrl(): string {
+    return 'https://www.instagram.com/';
+  }
+}
+
+describe('Actor A1: initial control lookup retries through waitFor (SPA hydration)', () => {
+  test('control appears late -> resolves ok without throwing (proves retry)', async () => {
+    const tab = new ScriptTab({
+      // Not-found on the first 3 probes, then the button appears and is clicked.
+      find: (call) =>
+        call <= 3 ? { found: false } : { found: true, state: 'follow', clicked: true },
+      probe: () => ({ found: true, state: 'following' }),
+    });
+    const actor = new Actor(tab, { pollIntervalMs: 0, pollTimeoutMs: 1000 });
+    const res = await actor.follow('late');
+    expect(res.ok).toBe(true);
+    expect(tab.findCalls).toBeGreaterThan(1); // it retried rather than probing once
+  });
+
+  test('control never appears -> throws AdapterStaleError', async () => {
+    const tab = new ScriptTab({ find: () => ({ found: false }) });
+    const actor = new Actor(tab, { pollIntervalMs: 0, pollTimeoutMs: 20 });
+    const err = await rejection(actor.follow('never'));
+    expect(err).toBeInstanceOf(AdapterStaleError);
+    expect((err as AdapterStaleError).component).toBe('actor.follow');
+    expect(tab.findCalls).toBeGreaterThan(1); // it polled repeatedly before giving up
+  });
+});
+
+describe('Actor A2: broadened (fallback) button anchor', () => {
+  /**
+   * The button exists ONLY under the fallback selector — the primary anchor
+   * yields nothing. The fake reports found only when the generated script
+   * embeds the fallback selector, so a Follow that succeeds proves the script
+   * searches the fallback anchor.
+   */
+  class FallbackOnlyTab implements AdapterTab {
+    gotoCalls: string[] = [];
+    async goto(url: string): Promise<void> {
+      this.gotoCalls.push(url);
+    }
+    async evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T> {
+      const src = String(fnOrString);
+      // The fallback selector is JSON-embedded in the script (its quotes get
+      // escaped), so detect it by a distinctive quote-free substring unique to
+      // the fallback anchor ('main button'; the primary is 'header button').
+      const hasFallback = src.includes('main button');
+      if (src.includes('const OP =')) {
+        return (hasFallback ? { found: true, state: 'follow', clicked: true } : { found: false }) as T;
+      }
+      if (src.includes('actor:probe-state')) {
+        return (hasFallback ? { found: true, state: 'following' } : { found: false, state: 'unknown' }) as T;
+      }
+      return null as T;
+    }
+    currentUrl(): string {
+      return 'https://www.instagram.com/';
+    }
+  }
+
+  test('match only under the fallback selector -> follow succeeds', async () => {
+    const tab = new FallbackOnlyTab();
+    const res = await new Actor(tab, { pollIntervalMs: 0, pollTimeoutMs: 0 }).follow('someone');
+    expect(res.ok).toBe(true);
+  });
+});
+
+describe('Actor A3: post-click state verification', () => {
+  test('post-click state never flips -> typed err (not ok, no throw)', async () => {
+    const tab = new ScriptTab({
+      find: () => ({ found: true, state: 'follow', clicked: true }),
+      probe: () => ({ found: true, state: 'follow' }), // stays Follow: click unverified
+    });
+    const res = await new Actor(tab, { pollIntervalMs: 0, pollTimeoutMs: 0 }).follow('someone');
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toMatch(/post-click state not confirmed/);
+    }
+  });
+
+  test('post-click state flips to Following -> ok', async () => {
+    const tab = new ScriptTab({
+      find: () => ({ found: true, state: 'follow', clicked: true }),
+      probe: () => ({ found: true, state: 'following' }),
+    });
+    const res = await new Actor(tab, { pollIntervalMs: 0, pollTimeoutMs: 0 }).follow('someone');
+    expect(res.ok).toBe(true);
+  });
+
+  test('unfollow: post-confirm state never flips to Follow -> typed err', async () => {
+    const tab = new ScriptTab({
+      find: () => ({ found: true, state: 'following', clicked: true, needsConfirm: true }),
+      confirm: { confirmed: true },
+      probe: () => ({ found: true, state: 'following' }), // stays Following: unverified
+    });
+    const res = await new Actor(tab, { pollIntervalMs: 0, pollTimeoutMs: 0 }).unfollow('someone');
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toMatch(/post-click state not confirmed/);
+    }
+  });
+});
+
 describe('Sentinel maps block signatures to labels', () => {
   test('challenge URL -> challenge', async () => {
     const tab = new FakeTab({ urlReturn: 'https://www.instagram.com/challenge/?next=/' });
