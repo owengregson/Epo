@@ -10,6 +10,7 @@ import {
   Observation,
   Source,
   SOURCE_CONFIDENCE,
+  Target,
 } from './types';
 import { projectAccount } from './projections';
 import { runMigrations } from './migrations';
@@ -51,6 +52,13 @@ interface FollowRecordRow {
   retry_count: number;
 }
 
+interface TargetRow {
+  account_pk: string;
+  source: string;
+  status: string;
+  chain_index: number | null;
+}
+
 const boolOrUndef = (v: number | null): boolean | undefined =>
   v === null ? undefined : v !== 0;
 const numOrUndef = (v: number | null): number | undefined => (v === null ? undefined : v);
@@ -83,6 +91,13 @@ const rowToEdge = (row: EdgeRow): Edge => ({
   firstSeenAt: row.first_seen_at,
   lastConfirmedAt: row.last_confirmed_at,
   status: row.status as 'active' | 'removed',
+});
+
+const rowToTarget = (row: TargetRow): Target => ({
+  accountPk: row.account_pk,
+  source: row.source as Target['source'],
+  status: row.status as Target['status'],
+  chainIndex: row.chain_index,
 });
 
 const rowToFollowRecord = (row: FollowRecordRow): FollowRecord => ({
@@ -322,6 +337,103 @@ export class KnowledgeStore {
     return this.followersOf(targetPk).filter(
       (pk) => pk !== targetPk && !excluded.has(pk),
     );
+  }
+
+  // --- Chain targets: targets table (§3.5) ---------------------------------------
+
+  /** Insert or replace a chain target, keyed on account_pk. */
+  addTarget(t: Target): void {
+    this.db
+      .prepare(
+        `INSERT INTO targets (account_pk, source, status, chain_index)
+         VALUES (@account_pk, @source, @status, @chain_index)
+         ON CONFLICT(account_pk) DO UPDATE SET
+           source = excluded.source,
+           status = excluded.status,
+           chain_index = excluded.chain_index`,
+      )
+      .run({
+        account_pk: t.accountPk,
+        source: t.source,
+        status: t.status,
+        chain_index: orNull(t.chainIndex ?? undefined),
+      });
+  }
+
+  getTarget(accountPk: string): Target | null {
+    const row = this.db
+      .prepare(`SELECT * FROM targets WHERE account_pk = ?`)
+      .get(accountPk) as TargetRow | undefined;
+    return row ? rowToTarget(row) : null;
+  }
+
+  setTargetStatus(accountPk: string, status: Target['status']): void {
+    this.db.prepare(`UPDATE targets SET status = ? WHERE account_pk = ?`).run(status, accountPk);
+  }
+
+  /** All chain targets ordered by chain_index (nulls last), then account_pk. */
+  listTargets(): Target[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM targets
+         ORDER BY chain_index IS NULL, chain_index ASC, account_pk ASC`,
+      )
+      .all() as TargetRow[];
+    return rows.map(rowToTarget);
+  }
+
+  /** The next chain position: `(MAX(chain_index) ?? -1) + 1`. */
+  nextChainIndex(): number {
+    const row = this.db
+      .prepare(`SELECT MAX(chain_index) AS m FROM targets`)
+      .get() as { m: number | null };
+    return (row.m ?? -1) + 1;
+  }
+
+  /**
+   * Yield statistics for a poaching session against `targetPk` (§3.5), computed on
+   * demand from follow_records + edges — the "analysis is an emergent query" principle.
+   *
+   * - `total`: follow_records aimed at the target that reached at least the
+   *   pending-followback stage (i.e. we actually followed the candidate).
+   * - `followedBack`: of those, the ones that reciprocated (non-null followed_back_at).
+   * - `followBackRate`: followedBack / total (0 when total is 0).
+   * - `poolSize`: active followers of the target (the raw poaching pool).
+   * - `mutualOverlap`: target-followers we ALREADY actively follow (ownPk -> pk edge).
+   */
+  targetYield(
+    targetPk: string,
+    ownPk: string,
+  ): {
+    total: number;
+    followedBack: number;
+    followBackRate: number;
+    poolSize: number;
+    mutualOverlap: number;
+  } {
+    const counts = this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           COUNT(followed_back_at) AS followed_back
+         FROM follow_records
+         WHERE target_pk = ?
+           AND state IN ('pending_followback', 'followed_back', 'unfollow_queued', 'unfollowed')`,
+      )
+      .get(targetPk) as { total: number; followed_back: number };
+
+    const total = counts.total;
+    const followedBack = counts.followed_back;
+    const followBackRate = total === 0 ? 0 : followedBack / total;
+
+    const followers = this.followersOf(targetPk);
+    const poolSize = followers.length;
+    const mutualOverlap = followers.filter((pk) => {
+      const edge = this.getEdge(ownPk, pk, 'follows');
+      return edge !== null && edge.status === 'active';
+    }).length;
+
+    return { total, followedBack, followBackRate, poolSize, mutualOverlap };
   }
 
   /** Assign a role to an account (e.g. 'target', 'me'); the accounts row must exist. */

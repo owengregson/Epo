@@ -42,5 +42,13 @@ export interface FollowRecord {
   retryCount: number;
 }
 
+/** A node in the poaching chain (§3.5). Maps 1:1 to a row in the `targets` table. */
+export interface Target {
+  accountPk: string;
+  source: 'seed' | 'discovered' | 'own_followers';
+  status: 'active' | 'exhausted' | 'retained';
+  chainIndex: number | null;
+}
+
 export const ratioOf = (followers?: number, following?: number): number | undefined =>
   followers && followers > 0 && following !== undefined ? following / followers : undefined;
