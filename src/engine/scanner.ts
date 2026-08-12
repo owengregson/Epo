@@ -69,7 +69,13 @@ export class Scanner {
       const acc = this.store.getAccount(pk);
       if (acc === null) continue;
       const s = scoreCandidate(acc, this.scorerCfg);
-      if (!s.eligible) continue;
+      if (!s.eligible) {
+        // R1.3: counts ARE known but the account is ineligible → mark it 'skipped'
+        // so `candidatePksForTarget` drops it and the pool genuinely shrinks.
+        // `no-counts` candidates are left alone — they await an enrichment pass.
+        if (!s.reasons.includes('no-counts')) this.store.setRole(pk, 'skipped');
+        continue;
+      }
       ranked.push({ pk, score: s.score });
     }
 
