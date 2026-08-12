@@ -151,6 +151,8 @@ ban risk, looks native). Detection/enrichment reads use intercepted or directly-
 
 ### 4.3 Engine services (small, single-purpose)
 
+All services read and write through the **Knowledge Graph** (§4.5) — never storage directly.
+
 - **Scanner** — poaches a target: harvests followers (Reader), applies cheap pre-filters, spots
   candidate next-targets.
 - **Scorer** — ratio sweet-spot scoring (§3.2) + composite ranking; projects target yields.
@@ -172,6 +174,55 @@ Sentinel can halt the pipeline at any point.
 Follow-back Watcher ─▶ updates FollowRecord state ─▶ Churn Scheduler.
 Chain Controller ─▶ selects next Target ─▶ Scanner.
 ```
+
+### 4.5 The Knowledge Graph — Peanut's local model of the Instagram neighborhood
+
+**This is the foundational substrate. Every Instagram interaction is an *observation* that updates
+it; every decision is a *query* against it; a network request is made *only* when the model is too
+stale or incomplete for a pending decision.** The model's completeness is therefore the same lever as
+request-minimality (§5): the more we know, the less we ask. It must be built exceptionally well — a
+mistake here is unbounded future technical debt — so the principles below are non-negotiable.
+
+1. **Identity by numeric id (`pk`), never username.** Usernames change; they are an attribute with
+   history. All keys/edges reference `pk`.
+
+2. **Event-sourced facts → projected current state (CQRS-lite).** Nothing is blindly overwritten.
+   Every learned fact is appended as an immutable **observation** (`accountPk, observedAt, source,
+   confidence, payload`). A **projection** materializes current best-known state for fast reads. Keeping
+   history lets us analyze *change* — follower-growth velocity, follow-back latency, ratio trend — not
+   just snapshots.
+
+3. **Provenance + confidence per fact.** Sources differ in completeness: a followers-list node (cheap,
+   partial) < a `show_many` relationship check (relationship-authoritative) < a full profile fetch
+   (rich). Merge policy is **per-field, newest-sufficient-confidence-wins**, so a cheap partial reading
+   never clobbers a richer known value.
+
+4. **Enrichment levels — most nodes stay stubs.** `stub` (seen only as an edge endpoint) → `listed`
+   (basic list payload: private/verified) → `profiled` (counts/ratio fetched). The graph accumulates
+   whatever naturally passes through poaching + relationship checks; expensive `profiled` enrichment
+   happens **only** for accounts a pending decision needs. Request-minimality expressed as data.
+
+5. **Relationships are directed edges with lifecycle.** `edge(src → dst, type=follows, firstSeen,
+   lastConfirmed, status=active|removed)`. Follow-back = both directed edges active. Edge changes are
+   themselves observations, so "unfollowed us back" is detectable and dated.
+
+6. **One ingestion boundary, one query boundary.** ALL writes funnel through a single typed
+   `observe(...)` API; ALL reads go through a repository/query API. No component touches storage
+   directly. **This single-write-path / single-read-path discipline is the specific thing that prevents
+   schema drift and write races** — the debt the redesign must avoid.
+
+7. **Freshness drives fetching.** Each fact carries `observedAt`; each decision declares a required
+   freshness; a stale-but-needed fact enqueues a **budgeted** refresh (never an unbounded crawl). The
+   graph subsumes the ad-hoc TTL cache.
+
+8. **Analysis & discovery are emergent queries, not subsystems.** Yield stats (§3.5) = queries over
+   edge/observation history per target. "Popular person" discovery = high local in-degree + follower-
+   overlap queries. The chain's intelligence *falls out of* the graph.
+
+**Storage:** embedded **SQLite via `better-sqlite3`** (WAL mode, transactional, indexed) — scales to
+hundreds of thousands of accounts / millions of edges, atomic, serverless. **Versioned migrations
+(`user_version` + migration runner) from commit one.** JSON files are retained only for small
+human-editable config, not graph data. (This supersedes the atomic-JSON sketch; see §6.)
 
 ---
 
@@ -196,30 +247,42 @@ Request **volume** is the primary ban vector. Budgeting reads and writes is a fi
 - **Spend profile-visits only where they pay off:** ratio requires follower/following counts (a profile
   read). Cheap pre-filters run first; Peanut fetches full stats only for the **top slice** needed to fill
   the day's quota + a small buffer.
-- **Cache with TTL:** recently-seen account stats are cached (default 7-day TTL) — no re-visiting.
+- **The knowledge graph *is* the cache (§4.5):** before any read, consult the graph; fetch only when a
+  needed fact is missing or staler than the decision's freshness requirement (default stats freshness 7 days).
 - **Real pagination cursors:** persist and replay list cursors so lists are never re-scrolled from the top.
 - **One global Request Budget:** a token-bucket governs *all* Instagram requests (reads + writes) per
   rolling window, with jitter, on top of the per-day action ceiling. Reads count too.
 
 ---
 
-## 6. Data model (durable, atomic, versioned)
+## 6. Data model — SQLite knowledge graph (event-sourced, migrated)
 
-All state persisted under Electron `userData`, written **atomically** (temp-file + rename) with a
-`schemaVersion`, so a truncated file can never brick startup.
+Single SQLite database under Electron `userData` via `better-sqlite3` (WAL mode, versioned migrations
+from commit one). Core tables:
 
-- **Account** — every account seen: `username`, `id`, `followers`, `following`, `ratio`, `isPrivate`,
-  `isVerified`, `activitySignal`, `role` (`candidate | following | target | retained-target | skipped`),
-  `statsFetchedAt`, `source`.
-- **FollowRecord** — per followed user: current lifecycle state (§3.4), `followedAt`, `followedBackAt`,
-  `holdUntil`, `unfollowDueAt`, `retryCount`, `targetId`.
-- **Target** — `account ref`, `source` (`seed | discovered | own-followers`), accumulated yield stats,
-  `status` (`active | exhausted | retained`), `chainIndex`.
-- **ActionLedger** — append-only record of every follow/unfollow with timestamp + result. **Source of
-  truth for rate limiting** (survives restart — fixes the in-memory-cap bug).
-- **RequestLog** — rolling window of Instagram requests for the budget governor.
-- **Chain** — ordered target lineage; inspectable and resumable.
-- **Settings** — all tunables (§7).
+- **`accounts`** (projection of current best-known state) — `pk` PK, `username`, `enrichment`
+  (`stub|listed|profiled`), `followers`, `following`, `ratio`, `is_private`, `is_verified`,
+  `activity_signal`, `role` (`candidate|following|target|retained_target|skipped`), `stats_observed_at`,
+  `stats_source`, `first_seen_at`, `last_seen_at`.
+- **`username_history`** — `pk, username, seen_at` (usernames change over time).
+- **`observations`** (append-only event log; source of truth from which `accounts` is projected) —
+  `id, account_pk, observed_at, source, confidence, field_set (json)`.
+- **`edges`** (directed relationships) — `src_pk, dst_pk, type, first_seen_at, last_confirmed_at,
+  status (active|removed)`, PK `(src_pk, dst_pk, type)`. Follow-back = reciprocal active edges.
+- **`follow_records`** — churn lifecycle (§3.4): `account_pk, state, followed_at, followed_back_at,
+  hold_until, unfollow_due_at, retry_count, target_pk`.
+- **`targets`** — `account_pk, source (seed|discovered|own_followers), status (active|exhausted|
+  retained), chain_index`; yield stats computed on demand from `edges`/`observations`/`follow_records`.
+- **`action_ledger`** (append-only) — `id, account_pk, action, at, result`. **Source of truth for the
+  rate governor** (survives restart — fixes the in-memory-cap bug).
+- **`request_log`** — rolling Instagram-request log for the request budget governor.
+- **`settings`** — small tunables (§7) live in a human-editable JSON file, **not** SQLite.
+
+**Access — the `KnowledgeStore` module** is the sole boundary: `observe(observation)` is the *only*
+write path (updates projections in the same transaction as the appended observation); typed queries
+(`getAccount`, `candidatesForTarget`, `pendingFollowbacks`, `yieldStatsForTarget`, `discoverNextTargets`,
+`dailyActionCount`, …) are the *only* read path. No raw SQL exists outside this module. All mutations
+transactional.
 
 ---
 
@@ -266,7 +329,7 @@ subtle shiny flair. No gradients-as-decoration, no glassmorphism, no emojis. Sys
 - **Sentinel auto-halt + alert** on block/challenge/expiry.
 - Instant abort via `AbortSignal` — no un-interruptible long sleeps.
 - No silent `catch {}`; all failures surface to the UI; `AdapterStaleError` on selector drift.
-- Atomic, versioned persistence; corrupt-file recovery.
+- Transactional SQLite (WAL) with versioned migrations; single-write-path integrity (§4.5).
 - **Live verification against real Instagram (Chrome DevTools MCP) is a mandatory Phase 1 gate**
   before any churn logic is trusted.
 
@@ -276,10 +339,12 @@ subtle shiny flair. No gradients-as-decoration, no glassmorphism, no emojis. Sys
 
 Each phase is internally parallelizable across Opus agents; phases are sequential gates.
 
-- **Phase 1 — Verified foundation.** Electron shell + embedded IG tab + persistent session; Instagram
-  Adapter (Reader/Actor/Sentinel) **proven against live Instagram via DevTools MCP**; durable
-  state/ledger + Request Governor + Rate Governor; login flow. Gate: real login, real follower-list
-  read, real single follow + single unfollow, block-detection — all verified live.
+- **Phase 1 — Verified foundation.** Electron shell + embedded IG tab + persistent session; the
+  **`KnowledgeStore`** (SQLite schema, migrations, `observe()` ingestion + query API — §4.5/§6); Instagram
+  Adapter (Reader/Actor/Sentinel) **proven against live Instagram via DevTools MCP**, writing everything
+  it reads through `observe()`; Request Governor + Rate Governor over the durable ledger; login flow.
+  Gate: real login; real follower-list read that populates the graph; real single follow + single
+  unfollow recorded as edges + ledger entries; block-detection — all verified live.
 - **Phase 2 — Churn core.** Scanner + Scorer (ratio sweet spot) + Churn Scheduler + Follow-back Watcher
   (batched detection) + own-target end-to-end churn. Gate: seed target → qualify → follow → detect
   follow-back → hold → unfollow, live, within budget.
@@ -312,3 +377,9 @@ experiments, warmup interactions before following, per-target blacklist/whitelis
 - **`friendships/show_many` unavailable/changed** → fall back to incremental head-read; degrade cadence.
 - **Chain converges to a bad niche** → minimum-yield gate + own-followers fallback + user can reseed.
 - **Ban despite care** → conservative defaults, hard ceiling, Sentinel halt, dry-run mode.
+- **Observation log grows unbounded** → configurable retention: roll up old observations into aggregates,
+  keep the projection + recent trail; `stub` nodes are cheap and can be pruned by last-seen age.
+- **`better-sqlite3` native module in Electron** → must be rebuilt for the Electron ABI
+  (`electron-rebuild`); pin versions and verify the native build in Phase 1.
+- **Knowledge-graph write discipline erodes over time** → enforced by construction: `KnowledgeStore` is
+  the only module importing the SQLite driver; a lint/review rule forbids raw SQL elsewhere.
