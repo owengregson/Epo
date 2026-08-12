@@ -144,3 +144,10 @@ vite.config.ts.timestamp-*
 
 # Serena tooling
 .serena/
+
+# Task E capture harness output — contains the user's REAL Instagram data.
+# Keep the fixtures dir (.gitkeep) and the README tracked; never commit payloads.
+docs/adapter/fixtures/raw/
+docs/adapter/fixtures/dom/
+docs/adapter/fixtures/manifest.json
+docs/adapter/field-notes-DRAFT.md

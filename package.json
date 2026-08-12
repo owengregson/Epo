@@ -11,6 +11,7 @@
     "rebuild:node": "npm rebuild better-sqlite3",
     "start": "npm run rebuild:electron && npm run build && electron dist/main/main.js",
     "dev": "npm run rebuild:electron && npm run build:dev && electron dist/main/main.js",
+    "capture": "npm run rebuild:electron && npm run build && electron dist/capture/capture-main.js",
     "test": "npm run rebuild:node && jest",
     "lint": "eslint src --ext .ts,.tsx"
   },
