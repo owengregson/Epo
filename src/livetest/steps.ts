@@ -26,6 +26,7 @@ import * as path from 'path';
 import { InstagramTab, IG_PARTITION } from '@/adapter/tab';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
+import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
 import type { Sentinel } from '@/adapter/sentinel';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { SystemClock } from '@/governors/clock';
@@ -610,31 +611,16 @@ export class LiveTestHarness {
     }
   }
 
-  /** Best-effort own username via `current_user`, retried a few times (R5 race). */
+  /**
+   * Own username, resolved robustly: the nav profile-link href / profile
+   * navigation (reliable), with `current_user` only as a last resort — see
+   * `@/adapter/identity`.
+   */
   private async resolveOwnUsername(): Promise<string | undefined> {
-    for (let attempt = 0; attempt < USERNAME_RESOLVE_ATTEMPTS; attempt++) {
-      try {
-        const username = await this.tab.evaluate<string | null>(
-          `(async () => {
-            try {
-              const res = await fetch('/api/v1/accounts/current_user/', {
-                headers: { 'x-ig-app-id': '${IG_APP_ID}' },
-                credentials: 'include',
-              });
-              if (!res.ok) return null;
-              const data = await res.json();
-              return data && data.user && data.user.username ? data.user.username : null;
-            } catch (e) { return null; }
-          })()`,
-        );
-        if (typeof username === 'string' && username.length > 0) return username;
-      } catch (e) {
-        logger.warn('livetest.resolveOwnUsername: evaluate failed', { attempt, error: String(e) });
-      }
-      if (attempt < USERNAME_RESOLVE_ATTEMPTS - 1) await sleep(USERNAME_RESOLVE_RETRY_MS);
-    }
-    logger.warn('livetest.resolveOwnUsername: unresolved after retries');
-    return undefined;
+    return resolveUsernameFromTab(this.tab, {
+      attempts: USERNAME_RESOLVE_ATTEMPTS,
+      retryMs: USERNAME_RESOLVE_RETRY_MS,
+    });
   }
 
   // -------------------------------------------------------------------------

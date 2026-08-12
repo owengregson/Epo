@@ -21,6 +21,7 @@ import { app, BaseWindow, session } from 'electron';
 import { mkdirSync, readdirSync, readFileSync, statSync } from 'fs';
 import * as path from 'path';
 import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
+import { resolveOwnUsername } from '@/adapter/identity';
 import { CaptureHarness } from '@/capture/capture-harness';
 import * as logger from '@/utils/logger';
 
@@ -59,20 +60,9 @@ async function isLoggedIn(): Promise<boolean> {
   }
 }
 
-/** Detect the logged-in user's own username via the private JSON API. */
+/** Detect the logged-in user's own username (robust — see `@/adapter/identity`). */
 async function detectOwnUsername(tab: InstagramTab): Promise<string | null> {
-  try {
-    const username = await tab.evaluate<string | null>(
-      `fetch('/api/v1/accounts/current_user/', { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })
-        .then(function(r){ return r.json(); })
-        .then(function(j){ return (j && j.user && j.user.username) ? j.user.username : null; })
-        .catch(function(){ return null; })`,
-    );
-    return username ?? null;
-  } catch (e) {
-    logger.warn('capture.detectOwnUsername failed', { error: String(e) });
-    return null;
-  }
+  return (await resolveOwnUsername(tab)) ?? null;
 }
 
 /**

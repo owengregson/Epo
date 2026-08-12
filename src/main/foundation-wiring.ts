@@ -24,6 +24,7 @@ import * as path from 'path';
 import { InstagramTab, IG_HOME_URL, IG_PARTITION } from '@/adapter/tab';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
+import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
@@ -707,58 +708,12 @@ export class Foundation {
    * the user finishes logging in) can still resolve it.
    */
   private async resolveOwnUsername(): Promise<string | undefined> {
-    await this.ensureOnInstagram();
-    for (let attempt = 0; attempt < USERNAME_RESOLVE_ATTEMPTS; attempt++) {
-      const username = await this.fetchCurrentUsername();
-      if (username !== undefined) return username;
-      if (attempt < USERNAME_RESOLVE_ATTEMPTS - 1) {
-        await delay(USERNAME_RESOLVE_RETRY_MS);
-      }
-    }
-    logger.warn('foundation.resolveOwnUsername: unresolved after retries (degrading)');
-    return undefined;
-  }
-
-  /** Navigate the tab to instagram.com home if it is not already on the site. */
-  private async ensureOnInstagram(): Promise<void> {
-    let onSite = false;
-    try {
-      onSite = this.tab.currentUrl().includes('instagram.com');
-    } catch (e) {
-      logger.warn('foundation.ensureOnInstagram: currentUrl failed', { error: String(e) });
-    }
-    if (onSite) return;
-    try {
-      await this.tab.goto(IG_HOME_URL);
-    } catch (e) {
-      logger.warn('foundation.ensureOnInstagram: navigation failed', { error: String(e) });
-    }
-  }
-
-  /** One `current_user` fetch attempt; `undefined` on any failure or empty body. */
-  private async fetchCurrentUsername(): Promise<string | undefined> {
-    try {
-      const username = await this.tab.evaluate<string | null>(
-        `(async () => {
-          try {
-            const res = await fetch('/api/v1/accounts/current_user/', {
-              headers: { 'x-ig-app-id': '${IG_APP_ID}' },
-              credentials: 'include',
-            });
-            if (!res.ok) return null;
-            const data = await res.json();
-            return data && data.user && data.user.username ? data.user.username : null;
-          } catch (e) {
-            return null;
-          }
-        })()`,
-      );
-      if (typeof username === 'string' && username.length > 0) return username;
-      return undefined;
-    } catch (e) {
-      logger.warn('foundation.fetchCurrentUsername: evaluate failed', { error: String(e) });
-      return undefined;
-    }
+    // Robust resolution: nav profile-link href / profile navigation first, the
+    // unreliable `current_user` endpoint only as a last resort (see identity.ts).
+    return resolveUsernameFromTab(this.tab, {
+      attempts: USERNAME_RESOLVE_ATTEMPTS,
+      retryMs: USERNAME_RESOLVE_RETRY_MS,
+    });
   }
 
   // -------------------------------------------------------------------------
