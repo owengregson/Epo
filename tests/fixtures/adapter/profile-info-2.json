@@ -1,0 +1,102 @@
+{
+  "data": {
+    "user": {
+      "ai_agent_type": null,
+      "biography": "",
+      "bio_links": [],
+      "fb_profile_biolink": null,
+      "biography_with_entities": {
+        "raw_text": "HK | Bay Area & Cal",
+        "entities": []
+      },
+      "blocked_by_viewer": false,
+      "restricted_by_viewer": false,
+      "country_block": false,
+      "eimu_id": "1000000001",
+      "external_url": null,
+      "external_url_linkshimmed": null,
+      "edge_followed_by": {
+        "count": 1194
+      },
+      "fbid": "1000000002",
+      "followed_by_viewer": true,
+      "edge_follow": {
+        "count": 1131
+      },
+      "follows_viewer": true,
+      "full_name": "Test User 1",
+      "group_metadata": null,
+      "has_ar_effects": false,
+      "has_clips": false,
+      "has_guides": false,
+      "has_chaining": true,
+      "has_channel": false,
+      "has_blocked_viewer": false,
+      "highlight_reel_count": 0,
+      "has_requested_viewer": false,
+      "hide_like_and_view_counts": false,
+      "id": "1000000003",
+      "is_business_account": false,
+      "is_professional_account": false,
+      "is_supervision_enabled": false,
+      "is_guardian_of_viewer": false,
+      "is_supervised_by_viewer": false,
+      "is_supervised_user": false,
+      "is_embeds_disabled": true,
+      "is_joined_recently": false,
+      "guardian_id": null,
+      "business_address_json": null,
+      "business_contact_method": "UNKNOWN",
+      "business_email": null,
+      "business_phone_number": null,
+      "business_category_name": null,
+      "overall_category_name": null,
+      "category_enum": null,
+      "category_name": null,
+      "is_private": true,
+      "is_verified": false,
+      "is_verified_by_mv4b": false,
+      "is_regulated_c18": false,
+      "edge_mutual_followed_by": {
+        "count": 90,
+        "edges": [
+          {
+            "node": {
+              "username": "user_002"
+            }
+          },
+          {
+            "node": {
+              "username": "user_003"
+            }
+          },
+          {
+            "node": {
+              "username": "user_004"
+            }
+          }
+        ]
+      },
+      "pinned_channels_list_count": 0,
+      "profile_pic_url": "",
+      "profile_pic_url_hd": "",
+      "requested_by_viewer": false,
+      "should_show_category": false,
+      "should_show_public_contacts": false,
+      "show_account_transparency_details": true,
+      "transparency_label": null,
+      "transparency_product": null,
+      "username": "user_005",
+      "pronouns": [],
+      "edge_owner_to_timeline_media": {
+        "count": 0,
+        "page_info": {
+          "has_next_page": false,
+          "end_cursor": null
+        },
+        "edges": []
+      }
+    }
+  },
+  "status": "ok"
+}

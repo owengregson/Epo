@@ -1,0 +1,23 @@
+{
+  "blocking": false,
+  "followed_by": true,
+  "following": true,
+  "incoming_request": false,
+  "is_bestie": false,
+  "is_blocking_reel": false,
+  "is_muting_reel": false,
+  "is_private": true,
+  "is_restricted": false,
+  "muting": false,
+  "outgoing_request": false,
+  "is_feed_favorite": false,
+  "subscribed": false,
+  "is_eligible_to_subscribe": false,
+  "is_supervised_by_viewer": false,
+  "is_guardian_of_viewer": false,
+  "is_muting_notes": false,
+  "is_muting_media_notes": false,
+  "is_muting_media_reposts": false,
+  "is_viewer_unconnected": false,
+  "status": "ok"
+}
