@@ -82,6 +82,20 @@ test('candidatePksForTarget excludes existing follow_records and the target itse
   expect(s.candidatePksForTarget('T').sort()).toEqual(['A', 'C']);
 });
 
+test("candidatePksForTarget excludes role='skipped' accounts (R1.4 — the pool shrinks)", () => {
+  s.observeEdge('A', 'T', 'follows', true, 100);
+  s.observeEdge('B', 'T', 'follows', true, 100);
+  s.observeEdge('C', 'T', 'follows', true, 100);
+  s.observe({ accountPk: 'B', observedAt: 100, source: 'profile', fields: { followers: 1, following: 9 } });
+  s.setRole('B', 'skipped'); // scored ineligible → out of the pool for good
+  expect(s.candidatePksForTarget('T').sort()).toEqual(['A', 'C']);
+
+  // Other roles do NOT exclude: 'candidate' accounts stay in the pool.
+  s.observe({ accountPk: 'C', observedAt: 100, source: 'profile', fields: { followers: 5, following: 5 } });
+  s.setRole('C', 'candidate');
+  expect(s.candidatePksForTarget('T').sort()).toEqual(['A', 'C']);
+});
+
 test('setRole + getAccount().role round-trips', () => {
   s.observe({ accountPk: '9', observedAt: 100, source: 'profile', fields: { followers: 1, following: 1 } });
   expect(s.getAccount('9')!.role).toBeUndefined();

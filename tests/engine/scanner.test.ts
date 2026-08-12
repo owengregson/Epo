@@ -53,11 +53,38 @@ test('ranks eligible followers by descending score and enqueues queued records',
     expect(store.getAccount(pk)!.role).toBe('candidate');
   }
 
-  // Ineligible followers were never enqueued.
+  // Ineligible followers were never enqueued — and, their counts being KNOWN,
+  // they were marked 'skipped' (R1.3) so they drop out of the candidate pool.
   for (const pk of ['verified', 'tooSmall', 'ratioOut']) {
     expect(store.getFollowRecord(pk)).toBeNull();
-    expect(store.getAccount(pk)!.role).toBeUndefined();
+    expect(store.getAccount(pk)!.role).toBe('skipped');
+    expect(store.candidatePksForTarget(TARGET)).not.toContain(pk);
   }
+});
+
+test('ineligible-with-counts candidates are skipped; no-counts ones await enrichment', () => {
+  seedFollower('eligible', { followers: 1000, following: 1100 });
+  seedFollower('ratioOut', { followers: 1000, following: 5000 }); // counts known, ineligible
+  // Counts unknown: seen on a followers list only — must NOT be skipped.
+  seedFollower('countless', { username: 'countless_user' });
+
+  const plan = scanner().planTarget(TARGET);
+
+  expect(plan.queued).toEqual(['eligible']);
+  expect(plan.considered).toBe(3);
+  expect(plan.eligible).toBe(1);
+
+  // The rejected-with-counts candidate leaves the pool for good…
+  expect(store.getAccount('ratioOut')!.role).toBe('skipped');
+  // …while the count-less one stays a candidate, awaiting an enrichment pass.
+  expect(store.getAccount('countless')!.role).toBeUndefined();
+  expect(store.candidatePksForTarget(TARGET)).toEqual(['countless']);
+
+  // A later pass (still no counts) keeps it un-skipped: only enrichment decides it.
+  const replan = scanner().planTarget(TARGET);
+  expect(replan.considered).toBe(1);
+  expect(replan.queued).toEqual([]);
+  expect(store.getAccount('countless')!.role).toBeUndefined();
 });
 
 test('a peak-ratio private account outranks a soft-edge public one', () => {
