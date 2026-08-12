@@ -74,6 +74,14 @@ export interface ReadFollowersResult {
   target: string;
   /** Number of follower accounts observed and written to the store. */
   observed: number;
+  /**
+   * Whether the read actually ran. Optional for back-compat with existing callers
+   * that only read `observed`; a manual read refused while the engine is running
+   * (R3) or before login returns `ok: false` with a `reason` and `observed: 0`.
+   */
+  ok?: boolean;
+  /** Human-readable reason when `ok` is false (e.g. `engine-running`). */
+  reason?: string;
 }
 
 /** Result of a single follow / unfollow DOM action. */

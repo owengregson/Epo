@@ -36,6 +36,38 @@ test('request budget refills after window', () => {
   store.close();
 });
 
+describe('withinActiveHours', () => {
+  const at = (hour: number): FakeClock =>
+    new FakeClock(Date.parse(`2026-08-12T${String(hour).padStart(2, '0')}:00:00`));
+  const withWindow = (start: number, end: number, clock: FakeClock): RateGovernor =>
+    new RateGovernor(new KnowledgeStore(':memory:'), clock, {
+      ...cfg,
+      activeHoursStart: start,
+      activeHoursEnd: end,
+    });
+
+  test('normal same-day window: inside 9..17, outside otherwise', () => {
+    expect(withWindow(9, 17, at(12)).withinActiveHours()).toBe(true);
+    expect(withWindow(9, 17, at(9)).withinActiveHours()).toBe(true);
+    expect(withWindow(9, 17, at(17)).withinActiveHours()).toBe(false); // end exclusive
+    expect(withWindow(9, 17, at(8)).withinActiveHours()).toBe(false);
+    expect(withWindow(9, 17, at(20)).withinActiveHours()).toBe(false);
+  });
+
+  test('overnight wrapping window 22..6 is active across midnight', () => {
+    expect(withWindow(22, 6, at(23)).withinActiveHours()).toBe(true); // late night
+    expect(withWindow(22, 6, at(2)).withinActiveHours()).toBe(true); // early morning
+    expect(withWindow(22, 6, at(22)).withinActiveHours()).toBe(true); // start inclusive
+    expect(withWindow(22, 6, at(6)).withinActiveHours()).toBe(false); // end exclusive
+    expect(withWindow(22, 6, at(12)).withinActiveHours()).toBe(false); // midday, outside
+  });
+
+  test('degenerate start === end window is never active', () => {
+    expect(withWindow(8, 8, at(8)).withinActiveHours()).toBe(false);
+    expect(withWindow(8, 8, at(0)).withinActiveHours()).toBe(false);
+  });
+});
+
 test('delay respects bounds with jitter off', () => {
   const store = new KnowledgeStore(':memory:');
   const g = new RateGovernor(store, new FakeClock(0), cfg);

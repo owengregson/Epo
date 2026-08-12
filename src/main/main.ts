@@ -97,7 +97,11 @@ function createWindow(): void {
   win.on('closed', () => {
     disposeIpc?.();
     disposeIpc = null;
-    foundation?.dispose();
+    // f14: dispose is async (stops the engine, awaits its loop, then closes the
+    // store); the window-close handler is sync, so fire-and-forget with logging.
+    void foundation?.dispose().catch((e: unknown) => {
+      logger.error('main: foundation dispose failed', { error: String(e) });
+    });
     foundation = null;
     instagramTab?.dispose();
     instagramTab = null;

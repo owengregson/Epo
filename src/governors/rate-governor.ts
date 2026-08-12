@@ -49,10 +49,21 @@ export class RateGovernor {
     return this.actionsToday() >= this.cfg.dailyHardCeiling;
   }
 
-  /** True when the clock's local hour is inside the configured active window. */
+  /**
+   * True when the clock's local hour is inside the configured active window.
+   *
+   * f13 — supports OVERNIGHT (wrapping) windows where `start > end` (e.g. 22→6):
+   * the hour is inside when `hour >= start OR hour < end`. The normal same-day case
+   * (`start <= end`, e.g. 9→17) keeps the plain `start <= hour < end` test. A
+   * degenerate `start === end` window is treated as never active.
+   */
   withinActiveHours(): boolean {
     const hour = new Date(this.clock.now()).getHours();
-    return hour >= this.cfg.activeHoursStart && hour < this.cfg.activeHoursEnd;
+    const { activeHoursStart: start, activeHoursEnd: end } = this.cfg;
+    if (start === end) return false;
+    if (start < end) return hour >= start && hour < end;
+    // Wrapping window: active from `start` through midnight and on until `end`.
+    return hour >= start || hour < end;
   }
 
   /**
