@@ -328,14 +328,25 @@ export class KnowledgeStore {
     return rows.map((r) => r.src_pk);
   }
 
+  /** All account_pks the Scanner has rejected (`role = 'skipped'`) — pool exclusion. */
+  private skippedPks(): Set<string> {
+    const rows = this.db
+      .prepare(`SELECT pk FROM accounts WHERE role = 'skipped'`)
+      .all() as Array<{ pk: string }>;
+    return new Set(rows.map((r) => r.pk));
+  }
+
   /**
    * Raw candidate pool for poaching a target: its active followers MINUS accounts
-   * already in a follow_record MINUS the target itself. The Scorer ranks these.
+   * already in a follow_record MINUS accounts the Scanner rejected (`role='skipped'`,
+   * R1.4 — the pool genuinely shrinks as candidates are evaluated, so the chain can
+   * advance) MINUS the target itself. The Scorer ranks these.
    */
   candidatePksForTarget(targetPk: string): string[] {
     const excluded = this.followRecordPks();
+    const skipped = this.skippedPks();
     return this.followersOf(targetPk).filter(
-      (pk) => pk !== targetPk && !excluded.has(pk),
+      (pk) => pk !== targetPk && !excluded.has(pk) && !skipped.has(pk),
     );
   }
 
@@ -447,8 +458,11 @@ export class KnowledgeStore {
    * Upsert the followers-list resume cursor (`next_max_id`) for a target. A `null`
    * cursor is stored verbatim (the last page had no next cursor), so a later read
    * distinguishes "exhausted" from "never scraped" only by row presence.
+   *
+   * `at` is required (f8): callers pass their injected clock's time, so this write
+   * can never silently bypass a FakeClock via a `Date.now()` default.
    */
-  setScrapeCursor(targetPk: string, cursor: string | null, at: number = Date.now()): void {
+  setScrapeCursor(targetPk: string, cursor: string | null, at: number): void {
     this.db
       .prepare(
         `INSERT INTO scrape_cursors (target_pk, cursor, updated_at)
