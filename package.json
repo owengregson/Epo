@@ -9,9 +9,10 @@
     "build:dev": "node esbuild.config.mjs --dev",
     "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
     "rebuild:node": "npm rebuild better-sqlite3",
-    "start": "npm run rebuild:electron && npm run build && electron dist/main/main.js",
-    "dev": "npm run rebuild:electron && npm run build:dev && electron dist/main/main.js",
-    "capture": "npm run rebuild:electron && npm run build && electron dist/capture/capture-main.js",
+    "fix:electron": "node scripts/fix-electron-macos.mjs",
+    "start": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/main/main.js",
+    "dev": "npm run fix:electron && npm run rebuild:electron && npm run build:dev && electron dist/main/main.js",
+    "capture": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/capture/capture-main.js",
     "test": "npm run rebuild:node && jest",
     "lint": "eslint src --ext .ts,.tsx"
   },
@@ -20,7 +21,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
-    "electron": "^31.2.1",
+    "electron": "^43.4.0",
     "preact": "^10.28.3"
   },
   "devDependencies": {
