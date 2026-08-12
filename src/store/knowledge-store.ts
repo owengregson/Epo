@@ -441,6 +441,33 @@ export class KnowledgeStore {
     this.db.prepare(`UPDATE accounts SET role = ? WHERE pk = ?`).run(role, pk);
   }
 
+  // --- Scrape cursors: per-target pagination resume (R4) -------------------------
+
+  /**
+   * Upsert the followers-list resume cursor (`next_max_id`) for a target. A `null`
+   * cursor is stored verbatim (the last page had no next cursor), so a later read
+   * distinguishes "exhausted" from "never scraped" only by row presence.
+   */
+  setScrapeCursor(targetPk: string, cursor: string | null, at: number = Date.now()): void {
+    this.db
+      .prepare(
+        `INSERT INTO scrape_cursors (target_pk, cursor, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(target_pk) DO UPDATE SET
+           cursor = excluded.cursor,
+           updated_at = excluded.updated_at`,
+      )
+      .run(targetPk, cursor, at);
+  }
+
+  /** The stored resume cursor for a target, or `null` when absent or itself null. */
+  getScrapeCursor(targetPk: string): string | null {
+    const row = this.db
+      .prepare(`SELECT cursor FROM scrape_cursors WHERE target_pk = ?`)
+      .get(targetPk) as { cursor: string | null } | undefined;
+    return row ? row.cursor : null;
+  }
+
   close(): void {
     this.db.close();
   }

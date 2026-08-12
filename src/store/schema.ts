@@ -97,4 +97,16 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_request_log_at ON request_log(at);
   `,
+
+  // --- Migration 1: per-target scrape cursor (R4) -------------------------------
+  // Persist the followers-list resume cursor (`next_max_id`) per target so a scrape
+  // can resume across sessions instead of re-scrolling from the top (kills the
+  // dead-cursor debt). Append-only: never edit migration 0 above.
+  `
+  CREATE TABLE scrape_cursors (
+    target_pk   TEXT    PRIMARY KEY,
+    cursor      TEXT,
+    updated_at  INTEGER NOT NULL
+  );
+  `,
 ];
