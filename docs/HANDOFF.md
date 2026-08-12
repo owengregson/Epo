@@ -1,14 +1,19 @@
 # Peanut v3 — Overnight Build Handoff
 
 **As of:** 2026-08-12, overnight session. **Branch:** `v3` (pushed to `origin/v3`).
-**Status:** The whole system is assembled + the dashboard is built (194 unit tests, clean
-`tsc`/`eslint`/`build`). **BUT** a Fable adversarial review of the *assembled* system found CRITICAL
-**integration** defects (each part was unit-correct; the composition was not) — most importantly, the
-candidate-enrichment pass was dropped in the rebuild, so the scorer saw no counts, nothing got
-enqueued, and the engine would **livelock hammering Instagram**. These are being remediated now (see
-`docs/superpowers/specs/2026-08-12-peanut-v3-remediation.md`). **Do NOT run the live gate (§5) until the
-remediation is merged and the suite re-verifies** — a git log line `fix(remediation): ...` and a green
-`npm test` will mark it done. Everything up to the remediation was built and verified autonomously.
+**Status:** The whole system is **assembled, remediated, and green** — **216 unit tests**, clean
+`tsc`/`eslint`/`build`. A Fable adversarial review of the *assembled* system found CRITICAL integration
+defects (each part was unit-correct; the composition was not — most importantly the candidate-enrichment
+pass was missing, so the engine could enqueue nothing and would **livelock hammering Instagram**). **All
+of them are now fixed and re-verified** (see `docs/superpowers/specs/2026-08-12-peanut-v3-remediation.md`
+and the `fix(remediation): ...` commits): enrichment is wired, the refill loop is provably livelock-safe
+(bounded cycle → exhaust → advance), actions are paced one-per-iteration, budget/sentinel refusals no
+longer burn the queue, manual ops are ceiling-gated + refused while the engine runs, and the loop is
+concurrency-safe and interruptible.
+
+**The one thing left that needs you is the live Instagram gate (§5)** — a real login → read → follow →
+unfollow → run-the-engine to validate the adapter against live Instagram. Everything up to it was built
+and verified autonomously; it's the only step that can't be done without a real account.
 
 ---
 
@@ -96,6 +101,13 @@ the adapter is the one versioned place to update.
   empty and the chain advances via the fully-built **own-followers fallback**. See engine-arch §7.
 - **Live validation of the churn loop end-to-end** — unit-proven; needs a real run (part of §5).
 - **Dashboard visual polish** — built to the metallic-minimal design; needs your eyes in the running app.
+- **Two known efficiency residuals** (correctness is fine; deferred as optimizations, tracked in the
+  remediation doc): the follow-back sweep does a bounded head-scrape rather than a true one-scroll-per-
+  page increment (finding 7), and the persisted scrape cursor isn't yet replayed to skip already-read
+  pages (finding 8). Both just mean *slightly* more requests than optimal, well within the budget.
+- **Manual follow/unfollow ledger identity** — the manual live-gate buttons key the ledger by username
+  (the store has no username→pk reverse index yet); the durable ceiling still counts them, so the safety
+  guarantee holds. The engine's own actions use real pks. A `manualActionPk()` seam is left for later.
 
 ## 7. Branches & docs
 
