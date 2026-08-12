@@ -29,6 +29,18 @@ export const IG_PARTITION = 'persist:ig';
 /** Instagram home; the login flow is completed by the user in the tab. */
 export const IG_HOME_URL = 'https://www.instagram.com/';
 
+/**
+ * A genuine desktop Chrome-on-macOS User-Agent.
+ *
+ * Electron's default UA advertises `Electron/<version>`, which Instagram's
+ * private JSON endpoints reject with "useragent mismatch". We pin a real Chrome
+ * UA on the persistent session so the intercepted API calls the Reader depends
+ * on are accepted. Bump this alongside `ADAPTER_VERSION` when re-verified.
+ */
+export const IG_USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+
 interface Rectangle {
   x: number;
   y: number;
@@ -51,15 +63,21 @@ export class InstagramTab {
   private debuggerReady = false;
 
   constructor() {
+    const igSession = session.fromPartition(IG_PARTITION);
+    // Present as real desktop Chrome so IG's private JSON API doesn't reject
+    // requests with "useragent mismatch". Set on the session (covers all
+    // network requests) and on the webContents once it exists (below).
+    igSession.setUserAgent(IG_USER_AGENT);
     this.view = new WebContentsView({
       webPreferences: {
         // Persistent, partitioned session: the whole point of Task 6.
-        session: session.fromPartition(IG_PARTITION),
+        session: igSession,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
       },
     });
+    this.view.webContents.setUserAgent(IG_USER_AGENT);
   }
 
   /** Attach the tab to a host window and begin observing network traffic. */

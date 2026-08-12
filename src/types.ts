@@ -83,6 +83,10 @@ export interface FoundationStatus {
   remainingToday: number;
   dailyHardCeiling: number;
   dailyOperatingRate: number;
+  /** True once today's actions reach the hard ceiling (uncrossable in code). */
+  atHardCeiling: boolean;
+  /** Requests still available in the current rolling request-budget window. */
+  requestBudgetRemaining: number;
 }
 
 // ---------------------------------------------------------------------------
