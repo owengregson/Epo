@@ -85,9 +85,12 @@ export class FakeActor {
     this.openCalls += 1;
     this.onOpen?.();
   }
-  async scrollFollowers(): Promise<void> {
+  /** Returns `true` by default (a page was scrolled); set `scrollReturns` to vary. */
+  scrollReturns = true;
+  async scrollFollowers(): Promise<boolean> {
     this.scrollCalls += 1;
     this.onScroll?.();
+    return this.scrollReturns;
   }
 }
 
