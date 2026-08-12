@@ -28,6 +28,7 @@ import { KnowledgeStore } from '@/store/knowledge-store';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
 import { RequestBudget } from '@/governors/request-budget';
+import { shapeChainList, shapeQueueList } from '@/main/foundation-reads';
 import { installRequestMetering } from '@/rim/request-metering';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
@@ -42,6 +43,7 @@ import { createEngine, type Engine, type EngineStatus } from '@/engine/engine';
 import type { FollowerAcquisition } from '@/rim/types';
 import {
   loadSettings,
+  saveSettings,
   toRateGovernorConfig,
   toRequestBudgetConfig,
   toChurnConfig,
@@ -49,9 +51,17 @@ import {
   toScannerConfig,
   toFollowbackConfig,
   toChainConfig,
+  type Settings,
 } from '@/settings/settings';
 import * as logger from '@/utils/logger';
-import type { ActionResult, PeanutStatus, ReadFollowersResult } from '@/types';
+import type {
+  ActionResult,
+  ChainTargetView,
+  FollowState,
+  PeanutStatus,
+  QueueListResult,
+  ReadFollowersResult,
+} from '@/types';
 
 const IG_DB_FILE = 'peanut.db';
 const IG_SETTINGS_FILE = 'peanut-settings.json';
@@ -90,6 +100,13 @@ interface BuiltGraph {
   churnActions: AdapterBackedChurnActions;
   requestMeteringUnsub: () => void;
   ownPk: string;
+  /** Live component handles kept so runtime Settings changes can reload configs. */
+  rate: RateGovernor;
+  budget: RequestBudget;
+  churn: ChurnScheduler;
+  scanner: Scanner;
+  followback: FollowbackWatcher;
+  chain: ChainController;
 }
 
 export class Foundation {
@@ -97,6 +114,8 @@ export class Foundation {
   private readonly onStatusCb?: (status: PeanutStatus) => void;
   private graph: BuiltGraph | null = null;
   private ownPkCache: string | null = null;
+  /** Settings cached once loaded, so `getSettings`/`updateSettings` share one copy. */
+  private settingsCache: Settings | null = null;
 
   constructor(deps: FoundationDeps) {
     this.tab = deps.tab;
@@ -269,7 +288,7 @@ export class Foundation {
     const userData = app.getPath('userData');
     const store = new KnowledgeStore(path.join(userData, IG_DB_FILE));
     const clock = new SystemClock();
-    const settings = loadSettings(path.join(userData, IG_SETTINGS_FILE));
+    const settings = this.resolveSettings();
 
     const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
     const budget = new RequestBudget(store, clock, toRequestBudgetConfig(settings));
@@ -359,7 +378,104 @@ export class Foundation {
       },
     });
 
-    return { store, engine, acquisition, churnActions, requestMeteringUnsub, ownPk };
+    return {
+      store,
+      engine,
+      acquisition,
+      churnActions,
+      requestMeteringUnsub,
+      ownPk,
+      rate,
+      budget,
+      churn,
+      scanner,
+      followback,
+      chain,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Read-only list projections + settings (§5) — pure store reads.
+  // -------------------------------------------------------------------------
+
+  /**
+   * The chain lineage: every target with its username and computed yield. Builds
+   * the graph if needed; returns `[]` when not logged in (nothing to read yet).
+   * Never throws across IPC — a failed read logs and returns `[]`.
+   */
+  async chainList(): Promise<ChainTargetView[]> {
+    if (!(await this.ensureBuilt()) || this.graph === null) return [];
+    try {
+      return shapeChainList(this.graph.store, this.graph.ownPk);
+    } catch (e) {
+      logger.error('foundation.chainList: failed', { error: String(e) });
+      return [];
+    }
+  }
+
+  /**
+   * A capped page of follow_records in one lifecycle state, joined to accounts.
+   * Empty (and untruncated) when not logged in. Never throws across IPC.
+   */
+  async queueList(state: FollowState): Promise<QueueListResult> {
+    if (!(await this.ensureBuilt()) || this.graph === null) {
+      return { rows: [], truncated: false };
+    }
+    try {
+      return shapeQueueList(this.graph.store, state);
+    } catch (e) {
+      logger.error('foundation.queueList: failed', { state, error: String(e) });
+      return { rows: [], truncated: false };
+    }
+  }
+
+  /** The persisted settings (loaded lazily and cached; defaults on any failure). */
+  async getSettings(): Promise<Settings> {
+    return this.resolveSettings();
+  }
+
+  /**
+   * Merge a partial into settings, persist atomically, and — when the engine is
+   * built — reload every derived component config live so the change takes effect
+   * without a restart. When not built, the merge is only persisted (§5).
+   */
+  async updateSettings(partial: Partial<Settings>): Promise<Settings> {
+    const next: Settings = { ...this.resolveSettings(), ...partial };
+    this.settingsCache = next;
+    try {
+      saveSettings(this.settingsFilePath(), next);
+    } catch (e) {
+      logger.error('foundation.updateSettings: persist failed', { error: String(e) });
+    }
+    if (this.graph !== null) this.reloadConfigs(next);
+    return next;
+  }
+
+  /** Push the new Settings into every live component's config (no rebuild). */
+  private reloadConfigs(s: Settings): void {
+    const g = this.graph;
+    if (g === null) return;
+    g.rate.applyConfig(toRateGovernorConfig(s));
+    g.budget.applyConfig(toRequestBudgetConfig(s));
+    g.churn.applyConfig(toChurnConfig(s));
+    g.scanner.applyConfig(toScannerConfig(s), toScorerConfig(s));
+    g.followback.applyConfig(toFollowbackConfig(s));
+    g.chain.applyConfig(toChainConfig(s));
+    g.churnActions.setDryRun(s.dryRun);
+    g.engine.applySettings(s);
+    logger.info('foundation: settings reloaded into live engine configs');
+  }
+
+  /** Load settings once from disk (merged over defaults) and cache the result. */
+  private resolveSettings(): Settings {
+    if (this.settingsCache === null) {
+      this.settingsCache = loadSettings(this.settingsFilePath());
+    }
+    return this.settingsCache;
+  }
+
+  private settingsFilePath(): string {
+    return path.join(app.getPath('userData'), IG_SETTINGS_FILE);
   }
 
   // -------------------------------------------------------------------------

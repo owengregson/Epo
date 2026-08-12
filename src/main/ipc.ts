@@ -18,9 +18,13 @@ import type { Foundation } from '@/main/foundation-wiring';
 import * as logger from '@/utils/logger';
 import type {
   ActionResult,
+  ChainTargetView,
+  FollowState,
   PeanutStatus,
+  QueueListResult,
   ReadFollowersResult,
 } from '@/types';
+import type { Settings } from '@/settings/settings';
 
 export interface IpcContext {
   tab: InstagramTab;
@@ -110,6 +114,43 @@ export function registerIpc(ctx: IpcContext): () => void {
     return foundation.status();
   });
 
+  // --- Read-only list projections + settings (§5) ----------------------------
+  // Foundation already logs and returns safe values on failure; the defensive
+  // wrapper guarantees nothing rejects an opaque invoke.
+
+  ipcMain.handle('chain:list', async (): Promise<ChainTargetView[]> => {
+    try {
+      return await foundation.chainList();
+    } catch (e) {
+      logger.error('chain:list failed', { error: String(e) });
+      return [];
+    }
+  });
+
+  ipcMain.handle(
+    'queue:list',
+    async (_event, state: FollowState): Promise<QueueListResult> => {
+      try {
+        return await foundation.queueList(state);
+      } catch (e) {
+        logger.error('queue:list failed', { state, error: String(e) });
+        return { rows: [], truncated: false };
+      }
+    },
+  );
+
+  ipcMain.handle('settings:get', async (): Promise<Settings> => {
+    return foundation.getSettings();
+  });
+
+  ipcMain.handle(
+    'settings:update',
+    async (_event, partial: Partial<Settings>): Promise<Settings> => {
+      logger.info('settings:update');
+      return foundation.updateSettings(partial);
+    },
+  );
+
   // --- Tab visibility --------------------------------------------------------
 
   ipcMain.handle('tab:show', async (): Promise<void> => {
@@ -131,6 +172,10 @@ export function registerIpc(ctx: IpcContext): () => void {
     'engine:resume',
     'engine:stop',
     'engine:status',
+    'chain:list',
+    'queue:list',
+    'settings:get',
+    'settings:update',
     'tab:show',
     'tab:hide',
   ];
