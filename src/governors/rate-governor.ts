@@ -29,7 +29,8 @@ export class RateGovernor {
     return d.getTime();
   }
 
-  private actionsToday(): number {
+  /** Durable count of actions recorded since local midnight (survives restart). */
+  actionsToday(): number {
     return this.store.actionCountSince(this.startOfTodayLocal());
   }
 

@@ -13,6 +13,7 @@
 import { app, BaseWindow, WebContentsView } from 'electron';
 import * as path from 'path';
 import { InstagramTab } from '@/adapter/tab';
+import { Foundation } from '@/main/foundation-wiring';
 import { registerIpc } from '@/main/ipc';
 import * as logger from '@/utils/logger';
 import type { LogEntry, LogLevel } from '@/types';
@@ -23,6 +24,7 @@ const SIDEBAR_WIDTH = 460;
 let mainWindow: BaseWindow | null = null;
 let dashboardView: WebContentsView | null = null;
 let instagramTab: InstagramTab | null = null;
+let foundation: Foundation | null = null;
 let disposeIpc: (() => void) | null = null;
 
 function createWindow(): void {
@@ -79,12 +81,16 @@ function createWindow(): void {
     }
   });
 
-  // --- IPC -----------------------------------------------------------------
-  disposeIpc = registerIpc({ tab });
+  // --- Foundation (composition root) + IPC ---------------------------------
+  const found = new Foundation({ tab });
+  foundation = found;
+  disposeIpc = registerIpc({ tab, foundation: found });
 
   win.on('closed', () => {
     disposeIpc?.();
     disposeIpc = null;
+    foundation?.dispose();
+    foundation = null;
     instagramTab?.dispose();
     instagramTab = null;
     dashboardView = null;
