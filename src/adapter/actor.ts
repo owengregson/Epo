@@ -184,25 +184,34 @@ export class Actor {
    * the dialog never appears.
    */
   async openFollowersDialog(targetUsername: string): Promise<void> {
+    // PRIMARY (Task-E-proven): navigating to the `/<user>/followers/` route opens
+    // the followers modal on logged-in desktop web. This sidesteps the obfuscated,
+    // drift-prone followers *link* selector entirely. Land on the profile first for
+    // context, then the followers route, then wait for the dialog.
     await this.tab.goto(this.profileUrl(targetUsername));
+    await this.tab.goto(`${this.profileUrl(targetUsername)}followers/`);
 
-    // A1: retry the followers-link lookup through `waitFor` — the link may not
-    // be hydrated into the DOM when `goto` resolves.
-    const clicked = await this.waitFor<ClickResult>(
-      () => this.tab.evaluate<ClickResult>(this.clickFollowersLinkScript(targetUsername)),
-      (r) => Boolean(r && r.clicked),
-    );
-    if (!clicked || !clicked.clicked) {
-      throw new AdapterStaleError(
-        'actor.openFollowersDialog',
-        SELECTORS.followersLink(targetUsername),
-      );
-    }
-
-    const present = await this.waitFor<DialogResult>(
+    let present = await this.waitFor<DialogResult>(
       () => this.tab.evaluate<DialogResult>(this.dialogPresentScript()),
       (r) => Boolean(r && r.present),
     );
+
+    // FALLBACK: if navigation didn't surface the modal, click the followers link
+    // from the profile page (A1: retry through `waitFor` for hydration).
+    if (!present) {
+      await this.tab.goto(this.profileUrl(targetUsername));
+      const clicked = await this.waitFor<ClickResult>(
+        () => this.tab.evaluate<ClickResult>(this.clickFollowersLinkScript(targetUsername)),
+        (r) => Boolean(r && r.clicked),
+      );
+      if (clicked && clicked.clicked) {
+        present = await this.waitFor<DialogResult>(
+          () => this.tab.evaluate<DialogResult>(this.dialogPresentScript()),
+          (r) => Boolean(r && r.present),
+        );
+      }
+    }
+
     if (!present) {
       throw new AdapterStaleError('actor.openFollowersDialog', SELECTORS.dialog);
     }
