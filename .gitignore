@@ -151,3 +151,6 @@ docs/adapter/fixtures/raw/
 docs/adapter/fixtures/dom/
 docs/adapter/fixtures/manifest.json
 docs/adapter/field-notes-DRAFT.md
+
+# DOM inspection harness output — captured clicks may contain real profile data.
+docs/adapter/inspect/
