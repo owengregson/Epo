@@ -5,6 +5,8 @@ import {
   Edge,
   EdgeType,
   EnrichmentLevel,
+  FollowRecord,
+  FollowState,
   Observation,
   Source,
   SOURCE_CONFIDENCE,
@@ -22,6 +24,7 @@ interface AccountRow {
   is_private: number | null;
   is_verified: number | null;
   activity_signal: number | null;
+  role: string | null;
   stats_observed_at: number | null;
   stats_source: string | null;
   first_seen_at: number;
@@ -35,6 +38,17 @@ interface EdgeRow {
   first_seen_at: number;
   last_confirmed_at: number;
   status: string;
+}
+
+interface FollowRecordRow {
+  account_pk: string;
+  target_pk: string | null;
+  state: string;
+  followed_at: number | null;
+  followed_back_at: number | null;
+  hold_until: number | null;
+  unfollow_due_at: number | null;
+  retry_count: number;
 }
 
 const boolOrUndef = (v: number | null): boolean | undefined =>
@@ -55,6 +69,7 @@ const rowToState = (row: AccountRow): AccountState => ({
   isPrivate: boolOrUndef(row.is_private),
   isVerified: boolOrUndef(row.is_verified),
   activitySignal: numOrUndef(row.activity_signal),
+  role: strOrUndef(row.role),
   statsObservedAt: numOrUndef(row.stats_observed_at),
   statsSource: strOrUndef(row.stats_source) as Source | undefined,
   firstSeenAt: row.first_seen_at,
@@ -68,6 +83,17 @@ const rowToEdge = (row: EdgeRow): Edge => ({
   firstSeenAt: row.first_seen_at,
   lastConfirmedAt: row.last_confirmed_at,
   status: row.status as 'active' | 'removed',
+});
+
+const rowToFollowRecord = (row: FollowRecordRow): FollowRecord => ({
+  accountPk: row.account_pk,
+  targetPk: row.target_pk,
+  state: row.state as FollowState,
+  followedAt: numOrUndef(row.followed_at),
+  followedBackAt: numOrUndef(row.followed_back_at),
+  holdUntil: numOrUndef(row.hold_until),
+  unfollowDueAt: numOrUndef(row.unfollow_due_at),
+  retryCount: row.retry_count,
 });
 
 /**
@@ -207,6 +233,100 @@ export class KnowledgeStore {
       .prepare(`SELECT COUNT(*) AS c FROM request_log WHERE at >= ?`)
       .get(sinceMs) as { c: number };
     return row.c;
+  }
+
+  // --- Churn lifecycle: follow_records (§3.4) ------------------------------------
+
+  /** Insert or fully replace a churn-lifecycle record, keyed on account_pk. */
+  upsertFollowRecord(rec: FollowRecord): void {
+    const tx = this.db.transaction((r: FollowRecord) => {
+      this.db
+        .prepare(
+          `INSERT INTO follow_records (
+             account_pk, target_pk, state, followed_at, followed_back_at,
+             hold_until, unfollow_due_at, retry_count
+           ) VALUES (
+             @account_pk, @target_pk, @state, @followed_at, @followed_back_at,
+             @hold_until, @unfollow_due_at, @retry_count
+           )
+           ON CONFLICT(account_pk) DO UPDATE SET
+             target_pk = excluded.target_pk,
+             state = excluded.state,
+             followed_at = excluded.followed_at,
+             followed_back_at = excluded.followed_back_at,
+             hold_until = excluded.hold_until,
+             unfollow_due_at = excluded.unfollow_due_at,
+             retry_count = excluded.retry_count`,
+        )
+        .run({
+          account_pk: r.accountPk,
+          target_pk: orNull(r.targetPk),
+          state: r.state,
+          followed_at: orNull(r.followedAt),
+          followed_back_at: orNull(r.followedBackAt),
+          hold_until: orNull(r.holdUntil),
+          unfollow_due_at: orNull(r.unfollowDueAt),
+          retry_count: r.retryCount,
+        });
+    });
+    tx(rec);
+  }
+
+  getFollowRecord(accountPk: string): FollowRecord | null {
+    const row = this.db
+      .prepare(`SELECT * FROM follow_records WHERE account_pk = ?`)
+      .get(accountPk) as FollowRecordRow | undefined;
+    return row ? rowToFollowRecord(row) : null;
+  }
+
+  followRecordsByState(state: FollowState): FollowRecord[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM follow_records WHERE state = ?`)
+      .all(state) as FollowRecordRow[];
+    return rows.map(rowToFollowRecord);
+  }
+
+  /** Every follow_record not yet in a terminal state. */
+  activeFollowRecords(): FollowRecord[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM follow_records WHERE state NOT IN ('unfollowed', 'abandoned')`)
+      .all() as FollowRecordRow[];
+    return rows.map(rowToFollowRecord);
+  }
+
+  /** All account_pks that already have a follow_record (for candidate exclusion). */
+  followRecordPks(): Set<string> {
+    const rows = this.db
+      .prepare(`SELECT account_pk FROM follow_records`)
+      .all() as Array<{ account_pk: string }>;
+    return new Set(rows.map((r) => r.account_pk));
+  }
+
+  /** src_pk of active `follows` edges pointing at the target (accounts that follow it). */
+  followersOf(targetPk: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT src_pk FROM edges
+         WHERE dst_pk = ? AND type = 'follows' AND status = 'active'`,
+      )
+      .all(targetPk) as Array<{ src_pk: string }>;
+    return rows.map((r) => r.src_pk);
+  }
+
+  /**
+   * Raw candidate pool for poaching a target: its active followers MINUS accounts
+   * already in a follow_record MINUS the target itself. The Scorer ranks these.
+   */
+  candidatePksForTarget(targetPk: string): string[] {
+    const excluded = this.followRecordPks();
+    return this.followersOf(targetPk).filter(
+      (pk) => pk !== targetPk && !excluded.has(pk),
+    );
+  }
+
+  /** Assign a role to an account (e.g. 'target', 'me'); the accounts row must exist. */
+  setRole(pk: string, role: string): void {
+    this.db.prepare(`UPDATE accounts SET role = ? WHERE pk = ?`).run(role, pk);
   }
 
   close(): void {
