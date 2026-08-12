@@ -247,11 +247,15 @@ export class Foundation {
       return { ok: false, username, reason: 'not-logged-in' };
     }
     try {
-      const { ok } =
+      // R4: the rim now returns a discriminated outcome. Map it to the manual
+      // IPC result — `ok`/`simulated` (dry-run no-op) succeed; `blocked`
+      // (budget/sentinel) and `failed` (unconfirmed click) do not.
+      const { status } =
         action === 'follow'
           ? await this.graph.churnActions.follow(username)
           : await this.graph.churnActions.unfollow(username);
-      return ok ? { ok: true, username } : { ok: false, username, reason: 'action-failed' };
+      if (status === 'ok' || status === 'simulated') return { ok: true, username };
+      return { ok: false, username, reason: status === 'blocked' ? 'blocked' : 'action-failed' };
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       logger.error('foundation.act: failed', { action, username, error: reason });

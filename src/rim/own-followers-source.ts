@@ -16,6 +16,7 @@
 
 import type { RequestBudget } from '@/governors/request-budget';
 import type { Sentinel } from '@/adapter/sentinel';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { OwnFollowersSource } from '@/engine/followback-watcher';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import * as logger from '@/utils/logger';
@@ -38,6 +39,14 @@ export interface OwnFollowersSourceDeps {
   ownUsername: string;
   budget: RequestBudget;
   sentinel: Sentinel;
+  /**
+   * When supplied, every parsed follower profile from the sweep is stored (f11):
+   * the pages were parsed anyway, so this free data becomes real `accounts` rows
+   * the chain's own-followers fallback target-source can rank. Optional so the
+   * composition root can wire it without breaking construction; when omitted the
+   * sweep still yields pks but discards the observations.
+   */
+  store?: KnowledgeStore;
   cfg?: OwnFollowersSourceConfig;
 }
 
@@ -53,6 +62,7 @@ export class AdapterBackedOwnFollowersSource implements OwnFollowersSource {
   private readonly ownUsername: string;
   private readonly budget: RequestBudget;
   private readonly sentinel: Sentinel;
+  private readonly store?: KnowledgeStore;
   private readonly cfg: OwnFollowersSourceConfig;
 
   /** Cached head-first slices of the current sweep; reset on each `nextPage(null)`. */
@@ -64,6 +74,7 @@ export class AdapterBackedOwnFollowersSource implements OwnFollowersSource {
     this.ownUsername = deps.ownUsername;
     this.budget = deps.budget;
     this.sentinel = deps.sentinel;
+    this.store = deps.store;
     this.cfg = deps.cfg ?? OWN_FOLLOWERS_SOURCE_DEFAULTS;
   }
 
@@ -92,8 +103,10 @@ export class AdapterBackedOwnFollowersSource implements OwnFollowersSource {
     }
     const result = await this.pageReader.collect({
       targetUsername: this.ownUsername,
-      // The Watcher records the follows-us edges itself; the source only yields pks.
-      onObservation: () => {},
+      // f11: the Watcher records the follows-us edges itself, but the parsed
+      // follower profiles are free data — store them so the fallback target-source
+      // has real `accounts` rows to rank. No-op when no store was injected.
+      onObservation: (obs) => this.store?.observe(obs),
       budget: this.budget,
       sentinel: this.sentinel,
       maxRounds: this.cfg.maxRounds,

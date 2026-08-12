@@ -5,6 +5,7 @@ import {
   ChurnScheduler,
   CHURN_DEFAULTS,
   type ChurnActions,
+  type ChurnActionOutcome,
   type ChurnConfig,
 } from '@/engine/churn-scheduler';
 import { setLevel } from '@/utils/logger';
@@ -16,19 +17,26 @@ beforeAll(() => setLevel('error'));
 const T0 = Date.parse('2026-08-12T12:00:00');
 const OWN = 'me';
 
-/** Records every call and returns configurable ok/fail. No browser involved. */
+/**
+ * Records every call and returns a configurable discriminated outcome (R4). The
+ * legacy `followOk`/`unfollowOk` booleans still map to `'ok'`/`'failed'` so the
+ * pre-R4 tests read unchanged; `followStatus`/`unfollowStatus` override outright
+ * for the `'blocked'`/`'simulated'` cases. No browser involved.
+ */
 class FakeActions implements ChurnActions {
   followCalls: string[] = [];
   unfollowCalls: string[] = [];
   followOk = true;
   unfollowOk = true;
-  async follow(username: string): Promise<{ ok: boolean }> {
+  followStatus?: ChurnActionOutcome['status'];
+  unfollowStatus?: ChurnActionOutcome['status'];
+  async follow(username: string): Promise<ChurnActionOutcome> {
     this.followCalls.push(username);
-    return { ok: this.followOk };
+    return { status: this.followStatus ?? (this.followOk ? 'ok' : 'failed') };
   }
-  async unfollow(username: string): Promise<{ ok: boolean }> {
+  async unfollow(username: string): Promise<ChurnActionOutcome> {
     this.unfollowCalls.push(username);
-    return { ok: this.unfollowOk };
+    return { status: this.unfollowStatus ?? (this.unfollowOk ? 'ok' : 'failed') };
   }
 }
 
@@ -264,6 +272,76 @@ test('execute is a no-op (no action) on a non-actionable record', async () => {
   expect(actions.followCalls).toEqual([]);
   expect(actions.unfollowCalls).toEqual([]);
   expect(store.getFollowRecord('h')!.state).toBe('followed_back');
+});
+
+// ── R4: blocked ≠ failed ────────────────────────────────────────────────────────
+
+test('R4: a BLOCKED follow leaves the record’s state/retryCount UNCHANGED and writes NO ledger row', async () => {
+  const { store, actions, sched } = makeHarness({ ownPk: OWN });
+  seedUsername(store, 'b1', 'userb1');
+  actions.followStatus = 'blocked';
+  store.upsertFollowRecord(rec({ accountPk: 'b1', state: 'queued', retryCount: 1 }));
+
+  await sched.tick();
+
+  expect(actions.followCalls).toEqual(['userb1']);
+  const got = store.getFollowRecord('b1')!;
+  expect(got.state).toBe('queued'); // untouched
+  expect(got.retryCount).toBe(1); // NOT bumped
+  expect(got.followedAt).toBeUndefined();
+  expect(store.actionCountSince(0)).toBe(0); // no ledger row
+  expect(store.getEdge(OWN, 'b1', 'follows')).toBeNull(); // no edge
+});
+
+test('R4: a BLOCKED unfollow leaves the record and its active edge UNTOUCHED', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  seedUsername(store, 'b2', 'userb2');
+  store.observeEdge(OWN, 'b2', 'follows', true, T0);
+  actions.unfollowStatus = 'blocked';
+  store.upsertFollowRecord(
+    rec({ accountPk: 'b2', state: 'unfollow_queued', unfollowDueAt: T0, retryCount: 2 }),
+  );
+
+  const due = sched.nextDue(clock.now())!;
+  await sched.execute(due, clock.now());
+
+  expect(actions.unfollowCalls).toEqual(['userb2']);
+  const got = store.getFollowRecord('b2')!;
+  expect(got.state).toBe('unfollow_queued'); // untouched
+  expect(got.retryCount).toBe(2); // NOT bumped
+  expect(store.actionCountSince(0)).toBe(0); // no ledger row
+  expect(store.getEdge(OWN, 'b2', 'follows')?.status).toBe('active'); // edge intact
+});
+
+// ── f12: dry-run advances state but writes no real edge/ledger ────────────────────
+
+test('f12: a SIMULATED follow transitions state but writes NO active edge and NO ledger row', async () => {
+  const { store, actions, sched } = makeHarness({ ownPk: OWN });
+  seedUsername(store, 's1', 'users1');
+  actions.followStatus = 'simulated';
+  store.upsertFollowRecord(rec({ accountPk: 's1', state: 'queued' }));
+
+  await sched.tick();
+
+  const got = store.getFollowRecord('s1')!;
+  expect(got.state).toBe('pending_followback'); // lifecycle advanced
+  expect(got.followedAt).toBe(T0);
+  expect(store.getEdge(OWN, 's1', 'follows')).toBeNull(); // NO fake follow edge
+  expect(store.actionCountSince(0)).toBe(0); // NO ledger row
+});
+
+test('f12: a SIMULATED unfollow transitions to unfollowed but leaves any edge/ledger alone', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  seedUsername(store, 's2', 'users2');
+  actions.unfollowStatus = 'simulated';
+  store.upsertFollowRecord(rec({ accountPk: 's2', state: 'unfollow_queued', unfollowDueAt: T0 }));
+
+  const due = sched.nextDue(clock.now())!;
+  await sched.execute(due, clock.now());
+
+  expect(store.getFollowRecord('s2')!.state).toBe('unfollowed'); // lifecycle advanced
+  expect(store.getEdge(OWN, 's2', 'follows')).toBeNull(); // no edge written
+  expect(store.actionCountSince(0)).toBe(0); // no ledger row
 });
 
 test('advanceTimers + nextDue + execute matches the old tick end-state (hold → unfollowed)', async () => {

@@ -11,16 +11,19 @@
  *        *when* to call `execute`), so it is deliberately not re-checked here.
  *  - C2: observe our OWN account once (from `ownPk`) so `ownPk`-anchored edges have
  *        a real `accounts` endpoint. `pk` is the single ledger identity.
- *
- * Both methods resolve (never reject) with `{ ok }` — a thrown Actor error (e.g.
- * `AdapterStaleError`) is caught, logged (never silently), and reported as `ok:false`.
+ *  - R4: resolve (never reject) with a DISCRIMINATED outcome so the scheduler can
+ *        tell a *blocked* action (budget exhausted / sentinel non-ok, BEFORE any
+ *        click) apart from a genuine *failed* click. `'blocked'` leaves the record
+ *        untouched for a later retry; `'simulated'` is dry-run (no click); `'ok'`/
+ *        `'failed'` map the Actor's verified `Result`. A thrown Actor error is
+ *        caught, logged (never silently), and reported as `'failed'`.
  */
 
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { RequestBudget } from '@/governors/request-budget';
 import { SystemClock, type Clock } from '@/governors/clock';
-import type { ChurnActions } from '@/engine/churn-scheduler';
+import type { ChurnActions, ChurnActionOutcome } from '@/engine/churn-scheduler';
 import * as logger from '@/utils/logger';
 
 export interface ChurnActionsDeps {
@@ -57,42 +60,46 @@ export class AdapterBackedChurnActions implements ChurnActions {
     this.dryRun = dryRun;
   }
 
-  follow(username: string): Promise<{ ok: boolean }> {
+  follow(username: string): Promise<ChurnActionOutcome> {
     return this.act(username, 'follow');
   }
 
-  unfollow(username: string): Promise<{ ok: boolean }> {
+  unfollow(username: string): Promise<ChurnActionOutcome> {
     return this.act(username, 'unfollow');
   }
 
   private async act(
     username: string,
     action: 'follow' | 'unfollow',
-  ): Promise<{ ok: boolean }> {
+  ): Promise<ChurnActionOutcome> {
     this.ensureSelfObserved();
 
-    // C1 order: budget → sentinel → (dry-run) → click.
+    // C1/R4 order: budget → sentinel → (dry-run) → click. A block BEFORE the click
+    // is not a failure — the scheduler leaves the record untouched to retry later.
     if (!this.budget.canSpend()) {
-      logger.warn('rim.churn-actions: request budget exhausted, refusing action', {
+      logger.warn('rim.churn-actions: request budget exhausted, blocking action', {
         username,
         action,
       });
-      return { ok: false };
+      return { status: 'blocked' };
     }
 
     const status = await this.adapter.sentinel.check();
     if (status !== 'ok') {
-      logger.warn('rim.churn-actions: sentinel blocked, refusing action', {
+      logger.warn('rim.churn-actions: sentinel blocked, blocking action', {
         username,
         action,
         status,
       });
-      return { ok: false };
+      return { status: 'blocked' };
     }
 
     if (this.dryRun) {
-      logger.info('rim.churn-actions: dry-run, skipping click', { username, action });
-      return { ok: true };
+      logger.info('rim.churn-actions: dry-run, simulating action (no click)', {
+        username,
+        action,
+      });
+      return { status: 'simulated' };
     }
 
     try {
@@ -101,14 +108,14 @@ export class AdapterBackedChurnActions implements ChurnActions {
           ? await this.adapter.actor.follow(username)
           : await this.adapter.actor.unfollow(username);
       // A3: the Actor already verified the post-click state; trust its Result.
-      return { ok: result.ok };
+      return { status: result.ok ? 'ok' : 'failed' };
     } catch (e) {
       logger.error('rim.churn-actions: actor threw', {
         username,
         action,
         error: String(e),
       });
-      return { ok: false };
+      return { status: 'failed' };
     }
   }
 
