@@ -76,7 +76,19 @@ rebuilt for the Electron ABI on `dev`/`start` and for Node on `test` — the scr
 
 ## 5. THE LIVE GATE (needs you — the only blocker)
 
-Launch `npm run dev`, then in the app:
+**Quickest first check — the live action smoke test.** Before running the full app, validate every real
+Instagram action in a couple of minutes (paced + bounded, safe for a real account):
+```bash
+PEANUT_TEST_FOLLOW=<a_throwaway_or_friend_account> npm run livetest    # add PEANUT_TEST_DRY=1 for no real clicks
+```
+A window opens; log in; it then runs Identity → Acquire → Enrich → Score+Plan → Follow → Follow-back
+check → Unfollow → Sentinel, each with jittered human delays (~30–75s between the follow and unfollow),
+exactly one follow+unfollow (net-zero), a real ~300/hr budget, and a Sentinel check before each action
+that aborts on any block. It prints a `STEP | STATUS | DETAIL` table + total actions/requests. This is
+the fastest way to confirm the live adapter works (esp. the enrichment fetch + button selectors) without
+waiting for engine cycles. Uses a throwaway temp DB. If a step FAILs, that's the targeted thing to fix.
+
+**Then the full gate** — launch `npm run dev`, then in the app:
 1. **Login** — click Login; log into Instagram in the right-hand tab (2FA fine). Quit + relaunch to
    confirm the session persists. Status should flip to `loggedIn` and the dependency graph builds
    (log: "dependency graph built" with your `ownPk`/`ownUsername`).
