@@ -9,6 +9,7 @@
  */
 
 export type Classification =
+  | 'friendship-show'
   | 'followers-list'
   | 'show-many'
   | 'profile-info'
@@ -26,26 +27,34 @@ export type Classification =
 export function classify(url: string): Classification {
   const u = url.toLowerCase();
 
-  // 1. Batched relationship status. Must precede the followers-list rule
+  // 1. Single-relationship status (`friendships/show/<pk>/`). This returns BOTH
+  //    directions (following + followed_by), unlike show_many. Must precede the
+  //    show-many and followers-list rules because it also contains
+  //    "friendships/"; guard against show_many explicitly for safety.
+  if (u.includes('friendships/show/') && !u.includes('show_many')) {
+    return 'friendship-show';
+  }
+
+  // 2. Batched relationship status. Must precede the followers-list rule
   //    because the show_many URL also contains "friendships/".
   if (u.includes('show_many')) return 'show-many';
 
-  // 2. Followers list: the REST endpoint (friendships/<pk>/followers/) or a
+  // 3. Followers list: the REST endpoint (friendships/<pk>/followers/) or a
   //    GraphQL query that mentions followers.
   const isRestFollowers =
     u.includes('friendships/') && u.includes('followers');
   const isGraphqlFollowers = u.includes('/graphql') && u.includes('follower');
   if (isRestFollowers || isGraphqlFollowers) return 'followers-list';
 
-  // 3. Profile info (follower/following counts for one account).
+  // 4. Profile info (follower/following counts for one account).
   if (u.includes('web_profile_info') || u.includes('/api/v1/users/')) {
     return 'profile-info';
   }
 
-  // 4. Activity / notifications feed ("started following you").
+  // 5. Activity / notifications feed ("started following you").
   if (u.includes('news/inbox')) return 'activity-feed';
 
-  // 5. Any other GraphQL traffic — kept for inventory / later distillation.
+  // 6. Any other GraphQL traffic — kept for inventory / later distillation.
   if (u.includes('/graphql')) return 'graphql-other';
 
   return 'other';

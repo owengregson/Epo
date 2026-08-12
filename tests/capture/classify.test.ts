@@ -11,6 +11,19 @@ describe('classify', () => {
     ).toBe('show-many');
   });
 
+  test('friendships/show/<pk>/ → friendship-show (checked before show_many/followers)', () => {
+    expect(
+      classify('https://www.instagram.com/api/v1/friendships/show/12345/'),
+    ).toBe('friendship-show');
+    expect(
+      classify('https://i.instagram.com/api/v1/friendships/show/17841400000/'),
+    ).toBe('friendship-show');
+    // show_many must NOT be misread as the single-show endpoint.
+    expect(
+      classify('https://www.instagram.com/api/v1/friendships/show_many/'),
+    ).toBe('show-many');
+  });
+
   test('friendships/<pk>/followers → followers-list', () => {
     expect(
       classify(
