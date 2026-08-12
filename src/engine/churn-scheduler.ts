@@ -5,15 +5,32 @@ import { FollowRecord } from '../store/types';
 import * as log from '../utils/logger';
 
 /**
+ * The discriminated outcome of a single follow/unfollow attempt (R4):
+ *
+ * - `'ok'`        — the click was performed and the Actor verified the transition.
+ * - `'failed'`    — a click was attempted but did not confirm (retry/abandon).
+ * - `'blocked'`   — budget exhausted or Sentinel non-`ok` BEFORE any click; the
+ *                   record is left completely untouched so it retries when the
+ *                   window clears. A block is NOT a failure.
+ * - `'simulated'` — dry-run: no click happened. The lifecycle STATE still advances
+ *                   (so dry-run exercises the machine) but no real edge/ledger row
+ *                   is written (f12), so dry-run never pollutes yield/overlap.
+ */
+export type ChurnActionOutcome = {
+  status: 'ok' | 'failed' | 'blocked' | 'simulated';
+};
+
+/**
  * The only Instagram-touching surface the scheduler needs. The real implementation
  * wraps Actor + Sentinel + request budget; tests pass a fake that records calls and
- * returns configurable ok/fail. Both methods resolve (never reject) with `{ ok }` so
- * a failed action is a value, not a thrown exception — but the scheduler still guards
- * against rejections defensively (no silent catches; failures are logged).
+ * returns a configurable outcome. Both methods resolve (never reject) with a
+ * {@link ChurnActionOutcome} so an outcome is a value, not a thrown exception — but
+ * the scheduler still guards against rejections defensively (no silent catches;
+ * failures are logged).
  */
 export interface ChurnActions {
-  follow(username: string): Promise<{ ok: boolean }>;
-  unfollow(username: string): Promise<{ ok: boolean }>;
+  follow(username: string): Promise<ChurnActionOutcome>;
+  unfollow(username: string): Promise<ChurnActionOutcome>;
 }
 
 /** Lifecycle timers + retry cap for the churn state machine (§3.4). All tunable in Settings. */
@@ -194,7 +211,13 @@ export class ChurnScheduler {
     if (rec) await this.execute(rec, now);
   }
 
-  /** Follow one `queued` record; on success move to `pending_followback`. */
+  /**
+   * Follow one `queued` record. Outcome handling (R4/f12):
+   *  - `'blocked'`   → leave the record completely untouched (no ledger, no retry).
+   *  - `'ok'`        → ledger `ok` + `pending_followback` + active `ownPk→pk` edge.
+   *  - `'simulated'` → advance to `pending_followback` only; no edge, no ledger row.
+   *  - `'failed'`    → ledger `fail` + retry/abandon.
+   */
   private async executeFollow(rec: FollowRecord, now: number): Promise<void> {
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
@@ -202,32 +225,55 @@ export class ChurnScheduler {
       return;
     }
 
-    let ok = false;
+    let status: ChurnActionOutcome['status'] = 'failed';
     try {
-      ({ ok } = await this.actions.follow(username));
+      ({ status } = await this.actions.follow(username));
     } catch (err) {
       log.error('churn: follow action threw', {
         pk: rec.accountPk,
         username,
         error: String(err),
       });
-      ok = false;
+      status = 'failed';
     }
 
-    if (ok) {
-      this.store.recordAction(rec.accountPk, 'follow', 'ok', now);
-      this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
-      if (this.ownPk !== undefined) {
-        this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', true, now);
-      }
-      log.info('churn: followed', { pk: rec.accountPk, username });
-    } else {
-      this.store.recordAction(rec.accountPk, 'follow', 'fail', now);
-      this.retryOrAbandon(rec, 'follow');
+    switch (status) {
+      case 'blocked':
+        // Budget/sentinel closed BEFORE any click — retry when the window clears.
+        log.info('churn: follow blocked, leaving record untouched', {
+          pk: rec.accountPk,
+          username,
+        });
+        return;
+      case 'ok':
+        this.store.recordAction(rec.accountPk, 'follow', 'ok', now);
+        this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
+        if (this.ownPk !== undefined) {
+          this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', true, now);
+        }
+        log.info('churn: followed', { pk: rec.accountPk, username });
+        return;
+      case 'simulated':
+        // f12: advance the lifecycle under dry-run WITHOUT a real edge or ledger row.
+        this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
+        log.info('churn: dry-run follow simulated, state advanced (no edge/ledger)', {
+          pk: rec.accountPk,
+          username,
+        });
+        return;
+      case 'failed':
+        this.store.recordAction(rec.accountPk, 'follow', 'fail', now);
+        this.retryOrAbandon(rec, 'follow');
+        return;
     }
   }
 
-  /** Unfollow one `unfollow_queued` record; on success move to `unfollowed`. */
+  /**
+   * Unfollow one `unfollow_queued` record. Outcome handling mirrors
+   * {@link executeFollow}: `'blocked'` leaves the record untouched; `'ok'` writes
+   * the ledger + `unfollowed` + removes the edge; `'simulated'` advances to
+   * `unfollowed` only (no edge/ledger); `'failed'` retries/abandons.
+   */
   private async executeUnfollow(rec: FollowRecord, now: number): Promise<void> {
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
@@ -235,28 +281,45 @@ export class ChurnScheduler {
       return;
     }
 
-    let ok = false;
+    let status: ChurnActionOutcome['status'] = 'failed';
     try {
-      ({ ok } = await this.actions.unfollow(username));
+      ({ status } = await this.actions.unfollow(username));
     } catch (err) {
       log.error('churn: unfollow action threw', {
         pk: rec.accountPk,
         username,
         error: String(err),
       });
-      ok = false;
+      status = 'failed';
     }
 
-    if (ok) {
-      this.store.recordAction(rec.accountPk, 'unfollow', 'ok', now);
-      this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
-      if (this.ownPk !== undefined) {
-        this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', false, now);
-      }
-      log.info('churn: unfollowed', { pk: rec.accountPk, username });
-    } else {
-      this.store.recordAction(rec.accountPk, 'unfollow', 'fail', now);
-      this.retryOrAbandon(rec, 'unfollow');
+    switch (status) {
+      case 'blocked':
+        log.info('churn: unfollow blocked, leaving record untouched', {
+          pk: rec.accountPk,
+          username,
+        });
+        return;
+      case 'ok':
+        this.store.recordAction(rec.accountPk, 'unfollow', 'ok', now);
+        this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
+        if (this.ownPk !== undefined) {
+          this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', false, now);
+        }
+        log.info('churn: unfollowed', { pk: rec.accountPk, username });
+        return;
+      case 'simulated':
+        // f12: advance the lifecycle under dry-run WITHOUT removing a real edge.
+        this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
+        log.info('churn: dry-run unfollow simulated, state advanced (no edge/ledger)', {
+          pk: rec.accountPk,
+          username,
+        });
+        return;
+      case 'failed':
+        this.store.recordAction(rec.accountPk, 'unfollow', 'fail', now);
+        this.retryOrAbandon(rec, 'unfollow');
+        return;
     }
   }
 
