@@ -16,7 +16,7 @@
  */
 
 import * as logger from '@/utils/logger';
-import { ok, type Result } from '@/utils/result';
+import { ok, err, type Result } from '@/utils/result';
 import { AdapterStaleError } from '@/adapter/errors';
 import { IG_ORIGIN, SELECTORS, SCROLL_CONTAINER_HEURISTIC } from '@/adapter/field-notes';
 
@@ -50,6 +50,12 @@ interface FindButtonResult {
 
 interface ClickResult {
   clicked: boolean;
+}
+
+/** Result of the post-click state probe (A3). */
+interface ProbeStateResult {
+  found: boolean;
+  state: ButtonState;
 }
 
 interface ConfirmResult {
@@ -95,12 +101,32 @@ export class Actor {
    */
   async follow(username: string): Promise<Result<void>> {
     await this.tab.goto(this.profileUrl(username));
-    const res = await this.tab.evaluate<FindButtonResult>(this.findAndActScript('follow'));
+    // A1: the SPA is still hydrating when `goto` resolves — the action button is
+    // not guaranteed to be in the DOM on the first probe. Retry the initial
+    // lookup through `waitFor` until the control appears or the timeout elapses.
+    const res = await this.waitFor<FindButtonResult>(
+      () => this.tab.evaluate<FindButtonResult>(this.findAndActScript('follow')),
+      (r) => Boolean(r && r.found),
+    );
 
     if (!res || !res.found) {
       throw new AdapterStaleError('actor.follow', SELECTORS.profileActionButtonRole);
     }
     logger.info('actor.follow', { username, state: res.state, clicked: res.clicked });
+
+    // A3: never report ok on an unverified click. Poll the button until it reads
+    // the expected post-state before returning. An already-in-target-state
+    // button (no click) is an idempotent no-op and resolves ok immediately.
+    if (res.clicked) {
+      const verified = await this.verifyPostState(
+        (s) => s === 'following' || s === 'requested',
+      );
+      if (!verified) {
+        return err(
+          `actor.follow: post-click state not confirmed (expected Following/Requested) for ${username}`,
+        );
+      }
+    }
     return ok(undefined);
   }
 
@@ -113,7 +139,12 @@ export class Actor {
    */
   async unfollow(username: string): Promise<Result<void>> {
     await this.tab.goto(this.profileUrl(username));
-    const res = await this.tab.evaluate<FindButtonResult>(this.findAndActScript('unfollow'));
+    // A1: retry the initial lookup through `waitFor` — hydration may not have
+    // placed the action button in the DOM when `goto` resolves.
+    const res = await this.waitFor<FindButtonResult>(
+      () => this.tab.evaluate<FindButtonResult>(this.findAndActScript('unfollow')),
+      (r) => Boolean(r && r.found),
+    );
 
     if (!res || !res.found) {
       throw new AdapterStaleError('actor.unfollow', SELECTORS.profileActionButtonRole);
@@ -130,6 +161,20 @@ export class Actor {
     }
 
     logger.info('actor.unfollow', { username, state: res.state, clicked: res.clicked });
+
+    // A3: after a real (post-confirm) click, verify the button flipped back to
+    // Follow / Follow Back before returning ok. An already-Follow button (no
+    // click) is an idempotent no-op and resolves ok immediately.
+    if (res.clicked) {
+      const verified = await this.verifyPostState(
+        (s) => s === 'follow' || s === 'follow-back',
+      );
+      if (!verified) {
+        return err(
+          `actor.unfollow: post-click state not confirmed (expected Follow/Follow Back) for ${username}`,
+        );
+      }
+    }
     return ok(undefined);
   }
 
@@ -141,8 +186,11 @@ export class Actor {
   async openFollowersDialog(targetUsername: string): Promise<void> {
     await this.tab.goto(this.profileUrl(targetUsername));
 
-    const clicked = await this.tab.evaluate<ClickResult>(
-      this.clickFollowersLinkScript(targetUsername),
+    // A1: retry the followers-link lookup through `waitFor` — the link may not
+    // be hydrated into the DOM when `goto` resolves.
+    const clicked = await this.waitFor<ClickResult>(
+      () => this.tab.evaluate<ClickResult>(this.clickFollowersLinkScript(targetUsername)),
+      (r) => Boolean(r && r.clicked),
     );
     if (!clicked || !clicked.clicked) {
       throw new AdapterStaleError(
@@ -211,14 +259,19 @@ export class Actor {
    */
   private findAndActScript(op: 'follow' | 'unfollow'): string {
     const selector = SELECTORS.profileActionButtonRole;
+    const fallbackSelector = SELECTORS.profileActionButtonRoleFallback;
     const regexes = {
       followBack: regexLiteral(SELECTORS.followBackText),
       following: regexLiteral(SELECTORS.followingText),
       requested: regexLiteral(SELECTORS.requestedText),
       follow: regexLiteral(SELECTORS.followText),
     };
+    // A2: search the verified primary anchor first; only if it yields no
+    // state-text match, fall back to the broader selector and take the FIRST
+    // state-matching button in document order. Never matched by class.
     return `(() => {
   const SEL = ${JSON.stringify(selector)};
+  const SEL2 = ${JSON.stringify(fallbackSelector)};
   const RX = ${JSON.stringify(regexes)};
   const OP = ${JSON.stringify(op)};
   const mk = (o) => new RegExp(o.source, o.flags);
@@ -227,18 +280,23 @@ export class Actor {
   const requested = mk(RX.requested);
   const follow = mk(RX.follow);
   const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
-  const nodes = Array.from(document.querySelectorAll(SEL));
-  let btn = null;
-  let state = 'unknown';
-  for (const n of nodes) {
-    const t = norm(n.textContent);
-    if (!t) continue;
-    if (followBack.test(t)) { btn = n; state = 'follow-back'; break; }
-    if (following.test(t)) { btn = n; state = 'following'; break; }
-    if (requested.test(t)) { btn = n; state = 'requested'; break; }
-    if (follow.test(t)) { btn = n; state = 'follow'; break; }
-  }
-  if (!btn) return { found: false };
+  const search = (sel) => {
+    const nodes = Array.from(document.querySelectorAll(sel));
+    for (const n of nodes) {
+      const t = norm(n.textContent);
+      if (!t) continue;
+      if (followBack.test(t)) return { btn: n, state: 'follow-back' };
+      if (following.test(t)) return { btn: n, state: 'following' };
+      if (requested.test(t)) return { btn: n, state: 'requested' };
+      if (follow.test(t)) return { btn: n, state: 'follow' };
+    }
+    return null;
+  };
+  let hit = search(SEL);
+  if (!hit) hit = search(SEL2);
+  if (!hit) return { found: false };
+  const btn = hit.btn;
+  const state = hit.state;
   let clicked = false;
   let needsConfirm = false;
   if (OP === 'follow') {
@@ -248,6 +306,62 @@ export class Actor {
     else if (state === 'requested') { btn.click(); clicked = true; }
   }
   return { found: true, state: state, clicked: clicked, needsConfirm: needsConfirm };
+})()`;
+  }
+
+  /**
+   * A3: poll the profile action button's leading state (via the same primary →
+   * fallback anchor search) until `accept(state)` holds or the timeout elapses.
+   * Returns `true` only when the expected post-state is observed.
+   */
+  private async verifyPostState(accept: (state: ButtonState) => boolean): Promise<boolean> {
+    const probe = await this.waitFor<ProbeStateResult>(
+      () => this.tab.evaluate<ProbeStateResult>(this.readButtonStateScript()),
+      (r) => Boolean(r && r.found && accept(r.state)),
+    );
+    return Boolean(probe && probe.found && accept(probe.state));
+  }
+
+  /**
+   * In-page probe: read the profile action button's current leading state,
+   * searching the primary anchor first then the fallback (never by class). Used
+   * by A3's post-click verification.
+   */
+  private readButtonStateScript(): string {
+    const selector = SELECTORS.profileActionButtonRole;
+    const fallbackSelector = SELECTORS.profileActionButtonRoleFallback;
+    const regexes = {
+      followBack: regexLiteral(SELECTORS.followBackText),
+      following: regexLiteral(SELECTORS.followingText),
+      requested: regexLiteral(SELECTORS.requestedText),
+      follow: regexLiteral(SELECTORS.followText),
+    };
+    return `(() => { /* actor:probe-state */
+  const SEL = ${JSON.stringify(selector)};
+  const SEL2 = ${JSON.stringify(fallbackSelector)};
+  const RX = ${JSON.stringify(regexes)};
+  const mk = (o) => new RegExp(o.source, o.flags);
+  const followBack = mk(RX.followBack);
+  const following = mk(RX.following);
+  const requested = mk(RX.requested);
+  const follow = mk(RX.follow);
+  const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
+  const search = (sel) => {
+    const nodes = Array.from(document.querySelectorAll(sel));
+    for (const n of nodes) {
+      const t = norm(n.textContent);
+      if (!t) continue;
+      if (followBack.test(t)) return 'follow-back';
+      if (following.test(t)) return 'following';
+      if (requested.test(t)) return 'requested';
+      if (follow.test(t)) return 'follow';
+    }
+    return null;
+  };
+  let state = search(SEL);
+  if (!state) state = search(SEL2);
+  if (!state) return { found: false, state: 'unknown' };
+  return { found: true, state: state };
 })()`;
   }
 
