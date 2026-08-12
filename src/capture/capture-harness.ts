@@ -40,6 +40,9 @@ export interface DomSnapshotEntry {
   at: number;
 }
 
+/** Instagram web app id — required header for the private JSON API. */
+const IG_APP_ID = '936619743392459';
+
 /** Max bodies persisted per classification; observations beyond this are counted only. */
 const MAX_SAVED_PER_CLASS = 10;
 
@@ -185,6 +188,51 @@ export class CaptureHarness {
     }
   }
 
+  /**
+   * Persist a parsed body captured DIRECTLY (not via the passive observer) and
+   * record it in the manifest. Used by {@link captureProfileShapes} for the
+   * shapes that Instagram will not fire on its own (web_profile_info via the
+   * page's own session, and the single `friendships/show/<pk>/` endpoint).
+   * Deterministic captures always write (they bypass MAX_SAVED_PER_CLASS).
+   */
+  private saveRaw(
+    classification: Classification,
+    parsed: unknown,
+    url: string,
+    status: number,
+  ): string | null {
+    const seq = ++this.seq;
+    const name = `${String(seq).padStart(4, '0')}-${classification}.json`;
+    let file: string | null = null;
+    try {
+      writeFileSync(
+        path.join(this.rawDir, name),
+        JSON.stringify(parsed, null, 2),
+        'utf8',
+      );
+      file = path.join('raw', name);
+      this.savedPerClass.set(
+        classification,
+        (this.savedPerClass.get(classification) ?? 0) + 1,
+      );
+      logger.info('capture.saved body (direct)', { classification, file, url });
+    } catch (e) {
+      logger.error('capture.write body failed (direct)', {
+        url,
+        error: String(e),
+      });
+    }
+    this.manifest.push({
+      seq,
+      url,
+      status,
+      classification,
+      file,
+      at: Date.now(),
+    });
+    return file;
+  }
+
   // -------------------------------------------------------------------------
   // DOM snapshots
   // -------------------------------------------------------------------------
@@ -222,11 +270,21 @@ export class CaptureHarness {
     }
   }
 
-  /** Save the profile header (`<header>`) if present. */
-  async snapshotHeader(): Promise<void> {
-    const html = await this.captureOuterHtml('header');
-    if (html) this.writeDom('header', html);
-    else logger.warn('capture.snapshotHeader: no <header> found');
+  /**
+   * Save the profile header (`<header>`) if present, falling back to `<main>`'s
+   * first section when Instagram has not rendered a `<header>`. When a username
+   * is given the snapshot is named `profile-header-<username>` so per-account
+   * headers (with their Follow/Following/Unfollow button) are distinguishable.
+   */
+  async snapshotHeader(username?: string): Promise<void> {
+    let html = await this.captureOuterHtml('header');
+    if (!html) html = await this.captureOuterHtml('main section');
+    const name = username ? `profile-header-${username}` : 'header';
+    if (html) this.writeDom(name, html);
+    else
+      logger.warn('capture.snapshotHeader: no <header> or <main> section found', {
+        username: username ?? null,
+      });
   }
 
   /** Save the first `[role="dialog"]` (e.g. the followers dialog) if present. */
@@ -344,6 +402,109 @@ export class CaptureHarness {
     );
     // Grab a final header/dialog state in case the manual flow already changed it.
     await this.snapshotHeader();
+  }
+
+  /**
+   * Deterministically capture the three shapes the passive-only flow misses for
+   * each sample username: (1) web_profile_info (follower/following COUNTS),
+   * (2) the profile HEADER DOM (where the Follow/Following/Unfollow button
+   * lives), and (3) the single `friendships/show/<pk>/` shape (returns BOTH
+   * `following` and `followed_by`, unlike show_many). Every step is best-effort:
+   * a failure is logged and the flow continues to the next sample.
+   */
+  async captureProfileShapes(samples: string[]): Promise<void> {
+    for (const u of samples) {
+      try {
+        await this.captureOneProfileShape(u);
+      } catch (e) {
+        logger.error('capture.captureProfileShapes: sample failed', {
+          username: u,
+          error: String(e),
+        });
+      }
+      await delay(1500);
+    }
+  }
+
+  private async captureOneProfileShape(u: string): Promise<void> {
+    await this.setStatus(`Capturing profile shape for @${u}…`);
+    const uJson = JSON.stringify(u);
+
+    // (1) web_profile_info via the page's own session (same technique as
+    //     detectOwnUsername). May fail with "useragent mismatch" — that's fine;
+    //     the profile NAVIGATION in step (2) makes Instagram fire its own count
+    //     queries which passive capture saves regardless.
+    let pk: string | null = null;
+    try {
+      const wpiUrl =
+        '/api/v1/users/web_profile_info/?username=' + encodeURIComponent(u);
+      const data = await this.tab.evaluate<Record<string, unknown> | null>(
+        `fetch('/api/v1/users/web_profile_info/?username=' + encodeURIComponent(${uJson}), { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })
+          .then(function(r){ return r.json(); })
+          .catch(function(){ return null; })`,
+      );
+      const user = extractProfileUser(data);
+      if (user) {
+        this.saveRaw('profile-info', data, wpiUrl, 200);
+        pk = extractPk(user);
+      } else {
+        logger.warn('capture.captureProfileShapes: web_profile_info had no user', {
+          username: u,
+        });
+      }
+    } catch (e) {
+      logger.warn('capture.captureProfileShapes: web_profile_info fetch failed', {
+        username: u,
+        error: String(e),
+      });
+    }
+
+    // (2) Navigate to the profile so Instagram fires its own profile/count
+    //     queries (passively captured), then snapshot the header DOM.
+    try {
+      await this.tab.goto(`https://www.instagram.com/${u}/`);
+      await delay(4000);
+      await this.snapshotHeader(u);
+    } catch (e) {
+      logger.warn('capture.captureProfileShapes: profile navigation failed', {
+        username: u,
+        error: String(e),
+      });
+    }
+
+    // (3) Single friendships/show/<pk>/ — the only shape with `followed_by`.
+    if (pk) {
+      try {
+        const showUrl = '/api/v1/friendships/show/' + pk + '/';
+        const show = await this.tab.evaluate<Record<string, unknown> | null>(
+          `fetch(${JSON.stringify(showUrl)}, { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })
+            .then(function(r){ return r.json(); })
+            .catch(function(){ return null; })`,
+        );
+        if (
+          show &&
+          ('following' in show || 'followed_by' in show || show['status'] === 'ok')
+        ) {
+          this.saveRaw('friendship-show', show, showUrl, 200);
+        } else {
+          logger.warn(
+            'capture.captureProfileShapes: friendships/show had no relationship fields',
+            { username: u, pk },
+          );
+        }
+      } catch (e) {
+        logger.warn('capture.captureProfileShapes: friendships/show fetch failed', {
+          username: u,
+          pk,
+          error: String(e),
+        });
+      }
+    } else {
+      logger.warn(
+        'capture.captureProfileShapes: no pk resolved; skipping friendships/show',
+        { username: u },
+      );
+    }
   }
 
   /**
@@ -515,4 +676,32 @@ export class CaptureHarness {
 /** Promise-based delay helper (no foreground blocking). */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Narrow an unknown value to a plain object, else null. */
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === 'object'
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Pull the `user` object out of a web_profile_info body. The private API wraps
+ * it as `{ data: { user } }`; some variants expose `{ user }` at the top level.
+ */
+function extractProfileUser(body: unknown): Record<string, unknown> | null {
+  const root = asRecord(body);
+  if (!root) return null;
+  const nested = asRecord(root['data']);
+  return (nested && asRecord(nested['user'])) ?? asRecord(root['user']);
+}
+
+/** Extract the numeric pk (as a string) from a user object, if present. */
+function extractPk(user: Record<string, unknown>): string | null {
+  for (const key of ['id', 'pk', 'pk_id']) {
+    const v = user[key];
+    if (typeof v === 'string' && v.length > 0) return v;
+    if (typeof v === 'number') return String(v);
+  }
+  return null;
 }
