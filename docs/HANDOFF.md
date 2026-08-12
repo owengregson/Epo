@@ -1,10 +1,14 @@
 # Peanut v3 — Overnight Build Handoff
 
 **As of:** 2026-08-12, overnight session. **Branch:** `v3` (pushed to `origin/v3`).
-**Status:** The entire system is **code-complete and assembled** — 188 passing unit tests, clean
-`tsc`/`eslint`/`build`. The ONE thing left that needs you is the **live Instagram gate** (§5): a real
-login → read → follow → unfollow to validate the adapter against live Instagram. Everything up to that
-was built and verified autonomously.
+**Status:** The whole system is assembled + the dashboard is built (194 unit tests, clean
+`tsc`/`eslint`/`build`). **BUT** a Fable adversarial review of the *assembled* system found CRITICAL
+**integration** defects (each part was unit-correct; the composition was not) — most importantly, the
+candidate-enrichment pass was dropped in the rebuild, so the scorer saw no counts, nothing got
+enqueued, and the engine would **livelock hammering Instagram**. These are being remediated now (see
+`docs/superpowers/specs/2026-08-12-peanut-v3-remediation.md`). **Do NOT run the live gate (§5) until the
+remediation is merged and the suite re-verifies** — a git log line `fix(remediation): ...` and a green
+`npm test` will mark it done. Everything up to the remediation was built and verified autonomously.
 
 ---
 
