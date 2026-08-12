@@ -82,7 +82,15 @@ function createWindow(): void {
   });
 
   // --- Foundation (composition root) + IPC ---------------------------------
-  const found = new Foundation({ tab });
+  // Push each engine status projection to the renderer (§5 — pushed, not polled).
+  const found = new Foundation({
+    tab,
+    onStatus: (status) => {
+      if (!dash.webContents.isDestroyed()) {
+        dash.webContents.send('peanut:status', status);
+      }
+    },
+  });
   foundation = found;
   disposeIpc = registerIpc({ tab, foundation: found });
 

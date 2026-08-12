@@ -1,14 +1,15 @@
 /**
  * Typed IPC channel registration (main process side).
  *
- * Every renderer-invocable channel from the `PeanutBridge` contract is
- * registered here and delegates to a single `Foundation` instance (the Phase 1
- * composition root — see `foundation-wiring.ts`). `tab:show`/`tab:hide` toggle
- * the embedded tab's visibility directly.
+ * Every renderer-invocable channel from the `PeanutBridge` contract is registered
+ * here and delegates to a single `Foundation` instance (the Wave 4 composition
+ * root — see `foundation-wiring.ts`). The engine controls (`engine:*`) and the
+ * manual live-gate ops (`foundation:*`) both route through the same real rim/Engine.
+ * `tab:show`/`tab:hide` toggle the embedded tab's visibility directly.
  *
- * No silent catches: every handler that can throw wraps the call, logs the
- * error, and returns a typed `{ ok: false, reason }` so failures surface in the
- * renderer instead of rejecting an opaque invoke.
+ * No silent catches: `Foundation` already returns typed results and logs its own
+ * failures, so handlers delegate directly; the manual/read handlers keep a defensive
+ * wrapper that logs and returns a typed failure so nothing rejects an opaque invoke.
  */
 
 import { ipcMain } from 'electron';
@@ -17,7 +18,7 @@ import type { Foundation } from '@/main/foundation-wiring';
 import * as logger from '@/utils/logger';
 import type {
   ActionResult,
-  FoundationStatus,
+  PeanutStatus,
   ReadFollowersResult,
 } from '@/types';
 
@@ -33,7 +34,9 @@ export interface IpcContext {
 export function registerIpc(ctx: IpcContext): () => void {
   const { tab, foundation } = ctx;
 
-  ipcMain.handle('foundation:login', async (): Promise<FoundationStatus> => {
+  // --- Manual live-gate ops --------------------------------------------------
+
+  ipcMain.handle('foundation:login', async (): Promise<PeanutStatus> => {
     logger.info('foundation:login — opening Instagram in embedded tab');
     return foundation.login();
   });
@@ -77,9 +80,37 @@ export function registerIpc(ctx: IpcContext): () => void {
     },
   );
 
-  ipcMain.handle('foundation:status', async (): Promise<FoundationStatus> => {
+  ipcMain.handle('foundation:status', async (): Promise<PeanutStatus> => {
     return foundation.status();
   });
+
+  // --- Engine controls -------------------------------------------------------
+
+  ipcMain.handle('engine:start', async (): Promise<PeanutStatus> => {
+    logger.info('engine:start');
+    return foundation.startEngine();
+  });
+
+  ipcMain.handle('engine:pause', async (): Promise<PeanutStatus> => {
+    logger.info('engine:pause');
+    return foundation.pauseEngine();
+  });
+
+  ipcMain.handle('engine:resume', async (): Promise<PeanutStatus> => {
+    logger.info('engine:resume');
+    return foundation.resumeEngine();
+  });
+
+  ipcMain.handle('engine:stop', async (): Promise<PeanutStatus> => {
+    logger.info('engine:stop');
+    return foundation.stopEngine();
+  });
+
+  ipcMain.handle('engine:status', async (): Promise<PeanutStatus> => {
+    return foundation.status();
+  });
+
+  // --- Tab visibility --------------------------------------------------------
 
   ipcMain.handle('tab:show', async (): Promise<void> => {
     tab.show();
@@ -95,6 +126,11 @@ export function registerIpc(ctx: IpcContext): () => void {
     'foundation:followOne',
     'foundation:unfollowOne',
     'foundation:status',
+    'engine:start',
+    'engine:pause',
+    'engine:resume',
+    'engine:stop',
+    'engine:status',
     'tab:show',
     'tab:hide',
   ];
