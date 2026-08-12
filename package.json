@@ -1,32 +1,38 @@
 {
   "name": "peanut-instagram-bot",
-  "version": "1.0.0",
-  "description": "Production-ready Instagram follow/unfollow scheduler using Puppeteer with state persistence.",
-  "main": "src/index.js",
+  "version": "3.0.0",
+  "description": "Reliable, safe, observable Instagram growth engine built on a local event-sourced knowledge graph.",
+  "main": "dist/main/main.js",
   "type": "commonjs",
-  "bin": {
-    "peanut-bot": "src/index.js"
-  },
   "scripts": {
-    "start": "node src/index.js",
-    "start:ui": "electron src/electron/main.js",
-    "test": "jest"
+    "build": "node esbuild.config.mjs",
+    "build:dev": "node esbuild.config.mjs --dev",
+    "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:node": "npm rebuild better-sqlite3",
+    "start": "npm run rebuild:electron && npm run build && electron dist/main/main.js",
+    "dev": "npm run rebuild:electron && npm run build:dev && electron dist/main/main.js",
+    "test": "npm run rebuild:node && jest",
+    "lint": "eslint src --ext .ts,.tsx"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "better-sqlite3": "^11.3.0",
     "electron": "^31.2.1",
-    "node-schedule": "^2.1.1",
-    "puppeteer": "^22.8.2",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "yargs": "^17.7.2"
+    "preact": "^10.28.3"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "@electron/rebuild": "^3.6.0",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "esbuild": "^0.20.0",
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.4.0"
   },
   "license": "MIT"
 }
