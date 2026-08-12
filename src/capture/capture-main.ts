@@ -18,7 +18,7 @@
  */
 
 import { app, BaseWindow, session } from 'electron';
-import { mkdirSync } from 'fs';
+import { mkdirSync, readdirSync, readFileSync, statSync } from 'fs';
 import * as path from 'path';
 import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
 import { CaptureHarness } from '@/capture/capture-harness';
@@ -75,6 +75,75 @@ async function detectOwnUsername(tab: InstagramTab): Promise<string | null> {
   }
 }
 
+/**
+ * Read a few sample usernames from the newest saved `*followers-list.json`
+ * fixture on disk (best-effort). Used as the middle-priority source of sample
+ * accounts for profile-shape capture when no env override is set.
+ */
+function readSampleUsernamesFromFixtures(limit: number): string[] {
+  try {
+    const rawDir = path.join(resolveOutDir(), 'raw');
+    const files = readdirSync(rawDir).filter((f) =>
+      f.endsWith('followers-list.json'),
+    );
+    if (files.length === 0) return [];
+    files.sort(
+      (a, b) =>
+        statSync(path.join(rawDir, b)).mtimeMs -
+        statSync(path.join(rawDir, a)).mtimeMs,
+    );
+    const newest = path.join(rawDir, files[0]);
+    const parsed = JSON.parse(readFileSync(newest, 'utf8')) as {
+      users?: Array<{ username?: string }>;
+    };
+    const names: string[] = [];
+    for (const u of parsed.users ?? []) {
+      if (u.username && !names.includes(u.username)) names.push(u.username);
+      if (names.length >= limit) break;
+    }
+    return names;
+  } catch (e) {
+    logger.warn('capture: reading sample usernames from fixtures failed', {
+      error: String(e),
+    });
+    return [];
+  }
+}
+
+/**
+ * Resolve the sample accounts for profile-shape capture, in priority order:
+ *   (a) PEANUT_CAPTURE_SAMPLES env (comma-separated);
+ *   (b) 2-3 usernames from the newest saved followers-list fixture;
+ *   (c) fallback `['instagram']`.
+ * At least one NON-own public account is always included (so a real
+ * Follow/Following button is captured); the detected own username is appended
+ * too (its own-layout header is still useful).
+ */
+function resolveSamples(ownUsername: string): string[] {
+  const samples: string[] = [];
+  const push = (name: string): void => {
+    const n = name.trim();
+    if (n && !samples.includes(n)) samples.push(n);
+  };
+
+  const env = process.env.PEANUT_CAPTURE_SAMPLES?.trim();
+  if (env) {
+    for (const part of env.split(',')) push(part);
+  } else {
+    const fromFixtures = readSampleUsernamesFromFixtures(3);
+    if (fromFixtures.length > 0) for (const u of fromFixtures) push(u);
+    else push('instagram');
+  }
+
+  // Guarantee at least one non-own public account for the Follow button.
+  if (!samples.some((s) => s !== ownUsername)) push('instagram');
+
+  // Include the own username too (own-layout header is still useful).
+  if (ownUsername) push(ownUsername);
+
+  return samples;
+}
+
 async function run(): Promise<void> {
   const outDir = resolveOutDir();
 
@@ -118,43 +187,59 @@ async function run(): Promise<void> {
   }
   if (!mainWindow) return; // window closed during login wait
 
-  await cap.setStatus('Logged in — resolving target…');
+  await cap.setStatus('Logged in — preparing capture…');
 
-  // Resolve target: explicit env override, else the user's own account.
-  let target = process.env.PEANUT_CAPTURE_TARGET?.trim() || '';
-  if (!target) {
-    // Ensure we're on an instagram.com origin so the fetch is same-origin.
-    if (!tab.currentUrl().includes('instagram.com')) {
-      await tab.goto(IG_HOME_URL);
-      await delay(2000);
-    }
+  // Ensure we're on an instagram.com origin so the page's own fetches are
+  // same-origin (required by detectOwnUsername + the direct shape fetches).
+  if (!tab.currentUrl().includes('instagram.com')) {
+    await tab.goto(IG_HOME_URL);
+    await delay(2000);
+  }
+
+  // Detect the own username best-effort. This drives own-followers capture, but
+  // its absence must NEVER dead-end the run — profile-shape capture always runs.
+  let ownUsername = process.env.PEANUT_CAPTURE_TARGET?.trim() || '';
+  if (!ownUsername) {
     const own = await detectOwnUsername(tab);
     if (own) {
-      target = own;
-      logger.info('capture.resolved own username as target', { target });
+      ownUsername = own;
+      logger.info('capture.resolved own username', { ownUsername });
+    } else {
+      logger.warn(
+        'capture: own username not detected (accounts/current_user unavailable); profile-shape capture will still run',
+      );
     }
   }
 
-  if (!target) {
-    await cap.setStatus(
-      'Could not detect your username.',
-      'Close this window and re-run with PEANUT_CAPTURE_TARGET=<username>.',
-    );
-    logger.error(
-      'capture: no target resolved; re-run with PEANUT_CAPTURE_TARGET=<username>',
-    );
-    return; // keep the window open so the user can read the banner
+  // Resolve the sample accounts for deterministic profile-shape capture.
+  const samples = resolveSamples(ownUsername);
+  logger.info('capture.resolved sample accounts', { samples, ownUsername });
+
+  // (1) Own-followers capture — only if the own username is known. Best-effort.
+  if (ownUsername) {
+    await cap.setStatus('Capturing your followers…', `@${ownUsername}`);
+    try {
+      await cap.driveCaptureFlow(ownUsername);
+    } catch (e) {
+      logger.error('capture.driveCaptureFlow failed', { error: String(e) });
+      await cap.setStatus(
+        'Own-followers flow hit an error — continuing to profile capture.',
+      );
+    }
   }
 
+  // (2) Profile-shape capture — ALWAYS runs. Best-effort.
+  await cap.setStatus('Capturing profile shapes…', samples.join(', '));
   try {
-    await cap.driveCaptureFlow(target);
+    await cap.captureProfileShapes(samples);
   } catch (e) {
-    logger.error('capture.driveCaptureFlow failed', { error: String(e) });
-    await cap.setStatus(
-      'Automated flow hit an error — passive capture continues.',
-      'Click the followers count / open dialogs manually. Close the window when done.',
-    );
+    logger.error('capture.captureProfileShapes failed', { error: String(e) });
   }
+
+  await cap.setStatus(
+    'Core + profile capture done — you may close the window.',
+    'Optional: open the unfollow-confirm dialog or activity feed to capture more.',
+  );
 }
 
 /** Finalize on window close: write outputs, print summary, quit. Idempotent. */
