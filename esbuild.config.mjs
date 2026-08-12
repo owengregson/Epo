@@ -19,6 +19,13 @@ await build({
 });
 
 await build({
+  entryPoints: ['src/livetest/livetest-main.ts'],
+  bundle: true, platform: 'node', target: 'node18', outdir: 'dist/livetest',
+  external: ['electron', 'better-sqlite3'],
+  sourcemap: isDev, minify: !isDev, format: 'cjs',
+});
+
+await build({
   entryPoints: ['src/renderer/index.tsx'],
   bundle: true, platform: 'browser', target: 'chrome120', outdir: 'dist/renderer',
   sourcemap: isDev, minify: !isDev, format: 'iife',

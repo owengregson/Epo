@@ -13,6 +13,7 @@
     "start": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/main/main.js",
     "dev": "npm run fix:electron && npm run rebuild:electron && npm run build:dev && electron dist/main/main.js",
     "capture": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/capture/capture-main.js",
+    "livetest": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/livetest/livetest-main.js",
     "test": "npm run rebuild:node && jest",
     "lint": "eslint src --ext .ts,.tsx"
   },
