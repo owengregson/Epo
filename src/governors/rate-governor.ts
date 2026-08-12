@@ -19,8 +19,13 @@ export class RateGovernor {
   constructor(
     private readonly store: KnowledgeStore,
     private readonly clock: Clock,
-    private readonly cfg: RateGovernorConfig,
+    private cfg: RateGovernorConfig,
   ) {}
+
+  /** Swap the live config in place (used when Settings are updated at runtime). */
+  applyConfig(cfg: RateGovernorConfig): void {
+    this.cfg = cfg;
+  }
 
   /** Local midnight of the clock's current day. */
   private startOfTodayLocal(): number {

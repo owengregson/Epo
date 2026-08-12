@@ -81,7 +81,12 @@ export class ChurnScheduler {
   private readonly rate: RateGovernor;
   private readonly actions: ChurnActions;
   private readonly ownPk?: string;
-  private readonly cfg: ChurnConfig;
+  private cfg: ChurnConfig;
+
+  /** Swap the live config in place (used when Settings are updated at runtime). */
+  applyConfig(cfg: ChurnConfig): void {
+    this.cfg = cfg;
+  }
 
   constructor(deps: ChurnDeps) {
     this.store = deps.store;

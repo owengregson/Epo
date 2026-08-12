@@ -48,7 +48,7 @@ export class FollowbackWatcher {
   private readonly clock: Clock;
   private readonly ownPk: string;
   private readonly followers: OwnFollowersSource;
-  private readonly cfg: FollowbackConfig;
+  private cfg: FollowbackConfig;
 
   constructor(deps: FollowbackDeps) {
     this.store = deps.store;
@@ -56,6 +56,11 @@ export class FollowbackWatcher {
     this.ownPk = deps.ownPk;
     this.followers = deps.followers;
     this.cfg = deps.cfg ?? FOLLOWBACK_DEFAULTS;
+  }
+
+  /** Swap the live config in place (used when Settings are updated at runtime). */
+  applyConfig(cfg: FollowbackConfig): void {
+    this.cfg = cfg;
   }
 
   /**

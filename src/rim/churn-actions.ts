@@ -39,7 +39,7 @@ export class AdapterBackedChurnActions implements ChurnActions {
   private readonly budget: RequestBudget;
   private readonly store: KnowledgeStore;
   private readonly ownPk?: string;
-  private readonly dryRun: boolean;
+  private dryRun: boolean;
   private readonly clock: Clock;
   private selfEnsured = false;
 
@@ -50,6 +50,11 @@ export class AdapterBackedChurnActions implements ChurnActions {
     this.ownPk = deps.ownPk;
     this.dryRun = deps.dryRun;
     this.clock = deps.clock ?? new SystemClock();
+  }
+
+  /** Toggle dry-run at runtime (used when Settings are updated). */
+  setDryRun(dryRun: boolean): void {
+    this.dryRun = dryRun;
   }
 
   follow(username: string): Promise<{ ok: boolean }> {
