@@ -1,0 +1,62 @@
+import { KnowledgeStore } from '../store/knowledge-store';
+import { Clock } from './clock';
+
+export interface RateGovernorConfig {
+  dailyHardCeiling: number;
+  dailyOperatingRate: number;
+  minDelayMs: number;
+  maxDelayMs: number;
+  jitterPercent: number;
+  activeHoursStart: number;
+  activeHoursEnd: number;
+}
+
+/**
+ * Enforces the durable daily action cap. Every count comes from the store's
+ * `action_ledger`, so limits survive restart (fixing the old in-memory-cap bug).
+ */
+export class RateGovernor {
+  constructor(
+    private readonly store: KnowledgeStore,
+    private readonly clock: Clock,
+    private readonly cfg: RateGovernorConfig,
+  ) {}
+
+  /** Local midnight of the clock's current day. */
+  private startOfTodayLocal(): number {
+    const d = new Date(this.clock.now());
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  private actionsToday(): number {
+    return this.store.actionCountSince(this.startOfTodayLocal());
+  }
+
+  /** Operating-rate headroom left today, never below zero. */
+  remainingToday(): number {
+    return Math.max(0, this.cfg.dailyOperatingRate - this.actionsToday());
+  }
+
+  /** True once today's actions reach the hard ceiling (uncrossable in code). */
+  atHardCeiling(): boolean {
+    return this.actionsToday() >= this.cfg.dailyHardCeiling;
+  }
+
+  /** True when the clock's local hour is inside the configured active window. */
+  withinActiveHours(): boolean {
+    const hour = new Date(this.clock.now()).getHours();
+    return hour >= this.cfg.activeHoursStart && hour < this.cfg.activeHoursEnd;
+  }
+
+  /**
+   * A humanized delay before the next action: a base uniformly in [min,max], then a
+   * symmetric ± jitter of `jitterPercent`. `rng` is injectable for deterministic tests.
+   */
+  nextDelayMs(rng: () => number = Math.random): number {
+    const { minDelayMs, maxDelayMs, jitterPercent } = this.cfg;
+    const base = minDelayMs + rng() * (maxDelayMs - minDelayMs);
+    const jitter = base * (jitterPercent / 100) * (rng() * 2 - 1);
+    return Math.round(base + jitter);
+  }
+}
