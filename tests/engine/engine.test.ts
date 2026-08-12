@@ -14,19 +14,24 @@ import { RequestBudget } from '@/governors/request-budget';
 import {
   Engine,
   ENGINE_IDLE_MS,
+  ENRICH_BATCH_SIZE,
+  MAX_ENRICH_PASSES_PER_CYCLE,
+  REFILL_PACING_MAX_MS,
+  REFILL_PACING_MIN_MS,
   type EngineChain,
   type EngineChurn,
+  type EngineEnricher,
   type EngineFollowback,
   type EngineScanner,
   type EngineStatus,
   type SleepFn,
 } from '@/engine/engine';
 import type { AdvanceResult } from '@/engine/chain-controller';
-import type { ScanPlan } from '@/engine/scanner';
+import { Scanner, type ScanPlan } from '@/engine/scanner';
 import type { FollowerAcquisition } from '@/rim/types';
 import type { SentinelStatus } from '@/adapter/sentinel';
 import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
-import type { FollowRecord } from '@/store/types';
+import type { AccountFields, FollowRecord } from '@/store/types';
 import { setLevel } from '@/utils/logger';
 
 beforeAll(() => setLevel('error'));
@@ -46,13 +51,50 @@ const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord 
 
 class FakeSentinel {
   checks = 0;
+  /** f9: while > 0, check() REJECTS (a transient evaluate failure), decrementing. */
+  failNext = 0;
   private readonly queue: SentinelStatus[];
   constructor(statuses: SentinelStatus[] = []) {
     this.queue = [...statuses];
   }
   async check(): Promise<SentinelStatus> {
     this.checks += 1;
+    if (this.failNext > 0) {
+      this.failNext -= 1;
+      throw new Error('evaluate failed: tab navigated mid-call');
+    }
     return this.queue.shift() ?? 'ok';
+  }
+}
+
+/**
+ * R1 fake enricher: `enrich(usernames)` writes a scripted profile observation
+ * (counts) into the store for every username it has a profile for — exactly what
+ * the real adapter-backed ProfileEnricher does via web_profile_info.
+ */
+class FakeEnricher implements EngineEnricher {
+  calls: string[][] = [];
+  /** username → the pk + profile fields to observe when enriched. */
+  profiles = new Map<string, { pk: string; fields: AccountFields }>();
+  constructor(
+    private readonly store: KnowledgeStore,
+    private readonly clock: FakeClock,
+  ) {}
+  async enrich(usernames: string[]): Promise<number> {
+    this.calls.push([...usernames]);
+    let enriched = 0;
+    for (const u of usernames) {
+      const p = this.profiles.get(u);
+      if (p === undefined) continue;
+      this.store.observe({
+        accountPk: p.pk,
+        observedAt: this.clock.now(),
+        source: 'profile',
+        fields: { username: u, ...p.fields },
+      });
+      enriched += 1;
+    }
+    return enriched;
   }
 }
 
@@ -166,6 +208,8 @@ interface HarnessOpts {
   settings?: Partial<Settings>;
   seedTarget?: boolean; // default true: t1/'targetone' active at chainIndex 0
   sentinel?: SentinelStatus[]; // scripted statuses, then 'ok'
+  budgetMax?: number; // request-budget window cap (default 999)
+  useRealScanner?: boolean; // wire the REAL Scanner over the store (R1 pipeline tests)
 }
 
 interface Harness {
@@ -177,6 +221,7 @@ interface Harness {
   chain: FakeChain;
   followback: FakeFollowback;
   acquisition: FakeAcquisition;
+  enricher: FakeEnricher;
   sleep: SleepRecorder;
   events: string[];
   statuses: EngineStatus[];
@@ -218,6 +263,7 @@ const makeHarness = (opts: HarnessOpts = {}): Harness => {
   const chain = new FakeChain();
   const followback = new FakeFollowback();
   const acquisition = new FakeAcquisition();
+  const enricher = new FakeEnricher(store, clock);
   const sleep = new SleepRecorder(clock, events);
 
   if (opts.seedTarget !== false) {
@@ -235,15 +281,16 @@ const makeHarness = (opts: HarnessOpts = {}): Harness => {
     clock,
     rate: new RateGovernor(store, clock, rateCfg),
     requestBudget: new RequestBudget(store, clock, {
-      maxRequestsPerWindow: 999,
+      maxRequestsPerWindow: opts.budgetMax ?? 999,
       windowMs: 60 * 60_000,
     }),
     sentinel,
     churn,
-    scanner,
+    scanner: opts.useRealScanner === true ? new Scanner({ store }) : scanner,
     chain,
     followback,
     acquisition,
+    enricher,
     settings,
     sleep: sleep.fn,
     onStatus: (s) => statuses.push(s),
@@ -252,7 +299,7 @@ const makeHarness = (opts: HarnessOpts = {}): Harness => {
 
   return {
     store, clock, sentinel, churn, scanner, chain,
-    followback, acquisition, sleep, events, statuses, halts, engine,
+    followback, acquisition, enricher, sleep, events, statuses, halts, engine,
   };
 };
 
@@ -544,6 +591,194 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     await h.engine.start(); // resolves on its own: halted on the second iteration
 
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
+    expect(h.halts).toEqual(['sentinel:challenge']);
+    expect(h.engine.status().state).toBe('halted');
+  });
+});
+
+// --- R1: enrichment pipeline (REAL Scanner + store, fake enricher) -------------------
+
+describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', () => {
+  /** Seed a follower of t1 as the followers-list would: an edge + list fields. */
+  const follower = (h: Harness, pk: string, fields: AccountFields): void => {
+    h.store.observe({ accountPk: pk, observedAt: T0, source: 'followers-list', fields });
+    h.store.observeEdge(pk, 't1', 'follows', true, T0);
+  };
+
+  test('acquire → enrich → plan: eligible enqueued, rejected skipped, then the chain ADVANCES', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
+    follower(h, 'f1', { username: 'fone' }); // no counts → enriches to in-band (peak ratio)
+    follower(h, 'f2', { username: 'ftwo' }); // no counts → enriches to in-band private
+    follower(h, 'f3', { username: 'fthree', followers: 1000, following: 5000 }); // counts KNOWN, ratio 5 → ineligible
+    follower(h, 'f4', { username: 'ffour' }); // no counts → enriches to too-small
+    h.enricher.profiles.set('fone', { pk: 'f1', fields: { followers: 1000, following: 1100 } });
+    h.enricher.profiles.set('ftwo', {
+      pk: 'f2',
+      fields: { followers: 1000, following: 1150, isPrivate: true },
+    });
+    h.enricher.profiles.set('ffour', { pk: 'f4', fields: { followers: 10, following: 11 } });
+
+    // Step 1: ONE acquisition + the first enrichment pass over the count-less trio
+    // (f3 already has counts, so it is never sent to the enricher).
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.acquisition.calls).toEqual(['targetone']);
+    expect(h.enricher.calls).toEqual([['fone', 'ftwo', 'ffour']]);
+
+    // Step 2: everything has counts now → plan: eligible enqueued, rejected SKIPPED.
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.acquisition.calls).toEqual(['targetone']); // no re-acquire mid-cycle
+    expect(h.store.getFollowRecord('f1')!.state).toBe('queued');
+    expect(h.store.getFollowRecord('f2')!.state).toBe('queued');
+    expect(h.store.getAccount('f3')!.role).toBe('skipped');
+    expect(h.store.getAccount('f4')!.role).toBe('skipped');
+    expect(h.store.candidatePksForTarget('t1')).toEqual([]); // the pool genuinely shrank
+    expect(h.engine.status().queued).toBe(2);
+
+    // Step 3: still under low-water, but progress opened a NEW cycle: one more
+    // acquisition, nothing left to enrich, and the final plan enqueues 0 → EXHAUSTED.
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.acquisition.calls).toEqual(['targetone', 'targetone']);
+    expect(h.enricher.calls.length).toBe(1);
+
+    // Steps 4..8: step 7 is latched off — the refill can NEVER fire again for this
+    // target. No acquisition, no enrichment: the livelock is structurally impossible.
+    for (let i = 0; i < 5; i += 1) expect(await h.engine.stepOnce()).toBe('idle');
+    expect(h.acquisition.calls.length).toBe(2);
+    expect(h.enricher.calls.length).toBe(1);
+
+    // Once the queue drains (records acted on), step 9 ADVANCES the chain.
+    h.store.upsertFollowRecord(rec({ accountPk: 'f1', targetPk: 't1', state: 'pending_followback' }));
+    h.store.upsertFollowRecord(rec({ accountPk: 'f2', targetPk: 't1', state: 'pending_followback' }));
+    h.store.observe({
+      accountPk: 't9',
+      observedAt: T0,
+      source: 'profile',
+      fields: { username: 'targetnine' },
+    });
+    h.chain.script = [{ nextTargetPk: 't9', source: 'own_followers', reason: 'next' }];
+    expect(await h.engine.stepOnce()).toBe('advanced-chain');
+    expect(h.chain.advanceCalls).toEqual(['t1']);
+    expect(h.engine.status().currentTargetPk).toBe('t9');
+    expect(h.engine.status().currentTargetUsername).toBe('targetnine');
+  });
+
+  test('R1.5: enrichment is capped per cycle; an un-enrichable target exhausts instead of spinning', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
+    follower(h, 'f1', { username: 'fone' }); // its counts never arrive: no profile scripted
+
+    // Pass 1 rides the one-and-only acquisition; passes 2..K each cost a step.
+    for (let pass = 1; pass <= MAX_ENRICH_PASSES_PER_CYCLE; pass += 1) {
+      expect(await h.engine.stepOnce()).toBe('acquired');
+      expect(h.enricher.calls.length).toBe(pass);
+      expect(h.enricher.calls[pass - 1]).toEqual(['fone']);
+    }
+    expect(h.acquisition.calls).toEqual(['targetone']); // exactly ONE acquire
+
+    // Cap reached → the FINAL plan enqueues nothing → the target is exhausted…
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    // …and the next step advances the chain (here: none left → halt) instead of
+    // re-acquiring or re-enriching forever.
+    h.chain.script = [{ nextTargetPk: null, source: 'none', reason: 'no-target-available' }];
+    expect(await h.engine.stepOnce()).toBe('halted');
+    expect(h.halts).toEqual(['chain-exhausted']);
+    expect(h.acquisition.calls.length).toBe(1);
+    expect(h.enricher.calls.length).toBe(MAX_ENRICH_PASSES_PER_CYCLE);
+  });
+
+  test('an enrichment pass sends at most ENRICH_BATCH_SIZE usernames', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
+    for (let i = 0; i < ENRICH_BATCH_SIZE + 3; i += 1) {
+      follower(h, `f${i}`, { username: `user${i}` });
+    }
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.enricher.calls[0]!.length).toBe(ENRICH_BATCH_SIZE);
+  });
+
+  test('f10: refill traffic ends with a short jittered pacing sleep', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
+    follower(h, 'f1', { username: 'fone' });
+    h.enricher.profiles.set('fone', { pk: 'f1', fields: { followers: 1000, following: 1100 } });
+
+    await h.engine.stepOnce(); // acquire + enrich: IG traffic → must be paced
+    expect(h.sleep.calls.length).toBe(1);
+    expect(h.sleep.calls[0]).toBeGreaterThanOrEqual(REFILL_PACING_MIN_MS);
+    expect(h.sleep.calls[0]).toBeLessThanOrEqual(REFILL_PACING_MAX_MS);
+  });
+});
+
+// --- R2 / R4 / f9 ---------------------------------------------------------------------
+
+describe('Engine — R2: one concurrent loop (generation token)', () => {
+  const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+  test('stop()+start() around an in-flight step leaves exactly ONE loop running', async () => {
+    const h = makeHarness();
+    h.sleep.hang = true;
+    h.churn.due = [rec({ accountPk: 'a' }), rec({ accountPk: 'b' }), rec({ accountPk: 'c' })];
+
+    const first = h.engine.start();
+    await tick();
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']); // loop 1 acted, parked in its delay
+
+    h.engine.stop(); // aborts loop 1's generation token + its hanging sleep
+    const second = h.engine.start(); // restart while loop 1's step is still unwinding
+    await first; // the STALE loop exits: its OWN token is aborted (identity check)
+    await tick();
+    await tick();
+
+    // Only the new loop stepped: exactly one more action ('b'), never a third.
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a', 'b']);
+    // The stale loop's exit did not clobber the new run's state.
+    expect(h.engine.status().state).toBe('running');
+
+    await tick();
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a', 'b']); // still ONE loop
+
+    h.engine.stop();
+    await second;
+    expect(h.engine.status().state).toBe('idle');
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a', 'b']);
+  });
+});
+
+describe('Engine — R4: request-budget pre-check before acting', () => {
+  test('a saturated budget parks the step: churn.execute is NOT called', async () => {
+    const h = makeHarness({ budgetMax: 0 });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(h.churn.executed).toEqual([]); // no blocked attempt was driven
+    expect(h.sleep.calls).toEqual([ENGINE_IDLE_MS]); // parked on the idle wait
+    expect(h.engine.status().state).not.toBe('halted');
+  });
+
+  test('with budget available the same step acts', async () => {
+    const h = makeHarness({ budgetMax: 5 });
+    h.churn.due = [rec({ accountPk: 'a' })];
+    expect(await h.engine.stepOnce()).toBe('acted');
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
+  });
+});
+
+describe('Engine — f9: per-step resilience', () => {
+  test("a transient sentinel.check rejection yields 'idle' and the loop survives", async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.sentinel.failNext = 1;
+
+    expect(await h.engine.stepOnce()).toBe('idle'); // caught + logged, not a crash
+    expect(h.halts).toEqual([]);
+    expect(h.engine.status().state).not.toBe('halted');
+    expect(h.churn.executed).toEqual([]);
+    expect(h.sleep.calls).toEqual([ENGINE_IDLE_MS]); // one idle back-off beat
+
+    expect(await h.engine.stepOnce()).toBe('acted'); // the next step proceeds normally
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
+  });
+
+  test('a VERIFIED sentinel block still halts — resilience does not mask real blocks', async () => {
+    const h = makeHarness({ sentinel: ['challenge'] });
+    expect(await h.engine.stepOnce()).toBe('halted');
     expect(h.halts).toEqual(['sentinel:challenge']);
     expect(h.engine.status().state).toBe('halted');
   });

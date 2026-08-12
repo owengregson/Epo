@@ -54,6 +54,16 @@ export interface EngineFollowback {
   check(): Promise<{ detected: string[] }>;
 }
 
+/**
+ * The profile-enricher port (R1): fetch profile stats (follower/following counts)
+ * for the given usernames and write them into the store as observations, returning
+ * how many profiles were successfully enriched. The real `ProfileEnricher` (rim)
+ * is budget/sentinel-gated and paced internally; tests inject a fake.
+ */
+export interface EngineEnricher {
+  enrich(usernames: string[]): Promise<number>;
+}
+
 /** The Rate Governor slice the Engine consults for gating, pacing, and status. */
 export interface EngineRate {
   withinActiveHours(): boolean;
@@ -63,9 +73,11 @@ export interface EngineRate {
   remainingToday(): number;
 }
 
-/** The Request Budget slice the Engine projects into status. */
+/** The Request Budget slice the Engine consults for gating and projects into status. */
 export interface EngineRequestBudget {
   remaining(): number;
+  /** R4: whether at least one request may be spent now (pre-checked before acting). */
+  canSpend(): boolean;
 }
 
 /** The Sentinel slice: classify the tab before anything else each iteration. */
@@ -99,6 +111,20 @@ export const defaultSleep: SleepFn = (ms, signal) =>
 
 /** How long an iteration idles when nothing is due yet (§3.1, final branch). */
 export const ENGINE_IDLE_MS = 30_000;
+
+/** f10: bounds of the short jittered pause ending every branch that issued IG traffic. */
+export const REFILL_PACING_MIN_MS = 2_000;
+export const REFILL_PACING_MAX_MS = 5_000;
+
+/** R1: at most this many candidate usernames are enriched per pass. */
+export const ENRICH_BATCH_SIZE = 10;
+
+/**
+ * R1.5: at most this many enrichment passes per refill cycle. Once exhausted, the
+ * cycle plans with whatever counts it has; a plan that enqueues nothing then marks
+ * the target exhausted — enrichment can never spin unboundedly on a dry target.
+ */
+export const MAX_ENRICH_PASSES_PER_CYCLE = 3;
 
 // ---------------------------------------------------------------------------------
 // Public types
@@ -149,6 +175,14 @@ export interface EngineDeps {
   chain: EngineChain;
   followback: EngineFollowback;
   acquisition: FollowerAcquisition;
+  /**
+   * R1: the profile enricher the pool-refill step uses to fetch counts for
+   * candidates the followers-list left count-less. The composition root injects
+   * the real adapter-backed `ProfileEnricher`; when absent (e.g. a wiring that
+   * predates enrichment) a warn-and-noop fallback is used — the refill guard
+   * still terminates, the target is just planned with whatever counts exist.
+   */
+  enricher?: EngineEnricher;
   settings: Settings;
   /** Injected sleep; defaults to a real interruptible setTimeout. */
   sleep?: SleepFn;
@@ -184,13 +218,25 @@ export class Engine {
 
   private current: CurrentTarget | null = null;
   /**
-   * Acquisition guard: set once `acquisition.acquire` has been attempted for the
-   * current target in this refill cycle; cleared when the chain advances or when
-   * a plan actually enqueues new candidates. Prevents the loop from re-acquiring
-   * a dry target forever — with the flag set and nothing new to enqueue, the
-   * "exhausted" branch (§3.1 step 9) is reachable and the chain advances.
+   * Refill-cycle guards (R1.5). A "cycle" is one bounded attempt to refill the
+   * current target's queue: at most ONE acquisition, at most
+   * {@link MAX_ENRICH_PASSES_PER_CYCLE} enrichment passes, then a final plan.
+   * All three reset when the chain advances (new target) or when a plan actually
+   * enqueues candidates (real forward progress, so a later refill is allowed).
+   *
+   * - `acquiredThisCycle`: `acquisition.acquire` has been attempted this cycle.
+   * - `enrichPassesThisCycle`: how many enrichment passes ran this cycle.
+   * - `targetExhausted`: the cycle's FINAL plan enqueued nothing — there is no
+   *   scorable candidate left (un-enriched ones were given their bounded chance),
+   *   so step 7 must not fire again and step 9 (chain advance) becomes reachable.
+   *
+   * Together these make step 7's IG traffic per cycle provably bounded
+   * (1 acquire + K enrich passes), and a new cycle requires a plan that enqueued
+   * > 0 — so the loop can never hammer Instagram on a dry/rejected target.
    */
   private acquiredThisCycle = false;
+  private enrichPassesThisCycle = 0;
+  private targetExhausted = false;
 
   /**
    * Last follow-back sweep, epoch ms. Starts at 0 so the FIRST eligible step of a
@@ -203,10 +249,21 @@ export class Engine {
   private lastSentinel: SentinelStatus | null = null;
   private lastActionAt: number | null = null;
 
+  /** The injected enricher, or the warn-and-noop fallback (see {@link EngineDeps}). */
+  private readonly enricher: EngineEnricher;
+
   constructor(deps: EngineDeps) {
     this.deps = deps;
     this.sleepFn = deps.sleep ?? defaultSleep;
     this.settings = deps.settings;
+    this.enricher = deps.enricher ?? {
+      enrich: (usernames: string[]): Promise<number> => {
+        log.warn('engine: no enricher injected — candidates keep lacking counts', {
+          requested: usernames.length,
+        });
+        return Promise.resolve(0);
+      },
+    };
   }
 
   /**
@@ -230,16 +287,27 @@ export class Engine {
    * Run the loop until stopped or halted. Resolves when the loop exits — `stop()`
    * aborts any in-flight sleep so resolution is prompt (E1). Restartable from
    * `idle` or `halted`; a second concurrent `start()` is a no-op.
+   *
+   * R2 — exactly one concurrent loop: each run captures its own AbortController as
+   * a GENERATION TOKEN, and the loop condition checks THAT token's `signal.aborted`
+   * (by identity), never the current `this.runAbort`. A `stop()`+`start()` around an
+   * in-flight step creates a fresh token for the new loop; the stale loop, waking
+   * from its await, sees its OWN token aborted and exits without touching the new
+   * run's state — two loops can never proceed together.
    */
   async start(): Promise<void> {
     if (this.engineState === 'running' || this.engineState === 'paused') return;
-    if (this.runAbort.signal.aborted) this.runAbort = new AbortController();
+    this.runAbort = new AbortController();
+    const token = this.runAbort; // this run's generation token (R2)
     this.engineState = 'running';
     log.info('engine: started');
     this.emitStatus();
 
     try {
       for (;;) {
+        // The identity check: a restart replaced `this.runAbort`, but THIS loop
+        // lives and dies with its own token.
+        if (token.signal.aborted) break;
         // Read through a method: control commands mutate the state concurrently,
         // so literal narrowing from the assignment above must not apply here.
         const state = this.stateNow();
@@ -252,9 +320,13 @@ export class Engine {
         if (result === 'aborted' || result === 'halted') break;
       }
     } finally {
-      const state = this.stateNow();
-      if (state === 'running' || state === 'paused') {
-        this.engineState = 'idle';
+      // Only the CURRENT generation may reset the engine state — a stale loop
+      // exiting after a restart must not clobber the new run's 'running'.
+      if (token === this.runAbort) {
+        const state = this.stateNow();
+        if (state === 'running' || state === 'paused') {
+          this.engineState = 'idle';
+        }
       }
       log.info('engine: loop ended', { state: this.engineState });
       this.emitStatus();
@@ -330,18 +402,34 @@ export class Engine {
    *     step CONTINUES (this is not the step's one major thing).
    *     (Current-target resolution happens here too: adopt the active store target,
    *     or bootstrap the seed — the latter costs the step, returning `'acquired'`.)
-   *  6. Follow-back sweep due → `followback.check()` → `'swept-followback'`.
-   *  7. Candidate pool low (and target not proven dry) → acquire + plan → `'acquired'`.
-   *  8. A due record → `churn.execute` then sleep `rate.nextDelayMs()` — THE human
-   *     delay between actions → `'acted'`.
-   *  9. Target exhausted → `chain.advance`; adopt the next target → `'advanced-chain'`,
-   *     or halt (`chain-exhausted`) → `'halted'`.
+   *  6. Follow-back sweep due → `followback.check()`, paced → `'swept-followback'`.
+   *  7. Candidate pool low (and target not exhausted) → one bounded refill-cycle
+   *     slice: acquire once / enrich count-less candidates (capped) / plan — every
+   *     IG-traffic path paced → `'acquired'` (see {@link Engine.refillPool}).
+   *  8. R4 pre-check: request budget saturated → park on the idle sleep → `'idle'`.
+   *     Otherwise a due record → `churn.execute` then sleep `rate.nextDelayMs()` —
+   *     THE human delay between actions → `'acted'`.
+   *  9. Target exhausted (refill cycle closed on an empty plan, queue drained) →
+   *     `chain.advance`; adopt the next target → `'advanced-chain'`, or halt
+   *     (`chain-exhausted`) → `'halted'`.
    * 10. Nothing due → short idle sleep → `'idle'`.
    *
    * Emits `onStatus` after every step, whatever the branch.
    */
   async stepOnce(): Promise<StepResult> {
-    const result = await this.step();
+    let result: StepResult;
+    try {
+      result = await this.step();
+    } catch (err) {
+      // f9 — per-step resilience: a transient rejection (a flaky `evaluate`, a
+      // navigation race — including the bare `sentinel.check()` itself) must not
+      // silently drop the whole loop. Log, back off one idle beat, and retry on
+      // the next iteration. Halting is reserved for a VERIFIED block, which the
+      // Sentinel reports as a non-'ok' status (step 2), never as a rejection.
+      log.warn('engine: step failed transiently, treating as idle', { error: String(err) });
+      await this.interruptibleSleep(ENGINE_IDLE_MS);
+      result = 'idle';
+    }
     this.lastStep = result;
     this.emitStatus();
     return result;
@@ -384,27 +472,35 @@ export class Engine {
     const current = this.current;
     if (current === null) return this.halt('no-current-target'); // unreachable guard
 
-    // 6. Follow-back sweep on its slow cadence.
+    // 6. Follow-back sweep on its slow cadence (IG traffic → paced, f10).
     const sweepDueMs = this.settings.followbackSweepHours * MS_PER_HOUR;
     if (now - this.lastSweepAt >= sweepDueMs) {
       await this.deps.followback.check();
       this.lastSweepAt = now;
+      await this.pacingSleep();
       return 'swept-followback';
     }
 
-    // 7. Candidate pool low → refill (acquire + plan), unless the target is proven
-    //    dry (already acquired this cycle AND the graph holds no unqueued candidates).
+    // 7. Candidate pool low → one bounded slice of the refill cycle (R1): acquire
+    //    once → enrich the count-less candidates (capped) → plan. `targetExhausted`
+    //    latches when the cycle's FINAL plan enqueues nothing, so this branch can
+    //    never fire unboundedly on a dry/rejected target (R1.5).
     const queuedForTarget = this.queuedCountFor(current.pk);
-    const unqueuedCandidates = this.deps.store.candidatePksForTarget(current.pk).length;
-    if (
-      queuedForTarget < this.settings.lowWaterCandidates &&
-      (!this.acquiredThisCycle || unqueuedCandidates > 0)
-    ) {
-      await this.acquireAndPlan(current);
-      return 'acquired';
+    if (queuedForTarget < this.settings.lowWaterCandidates && !this.targetExhausted) {
+      return this.refillPool(current);
     }
 
-    // 8. Exactly ONE Instagram action, then the human delay.
+    // 8. Exactly ONE Instagram action, then the human delay — but first the R4
+    //    pre-check: when the request budget cannot spend, a saturated window PARKS
+    //    on the idle wait instead of driving attempts that would only be blocked
+    //    downstream (no action, no chain traffic, no manufactured failures).
+    if (!this.deps.requestBudget.canSpend()) {
+      log.warn('engine: request budget saturated, parking', {
+        remaining: this.deps.requestBudget.remaining(),
+      });
+      await this.interruptibleSleep(ENGINE_IDLE_MS);
+      return 'idle';
+    }
     const due = this.deps.churn.nextDue(now);
     if (due !== null) {
       await this.deps.churn.execute(due, now);
@@ -413,17 +509,24 @@ export class Engine {
       return 'acted';
     }
 
-    // 9. Target exhausted: nothing queued for it, no candidates left in the graph,
-    //    and acquisition has already been tried this cycle → advance the chain.
-    if (queuedForTarget === 0 && unqueuedCandidates === 0 && this.acquiredThisCycle) {
+    // 9. Target exhausted: nothing queued for it and the refill cycle closed with
+    //    an empty plan (every remaining candidate was either scored-and-rejected —
+    //    now role='skipped' — or given its bounded enrichment chance) → advance.
+    if (queuedForTarget === 0 && this.targetExhausted) {
       const advance = await this.deps.chain.advance(current.pk);
       if (advance.nextTargetPk !== null) {
+        const from = current.pk;
         this.adoptTarget(advance.nextTargetPk);
         log.info('engine: advanced chain', {
-          from: current.pk,
+          from,
           to: advance.nextTargetPk,
           source: advance.source,
         });
+        // f10: the next step will typically re-acquire for the new target right
+        // away — interpose the jittered pacing pause before it can.
+        if (this.queuedCountFor(advance.nextTargetPk) < this.settings.lowWaterCandidates) {
+          await this.pacingSleep();
+        }
         return 'advanced-chain';
       }
       return this.halt('chain-exhausted');
@@ -477,40 +580,98 @@ export class Engine {
       username: this.deps.store.getAccount(targetPk)?.username ?? seed,
     };
     this.acquiredThisCycle = true;
+    this.enrichPassesThisCycle = 0;
+    this.targetExhausted = false;
     const plan = this.deps.scanner.planTarget(targetPk);
     if (plan.queued.length > 0) this.acquiredThisCycle = false;
     log.info('engine: seed target bootstrapped', { seed, targetPk, queued: plan.queued.length });
+    await this.pacingSleep(); // f10: the bootstrap IS an acquisition — pace it.
     return 'acquired';
   }
 
-  /** Make `pk` the current target and reset the acquisition guard for its cycle. */
+  /** Make `pk` the current target and reset the refill-cycle guards for it. */
   private adoptTarget(pk: string): void {
     this.current = { pk, username: this.deps.store.getAccount(pk)?.username ?? null };
     this.acquiredThisCycle = false;
+    this.enrichPassesThisCycle = 0;
+    this.targetExhausted = false;
   }
 
-  // --- Pool refill ----------------------------------------------------------------
+  // --- Pool refill (R1) -------------------------------------------------------------
 
   /**
-   * One budgeted acquisition pass + a plan. Sets the acquisition guard; a plan that
-   * actually enqueues candidates clears it again (there was yield, so a later refill
-   * is allowed). A target whose username is unknown cannot be scraped: the guard is
-   * set anyway so the exhausted branch can advance past it instead of spinning.
+   * Step 7's body — ONE bounded slice of the refill cycle per firing:
+   *
+   *  1. `acquisition.acquire` at most ONCE per cycle (a target whose username is
+   *     unknown cannot be scraped; the guard is set anyway so the cycle terminates).
+   *  2. Candidates the followers-list left count-less (`enrichment !== 'profiled'`)
+   *     get an enrichment pass: up to {@link ENRICH_BATCH_SIZE} usernames, at most
+   *     {@link MAX_ENRICH_PASSES_PER_CYCLE} passes per cycle → return; the NEXT
+   *     firing sees their counts and plans.
+   *  3. Otherwise the cycle closes with a plan. A plan that enqueues candidates
+   *     RESETS the guards (real progress, a later refill may run a new cycle); a
+   *     plan that enqueues nothing latches `targetExhausted` — planning was final,
+   *     step 7 stops firing, and step 9 (chain advance) becomes reachable.
+   *
+   * Livelock-proof by construction: a cycle spends at most 1 acquisition + K
+   * enrichment passes of IG traffic, and only demonstrated progress (queued > 0)
+   * can open another cycle. f10: every path that issued IG traffic ends with the
+   * short jittered pacing sleep, so no branch hammers back-to-back.
    */
-  private async acquireAndPlan(current: CurrentTarget): Promise<void> {
-    if (current.username === null) {
-      log.warn('engine: cannot acquire, target username unknown', { pk: current.pk });
+  private async refillPool(current: CurrentTarget): Promise<StepResult> {
+    let issuedTraffic = false;
+
+    // (1) At most one acquisition per cycle.
+    if (!this.acquiredThisCycle) {
       this.acquiredThisCycle = true;
-      return;
+      if (current.username === null) {
+        log.warn('engine: cannot acquire, target username unknown', { pk: current.pk });
+      } else {
+        await this.deps.acquisition.acquire(current.username);
+        issuedTraffic = true;
+      }
     }
-    await this.deps.acquisition.acquire(current.username);
-    this.acquiredThisCycle = true;
+
+    // (2) Select up to a batch of candidate usernames still lacking counts.
+    const usernames: string[] = [];
+    for (const pk of this.deps.store.candidatePksForTarget(current.pk)) {
+      if (usernames.length >= ENRICH_BATCH_SIZE) break;
+      const acc = this.deps.store.getAccount(pk);
+      if (acc === null || acc.enrichment === 'profiled') continue;
+      if (acc.username === undefined) continue; // no username → no profile fetch possible
+      usernames.push(acc.username);
+    }
+
+    // (3) Enrich them (bounded per cycle); the next firing scores what came back.
+    if (usernames.length > 0 && this.enrichPassesThisCycle < MAX_ENRICH_PASSES_PER_CYCLE) {
+      this.enrichPassesThisCycle += 1;
+      const enriched = await this.enricher.enrich(usernames);
+      issuedTraffic = true;
+      log.info('engine: enriched candidates', {
+        target: current.pk,
+        requested: usernames.length,
+        enriched,
+        pass: this.enrichPassesThisCycle,
+      });
+      await this.pacingSleep();
+      return 'acquired';
+    }
+
+    // (4) Plan — final for this cycle when it enqueues nothing.
     const plan = this.deps.scanner.planTarget(current.pk);
-    if (plan.queued.length > 0) this.acquiredThisCycle = false;
-    log.info('engine: acquired + planned', {
+    if (plan.queued.length > 0) {
+      this.acquiredThisCycle = false;
+      this.enrichPassesThisCycle = 0;
+    } else {
+      this.targetExhausted = true;
+    }
+    log.info('engine: refill planned', {
       target: current.pk,
       queued: plan.queued.length,
+      exhausted: this.targetExhausted,
     });
+    if (issuedTraffic) await this.pacingSleep();
+    return 'acquired';
   }
 
   /** How many `queued` follow-records aim at this target. */
@@ -541,19 +702,35 @@ export class Engine {
    */
   private async interruptibleSleep(ms: number): Promise<void> {
     const controller = new AbortController();
+    // Capture the CURRENT generation's signal: cleanup must unhook from the signal
+    // we hooked, even if a restart has swapped `this.runAbort` by the time we wake.
+    const runSignal = this.runAbort.signal;
     const onRunAbort = (): void => controller.abort();
-    if (this.runAbort.signal.aborted) {
+    if (runSignal.aborted) {
       controller.abort();
     } else {
-      this.runAbort.signal.addEventListener('abort', onRunAbort, { once: true });
+      runSignal.addEventListener('abort', onRunAbort, { once: true });
     }
     this.activeSleep = controller;
     try {
       await this.sleepFn(ms, controller.signal);
     } finally {
-      this.activeSleep = null;
-      this.runAbort.signal.removeEventListener('abort', onRunAbort);
+      // R2: only clear our own controller — a stale generation's sleep resolving
+      // after a restart must not null out the NEW loop's in-flight sleep handle.
+      if (this.activeSleep === controller) this.activeSleep = null;
+      runSignal.removeEventListener('abort', onRunAbort);
     }
+  }
+
+  /**
+   * f10: the short jittered pause ending every branch that issued Instagram traffic
+   * outside step 8 (acquire / enrich / sweep / chain-advance-into-refill), so no
+   * branch can hammer back-to-back. Step 8 keeps `rate.nextDelayMs()` as the human
+   * delay between ACTIONS; this is merely the between-reads floor.
+   */
+  private async pacingSleep(): Promise<void> {
+    const span = REFILL_PACING_MAX_MS - REFILL_PACING_MIN_MS;
+    await this.interruptibleSleep(Math.round(REFILL_PACING_MIN_MS + Math.random() * span));
   }
 
   /** Ms until the next local `activeHoursStart` o'clock (always strictly future). */
