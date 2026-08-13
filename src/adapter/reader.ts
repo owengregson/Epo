@@ -6,95 +6,39 @@
  * the KnowledgeStore. It NEVER touches the DOM and NEVER issues requests — it
  * only parses bodies the tab already captured.
  *
- * Everything Instagram-specific (URL matchers, JSON paths) is imported from
- * `field-notes.ts`, the single source of truth. When Instagram changes shape,
- * that file is the one place to update; this Reader consumes it.
+ * Everything Instagram-specific (URL matchers, JSON paths, per-shape
+ * extraction logic) lives behind the `SURFACE` interface
+ * (`src/adapter/ig-surface.ts`, implemented in `src/adapter/versions/*`). When
+ * Instagram changes shape, the version module is the one place to update; this
+ * Reader is version-agnostic and carries zero Instagram literals.
  *
  * Robustness contract (per Global Constraints): no silent `catch {}`. Every
  * parser returns a typed empty/`null` result on no-match and logs a `warn`
- * (via `@/utils/logger`) when it sees an unexpected-but-nonempty body, so shape
- * drift is loud rather than swallowed.
+ * (via `@/utils/logger`) when the surface reports an unexpected-but-nonempty
+ * body (`SHAPE_MISMATCH`), so shape drift is loud rather than swallowed.
  */
 
 import * as logger from '@/utils/logger';
-import { ENDPOINTS, JSON_PATHS } from '@/adapter/field-notes';
+import { SURFACE, isShapeMismatch } from '@/adapter/ig-surface';
 import type { Observation } from '@/store/types';
 
-/** The endpoint kinds the Reader knows how to route. */
-export type EndpointKind =
-  | 'followers-list'
-  | 'show-many'
-  | 'friendship-show'
-  | 'profile-info'
-  | 'activity-feed';
-
-/** Result of parsing one paginated followers page. */
-export interface FollowersListResult {
-  observations: Observation[];
-  /** Resume cursor (`next_max_id`); `null` when there is no next page. */
-  cursor: string | null;
-  hasMore: boolean;
-}
-
-/** One relationship row from the batched `show_many` shape (no `followed_by`). */
-export interface ShowManyEntry {
-  pk: string;
-  following: boolean;
-  isPrivate?: boolean;
-}
-
-/** The single `friendships/show/<pk>` shape — both directions known. */
-export interface FriendshipShowResult {
-  pk: string;
-  following: boolean;
-  /** `followed_by` => THEY follow us (the follow-back signal). */
-  followedBy: boolean;
-  isPrivate?: boolean;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Resolve a dotted path (e.g. `data.user`, `edge_followed_by.count`). */
-function getPath(root: unknown, path: string): unknown {
-  let current: unknown = root;
-  for (const key of path.split('.')) {
-    if (!isRecord(current)) return undefined;
-    current = current[key];
-  }
-  return current;
-}
-
-function asStringId(value: unknown): string | null {
-  if (typeof value === 'string' && value.length > 0) return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  return null;
-}
-
-function asBool(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
-}
-
-function asCount(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
+// Re-export the stable result types so existing consumers keep one import site.
+export type {
+  EndpointKind,
+  FollowersListResult,
+  FriendshipShowResult,
+  ShowManyEntry,
+} from '@/adapter/ig-surface';
+import type { EndpointKind, FollowersListResult, FriendshipShowResult, ShowManyEntry } from '@/adapter/ig-surface';
 
 export class Reader {
   /**
-   * Route a response URL to the parser that handles it, or `null`.
-   *
-   * Order matters: `friendship-show` and `show-many` both live under
-   * `/friendships/`, and a `show/<pk>/` URL also contains a numeric segment, so
-   * the single-show matcher is tested BEFORE `show_many`/`followers`.
+   * Route a response URL to the parser that handles it, or `null`. Ordering
+   * concerns (e.g. `friendship-show` before `show-many`/`followers-list`)
+   * live inside the versioned endpoint table.
    */
   matchEndpoint(url: string): EndpointKind | null {
-    if (ENDPOINTS.friendshipShow.test(url)) return 'friendship-show';
-    if (ENDPOINTS.showMany.test(url)) return 'show-many';
-    if (ENDPOINTS.followersList.test(url)) return 'followers-list';
-    if (ENDPOINTS.webProfileInfo.test(url)) return 'profile-info';
-    if (ENDPOINTS.activityFeed.test(url)) return 'activity-feed';
-    return null;
+    return SURFACE.matchEndpoint(url);
   }
 
   /**
@@ -103,20 +47,27 @@ export class Reader {
    * {@link parseFriendshipShow}.
    */
   extractPkFromUrl(url: string): string | null {
-    const match = /\/friendships\/show\/(\d+)\//.exec(url);
-    return match ? match[1] : null;
+    return SURFACE.extractIds('friendship-show', url).pk ?? null;
   }
 
   /**
-   * Pull the target pk out of a `friendships/<pk>/followers/` URL. The
-   * followers-list body carries the follower rows but not the target's own pk,
-   * so acquisition derives the follower→target edge from this URL the first
-   * time a page matches (profile-info is enrichment only). Mirrors
-   * {@link extractPkFromUrl}; returns `null` on a non-matching URL.
+   * Pull the target pk out of a followers-list URL. The followers-list body
+   * carries the follower rows but not the target's own pk, so acquisition
+   * derives the follower→target edge from this URL the first time a page
+   * matches (profile-info is enrichment only). Returns `null` on a
+   * non-matching URL.
    */
   extractTargetPkFromFollowersUrl(url: string): string | null {
-    const match = /\/friendships\/(\d+)\/followers\//.exec(url);
-    return match ? match[1] : null;
+    return SURFACE.extractIds('followers-list', url).targetPk ?? null;
+  }
+
+  /**
+   * Pull the target pk out of a following-list URL (the account whose FOLLOWING
+   * list is paginating). Mirrors {@link extractTargetPkFromFollowersUrl};
+   * returns `null` on a non-matching URL.
+   */
+  extractTargetPkFromFollowingUrl(url: string): string | null {
+    return SURFACE.extractIds('following-list', url).targetPk ?? null;
   }
 
   /**
@@ -125,121 +76,114 @@ export class Reader {
    */
   parseFollowersList(body: unknown, at: number): FollowersListResult {
     const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false };
-    const root = this.coerce(body, 'followers-list');
-    if (!isRecord(root)) return empty;
-
-    const p = JSON_PATHS.followersList;
-    const users = getPath(root, p.users);
-    if (!Array.isArray(users)) {
-      this.warnUnexpected('followers-list', p.users, root);
+    const result = SURFACE.extractFollowersList(this.coerce(body, 'followers-list'), at);
+    if (isShapeMismatch(result)) {
+      this.warnUnexpected('followers-list', body);
       return empty;
     }
-
-    const observations: Observation[] = [];
-    for (const entry of users) {
-      if (!isRecord(entry)) continue;
-      const pk = asStringId(entry[p.userPk]);
-      if (pk === null) continue;
-      observations.push({
-        accountPk: pk,
-        observedAt: at,
-        source: 'followers-list',
-        fields: {
-          username: typeof entry[p.userName] === 'string'
-            ? (entry[p.userName] as string)
-            : undefined,
-          isPrivate: asBool(entry[p.isPrivate]),
-          isVerified: asBool(entry[p.isVerified]),
-        },
-      });
-    }
-
-    const nextMaxId = getPath(root, p.nextMaxId);
-    const cursor = typeof nextMaxId === 'string' && nextMaxId.length > 0
-      ? nextMaxId
-      : null;
-    return { observations, cursor, hasMore: getPath(root, p.hasMore) === true };
+    return result;
   }
 
   /**
-   * Parse `web_profile_info` into a single profile observation (with follower
-   * and following counts). Returns `null` when the body has no user.
+   * Parse one paginated FOLLOWING page. The following-list body carries the
+   * exact followers-list shape (a `users` array + `next_max_id`), so this is a
+   * thin alias over the same extractor — kept separate so shape-drift warnings
+   * name the endpoint that actually broke.
+   */
+  parseFollowingList(body: unknown, at: number): FollowersListResult {
+    const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false };
+    const result = SURFACE.extractFollowersList(this.coerce(body, 'following-list'), at);
+    if (isShapeMismatch(result)) {
+      this.warnUnexpected('following-list', body);
+      return empty;
+    }
+    return result;
+  }
+
+  /**
+   * Parse a profile-info body into a single profile observation (with
+   * follower and following counts). Returns `null` when the body has no user.
    */
   parseProfileInfo(body: unknown, at: number): Observation | null {
-    const root = this.coerce(body, 'profile-info');
-    if (!isRecord(root)) return null;
-
-    const p = JSON_PATHS.webProfileInfo;
-    const user = getPath(root, p.user);
-    if (!isRecord(user)) return null;
-
-    const pk = asStringId(user[p.id]);
-    if (pk === null) {
-      this.warnUnexpected('profile-info', `${p.user}.${p.id}`, root);
+    const result = SURFACE.extractProfileInfo(this.coerce(body, 'web-profile-info'), at);
+    if (isShapeMismatch(result)) {
+      this.warnUnexpected('web-profile-info', body);
       return null;
     }
-
-    return {
-      accountPk: pk,
-      observedAt: at,
-      source: 'profile',
-      fields: {
-        username: typeof user[p.username] === 'string'
-          ? (user[p.username] as string)
-          : undefined,
-        followers: asCount(getPath(user, p.followersCount)),
-        following: asCount(getPath(user, p.followingCount)),
-        isPrivate: asBool(user[p.isPrivate]),
-        isVerified: asBool(user[p.isVerified]),
-      },
-    };
+    return result;
   }
 
   /**
-   * Parse the batched `show_many` relationship map. This shape reports only
-   * whether WE follow each pk — it carries NO `followed_by`. Returns `[]` on
+   * Whether the logged-in viewer already follows this profile, read from the
+   * profile-info body. This is what decides whether a PRIVATE account's
+   * followers are visible to us — we can read the followers of anyone we
+   * follow. Returns `null` when the flag is absent.
+   */
+  profileFollowedByViewer(body: unknown): boolean | null {
+    return SURFACE.extractProfileFollowedByViewer(this.coerce(body, 'web-profile-info'));
+  }
+
+  /**
+   * Parse the batched relationship map. This shape reports only whether WE
+   * follow each pk — it carries NO followed-by direction. Returns `[]` on
    * no-match.
    */
   parseShowMany(body: unknown, _at: number): ShowManyEntry[] {
-    const root = this.coerce(body, 'show-many');
-    if (!isRecord(root)) return [];
-
-    const p = JSON_PATHS.showMany;
-    const statuses = getPath(root, p.statuses);
-    if (!isRecord(statuses)) {
-      this.warnUnexpected('show-many', p.statuses, root);
+    const result = SURFACE.extractShowMany(this.coerce(body, 'show-many'));
+    if (isShapeMismatch(result)) {
+      this.warnUnexpected('show-many', body);
       return [];
     }
-
-    const out: ShowManyEntry[] = [];
-    for (const [pk, status] of Object.entries(statuses)) {
-      if (!isRecord(status)) continue;
-      out.push({
-        pk,
-        following: status[p.following] === true,
-        isPrivate: asBool(status[p.isPrivate]),
-      });
-    }
-    return out;
+    return result;
   }
 
   /**
-   * Parse the single `friendships/show/<pk>` shape into a both-directions
-   * relationship. The pk is supplied by the caller (from the URL, via
-   * {@link extractPkFromUrl}) because the body has none.
+   * Parse the single relationship shape into a both-directions result. The pk
+   * is supplied by the caller (from the URL, via {@link extractPkFromUrl})
+   * because the body has none. An unexpected shape (`SHAPE_MISMATCH` from the
+   * surface) is warned and mapped to the typed all-false no-match result — use
+   * `SURFACE.extractFriendshipShow` directly when the caller needs to
+   * distinguish "no relationship" from "unparsed".
    */
   parseFriendshipShow(body: unknown, _at: number, pk: string): FriendshipShowResult {
-    const root = this.coerce(body, 'friendship-show');
-    const p = JSON_PATHS.friendshipShow;
-    if (!isRecord(root)) {
+    const result = SURFACE.extractFriendshipShow(this.coerce(body, 'friendship-show'), pk);
+    if (isShapeMismatch(result)) {
+      this.warnUnexpected('friendship-show', body);
       return { pk, following: false, followedBy: false, isPrivate: undefined };
     }
-    return {
-      pk,
-      following: root[p.following] === true,
-      followedBy: root[p.followedBy] === true,
-      isPrivate: asBool(root[p.isPrivate]),
-    };
+    return result;
+  }
+
+  /**
+   * Relationship facts (whether WE follow each pk) from a response body, routed
+   * by endpoint. Pure; used by the RelationshipReconciler to heal divergence
+   * caused by external follow/unfollow changes. `[]` on any endpoint that
+   * carries no viewer-side relationship (or on no-match).
+   */
+  relationshipFacts(
+    url: string,
+    body: unknown,
+    at: number,
+  ): Array<{ pk: string; weFollow: boolean }> {
+    switch (this.matchEndpoint(url)) {
+      case 'show-many':
+        return this.parseShowMany(body, at).map((e) => ({ pk: e.pk, weFollow: e.following }));
+      case 'friendship-show': {
+        const pk = this.extractPkFromUrl(url);
+        if (pk === null) return [];
+        const r = this.parseFriendshipShow(body, at, pk);
+        return [{ pk, weFollow: r.following }];
+      }
+      case 'web-profile-info': {
+        const obs = this.parseProfileInfo(body, at);
+        const followed = this.profileFollowedByViewer(body);
+        // Emit only when BOTH the pk and the viewer-side flag are present.
+        if (obs === null || followed === null) return [];
+        return [{ pk: obs.accountPk, weFollow: followed }];
+      }
+      default:
+        return [];
+    }
   }
 
   /**
@@ -260,11 +204,9 @@ export class Reader {
     }
   }
 
-  private warnUnexpected(kind: EndpointKind, path: string, root: Record<string, unknown>): void {
-    logger.warn('reader.parse: unexpected body shape', {
-      kind,
-      missingPath: path,
-      keys: Object.keys(root),
-    });
+  private warnUnexpected(kind: EndpointKind, body: unknown): void {
+    const keys =
+      typeof body === 'object' && body !== null ? Object.keys(body as object) : [];
+    logger.warn('reader.parse: unexpected body shape', { kind, keys });
   }
 }

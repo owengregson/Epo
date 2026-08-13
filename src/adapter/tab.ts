@@ -19,27 +19,26 @@
  */
 
 import { WebContentsView, session } from 'electron';
-import type { BaseWindow, Debugger, Event as ElectronEvent } from 'electron';
+import type { BaseWindow, Debugger, Event as ElectronEvent, WebContents } from 'electron';
 import * as logger from '@/utils/logger';
+import { SURFACE } from '@/adapter/ig-surface';
 import type { ResponseHandler, TabResponse, Unsubscribe } from '@/types';
 
 /** Persistent session partition — login state is durable across restarts. */
 export const IG_PARTITION = 'persist:ig';
 
 /** Instagram home; the login flow is completed by the user in the tab. */
-export const IG_HOME_URL = 'https://www.instagram.com/';
+export const IG_HOME_URL = `${SURFACE.origin}/`;
 
 /**
- * A genuine desktop Chrome-on-macOS User-Agent.
+ * The genuine desktop Chrome User-Agent the active surface version pins.
  *
  * Electron's default UA advertises `Electron/<version>`, which Instagram's
  * private JSON endpoints reject with "useragent mismatch". We pin a real Chrome
  * UA on the persistent session so the intercepted API calls the Reader depends
- * on are accepted. Bump this alongside `ADAPTER_VERSION` when re-verified.
+ * on are accepted. It is re-verified (and bumped) with the surface version.
  */
-export const IG_USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+export const IG_USER_AGENT = SURFACE.userAgent;
 
 interface Rectangle {
   x: number;
@@ -102,15 +101,49 @@ export class InstagramTab {
     this.view.setVisible(false);
   }
 
+  /**
+   * The tab's LIVE webContents, guarded. Throws a clear, catchable error when the
+   * webContents was destroyed or never initialized — so callers log a meaningful
+   * reason instead of a cryptic `Cannot read properties of undefined (reading
+   * 'executeJavaScript')` when the tab is torn down (e.g. after a hard navigation
+   * failure or during shutdown).
+   */
+  private liveContents(): WebContents {
+    const wc = this.view?.webContents;
+    if (!wc || wc.isDestroyed()) {
+      throw new Error('instagram-tab: webContents unavailable (destroyed or not initialized)');
+    }
+    return wc;
+  }
+
   /** Navigate the tab to a URL (e.g. Instagram home for login). */
   async goto(url: string): Promise<void> {
     logger.info('tab.goto', { url });
-    await this.view.webContents.loadURL(url);
+    try {
+      await this.liveContents().loadURL(url);
+    } catch (e) {
+      // ERR_ABORTED (-3) means the navigation was superseded — a concurrent
+      // loadURL (e.g. the startup nav racing the build-flow's username resolve)
+      // or an Instagram client-side redirect. The winning navigation is the one
+      // that matters, so this is benign; rethrow anything else.
+      const err = e as { code?: string; errno?: number };
+      if (err && (err.code === 'ERR_ABORTED' || err.errno === -3)) {
+        logger.debug('tab.goto: navigation superseded (ERR_ABORTED), ignoring', { url });
+        return;
+      }
+      throw e;
+    }
   }
 
-  /** The tab's current URL (used by the Sentinel for logged-out redirects). */
+  /**
+   * The tab's current URL (used by the Sentinel for logged-out redirects). A
+   * query, not an operation, so it degrades to an empty string when the
+   * webContents is unavailable rather than throwing into every caller's path.
+   */
   currentUrl(): string {
-    return this.view.webContents.getURL();
+    const wc = this.view?.webContents;
+    if (!wc || wc.isDestroyed()) return '';
+    return wc.getURL();
   }
 
   /**
@@ -125,7 +158,7 @@ export class InstagramTab {
       typeof fnOrString === 'function'
         ? `(${fnOrString.toString()})()`
         : fnOrString;
-    return (await this.view.webContents.executeJavaScript(code, true)) as T;
+    return (await this.liveContents().executeJavaScript(code, true)) as T;
   }
 
   /**

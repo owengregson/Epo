@@ -1,7 +1,7 @@
 import { Actor, type AdapterTab } from '@/adapter/actor';
 import { Sentinel, type SentinelTab } from '@/adapter/sentinel';
 import { AdapterStaleError } from '@/adapter/errors';
-import { SELECTORS, SCROLL_CONTAINER_HEURISTIC } from '@/adapter/field-notes';
+import { SURFACE } from '@/adapter/ig-surface';
 
 /**
  * A fake tab whose `evaluate` returns a canned value (default: null, i.e. the
@@ -53,9 +53,9 @@ describe('Actor health-checks throw AdapterStaleError on absent selectors', () =
     const err = await rejection(fastActor(tab).follow('someone'));
     expect(err).toBeInstanceOf(AdapterStaleError);
     expect((err as AdapterStaleError).component).toBe('actor.follow');
-    expect((err as AdapterStaleError).selector).toBe(SELECTORS.profileActionButtonRole);
+    expect((err as AdapterStaleError).selector).toBe(SURFACE.staleSelectorLabel('action-button'));
     // It navigated to the profile before probing.
-    expect(tab.gotoCalls).toContain('https://www.instagram.com/someone/');
+    expect(tab.gotoCalls).toContain(SURFACE.profileUrl('someone'));
   });
 
   test('unfollow: missing header button -> actor.unfollow / profileActionButtonRole', async () => {
@@ -63,7 +63,7 @@ describe('Actor health-checks throw AdapterStaleError on absent selectors', () =
     const err = await rejection(fastActor(tab).unfollow('someone'));
     expect(err).toBeInstanceOf(AdapterStaleError);
     expect((err as AdapterStaleError).component).toBe('actor.unfollow');
-    expect((err as AdapterStaleError).selector).toBe(SELECTORS.profileActionButtonRole);
+    expect((err as AdapterStaleError).selector).toBe(SURFACE.staleSelectorLabel('action-button'));
   });
 
   test('unfollow: confirm control never appears -> actor.unfollow', async () => {
@@ -75,7 +75,7 @@ describe('Actor health-checks throw AdapterStaleError on absent selectors', () =
     const err = await rejection(fastActor(tab).unfollow('someone'));
     expect(err).toBeInstanceOf(AdapterStaleError);
     expect((err as AdapterStaleError).component).toBe('actor.unfollow');
-    expect((err as AdapterStaleError).selector).toBe(String(SELECTORS.unfollowConfirmText));
+    expect((err as AdapterStaleError).selector).toBe(SURFACE.staleSelectorLabel('unfollow-confirm'));
   });
 
   test('openFollowersDialog: link/dialog absent -> actor.openFollowersDialog', async () => {
@@ -101,6 +101,8 @@ describe('Actor tolerates an already-satisfied state (idempotent, no throw)', ()
     });
     const res = await fastActor(tab).follow('someone');
     expect(res.ok).toBe(true);
+    // No click happened — surfaced so callers can reconcile the external follow.
+    if (res.ok) expect(res.value.clicked).toBe(false);
   });
 });
 
@@ -231,6 +233,7 @@ describe('Actor A3: post-click state verification', () => {
     });
     const res = await new Actor(tab, { pollIntervalMs: 0, pollTimeoutMs: 0 }).follow('someone');
     expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.clicked).toBe(true);
   });
 
   test('unfollow: post-confirm state never flips to Follow -> typed err', async () => {

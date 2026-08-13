@@ -3,18 +3,21 @@
  *
  * Before (and around) any action, the engine asks the Sentinel whether the tab
  * is in a safe state. URL checks are the most reliable signal (Instagram
- * redirects to `/challenge/`, `/accounts/suspended/`, `/accounts/login/`); a
- * body-text scan is a best-effort backstop for in-page "Action Blocked" style
- * interstitials that do not change the URL.
+ * redirects to challenge/suspended/login interstitials); a body-text scan is a
+ * best-effort backstop for in-page "Action Blocked" style interstitials that
+ * do not change the URL.
  *
- * All signatures live in `field-notes.ts`; this file only maps a match to a
- * label. Any non-`ok` result should halt the engine and alert.
+ * All signatures live in the active `SURFACE` version module as LABELLED
+ * `BlockSignature`s (pattern → status), so this file is version-agnostic and
+ * only walks the tables. Any non-`ok` result should halt the engine and alert.
  */
 
 import * as logger from '@/utils/logger';
-import { BLOCK_SIGNATURES } from '@/adapter/field-notes';
+import { SURFACE } from '@/adapter/ig-surface';
+import type { SentinelStatus } from '@/adapter/ig-surface';
 
-export type SentinelStatus = 'ok' | 'action-blocked' | 'challenge' | 'logged-out';
+// Re-export so existing consumers keep importing the status from here.
+export type { SentinelStatus } from '@/adapter/ig-surface';
 
 /** Minimal structural view of the tab the Sentinel inspects. */
 export interface SentinelTab {
@@ -42,28 +45,22 @@ export class Sentinel {
     }
 
     // Body-text backstop: a challenge/block screen that keeps the same URL.
-    const text = await this.tab.evaluate<string>(
-      `(() => (document.body ? document.body.innerText : ''))()`,
-    );
-    for (const rx of BLOCK_SIGNATURES.texts) {
-      if (rx.test(text)) {
-        logger.warn('sentinel.blocked', { by: 'text', pattern: String(rx) });
-        return 'action-blocked';
+    const text = await this.tab.evaluate<string>(SURFACE.bodyTextProbeScript());
+    for (const sig of SURFACE.textSignatures) {
+      if (sig.pattern.test(text)) {
+        logger.warn('sentinel.blocked', { by: 'text', pattern: String(sig.pattern) });
+        return sig.status;
       }
     }
 
     return 'ok';
   }
 
-  /**
-   * Map a URL against `BLOCK_SIGNATURES.urls`. The login redirect means the
-   * session expired (`logged-out`); `/challenge/` and `/accounts/suspended/`
-   * are account interstitials (`challenge`).
-   */
+  /** Map a URL against the labelled block signatures. */
   private classifyUrl(url: string): SentinelStatus {
-    const [challengeRx, suspendedRx, loginRx] = BLOCK_SIGNATURES.urls;
-    if (loginRx.test(url)) return 'logged-out';
-    if (challengeRx.test(url) || suspendedRx.test(url)) return 'challenge';
+    for (const sig of SURFACE.blockSignatures) {
+      if (sig.pattern.test(url)) return sig.status;
+    }
     return 'ok';
   }
 }

@@ -1,4 +1,5 @@
 import { Reader } from '@/adapter/reader';
+import { SURFACE, SHAPE_MISMATCH, isShapeMismatch } from '@/adapter/ig-surface';
 
 import followersPage1 from '../fixtures/adapter/followers-list-page1.json';
 import followersLast from '../fixtures/adapter/followers-list-last.json';
@@ -32,12 +33,20 @@ describe('Reader.matchEndpoint', () => {
     ).toBe('followers-list');
   });
 
-  test('web_profile_info -> profile-info', () => {
+  test('following-list endpoint (Phase 5) — not misread as followers-list', () => {
+    expect(
+      r.matchEndpoint(
+        'https://www.instagram.com/api/v1/friendships/17841400000/following/?count=12&max_id=24',
+      ),
+    ).toBe('following-list');
+  });
+
+  test('web_profile_info -> web-profile-info', () => {
     expect(
       r.matchEndpoint(
         'https://www.instagram.com/api/v1/users/web_profile_info/?username=x',
       ),
-    ).toBe('profile-info');
+    ).toBe('web-profile-info');
   });
 
   test('news/inbox -> activity-feed', () => {
@@ -85,6 +94,40 @@ describe('Reader.extractTargetPkFromFollowersUrl', () => {
       ),
     ).toBeNull();
     expect(r.extractTargetPkFromFollowersUrl('https://example.com/')).toBeNull();
+  });
+});
+
+describe('Reader.extractTargetPkFromFollowingUrl', () => {
+  test('extracts the numeric id from a following URL', () => {
+    expect(
+      r.extractTargetPkFromFollowingUrl(
+        'https://www.instagram.com/api/v1/friendships/17841400000/following/?count=12',
+      ),
+    ).toBe('17841400000');
+  });
+
+  test('returns null on a non-matching URL (a followers URL is NOT following)', () => {
+    expect(
+      r.extractTargetPkFromFollowingUrl(
+        'https://www.instagram.com/api/v1/friendships/17841400000/followers/?count=12',
+      ),
+    ).toBeNull();
+    expect(r.extractTargetPkFromFollowingUrl('https://example.com/')).toBeNull();
+  });
+});
+
+describe('Reader.parseFollowingList', () => {
+  test('the following-list body parses with the followers-list shape', () => {
+    const out = r.parseFollowingList(followersPage1, AT);
+    expect(out.observations).toHaveLength(12);
+    expect(out.cursor).toBe('12');
+    expect(out.hasMore).toBe(true);
+    expect(out.observations[0].accountPk).toBe('1000000002');
+  });
+
+  test('no-match body yields a typed empty result (no throw)', () => {
+    const out = r.parseFollowingList({ nope: true }, AT);
+    expect(out).toEqual({ observations: [], cursor: null, hasMore: false });
   });
 });
 
@@ -161,6 +204,26 @@ describe('Reader.parseProfileInfo', () => {
   });
 });
 
+describe('Reader.profileFollowedByViewer', () => {
+  test('true when the viewer already follows the account (private followers visible)', () => {
+    expect(
+      r.profileFollowedByViewer({ data: { user: { id: '1', followed_by_viewer: true } } }),
+    ).toBe(true);
+  });
+
+  test('false when the viewer does not follow', () => {
+    expect(
+      r.profileFollowedByViewer({ data: { user: { id: '1', followed_by_viewer: false } } }),
+    ).toBe(false);
+  });
+
+  test('null when the flag or user is absent', () => {
+    expect(r.profileFollowedByViewer({ data: { user: { id: '1' } } })).toBeNull();
+    expect(r.profileFollowedByViewer({ data: {} })).toBeNull();
+    expect(r.profileFollowedByViewer({})).toBeNull();
+  });
+});
+
 describe('Reader.parseShowMany', () => {
   test('maps friendship_statuses to per-pk following flags', () => {
     const out = r.parseShowMany(showMany, AT);
@@ -207,6 +270,76 @@ describe('Reader.parseFriendshipShow', () => {
 
   test('no-match body -> false flags, pk preserved', () => {
     const out = r.parseFriendshipShow({ nope: true }, AT, '42');
+    expect(out).toEqual({
+      pk: '42',
+      following: false,
+      followedBy: false,
+      isPrivate: undefined,
+    });
+  });
+});
+
+describe('Reader.relationshipFacts', () => {
+  const SHOW_MANY_URL = 'https://i.instagram.com/api/v1/friendships/show_many/';
+  const SHOW_URL = 'https://www.instagram.com/api/v1/friendships/show/999/';
+  const PROFILE_URL = 'https://www.instagram.com/api/v1/users/web_profile_info/?username=x';
+
+  test('show-many → one fact per entry, weFollow from following', () => {
+    const facts = r.relationshipFacts(SHOW_MANY_URL, showMany, AT);
+    expect(facts).toHaveLength(12);
+    const byPk = new Map(facts.map((f) => [f.pk, f.weFollow]));
+    expect(byPk.get('1000000001')).toBe(true);
+    expect(byPk.get('1000000002')).toBe(false);
+    expect(facts.filter((f) => f.weFollow)).toHaveLength(5);
+  });
+
+  test('friendship-show → single fact keyed by the URL pk', () => {
+    expect(r.relationshipFacts(SHOW_URL, friendshipShowPrivate, AT)).toEqual([
+      { pk: '999', weFollow: true },
+    ]);
+  });
+
+  test('friendship-show with following:false → weFollow false', () => {
+    const body = { following: false, followed_by: true, status: 'ok' };
+    expect(r.relationshipFacts(SHOW_URL, body, AT)).toEqual([{ pk: '999', weFollow: false }]);
+  });
+
+  test('web-profile-info → fact from pk + followed_by_viewer', () => {
+    expect(r.relationshipFacts(PROFILE_URL, profileInfo1, AT)).toEqual([
+      { pk: '1000000003', weFollow: true },
+    ]);
+  });
+
+  test('web-profile-info without a user or without the flag → []', () => {
+    expect(r.relationshipFacts(PROFILE_URL, { data: {} }, AT)).toEqual([]);
+    expect(
+      r.relationshipFacts(PROFILE_URL, { data: { user: { id: '1', username: 'x' } } }, AT),
+    ).toEqual([]);
+  });
+
+  test('accepts a raw JSON string body', () => {
+    expect(r.relationshipFacts(SHOW_MANY_URL, JSON.stringify(showMany), AT)).toHaveLength(12);
+  });
+
+  test('non-relationship endpoints and unrelated URLs → []', () => {
+    expect(
+      r.relationshipFacts('https://www.instagram.com/api/v1/news/inbox/', {}, AT),
+    ).toEqual([]);
+    expect(r.relationshipFacts('https://example.com/', showMany, AT)).toEqual([]);
+  });
+});
+
+describe('SURFACE.extractFriendshipShow shape-mismatch sentinel', () => {
+  test('an unexpected (non-record) body returns SHAPE_MISMATCH, not a default', () => {
+    expect(SURFACE.extractFriendshipShow(null, '42')).toBe(SHAPE_MISMATCH);
+    expect(SURFACE.extractFriendshipShow('<!DOCTYPE html>', '42')).toBe(SHAPE_MISMATCH);
+    expect(SURFACE.extractFriendshipShow(undefined, '42')).toBe(SHAPE_MISMATCH);
+    expect(isShapeMismatch(SURFACE.extractFriendshipShow([], '42'))).toBe(true);
+  });
+
+  test('a genuine no-relationship record parses (distinguishable from unparsed)', () => {
+    const out = SURFACE.extractFriendshipShow({ following: false, followed_by: false }, '42');
+    expect(isShapeMismatch(out)).toBe(false);
     expect(out).toEqual({
       pk: '42',
       following: false,
