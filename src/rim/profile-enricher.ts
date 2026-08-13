@@ -3,32 +3,34 @@
  *
  * The system's missing organ: followers-list observations carry no follower/
  * following counts, so `scoreCandidate` returns `no-counts` for every candidate
- * and the pool never shrinks. This class fetches `web_profile_info` for a batch
- * of candidate usernames and writes the resulting `profiled` counts into the
- * store, so scoring can actually decide.
+ * and the pool never shrinks. This class fetches the profile-info endpoint for
+ * a batch of candidate usernames and writes the resulting `profiled` counts
+ * into the store, so scoring can actually decide.
  *
  * Mechanism (per spec): for each username (up to `batchCap`), if the budget can
- * still spend AND the Sentinel is `ok`, `tab.evaluate` an in-page `fetch` of the
- * private `web_profile_info` endpoint (with the `x-ig-app-id` header + session
- * credentials), parse the body via {@link Reader.parseProfileInfo}, and — when
- * non-null — `store.observe` it. The in-page fetch triggers a real IG response
- * that the installed request-metering pipeline counts (R2), so this class only
- * ever *checks* the budget; it never `spend()`s itself.
+ * still spend AND the Sentinel is `ok`, `tab.evaluate` the surface's in-page
+ * profile-info fetch script (which resolves to a `FetchEnvelope` — it
+ * never rejects on an HTML/error body), parse the JSON via
+ * {@link Reader.parseProfileInfo}, and — when non-null — `store.observe` it.
+ * The in-page fetch triggers a real IG response that the installed
+ * request-metering pipeline counts (R2), so this class only ever *checks* the
+ * budget; it never `spend()`s itself.
  *
- * Robustness: no silent catch. A per-username `tab.evaluate` rejection or a
- * malformed/`null` body is logged and skipped; the pass continues with the next
- * username. Returns the number of usernames actually enriched (observed).
+ * Robustness: no silent catch. A per-username `tab.evaluate` rejection is
+ * logged and skipped; a non-ok envelope (rate-limit wall, HTML interstitial,
+ * network error) or a malformed/`null` body is WARN-logged and skipped; the
+ * pass continues with the next username. Returns the number of usernames
+ * actually enriched (observed).
  */
 
 import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
+import { SURFACE, asFetchEnvelope } from '@/adapter/ig-surface';
 import type { RequestBudget } from '@/governors/request-budget';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { SystemClock, type Clock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
 import * as logger from '@/utils/logger';
-
-const IG_APP_ID = '936619743392459';
 
 /** Default number of usernames enriched per pass. */
 const DEFAULT_BATCH_CAP = 25;
@@ -60,16 +62,6 @@ export interface ProfileEnricherDeps {
   paceMs?: number;
   /** Injected for tests; defaults to a real `setTimeout` sleep. */
   sleep?: (ms: number) => Promise<void>;
-}
-
-/** Build the in-page fetch script for one username. */
-function profileInfoScript(username: string): string {
-  const u = JSON.stringify(username);
-  return (
-    `fetch('/api/v1/users/web_profile_info/?username=' + encodeURIComponent(${u}), ` +
-    `{ headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })` +
-    `.then(function (r) { return r.json(); })`
-  );
 }
 
 export class AdapterBackedProfileEnricher implements ProfileEnricher {
@@ -114,9 +106,9 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         continue;
       }
 
-      let body: unknown;
+      let raw: unknown;
       try {
-        body = await this.tab.evaluate<unknown>(profileInfoScript(username));
+        raw = await this.tab.evaluate<unknown>(SURFACE.profileInfoScript(username));
       } catch (e) {
         logger.error('rim.profile-enricher: fetch/evaluate failed', {
           username,
@@ -127,7 +119,28 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         continue;
       }
 
-      const obs = this.reader.parseProfileInfo(body, this.clock.now());
+      // The script resolves to a FetchEnvelope — an HTML wall, rate-limit or
+      // network error is a typed non-ok envelope, NOT a raw error. Skip and
+      // continue (a future pass retries) with a warn, never an error log.
+      const env = asFetchEnvelope(raw);
+      if (env === null) {
+        logger.warn('rim.profile-enricher: unexpected evaluate result (no envelope), skipping', {
+          username,
+        });
+        await this.pace(i, batch.length);
+        continue;
+      }
+      if (!env.ok) {
+        logger.warn('rim.profile-enricher: non-ok response, skipping', {
+          username,
+          status: env.status,
+          contentType: env.contentType,
+        });
+        await this.pace(i, batch.length);
+        continue;
+      }
+
+      const obs = this.reader.parseProfileInfo(env.json, this.clock.now());
       if (obs === null) {
         logger.warn('rim.profile-enricher: unparseable profile body, skipping', { username });
         await this.pace(i, batch.length);

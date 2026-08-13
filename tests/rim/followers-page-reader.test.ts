@@ -103,6 +103,158 @@ test('R2: an exhausted budget stops the scroll loop before scrolling', async () 
   expect(result.targetPk).toBe('999');
 });
 
+// --- Scan pacing + cooperative stop (Phase 5 prune scan) ---------------------------
+
+/** A reader with an injected sleep recorder + deterministic rng (no real timers). */
+const makePacedReader = (
+  tab: FakeTab,
+  actor: FakeActor,
+  opts: { sleeps: number[]; rng: () => number; scrollWaitMs?: number },
+): FollowersPageReader =>
+  new FollowersPageReader({
+    tab,
+    reader,
+    actor,
+    clock,
+    scrollWaitMs: opts.scrollWaitMs ?? 1,
+    sleep: async (ms) => {
+      opts.sleeps.push(ms);
+    },
+    rng: opts.rng,
+  });
+
+/** Script fresh-pk pages so only pacing/stop args can end the loop early. */
+const scriptEndlessPages = (tab: FakeTab, actor: FakeActor): void => {
+  let n = 0;
+  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['a'], 'C', true)));
+  actor.onScroll = () => {
+    n += 1;
+    tab.emit(mkResp(followersUrl('999', `C${n}`), followersBody([`s${n}`], `C${n}`, true)));
+  };
+};
+
+test('scrollMinMs/scrollMaxMs: every wait is a fresh jittered draw within [min,max]', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  scriptEndlessPages(tab, actor);
+
+  // A cycling rng proves each wait is re-drawn, not computed once and reused.
+  const draws = [0, 1, 0.25, 0.5];
+  let i = 0;
+  const sleeps: number[] = [];
+  await makePacedReader(tab, actor, { sleeps, rng: () => draws[i++ % draws.length] }).collect({
+    targetUsername: 'target',
+    onObservation: () => {},
+    budget: new FakeBudget() as unknown as RequestBudget,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    maxRounds: 3,
+    noNewStop: 5,
+    scrollMinMs: 1_000,
+    scrollMaxMs: 3_000,
+  });
+
+  // Initial post-open wait + one wait per scroll round, each min + draw·span.
+  expect(sleeps).toEqual([1_000, 3_000, 1_500, 2_000]);
+  for (const ms of sleeps) {
+    expect(ms).toBeGreaterThanOrEqual(1_000);
+    expect(ms).toBeLessThanOrEqual(3_000);
+  }
+});
+
+test('an inverted min/max pair is clamped so the wait never falls below the min', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  scriptEndlessPages(tab, actor);
+
+  const sleeps: number[] = [];
+  await makePacedReader(tab, actor, { sleeps, rng: () => 1 }).collect({
+    targetUsername: 'target',
+    onObservation: () => {},
+    budget: new FakeBudget() as unknown as RequestBudget,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    maxRounds: 1,
+    noNewStop: 5,
+    scrollMinMs: 4_000,
+    scrollMaxMs: 2_000, // below min → clamped up to min
+  });
+
+  expect(sleeps).toEqual([4_000, 4_000]);
+});
+
+test('shouldStop flipping true breaks the scroll loop early (fewer rounds than maxRounds)', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  let stop = false;
+  let n = 0;
+  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['a'], 'C', true)));
+  actor.onScroll = () => {
+    n += 1;
+    tab.emit(mkResp(followersUrl('999', `C${n}`), followersBody([`s${n}`], `C${n}`, true)));
+    if (n === 2) stop = true; // request the stop after the second scroll lands
+  };
+
+  const result = await makeReader(tab, actor).collect({
+    targetUsername: 'target',
+    onObservation: () => {},
+    budget: new FakeBudget() as unknown as RequestBudget,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    maxRounds: 10,
+    noNewStop: 5,
+    shouldStop: () => stop,
+  });
+
+  // Rounds 0 and 1 scrolled; round 2's top-of-round check broke the loop.
+  expect(actor.scrollCalls).toBe(2);
+  // Everything captured up to the stop is still drained and returned.
+  expect([...result.observedPks].sort()).toEqual(['a', 's1', 's2']);
+});
+
+test('shouldStop true from the start skips the initial post-open wait and all scrolling', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['a', 'b'], null, false)));
+
+  const sleeps: number[] = [];
+  const result = await makePacedReader(tab, actor, { sleeps, rng: () => 0.5 }).collect({
+    targetUsername: 'target',
+    onObservation: () => {},
+    budget: new FakeBudget() as unknown as RequestBudget,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    maxRounds: 10,
+    noNewStop: 5,
+    shouldStop: () => true,
+  });
+
+  expect(sleeps).toEqual([]); // not even the post-open wait ran
+  expect(actor.scrollCalls).toBe(0);
+  // The page captured on open is still drained and returned (nothing lost).
+  expect([...result.observedPks].sort()).toEqual(['a', 'b']);
+});
+
+test('default path (no min/max/shouldStop) keeps the fixed scrollWaitMs pacing', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  scriptEndlessPages(tab, actor);
+
+  const sleeps: number[] = [];
+  await makePacedReader(tab, actor, {
+    sleeps,
+    rng: () => {
+      throw new Error('rng must not be consulted on the fixed-pacing path');
+    },
+    scrollWaitMs: 7,
+  }).collect({
+    targetUsername: 'target',
+    onObservation: () => {},
+    budget: new FakeBudget() as unknown as RequestBudget,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    maxRounds: 2,
+    noNewStop: 5,
+  });
+
+  expect(sleeps).toEqual([7, 7, 7]); // post-open + one per round, all fixed
+});
+
 test('R5: drain awaits a response that lands during teardown', async () => {
   const tab = new FakeTab();
   const actor = new FakeActor();

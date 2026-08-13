@@ -18,6 +18,7 @@ import type { RequestBudget } from '@/governors/request-budget';
 import type { Sentinel } from '@/adapter/sentinel';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { OwnFollowersSource } from '@/engine/followback-watcher';
+import type { PruneOwnFollowers, PruneScanOpts } from '@/engine/prune-engine';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import * as logger from '@/utils/logger';
 
@@ -33,6 +34,17 @@ export const OWN_FOLLOWERS_SOURCE_DEFAULTS: OwnFollowersSourceConfig = {
   noNewStop: 2,
   pageSize: 50,
 };
+
+/**
+ * Bounds for {@link AdapterBackedOwnFollowersSource.fetchAllPks} — the prune
+ * scan's WHOLE-list walk. Deliberately separate from (and more generous than)
+ * the watcher's head-first sweep `cfg`, mirroring the own-following source's
+ * defaults: prune needs the entire followers list, not just the head.
+ */
+export const OWN_FOLLOWERS_FETCH_ALL_BOUNDS = {
+  maxRounds: 60,
+  noNewStop: 3,
+} as const;
 
 export interface OwnFollowersSourceDeps {
   pageReader: FollowersPageReader;
@@ -57,7 +69,7 @@ const chunk = <T>(items: T[], size: number): T[][] => {
   return out;
 };
 
-export class AdapterBackedOwnFollowersSource implements OwnFollowersSource {
+export class AdapterBackedOwnFollowersSource implements OwnFollowersSource, PruneOwnFollowers {
   private readonly pageReader: FollowersPageReader;
   private readonly ownUsername: string;
   private readonly budget: RequestBudget;
@@ -92,6 +104,36 @@ export class AdapterBackedOwnFollowersSource implements OwnFollowersSource {
     const hasMore = this.index < this.pages.length;
     // Encode our internal position as an opaque cursor the Watcher just echoes back.
     return { pks, cursor: hasMore ? `p${this.index}` : null, hasMore };
+  }
+
+  /**
+   * Phase 5 — the prune scan's whole-list scrape (the {@link PruneOwnFollowers}
+   * port): one bounded walk of our ENTIRE followers list through the shared
+   * page reader, with the engine's scan opts (cooperative `shouldStop` +
+   * jittered inter-round pacing) threaded straight into the scroll loop. Unlike
+   * {@link nextPage}'s head-first paged sweep this is generous ({@link
+   * OWN_FOLLOWERS_FETCH_ALL_BOUNDS}) and interruptible between rounds. A blocked
+   * sentinel yields an empty, warned result — never a throw.
+   */
+  async fetchAllPks(opts?: PruneScanOpts): Promise<string[]> {
+    const status = await this.sentinel.check();
+    if (status !== 'ok') {
+      logger.warn('rim.own-followers-source: sentinel blocked, empty scrape', { status });
+      return [];
+    }
+    const result = await this.pageReader.collect({
+      dialog: 'followers',
+      targetUsername: this.ownUsername,
+      onObservation: (obs) => this.store?.observe(obs),
+      budget: this.budget,
+      sentinel: this.sentinel,
+      maxRounds: OWN_FOLLOWERS_FETCH_ALL_BOUNDS.maxRounds,
+      noNewStop: OWN_FOLLOWERS_FETCH_ALL_BOUNDS.noNewStop,
+      shouldStop: opts?.shouldStop,
+      scrollMinMs: opts?.scrollMinMs,
+      scrollMaxMs: opts?.scrollMaxMs,
+    });
+    return result.observedPks;
   }
 
   /** Run one bounded scrape of our own followers and slice it head-first. */

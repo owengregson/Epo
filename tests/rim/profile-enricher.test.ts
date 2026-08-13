@@ -1,5 +1,6 @@
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import { Reader } from '@/adapter/reader';
+import { SURFACE } from '@/adapter/ig-surface';
 import type { RequestBudget } from '@/governors/request-budget';
 import type { Sentinel } from '@/adapter/sentinel';
 import { KnowledgeStore } from '@/store/knowledge-store';
@@ -31,13 +32,17 @@ const profileBody = (
 });
 
 /**
- * A fake port-tab whose `evaluate` returns a scripted `web_profile_info` body
+ * A fake port-tab whose `evaluate` resolves the FetchEnvelope the surface's
+ * in-page fetch script yields, wrapping the scripted `web_profile_info` body
  * chosen by matching the username the enricher embedded in the fetch script.
+ * `wallFor` simulates an HTML/rate-limit wall: a typed non-ok envelope (the
+ * in-page script never rejects on a non-JSON body).
  */
 class EnrichTab implements RimTab {
   evalCalls: string[] = [];
   bodies: Record<string, unknown> = {};
   throwFor = new Set<string>();
+  wallFor = new Set<string>();
   url = 'https://www.instagram.com/';
 
   async goto(u: string): Promise<void> {
@@ -52,11 +57,26 @@ class EnrichTab implements RimTab {
   async evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T> {
     const s = String(fnOrString);
     this.evalCalls.push(s);
-    const user = Object.keys(this.bodies).find((u) => s.includes(JSON.stringify(u)));
+    const users = [...Object.keys(this.bodies), ...this.wallFor];
+    const user = users.find((u) => s.includes(JSON.stringify(u)));
     if (user !== undefined && this.throwFor.has(user)) {
       throw new Error(`fetch failed for ${user}`);
     }
-    return (user !== undefined ? this.bodies[user] : undefined) as T;
+    if (user !== undefined && this.wallFor.has(user)) {
+      return {
+        ok: false,
+        status: 429,
+        contentType: 'text/html; charset=utf-8',
+        textHead: '<!DOCTYPE html><html lang="en"> ... Please wait a few minutes',
+      } as T;
+    }
+    if (user === undefined) return undefined as T;
+    return {
+      ok: true,
+      status: 200,
+      contentType: 'application/json; charset=utf-8',
+      json: this.bodies[user],
+    } as T;
   }
 }
 
@@ -124,7 +144,7 @@ test('the fetch script targets web_profile_info with the app-id header and encod
   expect(tab.evalCalls).toHaveLength(1);
   const script = tab.evalCalls[0];
   expect(script).toContain('/api/v1/users/web_profile_info/?username=');
-  expect(script).toContain("'x-ig-app-id': '936619743392459'");
+  expect(script).toContain(`'x-ig-app-id': '${SURFACE.appId}'`);
   expect(script).toContain("credentials: 'include'");
   expect(script).toContain('encodeURIComponent("alice")');
 });
@@ -165,6 +185,18 @@ test('a malformed/unparseable body is skipped and the pass continues', async () 
   const n = await enricher.enrich(['alice', 'bob']);
 
   expect(n).toBe(1);
+  expect(store.getAccount('102')?.followers).toBe(20);
+});
+
+test('an HTML/rate-limit wall is a typed skip (non-ok envelope), never a throw', async () => {
+  const { enricher, tab } = build();
+  tab.bodies = { bob: profileBody('102', 'bob', 20, 20) };
+  tab.wallFor.add('alice'); // alice gets a 429 text/html interstitial
+
+  const n = await enricher.enrich(['alice', 'bob']);
+
+  expect(n).toBe(1); // alice skipped on the envelope, bob still enriched
+  expect(store.getAccount('101')).toBeNull();
   expect(store.getAccount('102')?.followers).toBe(20);
 });
 

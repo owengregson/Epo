@@ -75,14 +75,20 @@ export class FakeSentinel {
   }
 }
 
-/** A followers-dialog actor whose open/scroll fire test-supplied callbacks. */
+/** A list-dialog actor whose open/scroll fire test-supplied callbacks. */
 export class FakeActor {
   openCalls = 0;
+  openFollowingCalls = 0;
   scrollCalls = 0;
   onOpen?: () => void;
   onScroll?: () => void;
   async openFollowersDialog(_targetUsername: string): Promise<void> {
     this.openCalls += 1;
+    this.onOpen?.();
+  }
+  /** The FOLLOWING dialog (Phase 5); fires the same onOpen hook. */
+  async openFollowingDialog(_targetUsername: string): Promise<void> {
+    this.openFollowingCalls += 1;
     this.onOpen?.();
   }
   /** Returns `true` by default (a page was scrolled); set `scrollReturns` to vary. */
@@ -97,6 +103,11 @@ export class FakeActor {
 /** Build a followers-list URL that carries `targetPk` (what R1 extracts). */
 export const followersUrl = (targetPk: string, maxId?: string): string =>
   `https://www.instagram.com/api/v1/friendships/${targetPk}/followers/?count=12` +
+  (maxId ? `&max_id=${maxId}` : '');
+
+/** Build a following-list URL that carries `targetPk` (Phase 5 auto-prune). */
+export const followingUrl = (targetPk: string, maxId?: string): string =>
+  `https://www.instagram.com/api/v1/friendships/${targetPk}/following/?count=12` +
   (maxId ? `&max_id=${maxId}` : '');
 
 /** A followers-list response body in the exact shape the Reader parses. */

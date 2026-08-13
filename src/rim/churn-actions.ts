@@ -108,7 +108,12 @@ export class AdapterBackedChurnActions implements ChurnActions {
           ? await this.adapter.actor.follow(username)
           : await this.adapter.actor.unfollow(username);
       // A3: the Actor already verified the post-click state; trust its Result.
-      return { status: result.ok ? 'ok' : 'failed' };
+      // Phase A: an ok WITHOUT a click means the button was already in the
+      // target state — an external actor owns the relationship. Surface it as
+      // `alreadyInState` so the scheduler reconciles instead of claiming it.
+      return result.ok
+        ? { status: 'ok', alreadyInState: !result.value.clicked }
+        : { status: 'failed' };
     } catch (e) {
       logger.error('rim.churn-actions: actor threw', {
         username,

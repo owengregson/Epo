@@ -10,15 +10,15 @@ import { FakeBudget, FakeSentinel } from './fakes';
 class FakeActionActor {
   followCalls: string[] = [];
   unfollowCalls: string[] = [];
-  followResult: Result<void> = ok(undefined);
-  unfollowResult: Result<void> = ok(undefined);
+  followResult: Result<{ clicked: boolean }> = ok({ clicked: true });
+  unfollowResult: Result<{ clicked: boolean }> = ok({ clicked: true });
   followThrows = false;
-  async follow(username: string): Promise<Result<void>> {
+  async follow(username: string): Promise<Result<{ clicked: boolean }>> {
     this.followCalls.push(username);
     if (this.followThrows) throw new Error('stale');
     return this.followResult;
   }
-  async unfollow(username: string): Promise<Result<void>> {
+  async unfollow(username: string): Promise<Result<{ clicked: boolean }>> {
     this.unfollowCalls.push(username);
     return this.unfollowResult;
   }
@@ -84,11 +84,20 @@ test('dry-run reports simulated without clicking', async () => {
 
 test('happy path clicks and reports ok from the Actor’s verified result', async () => {
   const { actions, actor } = build({});
-  expect(await actions.follow('bob')).toEqual({ status: 'ok' });
+  expect(await actions.follow('bob')).toEqual({ status: 'ok', alreadyInState: false });
   expect(actor.followCalls).toEqual(['bob']);
 
-  expect(await actions.unfollow('carol')).toEqual({ status: 'ok' });
+  expect(await actions.unfollow('carol')).toEqual({ status: 'ok', alreadyInState: false });
   expect(actor.unfollowCalls).toEqual(['carol']);
+});
+
+test('Phase A: an ok WITHOUT a click surfaces alreadyInState (external actor owns the state)', async () => {
+  const { actions, actor } = build({});
+  actor.followResult = ok({ clicked: false });
+  expect(await actions.follow('bob')).toEqual({ status: 'ok', alreadyInState: true });
+
+  actor.unfollowResult = ok({ clicked: false });
+  expect(await actions.unfollow('carol')).toEqual({ status: 'ok', alreadyInState: true });
 });
 
 test('a failed Actor Result is reported as failed', async () => {
