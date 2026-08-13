@@ -1,9 +1,12 @@
 {
-  "name": "peanut-instagram-bot",
+  "name": "epo",
   "version": "3.0.0",
-  "description": "Reliable, safe, observable Instagram growth engine built on a local event-sourced knowledge graph.",
+  "description": "Epo — a reliable, safe, observable Instagram growth engine built on a local event-sourced knowledge graph.",
   "main": "dist/main/main.js",
   "type": "commonjs",
+  "bin": {
+    "epo": "scripts/cli.mjs"
+  },
   "scripts": {
     "build": "node esbuild.config.mjs",
     "build:dev": "node esbuild.config.mjs --dev",
@@ -16,27 +19,33 @@
     "livetest": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/livetest/livetest-main.js",
     "inspect": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/inspect/inspect-main.js",
     "test": "npm run rebuild:node && jest",
-    "lint": "eslint src --ext .ts,.tsx"
+    "lint": "eslint src",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.3.1",
     "better-sqlite3": "^13.0.3",
-    "electron": "^43.4.0",
-    "preact": "^10.28.3"
+    "preact": "^10.29.8"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.6.0",
-    "@types/better-sqlite3": "^7.6.11",
-    "@types/jest": "^29.5.0",
-    "@types/node": "^20.0.0",
-    "@typescript-eslint/parser": "^7.18.0",
-    "esbuild": "^0.20.0",
-    "eslint": "^8.57.0",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.0",
-    "typescript": "^5.4.0"
+    "@electron/rebuild": "^4.2.0",
+    "electron": "^43.4.0",
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.2.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.8.1",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.67.0"
   },
   "license": "MIT"
 }

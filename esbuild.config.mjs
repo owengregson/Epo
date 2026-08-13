@@ -32,14 +32,25 @@ await build({
   sourcemap: isDev, minify: !isDev, format: 'cjs',
 });
 
+// Renderer (dashboard console). The entry imports `styles/index.css`, so esbuild
+// bundles the CSS graph — including self-hosted FontAwesome — into a sibling
+// `index.css`, and embeds the webfont files as `data:` URIs (offline + CSP-safe
+// under `font-src 'self' data:`). No CDN, no separate font requests.
 await build({
   entryPoints: ['src/renderer/index.tsx'],
   bundle: true, platform: 'browser', target: 'chrome120', outdir: 'dist/renderer',
   sourcemap: isDev, minify: !isDev, format: 'iife',
   jsxFactory: 'h', jsxFragment: 'Fragment',
-  loader: { '.tsx': 'tsx', '.ts': 'ts' },
+  loader: {
+    '.tsx': 'tsx',
+    '.ts': 'ts',
+    '.woff2': 'dataurl',
+    '.woff': 'dataurl',
+    '.ttf': 'dataurl',
+  },
 });
 
 if (existsSync('src/renderer/index.html')) cpSync('src/renderer/index.html', 'dist/renderer/index.html');
-if (existsSync('src/renderer/styles')) cpSync('src/renderer/styles', 'dist/renderer/styles', { recursive: true });
+// Static overlay page (the automation veil) served by the main process.
+if (existsSync('src/main/overlay')) cpSync('src/main/overlay', 'dist/main/overlay', { recursive: true });
 console.log('Build complete.');

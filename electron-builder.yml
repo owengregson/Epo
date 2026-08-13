@@ -1,0 +1,43 @@
+# electron-builder configuration for `npm run dist` (standalone packaging).
+# The 1024x1024 app icon lives at build/icon.png; electron-builder derives
+# the platform formats (.icns/.ico) from it via directories.buildResources.
+appId: com.owengregson.epo
+productName: Epo
+
+directories:
+  output: release
+  buildResources: build
+
+# The esbuild output is self-contained except for native/external modules
+# (better-sqlite3 stays external and is loaded from node_modules at runtime;
+# @fortawesome fonts are already inlined into dist/renderer/index.css as data:
+# URIs by esbuild, so they are not needed at runtime). electron-builder also
+# packages the production "dependencies" from package.json automatically.
+files:
+  - dist/**
+  - package.json
+
+# Native module: better-sqlite3 cannot be loaded from inside the asar archive.
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+
+# electron-builder rebuilds native deps (better-sqlite3) against the target
+# Electron ABI on its own; run `npm run rebuild:node` afterwards if you want
+# to run Jest again in the same checkout (tests need the Node ABI).
+npmRebuild: true
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  hardenedRuntime: false
+  # Unsigned build for now — code signing + notarization are a later step.
+  identity: null
+
+win:
+  target:
+    - nsis
+    - portable

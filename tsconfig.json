@@ -1,12 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "preserve",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "outDir": "dist",
     "rootDir": "src",
-    "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] },
+    "paths": { "@/*": ["./src/*"] },
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -15,7 +14,8 @@
     "jsxFragmentFactory": "Fragment",
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
+    "types": ["node", "jest"],
     "sourceMap": true
   },
   "include": ["src/**/*"],
