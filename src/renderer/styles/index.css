@@ -1,0 +1,21 @@
+/*
+ * Epo v3 renderer — stylesheet entry.
+ * esbuild bundles this graph into dist/renderer/index.css and embeds the
+ * FontAwesome webfonts as data: URIs (offline + CSP-safe). Import order is the
+ * cascade order: FontAwesome first, then tokens → base → layout → primitives → cards.
+ *
+ * Ownership: tokens/base/layout are the shell foundation; primitives are the
+ * data-agnostic design-system controls; cards are card-internal layouts.
+ */
+
+/* Self-hosted FontAwesome 7 (solid + brands sets used by the console). */
+@import '@fortawesome/fontawesome-free/css/fontawesome.min.css';
+@import '@fortawesome/fontawesome-free/css/solid.min.css';
+@import '@fortawesome/fontawesome-free/css/brands.min.css';
+
+/* Design system, in cascade order. */
+@import './tokens.css';
+@import './base.css';
+@import './layout.css';
+@import './primitives.css';
+@import './cards.css';

@@ -1,0 +1,422 @@
+/*
+ * Layout layer — the console shell: root pane, header (brand + transport),
+ * nav rail, the animated view stage, and the docked ticker. The engine state
+ * lives as data-state on the .console root (the mockup put it on the window
+ * frame; here the frame is the native Electron window).
+ */
+
+/* ---------- console root ---------- */
+.console {
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(0, 0, 0, 0.06)),
+    var(--bg);
+  border-right: 1px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  /* the console is a size container: its cards respond to ITS width (cqi) */
+  container-type: inline-size;
+  container-name: console;
+  /* card-internal rhythm tracks the console's own width — same px as the root
+     scale at the design width, compressing/expanding with the pane not the page */
+  --sp-0: clamp(1.5px, 0.43cqi, 2.5px);
+  --sp-1: clamp(3px, 0.85cqi, 5px);
+  --sp-2: clamp(6px, 1.7cqi, 9px);
+  --sp-3: clamp(9px, 2.55cqi, 13px);
+  --sp-4: clamp(12px, 3.4cqi, 18px);
+  --sp-5: clamp(15px, 4.26cqi, 22px);
+  --sp-6: clamp(18px, 5.1cqi, 27px);
+}
+
+/* ---------- header: brand + state, then transport ---------- */
+.con-head {
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
+}
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.logo-mark {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px; /* literal: the ::after pulse ring (11px) is this + its -3px inset */
+  flex: 0 0 30px;
+  background: linear-gradient(160deg, var(--border), var(--surface));
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--elev-2);
+  display: grid;
+  place-items: center;
+}
+/* live signal folded into the brand mark: hairline ring that breathes while
+   the engine runs, holds brass when paused */
+.logo-mark::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 11px;
+  border: 1px solid rgba(238, 241, 244, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s, border-color 0.3s;
+}
+.console[data-state='running'] .logo-mark::after {
+  opacity: 1;
+  animation: markPulse 2.6s var(--ease) infinite;
+}
+.console[data-state='paused'] .logo-mark::after {
+  opacity: 0.65;
+  border-color: rgba(216, 183, 104, 0.4);
+}
+@keyframes markPulse {
+  0%,
+  100% {
+    opacity: 0.22;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+.head-text {
+  flex: 1;
+  min-width: 0;
+}
+.con-head h1 {
+  font-size: var(--fs-fluid-title);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--chrome);
+  line-height: 1.2;
+}
+.head-text .tagline {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-top: var(--sp-0);
+  white-space: nowrap;
+}
+
+/* shared soft pulse (ticker beacon; also reused by the native veil dot) */
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(216, 221, 227, 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(216, 221, 227, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(216, 221, 227, 0);
+  }
+}
+
+/* ---------- transport trio — the buttons themselves read as engine state ---------- */
+.transport {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-2);
+}
+.tbtn {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  height: var(--h-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
+  border-radius: var(--r);
+  background: var(--grad-control);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--elev-1);
+  color: var(--muted);
+  font-size: var(--fs-base);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: color 0.15s, border-color 0.15s, background 0.15s, transform 0.06s, opacity 0.15s;
+}
+.tbtn .fa-solid {
+  flex: 0 0 auto;
+  font-size: var(--fs-md);
+}
+.tbtn:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+.tbtn:active {
+  transform: translateY(1px);
+}
+/* the natural next control carries the primary sheen for the current engine
+   state — the cluster itself is the state readout */
+.console[data-state='running'] #btnPause,
+.console[data-state='paused'] #btnStart,
+.console[data-state='halted'] #btnStart,
+.console[data-state='idle'] #btnStart {
+  background: var(--grad-raised);
+  background-image: var(--sheen);
+  border-color: var(--border-active);
+  color: var(--chrome);
+}
+.console[data-state='paused'] #btnStart {
+  border-color: #5c4e32;
+  color: #e2cd93;
+}
+.tbtn.danger:hover {
+  color: var(--danger);
+  border-color: #4a3333;
+}
+.tbtn[disabled] {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ---------- nav rail ---------- */
+.nav {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+.nav button {
+  appearance: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-1);
+  border-radius: var(--r);
+  transition: color 0.18s, background 0.18s, border-color 0.18s, box-shadow 0.18s;
+}
+.nav button .fa-solid {
+  font-size: var(--fs-xl);
+  opacity: 0.75;
+  transition: opacity 0.18s;
+}
+.nav button:hover {
+  color: var(--silver);
+  background: var(--hover-veil);
+}
+.nav button.active {
+  color: var(--chrome);
+  background: var(--grad-active);
+  border-color: var(--border-strong);
+  box-shadow: var(--elev-2);
+}
+.nav button.active .fa-solid {
+  opacity: 1;
+}
+
+/* ---------- view stage ---------- */
+.stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.view {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  display: none;
+}
+.view.active {
+  display: block;
+  z-index: 2; /* the incoming view reveals over the outgoing one */
+}
+.view.entering {
+  animation: viewIn 0.34s var(--ease) both;
+}
+/* The outgoing view stays painted while it fades, so a tab swap can begin its
+   fade-out the instant the new view starts entering (immediate crossfade) rather
+   than waiting for an exit phase to finish first. */
+.view.exiting {
+  display: block;
+  z-index: 1;
+  animation: viewOut 0.17s ease-in both;
+}
+@keyframes viewIn {
+  from {
+    opacity: 0;
+    transform: scale(1.035) translateY(8px);
+    filter: brightness(1.25);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: brightness(1);
+  }
+}
+@keyframes viewOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.975) translateY(-4px);
+  }
+}
+
+/* ---------- docked ticker ---------- */
+.ticker {
+  flex: 0 0 var(--h-ticker);
+  height: var(--h-ticker);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-4);
+  border-top: 1px solid var(--border-strong);
+  background: linear-gradient(180deg, #101013, #0b0b0d);
+  box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ticker .beacon {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--live);
+  flex: 0 0 6px;
+  animation: pulse 2.2s var(--ease) infinite;
+}
+.console:not([data-state='running']) .ticker .beacon {
+  background: var(--faint);
+  animation: none;
+  box-shadow: none;
+}
+.ticker .tline {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.ticker .tline .ts {
+  color: var(--faint);
+  margin-right: var(--sp-2);
+}
+.ticker .tline .lv-info {
+  color: var(--silver);
+  margin-right: var(--sp-2);
+  font-weight: 700;
+}
+.ticker .tline .lv-warn {
+  color: var(--warn);
+  margin-right: var(--sp-2);
+  font-weight: 700;
+}
+.ticker .tline .lv-error {
+  color: var(--danger);
+  margin-right: var(--sp-2);
+  font-weight: 700;
+}
+.ticker .tline.swap {
+  animation: tswap 0.5s var(--ease);
+}
+@keyframes tswap {
+  0% {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- console responsive: icon-only transport/nav when very narrow ---------- */
+@container console (max-width: 360px) {
+  .transport .tlabel {
+    display: none;
+  }
+  .nav button .nlabel {
+    display: none;
+  }
+  .nav button .fa-solid {
+    font-size: 17px;
+  }
+}
+
+/* ---------- toasts — typed control failures, docked above the ticker ---------- */
+.toasts {
+  position: absolute;
+  left: var(--sp-4);
+  right: var(--sp-4);
+  bottom: calc(var(--h-ticker) + var(--sp-3));
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--grad-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--elev-5);
+  font-size: var(--fs-base);
+  color: var(--silver);
+  animation: toastIn 0.24s var(--ease) both;
+}
+.toast[data-kind='error'] {
+  border-color: #553838;
+  color: #e2a3a3;
+}
+.toast__msg {
+  flex: 1;
+  min-width: 0;
+}
+.toast__close {
+  appearance: none;
+  background: none;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: var(--fs-xl);
+  line-height: 1;
+  padding: 0 var(--sp-1);
+}
+.toast__close:hover {
+  color: var(--silver);
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

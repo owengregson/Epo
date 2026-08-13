@@ -1,0 +1,113 @@
+/*
+ * Base layer — reset, document shell, shared utilities, the global tooltip
+ * popover, and the reduced-motion contract. The renderer fills the native
+ * dashboard sidebar; the window frame and Instagram pane are native views.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-lg);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden; /* the console scrolls inside itself, never the document */
+}
+
+#app {
+  height: 100%;
+}
+
+/* Tabular figures for every counter/readout. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Thin graphite scrollbars everywhere. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2c2c32 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2c2c32;
+  border-radius: 4px;
+}
+
+/* ---------- tooltip system — one popover, driven by [data-tip] labels ----------
+   Fixed-position (portal-style) so the scrolling settings pane never clips it. */
+[data-tip] {
+  cursor: help;
+}
+[data-tip]::after {
+  content: '?';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  line-height: 11px;
+  margin-left: var(--sp-1);
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--faint);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  text-align: center;
+  vertical-align: 1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+[data-tip]:hover::after {
+  color: var(--silver);
+  border-color: #45454e;
+}
+.tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 100;
+  max-width: min(250px, calc(100vw - 16px));
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--grad-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--elev-5);
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  color: var(--silver);
+  font-weight: 500;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 0.16s ease, transform 0.16s var(--ease);
+}
+.tip.show {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

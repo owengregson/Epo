@@ -1,11 +1,15 @@
 /*
- * Peanut v3 — design tokens (Fable spec §1).
+ * Epo v3 — design tokens (Command Console).
  * "Instrument panel, not app": monotone graphite with whitish-silver / brushed-metal
- * accents and one restrained shine. Desktop Electron → dark is primary and fixed.
- * These values are the spec's palette verbatim; do not retune them here.
+ * accents and one restrained shine. The palette + spacing values are the approved
+ * mockup's, verbatim — do not retune here. Everything below them (type scale, radii,
+ * hairlines, fills, elevation, control sizes) is the normalized vocabulary the
+ * component sheets draw from.
  */
 
 :root {
+  /* ============ PALETTE (approved — do not retune) ============ */
+
   /* Surfaces (graphite, back-to-front) */
   --bg: #0d0d0f;
   --surface: #141417;
@@ -21,19 +25,102 @@
   /* Metal accents — used sparingly (hairlines, active states, the running pulse) */
   --silver: #c9ccd1;
   --chrome: #eef1f4;
-  --live: #d8dde3;   /* near-white steel: the single "live/go" accent */
-  --warn: #d8b768;   /* muted brass */
+  --live: #d8dde3; /* near-white steel: the single "live/go" accent */
+  --warn: #d8b768; /* muted brass */
   --danger: #c96a6a;
+  --ok: #6db28a;
 
-  /* The only "shine": a 1px top highlight on raised surfaces. Nothing glows. */
-  --highlight: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  /* A very low-contrast brushed sheen for the primary control + status pill. */
-  --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 42%, rgba(0, 0, 0, 0.12) 100%);
+  /* Interaction borders — the three brightening steps controls move through */
+  --border-hover: #3d3d45; /* hovered inputs + subtly-lit active segments */
+  --border-active: #43434c; /* primary/selected controls (transport, chips) */
+  --border-focus: #55555f; /* keyboard/caret focus on text-ish inputs */
 
-  --radius: 7px;
-  --radius-sm: 5px;
-
-  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui,
-    'Segoe UI', Roboto, sans-serif;
+  /* ============ TYPEFACES ============ */
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ============ TYPE SCALE ============
+     One ladder for all static text. Near-duplicate mockup sizes snap to the
+     nearest step (8/8.5→2xs · 9/9.5→xs · 10/10.5→sm · 11→md · 11.5/12/12.5→base
+     · 13/13.5→lg · 14/14.5/15→xl). SVG clock text (7px caps, 14px readout) stays
+     literal where the clock-face geometry depends on it. */
+  --fs-2xs: 8.5px; /* micro badge caps (LOCKED, PRIVATE, pipeline stage labels) */
+  --fs-xs: 9px; /* uppercase eyebrows, mono axis/scale labels, badges */
+  --fs-sm: 10px; /* hints, legends, chips, ticker, dense meta */
+  --fs-md: 11px; /* small body: log lines, nav, tooltips, sub-lines */
+  --fs-base: 12px; /* body + control text (inputs, kv values, buttons) */
+  --fs-lg: 13px; /* document base, emphasized handles */
+  --fs-xl: 15px; /* headings, large glyphs, stepper +/- */
+
+  /* Fluid (container-tracking) type — cqi resolves against the .console
+     container. Min/max preserved from the mockup's hand-tuned clamps. */
+  --fs-fluid-cap: clamp(9px, 2.13cqi, 10.5px); /* card-header eyebrows */
+  --fs-fluid-title: clamp(12.5px, 2.98cqi, 15px); /* console title */
+  --fs-fluid-handle: clamp(13.5px, 3.3cqi, 16px); /* target @handle */
+  --fs-fluid-stat: clamp(13px, 3.4cqi, 17px); /* stat + pipeline numbers */
+  --fs-fluid-display: clamp(19px, 5.53cqi, 28px); /* growth number */
+  --fs-fluid-hero: clamp(24px, 7.23cqi, 36px); /* hero countdown */
+
+  /* ============ SPACING (approved — do not retune) ============
+     The one spacing scale (4px base @ the design width) — fluid: tracks the
+     viewport, compresses on small panes, breathes a touch on large ones.
+     The console root re-declares these against its own inline size (see layout.css). */
+  --sp-0: clamp(1.5px, 0.161vw, 2.5px);
+  --sp-1: clamp(3px, 0.322vw, 5px);
+  --sp-2: clamp(6px, 0.645vw, 9px);
+  --sp-3: clamp(9px, 0.967vw, 13px);
+  --sp-4: clamp(12px, 1.29vw, 18px);
+  --sp-5: clamp(15px, 1.612vw, 22px);
+  --sp-6: clamp(18px, 1.935vw, 27px);
+
+  /* ============ RADII ============ */
+  --r-sm: 6px; /* inputs + segments nested inside --r containers */
+  --r: 7px; /* the house radius: cards, buttons, wells */
+  --r-lg: 10px; /* modal / largest raised surfaces */
+  --r-pill: 99px; /* pills: badges, chips, toggle */
+
+  /* ============ HAIRLINES · DIVIDERS · INSETS ============ */
+  --divider: rgba(255, 255, 255, 0.03); /* row/field seam (1px solid) */
+  --hover-veil: rgba(255, 255, 255, 0.025); /* hover wash on flat buttons */
+  --inset-bg: rgba(0, 0, 0, 0.22); /* recessed wells: inputs, stats, pipelines */
+  --inset-shadow-soft: inset 0 1px 2px rgba(0, 0, 0, 0.3); /* shallow wells (stat cells) */
+  --inset-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35); /* standard control recess */
+  --inset-shadow-deep: inset 0 1px 2px rgba(0, 0, 0, 0.5); /* meter/slider troughs */
+
+  /* ============ COMPONENT FILLS (graphite tones) ============ */
+  --chip-bg: #202025; /* flat pill/badge fill + lit-gradient top stop */
+  --track-bg: #212126; /* meter/slider/toggle trough fill */
+  --active-fill: #26262c; /* selected segment / chip / pressed stepper */
+
+  /* Recurring surface gradients (all 180deg, brushed top-lit) */
+  --grad-control: linear-gradient(180deg, #1d1d22, #16161a); /* resting buttons + chips */
+  --grad-active: linear-gradient(180deg, var(--chip-bg), #18181c); /* lit nav / stepper keys */
+  --grad-raised: linear-gradient(180deg, #232328, #18181c); /* popovers, toasts, primary transport */
+
+  /* Meter fills (progress bars) */
+  --grad-meter: linear-gradient(90deg, #8f939a, var(--chrome));
+  --grad-meter-brass: linear-gradient(90deg, #9a8654, var(--warn));
+
+  /* ============ ELEVATION ============
+     The only shines: a brushed sheen for raised surfaces + a 1px top highlight.
+     Each elevation step bakes the top highlight in. */
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 42%, rgba(0, 0, 0, 0.12) 100%);
+  --shine: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  --elev-1: var(--shine), 0 3px 10px rgba(0, 0, 0, 0.35); /* small controls (buttons, segments) */
+  --elev-2: var(--shine), 0 5px 14px rgba(0, 0, 0, 0.4); /* lit nav, marks, chain nodes */
+  --elev-3: var(--shine), 0 8px 22px rgba(0, 0, 0, 0.38), 0 2px 6px rgba(0, 0, 0, 0.3); /* card */
+  --elev-4: var(--shine), 0 14px 34px rgba(0, 0, 0, 0.5), 0 3px 9px rgba(0, 0, 0, 0.35); /* raised card */
+  --elev-5: var(--shine), 0 14px 36px rgba(0, 0, 0, 0.65), 0 3px 10px rgba(0, 0, 0, 0.45); /* popover / toast */
+  --elev-6: var(--shine), 0 34px 90px rgba(0, 0, 0, 0.72), 0 6px 22px rgba(0, 0, 0, 0.5); /* modal */
+
+  /* ============ CONTROL SIZES ============ */
+  --h-xs: 24px; /* preset chips */
+  --h-sm: 26px; /* segmented-control buttons */
+  --h-md: 28px; /* number input, stepper */
+  --h-lg: 30px; /* transport buttons, select, text input */
+  --h-ticker: 34px; /* docked ticker bar (toasts offset against it) */
+
+  /* ============ MOTION ============ */
+  --ease: cubic-bezier(0.22, 0.9, 0.28, 1);
 }
