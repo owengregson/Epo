@@ -16,6 +16,9 @@ permissions: read-all
 
 jobs:
   analysis:
+    # OpenSSF Scorecard analyzes public repositories; on a private repo it
+    # can't read the repo ("not found") — skip cleanly until the repo is public.
+    if: ${{ github.event.repository.visibility == 'public' }}
     runs-on: ubuntu-latest
     permissions:
       security-events: write # upload SARIF to code scanning

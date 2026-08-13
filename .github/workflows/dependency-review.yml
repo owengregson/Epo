@@ -12,6 +12,9 @@ permissions:
 
 jobs:
   dependency-review:
+    # The dependency-review API needs the dependency graph, which requires a
+    # public repo (or GitHub Advanced Security) — skip cleanly until public.
+    if: ${{ github.event.repository.visibility == 'public' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

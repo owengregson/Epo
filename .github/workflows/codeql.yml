@@ -26,6 +26,9 @@ concurrency:
 jobs:
   analyze:
     name: analyze (${{ matrix.language }})
+    # Code scanning (CodeQL upload) needs a public repo or GitHub Advanced
+    # Security; on a private repo it can't enable — skip cleanly until public.
+    if: ${{ github.event.repository.visibility == 'public' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
