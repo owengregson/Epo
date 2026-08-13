@@ -4,7 +4,7 @@ import type { InstagramTab } from '@/adapter/tab';
 /**
  * The composition root builds its dependency graph lazily — only after login,
  * when `ownPk` is resolvable. Before that, `status()` must still return a complete,
- * well-shaped `PeanutStatus` with idle defaults and `loggedIn: false` (there is no
+ * well-shaped `EpoStatus` with idle defaults and `loggedIn: false` (there is no
  * `ds_user_id` cookie available under jest, and the cookie read fails closed).
  *
  * This exercises the not-built status path WITHOUT a browser or a real store: the
@@ -40,6 +40,9 @@ describe('Foundation status (not built)', () => {
       lastStep: null,
       lastSentinel: null,
       lastActionAt: null,
+      sessionStartedAt: null,
+      netToday: 0,
+      online: true,
       loggedIn: false,
     });
 

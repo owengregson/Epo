@@ -1,5 +1,5 @@
 /**
- * Preload bridge — exposes `window.peanut` to the renderer.
+ * Preload bridge — exposes `window.epo` to the renderer.
  *
  * Runs with `contextIsolation: true` / `nodeIntegration: false`; the renderer
  * never touches `ipcRenderer` directly. Push subscriptions (`on`/`off`) keep a
@@ -14,19 +14,25 @@ import type {
   ActionResult,
   ChainTargetView,
   FollowState,
-  PeanutBridge,
-  PeanutEventChannel,
-  PeanutEventPayloads,
-  PeanutStatus,
+  NetGrowthPoint,
+  EpoBridge,
+  EpoEventChannel,
+  EpoEventPayloads,
+  EpoStatus,
+  PruneControlResult,
+  PruneScanResult,
+  PruneStatus,
   QueueListResult,
   ReadFollowersResult,
+  SeedCheck,
 } from '@/types';
 import type { Settings } from '@/settings/settings';
 
 /** Renderer-facing channel -> underlying IPC channel. */
-const EVENT_CHANNELS: Record<PeanutEventChannel, string> = {
-  log: 'peanut:log',
-  status: 'peanut:status',
+const EVENT_CHANNELS: Record<EpoEventChannel, string> = {
+  log: 'epo:log',
+  status: 'epo:status',
+  pruneStatus: 'epo:prune-status',
 };
 
 type AnyListener = (payload: unknown) => void;
@@ -35,9 +41,9 @@ type IpcListener = (event: IpcRendererEvent, payload: unknown) => void;
 // channel -> (caller cb -> wrapped ipc listener)
 const listenerRegistry = new Map<string, Map<AnyListener, IpcListener>>();
 
-function on<C extends PeanutEventChannel>(
+function on<C extends EpoEventChannel>(
   channel: C,
-  cb: (payload: PeanutEventPayloads[C]) => void,
+  cb: (payload: EpoEventPayloads[C]) => void,
 ): void {
   const ipcChannel = EVENT_CHANNELS[channel];
   if (!ipcChannel) return;
@@ -55,9 +61,9 @@ function on<C extends PeanutEventChannel>(
   ipcRenderer.on(ipcChannel, wrapped);
 }
 
-function off<C extends PeanutEventChannel>(
+function off<C extends EpoEventChannel>(
   channel: C,
-  cb: (payload: PeanutEventPayloads[C]) => void,
+  cb: (payload: EpoEventPayloads[C]) => void,
 ): void {
   const ipcChannel = EVENT_CHANNELS[channel];
   if (!ipcChannel) return;
@@ -70,30 +76,41 @@ function off<C extends PeanutEventChannel>(
   }
 }
 
-const bridge: PeanutBridge = {
-  login: (): Promise<PeanutStatus> => ipcRenderer.invoke('foundation:login'),
+const bridge: EpoBridge = {
+  login: (): Promise<EpoStatus> => ipcRenderer.invoke('foundation:login'),
   readFollowers: (target: string): Promise<ReadFollowersResult> =>
     ipcRenderer.invoke('foundation:readFollowers', target),
   followOne: (username: string): Promise<ActionResult> =>
     ipcRenderer.invoke('foundation:followOne', username),
   unfollowOne: (username: string): Promise<ActionResult> =>
     ipcRenderer.invoke('foundation:unfollowOne', username),
-  status: (): Promise<PeanutStatus> => ipcRenderer.invoke('foundation:status'),
-  startEngine: (): Promise<PeanutStatus> => ipcRenderer.invoke('engine:start'),
-  pauseEngine: (): Promise<PeanutStatus> => ipcRenderer.invoke('engine:pause'),
-  resumeEngine: (): Promise<PeanutStatus> => ipcRenderer.invoke('engine:resume'),
-  stopEngine: (): Promise<PeanutStatus> => ipcRenderer.invoke('engine:stop'),
-  engineStatus: (): Promise<PeanutStatus> => ipcRenderer.invoke('engine:status'),
+  status: (): Promise<EpoStatus> => ipcRenderer.invoke('foundation:status'),
+  startEngine: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:start'),
+  pauseEngine: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:pause'),
+  resumeEngine: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:resume'),
+  stopEngine: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:stop'),
+  engineStatus: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:status'),
+  scanPrune: (): Promise<PruneScanResult> => ipcRenderer.invoke('prune:scan'),
+  startPrune: (): Promise<PruneControlResult> => ipcRenderer.invoke('prune:start'),
+  stopPrune: (): Promise<PruneStatus> => ipcRenderer.invoke('prune:stop'),
+  pruneStatus: (): Promise<PruneStatus> => ipcRenderer.invoke('prune:status'),
+  onPruneStatus: (cb: (status: PruneStatus) => void): void => on('pruneStatus', cb),
+  offPruneStatus: (cb: (status: PruneStatus) => void): void => off('pruneStatus', cb),
   chainList: (): Promise<ChainTargetView[]> => ipcRenderer.invoke('chain:list'),
+  growthSeries: (days: number): Promise<NetGrowthPoint[]> =>
+    ipcRenderer.invoke('growth:series', days),
+  checkSeed: (username: string): Promise<SeedCheck> => ipcRenderer.invoke('seed:check', username),
   queueList: (state: FollowState): Promise<QueueListResult> =>
     ipcRenderer.invoke('queue:list', state),
   getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   updateSettings: (partial: Partial<Settings>): Promise<Settings> =>
     ipcRenderer.invoke('settings:update', partial),
+  resetSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:reset'),
+  clearData: (): Promise<EpoStatus> => ipcRenderer.invoke('data:clear'),
   showTab: () => ipcRenderer.invoke('tab:show'),
   hideTab: () => ipcRenderer.invoke('tab:hide'),
   on,
   off,
 };
 
-contextBridge.exposeInMainWorld('peanut', bridge);
+contextBridge.exposeInMainWorld('epo', bridge);

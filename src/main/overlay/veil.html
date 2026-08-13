@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Automation veil</title>
+    <style>
+      /* Standalone overlay page layered above the Instagram tab. Its own layer is
+         transparent so the tab shows through, dimmed by the veil's radial gradient.
+         (A separate native view can't backdrop-blur the tab beneath it, so the
+         frosted look is normalized to a dim + a passing shine — same intent.) */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+      .veil {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        background: radial-gradient(
+          115% 85% at 50% 44%,
+          rgba(12, 12, 15, 0.55) 0%,
+          rgba(9, 9, 11, 0.72) 62%,
+          rgba(6, 6, 8, 0.82) 100%
+        );
+        opacity: 0;
+        transition: opacity 0.4s ease;
+      }
+      body.active .veil {
+        opacity: 1;
+      }
+      /* crisp 1px inner hairline framing the pane */
+      .veil::before {
+        content: '';
+        position: absolute;
+        inset: 12px;
+        border: 1px solid rgba(238, 241, 244, 0.1);
+        border-radius: 10px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.4);
+        pointer-events: none;
+      }
+      /* diagonal double-wipe shine: dim leading band + sharp trailing line, baked
+         into the gradient (135deg) and translated purely along the diagonal so the
+         bright line travels corner-to-corner from off-screen to off-screen. */
+      .shine {
+        position: absolute;
+        inset: -60%;
+        pointer-events: none;
+        transform: translate(-75%, -75%);
+        animation: veilWipe 11.75s cubic-bezier(0.18, 0.92, 0.28, 1) infinite;
+        animation-play-state: paused;
+      }
+      body.active .shine {
+        animation-play-state: running;
+      }
+      .shine-lead {
+        background: linear-gradient(
+          135deg,
+          transparent 40%,
+          rgba(255, 255, 255, 0.05) 45%,
+          rgba(255, 255, 255, 0.17) 50%,
+          rgba(255, 255, 255, 0.05) 55%,
+          transparent 60%
+        );
+      }
+      .shine-sharp {
+        background: linear-gradient(
+          135deg,
+          transparent 44.6%,
+          rgba(255, 255, 255, 0) 47.3%,
+          rgba(255, 255, 255, 0.31) 49.1%,
+          rgba(255, 255, 255, 0.31) 50.9%,
+          rgba(255, 255, 255, 0) 52.7%,
+          transparent 55.4%
+        );
+        animation-delay: 0.18s;
+        animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      @keyframes veilWipe {
+        0% {
+          transform: translate(-75%, -75%);
+        }
+        36% {
+          transform: translate(75%, 75%);
+        }
+        100% {
+          transform: translate(75%, 75%);
+        }
+      }
+      .chip {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 30px;
+        padding: 0 16px 0 12px;
+        border-radius: 99px;
+        background: linear-gradient(180deg, rgba(30, 30, 35, 0.97), rgba(17, 17, 20, 0.98));
+        border: 1px solid rgba(238, 241, 244, 0.14);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 14px 36px rgba(0, 0, 0, 0.65), 0 2px 8px rgba(0, 0, 0, 0.5);
+        font: 600 11px -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+        color: #eef1f4;
+        white-space: nowrap;
+        letter-spacing: 0.005em;
+      }
+      .chip svg {
+        width: 15px;
+        height: 15px;
+        color: #d8dde3;
+        flex: 0 0 auto;
+      }
+      .chip .dot {
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: #d8dde3;
+        margin: 0 2px;
+        animation: pulse 2.2s cubic-bezier(0.22, 0.9, 0.28, 1) infinite;
+      }
+      .chip .dim {
+        color: #9a9aa2;
+        font-weight: 500;
+      }
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(216, 221, 227, 0.35);
+        }
+        70% {
+          box-shadow: 0 0 0 7px rgba(216, 221, 227, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(216, 221, 227, 0);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .shine {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="veil">
+      <span class="shine shine-lead"></span>
+      <span class="shine shine-sharp"></span>
+      <div class="chip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="8" width="16" height="12" rx="3" />
+          <path d="M12 4v4" />
+          <circle cx="12" cy="3" r="1" fill="currentColor" stroke="none" />
+          <circle cx="9" cy="13" r="1.2" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="13" r="1.2" fill="currentColor" stroke="none" />
+          <path d="M9.5 17h5" />
+        </svg>
+        Automation active<span class="dot"></span><span class="dim">interaction paused</span>
+      </div>
+    </div>
+    <script>
+      // Restart the shine so a wipe fires ~0.25s after activation (lead leads, sharp lags).
+      function kickShine() {
+        [
+          ['.shine-lead', 0.25, 'cubic-bezier(.18,.92,.28,1)'],
+          ['.shine-sharp', 0.43, 'cubic-bezier(.16,1,.3,1)'],
+        ].forEach(function (d) {
+          var el = document.querySelector(d[0]);
+          if (!el) return;
+          el.style.animationName = 'none';
+          void el.offsetWidth; // reflow → restart from iteration 0
+          el.style.animationName = 'veilWipe';
+          el.style.animationDuration = '11.75s';
+          el.style.animationTimingFunction = d[2];
+          el.style.animationIterationCount = 'infinite';
+          el.style.animationDelay = d[1] + 's';
+        });
+      }
+      window.__veil = function (active) {
+        document.body.classList.toggle('active', !!active);
+        if (active) kickShine();
+      };
+    </script>
+  </body>
+</html>
