@@ -11,9 +11,14 @@ and the `fix(remediation): ...` commits): enrichment is wired, the refill loop i
 longer burn the queue, manual ops are ceiling-gated + refused while the engine runs, and the loop is
 concurrency-safe and interruptible.
 
-**The one thing left that needs you is the live Instagram gate (§5)** — a real login → read → follow →
-unfollow → run-the-engine to validate the adapter against live Instagram. Everything up to it was built
-and verified autonomously; it's the only step that can't be done without a real account.
+**LIVE GATE PASSED (2026-08-12).** `npm run livetest` returned ALL PASS on a real account and a real
+churn target: identity, acquire (multi-page scroll), enrich (real `web_profile_info` counts), score+plan
+(correct sweet-spot ranking), follow (post-click verified), follow-back check, unfollow (net-zero), and
+Sentinel — every mechanical action the bot performs is validated against live Instagram. Three live
+selector fixes were needed and made along the way (all in `field-notes.ts`/`actor.ts`, evidence-driven
+via `npm run inspect`): username resolution via the profile link, opening the followers modal by
+text-matching the `<a href="#">` stat, and treating "no scroll container" as non-fatal. The system is
+ready to run for real (§5b).
 
 ---
 
@@ -88,7 +93,15 @@ that aborts on any block. It prints a `STEP | STATUS | DETAIL` table + total act
 the fastest way to confirm the live adapter works (esp. the enrichment fetch + button selectors) without
 waiting for engine cycles. Uses a throwaway temp DB. If a step FAILs, that's the targeted thing to fix.
 
-**Then the full gate** — launch `npm run dev`, then in the app:
+**§5b — running the engine for real (recommended first-run posture).** After `npm run livetest` is
+green, launch `npm run dev`, set your seed + tune Settings, and Start. For the FIRST real run, be
+conservative: turn **dry-run ON** in Settings for one session to watch the loop pace and pick candidates
+without any real clicks; then turn dry-run off with a **low operating rate** (e.g. 10–15/day) and watch
+the first few real follows land ~3–7 min apart. Confirm the Activity log shows one action per interval,
+the Rate panel decrements, and the Sentinel stays `ok`. Ramp up only once you've seen a full
+follow→follow-back→hold→unfollow cycle behave.
+
+**The manual gate (optional, superseded by §5 livetest)** — launch `npm run dev`, then in the app:
 1. **Login** — click Login; log into Instagram in the right-hand tab (2FA fine). Quit + relaunch to
    confirm the session persists. Status should flip to `loggedIn` and the dependency graph builds
    (log: "dependency graph built" with your `ownPk`/`ownUsername`).
