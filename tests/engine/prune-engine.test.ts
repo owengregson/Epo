@@ -309,8 +309,9 @@ describe('PruneEngine.run', () => {
     // Both actions in the prune-own ledger; growth's action ledger untouched.
     expect(h.store.pruneCountSince(0)).toBe(2);
     expect(h.store.actionCountSince(0)).toBe(0);
-    // One humanized delay per action (min = max = 60s, jitter 0).
-    expect(h.sleeps).toEqual([60_000, 60_000]);
+    // One inter-action delay per action: 60s base (min = max, jitter 0) scaled
+    // to a third by PRUNE_DELAY_FACTOR → 20s.
+    expect(h.sleeps).toEqual([20_000, 20_000]);
     // Completed: done + lastRunAt reported exactly once.
     const status = h.engine.status();
     expect(status.state).toBe('done');
@@ -318,6 +319,20 @@ describe('PruneEngine.run', () => {
     expect(status.remaining).toBe(0);
     expect(h.completedAt).toEqual([T0]);
     expect(status.lastRunAt).toBe(T0);
+    h.store.close();
+  });
+
+  test('inter-action delay runs at a THIRD of the humanized pace (PRUNE_DELAY_FACTOR)', async () => {
+    const h = build({
+      following: [OWN_PK, '1'],
+      followers: [],
+      cfg: { minDelayMs: 90_000, maxDelayMs: 90_000, jitterPercent: 0 }, // deterministic 90s base
+    });
+
+    await h.engine.run();
+
+    // 90s base scaled to a third → 30s between unfollows (one action here).
+    expect(h.sleeps).toEqual([30_000]);
     h.store.close();
   });
 
@@ -405,8 +420,8 @@ describe('PruneEngine.run', () => {
     // Only u2's ok reached the ledger; u1 was left completely untouched.
     expect(h.store.pruneCountSince(0)).toBe(1);
     expect(h.store.getEdge(OWN_PK, '1', 'follows')?.status).toBe('active');
-    // The brief park was slept, then u2's human delay.
-    expect(h.sleeps).toEqual([PRUNE_PARK_MS, 60_000]);
+    // The brief park was slept, then u2's inter-action delay (60s base ×1/3 = 20s).
+    expect(h.sleeps).toEqual([PRUNE_PARK_MS, 20_000]);
     expect(h.engine.status().state).toBe('done');
     h.store.close();
   });

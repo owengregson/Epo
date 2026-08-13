@@ -241,8 +241,9 @@ export function toChainConfig(s: Settings): ChainConfig {
 
 /**
  * Project the Prune Engine's config out of Settings (minutes → ms). The
- * inter-action delay knobs are shared with the growth engine — one humanized
- * pace, whichever routine drives the tab. The SCAN pacing knobs (seconds → ms)
+ * inter-action delay knobs are shared with the growth engine, but prune scales
+ * the resulting humanized delay to a third (see `PRUNE_DELAY_FACTOR`) so it runs
+ * ~3× faster than growth's follow cadence. The SCAN pacing knobs (seconds → ms)
  * are prune's own, clamped so `0 ≤ scanMinMs ≤ scanMaxMs` even when the
  * settings file carries a negative or inverted pair.
  */

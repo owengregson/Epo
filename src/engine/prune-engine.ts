@@ -169,6 +169,16 @@ export interface PruneEngineDeps {
 export const PRUNE_PARK_MS = 30_000;
 
 /**
+ * Prune unfollows run at a THIRD of the growth engine's humanized inter-action
+ * pace: the same jittered min/max/jitter draw, scaled by this factor. Pruning is
+ * a deliberate, user-invoked bulk cleanup, so it moves ~3× faster than growth's
+ * follow cadence while still spacing every unfollow (never a burst). Only the
+ * inter-action delay is scaled — the scan pacing and the blocked/budget park are
+ * unaffected.
+ */
+export const PRUNE_DELAY_FACTOR = 1 / 3;
+
+/**
  * How long a completed scan's candidate set stays runnable for a 2-step run.
  * Within this window a manual Run consumes the reviewed candidates verbatim
  * (no second full-list walk); past it the cache is treated as stale and a Run
@@ -571,12 +581,17 @@ export class PruneEngine {
     this.deps.onStatus?.(this.status());
   }
 
-  /** The humanized inter-action delay: uniform [min,max] then ± jitterPercent. */
+  /**
+   * The inter-action delay between unfollows: the humanized uniform [min,max]
+   * draw ± jitterPercent (the growth engine's pace), then scaled to a THIRD
+   * ({@link PRUNE_DELAY_FACTOR}) so pruning runs ~3× faster while still spacing
+   * every action.
+   */
   private nextDelayMs(): number {
     const { minDelayMs, maxDelayMs, jitterPercent } = this.cfg;
     const base = minDelayMs + this.rng() * (maxDelayMs - minDelayMs);
     const jitter = base * (jitterPercent / 100) * (this.rng() * 2 - 1);
-    return Math.round(base + jitter);
+    return Math.round((base + jitter) * PRUNE_DELAY_FACTOR);
   }
 
   /**
