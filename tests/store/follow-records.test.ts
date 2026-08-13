@@ -96,6 +96,16 @@ test("candidatePksForTarget excludes role='skipped' accounts (R1.4 — the pool 
   expect(s.candidatePksForTarget('T').sort()).toEqual(['A', 'C']);
 });
 
+test('candidatePksForTarget excludes accounts we already follow (external or manual)', () => {
+  s.observeEdge('A', 'T', 'follows', true, 100);
+  s.observeEdge('B', 'T', 'follows', true, 100);
+  s.observeEdge('C', 'T', 'follows', true, 100);
+  s.setOwnPk('ME');
+  s.observeEdge('ME', 'B', 'follows', true, 100);  // we already follow B → never queue it
+  s.observeEdge('ME', 'C', 'follows', false, 100); // removed edge does NOT exclude
+  expect(s.candidatePksForTarget('T').sort()).toEqual(['A', 'C']);
+});
+
 test('setRole + getAccount().role round-trips', () => {
   s.observe({ accountPk: '9', observedAt: 100, source: 'profile', fields: { followers: 1, following: 1 } });
   expect(s.getAccount('9')!.role).toBeUndefined();

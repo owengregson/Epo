@@ -7,7 +7,7 @@ import { MIGRATIONS } from '@/store/schema';
 
 let dir: string;
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peanut-cursor-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'epo-cursor-'));
 });
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });

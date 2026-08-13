@@ -29,7 +29,8 @@ export type FollowState =
   | 'followed_back'        // they reciprocated; hold_until set
   | 'unfollow_queued'      // hold elapsed OR no-followback timeout — ready to unfollow
   | 'unfollowed'           // terminal (success or reclaimed)
-  | 'abandoned';           // terminal (retries exhausted)
+  | 'abandoned'            // terminal (retries exhausted)
+  | 'external';            // terminal — an external actor owns the relationship; Epo backs off
 
 export interface FollowRecord {
   accountPk: string;

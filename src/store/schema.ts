@@ -109,4 +109,17 @@ export const MIGRATIONS: string[] = [
     updated_at  INTEGER NOT NULL
   );
   `,
+
+  // --- Migration 2: auto-prune ledger (Phase 5) ----------------------------------
+  // The prune routine's OWN durable daily-cap ledger, independent of the growth
+  // engine's action_ledger. Append-only: never edit the migrations above.
+  `
+  CREATE TABLE prune_ledger (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_pk  TEXT    NOT NULL,
+    at          INTEGER NOT NULL,
+    result      TEXT    NOT NULL   -- ok | fail | simulated
+  );
+  CREATE INDEX idx_prune_ledger_at ON prune_ledger(at);
+  `,
 ];
