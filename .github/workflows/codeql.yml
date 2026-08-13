@@ -1,0 +1,53 @@
+# CodeQL static analysis for the TypeScript/JavaScript source (main process,
+# preload, renderer, and the esbuild/jest config scripts). build-mode: none
+# scans sources without running the esbuild pipeline — CodeQL's JS/TS
+# extractor reads the .ts files directly, so a build adds nothing.
+#
+# Pushes to main keep the code-scanning baseline fresh so PR alerts diff
+# against current main; the weekly schedule picks up newly-published queries
+# against unchanged code. Results land in Security → Code scanning.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '24 4 * * 1' # Mondays 04:24 UTC — off the top-of-hour rush
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # upload code-scanning results
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'

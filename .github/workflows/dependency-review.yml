@@ -1,0 +1,27 @@
+# Dependency review — flags newly-introduced dependencies with known
+# vulnerabilities (or license problems) in the PR diff itself, before merge.
+# Complements Dependabot: Dependabot bumps what's already there; this gate
+# vets what a PR adds.
+name: dependency-review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # comment-summary-in-pr posts the failure summary
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure

@@ -1,0 +1,34 @@
+# Dependabot — npm (package.json + package-lock.json) and github-actions,
+# weekly. Routine minor/patch bumps arrive grouped into a single PR per
+# ecosystem so every bump gets one CI run (typecheck + lint + jest + build);
+# majors stay individual so each gets its own gate run.
+#
+# electron and better-sqlite3 deserve a careful eye on major bumps: an
+# Electron major changes the bundled Node ABI, and better-sqlite3 majors can
+# change the native build requirements — both are exactly the "own PR, own
+# CI run" case the major/minor split exists for.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"

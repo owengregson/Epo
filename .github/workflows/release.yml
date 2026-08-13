@@ -1,0 +1,111 @@
+# The release pipeline. Pushing a tag v* (e.g. v3.0.0) builds Epo's desktop
+# packages on real macOS and Windows runners, uploads them as workflow
+# artifacts, and attaches them to a GitHub Release for that tag.
+#
+#   macos-latest   → .dmg + .zip
+#   windows-latest → NSIS installer + portable .exe
+#
+# NOTE: these builds are UNSIGNED. Code signing and macOS notarization are a
+# later step — they need Apple Developer / Windows signing certificates wired
+# in as repository secrets (CSC_LINK / CSC_KEY_PASSWORD, APPLE_ID, …) before
+# `--publish never` can become a signed pipeline. Until then, macOS users
+# must right-click → Open (or clear the quarantine flag) on first launch;
+# see .github/RELEASE-TEMPLATE.md for the user-facing wording.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+# Read-only by default; only the publish job (which creates the GitHub
+# Release) gets contents: write — least privilege.
+permissions:
+  contents: read
+
+# One release pipeline per tag; never cancel a packaging run mid-flight.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            targets: --mac dmg zip
+          - os: windows-latest
+            targets: --win nsis portable
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (esbuild bundle)
+        run: npm run build
+
+      # electron-builder rebuilds native modules (better-sqlite3) against the
+      # bundled Electron ABI itself, then packages dist/ for this runner's OS.
+      # Output is forced to release/ so the upload/publish globs below have a
+      # single stable home. --publish never: this job only produces files;
+      # the publish job below owns the GitHub Release.
+      - name: Package with electron-builder (unsigned)
+        run: npx electron-builder ${{ matrix.targets }} --publish never -c.directories.output=release
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: epo-${{ matrix.os }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+          if-no-files-found: error
+
+  publish:
+    name: publish GitHub Release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the GitHub Release and attaches assets
+
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -la release/
+
+      # Release notes: start from the auto-generated changelog; the maintainer
+      # edits the draft into shape using .github/RELEASE-TEMPLATE.md before
+      # publishing (draft: true keeps the release invisible until then).
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Epo ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe

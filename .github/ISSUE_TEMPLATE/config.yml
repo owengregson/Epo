@@ -1,0 +1,11 @@
+# Issue-form chooser config: force the structured forms (no blank issues),
+# and route questions and security reports to the right place before an
+# issue gets opened.
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & ideas (Discussions)
+    url: https://github.com/owengregson/Epo/discussions
+    about: Ask questions, share setups, or float ideas that aren't yet a concrete bug or feature request.
+  - name: Report a security vulnerability
+    url: https://github.com/owengregson/Epo/security/advisories/new
+    about: Security problems are handled privately — never as a public issue. See .github/SECURITY.md.

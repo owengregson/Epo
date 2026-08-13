@@ -1,0 +1,58 @@
+name: Feature request
+description: Suggest an improvement or new capability for Epo
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first, then the solution you have in mind — the
+        problem is the part that survives even if the proposed solution changes.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that Epo currently makes hard or impossible?
+      placeholder: "When I ..., I have to ..., because Epo doesn't ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like this to work? Sketch the UI or behavior if it helps.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today, or other approaches that could solve the same problem.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Epo does this touch most?
+      options:
+        - UI / Control Center
+        - Automation engine / scheduling
+        - Data / local knowledge graph
+        - Safety / rate limiting
+        - Packaging / installation
+        - Other
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and discussions and this is not a duplicate
+          required: true

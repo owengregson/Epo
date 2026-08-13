@@ -1,0 +1,91 @@
+name: Bug report
+description: Something in Epo is broken or behaving unexpectedly
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. A precise report with logs
+        is usually fixed much faster than a vague one.
+
+        **Security problems do not belong here** — use
+        [private vulnerability reporting](https://github.com/owengregson/Epo/security/advisories/new) instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: Epo version
+      description: The release tag you installed (About screen or the file you downloaded).
+      placeholder: v3.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: e.g. macOS 15.2, Windows 11 24H2
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps, starting from app launch. What did you click, in what order?
+      placeholder: |
+        1. Launch Epo
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include exact error text if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Paste relevant log output (redact your Instagram username and any
+        session tokens first). This field is rendered as code automatically.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am on the latest release (older versions are not supported)
+          required: true
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: This is not a security vulnerability (those go to private reporting)
+          required: true
