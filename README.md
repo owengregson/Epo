@@ -1,111 +1,226 @@
-# Peanut
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="project/assets/hero-dark.svg">
+    <img src="project/assets/hero.svg" width="720" alt="Epo — Instagram growth, engineered">
+  </picture>
+</p>
 
-Peanut is a production-ready Node.js CLI that automates Instagram follow/unfollow routines with safe scheduling, resume support, and session persistence. It logs in once, saves cookies, and then runs a daily routine that follows up to 30 accounts (1–2 per hour) and unfollows them 24 hours later. The bot stops automatically when it reaches followers that follow fewer than 600 accounts, as requested.
+<p align="center">
+  <b>A safe, observable Instagram follow/unfollow growth engine.</b><br>
+  A local-first desktop app that logs in once, then grows an account the patient way —
+  one paced action at a time, on a durable event-sourced knowledge graph, with the
+  brakes built in rather than bolted on.
+</p>
 
-> **Disclaimer**: Automating Instagram actions may violate Instagram’s Terms of Service. Use this tool responsibly and at your own risk.
+<p align="center">
+  <a href="../../releases/latest"><b>Download</b></a> &nbsp;·&nbsp;
+  <a href="#getting-started">Getting started</a> &nbsp;·&nbsp;
+  <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
+  <a href="#the-safety-model">Safety</a> &nbsp;·&nbsp;
+  <a href="#build--package">Build</a>
+</p>
+
+<br>
+
+> **Disclaimer.** Automating Instagram may violate Instagram's Terms of Service and can
+> get an account actioned or banned. Epo is built to be conservative, but you use it at
+> your own risk. Don't run it on an account you can't afford to lose.
+
+<br>
 
 ## Features
 
-- **Session persistence** using `cookies.json` so you don’t re-login every run.
-- **Follower collection** with infinite scrolling and scraping.
-- **Sorting by following count** to prioritize users who follow the most people.
-- **Daily scheduling** (30 follows/day, spaced hourly).
-- **Automatic unfollows** exactly 24 hours later.
-- **State persistence** (`state.json`) to resume safely after interruptions.
-- **Graceful stopping** when the following-count threshold is reached.
-- **Dry-run mode** for safe testing and demos.
+<table>
+<tr>
+<td width="50%" valign="top">
+<b>⌦ Command Console</b><br>
+A single-window instrument panel — live status, targeting, the poaching chain, queues,
+and settings. Brushed-graphite, keyboard-friendly, and it tells you exactly what the
+engine is doing right now.
+</td>
+<td width="50%" valign="top">
+<b>⏱ Paced like a human</b><br>
+One Instagram action at a time, separated by jittered delays, held inside your active
+hours and under a hard daily ceiling. Bursts are structurally impossible — the loop does
+at most one thing per step.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<b>🛡 Safety sentinel</b><br>
+Every loop iteration classifies the page first. A checkpoint, challenge, or logout halts
+the engine immediately with a reason — it never keeps clicking into a wall.
+</td>
+<td width="50%" valign="top">
+<b>🗄 Local-first knowledge graph</b><br>
+Everything lives in a local, event-sourced SQLite database (WAL, durable through power
+loss). Accounts, edges, the action ledger, and the churn lifecycle are all projections
+you can resume from.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<b>🤝 Async reconciliation</b><br>
+Manage the same account by hand or with another tool? Epo reads the true follow state
+from ordinary traffic and backs off — it only ever unfollows accounts <i>it</i> followed,
+and never re-follows someone you already follow.
+</td>
+<td width="50%" valign="top">
+<b>🧩 Version-marked adapter</b><br>
+Every Instagram-specific literal lives in one dated module. When Instagram changes its
+API or markup, a tiny fragment updates and the rest of the app stays version-agnostic.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<b>💾 Resumes anywhere</b><br>
+Target, database, progress, and stats persist between sessions. Lose the internet and the
+engine auto-holds, then auto-resumes when you're back; the app always relaunches idle.
+</td>
+<td width="50%" valign="top">
+<b>🧪 Dry-run &amp; tested</b><br>
+A full dry-run exercises the entire state machine without touching a button, and the core
+engine ships behind a suite of unit tests (no browser, no wall-clock, no real timers).
+</td>
+</tr>
+</table>
 
-## Requirements
+<br>
 
-- Node.js 18+
-- An Instagram account with access to the target’s follower list (private targets must already be followed).
+## Getting started
 
-## Installation
+Epo is a desktop app. There are two ways to run it.
+
+**1. Install a build** *(recommended once releases are published)* — grab the latest
+`.dmg`/`.zip` (macOS) or installer/portable `.exe` (Windows) from the
+[Releases page](../../releases/latest), open it, and log in.
+
+**2. From source:**
 
 ```bash
 npm install
+npm start        # builds and launches the app
 ```
+
+On first launch, Epo opens an embedded Instagram tab. **Log in there once** (complete any
+2FA/checkpoint yourself). The session is stored in a persistent, partitioned profile, so
+you won't need to log in again — and clearing your data in Settings is how you log out.
+
+Then, in **Settings**, set a **seed account** (whose followers Epo will poach) and tune
+targeting and cadence. Press **Start**. That's it — the console takes over from there.
+
+<br>
+
+## How it works
+
+Epo grows an account by *poaching*: it follows the kind of people who already follow
+accounts like yours, waits to see who follows back, keeps them briefly, then lets them go.
+
+1. **Poach.** Starting from your seed, Epo reads that target's followers into the knowledge
+   graph (paginated, paced, request-bounded).
+2. **Score &amp; queue.** Candidates are ranked — following/follower ratio inside your chosen
+   band, activity, privacy — and the best are queued.
+3. **Follow.** The churn scheduler follows one queued account, then waits a human delay.
+   Every real action is written to a durable ledger.
+4. **Watch for follow-backs.** A request-minimal sweep reads the head of *your* followers
+   list and marks reciprocations, cost `O(new)`, never `O(all)`.
+5. **Hold, then unfollow.** Reciprocated follows are held for a configurable window, then
+   queued for unfollow; non-reciprocators are reclaimed after a timeout.
+6. **Advance the chain.** When a target is exhausted, Epo moves to the next one and keeps
+   the loop going.
+
+Throughout, an **async reconciler** reads the real relationship state from ordinary
+Instagram responses. If you (or another bot) followed or unfollowed someone outside Epo,
+it heals its own records to match reality and steps aside — Epo only churns accounts it
+actually followed, so it never fights another actor or unfollows your manual follows.
+
+<br>
+
+## The safety model
+
+Request volume and burstiness are the main ban vectors, so the brakes are the design, not
+an afterthought:
+
+| Guardrail | What it does |
+|---|---|
+| **One-thing-per-step loop** | Each iteration performs at most one Instagram action, in a fixed precedence. Bursts can't happen. |
+| **Human pacing** | A jittered delay separates every action; reads are floored by a short pacing pause. |
+| **Active hours** | Nothing runs outside your configured window; the engine sleeps until it opens. |
+| **Daily hard ceiling** | A durable, uncrossable cap per day — manual actions count against it too. |
+| **Request budget** | Every real Instagram API call is metered; a saturated window parks instead of pushing. |
+| **Sentinel** | Classifies the page each step and halts on any checkpoint/challenge/logout. |
+| **Interruptible** | Pause/stop takes effect *between* actions instantly; no wait can outlive a control command. |
+| **Dry-run** | Exercises the whole lifecycle without a single click. |
+
+<br>
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set your target:
+Everything is configured in-app, in **Settings**, and persists across sessions:
+
+- **Seed &amp; session** — the account to poach from; reset/log-out lives here too.
+- **Targeting** — the following/follower ratio band and its peak, which follow the slider
+  proportionally.
+- **Cadence &amp; safety** — active hours, daily limit, request budget, follow-back sweep
+  cadence, lifecycle timers (how long to wait for a follow-back, how long to hold).
+- **Dry-run** — simulate without acting.
+- **Data** — reset settings, or clear all data (which also logs you out), each behind a
+  confirmation.
+
+<br>
+
+## Build &amp; package
 
 ```bash
-cp .env.example .env
+npm run dev      # build (dev) + launch
+npm test         # jest unit suite
+npm run lint     # eslint (flat config)
+npm run build    # bundle main + renderer to dist/
+
+npm run dist     # standalone app for the host OS (electron-builder)
+npm run dist:mac # macOS .dmg + .zip
+npm run dist:win # Windows NSIS installer + portable
 ```
 
-Environment variables:
+`npm run dist` produces an installable app under `release/`. Builds are currently
+**unsigned** — on macOS, right-click → *Open* the first time (or
+`xattr -d com.apple.quarantine` the app); on Windows, dismiss SmartScreen. Signing and
+notarization are a later step.
 
-| Variable | Description | Default |
-| --- | --- | --- |
-| `INSTAGRAM_TARGET` | Target username | — |
-| `PEANUT_COOKIES_PATH` | Path to cookies file | `cookies.json` |
-| `PEANUT_STATE_PATH` | Path to state file | `state.json` |
-| `PEANUT_DAILY_FOLLOW_LIMIT` | Daily follow limit | `30` |
-| `PEANUT_FOLLOW_INTERVAL_MINUTES` | Minutes between follows | `60` |
-| `PEANUT_MIN_FOLLOWING_COUNT` | Minimum following threshold | `600` |
-| `PEANUT_HEADLESS` | Headless mode | `true` |
-| `PEANUT_SCHEDULER_INTERVAL_MINUTES` | Scheduler tick interval | `10` |
-| `PEANUT_LOG_LEVEL` | `debug`, `info`, `warn`, `error` | `info` |
+<br>
 
-## Usage
+## For developers
 
-```bash
-npm start -- --target someuser
-```
-
-On first run (or when cookies expire), Peanut opens a browser window so you can log in manually and complete any 2FA prompts. Cookies are saved afterward for reuse.
-
-### Options
-
-```bash
-npm start -- --target someuser --refresh
-npm start -- --target someuser --dry-run
-```
-
-| Flag | Description |
-| --- | --- |
-| `--target` | Override `INSTAGRAM_TARGET` |
-| `--refresh` | Rebuild the follower list and sorting |
-| `--headless` | Override headless mode |
-| `--dry-run` | Simulate actions without clicking buttons |
-
-## How it Works
-
-1. **Login & Cookies**: Peanut opens Instagram, uses saved cookies if present, otherwise opens a manual login window so you can sign in and complete 2FA.
-2. **Follower Collection**: The bot opens the follower modal and scrolls until all followers are loaded, then collects usernames.
-3. **Following Count**: For each follower, it reads the “Following” count from their profile.
-4. **Sorting**: Followers are sorted descending by `followingCount`.
-5. **Daily Follow Queue**: Each day, up to 30 follows are scheduled, spaced hourly.
-6. **Unfollow Queue**: Every follow schedules an unfollow exactly 24 hours later.
-7. **Stop Condition**: Once the next candidate has fewer than 600 followings, the scheduler stops.
-
-## Testing
-
-```bash
-npm test
-```
-
-## Project Structure
+Epo is TypeScript end-to-end, strict mode, bundled by esbuild.
 
 ```
 src/
-  index.js         # CLI entrypoint
-  instagram.js     # Puppeteer automation
-  scheduler.js     # Scheduling logic
-  state.js         # State persistence
-  utils/
-    logger.js      # Structured logging
-    sort.js        # Sorting helpers
-    time.js        # Date utilities
+  main/        Electron main process — window, IPC, foundation wiring, connectivity
+  renderer/    Preact "Command Console" UI (app · views · cards · ui primitives · styles)
+  engine/      the paced runtime: churn scheduler, scanner, chain, follow-back watcher
+  adapter/     version-marked Instagram surface (reader · actor · sentinel · versions/*)
+  rim/         browser-facing ports (acquisition, page readers, reconciler, metering)
+  governors/   clock, rate governor, request budget
+  store/       event-sourced SQLite knowledge graph (schema · migrations · projections)
 ```
 
-## Troubleshooting
+Design principles: the engine owns all wall-clock time and is fully unit-testable with
+fakes (no browser, no timers); the store is the single source of truth; and **all**
+Instagram-specific knowledge is quarantined in `src/adapter/versions/<date>.ts`, so a
+platform change touches one small module.
 
-- **Private account**: Ensure your account follows the target so you can see their follower list.
-- **Expired cookies**: Delete `cookies.json` to force a fresh login.
-- **Checkpoint**: If Instagram presents a checkpoint, run with `PEANUT_HEADLESS=false` and complete it manually.
+```bash
+npm test              # the full unit suite
+npx tsc --noEmit      # type-check
+```
+
+CI runs type-check, lint, tests, and a build on every push and PR; tagged `v*` releases
+build macOS and Windows artifacts.
+
+<br>
 
 ## License
 
-MIT
+[MIT](LICENSE).
+
+<p align="center"><sub><b>Epo</b> by <a href="https://github.com/owengregson">@owengregson</a></sub></p>

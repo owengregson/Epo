@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-label="Epo">
+  <defs>
+    <mask id="epoCut" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <rect x="7" y="7" width="50" height="50" rx="16" ry="16" fill="#fff"/>
+      <rect x="15" y="15" width="34" height="13" rx="7" ry="7" fill="#000"/>
+      <rect x="15" y="36" width="34" height="13" rx="7" ry="7" fill="#000"/>
+      <rect x="43" y="36" width="21" height="10" fill="#000"/>
+    </mask>
+    <linearGradient id="epoBody" x1="0" y1="6" x2="0" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#eef1f5"/><stop offset="18%" stop-color="#c9cdd4"/><stop offset="44%" stop-color="#eceff3"/>
+      <stop offset="57%" stop-color="#abafb7"/><stop offset="80%" stop-color="#cccfd5"/><stop offset="100%" stop-color="#e7eaef"/>
+    </linearGradient>
+    <linearGradient id="epoShadow" x1="0" y1="30" x2="0" y2="57" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3a3d44" stop-opacity="0"/><stop offset="100%" stop-color="#2c2e34" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="epoHi" x1="0" y1="7" x2="0" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/><stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <g mask="url(#epoCut)">
+    <rect width="64" height="64" fill="url(#epoBody)"/>
+    <rect width="64" height="64" fill="url(#epoShadow)"/>
+    <rect width="64" height="64" fill="url(#epoHi)"/>
+  </g>
+</svg>

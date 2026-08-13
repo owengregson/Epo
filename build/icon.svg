@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="tile" x1="180" y1="120" x2="860" y2="920" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#232329"/><stop offset="55%" stop-color="#141417"/><stop offset="100%" stop-color="#0e0e11"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.32" cy="0.10" r="0.9">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.09"/><stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="c" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <rect x="7" y="7" width="50" height="50" rx="16" ry="16" fill="#fff"/>
+      <rect x="15" y="15" width="34" height="13" rx="7" ry="7" fill="#000"/>
+      <rect x="15" y="36" width="34" height="13" rx="7" ry="7" fill="#000"/>
+      <rect x="43" y="36" width="21" height="10" fill="#000"/>
+    </mask>
+    <linearGradient id="b" x1="0" y1="6" x2="0" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f2f4f8"/><stop offset="18%" stop-color="#cbcfd6"/><stop offset="44%" stop-color="#eef1f5"/>
+      <stop offset="57%" stop-color="#adb1b9"/><stop offset="80%" stop-color="#ced1d7"/><stop offset="100%" stop-color="#e9ecf1"/>
+    </linearGradient>
+    <linearGradient id="s" x1="0" y1="30" x2="0" y2="57" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3a3d44" stop-opacity="0"/><stop offset="100%" stop-color="#2a2c32" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="h" x1="0" y1="7" x2="0" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.98"/><stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- graphite squircle tile -->
+  <rect x="92" y="100" width="840" height="840" rx="188" ry="188" fill="url(#tile)" stroke="#2c2c33" stroke-width="2"/>
+  <rect x="92" y="100" width="840" height="840" rx="188" ry="188" fill="url(#sheen)"/>
+  <rect x="93" y="101" width="838" height="200" rx="187" ry="187" fill="#ffffff" opacity="0.05"/>
+
+  <!-- metallic e, centered, scaled from the 64-unit mark -->
+  <g transform="translate(286 286) scale(7.0625)">
+    <g mask="url(#c)">
+      <rect width="64" height="64" fill="url(#b)"/>
+      <rect width="64" height="64" fill="url(#s)"/>
+      <rect width="64" height="64" fill="url(#h)"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-label="Epo">
+  <defs>
+    <mask id="epoCutL" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <rect x="7" y="7" width="50" height="50" rx="16" ry="16" fill="#fff"/>
+      <rect x="15" y="15" width="34" height="13" rx="7" ry="7" fill="#000"/>
+      <rect x="15" y="36" width="34" height="13" rx="7" ry="7" fill="#000"/>
+      <rect x="43" y="36" width="21" height="10" fill="#000"/>
+    </mask>
+    <linearGradient id="epoBodyL" x1="0" y1="6" x2="0" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#9aa0a9"/><stop offset="30%" stop-color="#5f636c"/><stop offset="55%" stop-color="#7c808a"/><stop offset="100%" stop-color="#43464e"/>
+    </linearGradient>
+    <linearGradient id="epoHiL" x1="0" y1="7" x2="0" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.6"/><stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <g mask="url(#epoCutL)">
+    <rect width="64" height="64" fill="url(#epoBodyL)"/>
+    <rect width="64" height="64" fill="url(#epoHiL)"/>
+  </g>
+</svg>

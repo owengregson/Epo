@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="200" viewBox="0 0 900 200" fill="none" role="img" aria-label="Epo — Instagram growth, engineered">
+  <defs>
+    <mask id="cL" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <rect x="7" y="7" width="50" height="50" rx="16" ry="16" fill="#fff"/>
+      <rect x="15" y="15" width="34" height="13" rx="7" ry="7" fill="#000"/>
+      <rect x="15" y="36" width="34" height="13" rx="7" ry="7" fill="#000"/>
+      <rect x="43" y="36" width="21" height="10" fill="#000"/>
+    </mask>
+    <linearGradient id="bL" x1="0" y1="6" x2="0" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#9aa0a9"/><stop offset="30%" stop-color="#5f636c"/><stop offset="55%" stop-color="#7c808a"/><stop offset="100%" stop-color="#43464e"/>
+    </linearGradient>
+    <linearGradient id="hL" x1="0" y1="7" x2="0" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.6"/><stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(52 44) scale(1.75)">
+    <g mask="url(#cL)">
+      <rect width="64" height="64" fill="url(#bL)"/><rect width="64" height="64" fill="url(#hL)"/>
+    </g>
+  </g>
+  <text x="200" y="112" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif" font-size="92" font-weight="800" letter-spacing="-3" fill="#1b1b1f">Epo</text>
+  <text x="204" y="150" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif" font-size="21" font-weight="500" letter-spacing="0.2" fill="#5b5f66">Instagram growth, engineered.</text>
+</svg>
