@@ -1,0 +1,36 @@
+# Dependabot auto-merge — land Dependabot PRs automatically once green.
+#
+# This workflow only turns ON GitHub's native auto-merge for a Dependabot PR;
+# it never merges anything itself. The main-branch ruleset's required check
+# (`node 25.x` — typecheck + lint + test + build) is what actually gates the
+# merge, so a PR lands the moment CI passes and is held (or discarded) if it
+# does not. Scoped to PRs authored by dependabot[bot], with the minimal write
+# permissions Dependabot-triggered runs are granted.
+name: dependabot-auto-merge
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      # Exposes update metadata (type, package, ecosystem) for optional gating,
+      # and confirms the PR genuinely originates from Dependabot.
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Enable auto-merge (squash). GitHub holds the merge until every required
+      # status check on main is green, then merges without further intervention.
+      - name: Enable auto-merge
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
