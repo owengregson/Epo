@@ -47,12 +47,10 @@ import {
   toScorerConfig,
 } from '@/settings/settings';
 import * as logger from '@/utils/logger';
+import { SURFACE, asFetchEnvelope } from '@/adapter/ig-surface';
 
-/** Instagram web app id — required header for the private JSON API. */
-const IG_APP_ID = '936619743392459';
-
-/** Temp DB file (SEPARATE from peanut.db) — deleted + recreated each run. */
-const LIVETEST_DB_FILE = 'peanut-livetest.db';
+/** Temp DB file (SEPARATE from epo.db) — deleted + recreated each run. */
+const LIVETEST_DB_FILE = 'epo-livetest.db';
 
 /** How many times to poll `current_user` for the own username, and the wait between. */
 const USERNAME_RESOLVE_ATTEMPTS = 4;
@@ -154,18 +152,18 @@ export class LiveTestHarness {
   constructor(tab: InstagramTab) {
     this.tab = tab;
     this.cfg = {
-      target: envStr('PEANUT_TEST_TARGET'),
-      followUser: envStr('PEANUT_TEST_FOLLOW'),
-      dryRun: process.env.PEANUT_TEST_DRY === '1',
-      opDelayMinMs: envInt('PEANUT_TEST_OP_DELAY_MIN_MS', 4000),
-      opDelayMaxMs: envInt('PEANUT_TEST_OP_DELAY_MAX_MS', 9000),
-      enrichPaceMinMs: envInt('PEANUT_TEST_ENRICH_PACE_MIN_MS', 3000),
-      enrichPaceMaxMs: envInt('PEANUT_TEST_ENRICH_PACE_MAX_MS', 5000),
-      followUnfollowGapMs: envInt('PEANUT_TEST_FOLLOW_UNFOLLOW_GAP_MS', 45000),
-      budgetMax: envInt('PEANUT_TEST_BUDGET_MAX', 300),
-      budgetWindowMs: envInt('PEANUT_TEST_BUDGET_WINDOW_MIN', 60) * 60_000,
-      acquireMaxRounds: envInt('PEANUT_TEST_ACQUIRE_ROUNDS', 3),
-      enrichCap: envInt('PEANUT_TEST_ENRICH_CAP', 5),
+      target: envStr('EPO_TEST_TARGET'),
+      followUser: envStr('EPO_TEST_FOLLOW'),
+      dryRun: process.env.EPO_TEST_DRY === '1',
+      opDelayMinMs: envInt('EPO_TEST_OP_DELAY_MIN_MS', 4000),
+      opDelayMaxMs: envInt('EPO_TEST_OP_DELAY_MAX_MS', 9000),
+      enrichPaceMinMs: envInt('EPO_TEST_ENRICH_PACE_MIN_MS', 3000),
+      enrichPaceMaxMs: envInt('EPO_TEST_ENRICH_PACE_MAX_MS', 5000),
+      followUnfollowGapMs: envInt('EPO_TEST_FOLLOW_UNFOLLOW_GAP_MS', 45000),
+      budgetMax: envInt('EPO_TEST_BUDGET_MAX', 300),
+      budgetWindowMs: envInt('EPO_TEST_BUDGET_WINDOW_MIN', 60) * 60_000,
+      acquireMaxRounds: envInt('EPO_TEST_ACQUIRE_ROUNDS', 3),
+      enrichCap: envInt('EPO_TEST_ENRICH_CAP', 5),
     };
   }
 
@@ -213,7 +211,7 @@ export class LiveTestHarness {
     await this.humanDelay();
     await this.step('2. Acquire', async () => {
       if (!target) {
-        return this.failAbort('no target — set PEANUT_TEST_TARGET or ensure own username resolves', 'no target');
+        return this.failAbort('no target — set EPO_TEST_TARGET or ensure own username resolves', 'no target');
       }
       const res = await graph.acquisition.acquire(target);
       targetPk = res.targetPk;
@@ -299,7 +297,7 @@ export class LiveTestHarness {
 
     // --- Steps 5–7: follow / follow-back / unfollow (only with a target user) -
     if (!this.cfg.followUser) {
-      const note = 'set PEANUT_TEST_FOLLOW=<username> to test follow/unfollow';
+      const note = 'set EPO_TEST_FOLLOW=<username> to test follow/unfollow';
       this.record('5. Follow', 'SKIP', note);
       this.record('6. Follow-back check', 'SKIP', note);
       this.record('7. Unfollow', 'SKIP', note);
@@ -630,13 +628,17 @@ export class LiveTestHarness {
   /** Resolve a username → pk via `web_profile_info`, parsed by the real Reader. */
   private async resolveUserPk(reader: Reader, username: string): Promise<string | null> {
     try {
-      const u = JSON.stringify(username);
-      const body = await this.tab.evaluate<unknown>(
-        `fetch('/api/v1/users/web_profile_info/?username=' + encodeURIComponent(${u}), ` +
-          `{ headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })` +
-          `.then(function (r) { return r.json(); }).catch(function () { return null; })`,
-      );
-      const obs = reader.parseProfileInfo(body, Date.now());
+      const raw = await this.tab.evaluate<unknown>(SURFACE.profileInfoScript(username));
+      const env = asFetchEnvelope(raw);
+      if (env === null || !env.ok) {
+        logger.warn('livetest.resolveUserPk: non-ok profile response', {
+          username,
+          status: env?.status,
+          contentType: env?.contentType,
+        });
+        return null;
+      }
+      const obs = reader.parseProfileInfo(env.json, Date.now());
       return obs ? obs.accountPk : null;
     } catch (e) {
       logger.error('livetest.resolveUserPk: failed', { username, error: String(e) });
@@ -649,12 +651,9 @@ export class LiveTestHarness {
     reader: Reader,
     pk: string,
   ): Promise<{ parsed: boolean; following: boolean; followedBy: boolean }> {
-    const p = JSON.stringify(pk);
-    const body = await this.tab.evaluate<Record<string, unknown> | null>(
-      `fetch('/api/v1/friendships/show/' + ${p} + '/', ` +
-        `{ headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })` +
-        `.then(function (r) { return r.json(); }).catch(function () { return null; })`,
-    );
+    const raw = await this.tab.evaluate<unknown>(SURFACE.friendshipShowScript(pk));
+    const env = asFetchEnvelope(raw);
+    const body = env !== null && env.ok ? (env.json as Record<string, unknown> | null) : null;
     const parsed =
       body !== null &&
       typeof body === 'object' &&
@@ -709,7 +708,7 @@ export class LiveTestHarness {
     const statW = 6;
     const bar = `${'-'.repeat(nameW)}-+-${'-'.repeat(statW)}-+-${'-'.repeat(40)}`;
 
-    console.log('\n=== Peanut live action test ===');
+    console.log('\n=== Epo live action test ===');
     console.log(`${'STEP'.padEnd(nameW)} | ${'STATUS'.padEnd(statW)} | DETAIL`);
     console.log(bar);
     for (const r of this.results) {
@@ -753,11 +752,11 @@ export class LiveTestHarness {
   async setStatus(text: string, instruction = ''): Promise<void> {
     this.lastStatus = text;
     logger.info(`livetest.status » ${text}`, instruction ? { instruction } : undefined);
-    const title = JSON.stringify('Peanut live test: ' + text);
+    const title = JSON.stringify('Epo live test: ' + text);
     const instr = JSON.stringify(instruction);
     const script = `(() => {
       try {
-        var id = '__peanut_livetest_banner';
+        var id = '__epo_livetest_banner';
         var el = document.getElementById(id);
         if (!el) {
           el = document.createElement('div');

@@ -50,7 +50,7 @@ async function run(): Promise<void> {
   const win = new BaseWindow({
     width: 1400,
     height: 900,
-    title: 'Peanut — Live Action Test',
+    title: 'Epo — Live Action Test',
     backgroundColor: '#0e0e10',
   });
   mainWindow = win;

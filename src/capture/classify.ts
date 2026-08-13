@@ -1,16 +1,21 @@
 /**
  * Pure URL classification for the Task E capture harness.
  *
- * These rules are intentionally URL-substring based (not shape based): the
- * harness runs against LIVE Instagram before any Reader/Adapter exists, so it
- * must decide what a response *probably* is from its URL alone, promptly, in the
- * network handler — before the body is fetched. The distilled `field-notes.ts`
- * (Task 7) will replace these heuristics with verified endpoint matchers.
+ * Endpoint routing comes from the active `SURFACE` version module (the single
+ * home of Instagram URL knowledge); on top of it the harness keeps a few
+ * BROADER capture-only heuristics (also owned by the version module as
+ * `CAPTURE_PATTERNS`) because it runs against LIVE Instagram and must decide
+ * what a response *probably* is from its URL alone, promptly, in the network
+ * handler — before the body is fetched.
  */
+
+import { SURFACE } from '@/adapter/ig-surface';
+import { CAPTURE_PATTERNS } from '@/adapter/versions/2026-08-12';
 
 export type Classification =
   | 'friendship-show'
   | 'followers-list'
+  | 'following-list'
   | 'show-many'
   | 'profile-info'
   | 'activity-feed'
@@ -18,56 +23,33 @@ export type Classification =
   | 'other';
 
 /**
- * Best-effort classification of an Instagram response URL.
- *
- * Order matters: `friendships/show_many` also contains `friendships/`, so the
- * show-many rule is evaluated before the followers-list rule to avoid a
- * misclassification.
+ * Best-effort classification of an Instagram response URL. The verified
+ * endpoint table handles ordering concerns (single-relationship before the
+ * batched map before followers); the fallbacks below only broaden coverage
+ * for traffic the verified matchers do not claim.
  */
 export function classify(url: string): Classification {
+  const kind = SURFACE.matchEndpoint(url);
+  if (kind === 'web-profile-info') return 'profile-info';
+  if (kind !== null) return kind;
+
   const u = url.toLowerCase();
+  const p = CAPTURE_PATTERNS;
 
-  // 1. Single-relationship status (`friendships/show/<pk>/`). This returns BOTH
-  //    directions (following + followed_by), unlike show_many. Must precede the
-  //    show-many and followers-list rules because it also contains
-  //    "friendships/"; guard against show_many explicitly for safety.
-  if (u.includes('friendships/show/') && !u.includes('show_many')) {
-    return 'friendship-show';
-  }
-
-  // 2. Batched relationship status. Must precede the followers-list rule
-  //    because the show_many URL also contains "friendships/".
-  if (u.includes('show_many')) return 'show-many';
-
-  // 3. Followers list: the REST endpoint (friendships/<pk>/followers/) or a
-  //    GraphQL query that mentions followers.
-  const isRestFollowers =
-    u.includes('friendships/') && u.includes('followers');
-  const isGraphqlFollowers = u.includes('/graphql') && u.includes('follower');
+  // Broad followers heuristics: any friendships URL naming followers, or a
+  // GraphQL query that mentions followers.
+  const isRestFollowers = u.includes(p.friendshipsFragment) && u.includes(p.followersFragment);
+  const isGraphqlFollowers = u.includes(p.graphql) && u.includes(p.followerWord);
   if (isRestFollowers || isGraphqlFollowers) return 'followers-list';
 
-  // 4. Profile info (follower/following counts for one account).
-  if (u.includes('web_profile_info') || u.includes('/api/v1/users/')) {
-    return 'profile-info';
-  }
+  // Any per-user REST endpoint (follower/following counts for one account).
+  if (u.includes(p.usersApi)) return 'profile-info';
 
-  // 5. Activity / notifications feed ("started following you").
-  if (u.includes('news/inbox')) return 'activity-feed';
-
-  // 6. Any other GraphQL traffic — kept for inventory / later distillation.
-  if (u.includes('/graphql')) return 'graphql-other';
+  // Any other GraphQL traffic — kept for inventory / later distillation.
+  if (u.includes(p.graphql)) return 'graphql-other';
 
   return 'other';
 }
-
-/** URL fragments that mark an Instagram JSON API response worth capturing. */
-const API_MARKERS = [
-  '/api/v1/',
-  '/graphql',
-  'web_profile_info',
-  'friendships',
-  'news/inbox',
-];
 
 /**
  * True when a response is a JSON body from an Instagram API-ish endpoint —
@@ -76,5 +58,5 @@ const API_MARKERS = [
 export function isInterestingJson(url: string, mimeType: string): boolean {
   if (!mimeType.toLowerCase().includes('json')) return false;
   const u = url.toLowerCase();
-  return API_MARKERS.some((marker) => u.includes(marker));
+  return CAPTURE_PATTERNS.apiMarkers.some((marker) => u.includes(marker));
 }

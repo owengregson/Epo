@@ -5,7 +5,7 @@
  * logs in ONCE; the harness then instruments the page so that clicking any
  * element CAPTURES its full details (tag, attributes, dataset, text, an ancestor
  * chain, outerHTML, and the URL) for the developer to derive robust, drift-proof
- * selectors for `field-notes.ts`.
+ * selectors for the versioned surface module (`src/adapter/versions/*`).
  *
  * Safe by default: every click is intercepted (preventDefault +
  * stop[Immediate]Propagation) so NOTHING happens — no navigation, no real
@@ -17,7 +17,7 @@
  *   2. Navigate to instagram.com; ask the user to log in (plain banner, no
  *      interception — the login form must work).
  *   3. Poll the `persist:ig` `sessionid` cookie until login completes.
- *   4. Land on PEANUT_INSPECT_TARGET if set, else the resolved own profile,
+ *   4. Land on EPO_INSPECT_TARGET if set, else the resolved own profile,
  *      else stay on home.
  *   5. Run a ~300ms inspection loop: install-if-missing the instrumentation,
  *      then drain buffered click records — append each as one JSONL line and
@@ -152,7 +152,7 @@ function reportRecord(rec: InspectRecord): void {
  * home. Returns a human-readable description of where we landed.
  */
 async function landAfterLogin(tab: InstagramTab): Promise<string> {
-  const target = process.env.PEANUT_INSPECT_TARGET?.trim();
+  const target = process.env.EPO_INSPECT_TARGET?.trim();
   if (target) {
     const url = `https://www.instagram.com/${target}/`;
     await tab.goto(url);
@@ -168,7 +168,7 @@ async function landAfterLogin(tab: InstagramTab): Promise<string> {
   }
 
   logger.warn(
-    'inspect: no PEANUT_INSPECT_TARGET and own username not resolved; staying on home',
+    'inspect: no EPO_INSPECT_TARGET and own username not resolved; staying on home',
   );
   if (!tab.currentUrl().includes('instagram.com')) {
     await tab.goto(IG_HOME_URL);
@@ -183,7 +183,7 @@ async function run(): Promise<void> {
   const win = new BaseWindow({
     width: 1400,
     height: 900,
-    title: 'Peanut — DOM Inspect',
+    title: 'Epo — DOM Inspect',
     backgroundColor: '#0e0e10',
   });
   mainWindow = win;
@@ -234,7 +234,7 @@ async function run(): Promise<void> {
     outFile,
   });
   console.log(
-    `\n=== Peanut DOM inspect ===\nLanded on: ${landed}\nClick elements in the window (RECORD-ONLY is safe). Saving to: ${outFile}\n`,
+    `\n=== Epo DOM inspect ===\nLanded on: ${landed}\nClick elements in the window (RECORD-ONLY is safe). Saving to: ${outFile}\n`,
   );
 
   const tickScript = buildInspectTickScript(INSPECT_BANNER_TEXT);

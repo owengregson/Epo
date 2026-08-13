@@ -11,7 +11,7 @@
  *   1. Open a BaseWindow filled by the Instagram tab.
  *   2. Navigate to instagram.com; ask the user to log in.
  *   3. Poll the `persist:ig` session cookie until `sessionid` is present.
- *   4. Resolve the capture target: PEANUT_CAPTURE_TARGET, else the logged-in
+ *   4. Resolve the capture target: EPO_CAPTURE_TARGET, else the logged-in
  *      user's own username (via accounts/current_user).
  *   5. Run the harness capture flow; keep passive capture running.
  *   6. On window close: write manifest + draft notes, print a summary, quit.
@@ -24,9 +24,6 @@ import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
 import { resolveOwnUsername } from '@/adapter/identity';
 import { CaptureHarness } from '@/capture/capture-harness';
 import * as logger from '@/utils/logger';
-
-/** Instagram web app id — required header for the private JSON API. */
-const IG_APP_ID = '936619743392459';
 
 /** Poll interval while waiting for login. */
 const LOGIN_POLL_MS = 2000;
@@ -102,7 +99,7 @@ function readSampleUsernamesFromFixtures(limit: number): string[] {
 
 /**
  * Resolve the sample accounts for profile-shape capture, in priority order:
- *   (a) PEANUT_CAPTURE_SAMPLES env (comma-separated);
+ *   (a) EPO_CAPTURE_SAMPLES env (comma-separated);
  *   (b) 2-3 usernames from the newest saved followers-list fixture;
  *   (c) fallback `['instagram']`.
  * At least one NON-own public account is always included (so a real
@@ -116,7 +113,7 @@ function resolveSamples(ownUsername: string): string[] {
     if (n && !samples.includes(n)) samples.push(n);
   };
 
-  const env = process.env.PEANUT_CAPTURE_SAMPLES?.trim();
+  const env = process.env.EPO_CAPTURE_SAMPLES?.trim();
   if (env) {
     for (const part of env.split(',')) push(part);
   } else {
@@ -140,7 +137,7 @@ async function run(): Promise<void> {
   const win = new BaseWindow({
     width: 1400,
     height: 900,
-    title: 'Peanut — Task E Capture',
+    title: 'Epo — Task E Capture',
     backgroundColor: '#0e0e10',
   });
   mainWindow = win;
@@ -188,7 +185,7 @@ async function run(): Promise<void> {
 
   // Detect the own username best-effort. This drives own-followers capture, but
   // its absence must NEVER dead-end the run — profile-shape capture always runs.
-  let ownUsername = process.env.PEANUT_CAPTURE_TARGET?.trim() || '';
+  let ownUsername = process.env.EPO_CAPTURE_TARGET?.trim() || '';
   if (!ownUsername) {
     const own = await detectOwnUsername(tab);
     if (own) {
@@ -245,7 +242,7 @@ async function finish(): Promise<void> {
     const counts = harness.getCounts();
     logger.info('capture: SUMMARY', { counts, outDir });
     // Human-friendly summary to stdout (console.log always prints).
-    console.log('\n=== Peanut capture summary ===');
+    console.log('\n=== Epo capture summary ===');
     console.log(`output: ${outDir}`);
     const classNames = Object.keys(counts).sort();
     if (classNames.length === 0) {

@@ -11,7 +11,7 @@
  * Two concerns:
  *   1. INSTALL — idempotently attach a capture-phase click recorder plus a
  *      floating mode toggle and a top instruction banner. Guarded by
- *      `window.__peanutInspectInstalled` so it re-installs after a full page
+ *      `window.__epoInspectInstalled` so it re-installs after a full page
  *      navigation, and re-injects the UI each tick if IG wiped it.
  *   2. DRAIN — splice out the records buffered since the last tick and return
  *      them to the Node side for logging + persistence.
@@ -56,7 +56,7 @@ export interface InspectRecord {
  * clicking, per the harness spec.
  */
 export const INSPECT_BANNER_TEXT =
-  "PEANUT INSPECT — click any element to capture it for the developer. " +
+  "EPO INSPECT — click any element to capture it for the developer. " +
   "Default RECORD-ONLY: the click is intercepted, nothing happens (safe). " +
   "Toggle PASS-THROUGH (bottom-right) only when you must open a menu/dialog first. " +
   "Please click, in RECORD-ONLY: (1) the 'followers' count on a profile, " +
@@ -71,12 +71,12 @@ export const INSPECT_BANNER_TEXT =
 export function buildPreLoginBannerScript(text: string): string {
   return `(function () {
     try {
-      var id = '__peanut_inspect_prelogin';
+      var id = '__epo_inspect_prelogin';
       var el = document.getElementById(id);
       if (!el) {
         el = document.createElement('div');
         el.id = id;
-        el.setAttribute('data-peanut-inspect', '1');
+        el.setAttribute('data-epo-inspect', '1');
         el.style.cssText = [
           'position:fixed','top:0','left:0','right:0','z-index:2147483647',
           'font:600 12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
@@ -85,7 +85,7 @@ export function buildPreLoginBannerScript(text: string): string {
         ].join(';');
         (document.body || document.documentElement).appendChild(el);
       }
-      el.textContent = ${JSON.stringify('Peanut inspect: ' + text)};
+      el.textContent = ${JSON.stringify('Epo inspect: ' + text)};
       return true;
     } catch (e) { return false; }
   })()`;
@@ -101,18 +101,18 @@ export function buildInspectTickScript(bannerText: string): string {
   const bannerJson = JSON.stringify(bannerText);
   return `(function () {
     try {
-      var PREFIX = '__peanut_inspect_';
+      var PREFIX = '__epo_inspect_';
 
       // --- INSTALL (once per page document) -------------------------------
-      if (!window.__peanutInspectInstalled) {
-        window.__peanutInspectRecords = [];
-        window.__peanutInspectMode = 'record-only';
+      if (!window.__epoInspectInstalled) {
+        window.__epoInspectRecords = [];
+        window.__epoInspectMode = 'record-only';
 
         var isOwnUi = function (node) {
           var n = node;
           while (n && n.nodeType) {
             if (n.id && String(n.id).indexOf(PREFIX) === 0) return true;
-            if (n.getAttribute && n.getAttribute('data-peanut-inspect')) return true;
+            if (n.getAttribute && n.getAttribute('data-epo-inspect')) return true;
             n = n.parentNode;
           }
           return false;
@@ -194,16 +194,16 @@ export function buildInspectTickScript(bannerText: string): string {
           if (!el || el.nodeType !== 1) return;
           if (isOwnUi(el)) return; // never capture or intercept our own UI
           try {
-            window.__peanutInspectRecords.push(buildRecord(el));
+            window.__epoInspectRecords.push(buildRecord(el));
           } catch (e) {
-            window.__peanutInspectRecords.push({
+            window.__epoInspectRecords.push({
               tag: '', id: '', classes: [], attributes: {}, text: '', href: '',
               role: '', ariaLabel: '', type: '', dataset: {}, outerHTML: '',
               ancestors: [], url: location.href, ts: new Date().toISOString(),
               error: String(e)
             });
           }
-          if (window.__peanutInspectMode === 'record-only') {
+          if (window.__epoInspectMode === 'record-only') {
             event.preventDefault();
             event.stopPropagation();
             event.stopImmediatePropagation();
@@ -211,12 +211,12 @@ export function buildInspectTickScript(bannerText: string): string {
         };
         document.addEventListener('click', handler, true);
 
-        window.__peanutInspectInstalled = true;
+        window.__epoInspectInstalled = true;
       }
 
       // --- UI (re)injection (survives IG SPA re-renders) ------------------
       var setToggleLabel = function (btn) {
-        if (window.__peanutInspectMode === 'pass-through') {
+        if (window.__epoInspectMode === 'pass-through') {
           btn.textContent = 'MODE: PASS-THROUGH';
           btn.style.background = '#b45309';
         } else {
@@ -230,7 +230,7 @@ export function buildInspectTickScript(bannerText: string): string {
       if (!banner) {
         banner = document.createElement('div');
         banner.id = bannerId;
-        banner.setAttribute('data-peanut-inspect', '1');
+        banner.setAttribute('data-epo-inspect', '1');
         banner.style.cssText = [
           'position:fixed','top:0','left:0','right:0','z-index:2147483647',
           'font:600 12px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
@@ -247,7 +247,7 @@ export function buildInspectTickScript(bannerText: string): string {
         toggle = document.createElement('button');
         toggle.id = toggleId;
         toggle.type = 'button';
-        toggle.setAttribute('data-peanut-inspect', '1');
+        toggle.setAttribute('data-epo-inspect', '1');
         toggle.style.cssText = [
           'position:fixed','bottom:16px','right:16px','z-index:2147483647',
           'font:700 12px/1 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
@@ -257,8 +257,8 @@ export function buildInspectTickScript(bannerText: string): string {
         ].join(';');
         toggle.addEventListener('click', function (ev) {
           ev.stopPropagation();
-          window.__peanutInspectMode =
-            window.__peanutInspectMode === 'record-only' ? 'pass-through' : 'record-only';
+          window.__epoInspectMode =
+            window.__epoInspectMode === 'record-only' ? 'pass-through' : 'record-only';
           setToggleLabel(toggle);
         }, false);
         (document.body || document.documentElement).appendChild(toggle);
@@ -266,7 +266,7 @@ export function buildInspectTickScript(bannerText: string): string {
       setToggleLabel(toggle);
 
       // --- DRAIN ----------------------------------------------------------
-      var recs = window.__peanutInspectRecords.splice(0);
+      var recs = window.__epoInspectRecords.splice(0);
       return recs;
     } catch (e) {
       return [{
