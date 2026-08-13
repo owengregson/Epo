@@ -5,6 +5,7 @@ import { type ChurnConfig } from '../engine/churn-scheduler';
 import { type FollowbackConfig, FOLLOWBACK_DEFAULTS } from '../engine/followback-watcher';
 import { type ScannerConfig } from '../engine/scanner';
 import { type ChainConfig } from '../engine/chain-controller';
+import { type PruneConfig } from '../engine/prune-engine';
 import { type RateGovernorConfig } from '../governors/rate-governor';
 import { type RequestBudgetConfig } from '../governors/request-budget';
 import { warn } from '../utils/logger';
@@ -62,6 +63,20 @@ export interface Settings {
 
   /** When true, actions are logged-and-noop'd (intent still recorded) — never touches the account. */
   dryRun: boolean;
+
+  // --- Auto-prune: unfollow non-reciprocating accounts (separate from growth). ---
+  /** Usernames never auto-pruned (case-insensitive; pk entries also match). */
+  pruneWhitelist: string[];
+  /** Max prune unfollows per local day (its OWN ledger, independent of growth). */
+  pruneDailyLimit: number;
+  /** Re-run the prune every N days; 0 = scheduling off (one-shot only). */
+  pruneScheduleDays: number;
+  /** Epoch ms of the last completed prune run; null when never run. */
+  pruneLastRunAt: number | null;
+  /** Min seconds to wait between scroll rounds while SCANNING (jittered up to max). */
+  pruneScanMinSeconds: number;
+  /** Max seconds to wait between scroll rounds while scanning (rate-limit safety). */
+  pruneScanMaxSeconds: number;
 }
 
 /**
@@ -104,6 +119,13 @@ export const DEFAULT_SETTINGS: Settings = {
   minPoolSize: 300,
 
   dryRun: false,
+
+  pruneWhitelist: [],
+  pruneDailyLimit: 50,
+  pruneScheduleDays: 0,
+  pruneLastRunAt: null,
+  pruneScanMinSeconds: 2,
+  pruneScanMaxSeconds: 5,
 };
 
 const MS_PER_MINUTE = 60_000;
@@ -214,5 +236,26 @@ export function toChainConfig(s: Settings): ChainConfig {
   return {
     minFollowBackRate: s.minFollowBackRate,
     minPoolSize: s.minPoolSize,
+  };
+}
+
+/**
+ * Project the Prune Engine's config out of Settings (minutes → ms). The
+ * inter-action delay knobs are shared with the growth engine — one humanized
+ * pace, whichever routine drives the tab. The SCAN pacing knobs (seconds → ms)
+ * are prune's own, clamped so `0 ≤ scanMinMs ≤ scanMaxMs` even when the
+ * settings file carries a negative or inverted pair.
+ */
+export function toPruneConfig(s: Settings): PruneConfig {
+  const scanMinMs = Math.max(0, s.pruneScanMinSeconds * 1000);
+  const scanMaxMs = Math.max(scanMinMs, s.pruneScanMaxSeconds * 1000);
+  return {
+    dailyLimit: s.pruneDailyLimit,
+    whitelist: s.pruneWhitelist,
+    minDelayMs: s.minDelayMinutes * MS_PER_MINUTE,
+    maxDelayMs: s.maxDelayMinutes * MS_PER_MINUTE,
+    jitterPercent: s.jitterPercent,
+    scanMinMs,
+    scanMaxMs,
   };
 }

@@ -16,12 +16,13 @@ import {
   toFollowbackConfig,
   toScannerConfig,
   toChainConfig,
+  toPruneConfig,
 } from '@/settings/settings';
 
 let dir: string;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peanut-settings-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'epo-settings-'));
 });
 
 afterEach(() => {
@@ -126,6 +127,67 @@ describe('projections from DEFAULT_SETTINGS', () => {
 
   test('toChainConfig carries the min-yield gate', () => {
     expect(toChainConfig(DEFAULT_SETTINGS)).toEqual({ minFollowBackRate: 0.15, minPoolSize: 300 });
+  });
+
+  test('toPruneConfig carries the prune cap/whitelist and shares the delay knobs (minutes → ms)', () => {
+    expect(toPruneConfig(DEFAULT_SETTINGS)).toEqual({
+      dailyLimit: 50,
+      whitelist: [],
+      minDelayMs: 180_000,
+      maxDelayMs: 420_000,
+      jitterPercent: 30,
+      scanMinMs: 2_000,
+      scanMaxMs: 5_000,
+    });
+    expect(
+      toPruneConfig({ ...DEFAULT_SETTINGS, pruneWhitelist: ['Keep_Me'], pruneDailyLimit: 5 }),
+    ).toEqual({
+      dailyLimit: 5,
+      whitelist: ['Keep_Me'],
+      minDelayMs: 180_000,
+      maxDelayMs: 420_000,
+      jitterPercent: 30,
+      scanMinMs: 2_000,
+      scanMaxMs: 5_000,
+    });
+  });
+
+  test('toPruneConfig maps the scan pacing knobs (seconds → ms) and clamps max ≥ min ≥ 0', () => {
+    const custom = toPruneConfig({
+      ...DEFAULT_SETTINGS,
+      pruneScanMinSeconds: 3,
+      pruneScanMaxSeconds: 8,
+    });
+    expect(custom.scanMinMs).toBe(3_000);
+    expect(custom.scanMaxMs).toBe(8_000);
+
+    // An inverted pair clamps max up to min (never a max below the min).
+    const inverted = toPruneConfig({
+      ...DEFAULT_SETTINGS,
+      pruneScanMinSeconds: 10,
+      pruneScanMaxSeconds: 3,
+    });
+    expect(inverted.scanMinMs).toBe(10_000);
+    expect(inverted.scanMaxMs).toBe(10_000);
+
+    // A negative min clamps to 0 (a wait can never be negative).
+    const negative = toPruneConfig({
+      ...DEFAULT_SETTINGS,
+      pruneScanMinSeconds: -4,
+      pruneScanMaxSeconds: 2,
+    });
+    expect(negative.scanMinMs).toBe(0);
+    expect(negative.scanMaxMs).toBe(2_000);
+  });
+
+  test('prune knobs round-trip through save → load and merge over defaults', () => {
+    const file = path.join(dir, 'prune.json');
+    saveSettings(file, { ...DEFAULT_SETTINGS, pruneWhitelist: ['a', 'B'], pruneLastRunAt: 123 });
+    const loaded = loadSettings(file);
+    expect(loaded.pruneWhitelist).toEqual(['a', 'B']);
+    expect(loaded.pruneLastRunAt).toBe(123);
+    expect(loaded.pruneDailyLimit).toBe(DEFAULT_SETTINGS.pruneDailyLimit);
+    expect(loaded.pruneScheduleDays).toBe(DEFAULT_SETTINGS.pruneScheduleDays);
   });
 
   test('projections honor non-default settings (custom conversions)', () => {

@@ -1,5 +1,5 @@
 /**
- * Shared cross-cutting types for Peanut v3.
+ * Shared cross-cutting types for Epo v3.
  *
  * This module is the single source of truth for the IPC contract between the
  * main process and the renderer, plus the network-observation shape that the
@@ -43,6 +43,7 @@ export type ResponseHandler = (response: TabResponse) => void;
 export type Unsubscribe = () => void;
 
 import type { EngineStatus } from '@/engine/engine';
+import type { PruneCandidate, PruneState, PruneStatus } from '@/engine/prune-engine';
 import type { Target, FollowState } from '@/store/types';
 import type { Settings } from '@/settings/settings';
 
@@ -50,6 +51,7 @@ import type { Settings } from '@/settings/settings';
 // These are all TYPE-ONLY re-exports — no runtime code crosses into the renderer,
 // so the dependency-free contract above still holds.
 export type { EngineStatus, Target, FollowState, Settings };
+export type { PruneCandidate, PruneState, PruneStatus };
 
 // ---------------------------------------------------------------------------
 // Structured log stream (main -> renderer)
@@ -98,7 +100,7 @@ export interface ActionResult {
  * the dependency graph is built (pre-login) the Engine fields carry their idle
  * defaults and `loggedIn` is false.
  */
-export interface PeanutStatus extends EngineStatus {
+export interface EpoStatus extends EngineStatus {
   /** True once the persisted IG session has a `ds_user_id` cookie. */
   loggedIn: boolean;
 }
@@ -139,6 +141,45 @@ export interface QueueListResult {
   truncated: boolean;
 }
 
+/** One day's cumulative net own-follower growth (Epo-visible, from sweeps). */
+export interface NetGrowthPoint {
+  dayStartMs: number;
+  cumulativeNet: number;
+}
+
+/**
+ * Result of a read-only prune scan (`prune:scan`). `ok: false` carries a typed
+ * reason (e.g. `growth-running`, `prune-running`, `not-logged-in`) the UI
+ * surfaces; the counts/candidates are then empty.
+ */
+export interface PruneScanResult {
+  ok: boolean;
+  reason?: string;
+  following: number;
+  followers: number;
+  candidates: PruneCandidate[];
+}
+
+/**
+ * Result of a prune control op (`prune:start`). Refusals (mutual exclusion with
+ * the growth engine, not logged in) come back as `ok: false` with a typed
+ * reason; `status` always carries the current prune projection.
+ */
+export interface PruneControlResult {
+  ok: boolean;
+  reason?: string;
+  status: PruneStatus;
+}
+
+/** Result of a read-only seed-username precheck (existence + followers visibility). */
+export interface SeedCheck {
+  ok: boolean;
+  exists: boolean;
+  followersVisible: boolean;
+  isPrivate: boolean;
+  reason?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Channel names — kept as string-literal unions so both sides stay in sync
 // ---------------------------------------------------------------------------
@@ -155,29 +196,38 @@ export type IpcInvokeChannel =
   | 'engine:resume'
   | 'engine:stop'
   | 'engine:status'
+  | 'prune:scan'
+  | 'prune:start'
+  | 'prune:stop'
+  | 'prune:status'
   | 'chain:list'
+  | 'growth:series'
+  | 'seed:check'
   | 'queue:list'
   | 'settings:get'
   | 'settings:update'
+  | 'settings:reset'
+  | 'data:clear'
   | 'tab:show'
   | 'tab:hide';
 
 /** Payload pushed on each renderer-facing event channel. */
-export interface PeanutEventPayloads {
+export interface EpoEventPayloads {
   log: LogEntry;
-  status: PeanutStatus;
+  status: EpoStatus;
+  pruneStatus: PruneStatus;
 }
 
 /** Channels pushed from the main process to the renderer. */
-export type PeanutEventChannel = keyof PeanutEventPayloads;
+export type EpoEventChannel = keyof EpoEventPayloads;
 
 // ---------------------------------------------------------------------------
-// The bridge exposed on `window.peanut` by the preload script
+// The bridge exposed on `window.epo` by the preload script
 // ---------------------------------------------------------------------------
 
-export interface PeanutBridge {
+export interface EpoBridge {
   /** Open Instagram in the embedded tab (login is performed by the user). */
-  login(): Promise<PeanutStatus>;
+  login(): Promise<EpoStatus>;
   /** Read a target account's followers into the knowledge graph. */
   readFollowers(target: string): Promise<ReadFollowersResult>;
   /** Follow a single account by username via a human-like DOM click. */
@@ -185,44 +235,64 @@ export interface PeanutBridge {
   /** Unfollow a single account by username via a human-like DOM click. */
   unfollowOne(username: string): Promise<ActionResult>;
   /** Fetch a status snapshot for the control shell. */
-  status(): Promise<PeanutStatus>;
+  status(): Promise<EpoStatus>;
   /** Start the automated engine loop (builds the graph if needed). */
-  startEngine(): Promise<PeanutStatus>;
+  startEngine(): Promise<EpoStatus>;
   /** Pause the engine between actions. */
-  pauseEngine(): Promise<PeanutStatus>;
+  pauseEngine(): Promise<EpoStatus>;
   /** Resume a paused engine. */
-  resumeEngine(): Promise<PeanutStatus>;
+  resumeEngine(): Promise<EpoStatus>;
   /** Stop the engine loop (aborts in-flight sleeps). */
-  stopEngine(): Promise<PeanutStatus>;
+  stopEngine(): Promise<EpoStatus>;
   /** Fetch the engine status snapshot (same projection as {@link status}). */
-  engineStatus(): Promise<PeanutStatus>;
+  engineStatus(): Promise<EpoStatus>;
+  /** READ-ONLY auto-prune scan: following − followers − whitelist (no unfollows). */
+  scanPrune(): Promise<PruneScanResult>;
+  /** Start one auto-prune run (mutually exclusive with the growth engine). */
+  startPrune(): Promise<PruneControlResult>;
+  /** Stop an active prune scan/run between actions. */
+  stopPrune(): Promise<PruneStatus>;
+  /** Fetch the prune status projection. */
+  pruneStatus(): Promise<PruneStatus>;
+  /** Subscribe to pushed prune status projections (`on('pruneStatus', …)` sugar). */
+  onPruneStatus(cb: (status: PruneStatus) => void): void;
+  /** Unsubscribe a previously-registered prune status listener. */
+  offPruneStatus(cb: (status: PruneStatus) => void): void;
   /** The chain lineage: every target with its username and computed yield. */
   chainList(): Promise<ChainTargetView[]>;
+  /** Cumulative net own-follower growth per day for the last `days` days. */
+  growthSeries(days: number): Promise<NetGrowthPoint[]>;
+  /** Read-only precheck of a seed username (existence + followers visibility). */
+  checkSeed(username: string): Promise<SeedCheck>;
   /** A capped page of follow_records in one lifecycle state, joined to accounts. */
   queueList(state: FollowState): Promise<QueueListResult>;
   /** The persisted settings object. */
   getSettings(): Promise<Settings>;
   /** Merge a partial into settings, persist, and reload the live engine configs. */
   updateSettings(partial: Partial<Settings>): Promise<Settings>;
+  /** Reset all settings to defaults (data + session kept). */
+  resetSettings(): Promise<Settings>;
+  /** Wipe the knowledge DB + IG session (logout); settings kept. */
+  clearData(): Promise<EpoStatus>;
   /** Reveal the embedded Instagram tab. */
   showTab(): Promise<void>;
   /** Hide the embedded Instagram tab. */
   hideTab(): Promise<void>;
   /** Subscribe to a push channel (the streaming log or pushed status). */
-  on<C extends PeanutEventChannel>(
+  on<C extends EpoEventChannel>(
     channel: C,
-    cb: (payload: PeanutEventPayloads[C]) => void,
+    cb: (payload: EpoEventPayloads[C]) => void,
   ): void;
   /** Unsubscribe a previously-registered listener (no leaks). */
-  off<C extends PeanutEventChannel>(
+  off<C extends EpoEventChannel>(
     channel: C,
-    cb: (payload: PeanutEventPayloads[C]) => void,
+    cb: (payload: EpoEventPayloads[C]) => void,
   ): void;
 }
 
 declare global {
   // eslint-disable-next-line no-var
   interface Window {
-    peanut: PeanutBridge;
+    epo: EpoBridge;
   }
 }
