@@ -161,6 +161,10 @@ export interface EngineStatus {
   lastStep: StepResult | null;
   lastSentinel: SentinelStatus | null;
   lastActionAt: number | null;
+  sessionStartedAt: number | null;
+  netToday: number;
+  /** Whether the connectivity monitor last reported the internet reachable. */
+  online: boolean;
 }
 
 /** Everything the Engine composes, already constructed (composition root's job). */
@@ -210,11 +214,28 @@ export class Engine {
   private settings: Settings;
 
   private engineState: EngineState = 'idle';
+  /** Epoch ms of the current run's idle→running transition; null when not running. */
+  private sessionStartedAt: number | null = null;
   private runAbort = new AbortController();
   /** The AbortController of the sleep currently in flight, if any. */
   private activeSleep: AbortController | null = null;
   /** Resolvers parked by the run loop while paused; released by resume()/stop(). */
   private resumeWaiters: Array<() => void> = [];
+  /**
+   * True while the run loop is actually PARKED at the pause gate — i.e. the
+   * in-flight step has finished and the loop is waiting in `waitForResume`, so
+   * nothing is driving the tab. Distinct from `engineState === 'paused'`, which
+   * flips the instant `pause()` is called even if a step is still mid-flight.
+   * The prune hand-off ({@link awaitParked}) waits for THIS, so a prune never
+   * touches the shared tab while a growth step is still running.
+   */
+  private parkedNow = false;
+  /** One-shot resolvers awaiting the loop reaching the pause gate (see {@link awaitParked}). */
+  private parkAckWaiters: Array<() => void> = [];
+  /** Last connectivity reported via {@link setOnline}; the loop parks while false. */
+  private online = true;
+  /** Resolvers parked by the run loop while offline; released by setOnline(true)/pause()/stop(). */
+  private onlineWaiters: Array<() => void> = [];
 
   private current: CurrentTarget | null = null;
   /**
@@ -300,6 +321,7 @@ export class Engine {
     this.runAbort = new AbortController();
     const token = this.runAbort; // this run's generation token (R2)
     this.engineState = 'running';
+    this.sessionStartedAt = this.deps.clock.now();
     log.info('engine: started');
     this.emitStatus();
 
@@ -315,6 +337,13 @@ export class Engine {
           await this.waitForResume();
           continue;
         }
+        // Offline hold: paused takes precedence (checked above); a running loop
+        // with no connectivity parks between steps until back online (or a
+        // pause/stop wakes it to re-evaluate).
+        if (!this.online) {
+          await this.waitForOnline();
+          continue;
+        }
         if (state !== 'running') break;
         const result = await this.stepOnce();
         if (result === 'aborted' || result === 'halted') break;
@@ -326,6 +355,7 @@ export class Engine {
         const state = this.stateNow();
         if (state === 'running' || state === 'paused') {
           this.engineState = 'idle';
+          this.sessionStartedAt = null;
         }
       }
       log.info('engine: loop ended', { state: this.engineState });
@@ -338,6 +368,8 @@ export class Engine {
     if (this.engineState !== 'running') return;
     this.engineState = 'paused';
     this.activeSleep?.abort();
+    // A loop parked for offline must wake to re-evaluate and park as paused.
+    this.releaseOnlineWaiters();
     log.info('engine: paused');
     this.emitStatus();
   }
@@ -360,15 +392,37 @@ export class Engine {
     this.runAbort.abort();
     this.activeSleep?.abort();
     if (this.engineState !== 'halted') this.engineState = 'idle';
+    this.sessionStartedAt = null;
     this.releaseResumeWaiters();
+    // A loop parked for offline must wake to observe the abort and exit cleanly.
+    this.releaseOnlineWaiters();
     log.info('engine: stopped');
     this.emitStatus();
   }
 
+  /**
+   * Report connectivity (wired to the main-process ConnectivityMonitor). Going
+   * OFFLINE aborts the in-flight sleep so the loop re-evaluates promptly and parks
+   * (no `stepOnce` runs while offline); coming back ONLINE releases the parked
+   * loop. Does not touch `sessionStartedAt` — an offline hold is not a stop.
+   */
+  setOnline(online: boolean): void {
+    if (this.online === online) return;
+    this.online = online;
+    if (!online) {
+      this.activeSleep?.abort();
+    } else {
+      this.releaseOnlineWaiters();
+    }
+    log.info(online ? 'engine: back online' : 'engine: offline, holding', { online });
+    this.emitStatus();
+  }
+
   status(): EngineStatus {
-    const { store, rate, requestBudget } = this.deps;
+    const { store, rate, requestBudget, clock } = this.deps;
     const chainIndex =
       this.current === null ? null : (store.getTarget(this.current.pk)?.chainIndex ?? null);
+    const startOfToday = new Date(clock.now()).setHours(0, 0, 0, 0);
     return {
       state: this.engineState,
       currentTargetPk: this.current?.pk ?? null,
@@ -385,6 +439,9 @@ export class Engine {
       lastStep: this.lastStep,
       lastSentinel: this.lastSentinel,
       lastActionAt: this.lastActionAt,
+      sessionStartedAt: this.sessionStartedAt,
+      netToday: store.netFollowersSince(startOfToday),
+      online: this.online,
     };
   }
 
@@ -505,7 +562,14 @@ export class Engine {
     if (due !== null) {
       await this.deps.churn.execute(due, now);
       this.lastActionAt = now;
-      await this.interruptibleSleep(this.deps.rate.nextDelayMs());
+      // If a pause/stop landed DURING the action, don't open a fresh full delay —
+      // let the loop reach the pause gate (or exit) promptly so a prune hand-off
+      // can take the shared tab. The inter-action spacing is preserved by the
+      // pause/stop itself (growth won't act again until it resumes). Any other
+      // state (running, or a direct step in tests) keeps THE human delay.
+      if (this.stateNow() !== 'paused' && !this.runAbort.signal.aborted) {
+        await this.interruptibleSleep(this.deps.rate.nextDelayMs());
+      }
       return 'acted';
     }
 
@@ -753,14 +817,70 @@ export class Engine {
   // --- Pause gate --------------------------------------------------------------------
 
   private waitForResume(): Promise<void> {
+    // Reaching here means the loop has quiesced at the pause gate — the in-flight
+    // step is done and nothing is driving the tab. Signal any prune hand-off.
+    this.parkedNow = true;
+    this.notifyParked();
     return new Promise<void>((resolve) => {
-      this.resumeWaiters.push(resolve);
+      this.resumeWaiters.push(() => {
+        this.parkedNow = false;
+        resolve();
+      });
     });
   }
 
   private releaseResumeWaiters(): void {
     const waiters = this.resumeWaiters;
     this.resumeWaiters = [];
+    for (const w of waiters) w();
+  }
+
+  private notifyParked(): void {
+    const waiters = this.parkAckWaiters;
+    this.parkAckWaiters = [];
+    for (const w of waiters) w();
+  }
+
+  /**
+   * Resolve once the loop has QUIESCED at the pause gate: the in-flight step (if
+   * any) has finished and the loop is parked in {@link waitForResume}. Resolves
+   * `true` immediately when the engine isn't driving the tab (idle/halted, or
+   * already parked); otherwise waits for the loop to reach the gate, up to
+   * `timeoutMs`, resolving `false` on timeout. The composition root calls this
+   * AFTER {@link pause} so a prune never drives the shared tab while a growth
+   * step is still in flight. Caller must have requested the pause first — this
+   * only observes; it never pauses.
+   */
+  async awaitParked(timeoutMs: number): Promise<boolean> {
+    const state = this.stateNow();
+    // Not running and not paused → the loop isn't driving the tab at all.
+    if (state === 'idle' || state === 'halted') return true;
+    // Paused AND the loop has already reached the gate → quiesced.
+    if (state === 'paused' && this.parkedNow) return true;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const done = (v: boolean): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(v);
+      };
+      const timer = setTimeout(() => done(false), timeoutMs);
+      this.parkAckWaiters.push(() => done(true));
+    });
+  }
+
+  // --- Offline gate (mirrors the pause gate) -------------------------------------------
+
+  private waitForOnline(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.onlineWaiters.push(resolve);
+    });
+  }
+
+  private releaseOnlineWaiters(): void {
+    const waiters = this.onlineWaiters;
+    this.onlineWaiters = [];
     for (const w of waiters) w();
   }
 }

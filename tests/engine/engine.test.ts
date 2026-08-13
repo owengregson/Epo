@@ -584,6 +584,39 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     expect(h.engine.status().state).toBe('idle');
   });
 
+  test('awaitParked resolves once the paused loop quiesces at the gate (prune hand-off)', async () => {
+    const h = makeHarness();
+    h.sleep.hang = true; // parked in the idle sleep, still "running"
+
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.engine.status().state).toBe('running');
+
+    // Ask for the park BEFORE pausing: it must NOT resolve while a step could run.
+    let resolved = false;
+    const parked = h.engine.awaitParked(1_000).then((v) => {
+      resolved = true;
+      return v;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(resolved).toBe(false); // running → not quiesced
+
+    h.engine.pause(); // aborts the in-flight sleep; the loop heads to the gate
+    expect(await parked).toBe(true);
+    expect(h.engine.status().state).toBe('paused');
+
+    // Already parked → a fresh wait resolves true immediately.
+    expect(await h.engine.awaitParked(1_000)).toBe(true);
+
+    h.engine.stop();
+    await started;
+  });
+
+  test('awaitParked resolves true immediately for an engine that never started', async () => {
+    const h = makeHarness();
+    expect(await h.engine.awaitParked(1_000)).toBe(true); // idle → not driving the tab
+  });
+
   test('start() halts the loop when the sentinel blocks mid-run', async () => {
     const h = makeHarness({ sentinel: ['ok', 'challenge'] });
     h.churn.due = [rec({ accountPk: 'a' })];
@@ -593,6 +626,114 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
     expect(h.halts).toEqual(['sentinel:challenge']);
     expect(h.engine.status().state).toBe('halted');
+  });
+});
+
+describe('Engine — offline hold (connectivity)', () => {
+  test('setOnline(false) parks the running loop; setOnline(true) resumes it', async () => {
+    const h = makeHarness();
+    h.sleep.hang = true; // the idle sleep now blocks until aborted
+
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0)); // let the loop reach its first sleep
+    expect(h.engine.status().online).toBe(true);
+    expect(h.sleep.calls.length).toBe(1); // parked in the idle sleep
+    const sessionStartedAt = h.engine.status().sessionStartedAt;
+    expect(sessionStartedAt).not.toBeNull();
+
+    h.engine.setOnline(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.engine.status().state).toBe('running'); // offline is a hold, not a stop
+    expect(h.engine.status().online).toBe(false);
+    expect(h.sleep.aborted).toBe(1); // the in-flight sleep was aborted promptly
+    const sleepsWhileOffline = h.sleep.calls.length;
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.sleep.calls.length).toBe(sleepsWhileOffline); // parked: no further steps
+    expect(h.engine.status().sessionStartedAt).toBe(sessionStartedAt); // hold keeps the session
+
+    h.engine.setOnline(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.engine.status().online).toBe(true);
+    expect(h.sleep.calls.length).toBeGreaterThan(sleepsWhileOffline); // stepping again
+
+    h.engine.stop();
+    await started;
+    expect(h.engine.status().state).toBe('idle');
+  });
+
+  test('stop() while offline-parked ends the loop cleanly', async () => {
+    const h = makeHarness();
+    h.sleep.hang = true;
+
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    h.engine.setOnline(false);
+    await new Promise((r) => setTimeout(r, 0)); // loop is parked in the offline gate
+
+    h.engine.stop();
+    await started; // resolves: the offline waiter was released and the token aborted
+
+    expect(h.engine.status().state).toBe('idle');
+    expect(await h.engine.stepOnce()).toBe('aborted'); // stopped engine refuses steps
+  });
+
+  test('pause() while offline-parked parks as paused; resume() re-parks for offline', async () => {
+    const h = makeHarness();
+    h.sleep.hang = true;
+
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    h.engine.setOnline(false);
+    await new Promise((r) => setTimeout(r, 0)); // loop is parked in the offline gate
+
+    h.engine.pause();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.engine.status().state).toBe('paused');
+    expect(h.engine.status().online).toBe(false);
+    const sleepsWhilePaused = h.sleep.calls.length;
+
+    // Resume while still offline: the loop wakes, sees offline, and re-parks —
+    // no step runs until connectivity returns.
+    h.engine.resume();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.engine.status().state).toBe('running');
+    expect(h.sleep.calls.length).toBe(sleepsWhilePaused); // still no further steps
+
+    h.engine.setOnline(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.sleep.calls.length).toBeGreaterThan(sleepsWhilePaused); // stepping again
+
+    h.engine.stop();
+    await started;
+  });
+});
+
+describe('Engine — session tracking + netToday (status projection)', () => {
+  test('sessionStartedAt is null when idle, set on start, cleared on stop', async () => {
+    const h = makeHarness();
+    h.sleep.hang = true; // park in the idle sleep so the clock does not advance
+
+    expect(h.engine.status().sessionStartedAt).toBeNull();
+
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.engine.status().sessionStartedAt).toBe(h.clock.now());
+
+    h.engine.stop();
+    await started;
+    expect(h.engine.status().sessionStartedAt).toBeNull();
+  });
+
+  test('netToday reflects follow_records reciprocated since local midnight', () => {
+    const h = makeHarness();
+    const startOfToday = new Date(T0).setHours(0, 0, 0, 0);
+    // Reciprocated today (noon) counts; reciprocated an hour before midnight does not.
+    h.store.upsertFollowRecord(rec({ accountPk: 'x', state: 'followed_back', followedBackAt: T0 }));
+    h.store.upsertFollowRecord(
+      rec({ accountPk: 'y', state: 'followed_back', followedBackAt: startOfToday - HOUR }),
+    );
+    expect(h.engine.status().netToday).toBe(1);
   });
 });
 

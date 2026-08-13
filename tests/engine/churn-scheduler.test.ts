@@ -30,13 +30,22 @@ class FakeActions implements ChurnActions {
   unfollowOk = true;
   followStatus?: ChurnActionOutcome['status'];
   unfollowStatus?: ChurnActionOutcome['status'];
+  /** Phase A: report an `ok` that clicked nothing (already in the target state). */
+  followAlreadyInState?: boolean;
+  unfollowAlreadyInState?: boolean;
   async follow(username: string): Promise<ChurnActionOutcome> {
     this.followCalls.push(username);
-    return { status: this.followStatus ?? (this.followOk ? 'ok' : 'failed') };
+    return {
+      status: this.followStatus ?? (this.followOk ? 'ok' : 'failed'),
+      alreadyInState: this.followAlreadyInState,
+    };
   }
   async unfollow(username: string): Promise<ChurnActionOutcome> {
     this.unfollowCalls.push(username);
-    return { status: this.unfollowStatus ?? (this.unfollowOk ? 'ok' : 'failed') };
+    return {
+      status: this.unfollowStatus ?? (this.unfollowOk ? 'ok' : 'failed'),
+      alreadyInState: this.unfollowAlreadyInState,
+    };
   }
 }
 
@@ -342,6 +351,43 @@ test('f12: a SIMULATED unfollow transitions to unfollowed but leaves any edge/le
   expect(store.getFollowRecord('s2')!.state).toBe('unfollowed'); // lifecycle advanced
   expect(store.getEdge(OWN, 's2', 'follows')).toBeNull(); // no edge written
   expect(store.actionCountSince(0)).toBe(0); // no ledger row
+});
+
+// ── Phase A: ok + alreadyInState = an external actor owns the relationship ────────
+
+test('Phase A: follow ok+alreadyInState drops the record to external with NO ledger/pending', async () => {
+  const { store, actions, sched } = makeHarness({ ownPk: OWN });
+  store.setOwnPk(OWN); // the reconciliation sink anchors edges on the store-side own pk
+  seedUsername(store, 'e1', 'usere1');
+  actions.followAlreadyInState = true;
+  store.upsertFollowRecord(rec({ accountPk: 'e1', state: 'queued' }));
+
+  await sched.tick();
+
+  expect(actions.followCalls).toEqual(['usere1']);
+  const got = store.getFollowRecord('e1')!;
+  expect(got.state).toBe('external'); // dropped, NOT pending_followback
+  expect(got.followedAt).toBeUndefined();
+  expect(store.actionCountSince(0)).toBe(0); // no ledger row — not our action
+  expect(store.getEdge(OWN, 'e1', 'follows')?.status).toBe('active'); // truth recorded
+  expect(store.getAccount('e1')!.role).toBe('skipped'); // out of the pool for good
+});
+
+test('Phase A: unfollow ok+alreadyInState reconciles to unfollowed with NO ledger', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  store.setOwnPk(OWN);
+  seedUsername(store, 'e2', 'usere2');
+  store.observeEdge(OWN, 'e2', 'follows', true, T0); // we believed we still followed them
+  actions.unfollowAlreadyInState = true;
+  store.upsertFollowRecord(rec({ accountPk: 'e2', state: 'unfollow_queued', unfollowDueAt: T0 }));
+
+  const due = sched.nextDue(clock.now())!;
+  await sched.execute(due, clock.now());
+
+  expect(actions.unfollowCalls).toEqual(['usere2']);
+  expect(store.getFollowRecord('e2')!.state).toBe('unfollowed');
+  expect(store.actionCountSince(0)).toBe(0); // no ledger row — the external actor unfollowed
+  expect(store.getEdge(OWN, 'e2', 'follows')?.status).toBe('removed'); // truth recorded
 });
 
 test('advanceTimers + nextDue + execute matches the old tick end-state (hold → unfollowed)', async () => {

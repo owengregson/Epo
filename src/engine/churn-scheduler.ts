@@ -18,6 +18,9 @@ import * as log from '../utils/logger';
  */
 export type ChurnActionOutcome = {
   status: 'ok' | 'failed' | 'blocked' | 'simulated';
+  /** True when `ok` but no click happened — the button was already in the target
+   *  state, so an external actor is responsible for the relationship (Phase A). */
+  alreadyInState?: boolean;
 };
 
 /**
@@ -212,8 +215,10 @@ export class ChurnScheduler {
   }
 
   /**
-   * Follow one `queued` record. Outcome handling (R4/f12):
+   * Follow one `queued` record. Outcome handling (R4/f12/Phase A):
    *  - `'blocked'`   → leave the record completely untouched (no ledger, no retry).
+   *  - `'ok'` + `alreadyInState` → an external actor already follows this account:
+   *                    reconcile (record drops to `external`); no ledger, no edge here.
    *  - `'ok'`        → ledger `ok` + `pending_followback` + active `ownPk→pk` edge.
    *  - `'simulated'` → advance to `pending_followback` only; no edge, no ledger row.
    *  - `'failed'`    → ledger `fail` + retry/abandon.
@@ -225,19 +230,19 @@ export class ChurnScheduler {
       return;
     }
 
-    let status: ChurnActionOutcome['status'] = 'failed';
+    let outcome: ChurnActionOutcome = { status: 'failed' };
     try {
-      ({ status } = await this.actions.follow(username));
+      outcome = await this.actions.follow(username);
     } catch (err) {
       log.error('churn: follow action threw', {
         pk: rec.accountPk,
         username,
         error: String(err),
       });
-      status = 'failed';
+      outcome = { status: 'failed' };
     }
 
-    switch (status) {
+    switch (outcome.status) {
       case 'blocked':
         // Budget/sentinel closed BEFORE any click — retry when the window clears.
         log.info('churn: follow blocked, leaving record untouched', {
@@ -246,6 +251,17 @@ export class ChurnScheduler {
         });
         return;
       case 'ok':
+        if (outcome.alreadyInState === true) {
+          // Phase A: nothing was clicked — an external actor already follows this
+          // account. Reconcile (drops the record to `external` + writes the edge);
+          // NO ledger row and NO pending_followback — the follow was never ours.
+          this.store.reconcileOwnFollow(rec.accountPk, true, now);
+          log.info('churn: follow found already-following (external), backing off', {
+            pk: rec.accountPk,
+            username,
+          });
+          return;
+        }
         this.store.recordAction(rec.accountPk, 'follow', 'ok', now);
         this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
         if (this.ownPk !== undefined) {
@@ -270,9 +286,11 @@ export class ChurnScheduler {
 
   /**
    * Unfollow one `unfollow_queued` record. Outcome handling mirrors
-   * {@link executeFollow}: `'blocked'` leaves the record untouched; `'ok'` writes
-   * the ledger + `unfollowed` + removes the edge; `'simulated'` advances to
-   * `unfollowed` only (no edge/ledger); `'failed'` retries/abandons.
+   * {@link executeFollow}: `'blocked'` leaves the record untouched; `'ok'` +
+   * `alreadyInState` reconciles (an external actor already unfollowed) and closes
+   * the record as `unfollowed` with NO ledger row; `'ok'` writes the ledger +
+   * `unfollowed` + removes the edge; `'simulated'` advances to `unfollowed` only
+   * (no edge/ledger); `'failed'` retries/abandons.
    */
   private async executeUnfollow(rec: FollowRecord, now: number): Promise<void> {
     const username = this.store.getAccount(rec.accountPk)?.username;
@@ -281,19 +299,19 @@ export class ChurnScheduler {
       return;
     }
 
-    let status: ChurnActionOutcome['status'] = 'failed';
+    let outcome: ChurnActionOutcome = { status: 'failed' };
     try {
-      ({ status } = await this.actions.unfollow(username));
+      outcome = await this.actions.unfollow(username);
     } catch (err) {
       log.error('churn: unfollow action threw', {
         pk: rec.accountPk,
         username,
         error: String(err),
       });
-      status = 'failed';
+      outcome = { status: 'failed' };
     }
 
-    switch (status) {
+    switch (outcome.status) {
       case 'blocked':
         log.info('churn: unfollow blocked, leaving record untouched', {
           pk: rec.accountPk,
@@ -301,6 +319,18 @@ export class ChurnScheduler {
         });
         return;
       case 'ok':
+        if (outcome.alreadyInState === true) {
+          // Phase A: nothing was clicked — already not following (an external
+          // actor unfollowed for us). Reconcile the edge, close the record, and
+          // write NO ledger row — the unfollow was not our action.
+          this.store.reconcileOwnFollow(rec.accountPk, false, now);
+          this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
+          log.info('churn: unfollow found already-not-following (external), reconciled', {
+            pk: rec.accountPk,
+            username,
+          });
+          return;
+        }
         this.store.recordAction(rec.accountPk, 'unfollow', 'ok', now);
         this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
         if (this.ownPk !== undefined) {
