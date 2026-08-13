@@ -1,4 +1,4 @@
-import { KnowledgeStore } from '../store/knowledge-store';
+import type { KnowledgeStore } from '../store/knowledge-store';
 import { scoreCandidate, type ScorerConfig } from './scorer';
 
 /**

@@ -18,8 +18,8 @@
  */
 
 import { app, BaseWindow, session } from 'electron';
-import { mkdirSync, readdirSync, readFileSync, statSync } from 'fs';
-import * as path from 'path';
+import { mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import * as path from 'node:path';
 import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
 import { resolveOwnUsername } from '@/adapter/identity';
 import { CaptureHarness } from '@/capture/capture-harness';

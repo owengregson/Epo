@@ -19,10 +19,10 @@
  */
 
 import { app, session } from 'electron';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-import { InstagramTab, IG_HOME_URL, IG_PARTITION } from '@/adapter/tab';
+import { type InstagramTab, IG_HOME_URL, IG_PARTITION } from '@/adapter/tab';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';

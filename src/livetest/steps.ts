@@ -20,10 +20,10 @@
  */
 
 import { app, session } from 'electron';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-import { InstagramTab, IG_PARTITION } from '@/adapter/tab';
+import { type InstagramTab, IG_PARTITION } from '@/adapter/tab';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
 import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
@@ -147,7 +147,6 @@ export class LiveTestHarness {
   private aborted = false;
   private abortReason = '';
   private realActions = 0;
-  private lastStatus = '';
 
   constructor(tab: InstagramTab) {
     this.tab = tab;
@@ -237,7 +236,7 @@ export class LiveTestHarness {
       const needing: string[] = [];
       for (const pk of followerPks) {
         const acc = graph.store.getAccount(pk);
-        if (acc && acc.username && acc.followers === undefined) needing.push(acc.username);
+        if (acc?.username && acc.followers === undefined) needing.push(acc.username);
         if (needing.length >= this.cfg.enrichCap) break;
       }
       if (needing.length === 0) {
@@ -653,11 +652,11 @@ export class LiveTestHarness {
   ): Promise<{ parsed: boolean; following: boolean; followedBy: boolean }> {
     const raw = await this.tab.evaluate<unknown>(SURFACE.friendshipShowScript(pk));
     const env = asFetchEnvelope(raw);
-    const body = env !== null && env.ok ? (env.json as Record<string, unknown> | null) : null;
+    const body = env?.ok ? (env.json as Record<string, unknown> | null) : null;
     const parsed =
       body !== null &&
       typeof body === 'object' &&
-      ('following' in body || 'followed_by' in body || body['status'] === 'ok');
+      ('following' in body || 'followed_by' in body || body.status === 'ok');
     const res = reader.parseFriendshipShow(body, Date.now(), pk);
     return { parsed, following: res.following, followedBy: res.followedBy };
   }
@@ -731,7 +730,6 @@ export class LiveTestHarness {
       skips,
     });
 
-    this.lastStatus = verdict;
     return {
       results: [...this.results],
       verdict,
@@ -750,9 +748,8 @@ export class LiveTestHarness {
 
   /** Log a status line and inject/update an unobtrusive banner at the top of IG. */
   async setStatus(text: string, instruction = ''): Promise<void> {
-    this.lastStatus = text;
     logger.info(`livetest.status » ${text}`, instruction ? { instruction } : undefined);
-    const title = JSON.stringify('Epo live test: ' + text);
+    const title = JSON.stringify(`Epo live test: ${text}`);
     const instr = JSON.stringify(instruction);
     const script = `(() => {
       try {

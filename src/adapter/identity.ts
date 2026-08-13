@@ -94,7 +94,7 @@ export async function resolveOwnUsername(
       tab, SURFACE.readAvatarAltScript(), 'avatar-alt',
     );
     const fromAlt = alt ? SURFACE.usernameFromAvatarAlt(alt) : null;
-    if (fromAlt && SURFACE.usernameFromProfileUrl('/' + fromAlt + '/')) {
+    if (fromAlt && SURFACE.usernameFromProfileUrl(`/${fromAlt}/`)) {
       logger.info('identity: resolved via avatar alt', { username: fromAlt });
       return fromAlt;
     }
@@ -130,8 +130,8 @@ export async function resolveOwnUsername(
         contentType: env.contentType,
       });
     }
-    const fromApi = env !== null && env.ok ? SURFACE.extractCurrentUsername(env.json) : null;
-    if (fromApi && SURFACE.usernameFromProfileUrl('/' + fromApi + '/')) {
+    const fromApi = env?.ok ? SURFACE.extractCurrentUsername(env.json) : null;
+    if (fromApi && SURFACE.usernameFromProfileUrl(`/${fromApi}/`)) {
       logger.info('identity: resolved via current_user', { username: fromApi });
       return fromApi;
     }

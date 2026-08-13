@@ -19,7 +19,7 @@
     "livetest": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/livetest/livetest-main.js",
     "inspect": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/inspect/inspect-main.js",
     "test": "npm run rebuild:node && jest",
-    "lint": "eslint src",
+    "lint": "biome lint src",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win"
@@ -33,19 +33,18 @@
     "preact": "^10.29.8"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
     "@electron/rebuild": "^4.2.0",
-    "electron": "^43.4.0",
-    "@eslint/js": "^10.0.1",
+    "@swc/core": "^1.15.47",
+    "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^9.6.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.2.0",
+    "electron": "^43.4.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
-    "eslint": "^10.8.1",
     "jest": "^30.4.2",
-    "ts-jest": "^29.4.12",
-    "typescript": "~6.0.3",
-    "typescript-eslint": "^8.67.0"
+    "typescript": "^7.0.2"
   },
   "license": "MIT"
 }

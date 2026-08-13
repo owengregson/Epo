@@ -1,0 +1,43 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": { "includes": ["src/**/*.ts", "src/**/*.tsx"] },
+  "formatter": { "enabled": false },
+  "javascript": { "jsxRuntime": "reactClassic" },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "a11y": {
+        "useAriaPropsSupportedByRole": "off",
+        "noLabelWithoutControl": "off",
+        "useSemanticElements": "off",
+        "noSvgWithoutTitle": "off",
+        "useButtonType": "off"
+      },
+      "suspicious": {
+        "noFocusedTests": "off"
+      },
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "better-sqlite3": "Only src/store/* may import better-sqlite3 (the DB stays behind the knowledge store)."
+            }
+          }
+        }
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/store/**/*.ts"],
+      "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
+    },
+    {
+      "includes": ["src/**/*.tsx"],
+      "linter": { "rules": { "style": { "useImportType": "off" } } }
+    }
+  ]
+}

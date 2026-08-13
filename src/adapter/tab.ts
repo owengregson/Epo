@@ -58,7 +58,6 @@ export class InstagramTab {
   private readonly view: WebContentsView;
   private readonly responseHandlers = new Set<ResponseHandler>();
   private readonly pending = new Map<string, PendingResponse>();
-  private attachedWindow: BaseWindow | null = null;
   private debuggerReady = false;
 
   constructor() {
@@ -81,7 +80,6 @@ export class InstagramTab {
 
   /** Attach the tab to a host window and begin observing network traffic. */
   attach(win: BaseWindow): void {
-    this.attachedWindow = win;
     win.contentView.addChildView(this.view);
     this.attachDebugger();
   }
@@ -186,7 +184,6 @@ export class InstagramTab {
       }
     }
     this.debuggerReady = false;
-    this.attachedWindow = null;
   }
 
   // -------------------------------------------------------------------------

@@ -85,7 +85,7 @@ export function buildPreLoginBannerScript(text: string): string {
         ].join(';');
         (document.body || document.documentElement).appendChild(el);
       }
-      el.textContent = ${JSON.stringify('Epo inspect: ' + text)};
+      el.textContent = ${JSON.stringify(`Epo inspect: ${text}`)};
       return true;
     } catch (e) { return false; }
   })()`;

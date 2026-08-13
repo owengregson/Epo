@@ -26,8 +26,8 @@
  */
 
 import { app, BaseWindow, session } from 'electron';
-import { appendFileSync, mkdirSync } from 'fs';
-import * as path from 'path';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import * as path from 'node:path';
 import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
 import { resolveOwnUsername } from '@/adapter/identity';
 import * as logger from '@/utils/logger';
@@ -76,7 +76,7 @@ async function isLoggedIn(): Promise<boolean> {
 
 /** Quote a value for an attribute selector, escaping any embedded double quote. */
 function quoteAttr(value: string): string {
-  return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 /**
@@ -124,7 +124,7 @@ function suggestSelector(rec: InspectRecord): string {
 function reportRecord(rec: InspectRecord): void {
   recordCount++;
   try {
-    appendFileSync(outFile, JSON.stringify(rec) + '\n', 'utf8');
+    appendFileSync(outFile, `${JSON.stringify(rec)}\n`, 'utf8');
   } catch (e) {
     logger.error('inspect.appendRecord failed', {
       error: String(e),

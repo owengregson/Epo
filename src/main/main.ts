@@ -11,7 +11,7 @@
  */
 
 import { app, BaseWindow, WebContentsView } from 'electron';
-import * as path from 'path';
+import * as path from 'node:path';
 import { InstagramTab } from '@/adapter/tab';
 import { OverlayVeil } from '@/main/overlay/veil-view';
 import { Foundation } from '@/main/foundation-wiring';

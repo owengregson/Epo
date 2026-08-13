@@ -95,7 +95,7 @@ async function run(): Promise<void> {
     await delay(2000);
   }
 
-  let summary;
+  let summary: Awaited<ReturnType<typeof test.run>>;
   try {
     summary = await test.run();
   } catch (e) {

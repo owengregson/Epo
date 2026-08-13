@@ -46,7 +46,7 @@ export function usePeekFit(viewId: string, refitKey?: unknown): void {
     fit();
     window.addEventListener('load', fit);
     window.addEventListener('resize', fit);
-    if (document.fonts && document.fonts.ready) {
+    if (document.fonts?.ready) {
       void document.fonts.ready.then(() => fit());
     }
     // The view's box also changes with the fluid frame / view switches,

@@ -97,10 +97,10 @@ export class Actor {
     // lookup through `waitFor` until the control appears or the timeout elapses.
     const res = await this.waitFor<FindButtonResult>(
       () => this.tab.evaluate<FindButtonResult>(SURFACE.findAndActScript('follow')),
-      (r) => Boolean(r && r.found),
+      (r) => Boolean(r?.found),
     );
 
-    if (!res || !res.found) {
+    if (!res?.found) {
       throw new AdapterStaleError('actor.follow', SURFACE.staleSelectorLabel('action-button'));
     }
     logger.info('actor.follow', { username, state: res.state, clicked: res.clicked });
@@ -137,17 +137,17 @@ export class Actor {
     // placed the action button in the DOM when `goto` resolves.
     const res = await this.waitFor<FindButtonResult>(
       () => this.tab.evaluate<FindButtonResult>(SURFACE.findAndActScript('unfollow')),
-      (r) => Boolean(r && r.found),
+      (r) => Boolean(r?.found),
     );
 
-    if (!res || !res.found) {
+    if (!res?.found) {
       throw new AdapterStaleError('actor.unfollow', SURFACE.staleSelectorLabel('action-button'));
     }
 
     if (res.needsConfirm) {
       const confirmed = await this.waitFor<ConfirmResult>(
         () => this.tab.evaluate<ConfirmResult>(SURFACE.confirmUnfollowScript()),
-        (r) => Boolean(r && r.confirmed),
+        (r) => Boolean(r?.confirmed),
       );
       if (!confirmed) {
         throw new AdapterStaleError(
@@ -188,9 +188,9 @@ export class Actor {
     // located by TEXT and clicked. Retry through `waitFor` for SPA hydration.
     const clicked = await this.waitFor<ClickResult>(
       () => this.tab.evaluate<ClickResult>(SURFACE.clickFollowersStatScript()),
-      (r) => Boolean(r && r.clicked),
+      (r) => Boolean(r?.clicked),
     );
-    if (!clicked || !clicked.clicked) {
+    if (!clicked?.clicked) {
       throw new AdapterStaleError(
         'actor.openFollowersDialog',
         SURFACE.staleSelectorLabel('followers-stat'),
@@ -199,7 +199,7 @@ export class Actor {
 
     const present = await this.waitFor<DialogResult>(
       () => this.tab.evaluate<DialogResult>(SURFACE.dialogPresentScript()),
-      (r) => Boolean(r && r.present),
+      (r) => Boolean(r?.present),
     );
     if (!present) {
       throw new AdapterStaleError(
@@ -223,9 +223,9 @@ export class Actor {
     // via JS the same way — located by TEXT, retried for SPA hydration.
     const clicked = await this.waitFor<ClickResult>(
       () => this.tab.evaluate<ClickResult>(SURFACE.clickFollowingStatScript()),
-      (r) => Boolean(r && r.clicked),
+      (r) => Boolean(r?.clicked),
     );
-    if (!clicked || !clicked.clicked) {
+    if (!clicked?.clicked) {
       throw new AdapterStaleError(
         'actor.openFollowingDialog',
         SURFACE.staleSelectorLabel('following-stat'),
@@ -234,7 +234,7 @@ export class Actor {
 
     const present = await this.waitFor<DialogResult>(
       () => this.tab.evaluate<DialogResult>(SURFACE.dialogPresentScript()),
-      (r) => Boolean(r && r.present),
+      (r) => Boolean(r?.present),
     );
     if (!present) {
       throw new AdapterStaleError(
@@ -258,7 +258,7 @@ export class Actor {
     // that already loaded from the initial page. The collect loop retries across
     // rounds and stops when nothing new arrives.
     const res = await this.tab.evaluate<ScrollResult>(SURFACE.scrollFollowersScript());
-    if (!res || !res.found) {
+    if (!res?.found) {
       logger.debug('actor.scrollFollowers: no scroll container (list fits or not yet hydrated)');
       return false;
     }
@@ -296,8 +296,8 @@ export class Actor {
   private async verifyPostState(accept: (state: ButtonState) => boolean): Promise<boolean> {
     const probe = await this.waitFor<ProbeStateResult>(
       () => this.tab.evaluate<ProbeStateResult>(SURFACE.probeStateScript()),
-      (r) => Boolean(r && r.found && accept(r.state)),
+      (r) => Boolean(r?.found && accept(r.state)),
     );
-    return Boolean(probe && probe.found && accept(probe.state));
+    return Boolean(probe?.found && accept(probe.state));
   }
 }

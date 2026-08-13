@@ -1,7 +1,7 @@
-import { KnowledgeStore } from '../store/knowledge-store';
-import { Clock } from '../governors/clock';
-import { RateGovernor } from '../governors/rate-governor';
-import { FollowRecord } from '../store/types';
+import type { KnowledgeStore } from '../store/knowledge-store';
+import type { Clock } from '../governors/clock';
+import type { RateGovernor } from '../governors/rate-governor';
+import type { FollowRecord } from '../store/types';
 import * as log from '../utils/logger';
 
 /**

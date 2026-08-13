@@ -1,16 +1,16 @@
 import Database from 'better-sqlite3';
 import type BetterSqlite3 from 'better-sqlite3';
 import {
-  AccountState,
-  Edge,
-  EdgeType,
-  EnrichmentLevel,
-  FollowRecord,
-  FollowState,
-  Observation,
-  Source,
+  type AccountState,
+  type Edge,
+  type EdgeType,
+  type EnrichmentLevel,
+  type FollowRecord,
+  type FollowState,
+  type Observation,
+  type Source,
   SOURCE_CONFIDENCE,
-  Target,
+  type Target,
 } from './types';
 import { projectAccount } from './projections';
 import { runMigrations } from './migrations';

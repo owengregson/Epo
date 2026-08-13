@@ -1,13 +1,13 @@
-import * as fs from 'fs';
+import * as fs from 'node:fs';
 
 import { type ScorerConfig, SCORER_DEFAULTS } from '../engine/scorer';
-import { type ChurnConfig } from '../engine/churn-scheduler';
+import type { ChurnConfig } from '../engine/churn-scheduler';
 import { type FollowbackConfig, FOLLOWBACK_DEFAULTS } from '../engine/followback-watcher';
-import { type ScannerConfig } from '../engine/scanner';
-import { type ChainConfig } from '../engine/chain-controller';
-import { type PruneConfig } from '../engine/prune-engine';
-import { type RateGovernorConfig } from '../governors/rate-governor';
-import { type RequestBudgetConfig } from '../governors/request-budget';
+import type { ScannerConfig } from '../engine/scanner';
+import type { ChainConfig } from '../engine/chain-controller';
+import type { PruneConfig } from '../engine/prune-engine';
+import type { RateGovernorConfig } from '../governors/rate-governor';
+import type { RequestBudgetConfig } from '../governors/request-budget';
 import { warn } from '../utils/logger';
 
 /**

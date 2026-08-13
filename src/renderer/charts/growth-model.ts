@@ -41,7 +41,7 @@ export function pnoise(i: number): number {
 export function projP(base: number, ym: number, pb: number, bandWidth: number, R: number): number {
   // Scale the LEVEL by ym but the SPREAD (deviation from the expected case) by
   // ym^EXP, so stratification grows with the scalar rather than an even multiply.
-  let p = Math.max(0, PROJ_CENTER * ym + (base - PROJ_CENTER) * Math.pow(ym, YIELD_SPREAD_EXP));
+  let p = Math.max(0, PROJ_CENTER * ym + (base - PROJ_CENTER) * ym ** YIELD_SPREAD_EXP);
   p *= 1 + pb * 0.6; // private boost
   p *= clampN(1 + (0.6 - bandWidth) * 0.25, 0.85, 1.15); // band tightness
   p *= clampN(1 - Math.max(0, R - 60) / 320, 0.8, 1); // volume penalty

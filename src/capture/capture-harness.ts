@@ -14,8 +14,8 @@
  * response bodies after navigation.
  */
 
-import { mkdirSync, writeFileSync } from 'fs';
-import * as path from 'path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { classify, isInterestingJson, type Classification } from '@/capture/classify';
 import { SURFACE } from '@/adapter/ig-surface';
 import * as logger from '@/utils/logger';
@@ -344,7 +344,7 @@ export class CaptureHarness {
           ].join(';');
           (document.body || document.documentElement).appendChild(el);
         }
-        var title = ${JSON.stringify('Epo capture: ' + text)};
+        var title = ${JSON.stringify(`Epo capture: ${text}`)};
         var instr = ${JSON.stringify(instruction)};
         el.innerHTML = '<span>' + title + '</span>' +
           (instr ? '<span style="opacity:0.7;font-weight:400;margin-left:10px">' + instr + '</span>' : '');
@@ -438,7 +438,7 @@ export class CaptureHarness {
     let pk: string | null = null;
     try {
       const wpiUrl =
-        '/api/v1/users/web_profile_info/?username=' + encodeURIComponent(u);
+        `/api/v1/users/web_profile_info/?username=${encodeURIComponent(u)}`;
       const data = await this.tab.evaluate<Record<string, unknown> | null>(
         `fetch('/api/v1/users/web_profile_info/?username=' + encodeURIComponent(${uJson}), { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })
           .then(function(r){ return r.json(); })
@@ -476,7 +476,7 @@ export class CaptureHarness {
     // (3) Single friendships/show/<pk>/ — the only shape with `followed_by`.
     if (pk) {
       try {
-        const showUrl = '/api/v1/friendships/show/' + pk + '/';
+        const showUrl = `/api/v1/friendships/show/${pk}/`;
         const show = await this.tab.evaluate<Record<string, unknown> | null>(
           `fetch(${JSON.stringify(showUrl)}, { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })
             .then(function(r){ return r.json(); })
@@ -484,7 +484,7 @@ export class CaptureHarness {
         );
         if (
           show &&
-          ('following' in show || 'followed_by' in show || show['status'] === 'ok')
+          ('following' in show || 'followed_by' in show || show.status === 'ok')
         ) {
           this.saveRaw('friendship-show', show, showUrl, 200);
         } else {
@@ -693,8 +693,8 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 function extractProfileUser(body: unknown): Record<string, unknown> | null {
   const root = asRecord(body);
   if (!root) return null;
-  const nested = asRecord(root['data']);
-  return (nested && asRecord(nested['user'])) ?? asRecord(root['user']);
+  const nested = asRecord(root.data);
+  return (nested && asRecord(nested.user)) ?? asRecord(root.user);
 }
 
 /** Extract the numeric pk (as a string) from a user object, if present. */

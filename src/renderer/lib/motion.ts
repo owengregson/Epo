@@ -26,5 +26,5 @@ export const GROWTH_REVEAL_DUR_MS = 1400;
 
 /** easeOutCubic — the curve the chart reveal rides. */
 export function easeOutCubic(x: number): number {
-  return 1 - Math.pow(1 - x, 3);
+  return 1 - (1 - x) ** 3;
 }

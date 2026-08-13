@@ -11,7 +11,7 @@
  */
 
 import { WebContentsView, type BaseWindow, type Rectangle } from 'electron';
-import * as path from 'path';
+import * as path from 'node:path';
 import * as logger from '@/utils/logger';
 
 /** Must match the veil page's opacity transition (`veil.html`). */

@@ -47,7 +47,7 @@ export function SeedSessionCard({
   }, [requiredPrompt]);
 
   const invalid = required || seed.status === 'invalid';
-  const inputClass = 'tinput' + (invalid ? ' invalid' : seed.status === 'valid' ? ' valid' : '');
+  const inputClass = `tinput${invalid ? ' invalid' : seed.status === 'valid' ? ' valid' : ''}`;
   const statusClass = seed.status === 'idle' ? 'seed-status' : `seed-status show ${seed.status}`;
 
   const restart = async (): Promise<void> => {

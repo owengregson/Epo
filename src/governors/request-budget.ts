@@ -1,5 +1,5 @@
-import { KnowledgeStore } from '../store/knowledge-store';
-import { Clock } from './clock';
+import type { KnowledgeStore } from '../store/knowledge-store';
+import type { Clock } from './clock';
 
 export interface RequestBudgetConfig {
   maxRequestsPerWindow: number;
