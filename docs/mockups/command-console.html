@@ -1,0 +1,3145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peanut — Command Console</title>
+<!-- Local file — CDN resources allowed: FontAwesome Free (icons) + Inter (typography) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.3.0/css/all.min.css">
+<style>
+  /* ============================================================
+     PEANUT · DRAFT B · "COMMAND CONSOLE" · revision 4
+     Dark instrument panel — mission-control gravitas.
+     One unified 4px spacing scale. Every setting is live.
+     ============================================================ */
+  :root{
+    --bg:#0d0d0f; --surface:#141417; --elevated:#1b1b1f;
+    --border:#26262b; --border-strong:#33333a;
+    --text:#ececee; --muted:#9a9aa2; --faint:#66666e;
+    --silver:#c9ccd1; --chrome:#eef1f4; --live:#d8dde3;
+    --warn:#d8b768; --danger:#c96a6a; --ok:#6db28a;
+    --r:7px;
+    --sheen:linear-gradient(180deg, rgba(255,255,255,.05) 0%, rgba(255,255,255,0) 42%, rgba(0,0,0,.12) 100%);
+    --shine:inset 0 1px 0 rgba(255,255,255,.04);
+    --mono:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+    --ease:cubic-bezier(.22,.9,.28,1);
+    /* --- the one spacing scale (4px base @ the 1240px design width) ---
+       fluid: tracks the viewport — equals the design px at ~1240,
+       compresses on small screens, breathes a touch on large ones */
+    --sp-0:clamp(1.5px, .161vw, 2.5px);
+    --sp-1:clamp(3px,   .322vw, 5px);
+    --sp-2:clamp(6px,   .645vw, 9px);
+    --sp-3:clamp(9px,   .967vw, 13px);
+    --sp-4:clamp(12px, 1.29vw,  18px);
+    --sp-5:clamp(15px, 1.612vw, 22px);
+    --sp-6:clamp(18px, 1.935vw, 27px);
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html,body{height:100%}
+  body{
+    background:#08080a;
+    background-image:radial-gradient(1100px 700px at 50% 32%, rgba(255,255,255,.028), transparent 62%);
+    color:var(--text);
+    font-family:'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+    font-size:13px; line-height:1.45;
+    -webkit-font-smoothing:antialiased;
+    display:flex; align-items:center; justify-content:center;
+    min-height:100vh; overflow:hidden;   /* the app scrolls inside itself, never the page */
+    padding:clamp(0px, 3vmin - 6px, 24px); /* letterbox margin → 0 on small screens */
+  }
+  .num{font-variant-numeric:tabular-nums; font-feature-settings:"tnum"}
+
+  /* ---------- App window frame ---------- */
+  .window{
+    /* fluid frame: fills the viewport up to sane maxima, shrinks to fit —
+       at the 1240×860 design context it renders exactly as before */
+    width:min(1240px, 100%);
+    height:min(900px, 100%);
+    border-radius:12px; overflow:hidden;
+    background:var(--bg);
+    border:1px solid var(--border-strong);
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.05) inset,
+      0 24px 70px rgba(0,0,0,.65),
+      0 4px 18px rgba(0,0,0,.5);
+    display:flex; flex-direction:column;
+  }
+  .titlebar{
+    height:40px; flex:0 0 40px;
+    display:flex; align-items:center; gap:var(--sp-3);
+    padding:0 var(--sp-4);
+    background:linear-gradient(180deg,#17171a,#121215);
+    border-bottom:1px solid var(--border);
+    box-shadow:var(--shine);
+    user-select:none;
+  }
+  .dots{display:flex; gap:var(--sp-2)}
+  .dots i{width:11px;height:11px;border-radius:50%;background:#2b2b31;border:1px solid #3a3a41;display:block}
+  .titlebar .app-name{
+    flex:1; text-align:center; font-size:12px; font-weight:600;
+    letter-spacing:.02em; color:var(--muted);
+    margin-right:calc(var(--sp-6) + var(--sp-6) + var(--sp-1)); /* balance the dots */
+  }
+  .body{flex:1; display:flex; min-height:0}
+
+  /* ============================================================
+     LEFT · CONTROL CONSOLE (the star)
+     ============================================================ */
+  .console{
+    width:clamp(380px, 38%, 470px); flex:0 0 auto;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.015), rgba(0,0,0,.06)),
+      var(--bg);
+    border-right:1px solid var(--border-strong);
+    display:flex; flex-direction:column; min-height:0;
+    position:relative; overflow:hidden;
+    /* the console is a size container: its cards respond to ITS width */
+    container-type:inline-size; container-name:console;
+  }
+  /* card-internal rhythm tracks the console's own width (cqi), so the
+     spacing inside cards compresses/expands with the pane, not the page.
+     Same px values as the root scale at the 470px design width. */
+  .console{
+    --sp-0:clamp(1.5px, .43cqi, 2.5px);
+    --sp-1:clamp(3px,   .85cqi, 5px);
+    --sp-2:clamp(6px,  1.7cqi,  9px);
+    --sp-3:clamp(9px,  2.55cqi, 13px);
+    --sp-4:clamp(12px, 3.4cqi,  18px);
+    --sp-5:clamp(15px, 4.26cqi, 22px);
+    --sp-6:clamp(18px, 5.1cqi,  27px);
+  }
+
+  /* ----- console header: brand + state, then transport ----- */
+  .con-head{
+    padding:var(--sp-3) var(--sp-4);
+    display:flex; flex-direction:column; gap:var(--sp-3);
+    border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg, rgba(255,255,255,.02), transparent);
+  }
+  .brand-row{display:flex; align-items:center; gap:var(--sp-3)}
+  .logo-mark{
+    width:30px;height:30px;border-radius:8px; flex:0 0 30px;
+    background:linear-gradient(160deg,#26262b,#141417);
+    border:1px solid var(--border-strong);
+    box-shadow:var(--shine), 0 4px 12px rgba(0,0,0,.4);
+    display:grid;place-items:center;
+  }
+  .head-text{flex:1; min-width:0}
+  .con-head h1{
+    font-size:14px; font-size:clamp(12.5px, 2.98cqi, 15px);
+    font-weight:700; letter-spacing:-0.03em; color:var(--chrome); line-height:1.2;
+  }
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(216,221,227,.35)}
+    70%{box-shadow:0 0 0 7px rgba(216,221,227,0)}
+    100%{box-shadow:0 0 0 0 rgba(216,221,227,0)}
+  }
+
+  /* --- brand tagline: small, muted, static — carries no state --- */
+  .head-text .tagline{
+    font-size:9px; font-weight:700; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--faint); margin-top:var(--sp-0); white-space:nowrap;
+  }
+
+  /* --- live signal folded into the brand mark: hairline ring that
+     breathes while the engine runs, holds brass when paused --- */
+  .logo-mark{position:relative}
+  .logo-mark::after{
+    content:""; position:absolute; inset:-3px; border-radius:11px;
+    border:1px solid rgba(238,241,244,.30);
+    opacity:0; pointer-events:none;
+    transition:opacity .3s, border-color .3s;
+  }
+  .window[data-state="running"] .logo-mark::after{
+    opacity:1; animation:markPulse 2.6s var(--ease) infinite;
+  }
+  @keyframes markPulse{0%,100%{opacity:.22} 50%{opacity:.8}}
+  .window[data-state="paused"] .logo-mark::after{
+    opacity:.65; border-color:rgba(216,183,104,.4);
+  }
+
+  /* transport trio — the buttons themselves read as engine state */
+  .transport{display:grid; grid-template-columns:repeat(3,1fr); gap:var(--sp-2)}
+  .tbtn{
+    appearance:none; cursor:pointer; font:inherit;
+    height:30px;
+    display:inline-flex; align-items:center; justify-content:center; gap:var(--sp-2);
+    padding:0 var(--sp-3); border-radius:var(--r);
+    background:linear-gradient(180deg,#1d1d22,#16161a);
+    border:1px solid var(--border-strong);
+    box-shadow:var(--shine), 0 3px 10px rgba(0,0,0,.3);
+    color:var(--muted);
+    font-size:11.5px; font-weight:600; letter-spacing:.01em;
+    transition:color .15s, border-color .15s, background .15s, transform .06s, opacity .15s;
+  }
+  .tbtn .fa-solid{flex:0 0 auto; font-size:11px}
+  .tbtn:hover{color:var(--text); border-color:#3d3d45}
+  .tbtn:active{transform:translateY(1px)}
+  /* the natural next control carries the primary sheen for the
+     current engine state — the cluster itself is the state readout */
+  .window[data-state="running"] #btnPause,
+  .window[data-state="paused"]  #btnStart,
+  .window[data-state="halted"]  #btnStart,
+  .window[data-state="idle"]    #btnStart{
+    background:linear-gradient(180deg,#232329,#191a1e);
+    background-image:var(--sheen);           /* the one brushed sheen */
+    border-color:#43434c; color:var(--chrome);
+  }
+  .window[data-state="paused"] #btnStart{    /* held: brass resume */
+    border-color:#5c4e32; color:#e2cd93;
+  }
+  .tbtn.danger:hover{color:var(--danger); border-color:#4a3333}
+  .tbtn[disabled]{opacity:.4; cursor:default; pointer-events:none}
+
+  /* ----- nav rail ----- */
+  .nav{
+    display:grid; grid-template-columns:repeat(4,1fr); gap:var(--sp-2);
+    padding:var(--sp-3) var(--sp-4);
+    border-bottom:1px solid var(--border);
+  }
+  .nav button{
+    appearance:none; border:1px solid transparent; cursor:pointer;
+    background:transparent; color:var(--muted);
+    font:inherit; font-size:11px; font-weight:600; letter-spacing:.01em;
+    display:flex; flex-direction:column; align-items:center; gap:var(--sp-1);
+    padding:var(--sp-2) var(--sp-1); border-radius:var(--r);
+    transition:color .18s, background .18s, border-color .18s, box-shadow .18s;
+  }
+  .nav button .fa-solid{font-size:15px; opacity:.75; transition:opacity .18s}
+  .nav button:hover{color:var(--silver); background:rgba(255,255,255,.025)}
+  .nav button.active{
+    color:var(--chrome);
+    background:linear-gradient(180deg,#202025,#18181c);
+    border-color:var(--border-strong);
+    box-shadow:var(--shine), 0 5px 14px rgba(0,0,0,.4);
+  }
+  .nav button.active .fa-solid{opacity:1}
+
+  /* ----- view stage ----- */
+  .stage{flex:1; min-height:0; position:relative; overflow:hidden}
+  .view{
+    position:absolute; inset:0;
+    overflow-y:auto; overflow-x:hidden;
+    padding:var(--sp-4) var(--sp-4) var(--sp-5);
+    display:none;
+    scrollbar-width:thin; scrollbar-color:#2c2c32 transparent;
+  }
+  .view::-webkit-scrollbar{width:8px}
+  .view::-webkit-scrollbar-thumb{background:#2c2c32;border-radius:4px}
+  .view.active{display:block}
+  .view.entering{animation:viewIn .34s var(--ease) both}
+  .view.exiting {animation:viewOut .17s ease-in both}
+  @keyframes viewIn{
+    from{opacity:0; transform:scale(1.035) translateY(8px); filter:brightness(1.25)}
+    to  {opacity:1; transform:scale(1) translateY(0); filter:brightness(1)}
+  }
+  @keyframes viewOut{
+    from{opacity:1; transform:scale(1)}
+    to  {opacity:0; transform:scale(.975) translateY(-4px)}
+  }
+
+  /* ----- cards ----- */
+  .card{
+    position:relative;
+    background:var(--surface);
+    background-image:var(--sheen);
+    border:1px solid var(--border);
+    border-radius:var(--r);
+    box-shadow:var(--shine), 0 8px 22px rgba(0,0,0,.38), 0 2px 6px rgba(0,0,0,.3);
+    margin-bottom:var(--sp-3);
+    overflow:hidden;
+  }
+  .card:last-child{margin-bottom:0}
+  .card.raised{
+    background:var(--elevated);
+    background-image:var(--sheen);
+    border-color:var(--border-strong);
+    box-shadow:var(--shine), 0 14px 34px rgba(0,0,0,.5), 0 3px 9px rgba(0,0,0,.35);
+  }
+  .view.entering .card{
+    animation:cardIn .45s var(--ease) both;
+    animation-delay:calc(var(--i,0) * 65ms + 60ms);
+  }
+  @keyframes cardIn{
+    from{opacity:0; transform:translateY(14px) scale(.985)}
+    to  {opacity:1; transform:translateY(0) scale(1)}
+  }
+  .card-h{
+    display:flex; align-items:center; gap:var(--sp-2);
+    padding:var(--sp-3) var(--sp-4) 0;
+    font-size:10px; font-size:clamp(9px, 2.13cqi, 10.5px);
+    font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--faint);
+  }
+  .card-h .fa-solid{flex:0 0 auto; font-size:11px}
+  .card-h .spacer{flex:1}
+  .card-h .aux{font-size:10px; letter-spacing:.06em; text-transform:none; color:var(--faint); font-weight:600}
+  .card-b{padding:var(--sp-3) var(--sp-4) var(--sp-4)}
+
+  /* ============ LIVE STATUS HERO — time-to-next-action ============ */
+  .hero-next{display:flex; align-items:center; gap:var(--sp-4)}
+  .hn-ring{position:relative; width:58px; height:58px; flex:0 0 58px}
+  .hn-ring svg{display:block; transform:rotate(-90deg)}
+  .nr-track{fill:none; stroke:#222227; stroke-width:4}
+  .nr-fill{
+    fill:none; stroke:var(--silver); stroke-width:4; stroke-linecap:round;
+    transition:stroke-dashoffset 1s linear;
+  }
+  .hn-ring .glyph{position:absolute; inset:0; display:grid; place-items:center; color:var(--muted); pointer-events:none}
+  .hn-ring .glyph .fa-solid{font-size:14px}
+  .hn-count{font-size:34px; font-size:clamp(24px, 7.23cqi, 36px); font-weight:700; letter-spacing:-0.04em; line-height:1; color:var(--chrome)}
+  .window:not([data-state="running"]) .hn-count{color:var(--muted)}
+  .hn-cap{font-size:9.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); margin-top:var(--sp-1)}
+
+  .hero-what{
+    display:flex; align-items:center; gap:var(--sp-2);
+    margin-top:var(--sp-3);
+    padding:var(--sp-2) var(--sp-3);
+    background:rgba(0,0,0,.22); border:1px solid var(--border); border-radius:var(--r);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.3);
+    min-width:0;
+  }
+  .hero-what .hw-k{font-size:9px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); flex:0 0 auto}
+  .hero-what .fa-solid{flex:0 0 auto; color:var(--faint); font-size:10px}
+  .hero-what .hw-act{font-size:12px; color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .hero-what .hw-act b{color:var(--text); font-weight:600}
+  .hero-what .spacer{flex:1}
+
+  .rchip{
+    font-family:var(--mono); font-size:10px; color:var(--silver);
+    padding:var(--sp-0) var(--sp-2); border-radius:99px;
+    background:#202025; border:1px solid var(--border-strong);
+    white-space:nowrap; flex:0 0 auto;
+  }
+
+  .hero-today{margin-top:var(--sp-3)}
+  .hero-today .ht-top{display:flex; justify-content:space-between; align-items:baseline; gap:var(--sp-3)}
+  .hero-today .ht-top .k{color:var(--muted); font-size:12px}
+  .hero-today .ht-top .v{font-weight:600; font-size:12.5px; color:var(--text)}
+  .hero-today .ht-top .v b{color:var(--chrome); font-weight:700}
+  .hero-today .ht-top .v .dim{color:var(--faint); font-weight:500}
+  .hero-today .ht-foot{
+    display:flex; justify-content:space-between; align-items:baseline;
+    margin-top:var(--sp-2);
+    font-size:10.5px; color:var(--faint); letter-spacing:.03em;
+  }
+  .hero-today .ht-foot b{color:var(--silver); font-weight:600}
+
+  .hero-cells{display:grid; grid-template-columns:repeat(3,1fr); gap:var(--sp-2); margin-top:var(--sp-3)}
+  .stat{
+    background:rgba(0,0,0,.22); border:1px solid var(--border);
+    border-radius:var(--r); padding:var(--sp-2) var(--sp-3);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.3);
+    min-width:0;
+  }
+  .stat .k{font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .stat .v{font-size:16px; font-size:clamp(13px, 3.4cqi, 17px); font-weight:700; letter-spacing:-0.02em; color:var(--text); margin-top:var(--sp-0)}
+  .stat .v small{font-size:10px; color:var(--muted); font-weight:600}
+  .stat .v.sm{font-size:12px; font-weight:600; letter-spacing:-0.01em; margin-top:var(--sp-1); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .stat .ss{font-size:9px; color:var(--faint); margin-top:var(--sp-0); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+
+  /* ============ NET FOLLOWER GROWTH ============ */
+  .growth-head{
+    display:flex; align-items:flex-end; justify-content:space-between; gap:var(--sp-3);
+    margin-bottom:var(--sp-3);
+  }
+  .g-num{font-size:26px; font-size:clamp(19px, 5.53cqi, 28px); font-weight:700; letter-spacing:-0.03em; line-height:1; color:var(--chrome)}
+  .g-cap{font-size:10.5px; color:var(--faint); margin-top:var(--sp-1); letter-spacing:.02em}
+  .g-delta{
+    display:inline-flex; align-items:center; gap:var(--sp-1);
+    height:22px; padding:0 var(--sp-2); border-radius:99px;
+    background:rgba(216,221,227,.05); border:1px solid var(--border-strong);
+    font-size:10.5px; font-weight:700; color:var(--live); letter-spacing:.01em;
+    white-space:nowrap;
+  }
+  .g-delta .fa-solid{flex:0 0 auto; font-size:9px}
+  .g-delta .dim{color:var(--faint); font-weight:500}
+  .growth-svg{display:block; width:100%; height:auto}
+  .growth-grid{stroke:rgba(255,255,255,.05); stroke-width:1}
+  .growth-grid.dash{stroke-dasharray:2 4}
+  .growth-ylab{fill:var(--faint); font-size:9px; font-family:var(--mono)}
+  .growth-line{
+    stroke:var(--silver); stroke-width:1.8; fill:none;
+    stroke-linecap:round; stroke-linejoin:round;
+    transition:stroke-dashoffset 1.4s .3s var(--ease);
+  }
+  .growth-area{fill:url(#growthGrad); opacity:0; transition:opacity .9s 1.2s ease}
+  .growth-dot{fill:var(--chrome); stroke:#0d0d0f; stroke-width:2; opacity:0; transition:opacity .4s 1.7s ease}
+  .growth-on .growth-area{opacity:1}
+  .growth-on .growth-dot{opacity:1}
+  .growth-x{
+    display:flex; justify-content:space-between;
+    margin-top:var(--sp-2);
+    font-size:10px; color:var(--faint); letter-spacing:.03em;
+  }
+
+  /* ============ NOW TARGETING ============ */
+  .target-row{display:flex; align-items:center; gap:var(--sp-3)}
+  .avatar{
+    width:46px;height:46px;border-radius:50%; flex:0 0 46px;
+    background:linear-gradient(150deg,#3a3a42,#1c1c21);
+    border:1px solid var(--border-strong);
+    box-shadow:var(--shine), 0 5px 14px rgba(0,0,0,.45);
+    display:grid;place-items:center;
+    font-size:19px; font-weight:700; color:var(--chrome); letter-spacing:-0.02em;
+  }
+  .avatar.small{width:32px;height:32px;flex-basis:32px;font-size:13px}
+  .t-id{min-width:0}
+  .t-id .handle{font-size:15.5px; font-size:clamp(13.5px, 3.3cqi, 16px); font-weight:700; letter-spacing:-0.025em; color:var(--chrome)}
+  .t-id .meta{font-size:11px; color:var(--muted); margin-top:var(--sp-0)}
+  .t-id .meta .sep{color:var(--faint); margin:0 var(--sp-1)}
+  .badge{
+    display:inline-block; padding:var(--sp-0) var(--sp-2); border-radius:99px;
+    font-size:9.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    background:#202025; border:1px solid var(--border-strong); color:var(--silver);
+  }
+  .t-stats{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:var(--sp-2); margin-top:var(--sp-3);
+  }
+
+  /* ============ RATE & SAFETY ============ */
+  .kv{display:flex; align-items:center; justify-content:space-between; gap:var(--sp-3); padding:var(--sp-2) 0}
+  .kv + .kv, .kv-block + .kv{border-top:1px solid rgba(255,255,255,.03)}
+  .kv .k{color:var(--muted); font-size:12px; display:flex; align-items:center; gap:var(--sp-2)}
+  .kv .v{font-weight:600; color:var(--text); font-size:12.5px; display:flex; align-items:center; gap:var(--sp-2)}
+  .kv .v .dim{color:var(--faint); font-weight:500}
+  .kv .v.live{color:var(--live)}
+  .bar{
+    height:5px; border-radius:3px; background:#212126; overflow:hidden;
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.5);
+    margin-top:var(--sp-2);
+  }
+  .bar i{
+    display:block; height:100%; border-radius:3px;
+    background:linear-gradient(90deg,#8f939a,var(--chrome));
+    transition:width 1.2s .3s var(--ease);
+    width:0;
+  }
+  .bar.brass i{background:linear-gradient(90deg,#9a8654,var(--warn))}
+  .kv-block{padding:var(--sp-2) 0}
+  .kv-block + .kv-block{border-top:1px solid rgba(255,255,255,.03)}
+  .kv-block .top{display:flex; justify-content:space-between; align-items:baseline; gap:var(--sp-3)}
+  .kv-block .top .k{color:var(--muted); font-size:12px}
+  .kv-block .top .k .dim2{color:var(--faint)}
+  .kv-block .top .v{font-weight:600; font-size:12.5px}
+  .kv-block .top .v .dim{color:var(--faint); font-weight:500}
+  .kv-block .top .v.warn{color:var(--warn)}
+
+  /* ============ LOG ============ */
+  .log{
+    font-family:var(--mono); font-size:11px; line-height:1.8;
+    color:var(--muted);
+  }
+  .log .ln{display:flex; gap:var(--sp-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .log .ts{color:var(--faint)}
+  .log .lv{width:38px; flex:0 0 38px; font-weight:700; letter-spacing:.05em}
+  .log .lv.info{color:var(--silver)}
+  .log .lv.ok{color:var(--live)}
+  .log .lv.warn{color:var(--warn)}
+  .log .msg{color:var(--muted)}
+  .log .msg b{color:var(--text); font-weight:600}
+
+  /* ============ CHAIN ============ */
+  .chain-node{
+    display:flex; gap:var(--sp-3); align-items:flex-start; position:relative;
+    padding:var(--sp-3);
+    border:1px solid var(--border); border-radius:var(--r);
+    background:var(--surface); background-image:var(--sheen);
+    box-shadow:var(--shine), 0 6px 16px rgba(0,0,0,.3);
+  }
+  .chain-node.current{
+    background:var(--elevated); background-image:var(--sheen);
+    border-color:#3d3d45;
+    box-shadow:var(--shine), 0 12px 30px rgba(0,0,0,.5), 0 0 0 1px rgba(238,241,244,.05);
+  }
+  .chain-link{
+    display:flex; align-items:center; gap:var(--sp-2);
+    padding:var(--sp-2) 0 var(--sp-2) var(--sp-6); color:var(--faint);
+  }
+  .chain-link .stem{width:1px; height:22px; background:linear-gradient(180deg,var(--border-strong),var(--border))}
+  .chain-link span{font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; font-weight:700}
+  .cn-body{flex:1; min-width:0}
+  .cn-body .h{display:flex; align-items:center; gap:var(--sp-2)}
+  .cn-body .h .handle{font-weight:700; font-size:13.5px; letter-spacing:-0.02em; color:var(--text)}
+  .cn-body .sub{font-size:11px; color:var(--muted); margin-top:var(--sp-0)}
+  .cn-body .sub .sep{color:var(--faint); margin:0 var(--sp-1)}
+  .view-h{
+    display:flex; align-items:center; gap:var(--sp-2);
+    padding:0 var(--sp-0) var(--sp-3);
+    font-size:10px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--faint);
+  }
+  .view-h .fa-solid{flex:0 0 auto; font-size:11px}
+
+  /* ============ QUEUES · lifecycle pipeline ============ */
+  .qpipe{
+    display:flex; align-items:stretch; gap:var(--sp-0);
+    padding:var(--sp-1);
+    background:rgba(0,0,0,.22);
+    border:1px solid var(--border); border-radius:var(--r);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.35);
+    margin-bottom:var(--sp-2);
+  }
+  .qstage{
+    appearance:none; cursor:pointer; font:inherit;
+    flex:1; min-width:0;
+    display:flex; flex-direction:column; align-items:center;
+    padding:var(--sp-2) var(--sp-1);
+    background:transparent; border:1px solid transparent; border-radius:5px;
+    color:var(--muted);
+    transition:color .18s, background .18s, border-color .18s, box-shadow .18s;
+  }
+  .qstage:hover{color:var(--silver); background:rgba(255,255,255,.03)}
+  .qstage:focus-visible{outline:2px solid var(--silver); outline-offset:-2px}
+  .qstage.active{
+    background-color:#212127; background-image:var(--sheen);
+    border-color:#3d3d45; color:var(--chrome);
+    box-shadow:var(--shine), 0 4px 12px rgba(0,0,0,.4);
+  }
+  .qstage .n{font-size:17px; font-size:clamp(14px, 3.62cqi, 18px); font-weight:700; letter-spacing:-0.03em; line-height:1.1}
+  .qstage .l{font-size:8.5px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; margin-top:var(--sp-0)}
+  .qflow{
+    display:flex; align-items:center; flex:0 0 auto;
+    color:var(--faint); padding:0 var(--sp-0);
+  }
+  .qflow .fa-solid{font-size:9px}
+  .qsum{
+    display:flex; align-items:center; gap:var(--sp-2);
+    padding:0 var(--sp-0);
+    margin-bottom:var(--sp-3);
+    font-size:10.5px; color:var(--faint); letter-spacing:.02em;
+  }
+  .qsum b{color:var(--muted); font-weight:600}
+
+  .qrows{padding:var(--sp-1) 0}
+  .qr{
+    display:flex; align-items:center; gap:var(--sp-3);
+    padding:var(--sp-2) var(--sp-4);
+    transition:background .15s;
+  }
+  .qr:hover{background:rgba(255,255,255,.02)}
+  .qr + .qr{border-top:1px solid rgba(255,255,255,.035)}
+  .qr.due{background:rgba(216,183,104,.028)}
+  .qr.due:hover{background:rgba(216,183,104,.05)}
+  .qr-av{
+    width:26px;height:26px;border-radius:50%; flex:0 0 26px;
+    background:linear-gradient(150deg,#34343c,#1b1b20);
+    border:1px solid var(--border-strong);
+    display:grid; place-items:center;
+    font-size:10.5px; font-weight:700; color:var(--silver);
+  }
+  .qr-main{flex:1; min-width:0}
+  .qr-top{display:flex; align-items:center; gap:var(--sp-2); min-width:0}
+  .qr-top .handle{font-weight:600; font-size:12.5px; color:var(--text); letter-spacing:-0.01em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .qr.due .handle{color:var(--chrome)}
+  .priv, .ready{
+    font-size:8.5px; font-weight:700; letter-spacing:.09em; text-transform:uppercase;
+    padding:var(--sp-0) var(--sp-2); border-radius:99px;
+    background:#202025; border:1px solid var(--border-strong); color:var(--muted);
+    flex:0 0 auto;
+  }
+  .ready{color:var(--warn); border-color:#4a4030}
+  .priv .fa-solid{font-size:7px; margin-right:var(--sp-1); vertical-align:0}
+  .qr-sub{display:flex; align-items:center; gap:var(--sp-2); margin-top:var(--sp-1); font-size:10px; color:var(--faint); min-width:0}
+  .qr-sub .ctx{white-space:nowrap; flex:0 0 auto}
+  .qbar{
+    flex:1; max-width:110px; height:3px; border-radius:2px;
+    background:#212126; overflow:hidden;
+    box-shadow:inset 0 1px 1px rgba(0,0,0,.5);
+  }
+  .qbar i{display:block; height:100%; border-radius:2px; background:linear-gradient(90deg,#8f939a,var(--chrome))}
+  .qbar.brass i{background:linear-gradient(90deg,#9a8654,var(--warn))}
+  .qlist{animation:qfade .3s var(--ease)}
+  @keyframes qfade{from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none}}
+
+  /* ============ SETTINGS — the right control for each job ============ */
+  .field{padding:var(--sp-3) var(--sp-4)}
+  .field + .field{border-top:1px solid rgba(255,255,255,.03)}
+  .card-h + .field{padding-top:var(--sp-3)}
+  .ftop{display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3)}
+  .ftop label{font-size:12px; color:var(--muted)}
+  .ftop label .dim2{color:var(--faint)}
+  .ftop .fv{
+    font-weight:600; font-size:12px; color:var(--text);
+    font-variant-numeric:tabular-nums; font-feature-settings:"tnum";
+    white-space:nowrap;
+  }
+  .ftop .fv .dim{color:var(--faint); font-weight:500}
+  .hint{font-size:10.5px; color:var(--faint); margin-top:var(--sp-2); line-height:1.5}
+  .hint.warn{color:var(--warn)}
+  .hint.alarm{color:var(--danger)}
+  .hint .fa-solid{font-size:10px; margin-right:var(--sp-1)}
+  .hint[hidden]{display:none}
+
+  /* segmented control (radiogroup) */
+  .seg{
+    display:flex; gap:var(--sp-0);
+    margin-top:var(--sp-2); padding:var(--sp-0);
+    background:rgba(0,0,0,.22);
+    border:1px solid var(--border-strong); border-radius:var(--r);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.35);
+  }
+  .seg button{
+    appearance:none; cursor:pointer; font:inherit;
+    flex:1; height:26px; min-width:0;
+    border:1px solid transparent; border-radius:5px;
+    background:transparent; color:var(--muted);
+    font-size:10.5px; font-weight:600; letter-spacing:.01em;
+    transition:color .15s, background .15s, border-color .15s, box-shadow .15s;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .seg button:hover{color:var(--silver)}
+  .seg button:focus-visible{outline:2px solid var(--silver); outline-offset:-2px}
+  .seg button.active{
+    background-color:#26262c; background-image:var(--sheen);
+    border-color:#3d3d45; color:var(--chrome);
+    box-shadow:var(--shine), 0 3px 8px rgba(0,0,0,.4);
+  }
+
+  /* chip / pill preset selector */
+  .chips{display:flex; gap:var(--sp-2); margin-top:var(--sp-2); flex-wrap:wrap}
+  .chip{
+    appearance:none; cursor:pointer; font:inherit;
+    height:24px; padding:0 var(--sp-3); border-radius:99px;
+    background:linear-gradient(180deg,#1d1d22,#16161a);
+    border:1px solid var(--border);
+    color:var(--muted); font-size:11px; font-weight:600;
+    transition:color .15s, border-color .15s, background .15s, box-shadow .15s;
+  }
+  .chip:hover{color:var(--silver); border-color:var(--border-strong)}
+  .chip:focus-visible{outline:2px solid var(--silver); outline-offset:2px}
+  .chip.active{
+    background-color:#26262c; background-image:var(--sheen);
+    border-color:#43434c; color:var(--chrome);
+    box-shadow:var(--shine), 0 3px 8px rgba(0,0,0,.35);
+  }
+
+  /* styled native select */
+  .selwrap{position:relative; margin-top:var(--sp-2)}
+  .sel{
+    appearance:none; -webkit-appearance:none; -moz-appearance:none;
+    width:100%; height:30px;
+    padding:0 var(--sp-6) 0 var(--sp-3);
+    background:rgba(0,0,0,.22);
+    border:1px solid var(--border-strong); border-radius:6px;
+    color:var(--text); font:inherit; font-size:12px; font-weight:600;
+    font-variant-numeric:tabular-nums; font-feature-settings:"tnum";
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.35);
+    cursor:pointer;
+    transition:border-color .15s;
+  }
+  .sel:hover{border-color:#3d3d45}
+  .sel:focus{outline:none; border-color:#55555f}
+  .sel option{background:#1b1b1f; color:var(--text)}
+  .selwrap .fa-solid{
+    position:absolute; right:var(--sp-3); top:50%; transform:translateY(-50%);
+    pointer-events:none; color:var(--faint); font-size:10px;
+  }
+
+  /* text input */
+  .tinput{
+    width:100%; height:30px; margin-top:var(--sp-2);
+    padding:0 var(--sp-3);
+    background:rgba(0,0,0,.22);
+    border:1px solid var(--border-strong); border-radius:6px;
+    color:var(--text); font:inherit; font-size:12.5px; font-weight:600; letter-spacing:-0.01em;
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.35);
+    transition:border-color .15s;
+  }
+  .tinput::placeholder{color:var(--faint); font-weight:500}
+  .tinput:hover{border-color:#3d3d45}
+  .tinput:focus{outline:none; border-color:#55555f}
+
+  /* number input */
+  .ninput{
+    width:100%; height:28px;
+    padding:0 var(--sp-2);
+    background:rgba(0,0,0,.22);
+    border:1px solid var(--border-strong); border-radius:6px;
+    color:var(--text); font:inherit; font-size:12px; font-weight:600;
+    font-variant-numeric:tabular-nums; font-feature-settings:"tnum";
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.35);
+    transition:border-color .15s;
+    text-align:center;
+  }
+  .ninput:hover{border-color:#3d3d45}
+  .ninput:focus{outline:none; border-color:#55555f}
+  .pair{display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-3); margin-top:var(--sp-2)}
+  .pair .plab{display:block; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; font-weight:700; color:var(--faint); margin-bottom:var(--sp-1)}
+
+  /* stepper */
+  .stepper{
+    display:flex; align-items:stretch; height:28px; margin-top:var(--sp-2);
+    border:1px solid var(--border-strong); border-radius:6px;
+    background:rgba(0,0,0,.22);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.35);
+    overflow:hidden;
+  }
+  .stepper button{
+    appearance:none; cursor:pointer; font:inherit; border:none;
+    width:28px; flex:0 0 28px;
+    background:linear-gradient(180deg,#202025,#18181c);
+    color:var(--muted); font-size:14px; font-weight:600; line-height:1;
+    transition:color .15s, background .15s;
+  }
+  .stepper button:hover{color:var(--chrome); background:#26262c}
+  .stepper button:first-child{border-right:1px solid var(--border)}
+  .stepper button:last-child{border-left:1px solid var(--border)}
+  .stepper input{
+    flex:1; min-width:0; border:none; background:transparent;
+    color:var(--text); font:inherit; font-size:12px; font-weight:600; text-align:center;
+    font-variant-numeric:tabular-nums; font-feature-settings:"tnum";
+  }
+  .stepper input:focus{outline:none}
+
+  /* single sliders */
+  input[type=range]{
+    -webkit-appearance:none; appearance:none; width:100%; height:22px;
+    background:transparent; margin-top:var(--sp-2); cursor:pointer;
+  }
+  input[type=range]::-webkit-slider-runnable-track{
+    height:4px; border-radius:2px;
+    background:linear-gradient(90deg, var(--silver) 0 var(--pct,50%), #26262b var(--pct,50%) 100%);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.5);
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:15px; height:15px; border-radius:50%;
+    margin-top:-5.5px;
+    background:linear-gradient(160deg,#f4f6f8,#b9bdc4);
+    border:1px solid #82868d;
+    box-shadow:0 2px 6px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.6);
+  }
+  input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:#26262b}
+  input[type=range]::-moz-range-progress{height:4px;border-radius:2px;background:var(--silver)}
+  input[type=range]::-moz-range-thumb{
+    width:14px;height:14px;border-radius:50%;
+    background:linear-gradient(160deg,#f4f6f8,#b9bdc4);
+    border:1px solid #82868d;
+    box-shadow:0 2px 6px rgba(0,0,0,.5);
+  }
+
+  /* snap ticks under a slider — 7px side padding centres the marks
+     under the 15px thumb's travel (unavoidable thumb geometry) */
+  .tickrow{display:flex; justify-content:space-between; padding:0 7px; margin-top:calc(-1 * var(--sp-1))}
+  .tickrow i{width:1px; height:4px; background:#33333a; display:block}
+  .ticklabels{
+    display:flex; justify-content:space-between;
+    font-family:var(--mono); font-size:9.5px; color:var(--faint);
+    margin-top:var(--sp-1);
+  }
+
+  /* dual-handle control (ratio · delay · hours) */
+  .dual{margin-top:var(--sp-3); padding:0 var(--sp-1); position:relative; user-select:none}
+  .dual-track{
+    position:relative; height:6px; border-radius:3px; background:#212126;
+    box-shadow:inset 0 1px 3px rgba(0,0,0,.55);
+  }
+  .dual-peak{
+    position:absolute; top:0; bottom:0; border-radius:3px;
+    background:linear-gradient(180deg,var(--chrome),#b9bfc7);
+    z-index:1;
+  }
+  .dual-band{
+    position:absolute; top:0; bottom:0; border-radius:3px;
+    background:linear-gradient(180deg,#6d7178,#55585e);
+  }
+  .dual-h{
+    position:absolute; top:50%; width:17px; height:17px; border-radius:50%;
+    transform:translate(-50%,-50%);
+    background:linear-gradient(160deg,#f4f6f8,#b3b7be);
+    border:1px solid #7e828a;
+    box-shadow:0 3px 8px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.65);
+    cursor:grab; touch-action:none; z-index:2;
+  }
+  .dual-h:active{cursor:grabbing; box-shadow:0 3px 10px rgba(0,0,0,.7), 0 0 0 5px rgba(238,241,244,.06)}
+  .dual-h:focus-visible{outline:2px solid var(--silver); outline-offset:2px}
+  .dual-scale{
+    display:flex; justify-content:space-between;
+    font-family:var(--mono); font-size:9.5px; color:var(--faint);
+    margin-top:var(--sp-2);
+  }
+  .legend{
+    display:flex; align-items:center; gap:var(--sp-4);
+    margin-top:var(--sp-2);
+    font-size:10.5px; color:var(--faint);
+  }
+  .legend i{
+    display:inline-block; width:9px; height:9px; border-radius:2px;
+    margin-right:var(--sp-1); vertical-align:-1px;
+  }
+  .legend .l-band i{background:#5c5f66}
+  .legend .l-peak i{background:linear-gradient(180deg,var(--chrome),#b9bfc7)}
+
+  /* toggle */
+  .toggle{
+    position:relative; width:38px; height:21px; border-radius:99px;
+    background:#212126; border:1px solid var(--border-strong);
+    box-shadow:inset 0 1px 3px rgba(0,0,0,.5);
+    cursor:pointer; transition:background .2s; flex:0 0 38px;
+  }
+  .toggle::after{
+    content:""; position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%;
+    background:linear-gradient(160deg,#c7cbd1,#8e9299);
+    box-shadow:0 2px 5px rgba(0,0,0,.5);
+    transition:transform .22s var(--ease), background .2s;
+  }
+  .toggle.on{background:linear-gradient(180deg,#3a3d43,#2c2f34); border-color:#4a4d54}
+  .toggle.on::after{transform:translateX(17px); background:linear-gradient(160deg,#f4f6f8,#c3c7cd)}
+  .toggle:focus-visible{outline:2px solid var(--silver); outline-offset:2px}
+
+  /* ---------- preset-locked knobs ---------- */
+  .ftop label{flex:1 1 auto; min-width:0}
+  .lockmark{
+    display:none; align-items:center; gap:var(--sp-1); flex:0 0 auto;
+    font-size:8.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--faint);
+  }
+  .lockmark .fa-solid{flex:0 0 auto; font-size:9px}
+  .field.locked .lockmark{display:inline-flex}
+  .field.locked input[type=range],
+  .field.locked .dual{pointer-events:none; opacity:.45}
+  .field.locked .fv{opacity:.45}
+
+  /* ---------- auto-derived read-out (under the Daily-activity slider) ---------- */
+  .derived{
+    display:flex; align-items:center; flex-wrap:wrap;
+    gap:var(--sp-1) var(--sp-2);
+    margin-top:var(--sp-2);
+  }
+  .derived .dlab{
+    font-size:9px; font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--faint); flex:0 0 auto;
+  }
+  .dchip{
+    display:inline-flex; align-items:baseline; gap:var(--sp-1);
+    padding:var(--sp-0) var(--sp-2); border-radius:99px;
+    background:rgba(0,0,0,.22); border:1px solid var(--border);
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.3);
+    font-size:10.5px; color:var(--muted); white-space:nowrap;
+  }
+  .dchip b{color:var(--text); font-weight:600}
+  .dchip .dim{color:var(--faint); font-weight:500; font-size:9.5px}
+
+  /* full-width action button (Seed card) */
+  .tbtn.wide{width:100%; margin-top:var(--sp-1)}
+
+  /* ---------- tooltip system (one popover, [data-tip] driven) ---------- */
+  [data-tip]{cursor:help}
+  [data-tip]::after{
+    content:"?";
+    display:inline-block; width:12px; height:12px; line-height:11px;
+    margin-left:var(--sp-1);
+    border-radius:50%;
+    border:1px solid var(--border-strong);
+    background:rgba(255,255,255,.04);
+    color:var(--faint);
+    font-size:8px; font-weight:700; text-align:center;
+    vertical-align:1px;
+    transition:color .15s, border-color .15s;
+  }
+  [data-tip]:hover::after{color:var(--silver); border-color:#45454e}
+  .tip{
+    position:fixed; left:0; top:0; z-index:100;
+    max-width:min(250px, calc(100vw - 16px));
+    padding:var(--sp-2) var(--sp-3);
+    background:linear-gradient(180deg,#232328,#18181c);
+    border:1px solid var(--border-strong); border-radius:var(--r);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 14px 36px rgba(0,0,0,.65), 0 3px 10px rgba(0,0,0,.45);
+    font-size:11px; line-height:1.55; color:var(--silver); font-weight:500;
+    pointer-events:none;
+    opacity:0; transform:translateY(3px);
+    transition:opacity .16s ease, transform .16s var(--ease);
+  }
+  .tip.show{opacity:1; transform:none}
+
+  /* ---------- 24-hour clock range picker (active hours) ---------- */
+  .clock{display:flex; justify-content:center; margin-top:var(--sp-2); user-select:none}
+  .clock svg{display:block; touch-action:none; max-width:100%; height:auto}
+  .ck-track{fill:none; stroke:#212126; stroke-width:7}
+  .ck-arc{fill:none; stroke:var(--silver); stroke-width:7; stroke-linecap:round}
+  .ck-tick{stroke:#2e2e35; stroke-width:1}
+  .ck-tick.major{stroke:#45454e; stroke-width:1.5}
+  .ck-lab{fill:var(--faint); font-size:9px; font-family:var(--mono)}
+  .ck-h{
+    fill:#e6e9ed; stroke:#7e828a; stroke-width:1; cursor:grab;
+    filter:drop-shadow(0 2px 4px rgba(0,0,0,.55));
+  }
+  .ck-h:active{cursor:grabbing}
+  .ck-h:focus{outline:none}
+  .ck-h:focus-visible{stroke:var(--chrome); stroke-width:2.5}
+  .ck-win{
+    fill:var(--chrome); font-size:14px; font-weight:700; letter-spacing:-0.02em;
+    font-variant-numeric:tabular-nums; font-feature-settings:"tnum";
+  }
+  .ck-cap{fill:var(--faint); font-size:7px; font-weight:700; letter-spacing:.16em}
+
+  /* ---------- reusable confirmation modal ---------- */
+  .scrim{
+    position:absolute; inset:0; z-index:60;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(5,5,7,.62);
+    -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);
+    opacity:0; pointer-events:none;
+    transition:opacity .22s ease;
+  }
+  .scrim.open{opacity:1; pointer-events:auto}
+  .modal{
+    width:340px; max-width:calc(100% - var(--sp-6) - var(--sp-6));
+    padding:var(--sp-5);
+    background:var(--elevated); background-image:var(--sheen);
+    border:1px solid var(--border-strong); border-radius:10px;
+    box-shadow:var(--shine), 0 34px 90px rgba(0,0,0,.72), 0 6px 22px rgba(0,0,0,.5);
+    transform:translateY(10px) scale(.97);
+    transition:transform .24s var(--ease);
+  }
+  .scrim.open .modal{transform:none}
+  .modal-t{font-size:14.5px; font-weight:700; letter-spacing:-0.02em; color:var(--chrome)}
+  .modal-b{font-size:12px; color:var(--muted); line-height:1.55; margin-top:var(--sp-2)}
+  .modal-a{display:flex; justify-content:flex-end; gap:var(--sp-2); margin-top:var(--sp-5)}
+  .modal .tbtn{height:30px; padding:0 var(--sp-4)}
+  .tbtn.confirm-danger{
+    color:#e29090; border-color:#553838;
+    background:linear-gradient(180deg,#2b1d1d,#211717);
+  }
+  .tbtn.confirm-danger:hover{color:#efabab; border-color:#6b4646}
+
+  /* ============ DOCKED TICKER ============ */
+  .ticker{
+    flex:0 0 34px; height:34px;
+    display:flex; align-items:center; gap:var(--sp-2);
+    padding:0 var(--sp-4);
+    border-top:1px solid var(--border-strong);
+    background:linear-gradient(180deg,#101013,#0b0b0d);
+    box-shadow:0 -6px 16px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.03);
+    font-family:var(--mono); font-size:10.5px;
+    overflow:hidden; white-space:nowrap;
+  }
+  .ticker .beacon{width:6px;height:6px;border-radius:50%;background:var(--live);flex:0 0 6px;
+    animation:pulse 2.2s var(--ease) infinite}
+  .window:not([data-state="running"]) .ticker .beacon{background:var(--faint); animation:none; box-shadow:none}
+  .ticker .tline{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--muted)}
+  .ticker .tline .ts{color:var(--faint); margin-right:var(--sp-2)}
+  .ticker .tline .lv-info{color:var(--silver); margin-right:var(--sp-2); font-weight:700}
+  .ticker .tline .lv-warn{color:var(--warn); margin-right:var(--sp-2); font-weight:700}
+  .ticker .tline.swap{animation:tswap .5s var(--ease)}
+  @keyframes tswap{
+    0%{opacity:0; transform:translateY(9px)}
+    100%{opacity:1; transform:none}
+  }
+
+  /* ============================================================
+     RIGHT · EMBEDDED INSTAGRAM (mock) + FROSTED VEIL
+     ============================================================ */
+  .igpane{
+    flex:1; min-width:0; min-height:0; position:relative; background:#0a0a0b;
+    display:flex; flex-direction:column;
+    container-type:inline-size; container-name:igpane;  /* profile adapts to pane width */
+  }
+  .ig-top{
+    height:46px; flex:0 0 46px;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 var(--sp-6);
+    border-bottom:1px solid #1e1e22; background:#0e0e10;
+  }
+  .ig-word{font-size:19px; font-weight:600; letter-spacing:-0.02em; color:#e4e4e6; font-style:italic; font-family:Georgia,'Times New Roman',serif}
+  .ig-icons{display:flex; align-items:center; gap:var(--sp-4); color:#8a8a90}
+  .ig-icons .fa-solid{font-size:17px}
+  .ig-scroll{
+    flex:1; overflow:hidden;
+    padding:var(--sp-6) calc(var(--sp-6) + var(--sp-5)) 0;
+    padding:var(--sp-6) clamp(16px, 5.7cqi, 46px) 0;
+  }
+  .ig-profile{
+    display:flex; align-items:center; margin-bottom:var(--sp-6);
+    gap:calc(var(--sp-6) + var(--sp-5));
+    gap:clamp(16px, 5.7cqi, 46px);
+  }
+  .ig-avatar{
+    width:128px;height:128px;border-radius:50%; flex:0 0 128px;
+    width:clamp(76px, 16.6cqi, 132px); height:clamp(76px, 16.6cqi, 132px);
+    flex-basis:clamp(76px, 16.6cqi, 132px);
+    background:linear-gradient(150deg,#3c3c44,#1a1a1f);
+    border:1px solid #2e2e34;
+    display:grid; place-items:center;
+    font-size:52px; font-size:clamp(30px, 6.75cqi, 54px);
+    font-weight:700; color:#d5d7db;
+  }
+  .ig-info{min-width:0}
+  .ig-info h2{
+    font-size:19px; font-size:clamp(16px, 2.47cqi, 20px);
+    font-weight:400; color:#e7e7ea; letter-spacing:0;
+    display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap;
+  }
+  .ig-btn{
+    font-size:12.5px; font-weight:600; padding:var(--sp-1) var(--sp-4); border-radius:8px;
+    background:#232327; color:#dcdce0; border:none;
+  }
+  .ig-counts{
+    display:flex; flex-wrap:wrap; margin-top:var(--sp-4); color:#c9c9cd;
+    gap:calc(var(--sp-6) + var(--sp-2));
+    gap:var(--sp-2) clamp(14px, 4.15cqi, 34px);
+    font-size:14px; font-size:clamp(12.5px, 1.82cqi, 15px);
+  }
+  .ig-counts b{color:#f0f0f2; font-weight:700}
+  .ig-bio{margin-top:var(--sp-3); font-size:12.5px; color:#b9b9bf; line-height:1.55}
+  .ig-bio .nm{font-weight:700; color:#e7e7ea}
+  .ig-tabs{
+    display:flex; justify-content:center;
+    gap:calc(var(--sp-6) + var(--sp-6));
+    gap:clamp(20px, 6.2cqi, 52px);
+    border-top:1px solid #1e1e22; margin-top:var(--sp-2);
+    padding:var(--sp-3) 0;
+    font-size:10.5px; letter-spacing:.12em; font-weight:700; color:#77777e;
+  }
+  .ig-tabs .on{color:#e7e7ea}
+  .ig-grid{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:var(--sp-1);
+    padding-bottom:var(--sp-1);
+  }
+  .ig-grid i{
+    display:block; aspect-ratio:1;
+    background:linear-gradient(150deg,#232328,#151518);
+    border:1px solid rgba(255,255,255,.02);
+  }
+  .ig-grid i:nth-child(3n+2){background:linear-gradient(150deg,#28282e,#17171b)}
+  .ig-grid i:nth-child(4n+1){background:linear-gradient(150deg,#1e1e23,#131316)}
+
+  /* ----- automation veil — crisp frosted glass -----
+     State-driven: fully visible only while the engine Runs;
+     fades out and releases pointer events otherwise.
+     Radial vignette focuses the chip; 1px inner hairline frames
+     the pane; a diagonal double-wipe shine passes while running. */
+  .veil{
+    position:absolute; inset:0; z-index:5;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(115% 85% at 50% 44%,
+      rgba(12,12,15,.34) 0%, rgba(9,9,11,.56) 62%, rgba(6,6,8,.72) 100%);
+    -webkit-backdrop-filter:blur(9px) saturate(.6) brightness(.85);
+    backdrop-filter:blur(9px) saturate(.6) brightness(.85);
+    overflow:hidden;
+    opacity:0; pointer-events:none;
+    transition:opacity .35s ease;
+  }
+  .window[data-state="running"] .veil{opacity:1; pointer-events:auto; cursor:not-allowed}
+  .veil::before{ /* crisp 1px inner hairline framing the pane */
+    content:""; position:absolute; inset:var(--sp-3);
+    border:1px solid rgba(238,241,244,.10); border-radius:var(--r);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 1px rgba(0,0,0,.4);
+    pointer-events:none;
+  }
+  /* --- diagonal double-wipe shine ---
+     Two rotated gradient bands wipe from beyond the top-left corner
+     to beyond the bottom-right: a dim, softer LEADING band (~.4)
+     travels ~150ms ahead of a SHARP full-white trailing line.
+     Both idle fully off-screen (±140% of an oversized band along
+     the diagonal), wipe with ease-out, then rest until the next
+     pass (~7.5s loop). Visible only while the engine runs.       */
+  /* Diagonal baked into the gradient (135deg → a "/" light line); the
+     whole oversized band translates purely along the diagonal, so the
+     bright line genuinely travels corner-to-corner. At ±75% of a 220%-
+     of-pane band, both bands idle fully off-screen beyond the corners. */
+  .veil .shine{
+    position:absolute; inset:-60%;
+    pointer-events:none; z-index:0;
+    transform:translate(-75%,-75%);
+    animation:veilWipe 11.75s cubic-bezier(.18,.92,.28,1) infinite;
+    animation-play-state:paused;
+  }
+  .window[data-state="running"] .veil .shine{animation-play-state:running}
+  .veil .shine-lead{   /* leading band — dim, slightly softer/wider */
+    background:linear-gradient(135deg,
+      transparent 40%, rgba(255,255,255,.05) 45%,
+      rgba(255,255,255,.17) 50%, rgba(255,255,255,.05) 55%,
+      transparent 60%);
+  }
+  .veil .shine-sharp{  /* trailing band — thin, crisp, full white */
+    background:linear-gradient(135deg,
+      transparent 44.6%, rgba(255,255,255,0) 47.3%,
+      rgba(255,255,255,.31) 49.1%, rgba(255,255,255,.31) 50.9%,
+      rgba(255,255,255,0) 52.7%, transparent 55.4%);
+    animation-delay:.18s;
+    animation-timing-function:cubic-bezier(.16,1,.3,1); /* lags the leading band during the wipe */
+  }
+  @keyframes veilWipe{
+    0%  {transform:translate(-75%,-75%)}
+    36% {transform:translate(75%,75%)}
+    100%{transform:translate(75%,75%)}
+  }
+  .veil-chip{
+    position:relative; z-index:1;
+    display:flex; align-items:center; gap:var(--sp-2);
+    height:30px; padding:0 var(--sp-4) 0 var(--sp-3);
+    border-radius:99px;
+    background:linear-gradient(180deg, rgba(30,30,35,.97), rgba(17,17,20,.98));
+    border:1px solid rgba(238,241,244,.14);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.07),
+      0 14px 36px rgba(0,0,0,.65), 0 2px 8px rgba(0,0,0,.5);
+    font-size:11px; font-weight:600; letter-spacing:.005em; color:var(--chrome);
+    white-space:nowrap; max-width:calc(100% - var(--sp-6) - var(--sp-6));
+  }
+  .veil-chip .fa-solid{flex:0 0 auto; font-size:12px; color:var(--live)}
+  .veil-chip .vdot{
+    width:4px; height:4px; border-radius:50%; flex:0 0 4px;
+    background:var(--live); margin:0 var(--sp-0);
+    animation:pulse 2.2s var(--ease) infinite;
+  }
+  .veil-chip .dim{color:var(--muted); font-weight:500}
+
+  /* Overview: balanced top/bottom scroll padding — the JS peek-fitter grows
+     the top two cards so the 3rd card is deliberately cut at the fold. */
+  #view-overview{ padding-bottom:var(--sp-4); }
+
+  /* ---------- Projected Growth (settings simulation) ---------- */
+  .proj-svg{display:block; width:100%; height:auto}
+  .proj-line{
+    fill:none; stroke-linecap:round; stroke-linejoin:round;
+    transition:stroke-dashoffset 1.2s var(--ease);
+  }
+  .proj-line.good{stroke:var(--chrome); stroke-width:1.8}
+  .proj-line.avg {stroke:var(--silver); stroke-width:1.5; opacity:.72}
+  .proj-line.bad {stroke:var(--silver); stroke-width:1.1; opacity:.34}
+  .proj-end{font-size:9px; font-family:var(--mono)}
+  .proj-end.good{fill:var(--chrome)}
+  .proj-end.avg {fill:var(--silver); opacity:.85}
+  .proj-end.bad {fill:var(--faint)}
+  .proj-legend{
+    display:flex; align-items:center; flex-wrap:wrap; gap:var(--sp-3);
+    margin-top:var(--sp-2);
+    font-size:10.5px; color:var(--faint);
+  }
+  .proj-legend .pl{white-space:nowrap}
+  .proj-legend .pl i{
+    display:inline-block; width:10px; height:2px; border-radius:1px;
+    margin-right:var(--sp-1); vertical-align:3px;
+  }
+  .proj-legend .pl.good i{background:var(--chrome)}
+  .proj-legend .pl.avg  i{background:var(--silver); opacity:.72}
+  .proj-legend .pl.bad  i{background:var(--silver); opacity:.34}
+  .proj-legend b{color:var(--muted); font-weight:600}
+  .proj-yield{
+    margin-top:var(--sp-3); padding-top:var(--sp-3);
+    border-top:1px solid rgba(255,255,255,.03);
+  }
+
+  /* ---------- seed username validity check ---------- */
+  .seedwrap{position:relative; margin-top:var(--sp-2)}
+  .seedwrap .tinput{margin-top:0; padding-right:calc(var(--sp-6) + var(--sp-2))}
+  .seed-status{
+    position:absolute; right:var(--sp-3); top:50%; transform:translateY(-50%);
+    font-size:11px; line-height:1; pointer-events:none; display:none;
+  }
+  .seed-status.show{display:block}
+  .seed-status.checking{color:var(--silver)}
+  .seed-status.valid{color:var(--ok)}
+  .seed-status.invalid{color:var(--danger)}
+  .tinput.valid{
+    border-color:#3c6a4f;
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.35), 0 0 0 1px rgba(109,178,138,.22);
+  }
+  .tinput.valid:hover, .tinput.valid:focus{border-color:#4d8465}
+  .tinput.invalid{
+    border-color:#6b3d3d;
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.35), 0 0 0 1px rgba(201,106,106,.22);
+  }
+  .tinput.invalid:hover, .tinput.invalid:focus{border-color:#855050}
+
+  /* ============================================================
+     RESPONSIVE SYSTEM
+     Frame: fluid .window (see above) — the page body never scrolls.
+     Container queries: cards respond to the CONSOLE's own width and
+     the profile to the IG pane's, so both stay correct wherever the
+     stacking / flex math puts them.
+     ============================================================ */
+
+  /* --- console innards: graceful column collapse as IT narrows --- */
+  @container console (max-width:430px){
+    .hero-cells{grid-template-columns:repeat(2,1fr)}
+    .t-stats{grid-template-columns:repeat(2,1fr)}
+    .growth-head{flex-wrap:wrap}
+  }
+  @container console (max-width:360px){
+    .transport .tlabel{display:none}         /* transport → icon-only  */
+    .nav button .nlabel{display:none}        /* nav rail  → icon-only  */
+    .nav button .fa-solid{font-size:17px}
+    .pair{grid-template-columns:1fr}         /* settings pairs stack   */
+    .qr .qbar{display:none}                  /* queue rows keep text   */
+    .hero-what .rchip{display:none}
+    .proj-legend{gap:var(--sp-2)}
+  }
+  @container console (max-width:300px){
+    .hero-cells{grid-template-columns:1fr}
+    .hero-next{gap:var(--sp-3)}
+    .qflow{display:none}                     /* pipeline: drop arrows  */
+    .ticklabels,.dual-scale{font-size:9px}
+  }
+
+  /* --- IG pane: profile block degrades cleanly when narrow --- */
+  @container igpane (max-width:460px){
+    .ig-profile{flex-direction:column; align-items:flex-start; gap:var(--sp-4)}
+    .veil-chip .dim, .veil-chip .vdot{display:none}
+  }
+
+  /* --- stacked ladder: console above the IG pane; the app's own
+         body column scrolls — the page body never does --- */
+  @media (max-width:1020px){
+    .body{flex-direction:column; overflow-y:auto; scrollbar-width:thin; scrollbar-color:#2c2c32 transparent}
+    .body::-webkit-scrollbar{width:8px}
+    .body::-webkit-scrollbar-thumb{background:#2c2c32;border-radius:4px}
+    .console{width:100%; flex:0 0 auto; border-right:none; border-bottom:1px solid var(--border-strong)}
+    .stage{flex:0 0 auto; height:clamp(360px, 58vh, 640px)}
+    .igpane{flex:0 0 auto; min-height:min(480px, 90vh)}
+  }
+
+  /* --- tiny screens: the frame goes true edge-to-edge --- */
+  @media (max-width:520px), (max-height:480px){
+    .window{border-radius:0; border-left:none; border-right:none}
+  }
+
+  /* ---------- reduced motion ---------- */
+  @media (prefers-reduced-motion: reduce){
+    *, *::before, *::after{
+      animation-duration:.01ms !important;
+      animation-iteration-count:1 !important;
+      transition-duration:.01ms !important;
+    }
+    .veil .shine{display:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="window" role="application" aria-label="Peanut app window" data-state="running" id="win">
+  <!-- faux titlebar -->
+  <div class="titlebar">
+    <div class="dots"><i></i><i></i><i></i></div>
+    <div class="app-name">Peanut</div>
+  </div>
+
+  <div class="body">
+    <!-- ==================================================
+         LEFT · COMMAND CONSOLE SIDEBAR (~470px)
+         ================================================== -->
+    <aside class="console">
+
+      <div class="con-head">
+        <div class="brand-row">
+          <div class="logo-mark" aria-hidden="true">
+            <!-- peanut glyph -->
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c9ccd1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9.5 3.5c-3 0-5 2.4-5 5 0 1.8 1 3 2 3.7-1 .8-2 2-2 3.8 0 2.7 2 5 5 5 2.2 0 3.5-1.2 4.5-2.8.9 1.6 2.3 2.8 4.5 2.8"/>
+              <path d="M14.5 3.5c3 0 5 2.4 5 5 0 1.8-1 3-2 3.7 1 .8 2 2 2 3.8 0 2.7-2 5-5 5"/>
+              <path d="M14.5 3.5c-2.2 0-3.6 1.2-4.5 2.8"/>
+            </svg>
+          </div>
+          <div class="head-text">
+            <h1>Peanut</h1>
+            <div class="tagline">Growth engine</div>
+          </div>
+        </div>
+        <!-- transport trio — the buttons themselves read as engine state -->
+        <div class="transport" role="group" aria-label="Engine transport">
+          <button class="tbtn" id="btnStart" title="Start the engine" disabled>
+            <i class="fa-solid fa-play" aria-hidden="true"></i>
+            <span class="tlabel" id="btnStartLabel">Start</span>
+          </button>
+          <button class="tbtn" id="btnPause" title="Pause after the current action">
+            <i class="fa-solid fa-pause" aria-hidden="true"></i>
+            <span class="tlabel">Pause</span>
+          </button>
+          <button class="tbtn danger" id="btnStop" title="Cancel the session">
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+            <span class="tlabel">Cancel</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- nav rail -->
+      <nav class="nav" aria-label="Console views">
+        <button class="active" data-view="overview" aria-label="Overview">
+          <i class="fa-solid fa-gauge-high" aria-hidden="true"></i>
+          <span class="nlabel">Overview</span>
+        </button>
+        <button data-view="chain" aria-label="Chain">
+          <i class="fa-solid fa-link" aria-hidden="true"></i>
+          <span class="nlabel">Chain</span>
+        </button>
+        <button data-view="queues" aria-label="Queues">
+          <i class="fa-solid fa-layer-group" aria-hidden="true"></i>
+          <span class="nlabel">Queues</span>
+        </button>
+        <button data-view="settings" aria-label="Settings">
+          <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+          <span class="nlabel">Settings</span>
+        </button>
+      </nav>
+
+      <!-- ============ VIEW STAGE ============ -->
+      <div class="stage">
+
+        <!-- ========== OVERVIEW ========== -->
+        <section class="view active entering" id="view-overview">
+
+          <!-- LIVE STATUS · time-to-next-action instrument cluster -->
+          <div class="card raised" style="--i:0">
+            <div class="card-h">
+              <i class="fa-solid fa-stopwatch" aria-hidden="true"></i>
+              Live Status
+              <span class="spacer"></span>
+            </div>
+            <div class="card-b">
+              <!-- next action: small depleting ring + prominent countdown -->
+              <div class="hero-next">
+                <div class="hn-ring" aria-hidden="true">
+                  <svg width="58" height="58" viewBox="0 0 58 58">
+                    <circle class="nr-track" cx="29" cy="29" r="25"/>
+                    <circle class="nr-fill" id="ringFill" cx="29" cy="29" r="25"/>
+                  </svg>
+                  <span class="glyph">
+                    <i class="fa-solid fa-bolt" aria-hidden="true"></i>
+                  </span>
+                </div>
+                <div class="hn-main">
+                  <div class="hn-count num" id="countdown">3:47</div>
+                  <div class="hn-cap">until next action</div>
+                </div>
+              </div>
+              <!-- what fires next -->
+              <div class="hero-what num">
+                <span class="hw-k">Next</span>
+                <i class="fa-solid fa-arrow-right-long" aria-hidden="true"></i>
+                <span class="hw-act" id="nextAct">follow <b>@isabelleyaoo</b></span>
+                <span class="spacer"></span>
+                <span class="rchip num" id="nextRatio">r=0.97</span>
+              </div>
+              <!-- compact Today readout (full detail lives in Rate & Safety) -->
+              <div class="hero-today num">
+                <div class="ht-top">
+                  <span class="k">Actions today</span>
+                  <span class="v"><b id="heroDone">12</b> <span class="dim">/ <span id="heroRate">55</span></span></span>
+                </div>
+                <div class="bar"><i id="heroBar" data-w="22%"></i></div>
+                <div class="ht-foot">
+                  <span><b id="heroLeft">43</b> left</span>
+                  <span>ceiling <b id="heroCeil">72</b></span>
+                </div>
+              </div>
+              <!-- secondary instruments -->
+              <div class="hero-cells">
+                <div class="stat"><div class="k">Net today</div><div class="v num" id="netToday">+9</div></div>
+                <div class="stat"><div class="k">Session</div><div class="v num" id="sessVal">2h 41m</div></div>
+                <div class="stat"><div class="k">Last action</div><div class="v sm num" id="lastAct">@isabelleyaoo</div><div class="ss" id="lastSub">followed · sentinel ok</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- NET FOLLOWER GROWTH -->
+          <div class="card" style="--i:1" id="growthCard">
+            <div class="card-h">
+              <i class="fa-solid fa-arrow-trend-up" aria-hidden="true"></i>
+              Net Follower Growth
+              <span class="spacer"></span>
+              <span class="aux num">last 14 days</span>
+            </div>
+            <div class="card-b">
+              <div class="growth-head">
+                <div>
+                  <div class="g-num num">+128</div>
+                  <div class="g-cap">net · gained &amp; retained, minus lost</div>
+                </div>
+                <div class="g-delta num" title="Compared with the previous 14-day period">
+                  <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>
+                  +22 <span class="dim">vs prior 14d</span>
+                </div>
+              </div>
+              <svg class="growth-svg" id="growthSvg" viewBox="0 0 400 118" aria-label="Cumulative net follower growth, last 14 days, up 128">
+                <defs>
+                  <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="rgba(201,204,209,.18)"/>
+                    <stop offset="100%" stop-color="rgba(201,204,209,0)"/>
+                  </linearGradient>
+                  <clipPath id="growthClip"><rect id="growthClipRect" x="0" y="0" width="0" height="118"/></clipPath>
+                </defs>
+                <!-- gridlines -->
+                <line class="growth-grid dash" x1="8"  y1="12"  x2="362" y2="12"/>
+                <line class="growth-grid dash" x1="8"  y1="58"  x2="362" y2="58"/>
+                <line class="growth-grid"      x1="8"  y1="104" x2="362" y2="104"/>
+                <text class="growth-ylab" x="370" y="15">+128</text>
+                <text class="growth-ylab" x="370" y="61">+64</text>
+                <text class="growth-ylab" x="370" y="107">0</text>
+                <path class="growth-area" id="growthArea" clip-path="url(#growthClip)" d=""/>
+                <path class="growth-line" id="growthLine" d=""/>
+                <circle class="growth-dot" id="growthDot" r="3"/>
+              </svg>
+              <div class="growth-x num"><span>Jul 30</span><span>Aug 12</span></div>
+            </div>
+          </div>
+
+          <!-- NOW TARGETING -->
+          <div class="card raised" style="--i:2">
+            <div class="card-h">
+              <i class="fa-solid fa-bullseye" aria-hidden="true"></i>
+              Now Targeting
+              <span class="spacer"></span>
+              <span class="badge">Hop 3</span>
+            </div>
+            <div class="card-b">
+              <div class="target-row">
+                <div class="avatar">C</div>
+                <div class="t-id">
+                  <div class="handle">@chloexuee</div>
+                  <div class="meta">Source · Discovered<span class="sep">·</span>Chain hop 3</div>
+                </div>
+              </div>
+              <div class="t-stats num">
+                <div class="stat"><div class="k">Follow-back</div><div class="v">18<small>%</small></div></div>
+                <div class="stat"><div class="k">Pool</div><div class="v">4,210</div></div>
+                <div class="stat"><div class="k">Followed</div><div class="v">25</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RATE & SAFETY -->
+          <div class="card" style="--i:3">
+            <div class="card-h">
+              <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+              Rate &amp; Safety
+            </div>
+            <div class="card-b">
+              <div class="kv-block">
+                <div class="top"><span class="k">Actions today <span class="dim2">· operating rate</span></span><span class="v num"><span id="ovDone">12</span> <span class="dim">/ <span id="ovRate">55</span></span></span></div>
+                <div class="bar"><i id="ovRateBar" data-w="22%"></i></div>
+              </div>
+              <div class="kv-block">
+                <div class="top"><span class="k">Request budget <span class="dim2">· this window</span></span><span class="v num warn">168 <span class="dim">/ <span id="ovBudget">200</span></span></span></div>
+                <div class="bar brass"><i id="ovBudgetBar" data-w="84%"></i></div>
+              </div>
+              <div class="kv">
+                <span class="k">Active hours</span>
+                <span class="v num"><span id="ovHours">08:00 – 22:00</span><span class="badge" style="color:var(--live)">Open</span></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ACTIVITY -->
+          <div class="card" style="--i:4">
+            <div class="card-h">
+              <i class="fa-solid fa-wave-square" aria-hidden="true"></i>
+              Activity
+            </div>
+            <div class="card-b">
+              <div class="log" id="logPane">
+                <div class="ln"><span class="ts num">14:32:07</span><span class="lv info">info</span><span class="msg">followed <b>@isabelleyaoo</b></span></div>
+                <div class="ln"><span class="ts num">14:32:04</span><span class="lv ok">ok</span><span class="msg">sentinel ok</span></div>
+                <div class="ln"><span class="ts num">14:31:48</span><span class="lv info">info</span><span class="msg">enriched <b>@maya.kotu</b> 5.2k/6.1k r=1.17</span></div>
+                <div class="ln"><span class="ts num">14:31:22</span><span class="lv warn">warn</span><span class="msg">budget 168/200</span></div>
+                <div class="ln"><span class="ts num">14:30:55</span><span class="lv info">info</span><span class="msg">held <b>@sof.wren</b> 2d</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== CHAIN ========== -->
+        <section class="view" id="view-chain">
+          <div class="view-h">
+            <i class="fa-solid fa-link" aria-hidden="true"></i>
+            Target Chain · Lineage
+          </div>
+
+          <div class="card" style="--i:0; background:transparent; border:none; box-shadow:none; overflow:visible">
+            <div class="chain-node">
+              <div class="avatar small">O</div>
+              <div class="cn-body">
+                <div class="h"><span class="handle">@owenjee_</span><span class="badge">Seed</span></div>
+                <div class="sub">Origin account<span class="sep">·</span>exhausted &amp; chained</div>
+              </div>
+            </div>
+            <div class="chain-link"><span class="stem"></span><span>chained to</span></div>
+            <div class="chain-node">
+              <div class="avatar small">P</div>
+              <div class="cn-body">
+                <div class="h"><span class="handle">@paige.esposa</span><span class="badge">Discovered</span></div>
+                <div class="sub num">22% back<span class="sep">·</span>pool 1,240<span class="sep">·</span>exhausted</div>
+              </div>
+            </div>
+            <div class="chain-link"><span class="stem"></span><span>chained to</span></div>
+            <div class="chain-node current">
+              <div class="avatar small">C</div>
+              <div class="cn-body">
+                <div class="h"><span class="handle">@chloexuee</span><span class="badge" style="color:var(--live)">Current · Hop 3</span></div>
+                <div class="sub num">18% back<span class="sep">·</span>pool 4,210<span class="sep">·</span>followed 25</div>
+              </div>
+            </div>
+            <div class="chain-link"><span class="stem"></span><span>next target auto-discovers on exhaustion</span></div>
+          </div>
+        </section>
+
+        <!-- ========== QUEUES · lifecycle pipeline ========== -->
+        <section class="view" id="view-queues">
+          <!-- connected stage selector: the actual flow of an account -->
+          <div class="qpipe num" role="tablist" aria-label="Lifecycle pipeline">
+            <button class="qstage active" role="tab" aria-selected="true" data-q="queued"><span class="n">5</span><span class="l">Queued</span></button>
+            <span class="qflow" aria-hidden="true"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span>
+            <button class="qstage" role="tab" aria-selected="false" data-q="awaiting"><span class="n">8</span><span class="l">Awaiting</span></button>
+            <span class="qflow" aria-hidden="true"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span>
+            <button class="qstage" role="tab" aria-selected="false" data-q="held"><span class="n">3</span><span class="l">Held</span></button>
+            <span class="qflow" aria-hidden="true"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span>
+            <button class="qstage" role="tab" aria-selected="false" data-q="due"><span class="n">2</span><span class="l">Due</span></button>
+          </div>
+          <div class="qsum num" id="qSummary"><b>5 ranked candidates</b> · top score 0.94</div>
+
+          <div class="card" style="--i:0">
+            <div class="card-h" id="qTitle">Queued · next to follow</div>
+            <div class="qrows">
+              <div class="qlist" id="qList"><!-- rows injected --></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========== SETTINGS — the right control for each job ========== -->
+        <section class="view" id="view-settings">
+
+          <!-- SEED / SESSION -->
+          <div class="card raised" style="--i:0">
+            <div class="card-h">
+              <i class="fa-solid fa-seedling" aria-hidden="true"></i>
+              Seed · Session
+            </div>
+            <div class="field">
+              <div class="ftop"><label for="seedInput" data-tip="The first account whose followers are harvested. Pick one whose audience matches who you want to attract — the whole chain inherits its flavor.">Seed username</label></div>
+              <div class="seedwrap">
+                <input class="tinput" type="text" id="seedInput" value="@owenjee_" placeholder="@owenjee_" spellcheck="false" autocomplete="off" aria-label="Seed username">
+                <span class="seed-status" id="seedStatus" aria-hidden="true"></span>
+              </div>
+              <div class="hint">The chain grows outward from this account’s followers.</div>
+              <div class="hint alarm" id="seedErr" role="alert" hidden><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i><span id="seedErrTxt"></span></div>
+            </div>
+            <div class="field">
+              <button class="tbtn wide danger" type="button" id="btnReseed" disabled>
+                <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+                Restart from seed
+              </button>
+              <div class="hint">Scraps the current session and starts a fresh chain from this seed.</div>
+            </div>
+          </div>
+
+          <!-- STRATEGY · aggressiveness preset (segmented control) -->
+          <div class="card raised" style="--i:1">
+            <div class="card-h">
+              <i class="fa-solid fa-bolt" aria-hidden="true"></i>
+              Strategy
+            </div>
+            <div class="field">
+              <div class="ftop"><label id="aggLabel" data-tip="One-tap pace tuning: daily activity, action delay and jitter move together — and stay locked to the preset. Per-day amounts like the plan derive from activity automatically. Choose Custom to unlock and tune each knob by hand.">Aggressiveness</label></div>
+              <div class="seg" role="radiogroup" aria-labelledby="aggLabel" id="aggSeg">
+                <button type="button" role="radio" aria-checked="false" tabindex="-1" data-agg="conservative">Conservative</button>
+                <button type="button" role="radio" aria-checked="true" tabindex="0" data-agg="balanced" class="active">Balanced</button>
+                <button type="button" role="radio" aria-checked="false" tabindex="-1" data-agg="aggressive">Aggressive</button>
+                <button type="button" role="radio" aria-checked="false" tabindex="-1" data-agg="custom">Custom</button>
+              </div>
+              <div class="hint num" id="aggHint">55 / day · 3–6 min delay · ±25% jitter</div>
+            </div>
+          </div>
+
+          <!-- PROJECTED GROWTH · live simulation of the current settings -->
+          <div class="card" style="--i:2" id="projGrowthCard">
+            <div class="card-h">
+              <i class="fa-solid fa-arrow-trend-up" aria-hidden="true"></i>
+              Projected Growth
+              <span class="spacer"></span>
+              <span class="aux num">next 30 days · if sustained</span>
+            </div>
+            <div class="card-b">
+              <svg class="proj-svg" id="projSvg" viewBox="0 0 400 122" aria-label="Projected cumulative net follower growth over the next 30 days, across cautious, expected and optimistic yield scenarios">
+                <line class="growth-grid dash" x1="8" y1="12"  x2="348" y2="12"/>
+                <line class="growth-grid dash" x1="8" y1="58"  x2="348" y2="58"/>
+                <line class="growth-grid"      x1="8" y1="104" x2="348" y2="104"/>
+                <text class="growth-ylab" x="354" y="107">0</text>
+                <path class="proj-line bad"  id="projPathBad"  d=""/>
+                <path class="proj-line avg"  id="projPathAvg"  d=""/>
+                <path class="proj-line good" id="projPathGood" d=""/>
+                <text class="proj-end bad"  id="projLabBad"  x="354" y="0"></text>
+                <text class="proj-end avg"  id="projLabAvg"  x="354" y="0"></text>
+                <text class="proj-end good" id="projLabGood" x="354" y="0"></text>
+              </svg>
+              <div class="growth-x num"><span>day 0</span><span>10</span><span>20</span><span>30</span></div>
+              <div class="proj-legend num" id="projLegend">
+                <span class="pl bad"><i></i>Cautious <b id="plBad">9%</b></span>
+                <span class="pl avg"><i></i>Expected <b id="plAvg">16%</b></span>
+                <span class="pl good"><i></i>Optimistic <b id="plGood">27%</b></span>
+                <span class="plc">follow-back</span>
+              </div>
+              <div class="hint">Estimate assumes you sustain this pace and keep chaining fresh targets; real yield varies with audience quality.</div>
+              <div class="proj-yield">
+                <div class="ftop">
+                  <label for="yieldSlider" data-tip="Models a more or less favorable audience: one multiplier scales all three scenario yields together — cautious, expected and optimistic keep their relative proportions. Center = today's default yields.">Audience yield</label>
+                  <output class="fv num" id="yieldRead">×1.00</output>
+                </div>
+                <input type="range" id="yieldSlider" min="0" max="100" step="1" value="50" aria-label="Audience yield multiplier">
+                <div class="ticklabels num" aria-hidden="true"><span>×0.50</span><span>×1.00</span><span>×1.50</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- TARGETING -->
+          <div class="card" style="--i:3">
+            <div class="card-h">
+              <i class="fa-solid fa-bullseye" aria-hidden="true"></i>
+              Targeting
+            </div>
+
+            <div class="field">
+              <div class="ftop">
+                <label data-tip="Only accounts whose follower:following ratio falls inside this band are eligible. Widen it for a bigger candidate pool; tighten it to focus on the follow-back sweet spot.">Ratio band <span class="dim2">· follower : following</span></label>
+                <output class="fv num" id="ratioRead">0.90 – 1.50</output>
+              </div>
+              <div class="dual" id="ratioDual">
+                <div class="dual-track" id="ratioTrack">
+                  <div class="dual-band" id="ratioBand"></div>
+                  <div class="dual-peak" id="ratioPeak"></div>
+                  <div class="dual-h" id="ratioLo" role="slider" aria-label="Band low" aria-valuemin="0.5" aria-valuemax="3" aria-valuenow="0.9" tabindex="0"></div>
+                  <div class="dual-h" id="ratioHi" role="slider" aria-label="Band high" aria-valuemin="0.5" aria-valuemax="3" aria-valuenow="1.5" tabindex="0"></div>
+                </div>
+                <div class="dual-scale num" id="ratioScale"></div>
+                <div class="legend">
+                  <span class="l-band"><i></i>Eligible band</span>
+                  <span class="l-peak"><i></i>Peak plateau <span class="num" id="peakLegend">1.00 – 1.20</span></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="ftop"><label data-tip="The ratio zone that scores full marks — candidates here rank first in the queue. It repositions proportionally when the band moves; edit the steppers to override.">Peak plateau <span class="dim2">· full-score zone</span></label></div>
+              <div class="pair">
+                <div><span class="plab">Low</span><div class="stepper" id="stPeakLo"></div></div>
+                <div><span class="plab">High</span><div class="stepper" id="stPeakHi"></div></div>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="ftop"><label data-tip="Absolute ratio limits — accounts outside are never targeted, whatever the band says. Widen only if candidates run dry; tighten to be strict about profile shape.">Hard bounds <span class="dim2">· never target outside</span></label></div>
+              <div class="pair">
+                <div><span class="plab">Low</span><div class="stepper" id="stHardLo"></div></div>
+                <div><span class="plab">High</span><div class="stepper" id="stHardHi"></div></div>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="ftop"><label data-tip="Candidates must have a follower count inside this range. Smaller accounts follow back far more often; very large ones almost never do.">Followers <span class="dim2">· candidate range</span></label><output class="fv num" id="folRead">50 – 20,000</output></div>
+              <div class="pair">
+                <div><span class="plab">Min</span><input class="ninput num" type="text" id="folMin" value="50" inputmode="numeric" aria-label="Minimum followers"></div>
+                <div><span class="plab">Max</span><input class="ninput num" type="text" id="folMax" value="20,000" inputmode="numeric" aria-label="Maximum followers"></div>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="ftop"><label data-tip="Score bonus applied to private profiles, which follow back more often. Raise it to favor them in ranking; set 0 to treat everyone equally.">Private-account boost</label><output class="fv num" id="pbRead">+0.15</output></div>
+              <input type="range" id="pbSlider" min="0" max="0.5" step="0.01" value="0.15" aria-label="Private account boost">
+              <div class="hint">Private accounts follow back more often — score bonus at ranking.</div>
+            </div>
+
+            <div class="field">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3)">
+                <div>
+                  <div style="font-size:12px;color:var(--muted)" data-tip="Verified profiles almost never follow back, so following them wastes daily actions. Disable only if your niche has small verified creators worth trying.">Skip verified accounts</div>
+                  <div class="hint" style="margin-top:var(--sp-0)">Verified profiles almost never follow back.</div>
+                </div>
+                <div class="toggle on" id="verToggle" role="switch" aria-checked="true" tabindex="0" aria-label="Skip verified accounts"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LIFECYCLE -->
+          <div class="card" style="--i:4">
+            <div class="card-h">
+              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+              Lifecycle
+            </div>
+            <div class="field">
+              <div class="ftop"><label data-tip="How long a followed account gets to follow back before it's written off and unfollowed. Longer catches slow responders but bloats the awaiting queue.">Wait for follow-back</label><output class="fv num" id="waitRead">4 days</output></div>
+              <input type="range" id="waitSlider" min="1" max="14" step="1" value="4" aria-label="Days to wait for follow-back">
+              <div class="tickrow" id="waitTicks" aria-hidden="true"></div>
+              <div class="ticklabels num" aria-hidden="true"><span>1d</span><span>14d</span></div>
+            </div>
+            <div class="field">
+              <div class="ftop"><label data-tip="Days to keep following after they follow back, so the unfollow isn't obvious. Longer reads more natural and retains more; shorter recycles slots faster.">Hold after follow-back</label><output class="fv num" id="holdRead">2 days</output></div>
+              <input type="range" id="holdSlider" min="0" max="10" step="1" value="2" aria-label="Days to hold after follow-back">
+              <div class="tickrow" id="holdTicks" aria-hidden="true"></div>
+              <div class="ticklabels num" aria-hidden="true"><span>0d</span><span>10d</span></div>
+            </div>
+            <div class="field">
+              <div class="ftop"><label data-tip="How many times a failed unfollow is retried before the account is flagged for manual review. More retries leave fewer stragglers but spend extra requests.">Unfollow retries</label></div>
+              <div class="pair" style="grid-template-columns:1fr">
+                <div><div class="stepper" id="stRetries"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SAFETY -->
+          <div class="card" style="--i:5">
+            <div class="card-h">
+              <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+              Safety
+            </div>
+            <div class="field locked" data-lockable>
+              <div class="ftop">
+                <label data-tip="Follows + unfollows per day — the engine paces itself to this rate. It is the single master for per-day volume: the hard ceiling and daily plan below derive from it automatically. Higher grows faster but raises detection risk.">Daily activity</label>
+                <span class="lockmark" title="Locked by preset — choose Custom to edit"><i class="fa-solid fa-lock" aria-hidden="true"></i>preset</span>
+                <output class="fv num" id="actRead">55 <span class="dim">/ day</span></output>
+              </div>
+              <input type="range" id="actSlider" min="5" max="150" step="1" value="55" aria-label="Daily activity" disabled>
+              <div class="derived num" id="actDerived">
+                <span class="dlab" data-tip="Read-only per-day amounts that follow the Daily activity slider: the hard ceiling (rate × 1.3, max 150) absorbs catch-up bursts; the daily plan (rate × 1.1, max 120) is how many candidates are queued into each day's plan.">Auto-derived</span>
+                <span class="dchip">Hard ceiling <b id="drvCeil">72</b> <span class="dim">/ day</span></span>
+                <span class="dchip">Daily plan <b id="drvPlan">61</b> <span class="dim">queued / day</span></span>
+              </div>
+              <div class="hint alarm" id="actWarn" hidden>
+                <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                High volume sharply raises detection risk.
+              </div>
+            </div>
+            <div class="field locked" data-lockable>
+              <div class="ftop">
+                <label data-tip="Minimum and maximum wait between consecutive actions. Wider and slower reads more human; tighter and faster is more efficient but more pattern-like.">Action delay</label>
+                <span class="lockmark" title="Locked by preset — choose Custom to edit"><i class="fa-solid fa-lock" aria-hidden="true"></i>preset</span>
+                <output class="fv num" id="delayRead">3 – 6 min</output>
+              </div>
+              <div class="dual" id="delayDual">
+                <div class="dual-track">
+                  <div class="dual-band"></div>
+                  <div class="dual-h" role="slider" aria-label="Delay minimum" aria-valuemin="1" aria-valuemax="30" aria-valuenow="3" tabindex="0"></div>
+                  <div class="dual-h" role="slider" aria-label="Delay maximum" aria-valuemin="1" aria-valuemax="30" aria-valuenow="6" tabindex="0"></div>
+                </div>
+                <div class="dual-scale num"></div>
+              </div>
+            </div>
+            <div class="field locked" data-lockable>
+              <div class="ftop">
+                <label data-tip="Randomizes the gap between actions so timing looks human. Higher = safer but slower and less predictable; lower = faster but more pattern-like.">Jitter <span class="dim2">· timing randomness</span></label>
+                <span class="lockmark" title="Locked by preset — choose Custom to edit"><i class="fa-solid fa-lock" aria-hidden="true"></i>preset</span>
+                <output class="fv num" id="jitRead">±25%</output>
+              </div>
+              <input type="range" id="jitSlider" min="0" max="100" step="5" value="25" aria-label="Timing jitter percent" disabled>
+            </div>
+            <div class="field">
+              <div class="ftop"><label data-tip="The engine only acts inside this daily window. Match your real waking hours — activity at 4 a.m. every night is an easy tell.">Active hours</label><output class="fv num" id="hoursRead">08:00 – 22:00</output></div>
+              <div class="clock" id="hoursClock"></div>
+              <div class="hint" style="text-align:center">Drag a handle · arrow keys nudge ±1 h</div>
+            </div>
+            <div class="field">
+              <div class="ftop"><label data-tip="Cap on Instagram requests — scrapes plus actions — per window. Lower is stealthier but enriches candidates slower; higher fills the queue faster.">Request budget <span class="dim2">· per window</span></label><output class="fv num" id="budgetRead">200 <span class="dim">/ 60 min</span></output></div>
+              <input type="range" id="budgetSlider" min="50" max="500" step="10" value="200" aria-label="Request budget per window">
+            </div>
+            <div class="field">
+              <div class="ftop"><label for="windowSel" data-tip="The period the request budget applies to. Shorter windows smooth traffic into small, steady bursts; longer windows permit bigger spikes.">Budget window</label></div>
+              <div class="selwrap">
+                <select class="sel num" id="windowSel">
+                  <option value="15">15 min</option>
+                  <option value="30">30 min</option>
+                  <option value="60" selected>60 min</option>
+                  <option value="90">90 min</option>
+                  <option value="120">120 min</option>
+                </select>
+                <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+              </div>
+            </div>
+          </div>
+
+          <!-- CADENCE -->
+          <div class="card" style="--i:6">
+            <div class="card-h">
+              <i class="fa-solid fa-calendar-days" aria-hidden="true"></i>
+              Cadence
+            </div>
+            <div class="field">
+              <div class="ftop"><label id="sweepLabel" data-tip="How often the engine re-checks who followed back. Frequent sweeps recycle follow slots sooner but spend request budget on checking.">Follow-back sweep</label><output class="fv num" id="sweepRead">every 4 h</output></div>
+              <div class="chips num" role="group" aria-labelledby="sweepLabel" id="sweepChips">
+                <button type="button" class="chip" data-h="2" aria-pressed="false">2h</button>
+                <button type="button" class="chip active" data-h="4" aria-pressed="true">4h</button>
+                <button type="button" class="chip" data-h="6" aria-pressed="false">6h</button>
+                <button type="button" class="chip" data-h="12" aria-pressed="false">12h</button>
+                <button type="button" class="chip" data-h="24" aria-pressed="false">24h</button>
+              </div>
+            </div>
+            <div class="field">
+              <div class="ftop"><label data-tip="When the ranked queue drops below this count, the engine scrapes and enriches more candidates. Higher keeps a comfortable buffer; lower minimizes scraping.">Low-water candidates <span class="dim2">· refill below</span></label></div>
+              <div class="pair" style="grid-template-columns:1fr">
+                <div><div class="stepper" id="stLowWater"></div></div>
+              </div>
+            </div>
+            <div class="field">
+              <div class="ftop"><label data-tip="A chain target must convert at least this fraction of follows into follow-backs. Below it, the chain hops onward. Raise for quality; lower to keep chains alive longer.">Min follow-back rate <span class="dim2">· hop threshold</span></label><output class="fv num" id="fbRead">0.15</output></div>
+              <input type="range" id="fbSlider" min="0" max="1" step="0.05" value="0.15" aria-label="Minimum follow-back rate">
+            </div>
+            <div class="field">
+              <div class="ftop"><label data-tip="Minimum follower pool a chain target needs to be worth mining. Small pools exhaust quickly and force frequent, riskier hops.">Min pool size <span class="dim2">· hop threshold</span></label><output class="fv num" id="poolRead">300</output></div>
+              <input type="range" id="poolSlider" min="0" max="5000" step="50" value="300" aria-label="Minimum pool size">
+              <div class="hint">Targets below either threshold are skipped and the chain hops forward.</div>
+            </div>
+          </div>
+
+          <!-- DRY RUN -->
+          <div class="card" style="--i:7">
+            <div class="card-b" style="padding:var(--sp-3) var(--sp-4)">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3)">
+                <div>
+                  <div style="font-size:12.5px;font-weight:600;color:var(--text)" data-tip="Simulates every decision — targeting, timing, queueing — and logs it, without sending anything to Instagram. Perfect for tuning settings risk-free.">Dry run</div>
+                  <div style="font-size:11px;color:var(--faint);margin-top:var(--sp-0)">Simulate every action — nothing is sent to Instagram</div>
+                </div>
+                <div class="toggle" id="dryToggle" role="switch" aria-checked="false" tabindex="0" aria-label="Dry run"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- docked activity ticker -->
+      <div class="ticker" aria-live="polite">
+        <span class="beacon"></span>
+        <span class="tline num" id="tickerLine"><span class="ts">14:32:07</span><span class="lv-info">info</span>followed @isabelleyaoo</span>
+      </div>
+    </aside>
+
+    <!-- ==================================================
+         RIGHT · EMBEDDED INSTAGRAM WEBVIEW (mock)
+         ================================================== -->
+    <main class="igpane" aria-label="Embedded Instagram">
+      <div class="ig-top">
+        <span class="ig-word">Instagram</span>
+        <div class="ig-icons">
+          <i class="fa-solid fa-house" aria-hidden="true"></i>
+          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+          <i class="fa-solid fa-heart" aria-hidden="true"></i>
+        </div>
+      </div>
+
+      <div class="ig-scroll">
+        <div class="ig-profile">
+          <div class="ig-avatar">C</div>
+          <div class="ig-info">
+            <h2>chloexuee
+              <button class="ig-btn">Following</button>
+              <button class="ig-btn">Message</button>
+            </h2>
+            <!-- counts kept consistent with the console: pool = 4,210 followers -->
+            <div class="ig-counts num">
+              <span><b>482</b> posts</span>
+              <span><b>4,210</b> followers</span>
+              <span><b>3,876</b> following</span>
+            </div>
+            <div class="ig-bio">
+              <div class="nm">chloe</div>
+              somewhere between coffee &amp; the coast ☾<br>
+              nyc · film + fits
+            </div>
+          </div>
+        </div>
+        <div class="ig-tabs"><span class="on">POSTS</span><span>REELS</span><span>TAGGED</span></div>
+        <div class="ig-grid">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+      </div>
+
+      <!--
+        AUTOMATION VEIL
+        In the real app this is a separate always-on-top Electron overlay
+        view (a transparent BrowserView layered above the Instagram
+        webContents) that intercepts and blocks all pointer events while
+        the engine is Running. Here it is state-driven: visible only while
+        data-state="running"; it fades out (opacity + pointer-events:none)
+        the moment the engine is Paused, Halted, or Idle — try the
+        transport buttons in the console header.
+      -->
+      <div class="veil" id="veil" aria-hidden="true">
+        <!-- diagonal double-wipe shine: dim leading band + sharp trailing line -->
+        <span class="shine shine-lead" aria-hidden="true"></span>
+        <span class="shine shine-sharp" aria-hidden="true"></span>
+        <div class="veil-chip">
+          <i class="fa-solid fa-robot" aria-hidden="true"></i>
+          Automation active<span class="vdot" aria-hidden="true"></span><span class="dim">interaction paused</span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- reusable confirmation modal (Cancel-session · Restart-from-seed) -->
+  <div class="scrim" id="modalScrim" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalBody">
+      <div class="modal-t" id="modalTitle">Cancel the session?</div>
+      <div class="modal-b" id="modalBody">This ends the current session and resets today’s progress.</div>
+      <div class="modal-a">
+        <button class="tbtn" type="button" id="modalCancel">Keep running</button>
+        <button class="tbtn confirm-danger" type="button" id="modalConfirm">Cancel &amp; reset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- single tooltip popover — filled + positioned per [data-tip] label -->
+<div class="tip" id="tipPop" role="tooltip" aria-hidden="true"></div>
+
+<script>
+(function(){
+  "use strict";
+  var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var win = document.getElementById("win");
+
+  /* ============================================================
+     ENGINE STATE — one source of truth for hero, bars, settings
+     ============================================================ */
+  var S = {
+    state: "running",   // running | paused | halted | idle
+    done: 12,           // actions performed today
+    rate: 55,           // daily activity (operating rate)
+    ceiling: 72,        // hard ceiling — derived: round(rate × 1.3), max 150
+    budget: 200,        // requests per window
+    windowMin: 60       // budget window in minutes
+  };
+
+  /* ============================================================
+     LIVE STATUS HERO — countdown ring + Today readout + cells
+     ============================================================ */
+  var CANDS = [                              /* mirrors the Queued list */
+    {h:"@isabelleyaoo", r:"0.97"},
+    {h:"@maya.kotu",    r:"1.12"},
+    {h:"@lucaaevans",   r:"1.31"},
+    {h:"@sof.wren",     r:"1.05"},
+    {h:"@deytonhale",   r:"1.44"}
+  ];
+  var nextIdx = 0;
+  var intTotal = 240, intRemain = 227;       /* ~3:47 into a 4:00 interval */
+  var sessSec = 2*3600 + 41*60;              /* session uptime 2h 41m */
+
+  var cd        = document.getElementById("countdown");
+  var ringFill  = document.getElementById("ringFill");
+  var nextAct   = document.getElementById("nextAct");
+  var nextRatio = document.getElementById("nextRatio");
+  var lastAct   = document.getElementById("lastAct");
+  var lastSub   = document.getElementById("lastSub");
+  var sessVal   = document.getElementById("sessVal");
+  var heroDone  = document.getElementById("heroDone");
+  var heroRate  = document.getElementById("heroRate");
+  var heroLeft  = document.getElementById("heroLeft");
+  var heroCeil  = document.getElementById("heroCeil");
+  var heroBar   = document.getElementById("heroBar");
+  var ovDone    = document.getElementById("ovDone");
+  var ovRate    = document.getElementById("ovRate");
+  var ovRateBar = document.getElementById("ovRateBar");
+  var netToday  = document.getElementById("netToday");
+
+  var RING_C = 2 * Math.PI * 25;             /* r=25 */
+  ringFill.style.strokeDasharray = RING_C;
+
+  function fmt(s){ return Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); }
+
+  function paintTimer(){
+    cd.textContent = fmt(intRemain);
+    ringFill.style.strokeDashoffset = RING_C * (1 - intRemain/intTotal);
+  }
+  function paintNext(){
+    nextAct.innerHTML = 'follow <b>' + CANDS[nextIdx].h + '</b>';
+    nextRatio.textContent = "r=" + CANDS[nextIdx].r;
+  }
+  /* compact Today readout — also mirrors into Rate & Safety */
+  function paintToday(){
+    heroDone.textContent = S.done;
+    heroRate.textContent = S.rate;
+    heroLeft.textContent = Math.max(0, S.rate - S.done);
+    heroCeil.textContent = S.ceiling;
+    var w = Math.round(Math.min(1, S.done/S.rate)*100) + "%";
+    heroBar.style.width = w;
+    ovDone.textContent = S.done;
+    ovRate.textContent = S.rate;
+    ovRateBar.style.width = w;
+  }
+  /* the interval "fires": perform the action, pick a new interval */
+  function fireAction(){
+    S.done = Math.min(S.done + 1, S.ceiling);
+    lastAct.textContent = CANDS[nextIdx].h;
+    lastSub.textContent = "followed · sentinel ok";
+    nextIdx = (nextIdx + 1) % CANDS.length;
+    paintNext();
+    paintToday();
+    intTotal  = 180 + Math.floor(Math.random()*121);   /* new ~3–5 min */
+    intRemain = intTotal;
+  }
+  paintNext();
+  paintTimer();
+  paintToday();
+
+  /* full session reset — shared by Cancel & Restart-from-seed.
+     Settings are untouched; only session progress clears. */
+  var cleared = false;
+  function resetSession(){
+    S.done = 0; sessSec = 0; nextIdx = 0;
+    intTotal = 240; intRemain = 240;
+    cleared = true;
+    sessVal.textContent = "0h 00m";
+    lastAct.textContent = "—";
+    lastSub.textContent = "—";
+    netToday.textContent = "+0";
+    cd.textContent = "—";
+    ringFill.style.strokeDashoffset = RING_C;   /* ring empties */
+    nextAct.textContent = "—";
+    nextRatio.textContent = "—";
+    paintToday();
+  }
+
+  /* one 1 Hz heartbeat: countdown + session uptime (hold unless running) */
+  setInterval(function(){
+    if (S.state !== "running") return;
+    sessSec++;
+    sessVal.textContent = Math.floor(sessSec/3600) + "h " +
+      String(Math.floor((sessSec%3600)/60)).padStart(2,"0") + "m";
+    intRemain--;
+    if (intRemain <= 0) fireAction();
+    paintTimer();
+  }, 1000);
+
+  /* ============================================================
+     NET FOLLOWER GROWTH — cumulative line, smooth + animated
+     ============================================================ */
+  (function(){
+    var DATA = [0,6,14,19,27,38,44,55,63,74,88,97,112,128]; // cumulative net, 14 days
+    var X0=8, X1=362, Y0=104, Y1=12, VMAX=128;
+    var pts = DATA.map(function(v,i){
+      return [ X0 + (X1-X0)*(i/(DATA.length-1)), Y0 - (Y0-Y1)*(v/VMAX) ];
+    });
+    function smooth(p){ /* Catmull-Rom → cubic Bézier */
+      var d = "M"+p[0][0].toFixed(1)+","+p[0][1].toFixed(1);
+      for (var i=0;i<p.length-1;i++){
+        var p0=p[Math.max(0,i-1)], p1=p[i], p2=p[i+1], p3=p[Math.min(p.length-1,i+2)];
+        d += "C"+(p1[0]+(p2[0]-p0[0])/6).toFixed(1)+","+(p1[1]+(p2[1]-p0[1])/6).toFixed(1)
+           +" "+(p2[0]-(p3[0]-p1[0])/6).toFixed(1)+","+(p2[1]-(p3[1]-p1[1])/6).toFixed(1)
+           +" "+p2[0].toFixed(1)+","+p2[1].toFixed(1);
+      }
+      return d;
+    }
+    var lineD = smooth(pts);
+    var line = document.getElementById("growthLine");
+    var area = document.getElementById("growthArea");
+    var dot  = document.getElementById("growthDot");
+    var clip = document.getElementById("growthClipRect");
+    var endPt = pts[pts.length-1];
+    line.setAttribute("d", lineD);
+    area.setAttribute("d", lineD + "L"+X1+","+Y0+" L"+X0+","+Y0+" Z");
+    var len = line.getTotalLength();
+    line.style.transition = "none";
+    line.style.strokeDasharray = len;
+
+    /* Draw the line to `frac`, ride the dot at the leading tip, and reveal the
+       fill underneath it (clip grows with the tip) — the projected-growth
+       draw-in style, plus a leading dot and a smoothly filling area. */
+    function place(frac){
+      var e = Math.min(1, Math.max(0, frac));
+      line.style.strokeDashoffset = len * (1 - e);
+      var tip = e >= 1 ? {x:endPt[0], y:endPt[1]} : line.getPointAtLength(len * e);
+      dot.setAttribute("cx", tip.x.toFixed(1));
+      dot.setAttribute("cy", tip.y.toFixed(1));
+      clip.setAttribute("width", (e >= 1 ? X1 + 2 : tip.x + 1).toFixed(1));
+    }
+    function reveal(){
+      dot.style.transition = "none"; area.style.transition = "none";
+      dot.style.opacity = "1"; area.style.opacity = "1";
+      if (reduceMotion){ place(1); return; }
+      place(0);
+      var start = null, DELAY = 300, DUR = 1400;
+      function ease(x){ return 1 - Math.pow(1 - x, 3); }   /* easeOutCubic */
+      function frame(ts){
+        if (start === null) start = ts;
+        var p = (ts - start - DELAY) / DUR;
+        place(p <= 0 ? 0 : ease(Math.min(1, p)));
+        if (p < 1) requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
+    window.addEventListener("load", function(){
+      document.getElementById("growthCard").classList.add("growth-on");
+      reveal();
+    });
+  })();
+
+  /* ---------- progress bars animate on load ---------- */
+  window.addEventListener("load", function(){
+    document.querySelectorAll(".bar i").forEach(function(el){
+      el.style.width = el.getAttribute("data-w");
+    });
+  });
+
+  /* ============================================================
+     REUSABLE CONFIRMATION MODAL — Cancel-session & Restart-from-seed
+     share it; the dismiss label is configurable per action.
+     ============================================================ */
+  var scrim    = document.getElementById("modalScrim");
+  var mTitle   = document.getElementById("modalTitle");
+  var mBody    = document.getElementById("modalBody");
+  var mCancel  = document.getElementById("modalCancel");
+  var mConfirm = document.getElementById("modalConfirm");
+  var modalCb = null, modalPrev = null, modalIsOpen = false;
+
+  function openModal(o){
+    mTitle.textContent = o.title;
+    mBody.textContent  = o.body;
+    mCancel.textContent = o.dismiss || "Cancel";
+    mConfirm.textContent = o.confirm;
+    mConfirm.classList.toggle("confirm-danger", !!o.danger);
+    modalCb = o.onConfirm || null;
+    modalPrev = document.activeElement;
+    scrim.classList.add("open");
+    scrim.setAttribute("aria-hidden","false");
+    modalIsOpen = true;
+    mCancel.focus();
+  }
+  function closeModal(confirmed){
+    var cb = modalCb, prev = modalPrev;
+    modalCb = null; modalPrev = null;
+    modalIsOpen = false;
+    /* move focus out BEFORE hiding, so aria-hidden never traps it */
+    if (document.activeElement && scrim.contains(document.activeElement)){
+      document.activeElement.blur();
+    }
+    scrim.classList.remove("open");
+    scrim.setAttribute("aria-hidden","true");
+    if (confirmed && cb) cb();
+    if (prev && prev.focus && document.contains(prev) && !prev.disabled) prev.focus();
+  }
+  mCancel.addEventListener("click", function(){ closeModal(false); });
+  mConfirm.addEventListener("click", function(){ closeModal(true); });
+  scrim.addEventListener("mousedown", function(e){ if (e.target === scrim) closeModal(false); });
+  scrim.addEventListener("keydown", function(e){   /* two-stop focus trap */
+    if (e.key === "Tab"){
+      e.preventDefault();
+      (document.activeElement === mCancel ? mConfirm : mCancel).focus();
+    }
+  });
+
+  /* ============================================================
+     TRANSPORT — Start / Pause / Cancel drive the state expression
+     (brand-mark ring + primary sheen + veil, all keyed off
+     data-state) and the hero.
+     ============================================================ */
+  var btnStart = document.getElementById("btnStart");
+  var btnStartLabel = document.getElementById("btnStartLabel");
+  var btnPause = document.getElementById("btnPause");
+  var btnStop  = document.getElementById("btnStop");
+
+  /* Restart the veil shine so a wipe fires ~0.25s after the engine starts,
+     instead of waiting for the current loop. Lead leads; sharp lags .18s. */
+  function kickShine(){
+    [ [".veil .shine-lead", 0.25, "cubic-bezier(.18,.92,.28,1)"],
+      [".veil .shine-sharp", 0.43, "cubic-bezier(.16,1,.3,1)"] ].forEach(function(d){
+      var el = document.querySelector(d[0]); if (!el) return;
+      el.style.animationName = "none";
+      void el.offsetWidth;                  /* reflow → restart from iteration 0 */
+      el.style.animationName = "veilWipe";
+      el.style.animationDuration = "11.75s";
+      el.style.animationTimingFunction = d[2];
+      el.style.animationIterationCount = "infinite";
+      el.style.animationDelay = d[1] + "s"; /* first wipe ~0.25s after start */
+    });
+  }
+
+  function setState(s){
+    var prev = S.state;
+    S.state = s;
+    win.dataset.state = s;                     // drives veil, ring, sheen (CSS)
+    btnStartLabel.textContent = (s === "paused") ? "Resume" : "Start";
+    btnStart.disabled = (s === "running");
+    btnPause.disabled = (s !== "running");
+    btnStop.disabled  = !(s === "running" || s === "paused");
+    if (s === "running" && cleared){           /* fresh run after a reset */
+      cleared = false;
+      paintNext();
+      paintTimer();
+    }
+    /* any non-running → running: skip forward so a shine wipe fires ~0.25s later */
+    if (s === "running" && prev !== "running") kickShine();
+  }
+  btnStart.addEventListener("click", function(){ setState("running"); goToView("overview"); });
+  btnPause.addEventListener("click", function(){ setState("paused"); });
+  btnStop .addEventListener("click", function(){
+    openModal({
+      title:"Cancel the session?",
+      body:"This ends the current session and resets today’s progress.",
+      dismiss:"Keep running",
+      confirm:"Cancel & reset",
+      danger:true,
+      onConfirm:function(){ resetSession(); setState("idle"); goToView("overview"); }
+    });
+  });
+  setState("running");   // default on load → veil shows
+
+  /* ============================================================
+     VIEW SWITCHING · cinematic scale+fade
+     ============================================================ */
+  var navBtns = document.querySelectorAll(".nav button");
+  var current = "overview";
+  var switching = false;
+  function goToView(next){
+    if (next===current || switching) return;
+    switching = true;
+    navBtns.forEach(function(b){ b.classList.toggle("active", b.getAttribute("data-view")===next); });
+    var out = document.getElementById("view-"+current);
+    var inn = document.getElementById("view-"+next);
+    current = next;
+    if (reduceMotion){
+      out.classList.remove("active","entering","exiting");
+      inn.classList.add("active");
+      switching = false;
+      return;
+    }
+    out.classList.remove("entering");
+    out.classList.add("exiting");
+    setTimeout(function(){
+      out.classList.remove("active","exiting");
+      inn.classList.add("active");
+      void inn.offsetWidth;               // restart stagger animations
+      inn.classList.add("entering");
+      inn.scrollTop = 0;
+      setTimeout(function(){ switching=false; }, 340);
+    }, 165);
+  }
+  navBtns.forEach(function(btn){
+    btn.addEventListener("click", function(){ goToView(btn.getAttribute("data-view")); });
+  });
+
+  /* ---------- docked ticker rotation ---------- */
+  var lines = [
+    {ts:"14:32:07", lv:"info", msg:"followed @isabelleyaoo"},
+    {ts:"14:32:04", lv:"info", msg:"sentinel ok"},
+    {ts:"14:31:48", lv:"info", msg:"enriched @maya.kotu 5.2k/6.1k r=1.17"},
+    {ts:"14:31:22", lv:"warn", msg:"budget 168/200"},
+    {ts:"14:30:55", lv:"info", msg:"held @sof.wren 2d"}
+  ];
+  var ti = 0, tline = document.getElementById("tickerLine");
+  setInterval(function(){
+    ti = (ti+1) % lines.length;
+    var l = lines[ti];
+    tline.classList.remove("swap");
+    void tline.offsetWidth;
+    tline.innerHTML = '<span class="ts">'+l.ts+'</span><span class="lv-'+l.lv+'">'+l.lv+'</span>'+l.msg;
+    if (!reduceMotion) tline.classList.add("swap");
+  }, 3600);
+
+  /* ============================================================
+     QUEUES — lifecycle pipeline with stage-specific context
+     ============================================================ */
+  var QDATA = {
+    queued: {
+      title:"Queued · next to follow",
+      sum:"<b>5 ranked candidates</b> · top score 0.94",
+      rows:[
+        {h:"@isabelleyaoo", r:"0.97", priv:true,  ctx:"#1 · scored 0.94", bar:94},
+        {h:"@maya.kotu",    r:"1.12",             ctx:"#2 · scored 0.89", bar:89},
+        {h:"@lucaaevans",   r:"1.31",             ctx:"#3 · scored 0.83", bar:83},
+        {h:"@sof.wren",     r:"1.05", priv:true,  ctx:"#4 · scored 0.78", bar:78},
+        {h:"@deytonhale",   r:"1.44",             ctx:"#5 · scored 0.71", bar:71}
+      ]},
+    awaiting: {
+      title:"Awaiting · follow-back window",
+      sum:"<b>8 awaiting follow-back</b> · avg 3.1d left of 4d window",
+      rows:[
+        {h:"@nina.calder",  r:"1.08",            ctx:"2d left of 4d", bar:50},
+        {h:"@jules.wt",     r:"0.94",            ctx:"2d left of 4d", bar:50},
+        {h:"@marisol.v",    r:"1.21", priv:true, ctx:"3d left of 4d", bar:25},
+        {h:"@tommy.rhee",   r:"1.36",            ctx:"3d left of 4d", bar:25},
+        {h:"@aiko.tan",     r:"1.02",            ctx:"3d left of 4d", bar:25},
+        {h:"@bran.olsen",   r:"1.18",            ctx:"4d left of 4d", bar:6},
+        {h:"@carys.moon",   r:"0.99", priv:true, ctx:"4d left of 4d", bar:6},
+        {h:"@felix.dune",   r:"1.27",            ctx:"4d left of 4d", bar:6}
+      ]},
+    held: {
+      title:"Held · followed back, holding",
+      sum:"<b>3 followed back</b> · avg 1.3d hold remaining",
+      rows:[
+        {h:"@sof.wren",     r:"1.05", priv:true, ctx:"followed back · 2d hold left", bar:10},
+        {h:"@ella.marsh",   r:"1.14",            ctx:"followed back · 1d hold left", bar:50},
+        {h:"@theo.lindt",   r:"1.29",            ctx:"followed back · 1d hold left", bar:50}
+      ]},
+    due: {
+      title:"Due · ready to unfollow",
+      sum:"<b>2 cleared hold</b> · unfollow in next action slots",
+      rows:[
+        {h:"@ray.calloway", r:"1.41", due:true,  ctx:"hold complete · ready", bar:100},
+        {h:"@mimi.osei",    r:"1.09", due:true,  ctx:"hold complete · ready", bar:100}
+      ]}
+  };
+  var qList = document.getElementById("qList");
+  var qTitle = document.getElementById("qTitle");
+  var qSummary = document.getElementById("qSummary");
+  function monogram(h){ return h.replace("@","").charAt(0).toUpperCase(); }
+  function renderQ(key){
+    var d = QDATA[key];
+    qTitle.textContent = d.title;
+    qSummary.innerHTML = d.sum;
+    var html = d.rows.map(function(r){
+      return '<div class="qr'+(r.due?' due':'')+'">'
+        + '<span class="qr-av num">'+monogram(r.h)+'</span>'
+        + '<div class="qr-main">'
+        +   '<div class="qr-top"><span class="handle">'+r.h+'</span>'
+        +     (r.priv ? '<span class="priv"><i class="fa-solid fa-lock" aria-hidden="true"></i>Private</span>' : '')
+        +     (r.due  ? '<span class="ready">Ready</span>'  : '')
+        +   '</div>'
+        +   '<div class="qr-sub num"><span class="ctx">'+r.ctx+'</span>'
+        +     '<span class="qbar'+(r.due?' brass':'')+'"><i style="width:'+r.bar+'%"></i></span>'
+        +   '</div>'
+        + '</div>'
+        + '<span class="rchip num">r='+r.r+'</span>'
+        + '</div>';
+    }).join("");
+    qList.classList.remove("qlist"); void qList.offsetWidth;
+    qList.innerHTML = html;
+    qList.classList.add("qlist");
+  }
+  renderQ("queued");
+  document.querySelectorAll(".qstage").forEach(function(t){
+    t.addEventListener("click", function(){
+      document.querySelectorAll(".qstage").forEach(function(x){
+        var on = (x === t);
+        x.classList.toggle("active", on);
+        x.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      renderQ(t.getAttribute("data-q"));
+    });
+  });
+
+  /* ============================================================
+     SETTINGS · shared control helpers
+     ============================================================ */
+
+  /* guard: true while a preset is writing knobs, and during init,
+     so programmatic changes never flip the preset to "Custom" */
+  var applying = true;
+
+  /* --- single sliders: filled track + live readout --- */
+  function bindSlider(id, readId, fmtFn, onChange){
+    var s = document.getElementById(id), r = document.getElementById(readId);
+    function upd(fire){
+      var v = +s.value;
+      var p = ((v - +s.min)/(+s.max - +s.min))*100;
+      s.style.setProperty("--pct", p+"%");
+      r.innerHTML = fmtFn(v);
+      /* skip onChange during init — defaults are already reflected in the
+         static markup, and firing early would cancel the load animations */
+      if (fire !== false && onChange) onChange(v);
+    }
+    s.addEventListener("input", function(){ upd(true); }); upd(false);
+    return { el:s, get:function(){ return +s.value; },
+             set:function(v){ s.value = v; upd(true); } };
+  }
+
+  /* --- generic dual-handle range control --- */
+  function makeDual(rootId, cfg){
+    var root  = document.getElementById(rootId);
+    var track = root.querySelector(".dual-track");
+    var band  = root.querySelector(".dual-band");
+    var peakEl= root.querySelector(".dual-peak");
+    var hs    = root.querySelectorAll(".dual-h");
+    var hLo = hs[0], hHi = hs[1];
+    var scale = root.querySelector(".dual-scale");
+    var st = { min:cfg.min, max:cfg.max, lo:cfg.lo, hi:cfg.hi,
+               peakLo:cfg.peakLo, peakHi:cfg.peakHi };
+    var step = cfg.step, gap = cfg.gap || step;
+
+    function pct(v){ return ((v-st.min)/(st.max-st.min))*100; }
+    function snap(v){ return Math.round(v/step)*step; }
+    function buildScale(){
+      if (!scale) return;
+      var n = cfg.scaleStops || 6, html = "";
+      for (var i=0;i<n;i++){
+        var v = st.min + (st.max-st.min)*(i/(n-1));
+        html += "<span>"+cfg.scaleFmt(v)+"</span>";
+      }
+      scale.innerHTML = html;
+    }
+    function paint(){
+      hLo.style.left = pct(st.lo)+"%";
+      hHi.style.left = pct(st.hi)+"%";
+      band.style.left = pct(st.lo)+"%";
+      band.style.width = (pct(st.hi)-pct(st.lo))+"%";
+      if (peakEl && st.peakLo != null){
+        var pl = Math.max(st.lo, st.peakLo), ph = Math.min(st.hi, st.peakHi);
+        if (ph > pl){ peakEl.style.display="block"; peakEl.style.left=pct(pl)+"%"; peakEl.style.width=(pct(ph)-pct(pl))+"%"; }
+        else peakEl.style.display="none";
+      }
+      hLo.setAttribute("aria-valuenow", cfg.ariaFmt(st.lo));
+      hHi.setAttribute("aria-valuenow", cfg.ariaFmt(st.hi));
+      hLo.setAttribute("aria-valuemin", cfg.ariaFmt(st.min));
+      hHi.setAttribute("aria-valuemax", cfg.ariaFmt(st.max));
+      if (cfg.onChange) cfg.onChange(st.lo, st.hi);
+    }
+    function fromX(clientX){
+      var rect = track.getBoundingClientRect();
+      var f = Math.min(1, Math.max(0, (clientX-rect.left)/rect.width));
+      return snap(st.min + f*(st.max-st.min));
+    }
+    function move(v, isLo){
+      if (isLo) st.lo = Math.max(st.min, Math.min(v, st.hi-gap));
+      else      st.hi = Math.min(st.max, Math.max(v, st.lo+gap));
+      paint();
+    }
+    function drag(handle, isLo){
+      handle.addEventListener("pointerdown", function(e){
+        e.preventDefault();
+        handle.setPointerCapture(e.pointerId);
+        function mv(ev){ move(fromX(ev.clientX), isLo); }
+        function up(){ handle.removeEventListener("pointermove", mv); handle.removeEventListener("pointerup", up); handle.removeEventListener("pointercancel", up); }
+        handle.addEventListener("pointermove", mv);
+        handle.addEventListener("pointerup", up);
+        handle.addEventListener("pointercancel", up);
+      });
+      handle.addEventListener("keydown", function(e){
+        var d = 0;
+        if (e.key==="ArrowRight"||e.key==="ArrowUp") d = step;
+        else if (e.key==="ArrowLeft"||e.key==="ArrowDown") d = -step;
+        else return;
+        e.preventDefault();
+        if (e.shiftKey) d *= 2;
+        move((isLo?st.lo:st.hi)+d, isLo);
+      });
+    }
+    drag(hLo,true); drag(hHi,false);
+    buildScale(); paint();
+    return {
+      get:function(){ return st; },
+      setPeak:function(l,h){ st.peakLo=l; st.peakHi=h; paint(); },
+      setVals:function(l,h){
+        st.lo = Math.max(st.min, Math.min(l, st.max));
+        st.hi = Math.min(st.max, Math.max(h, st.lo+gap));
+        paint();
+      },
+      setRange:function(mn,mx){
+        st.min=mn; st.max=mx;
+        st.lo=Math.max(mn, Math.min(st.lo, mx-gap));
+        st.hi=Math.min(mx, Math.max(st.hi, mn+gap));
+        buildScale(); paint();
+      }
+    };
+  }
+
+  /* --- steppers: − value + --- */
+  function makeStepper(rootId, cfg){
+    var root = document.getElementById(rootId);
+    root.innerHTML =
+      '<button type="button" aria-label="Decrease">−</button>' +
+      '<input class="num" type="text" inputmode="decimal" aria-label="'+(cfg.label||"Value")+'">' +
+      '<button type="button" aria-label="Increase">+</button>';
+    var btns = root.querySelectorAll("button");
+    var inp  = root.querySelector("input");
+    var val  = cfg.val;
+    function fmtv(v){ return cfg.dec ? v.toFixed(cfg.dec) : String(Math.round(v)); }
+    function set(v, fire){
+      if (isNaN(v)) v = cfg.val;
+      v = Math.round(v/cfg.step)*cfg.step;
+      v = Math.max(cfg.min, Math.min(cfg.max, v));
+      val = +v.toFixed(4);
+      inp.value = fmtv(val) + (cfg.suffix||"");
+      if (fire !== false && cfg.onChange) cfg.onChange(val);
+    }
+    btns[0].addEventListener("click", function(){ set(val - cfg.step); });
+    btns[1].addEventListener("click", function(){ set(val + cfg.step); });
+    inp.addEventListener("change", function(){ set(parseFloat(inp.value.replace(/[^\d.\-]/g,""))); });
+    set(cfg.val, false); /* init silently — defaults already painted */
+    return { get:function(){ return val; }, set:set };
+  }
+
+  /* --- toggle switch --- */
+  function bindToggle(id){
+    var t = document.getElementById(id);
+    function flip(){ t.classList.toggle("on"); t.setAttribute("aria-checked", t.classList.contains("on")); }
+    t.addEventListener("click", flip);
+    t.addEventListener("keydown", function(e){ if(e.key===" "||e.key==="Enter"){ e.preventDefault(); flip(); }});
+  }
+
+  /* --- snap-tick rows under precise sliders --- */
+  function buildTicks(id, n){
+    var el = document.getElementById(id), html = "";
+    for (var i=0;i<n;i++) html += "<i></i>";
+    el.innerHTML = html;
+  }
+  buildTicks("waitTicks", 14);   /* 1–14 days */
+  buildTicks("holdTicks", 11);   /* 0–10 days */
+
+  /* ============================================================
+     SETTINGS · STRATEGY — aggressiveness preset (segmented)
+     Picking a preset writes daily activity, delay and jitter —
+     and LOCKS those knobs. Custom unlocks them. Per-day amounts
+     (hard ceiling, daily plan) always derive from daily activity.
+     ============================================================ */
+  var AGG = {
+    conservative:{rate:30, dLo:5, dHi:10, jit:35, hint:"30 / day · 5–10 min delay · ±35% jitter"},
+    balanced:    {rate:55, dLo:3, dHi:6,  jit:25, hint:"55 / day · 3–6 min delay · ±25% jitter"},
+    aggressive:  {rate:90, dLo:2, dHi:4,  jit:15, hint:"90 / day · 2–4 min delay · ±15% jitter"},
+    custom:      {hint:"Manual — these knobs hold their tuned values."}
+  };
+  var aggSeg  = document.getElementById("aggSeg");
+  var aggHint = document.getElementById("aggHint");
+  var aggBtns = Array.prototype.slice.call(aggSeg.querySelectorAll("button"));
+  var rateCtl, delayCtl, jitCtl;                   /* wired below */
+
+  /* gray out + freeze the preset-written knobs while a preset is active */
+  var lockFields = Array.prototype.slice.call(document.querySelectorAll("[data-lockable]"));
+  function setKnobLock(locked){
+    lockFields.forEach(function(f){ f.classList.toggle("locked", locked); });
+    ["actSlider","jitSlider"].forEach(function(id){
+      document.getElementById(id).disabled = locked;
+    });
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#delayDual .dual-h"),
+      function(h){ h.tabIndex = locked ? -1 : 0; }
+    );
+  }
+
+  function setAgg(key, apply){
+    aggBtns.forEach(function(b){
+      var on = (b.getAttribute("data-agg") === key);
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+      b.tabIndex = on ? 0 : -1;
+    });
+    aggHint.textContent = AGG[key].hint;
+    var p = AGG[key];
+    if (apply && p.rate != null){
+      applying = true;
+      rateCtl.set(p.rate);                  /* ceiling + plan re-derive */
+      delayCtl.setVals(p.dLo, p.dHi);
+      jitCtl.set(p.jit);
+      applying = false;
+    }
+    setKnobLock(key !== "custom");
+  }
+  function markCustom(){ if (!applying) setAgg("custom", false); }
+
+  aggBtns.forEach(function(b){
+    b.addEventListener("click", function(){ setAgg(b.getAttribute("data-agg"), true); });
+  });
+  aggSeg.addEventListener("keydown", function(e){
+    var dir = (e.key==="ArrowRight"||e.key==="ArrowDown") ? 1
+            : (e.key==="ArrowLeft" ||e.key==="ArrowUp")   ? -1 : 0;
+    if (!dir) return;
+    e.preventDefault();
+    var idx = aggBtns.findIndex(function(b){ return b.classList.contains("active"); });
+    var nx = (idx + dir + aggBtns.length) % aggBtns.length;
+    setAgg(aggBtns[nx].getAttribute("data-agg"), true);
+    aggBtns[nx].focus();
+  });
+
+  /* ============================================================
+     SETTINGS · TARGETING
+     ============================================================ */
+  var ratioRead = document.getElementById("ratioRead");
+  var peakLegend = document.getElementById("peakLegend");
+  var peakLoSt, peakHiSt;
+
+  /* The peak plateau keeps its PROPORTIONAL position inside the band:
+     band 0.90–1.50 with peak 1.00–1.20 → fractions 1/6 and 1/2 of the
+     band width. Dragging the band repositions the peak (snapped to
+     0.05); editing the peak steppers re-anchors the fractions. */
+  var peakFracLo = 1/6, peakFracHi = 0.5;
+  var lastBandLo = 0.90, lastBandHi = 1.50;
+  function snap05(v){ return Math.round(v/0.05)*0.05; }
+
+  function applyPeak(l, h){
+    ratioDual.setPeak(l, h);
+    peakLegend.textContent = l.toFixed(2)+" – "+h.toFixed(2);
+  }
+
+  var ratioDual = makeDual("ratioDual", {
+    min:0.5, max:3.0, step:0.01, gap:0.05,
+    lo:0.90, hi:1.50, peakLo:1.00, peakHi:1.20,
+    scaleStops:6,
+    scaleFmt:function(v){ return v.toFixed(1); },
+    ariaFmt:function(v){ return v.toFixed(2); },
+    onChange:function(lo,hi){
+      ratioRead.textContent = lo.toFixed(2)+" – "+hi.toFixed(2);
+      if (lo === lastBandLo && hi === lastBandHi) return;
+      lastBandLo = lo; lastBandHi = hi;
+      recalcGrowth();                       /* band width feeds the projection */
+      if (!peakLoSt || !peakHiSt) return;
+      /* band moved → keep the peak's proportional position */
+      var nl = Math.max(lo, Math.min(hi, snap05(lo + peakFracLo*(hi-lo))));
+      var nh = Math.max(nl, Math.min(hi, snap05(lo + peakFracHi*(hi-lo))));
+      peakLoSt.set(nl, false);
+      peakHiSt.set(nh, false);
+      applyPeak(peakLoSt.get(), peakHiSt.get());
+    }
+  });
+
+  /* manual stepper edits override the auto-fit and re-anchor fractions */
+  function syncPeak(){
+    if (!peakLoSt || !peakHiSt) return;
+    var l = Math.min(peakLoSt.get(), peakHiSt.get());
+    var h = Math.max(peakLoSt.get(), peakHiSt.get());
+    var st = ratioDual.get();
+    if (st.hi > st.lo){
+      peakFracLo = (l - st.lo)/(st.hi - st.lo);
+      peakFracHi = (h - st.lo)/(st.hi - st.lo);
+    }
+    applyPeak(l, h);
+  }
+  peakLoSt = makeStepper("stPeakLo", {min:0.5, max:3.0, step:0.05, val:1.00, dec:2, label:"Peak plateau low",  onChange:syncPeak});
+  peakHiSt = makeStepper("stPeakHi", {min:0.5, max:3.0, step:0.05, val:1.20, dec:2, label:"Peak plateau high", onChange:syncPeak});
+
+  var hardLoSt, hardHiSt;
+  function syncHard(){
+    if (!hardLoSt || !hardHiSt) return;
+    var l = Math.min(hardLoSt.get(), hardHiSt.get());
+    var h = Math.max(hardLoSt.get(), hardHiSt.get());
+    if (h - l < 0.1) h = l + 0.1;
+    ratioDual.setRange(l,h);
+  }
+  hardLoSt = makeStepper("stHardLo", {min:0.5, max:3.0, step:0.05, val:0.50, dec:2, label:"Hard bound low",  onChange:syncHard});
+  hardHiSt = makeStepper("stHardHi", {min:0.5, max:3.0, step:0.05, val:3.00, dec:2, label:"Hard bound high", onChange:syncHard});
+
+  /* followers min / max — formatted number inputs */
+  var folMin = document.getElementById("folMin");
+  var folMax = document.getElementById("folMax");
+  var folRead = document.getElementById("folRead");
+  function commas(n){ return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+  function syncFollowers(){
+    var lo = parseInt(folMin.value.replace(/\D/g,""),10); if (isNaN(lo)) lo = 50;
+    var hi = parseInt(folMax.value.replace(/\D/g,""),10); if (isNaN(hi)) hi = 20000;
+    lo = Math.max(0, Math.min(lo, 1000000));
+    hi = Math.max(lo, Math.min(hi, 1000000));
+    folMin.value = commas(lo); folMax.value = commas(hi);
+    folRead.textContent = commas(lo)+" – "+commas(hi);
+  }
+  folMin.addEventListener("change", syncFollowers);
+  folMax.addEventListener("change", syncFollowers);
+  syncFollowers();
+
+  var pbCtl = bindSlider("pbSlider","pbRead",
+    function(v){ return "+"+v.toFixed(2); },
+    function(){ recalcGrowth(); });
+  bindToggle("verToggle");
+
+  /* ============================================================
+     SETTINGS · LIFECYCLE (snap sliders with tick rows)
+     ============================================================ */
+  var waitCtl = bindSlider("waitSlider","waitRead",
+    function(v){ return v + (v===1 ? " day" : " days"); },
+    function(){ recalcGrowth(); });
+  var holdCtl = bindSlider("holdSlider","holdRead",
+    function(v){ return v + (v===1 ? " day" : " days"); },
+    function(){ recalcGrowth(); });
+  makeStepper("stRetries", {min:0, max:10, step:1, val:3, label:"Unfollow retries"});
+
+  /* ============================================================
+     SETTINGS · SAFETY — the Daily-activity knob is the single
+     master for per-day volume. Every per-day AMOUNT derives from
+     it and is shown read-only in the Auto-derived row below:
+       hard ceiling = round(rate × 1.3), capped at 150
+       daily plan   = round(rate × 1.1), capped at 120
+     ============================================================ */
+  var actWarn = document.getElementById("actWarn");
+  var drvCeil = document.getElementById("drvCeil");
+  var drvPlan = document.getElementById("drvPlan");
+  function ceilFor(rate){ return Math.min(150, Math.round(rate * 1.3)); }
+  function planFor(rate){ return Math.min(120, Math.round(rate * 1.1)); }
+  function paintDerived(rate){
+    drvCeil.textContent = ceilFor(rate);
+    drvPlan.textContent = planFor(rate);
+  }
+  rateCtl = bindSlider("actSlider","actRead",
+    function(v){ return v+' <span class="dim">/ day</span>'; },
+    function(v){
+      S.rate = v;
+      S.ceiling = ceilFor(v);
+      paintDerived(v);
+      actWarn.hidden = v < 80;
+      paintToday();
+      markCustom();
+      recalcGrowth();                        /* operating rate drives the projection */
+    });
+  paintDerived(rateCtl.get());               /* init: static markup → live values */
+
+  var delayRead = document.getElementById("delayRead");
+  delayCtl = makeDual("delayDual", {
+    min:1, max:30, step:1, lo:3, hi:6,
+    scaleStops:6,
+    scaleFmt:function(v){ return Math.round(v)+"m"; },
+    ariaFmt:function(v){ return String(Math.round(v)); },
+    onChange:function(lo,hi){ delayRead.textContent = lo+" – "+hi+" min"; markCustom(); }
+  });
+
+  jitCtl = bindSlider("jitSlider","jitRead",
+    function(v){ return "±"+v+"%"; },
+    function(){ markCustom(); });
+
+  /* ============================================================
+     ACTIVE HOURS — radial 24-hour clock range picker
+     Two draggable handles; the silver arc is the active window.
+     Handles are focusable; arrow keys nudge ±1 h.
+     ============================================================ */
+  var hoursRead = document.getElementById("hoursRead");
+  var ovHours = document.getElementById("ovHours");
+  function hh(v){ return String(v).padStart(2,"0")+":00"; }
+  (function(){
+    var NS = "http://www.w3.org/2000/svg";
+    var CTR = 100, R = 74;                    /* center, ring/handle radius */
+    var hStart = 8, hEnd = 22;
+    var box = document.getElementById("hoursClock");
+
+    function mk(name, attrs){
+      var n = document.createElementNS(NS, name);
+      for (var k in attrs) n.setAttribute(k, attrs[k]);
+      return n;
+    }
+    function pos(h, r){
+      var a = (h/24)*Math.PI*2 - Math.PI/2;   /* hour 0 at top, clockwise */
+      return [CTR + r*Math.cos(a), CTR + r*Math.sin(a)];
+    }
+
+    var svg = mk("svg", {viewBox:"0 0 200 200", width:"184", height:"184",
+      role:"group", "aria-label":"Active hours, 24-hour dial"});
+    svg.appendChild(mk("circle", {"class":"ck-track", cx:CTR, cy:CTR, r:R}));
+
+    /* hour ticks (major every 6 h) + the four anchor labels */
+    var i, p1, p2;
+    for (i = 0; i < 24; i++){
+      var major = (i % 6 === 0);
+      p1 = pos(i, major ? 81.5 : 83);
+      p2 = pos(i, major ? 89 : 87);
+      svg.appendChild(mk("line", {"class":"ck-tick"+(major ? " major" : ""),
+        x1:p1[0].toFixed(1), y1:p1[1].toFixed(1),
+        x2:p2[0].toFixed(1), y2:p2[1].toFixed(1)}));
+    }
+    [0,6,12,18].forEach(function(h){
+      var p = pos(h, 95.5);
+      var t = mk("text", {"class":"ck-lab",
+        x:p[0].toFixed(1), y:(p[1]+3).toFixed(1), "text-anchor":"middle"});
+      t.textContent = String(h);
+      svg.appendChild(t);
+    });
+
+    var arc = mk("path", {"class":"ck-arc"});
+    svg.appendChild(arc);
+
+    var winText = mk("text", {"class":"ck-win", x:CTR, y:97, "text-anchor":"middle"});
+    var capText = mk("text", {"class":"ck-cap", x:CTR, y:112, "text-anchor":"middle"});
+    capText.textContent = "ACTIVE WINDOW";
+    svg.appendChild(winText);
+    svg.appendChild(capText);
+
+    var hA = mk("circle", {"class":"ck-h", r:"7.5", tabindex:"0", role:"slider",
+      "aria-label":"Active hours start", "aria-valuemin":"0", "aria-valuemax":"23"});
+    var hB = mk("circle", {"class":"ck-h", r:"7.5", tabindex:"0", role:"slider",
+      "aria-label":"Active hours end", "aria-valuemin":"0", "aria-valuemax":"23"});
+    svg.appendChild(hA);
+    svg.appendChild(hB);
+    box.appendChild(svg);
+
+    function paint(){
+      var span = (hEnd - hStart + 24) % 24;
+      var a = pos(hStart, R), b = pos(hEnd, R);
+      arc.setAttribute("d",
+        "M"+a[0].toFixed(2)+","+a[1].toFixed(2)+
+        " A"+R+","+R+" 0 "+(span > 12 ? 1 : 0)+" 1 "+
+        b[0].toFixed(2)+","+b[1].toFixed(2));
+      hA.setAttribute("cx", a[0].toFixed(2)); hA.setAttribute("cy", a[1].toFixed(2));
+      hB.setAttribute("cx", b[0].toFixed(2)); hB.setAttribute("cy", b[1].toFixed(2));
+      hA.setAttribute("aria-valuenow", hStart);
+      hB.setAttribute("aria-valuenow", hEnd);
+      hA.setAttribute("aria-valuetext", hh(hStart));
+      hB.setAttribute("aria-valuetext", hh(hEnd));
+      var t = hh(hStart)+" – "+hh(hEnd);
+      winText.textContent = t;
+      hoursRead.textContent = t;
+      ovHours.textContent = t;
+    }
+    function hourFromPointer(ev){
+      var r = svg.getBoundingClientRect();
+      var dx = ev.clientX - (r.left + r.width/2);
+      var dy = ev.clientY - (r.top + r.height/2);
+      var ang = Math.atan2(dy, dx) + Math.PI/2;   /* 0 rad at 12 o'clock */
+      if (ang < 0) ang += Math.PI*2;
+      return Math.round(ang/(Math.PI*2)*24) % 24; /* snap to whole hours */
+    }
+    function setHour(isStart, h){
+      h = ((h % 24) + 24) % 24;
+      if (isStart){ if (h === hEnd) return; hStart = h; }
+      else        { if (h === hStart) return; hEnd = h; }
+      paint();
+    }
+    function wire(handle, isStart){
+      handle.addEventListener("pointerdown", function(e){
+        e.preventDefault();
+        handle.setPointerCapture(e.pointerId);
+        function mv(ev){ setHour(isStart, hourFromPointer(ev)); }
+        function up(){
+          handle.removeEventListener("pointermove", mv);
+          handle.removeEventListener("pointerup", up);
+          handle.removeEventListener("pointercancel", up);
+        }
+        handle.addEventListener("pointermove", mv);
+        handle.addEventListener("pointerup", up);
+        handle.addEventListener("pointercancel", up);
+      });
+      handle.addEventListener("keydown", function(e){
+        var d = 0;
+        if (e.key === "ArrowRight" || e.key === "ArrowUp") d = 1;
+        else if (e.key === "ArrowLeft" || e.key === "ArrowDown") d = -1;
+        else return;
+        e.preventDefault();
+        var nx = (isStart ? hStart : hEnd) + d;
+        if (((nx % 24) + 24) % 24 === (isStart ? hEnd : hStart)) nx += d;
+        setHour(isStart, nx);
+      });
+    }
+    wire(hA, true);
+    wire(hB, false);
+    paint();
+  })();
+
+  var budgetRead = document.getElementById("budgetRead");
+  var ovBudget = document.getElementById("ovBudget");
+  var ovBudgetBar = document.getElementById("ovBudgetBar");
+  function paintBudget(){
+    budgetRead.innerHTML = S.budget+' <span class="dim">/ '+S.windowMin+' min</span>';
+    ovBudget.textContent = S.budget;
+    ovBudgetBar.style.width = Math.min(100, Math.round(168/S.budget*100))+"%";
+  }
+  bindSlider("budgetSlider","budgetRead",
+    function(v){ return v+' <span class="dim">/ '+S.windowMin+' min</span>'; },
+    function(v){ S.budget = v; paintBudget(); });
+
+  /* budget window — native select, styled */
+  var windowSel = document.getElementById("windowSel");
+  windowSel.addEventListener("change", function(){
+    S.windowMin = +windowSel.value;
+    paintBudget();
+  });
+
+  /* ============================================================
+     SETTINGS · CADENCE
+     ============================================================ */
+  /* follow-back sweep — chip preset selector */
+  var sweepRead = document.getElementById("sweepRead");
+  var sweepChips = Array.prototype.slice.call(document.querySelectorAll("#sweepChips .chip"));
+  sweepChips.forEach(function(c){
+    c.addEventListener("click", function(){
+      sweepChips.forEach(function(x){
+        var on = (x === c);
+        x.classList.toggle("active", on);
+        x.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+      sweepRead.textContent = "every " + c.getAttribute("data-h") + " h";
+    });
+  });
+
+  makeStepper("stLowWater", {min:0, max:50, step:1, val:5, label:"Low-water candidates"});
+  bindSlider("fbSlider","fbRead", function(v){ return v.toFixed(2); });
+  bindSlider("poolSlider","poolRead", function(v){ return commas(v); });
+
+  /* ---------- dry-run toggle ---------- */
+  bindToggle("dryToggle");
+
+  /* ============================================================
+     PROJECTED GROWTH — simulates cumulative NET followers over the
+     next 30 days under the CURRENT settings, across three yield
+     scenarios (cautious / expected / optimistic):
+       net(t) = R · P · ( t − (1−RR) · max(0, t − (wait+hold)) )
+     R  = operating rate (follows/day)
+     P  = scenario follow-back rate, modulated by the live settings —
+          audience-yield multiplier (the slider under the chart),
+          private boost, ratio-band tightness, and a volume penalty
+     RR = scenario retention (fraction who STAY after the unfollow)
+     Fast early ramp (first cohorts not yet unfollowed) settling into
+     a steady ≈ R·P·RR net per day. Recomputed live: operating rate,
+     preset switches, wait/hold, private boost, the ratio band and
+     the yield slider all re-run recalcGrowth(). READ-ONLY — never
+     flips the preset.
+     ============================================================ */
+  var PROJ_SCEN = [
+    {P0:0.08, RR:0.55},    /* bad  — cautious yield    */
+    {P0:0.15, RR:0.66},    /* avg  — expected yield    */
+    {P0:0.25, RR:0.76}     /* good — optimistic yield  */
+  ];
+  var projReady = false, projDrawn = false;
+  var projPaths = [
+    document.getElementById("projPathBad"),
+    document.getElementById("projPathAvg"),
+    document.getElementById("projPathGood")
+  ];
+  var projLabs = [
+    document.getElementById("projLabBad"),
+    document.getElementById("projLabAvg"),
+    document.getElementById("projLabGood")
+  ];
+  var projPcts = [
+    document.getElementById("plBad"),
+    document.getElementById("plAvg"),
+    document.getElementById("plGood")
+  ];
+  /* audience-yield slider — one multiplier on the scenario base P.
+     Handle centered by default: 0…100 maps to ×0.50…×1.50 (50 = ×1.00). */
+  var yieldCtl = bindSlider("yieldSlider","yieldRead",
+    function(v){ return "×" + (0.5 + v/100).toFixed(2); },
+    function(){ recalcGrowth(); });
+  function yieldMult(){ return 0.5 + yieldCtl.get()/100; }
+
+  function clamp(v, lo, hi){ return Math.min(hi, Math.max(lo, v)); }
+  var PROJ_CENTER = 0.15;      /* the expected (avg) scenario base — the pivot */
+  var YIELD_SPREAD_EXP = 2;    /* >1 → the three cases fan out super-linearly as the
+                                  yield scalar rises, and converge as it falls */
+  /* deterministic pseudo-noise in [-1,1] from an integer seed — stable across
+     recalcs so the wiggle doesn't reshuffle while dragging sliders */
+  function pnoise(i){ var x = Math.sin(i * 12.9898) * 43758.5453; return (x - Math.floor(x))*2 - 1; }
+  /* scenario follow-back rate, modulated by the live settings */
+  function projP(base, ym, pb, bandWidth, R){
+    /* audience yield: scale the LEVEL by ym but the SPREAD (deviation from the
+       expected case) by ym^EXP — so stratification grows with the scalar rather
+       than an even multiply. */
+    var p = Math.max(0, PROJ_CENTER*ym + (base - PROJ_CENTER)*Math.pow(ym, YIELD_SPREAD_EXP));
+    p *= 1 + pb*0.6;                                    /* private boost   */
+    p *= clamp(1 + (0.6 - bandWidth)*0.25, 0.85, 1.15); /* band tightness  */
+    p *= clamp(1 - Math.max(0, R - 60)/320, 0.8, 1);    /* volume penalty  */
+    return Math.min(0.6, p);
+  }
+  /* cumulative net followers at day t */
+  function projNet(t, R, P, RR, lag){
+    return Math.max(0, R * P * (t - (1 - RR)*Math.max(0, t - lag)));
+  }
+
+  function recalcGrowth(){
+    if (!projReady) return;                 /* controls still initialising */
+    var R    = S.rate;
+    var ym   = yieldMult();
+    var pb   = pbCtl.get();
+    var band = ratioDual.get();
+    var lag  = waitCtl.get() + holdCtl.get();
+    var res = PROJ_SCEN.map(function(sc, si){
+      var P = projP(sc.P0, ym, pb, band.hi - band.lo, R);
+      var amp = R * P * 2.0;                   /* daily follow/unfollow churn, per scenario */
+      var pts = [];
+      for (var t = 0; t <= 30; t += 1){
+        var base = projNet(t, R, P, sc.RR, lag);
+        var taper = Math.sin(Math.PI * t / 30); /* 0 at both ends → clean start & endpoint */
+        pts.push(Math.max(0, base + amp * pnoise(t*7 + si*101) * taper));
+      }
+      /* endpoint anchored to the smooth projection (taper = 0 at t = 30) */
+      return {P:P, pts:pts, end:projNet(30, R, P, sc.RR, lag)};
+    });
+    var vmax = Math.max(1, res[2].end);     /* good case is always the ceiling */
+    var X0 = 8, X1 = 348, Y0 = 104, Y1 = 12;
+    var endY = [];
+    res.forEach(function(r, i){
+      var d = "";
+      r.pts.forEach(function(v, j){
+        var x = X0 + (X1-X0)*(j/(r.pts.length-1));
+        var y = clamp(Y0 - (Y0-Y1)*(v/vmax), Y1, Y0);   /* keep noise within the plot */
+        d += (j ? " L" : "M") + x.toFixed(1) + "," + y.toFixed(1);
+      });
+      projPaths[i].setAttribute("d", d);
+      endY[i] = Y0 - (Y0-Y1)*(r.end/vmax) + 3;
+    });
+    /* endpoint labels — separate ≥11px (good sits highest), then pull
+       the stack back up if the bottom label would leave the plot */
+    endY[1] = Math.max(endY[1], endY[2] + 11);
+    endY[0] = Math.max(endY[0], endY[1] + 11);
+    if (endY[0] > 100){
+      endY[0] = 100;
+      endY[1] = Math.min(endY[1], endY[0] - 11);
+      endY[2] = Math.min(endY[2], endY[1] - 11);
+    }
+    projLabs.forEach(function(el, i){
+      el.setAttribute("y", endY[i].toFixed(1));
+      el.textContent = "+" + commas(Math.round(res[i].end));
+    });
+    /* legend — effective follow-back yields per scenario */
+    projPcts.forEach(function(el, i){
+      el.textContent = Math.round(res[i].P*100) + "%";
+    });
+    /* draw-in: keep the curves dash-hidden until the first reveal */
+    projPaths.forEach(function(p){
+      if (projDrawn || reduceMotion){
+        p.style.strokeDasharray = "";
+        p.style.strokeDashoffset = "";
+      } else {
+        var len = p.getTotalLength();
+        p.style.strokeDasharray = len;
+        p.style.strokeDashoffset = len;
+      }
+    });
+  }
+
+  /* draw the curves in the first time the Settings view is shown */
+  function projReveal(){
+    if (projDrawn) return;
+    projDrawn = true;
+    if (reduceMotion){ recalcGrowth(); return; }
+    setTimeout(function(){                  /* after the view-in transition */
+      projPaths.forEach(function(p){ p.style.strokeDashoffset = 0; });
+    }, 280);
+  }
+  document.querySelectorAll('.nav button[data-view="settings"]').forEach(function(b){
+    b.addEventListener("click", projReveal);
+  });
+
+  /* ============================================================
+     SEED / SESSION — live seed validity check + restart-from-seed
+     ============================================================ */
+  var seedInput  = document.getElementById("seedInput");
+  var seedStatus = document.getElementById("seedStatus");
+  var seedErr    = document.getElementById("seedErr");
+  var seedErrTxt = document.getElementById("seedErrTxt");
+  var btnReseed  = document.getElementById("btnReseed");
+  var seedTimer = null, seedReq = 0;
+
+  /* In the real app this hits Instagram to confirm the account exists
+     AND that its followers/following lists are viewable — viewable even
+     when the profile is private, because we follow targets before
+     harvesting them. Here the round-trip is simulated with setTimeout
+     (~0.8–1.2 s of "network"), no real requests. */
+  var SEED_BLOCKLIST = ["notreal", "invalid", "test", "xxxxxx", "fake", "nobody"];
+  function seedNameValid(n){
+    if (!/^[a-z0-9._]{3,30}$/i.test(n)) return false;
+    if (n.charAt(0) === "." || n.charAt(n.length - 1) === ".") return false;
+    return SEED_BLOCKLIST.indexOf(n.toLowerCase()) === -1;
+  }
+  function setSeedUI(state){                 /* "" | checking | valid | invalid */
+    seedStatus.className = "seed-status" + (state ? " show " + state : "");
+    seedStatus.innerHTML =
+      state === "checking" ? '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>' :
+      state === "valid"    ? '<i class="fa-solid fa-check" aria-hidden="true"></i>' :
+      state === "invalid"  ? '<i class="fa-solid fa-xmark" aria-hidden="true"></i>' : "";
+    seedInput.classList.toggle("valid",   state === "valid");
+    seedInput.classList.toggle("invalid", state === "invalid");
+    seedErr.hidden = (state !== "invalid");
+    btnReseed.disabled = (state !== "valid");   /* only a verified seed restarts */
+  }
+  function seedFetch(){
+    var name = seedInput.value.trim().replace(/^@/, "");
+    var req = ++seedReq;
+    setSeedUI("checking");
+    setTimeout(function(){                   /* simulated verification latency */
+      if (req !== seedReq) return;           /* superseded by a newer edit */
+      if (seedNameValid(name)){
+        setSeedUI("valid");
+      } else {
+        seedErrTxt.textContent = "Couldn’t verify @" + name +
+          " — account not found, or its followers aren’t visible.";
+        setSeedUI("invalid");
+      }
+    }, 800 + Math.round(Math.random()*400));
+  }
+  seedInput.addEventListener("input", function(){
+    seedReq++;                               /* cancel any in-flight check */
+    if (seedTimer){ clearTimeout(seedTimer); seedTimer = null; }
+    if (!seedInput.value.trim()){ setSeedUI(""); return; }
+    setSeedUI("checking");                   /* spinner; outline stays neutral */
+    seedTimer = setTimeout(seedFetch, 1000); /* debounce: 1 s after last edit */
+  });
+  seedFetch();                               /* verify the default seed on load */
+
+  btnReseed.addEventListener("click", function(){
+    if (btnReseed.disabled) return;          /* belt & braces — never while gray */
+    var seed = seedInput.value.trim() || "@owenjee_";
+    if (seed.charAt(0) !== "@") seed = "@" + seed;
+    openModal({
+      title:"Restart from "+seed+"?",
+      body:"This scraps the current session and starts a new chain from this seed.",
+      confirm:"Restart",
+      danger:true,
+      onConfirm:function(){
+        resetSession();                  /* counters, hero, session, veil… */
+        setState("running");             /* …then a fresh run from the seed */
+        goToView("overview");            /* return to the dashboard */
+      }
+    });
+  });
+
+  /* ============================================================
+     TOOLTIP SYSTEM — one popover, driven by [data-tip] labels.
+     Fixed-position (portal-style) so the scrolling settings pane
+     never clips it; shows after ~250 ms of hover.
+     ============================================================ */
+  var tipPop = document.getElementById("tipPop");
+  var tipTimer = null, tipCur = null;
+
+  function hideTip(){
+    if (tipTimer){ clearTimeout(tipTimer); tipTimer = null; }
+    tipCur = null;
+    tipPop.classList.remove("show");
+    tipPop.setAttribute("aria-hidden","true");
+  }
+  function showTip(el){
+    tipPop.textContent = el.getAttribute("data-tip");
+    var r = el.getBoundingClientRect();
+    var tw = tipPop.offsetWidth, th = tipPop.offsetHeight;
+    var left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 8));
+    var top = r.top - th - 8;
+    if (top < 8) top = r.bottom + 8;      /* flip below near the top edge */
+    tipPop.style.left = left + "px";
+    tipPop.style.top  = top + "px";
+    tipPop.classList.add("show");
+    tipPop.setAttribute("aria-hidden","false");
+  }
+  document.addEventListener("mouseover", function(e){
+    var el = (e.target && e.target.closest) ? e.target.closest("[data-tip]") : null;
+    if (el === tipCur) return;
+    hideTip();
+    if (el){
+      tipCur = el;
+      tipTimer = setTimeout(function(){ showTip(el); }, 250);
+    }
+  });
+  document.addEventListener("scroll", hideTip, true);
+
+  /* ---------- Escape dismisses modal & tooltip ---------- */
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape"){
+      if (modalIsOpen) closeModal(false);
+      hideTip();
+    }
+  });
+
+  /* init complete — preset starts on Balanced (matches the defaults
+     and locks its knobs); manual edits may now flip it to Custom */
+  setAgg("balanced", false);
+  applying = false;
+
+  /* projected-growth card goes live once every control it reads exists */
+  projReady = true;
+  recalcGrowth();
+
+  /* ===== Overview peek-fit =====
+     Grow the top two cards just enough that the 3rd card is deliberately
+     cut at the fold (a scroll affordance) with a fixed peek. Dynamic to the
+     panel height (re-fits on load, font settle, resize, and re-entry). */
+  (function(){
+    var view = document.getElementById("view-overview");
+    if (!view) return;
+    var cards = Array.prototype.filter.call(view.children, function(el){
+      return el.classList && el.classList.contains("card");
+    });
+    if (cards.length < 3) return;
+    var grow = [cards[0], cards[1]], third = cards[2];
+    var PEEK = 76;                         /* px of card 3 left visible */
+    function fit(){
+      grow.forEach(function(c){ c.style.minHeight = ""; });   /* measure natural */
+      var extra = (view.clientHeight - PEEK) - third.offsetTop;
+      if (extra > 8){                       /* only grow — never clip content */
+        var each = extra / grow.length;
+        grow.forEach(function(c){ c.style.minHeight = (c.offsetHeight + each) + "px"; });
+      }
+    }
+    fit();
+    window.addEventListener("load", fit);
+    window.addEventListener("resize", fit);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+    /* the stage's box also changes with the fluid frame / stacking ladder,
+       not only on viewport resize — observe it directly */
+    if (window.ResizeObserver){
+      new ResizeObserver(function(){ fit(); }).observe(view);
+    }
+    document.querySelectorAll('.nav button[data-view="overview"]').forEach(function(b){
+      b.addEventListener("click", function(){ setTimeout(fit, 360); });
+    });
+  })();
+})();
+</script>
+</body>
+</html>
