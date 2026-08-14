@@ -78,7 +78,7 @@ export interface LiveStatusCardProps {
  * Today readout, and the Net-today / Session / Last-action cells.
  */
 export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX.Element {
-  const cd = useCountdown(status, settings);
+  const cd = useCountdown(status);
   const queued = useQueue('queued', status);
   const pendingQ = useQueue('pending_followback', status);
 

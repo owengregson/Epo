@@ -24,6 +24,9 @@ export const VIEW_ENTER_MS = 340;
 export const GROWTH_REVEAL_DELAY_MS = 300;
 export const GROWTH_REVEAL_DUR_MS = 1400;
 
+/** ProjectionChart: how long after draw-in the dash attrs are stripped. */
+export const PROJ_DASH_DROP_MS = 1300;
+
 /** easeOutCubic — the curve the chart reveal rides. */
 export function easeOutCubic(x: number): number {
   return 1 - (1 - x) ** 3;
