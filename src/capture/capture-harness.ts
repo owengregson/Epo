@@ -21,6 +21,8 @@ import { SURFACE } from '@/adapter/ig-surface';
 import * as logger from '@/utils/logger';
 import type { InstagramTab } from '@/adapter/tab';
 import type { TabResponse, Unsubscribe } from '@/types';
+import { sleep } from '@/timing/primitives';
+import { HARNESS } from '@/timing/config';
 
 /** One recorded response in the capture manifest. */
 export interface ManifestEntry {
@@ -48,7 +50,7 @@ const IG_APP_ID = SURFACE.appId;
 const MAX_SAVED_PER_CLASS = 10;
 
 /** How often the harness sweeps for a newly-opened `[role="dialog"]`. */
-const DIALOG_SWEEP_MS = 2000;
+const DIALOG_SWEEP_MS = HARNESS.DIALOG_SWEEP_MS;
 
 export class CaptureHarness {
   private readonly tab: InstagramTab;
@@ -377,13 +379,13 @@ export class CaptureHarness {
     // (a) Profile
     await this.setStatus('Capturing profile…', `target: @${target}`);
     await this.tab.goto(`https://www.instagram.com/${target}/`);
-    await delay(4000);
+    await sleep(HARNESS.CAPTURE_NAV_SETTLE_MS);
     await this.snapshotHeader();
 
     // (b) Followers dialog
     await this.setStatus('Opening followers…', FALLBACK);
     await this.tab.goto(`https://www.instagram.com/${target}/followers/`);
-    await delay(4000);
+    await sleep(HARNESS.CAPTURE_NAV_SETTLE_MS);
     await this.snapshotDialog();
 
     // (c) Scroll follower pages to trigger paginated fetches.
@@ -393,7 +395,7 @@ export class CaptureHarness {
         FALLBACK,
       );
       await this.scrollFollowersDialog();
-      await delay(2500);
+      await sleep(HARNESS.CAPTURE_DIALOG_SETTLE_MS);
     }
 
     // (d) Done — leave passive capture running for optional manual steps.
@@ -423,7 +425,7 @@ export class CaptureHarness {
           error: String(e),
         });
       }
-      await delay(1500);
+      await sleep(HARNESS.CAPTURE_SHORT_SETTLE_MS);
     }
   }
 
@@ -464,7 +466,7 @@ export class CaptureHarness {
     //     queries (passively captured), then snapshot the header DOM.
     try {
       await this.tab.goto(`https://www.instagram.com/${u}/`);
-      await delay(4000);
+      await sleep(HARNESS.CAPTURE_NAV_SETTLE_MS);
       await this.snapshotHeader(u);
     } catch (e) {
       logger.warn('capture.captureProfileShapes: profile navigation failed', {
@@ -675,9 +677,6 @@ export class CaptureHarness {
 }
 
 /** Promise-based delay helper (no foreground blocking). */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /** Narrow an unknown value to a plain object, else null. */
 function asRecord(v: unknown): Record<string, unknown> | null {

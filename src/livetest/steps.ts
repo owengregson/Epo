@@ -48,22 +48,14 @@ import {
 } from '@/settings/settings';
 import * as logger from '@/utils/logger';
 import { SURFACE, asFetchEnvelope } from '@/adapter/ig-surface';
+import { sample, sleep, uniform } from '@/timing/primitives';
+import { HARNESS, SCHEDULER } from '@/timing/config';
 
 /** Temp DB file (SEPARATE from epo.db) — deleted + recreated each run. */
 const LIVETEST_DB_FILE = 'epo-livetest.db';
 
-/** How many times to poll `current_user` for the own username, and the wait between. */
-const USERNAME_RESOLVE_ATTEMPTS = 4;
-const USERNAME_RESOLVE_RETRY_MS = 1_500;
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Inclusive-ish random integer in [min, max]. */
-function jittered(min: number, max: number): number {
-  if (max <= min) return Math.max(0, Math.round(min));
-  return Math.floor(min + Math.random() * (max - min + 1));
-}
+/** A fresh uniform draw in [min, max] ms (the shared timing primitive). */
+const jittered = (min: number, max: number): number => sample(uniform(min, max));
 
 function envInt(name: string, def: number): number {
   const raw = process.env[name];
@@ -154,11 +146,11 @@ export class LiveTestHarness {
       target: envStr('EPO_TEST_TARGET'),
       followUser: envStr('EPO_TEST_FOLLOW'),
       dryRun: process.env.EPO_TEST_DRY === '1',
-      opDelayMinMs: envInt('EPO_TEST_OP_DELAY_MIN_MS', 4000),
-      opDelayMaxMs: envInt('EPO_TEST_OP_DELAY_MAX_MS', 9000),
-      enrichPaceMinMs: envInt('EPO_TEST_ENRICH_PACE_MIN_MS', 3000),
-      enrichPaceMaxMs: envInt('EPO_TEST_ENRICH_PACE_MAX_MS', 5000),
-      followUnfollowGapMs: envInt('EPO_TEST_FOLLOW_UNFOLLOW_GAP_MS', 45000),
+      opDelayMinMs: envInt('EPO_TEST_OP_DELAY_MIN_MS', HARNESS.OP_DELAY_MIN_MS),
+      opDelayMaxMs: envInt('EPO_TEST_OP_DELAY_MAX_MS', HARNESS.OP_DELAY_MAX_MS),
+      enrichPaceMinMs: envInt('EPO_TEST_ENRICH_PACE_MIN_MS', HARNESS.ENRICH_PACE_MIN_MS),
+      enrichPaceMaxMs: envInt('EPO_TEST_ENRICH_PACE_MAX_MS', HARNESS.ENRICH_PACE_MAX_MS),
+      followUnfollowGapMs: envInt('EPO_TEST_FOLLOW_UNFOLLOW_GAP_MS', HARNESS.FOLLOW_UNFOLLOW_GAP_MS),
       budgetMax: envInt('EPO_TEST_BUDGET_MAX', 300),
       budgetWindowMs: envInt('EPO_TEST_BUDGET_WINDOW_MIN', 60) * 60_000,
       acquireMaxRounds: envInt('EPO_TEST_ACQUIRE_ROUNDS', 3),
@@ -379,7 +371,10 @@ export class LiveTestHarness {
       } else {
         try {
           // Enforce the human follow→unfollow gap (jittered ~0.7–1.6x the base).
-          const jitteredGap = Math.round(this.cfg.followUnfollowGapMs * (0.7 + Math.random() * 0.9));
+          const jitteredGap = jittered(
+            this.cfg.followUnfollowGapMs * 0.7,
+            this.cfg.followUnfollowGapMs * 1.6,
+          );
           const remaining = jitteredGap - (Date.now() - followClickAt);
           if (remaining > 0) {
             await this.setStatus(`Waiting ${Math.round(remaining / 1000)}s before unfollow (human gap)…`);
@@ -615,8 +610,8 @@ export class LiveTestHarness {
    */
   private async resolveOwnUsername(): Promise<string | undefined> {
     return resolveUsernameFromTab(this.tab, {
-      attempts: USERNAME_RESOLVE_ATTEMPTS,
-      retryMs: USERNAME_RESOLVE_RETRY_MS,
+      attempts: SCHEDULER.USERNAME_RESOLVE_ATTEMPTS,
+      retryMs: SCHEDULER.USERNAME_RESOLVE_RETRY_MS,
     });
   }
 
