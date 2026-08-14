@@ -16,24 +16,26 @@
 
 import { net } from 'electron';
 import type { ClientRequest } from 'electron';
+import { SystemClock } from '@/governors/clock';
+import { ScheduleManager } from '@/timing/schedule-manager';
+import { CONNECTIVITY } from '@/timing/config';
 import * as log from '@/utils/logger';
 
 /** Returns 204 with an empty body — the canonical connectivity probe. */
 const PROBE_URL = 'https://www.gstatic.com/generate_204';
-
-const DEFAULT_INTERVAL_MS = 20_000;
-const DEFAULT_TIMEOUT_MS = 5_000;
 
 export class ConnectivityMonitor {
   private readonly onChange: (online: boolean) => void;
   private readonly intervalMs: number;
   private readonly timeoutMs: number;
 
-  private timer: ReturnType<typeof setInterval> | null = null;
+  /** The probe loop rides ScheduleManager: its overlap guard drops (never
+   *  stacks) a tick landing while a probe is still in flight — replacing the
+   *  old hand-rolled `checking` flag. */
+  private readonly scheduler = new ScheduleManager({ clock: new SystemClock() });
+  private started = false;
   /** Last resolved state; null until the first check settles. */
   private lastOnline: boolean | null = null;
-  /** Overlap guard: while true, timer ticks are dropped instead of stacking. */
-  private checking = false;
   private inFlight: ClientRequest | null = null;
   private stopped = false;
 
@@ -42,45 +44,37 @@ export class ConnectivityMonitor {
     opts?: { intervalMs?: number; timeoutMs?: number },
   ) {
     this.onChange = onChange;
-    this.intervalMs = opts?.intervalMs ?? DEFAULT_INTERVAL_MS;
-    this.timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.intervalMs = opts?.intervalMs ?? CONNECTIVITY.PROBE_INTERVAL_MS;
+    this.timeoutMs = opts?.timeoutMs ?? CONNECTIVITY.REQUEST_TIMEOUT_MS;
   }
 
   /** Immediate check, then every `intervalMs`. Idempotent while running. */
   start(): void {
-    if (this.timer !== null) return;
+    if (this.started) return;
+    this.started = true;
     this.stopped = false;
-    void this.check();
-    this.timer = setInterval(() => {
-      void this.check();
-    }, this.intervalMs);
+    this.scheduler.every('connectivity:probe', this.intervalMs, () => this.check(), {
+      immediate: true,
+    });
   }
 
-  /** Clear the timer and abort any in-flight probe. Idempotent. */
+  /** Stop the loop and abort any in-flight probe. Idempotent. */
   stop(): void {
     this.stopped = true;
-    if (this.timer !== null) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
+    this.started = false;
+    this.scheduler.stop('connectivity:probe');
     this.inFlight?.abort();
     this.inFlight = null;
   }
 
   /** One probe; reports to `onChange` on the first result and on every change. */
   private async check(): Promise<void> {
-    if (this.checking) return;
-    this.checking = true;
-    try {
-      const online = await this.probe();
-      if (this.stopped) return;
-      if (this.lastOnline !== online) {
-        this.lastOnline = online;
-        log.info('connectivity: state resolved', { online });
-        this.onChange(online);
-      }
-    } finally {
-      this.checking = false;
+    const online = await this.probe();
+    if (this.stopped) return;
+    if (this.lastOnline !== online) {
+      this.lastOnline = online;
+      log.info('connectivity: state resolved', { online });
+      this.onChange(online);
     }
   }
 
