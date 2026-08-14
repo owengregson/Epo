@@ -20,8 +20,8 @@ export class InstagramAdapter {
   readonly sentinel: Sentinel;
   readonly adapterVersion: string = SURFACE.version;
 
-  constructor(tab: AdapterTab) {
-    this.actor = new Actor(tab);
+  constructor(tab: AdapterTab, opts: { abortSignal?: () => AbortSignal | undefined } = {}) {
+    this.actor = new Actor(tab, { abortSignal: opts.abortSignal });
     this.sentinel = new Sentinel(tab);
   }
 }

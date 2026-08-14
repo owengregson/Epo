@@ -195,6 +195,8 @@ export class Foundation {
   private lastOnline = true;
   /** The one ScheduleManager for Foundation-level periodic work + cadences. */
   private readonly scheduler = new ScheduleManager({ clock: new SystemClock() });
+  /** Aborted once {@link dispose} begins — interrupts identity-resolution waits. */
+  private readonly disposeAbort = new AbortController();
 
   constructor(deps: FoundationDeps) {
     this.tab = deps.tab;
@@ -727,6 +729,7 @@ export class Foundation {
    */
   async dispose(): Promise<void> {
     this.disposing = true;
+    this.disposeAbort.abort();
     this.scheduler.dispose();
     await this.teardownGraph();
     logger.info('foundation disposed');
@@ -834,9 +837,19 @@ export class Foundation {
     const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
     const budget = new RequestBudget(store, clock, toRequestBudgetConfig(settings));
 
+    // The ACTIVE driver's run token: adapter/rim waits link to this so a stop()
+    // interrupts an in-flight DOM poll or pacing sleep instead of sitting out
+    // its timeout. Pause is deliberately NOT included — a paused step finishes
+    // cleanly (the park/hand-off contract is unchanged).
+    const driverSignal = (): AbortSignal | undefined => {
+      if (this.activeDriver === 'prune') return this.graph?.pruneEngine.runSignal();
+      if (this.activeDriver === 'growth') return this.graph?.engine.runSignal();
+      return undefined;
+    };
+
     // The adapter owns the single Actor + Sentinel instances the whole rim shares;
     // the Reader is pure and held directly (E2 — no dead adapter.reader slot).
-    const adapter = new InstagramAdapter(this.tab);
+    const adapter = new InstagramAdapter(this.tab, { abortSignal: driverSignal });
     // Log ONCE, at build, which Instagram surface capture this graph runs against.
     logger.info('foundation: instagram adapter surface', {
       adapterVersion: adapter.adapterVersion,
@@ -857,7 +870,12 @@ export class Foundation {
       relationshipReconciler,
     );
 
-    const pageReader = new FollowersPageReader({ tab: this.tab, reader, actor });
+    const pageReader = new FollowersPageReader({
+      tab: this.tab,
+      reader,
+      actor,
+      abortSignal: driverSignal,
+    });
 
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
@@ -930,6 +948,7 @@ export class Foundation {
       budget,
       sentinel,
       clock,
+      abortSignal: driverSignal,
     });
 
     // The follow-back sweep cadence, persisted through Settings so the 4h rhythm
@@ -1315,6 +1334,7 @@ export class Foundation {
     return resolveUsernameFromTab(this.tab, {
       attempts: SCHEDULER.USERNAME_RESOLVE_ATTEMPTS,
       retryMs: SCHEDULER.USERNAME_RESOLVE_RETRY_MS,
+      signal: this.disposeAbort.signal,
     });
   }
 

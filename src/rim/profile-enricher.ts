@@ -31,15 +31,11 @@ import type { KnowledgeStore } from '@/store/knowledge-store';
 import { SystemClock, type Clock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
 import * as logger from '@/utils/logger';
+import { sleep } from '@/timing/primitives';
+import { RIM } from '@/timing/config';
 
 /** Default number of usernames enriched per pass. */
 const DEFAULT_BATCH_CAP = 25;
-
-/** Default pause between fetches so a pass does not hammer Instagram (~1s). */
-const DEFAULT_PACE_MS = 1000;
-
-const realSleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * The enrichment port the Engine calls before planning a target (structurally
@@ -61,7 +57,12 @@ export interface ProfileEnricherDeps {
   /** Pause between fetches, ms (default ~1000). */
   paceMs?: number;
   /** Injected for tests; defaults to a real `setTimeout` sleep. */
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /**
+   * Provider of the ACTIVE driver's abort signal — a `stop()` ends the pass
+   * between usernames and interrupts the in-flight pacing sleep.
+   */
+  abortSignal?: () => AbortSignal | undefined;
 }
 
 export class AdapterBackedProfileEnricher implements ProfileEnricher {
@@ -73,7 +74,8 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
   private readonly clock: Clock;
   private readonly batchCap: number;
   private readonly paceMs: number;
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  private readonly abortSignal?: () => AbortSignal | undefined;
 
   constructor(deps: ProfileEnricherDeps) {
     this.tab = deps.tab;
@@ -83,8 +85,9 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
     this.sentinel = deps.sentinel;
     this.clock = deps.clock ?? new SystemClock();
     this.batchCap = deps.batchCap ?? DEFAULT_BATCH_CAP;
-    this.paceMs = deps.paceMs ?? DEFAULT_PACE_MS;
-    this.sleep = deps.sleep ?? realSleep;
+    this.paceMs = deps.paceMs ?? RIM.ENRICH_PACE_MS;
+    this.sleep = deps.sleep ?? sleep;
+    this.abortSignal = deps.abortSignal;
   }
 
   async enrich(usernames: string[]): Promise<number> {
@@ -93,6 +96,12 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
 
     for (let i = 0; i < batch.length; i++) {
       const username = batch[i];
+
+      // A stopped driver ends the pass between usernames (a future pass retries).
+      if (this.abortSignal?.()?.aborted) {
+        logger.info('rim.profile-enricher: driver stopped, ending pass', { username });
+        break;
+      }
 
       // Budget/sentinel are gated like any IG work — but blocking here just skips
       // this username (a future pass retries it); it is not a failure.
@@ -164,6 +173,6 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
 
   /** Light pacing between fetches; no wait after the final username. */
   private async pace(index: number, length: number): Promise<void> {
-    if (index < length - 1) await this.sleep(this.paceMs);
+    if (index < length - 1) await this.sleep(this.paceMs, this.abortSignal?.());
   }
 }

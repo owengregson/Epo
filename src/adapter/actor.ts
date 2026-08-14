@@ -17,6 +17,8 @@ import * as logger from '@/utils/logger';
 import { ok, err, type Result } from '@/utils/result';
 import { AdapterStaleError } from '@/adapter/errors';
 import { SURFACE } from '@/adapter/ig-surface';
+import { sleep } from '@/timing/primitives';
+import { ADAPTER } from '@/timing/config';
 
 /**
  * Minimal structural view of the tab the Actor drives. `InstagramTab` (from
@@ -34,6 +36,12 @@ export interface ActorOptions {
   pollIntervalMs?: number;
   /** Total time to wait before declaring a control absent. */
   pollTimeoutMs?: number;
+  /**
+   * Provider of the ACTIVE driver's abort signal (the engine/prune run token),
+   * polled per wait iteration — a `stop()` interrupts an in-flight DOM poll
+   * instead of sitting out its timeout. Absent → the old always-complete waits.
+   */
+  abortSignal?: () => AbortSignal | undefined;
 }
 
 /** Leading-state of the profile action button, as read from the page. */
@@ -70,17 +78,17 @@ interface ScrollResult {
   scrollTop?: number;
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 export class Actor {
   private readonly tab: AdapterTab;
   private readonly pollIntervalMs: number;
   private readonly pollTimeoutMs: number;
+  private readonly abortSignal?: () => AbortSignal | undefined;
 
   constructor(tab: AdapterTab, opts: ActorOptions = {}) {
     this.tab = tab;
-    this.pollIntervalMs = opts.pollIntervalMs ?? 250;
-    this.pollTimeoutMs = opts.pollTimeoutMs ?? 8000;
+    this.pollIntervalMs = opts.pollIntervalMs ?? ADAPTER.POLL_INTERVAL_MS;
+    this.pollTimeoutMs = opts.pollTimeoutMs ?? ADAPTER.POLL_TIMEOUT_MS;
+    this.abortSignal = opts.abortSignal;
   }
 
   /**
@@ -273,18 +281,26 @@ export class Actor {
   // Internals
   // -------------------------------------------------------------------------
 
-  /** Poll `run` until `done` is satisfied or the timeout elapses. */
+  /**
+   * Poll `run` until `done` is satisfied, the timeout elapses, or the ACTIVE
+   * driver's abort signal fires (a `stop()` must not sit out an 8s poll). An
+   * aborted signal resolves null — the same "control absent" shape a timeout
+   * yields. Without a signal the old behavior holds: always at least one
+   * attempt, even with a zero/negative timeout.
+   */
   private async waitFor<T>(
     run: () => Promise<T>,
     done: (value: T) => boolean,
   ): Promise<T | null> {
+    const signal = this.abortSignal?.();
     const deadline = Date.now() + this.pollTimeoutMs;
-    // Always attempt at least once, even with a zero/negative timeout.
     for (;;) {
+      if (signal?.aborted) return null;
       const value = await run();
       if (done(value)) return value;
       if (Date.now() >= deadline) return null;
-      await sleep(this.pollIntervalMs);
+      if (signal?.aborted) return null;
+      await sleep(this.pollIntervalMs, signal);
     }
   }
 
