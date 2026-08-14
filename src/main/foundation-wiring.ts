@@ -29,6 +29,7 @@ import type { Sentinel } from '@/adapter/sentinel';
 import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { SystemClock } from '@/governors/clock';
+import { ScheduleManager } from '@/timing/schedule-manager';
 import { RateGovernor } from '@/governors/rate-governor';
 import { RequestBudget } from '@/governors/request-budget';
 import { shapeChainList, shapeQueueList } from '@/main/foundation-reads';
@@ -204,6 +205,8 @@ export class Foundation {
    * on {@link dispose}.
    */
   private pruneSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+  /** The one ScheduleManager for Foundation-level periodic work + cadences. */
+  private readonly scheduler = new ScheduleManager({ clock: new SystemClock() });
 
   constructor(deps: FoundationDeps) {
     this.tab = deps.tab;
@@ -937,6 +940,15 @@ export class Foundation {
       clock,
     });
 
+    // The follow-back sweep cadence, persisted through Settings so the 4h rhythm
+    // survives restarts (Settings.sweepLastRunAt; same pattern as pruneLastRunAt).
+    const sweepCadence = this.scheduler.cadence('engine:followback-sweep', {
+      getLastRunAt: () => this.resolveSettings().sweepLastRunAt,
+      setLastRunAt: (at) => {
+        void this.updateSettings({ sweepLastRunAt: at });
+      },
+    });
+
     const engine = createEngine({
       store,
       clock,
@@ -950,6 +962,7 @@ export class Foundation {
       acquisition,
       enricher,
       settings,
+      sweepCadence,
       onStatus: (s) => this.emit(s),
       onHalt: (reason) => {
         logger.warn('foundation: engine halted', { reason });

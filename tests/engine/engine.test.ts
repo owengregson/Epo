@@ -211,6 +211,7 @@ interface HarnessOpts {
   budgetMax?: number; // request-budget window cap (default 999)
   useRealScanner?: boolean; // wire the REAL Scanner over the store (R1 pipeline tests)
   rng?: () => number; // injected randomness for the pacing draw
+  sweepCadence?: { isDue(now: number, everyMs: number): boolean; markRun(now: number): void };
 }
 
 interface Harness {
@@ -295,6 +296,7 @@ const makeHarness = (opts: HarnessOpts = {}): Harness => {
     settings,
     sleep: sleep.fn,
     rng: opts.rng,
+    sweepCadence: opts.sweepCadence,
     onStatus: (s) => statuses.push(s),
     onHalt: (reason) => halts.push(reason),
   });
@@ -928,6 +930,33 @@ describe('Engine — f9: per-step resilience', () => {
     expect(await h.engine.stepOnce()).toBe('halted');
     expect(h.halts).toEqual(['sentinel:challenge']);
     expect(h.engine.status().state).toBe('halted');
+  });
+});
+
+describe('Engine — injectable sweep cadence (persisted by the composition root)', () => {
+  test('the follow-back sweep consults the injected cadence and marks the run', async () => {
+    const marked: number[] = [];
+    const h = makeHarness({
+      settings: { followbackSweepHours: 4 },
+      sweepCadence: {
+        isDue: () => true,
+        markRun: (now) => marked.push(now),
+      },
+    });
+
+    expect(await h.engine.stepOnce()).toBe('swept-followback');
+    expect(h.followback.checks).toBe(1);
+    expect(marked).toEqual([T0]);
+  });
+
+  test('a not-due cadence skips the sweep', async () => {
+    const h = makeHarness({
+      settings: { followbackSweepHours: 4 },
+      sweepCadence: { isDue: () => false, markRun: () => {} },
+    });
+
+    expect(await h.engine.stepOnce()).not.toBe('swept-followback');
+    expect(h.followback.checks).toBe(0);
   });
 });
 

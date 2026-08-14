@@ -192,6 +192,14 @@ export interface EngineDeps {
   delays?: DelayManager;
   /** Randomness for the jittered pacing draw; injectable for deterministic tests. */
   rng?: () => number;
+  /**
+   * Due-by-timestamp cadence for the follow-back sweep. The composition root
+   * injects a persisted cadence (Settings.sweepLastRunAt) so the 4h rhythm
+   * survives restarts; the default is the old in-memory behavior (last run
+   * starts at 0 → a fresh Engine's first eligible step performs a cheap
+   * catch-up sweep, then the configured cadence applies).
+   */
+  sweepCadence?: SweepCadence;
   /** Called with a fresh status projection after every step and lifecycle change. */
   onStatus?: (s: EngineStatus) => void;
   /** Called exactly once per halt with the reason (e.g. `sentinel:challenge`). */
@@ -199,6 +207,12 @@ export interface EngineDeps {
 }
 
 const MS_PER_HOUR = 3_600_000;
+
+/** The follow-back sweep's due-by-timestamp port (see {@link EngineDeps.sweepCadence}). */
+export interface SweepCadence {
+  isDue(now: number, everyMs: number): boolean;
+  markRun(now: number): void;
+}
 
 interface CurrentTarget {
   pk: string;
@@ -261,11 +275,11 @@ export class Engine {
   private targetExhausted = false;
 
   /**
-   * Last follow-back sweep, epoch ms. Starts at 0 so the FIRST eligible step of a
-   * fresh Engine performs a catch-up sweep (cheap: the watcher no-ops when nothing
-   * is pending), then the configured cadence applies.
+   * Sweep cadence port. Injected (persisted) by the composition root; the
+   * default preserves the old behavior — in-memory, starting due, so a fresh
+   * Engine's first eligible step performs a cheap catch-up sweep.
    */
-  private lastSweepAt = 0;
+  private readonly sweepCadence: SweepCadence;
 
   private lastStep: StepResult | null = null;
   private lastSentinel: SentinelStatus | null = null;
@@ -279,6 +293,17 @@ export class Engine {
     this.delays =
       deps.delays ??
       new DelayManager({ clock: deps.clock, rng: deps.rng, sleep: deps.sleep ?? timingSleep });
+    this.sweepCadence =
+      deps.sweepCadence ??
+      ((): SweepCadence => {
+        let last = 0;
+        return {
+          isDue: (now, everyMs) => now - last >= everyMs,
+          markRun: (now) => {
+            last = now;
+          },
+        };
+      })();
     this.settings = deps.settings;
     this.enricher = deps.enricher ?? {
       enrich: (usernames: string[]): Promise<number> => {
@@ -533,11 +558,13 @@ export class Engine {
     const current = this.current;
     if (current === null) return this.halt('no-current-target'); // unreachable guard
 
-    // 6. Follow-back sweep on its slow cadence (IG traffic → paced, f10).
+    // 6. Follow-back sweep on its slow cadence (IG traffic → paced, f10). The
+    //    cadence is persisted by the composition root (Settings.sweepLastRunAt),
+    //    so a restart no longer resets the rhythm to sweep-immediately.
     const sweepDueMs = this.settings.followbackSweepHours * MS_PER_HOUR;
-    if (now - this.lastSweepAt >= sweepDueMs) {
+    if (this.sweepCadence.isDue(now, sweepDueMs)) {
       await this.deps.followback.check();
-      this.lastSweepAt = now;
+      this.sweepCadence.markRun(now);
       await this.pacingSleep();
       return 'swept-followback';
     }
