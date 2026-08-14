@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'preact/hooks';
 import type { Settings } from '@/types';
 import { useEngineStatus } from '../hooks/useEngineStatus';
 import { useToasts } from '../hooks/useToasts';
+import { useScrollReset } from '../hooks/useScrollReset';
 import { useView, type ViewKey } from '../hooks/useView';
 import { useLogFeed } from '../hooks/useLogFeed';
 import { useConfirm } from '../hooks/useConfirm';
@@ -31,6 +32,8 @@ export function App(): h.JSX.Element {
   const toasts = useToasts();
   const view = useView('overview');
   const { goTo } = view;
+  // A view always OPENS at the top — no preserved scroll between tab switches.
+  useScrollReset(view.current);
   const { lines, latest } = useLogFeed();
   const confirmCtl = useConfirm();
   const [settings, setSettings] = useState<Settings | null>(null);
