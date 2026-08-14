@@ -532,6 +532,152 @@ function scrollFollowersScript(): string {
 }
 
 // ---------------------------------------------------------------------------
+// Humanizer LOCATE scripts (additive, 2026-08-13). Each performs the SAME
+// element search as its click-script counterpart above but returns the
+// target's viewport bounding rect (getBoundingClientRect) WITHOUT clicking —
+// the Humanizer then clicks/scrolls with real trusted input events. The click
+// scripts above are untouched and remain the no-humanizer fallback. Marker
+// comments (`actor:locate-*`) identify each script to test fakes.
+// ---------------------------------------------------------------------------
+
+/** Serialize a bounding rect for the structured-clone trip back. */
+const RECT_JS = `(el) => { const r = el.getBoundingClientRect();
+  return { x: r.left, y: r.top, width: r.width, height: r.height }; }`;
+
+/**
+ * Locate-only variant of {@link findAndActScript}: same primary→fallback
+ * search and the same would-click decision table, but NO click — the rect and
+ * decision come back for the Humanizer to act on.
+ */
+function locateActionButtonScript(op: 'follow' | 'unfollow'): string {
+  const regexes = {
+    followBack: regexLiteral(SELECTORS.followBackText),
+    following: regexLiteral(SELECTORS.followingText),
+    requested: regexLiteral(SELECTORS.requestedText),
+    follow: regexLiteral(SELECTORS.followText),
+  };
+  return `(() => { /* actor:locate-action */
+  const SEL = ${JSON.stringify(SELECTORS.profileActionButtonRole)};
+  const SEL2 = ${JSON.stringify(SELECTORS.profileActionButtonRoleFallback)};
+  const RX = ${JSON.stringify(regexes)};
+  const OP = ${JSON.stringify(op)};
+  const rectOf = ${RECT_JS};
+  const mk = (o) => new RegExp(o.source, o.flags);
+  const followBack = mk(RX.followBack);
+  const following = mk(RX.following);
+  const requested = mk(RX.requested);
+  const follow = mk(RX.follow);
+  const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
+  const search = (sel) => {
+    const nodes = Array.from(document.querySelectorAll(sel));
+    for (const n of nodes) {
+      const t = norm(n.textContent);
+      if (!t) continue;
+      if (followBack.test(t)) return { btn: n, state: 'follow-back' };
+      if (following.test(t)) return { btn: n, state: 'following' };
+      if (requested.test(t)) return { btn: n, state: 'requested' };
+      if (follow.test(t)) return { btn: n, state: 'follow' };
+    }
+    return null;
+  };
+  let hit = search(SEL);
+  if (!hit) hit = search(SEL2);
+  if (!hit) return { found: false };
+  const state = hit.state;
+  let wouldClick = false;
+  let needsConfirm = false;
+  if (OP === 'follow') {
+    if (state === 'follow' || state === 'follow-back') wouldClick = true;
+  } else {
+    if (state === 'following') { wouldClick = true; needsConfirm = true; }
+    else if (state === 'requested') wouldClick = true;
+  }
+  return { found: true, state: state, wouldClick: wouldClick, needsConfirm: needsConfirm, rect: rectOf(hit.btn) };
+})()`;
+}
+
+/** Locate-only variant of {@link confirmUnfollowScript}: the confirm control's rect. */
+function locateConfirmUnfollowScript(): string {
+  const rx = regexLiteral(SELECTORS.unfollowConfirmText);
+  return `(() => { /* actor:locate-confirm */
+  const RX = ${JSON.stringify(rx)};
+  const rx = new RegExp(RX.source, RX.flags);
+  const rectOf = ${RECT_JS};
+  const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
+  const dialog = document.querySelector(${JSON.stringify(SELECTORS.dialog)});
+  const scope = dialog || document;
+  const nodes = Array.from(scope.querySelectorAll('button, [role="button"], [role="menuitem"]'));
+  for (const n of nodes) {
+    if (rx.test(norm(n.textContent))) return { found: true, rect: rectOf(n) };
+  }
+  return { found: false };
+})()`;
+}
+
+/**
+ * Locate-only variant of the stat click scripts: the CLICKABLE ancestor's rect
+ * for the followers or following count control (same text tests, same
+ * `clickableOf` resolution — the Humanizer must press what the JS would click).
+ */
+function locateStatScript(which: 'followers' | 'following'): string {
+  const followers = regexLiteral(SELECTORS.followersStatText);
+  const following = regexLiteral(SELECTORS.followingStatText);
+  return `(() => { /* actor:locate-stat-${which} */
+  const RXF = ${JSON.stringify(followers)};
+  const RXG = ${JSON.stringify(following)};
+  const WHICH = ${JSON.stringify(which)};
+  const rectOf = ${RECT_JS};
+  const followers = new RegExp(RXF.source, RXF.flags);
+  const following = new RegExp(RXG.source, RXG.flags);
+  const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
+  const wanted = (t) => WHICH === 'followers'
+    ? (followers.test(t) && !following.test(t))
+    : (following.test(t) && !followers.test(t));
+  const clickableOf = (el) => el.closest('a, button, [role="button"], [role="link"]') || el;
+  const scopes = [document.querySelector('header'), document.querySelector('main'), document.body].filter(Boolean);
+  for (const scope of scopes) {
+    const cands = scope.querySelectorAll('a, [role="link"], [role="button"], button');
+    for (const el of cands) {
+      if (wanted(norm(el.textContent))) return { found: true, rect: rectOf(clickableOf(el)) };
+    }
+  }
+  return { found: false };
+})()`;
+}
+
+/**
+ * Locate-only variant of {@link scrollFollowersScript}: the same
+ * largest-scrollable-descendant heuristic, but it reports the container's rect
+ * and scroll metrics instead of jumping `scrollTop` — the Humanizer then
+ * scrolls it with real wheel events.
+ */
+function locateScrollContainerScript(): string {
+  return `(() => { /* actor:locate-scroll */
+  const rectOf = ${RECT_JS};
+  const dialog = document.querySelector(${JSON.stringify(SELECTORS.dialog)});
+  if (!dialog) return { found: false };
+  const nodes = Array.from(dialog.querySelectorAll('*'));
+  let best = null;
+  let bestH = 0;
+  for (const el of nodes) {
+    const style = window.getComputedStyle(el);
+    const oy = style.overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) {
+      if (el.scrollHeight > bestH) { bestH = el.scrollHeight; best = el; }
+    }
+  }
+  if (!best) return { found: false };
+  return {
+    found: true,
+    rect: rectOf(best),
+    scrollTop: best.scrollTop,
+    scrollHeight: best.scrollHeight,
+    clientHeight: best.clientHeight,
+  };
+})()`;
+}
+
+// ---------------------------------------------------------------------------
 // Response extractors
 // ---------------------------------------------------------------------------
 
@@ -729,6 +875,12 @@ export const SURFACE_2026_08_12: IgSurface = {
   dialogPresentScript: (): string =>
     `(() => ({ present: !!document.querySelector(${JSON.stringify(SELECTORS.dialog)}) }))()`,
   scrollFollowersScript,
+
+  locateActionButtonScript,
+  locateConfirmUnfollowScript,
+  locateFollowersStatScript: (): string => locateStatScript('followers'),
+  locateFollowingStatScript: (): string => locateStatScript('following'),
+  locateScrollContainerScript,
 
   readProfileHrefScript: (): string => READ_PROFILE_HREF,
   clickProfileLinkScript: (): string => CLICK_PROFILE_LINK,

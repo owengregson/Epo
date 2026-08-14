@@ -24,6 +24,8 @@ import * as path from 'node:path';
 
 import { type InstagramTab, IG_HOME_URL, IG_PARTITION } from '@/adapter/tab';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
+import { Humanizer } from '@/humanizer/humanizer';
+import { ElectronInputDriver } from '@/humanizer/input-driver';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
@@ -839,9 +841,15 @@ export class Foundation {
     const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
     const budget = new RequestBudget(store, clock, toRequestBudgetConfig(settings));
 
+    // Humanizer: every Actor click/scroll becomes real trusted input events
+    // (sendInputEvent) shaped by the human motion profile; the tab is the one
+    // Electron seam it drives. Element locating stays in-page via the surface's
+    // locate scripts (with the JS-click fallback wherever those are absent).
+    const humanizer = new Humanizer({ driver: new ElectronInputDriver(this.tab) });
+
     // The adapter owns the single Actor + Sentinel instances the whole rim shares;
     // the Reader is pure and held directly (E2 — no dead adapter.reader slot).
-    const adapter = new InstagramAdapter(this.tab);
+    const adapter = new InstagramAdapter(this.tab, { humanizer });
     // Log ONCE, at build, which Instagram surface capture this graph runs against.
     logger.info('foundation: instagram adapter surface', {
       adapterVersion: adapter.adapterVersion,

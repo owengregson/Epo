@@ -19,7 +19,14 @@
  */
 
 import { WebContentsView, session } from 'electron';
-import type { BaseWindow, Debugger, Event as ElectronEvent, WebContents } from 'electron';
+import type {
+  BaseWindow,
+  Debugger,
+  Event as ElectronEvent,
+  MouseInputEvent,
+  MouseWheelInputEvent,
+  WebContents,
+} from 'electron';
 import * as logger from '@/utils/logger';
 import { SURFACE } from '@/adapter/ig-surface';
 import type { ResponseHandler, TabResponse, Unsubscribe } from '@/types';
@@ -157,6 +164,18 @@ export class InstagramTab {
         ? `(${fnOrString.toString()})()`
         : fnOrString;
     return (await this.liveContents().executeJavaScript(code, true)) as T;
+  }
+
+  /**
+   * Synthesize a REAL trusted input event (mouse move / down / up / wheel) into
+   * the tab's webContents. Unlike an in-page `el.click()`, events delivered
+   * through `sendInputEvent` enter Chromium's input pipeline and are
+   * indistinguishable from OS input (`isTrusted` mouse events) — the Humanizer
+   * (`src/humanizer/`) drives all its gestures through this single seam, and
+   * the tab stays the only Electron-touching layer.
+   */
+  sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent): void {
+    this.liveContents().sendInputEvent(event);
   }
 
   /**

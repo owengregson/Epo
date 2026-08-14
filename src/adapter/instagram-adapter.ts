@@ -11,17 +11,26 @@
  * can log which Instagram surface these selectors were verified against.
  */
 
-import { Actor, type AdapterTab } from '@/adapter/actor';
+import { Actor, type ActorHumanizer, type AdapterTab } from '@/adapter/actor';
 import { Sentinel } from '@/adapter/sentinel';
 import { SURFACE } from '@/adapter/ig-surface';
+
+/** Optional adapter extras (additive; construction without them is unchanged). */
+export interface InstagramAdapterOptions {
+  /**
+   * Human-input engine: when present the Actor clicks/scrolls through real
+   * trusted input events instead of in-page JS (see `src/humanizer/`).
+   */
+  humanizer?: ActorHumanizer;
+}
 
 export class InstagramAdapter {
   readonly actor: Actor;
   readonly sentinel: Sentinel;
   readonly adapterVersion: string = SURFACE.version;
 
-  constructor(tab: AdapterTab) {
-    this.actor = new Actor(tab);
+  constructor(tab: AdapterTab, opts: InstagramAdapterOptions = {}) {
+    this.actor = new Actor(tab, { humanizer: opts.humanizer });
     this.sentinel = new Sentinel(tab);
   }
 }
