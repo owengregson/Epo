@@ -88,6 +88,7 @@ export class AdapterBackedOwnFollowingSource implements PruneOwnFollowing {
       shouldStop: opts?.shouldStop,
       scrollMinMs: opts?.scrollMinMs,
       scrollMaxMs: opts?.scrollMaxMs,
+      onProgress: opts?.onProgress,
     });
     return result.observedPks;
   }

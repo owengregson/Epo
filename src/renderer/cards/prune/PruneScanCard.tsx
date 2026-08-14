@@ -54,16 +54,23 @@ export function PruneScanCard({
   onStop,
   confirm,
 }: PruneScanCardProps): h.JSX.Element {
-  // Prefer this session's scan; fall back to the projection's persisted counts.
-  const following = scan?.following ?? prune?.following ?? 0;
-  const followers = scan?.followers ?? prune?.followers ?? 0;
-  const candidates = scan !== null ? scan.candidates.length : (prune?.candidates ?? 0);
-  const scannedEver =
-    scan !== null || (prune !== null && (prune.following > 0 || prune.followers > 0));
-
   // Scan is live off the PUSHED state (so the Stop affordance covers scheduled
   // scans too), with the local flag bridging the gap before the first push.
   const isScanning = scanning || prune?.state === 'scanning';
+
+  // While a scan is LIVE the pushed projection carries the mid-scrape counts —
+  // prefer it over a previous session's cached scan so the numbers tick up in
+  // real time. Otherwise prefer this session's scan, then the persisted counts.
+  const following =
+    (isScanning ? prune?.following : undefined) ?? scan?.following ?? prune?.following ?? 0;
+  const followers =
+    (isScanning ? prune?.followers : undefined) ?? scan?.followers ?? prune?.followers ?? 0;
+  const candidates =
+    !isScanning && scan !== null ? scan.candidates.length : (prune?.candidates ?? 0);
+  const scannedEver =
+    isScanning ||
+    scan !== null ||
+    (prune !== null && (prune.following > 0 || prune.followers > 0));
   const pruneRunning = prune?.state === 'running';
   const busy = isScanning || pruneRunning;
 

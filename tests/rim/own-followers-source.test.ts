@@ -99,6 +99,17 @@ test('fetchAllPks scrapes the whole followers list in one call and stores every 
   }
 });
 
+test('fetchAllPks threads onProgress into the scrape (live mid-scan counts)', async () => {
+  const { source } = buildSource({ withStore: true });
+
+  const progress: number[] = [];
+  const pks = await source.fetchAllPks({ onProgress: (n) => progress.push(n) });
+
+  // Page 1 (open) lands 2 pks, scroll 1 lands 1 more; stagnant pages are silent.
+  expect(progress).toEqual([2, 3]);
+  expect(pks.length).toBe(3);
+});
+
 test('fetchAllPks threads shouldStop into the scrape (immediate stop: no scroll, open page kept)', async () => {
   const { source, actor } = buildSource({ withStore: true });
 

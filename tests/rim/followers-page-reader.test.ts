@@ -103,6 +103,39 @@ test('R2: an exhausted budget stops the scroll loop before scrolling', async () 
   expect(result.targetPk).toBe('999');
 });
 
+test('onProgress reports the cumulative observed count once per page that grows the set', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+
+  const pages: TabResponse[] = [
+    mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)), // on open → 2
+    mkResp(followersUrl('999', 'C1'), followersBody(['c'], 'C2', true)), // scroll 1 → 3
+    mkResp(followersUrl('999', 'C2'), followersBody(['a', 'c'], 'C3', true)), // dupes only → silent
+    mkResp(followersUrl('999', 'C3'), followersBody([], 'C3', true)), // empty → silent, stop
+  ];
+  let i = 0;
+  actor.onOpen = () => tab.emit(pages[i++]);
+  actor.onScroll = () => {
+    if (i < pages.length) tab.emit(pages[i++]);
+  };
+
+  const progress: number[] = [];
+  const result = await makeReader(tab, actor).collect({
+    targetUsername: 'target',
+    onObservation: () => {},
+    onProgress: (n) => progress.push(n),
+    budget: new FakeBudget() as unknown as RequestBudget,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    maxRounds: 5,
+    noNewStop: 2,
+  });
+
+  // One call per GROWING page with the cumulative count; duplicate-only and
+  // empty pages fire nothing.
+  expect(progress).toEqual([2, 3]);
+  expect([...result.observedPks].sort()).toEqual(['a', 'b', 'c']);
+});
+
 // --- Scan pacing + cooperative stop (Phase 5 prune scan) ---------------------------
 
 /** A reader with an injected sleep recorder + deterministic rng (no real timers). */

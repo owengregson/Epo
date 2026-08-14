@@ -156,6 +156,17 @@ test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape'
   expect(stopped).toEqual(['z']); // the open-page capture is still returned
 });
 
+test('fetchAllPks threads onProgress into the scrape (live mid-scan counts)', async () => {
+  const { source } = buildSource();
+
+  const progress: number[] = [];
+  const pks = await source.fetchAllPks({ onProgress: (n) => progress.push(n) });
+
+  // Page 1 (open) lands 2 pks, scroll 1 lands 1 more; stagnant pages are silent.
+  expect(progress).toEqual([2, 3]);
+  expect(pks.length).toBe(3);
+});
+
 test('a blocked sentinel yields an empty scrape (warned, never a throw)', async () => {
   const tab = new FakeTab();
   const actor = new FakeActor();

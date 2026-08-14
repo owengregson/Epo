@@ -132,6 +132,7 @@ export class AdapterBackedOwnFollowersSource implements OwnFollowersSource, Prun
       shouldStop: opts?.shouldStop,
       scrollMinMs: opts?.scrollMinMs,
       scrollMaxMs: opts?.scrollMaxMs,
+      onProgress: opts?.onProgress,
     });
     return result.observedPks;
   }
