@@ -15,6 +15,8 @@
 
 import * as logger from '@/utils/logger';
 import { SURFACE, asFetchEnvelope } from '@/adapter/ig-surface';
+import { sleep } from '@/timing/primitives';
+import { ADAPTER } from '@/timing/config';
 
 /** The narrow tab surface this resolver needs; `InstagramTab` satisfies it. */
 export interface IdentityTab {
@@ -22,8 +24,6 @@ export interface IdentityTab {
   evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T>;
   currentUrl(): string;
 }
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Extract a username from a profile URL/path (a full profile URL or a bare
@@ -62,10 +62,10 @@ async function tryEvaluate<T>(tab: IdentityTab, script: string, label: string): 
  */
 export async function resolveOwnUsername(
   tab: IdentityTab,
-  opts: { attempts?: number; retryMs?: number } = {},
+  opts: { attempts?: number; retryMs?: number; signal?: AbortSignal } = {},
 ): Promise<string | undefined> {
-  const attempts = opts.attempts ?? 4;
-  const retryMs = opts.retryMs ?? 1200;
+  const attempts = opts.attempts ?? ADAPTER.IDENTITY_ATTEMPTS;
+  const retryMs = opts.retryMs ?? ADAPTER.IDENTITY_RETRY_MS;
   const home = `${SURFACE.origin}/`;
 
   // Ensure we're on the Instagram origin so the nav is present. The base
@@ -79,6 +79,8 @@ export async function resolveOwnUsername(
 
   try {
    for (let attempt = 0; attempt < attempts; attempt++) {
+    // A shutdown (or driver stop) must not sit out the retry loop.
+    if (opts.signal?.aborted) return undefined;
     // 1) nav profile-link href — the primary, non-destructive path.
     const href = await tryEvaluate<string | null>(
       tab, SURFACE.readProfileHrefScript(), 'profile-href',
@@ -104,8 +106,9 @@ export async function resolveOwnUsername(
       tab, SURFACE.clickProfileLinkScript(), 'click-profile',
     );
     if (clicked) {
-      for (let i = 0; i < 15; i++) {
-        await sleep(300);
+      for (let i = 0; i < ADAPTER.NAV_SETTLE_ROUNDS; i++) {
+        if (opts.signal?.aborted) return undefined;
+        await sleep(ADAPTER.NAV_SETTLE_MS, opts.signal);
         let url = '';
         try {
           url = tab.currentUrl();
@@ -136,7 +139,7 @@ export async function resolveOwnUsername(
       return fromApi;
     }
 
-    if (attempt < attempts - 1) await sleep(retryMs);
+    if (attempt < attempts - 1) await sleep(retryMs, opts.signal);
    }
   } catch (e) {
     // The tab's webContents was destroyed/absent (a hard load failure or a

@@ -178,7 +178,7 @@ class SleepRecorder {
   fn: SleepFn = (ms, signal) => {
     this.calls.push(ms);
     this.events.push(`sleep:${ms}`);
-    if (signal.aborted) {
+    if (signal?.aborted) {
       this.aborted += 1;
       return Promise.resolve();
     }
@@ -187,7 +187,7 @@ class SleepRecorder {
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
-      signal.addEventListener(
+      signal?.addEventListener(
         'abort',
         () => {
           this.aborted += 1;
@@ -210,6 +210,8 @@ interface HarnessOpts {
   sentinel?: SentinelStatus[]; // scripted statuses, then 'ok'
   budgetMax?: number; // request-budget window cap (default 999)
   useRealScanner?: boolean; // wire the REAL Scanner over the store (R1 pipeline tests)
+  rng?: () => number; // injected randomness for the pacing draw
+  sweepCadence?: { isDue(now: number, everyMs: number): boolean; markRun(now: number): void };
 }
 
 interface Harness {
@@ -293,6 +295,8 @@ const makeHarness = (opts: HarnessOpts = {}): Harness => {
     enricher,
     settings,
     sleep: sleep.fn,
+    rng: opts.rng,
+    sweepCadence: opts.sweepCadence,
     onStatus: (s) => statuses.push(s),
     onHalt: (reason) => halts.push(reason),
   });
@@ -343,11 +347,15 @@ describe('Engine.stepOnce — one major thing per iteration', () => {
     h.churn.due = [rec({ accountPk: 'a' })];
     await h.engine.stepOnce();
     await h.engine.stepOnce();
-    expect(h.statuses.length).toBe(2);
-    expect(h.statuses[0].lastStep).toBe('acted');
-    expect(h.statuses[1].lastStep).toBe('idle');
-    expect(h.statuses[0].lastSentinel).toBe('ok');
-    expect(h.statuses[0].lastActionAt).toBe(T0);
+    // Three emissions: one DURING the action-delay wait (real nextActionAt for
+    // the renderer countdown), then the post-step emission of each step.
+    expect(h.statuses.length).toBe(3);
+    expect(h.statuses[0].lastStep).toBeNull(); // mid-wait: the step hasn't returned
+    expect(h.statuses[0].nextActionAt).toBe(T0 + DELAY_MS);
+    expect(h.statuses[1].lastStep).toBe('acted');
+    expect(h.statuses[2].lastStep).toBe('idle');
+    expect(h.statuses[1].lastSentinel).toBe('ok');
+    expect(h.statuses[1].lastActionAt).toBe(T0);
   });
 });
 
@@ -922,6 +930,65 @@ describe('Engine — f9: per-step resilience', () => {
     expect(await h.engine.stepOnce()).toBe('halted');
     expect(h.halts).toEqual(['sentinel:challenge']);
     expect(h.engine.status().state).toBe('halted');
+  });
+});
+
+describe('Engine — injectable sweep cadence (persisted by the composition root)', () => {
+  test('the follow-back sweep consults the injected cadence and marks the run', async () => {
+    const marked: number[] = [];
+    const h = makeHarness({
+      settings: { followbackSweepHours: 4 },
+      sweepCadence: {
+        isDue: () => true,
+        markRun: (now) => marked.push(now),
+      },
+    });
+
+    expect(await h.engine.stepOnce()).toBe('swept-followback');
+    expect(h.followback.checks).toBe(1);
+    expect(marked).toEqual([T0]);
+  });
+
+  test('a not-due cadence skips the sweep', async () => {
+    const h = makeHarness({
+      settings: { followbackSweepHours: 4 },
+      sweepCadence: { isDue: () => false, markRun: () => {} },
+    });
+
+    expect(await h.engine.stepOnce()).not.toBe('swept-followback');
+    expect(h.followback.checks).toBe(0);
+  });
+});
+
+describe('Engine — DelayManager integration', () => {
+  test('status().nextActionAt carries the action-delay deadline while waiting, null after', async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    await h.engine.stepOnce();
+
+    // The mid-wait emission carried the REAL deadline; after the step it is null.
+    const midWait = h.statuses.find((s) => s.nextActionAt !== null);
+    expect(midWait).toBeDefined();
+    expect(midWait!.nextActionAt).toBe(T0 + DELAY_MS);
+    expect(h.engine.status().nextActionAt).toBeNull();
+  });
+
+  test('refill pacing draws through the injected rng (no raw Math.random)', async () => {
+    let draws = 0;
+    const h = makeHarness({
+      settings: { followbackSweepHours: 4 }, // the sweep branch ends in pacingSleep
+      rng: () => {
+        draws += 1;
+        return 0.5;
+      },
+    });
+
+    expect(await h.engine.stepOnce()).toBe('swept-followback');
+
+    expect(draws).toBeGreaterThan(0);
+    // rng 0.5 → the exact uniform midpoint of the pacing band.
+    expect(h.sleep.calls).toEqual([(REFILL_PACING_MIN_MS + REFILL_PACING_MAX_MS) / 2]);
   });
 });
 

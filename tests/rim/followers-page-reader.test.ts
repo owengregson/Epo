@@ -324,3 +324,34 @@ test('R5: drain awaits a response that lands during teardown', async () => {
   // Both the early body and the late-landing body were fully drained before return.
   expect([...result.observedPks].sort()).toEqual(['early', 'late']);
 });
+
+test('an aborted driver signal ends the scroll loop like shouldStop', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  scriptEndlessPages(tab, actor);
+  const ac = new AbortController();
+  ac.abort();
+
+  const paced = new FollowersPageReader({
+    tab,
+    reader,
+    actor,
+    clock,
+    scrollWaitMs: 1,
+    sleep: async () => {},
+    abortSignal: () => ac.signal,
+  });
+  const result = await paced.collect({
+    targetUsername: 'target',
+    onObservation: () => {},
+    budget: new FakeBudget() as unknown as RequestBudget,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    maxRounds: 10,
+    noNewStop: 5,
+  });
+
+  expect(actor.scrollCalls).toBe(0); // no scroll round ran
+  // The page captured on open is still drained and returned (a stop never
+  // loses parsed data).
+  expect(result.observedPks).toEqual(['a']);
+});

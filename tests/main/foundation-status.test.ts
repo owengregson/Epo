@@ -41,6 +41,7 @@ describe('Foundation status (not built)', () => {
       lastSentinel: null,
       lastActionAt: null,
       sessionStartedAt: null,
+      nextActionAt: null,
       netToday: 0,
       online: true,
       loggedIn: false,

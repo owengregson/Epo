@@ -24,9 +24,11 @@ import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
 import { resolveOwnUsername } from '@/adapter/identity';
 import { CaptureHarness } from '@/capture/capture-harness';
 import * as logger from '@/utils/logger';
+import { sleep } from '@/timing/primitives';
+import { HARNESS } from '@/timing/config';
 
 /** Poll interval while waiting for login. */
-const LOGIN_POLL_MS = 2000;
+const LOGIN_POLL_MS = HARNESS.LOGIN_POLL_MS;
 
 let mainWindow: BaseWindow | null = null;
 let instagramTab: InstagramTab | null = null;
@@ -40,9 +42,6 @@ function resolveOutDir(): string {
   return dir;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /** True once the persistent IG session holds a non-empty `sessionid` cookie. */
 async function isLoggedIn(): Promise<boolean> {
@@ -170,7 +169,7 @@ async function run(): Promise<void> {
 
   // Poll for login.
   while (mainWindow && !(await isLoggedIn())) {
-    await delay(LOGIN_POLL_MS);
+    await sleep(LOGIN_POLL_MS);
   }
   if (!mainWindow) return; // window closed during login wait
 
@@ -180,7 +179,7 @@ async function run(): Promise<void> {
   // same-origin (required by detectOwnUsername + the direct shape fetches).
   if (!tab.currentUrl().includes('instagram.com')) {
     await tab.goto(IG_HOME_URL);
-    await delay(2000);
+    await sleep(2000);
   }
 
   // Detect the own username best-effort. This drives own-followers capture, but

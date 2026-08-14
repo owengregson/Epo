@@ -54,6 +54,8 @@ export interface Settings {
   requestBudgetMaxPerWindow: number;
   requestBudgetWindowMinutes: number;
   followbackSweepHours: number;
+  /** Epoch ms of the last completed follow-back sweep; null when never run. */
+  sweepLastRunAt: number | null;
 
   // --- Scanner / chain / pool health. ---
   dailyPlanSize: number;
@@ -112,6 +114,7 @@ export const DEFAULT_SETTINGS: Settings = {
   requestBudgetMaxPerWindow: 200,
   requestBudgetWindowMinutes: 60,
   followbackSweepHours: 4,
+  sweepLastRunAt: null,
 
   dailyPlanSize: 25,
   lowWaterCandidates: 5,

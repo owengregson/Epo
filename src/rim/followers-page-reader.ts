@@ -25,8 +25,8 @@ import { SystemClock, type Clock } from '@/governors/clock';
 import type { Observation } from '@/store/types';
 import type { RimTab } from '@/rim/types';
 import * as logger from '@/utils/logger';
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+import { fixed, sample, sleep, uniform } from '@/timing/primitives';
+import { RIM } from '@/timing/config';
 
 /** The list-dialog operations the scraper needs. `Actor` satisfies this. */
 export interface FollowersActor {
@@ -45,9 +45,15 @@ export interface FollowersPageReaderDeps {
   /** Pause after each scroll so the paginated `followers/` response can land. */
   scrollWaitMs?: number;
   /** Injected pause; defaults to a real setTimeout (tests record the ms instead). */
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Injectable randomness for the jittered scan pacing (deterministic tests). */
   rng?: () => number;
+  /**
+   * Provider of the ACTIVE driver's abort signal — folded into the cooperative
+   * `shouldStop` check AND passed into the inter-round sleeps, so a `stop()`
+   * breaks a scrape mid-wait, not just between rounds.
+   */
+  abortSignal?: () => AbortSignal | undefined;
 }
 
 /** One scrape run's parameters. */
@@ -110,33 +116,37 @@ export class FollowersPageReader {
   private readonly actor: FollowersActor;
   private readonly clock: Clock;
   private readonly scrollWaitMs: number;
-  private readonly sleepFn: (ms: number) => Promise<void>;
+  private readonly sleepFn: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly rng: () => number;
+  private readonly abortSignal?: () => AbortSignal | undefined;
 
   constructor(deps: FollowersPageReaderDeps) {
     this.tab = deps.tab;
     this.reader = deps.reader;
     this.actor = deps.actor;
     this.clock = deps.clock ?? new SystemClock();
-    this.scrollWaitMs = deps.scrollWaitMs ?? 2000;
+    this.scrollWaitMs = deps.scrollWaitMs ?? RIM.SCROLL_WAIT_MS;
     this.sleepFn = deps.sleep ?? sleep;
     this.rng = deps.rng ?? Math.random;
+    this.abortSignal = deps.abortSignal;
   }
 
   async collect(args: CollectArgs): Promise<CollectResult> {
     const { targetUsername, onObservation, budget, sentinel, maxRounds, noNewStop } = args;
     const dialog = args.dialog ?? 'followers';
-    const shouldStop = args.shouldStop ?? ((): boolean => false);
+    // The caller's cooperative stop, folded with the ACTIVE driver's abort
+    // signal — either ends the scrape at the next check.
+    const externalStop = args.shouldStop ?? ((): boolean => false);
+    const shouldStop = (): boolean =>
+      externalStop() || this.abortSignal?.()?.aborted === true;
     // Each call draws a FRESH jittered wait when both bounds are set (the prune
-    // scan path); otherwise the fixed scrollWaitMs (growth, unchanged).
-    const nextWaitMs = (): number => {
-      if (args.scrollMinMs === undefined || args.scrollMaxMs === undefined) {
-        return this.scrollWaitMs;
-      }
-      const min = Math.max(0, args.scrollMinMs);
-      const max = Math.max(min, args.scrollMaxMs);
-      return Math.round(min + this.rng() * (max - min));
-    };
+    // scan path); otherwise the fixed scrollWaitMs (growth, unchanged). The
+    // `uniform` policy carries the min ≥ 0 / max ≥ min clamps.
+    const waitPolicy =
+      args.scrollMinMs === undefined || args.scrollMaxMs === undefined
+        ? fixed(this.scrollWaitMs)
+        : uniform(args.scrollMinMs, args.scrollMaxMs);
+    const nextWaitMs = (): number => sample(waitPolicy, this.rng);
     // The one endpoint kind this scrape parses list pages from — the paginated
     // `following/` API when the FOLLOWING dialog is open, else `followers/`.
     const listKind = dialog === 'following' ? 'following-list' : 'followers-list';
@@ -226,7 +236,7 @@ export class FollowersPageReader {
       // the initial page arrives shortly after the modal opens, and small lists may
       // never need a scroll at all. Skipped when a stop is already requested (the
       // loop's own top-of-round check then breaks immediately).
-      if (!shouldStop()) await this.sleepFn(nextWaitMs());
+      if (!shouldStop()) await this.sleepFn(nextWaitMs(), this.abortSignal?.());
 
       let stagnantRounds = 0;
       for (let round = 0; round < maxRounds; round++) {
@@ -258,7 +268,7 @@ export class FollowersPageReader {
 
         const before = observed.size;
         await this.actor.scrollFollowers();
-        await this.sleepFn(nextWaitMs());
+        await this.sleepFn(nextWaitMs(), this.abortSignal?.());
 
         if (observed.size === before) {
           stagnantRounds += 1;

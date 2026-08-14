@@ -381,6 +381,22 @@ describe('PruneEngine.run', () => {
     h.store.close();
   });
 
+  test('status().nextActionAt carries the inter-unfollow deadline while waiting, null after', async () => {
+    const h = build({
+      following: [OWN_PK, '1'],
+      followers: [],
+    });
+
+    await h.engine.run();
+
+    // The mid-wait emission carried the REAL deadline: 60s base ×1/3 = 20s out.
+    const midWait = h.statuses.find((s) => s.nextActionAt !== null);
+    expect(midWait).toBeDefined();
+    expect(midWait!.nextActionAt).toBe(T0 + 20_000);
+    expect(h.engine.status().nextActionAt).toBeNull();
+    h.store.close();
+  });
+
   test('inter-action delay runs at a THIRD of the humanized pace (PRUNE_DELAY_FACTOR)', async () => {
     const h = build({
       following: [OWN_PK, '1'],
@@ -523,11 +539,11 @@ describe('PruneEngine.run', () => {
     // path, minus the timer.
     const hangingSleep: SleepFn = (_ms, signal) =>
       new Promise<void>((resolve) => {
-        if (signal.aborted) {
+        if (signal?.aborted) {
           resolve();
           return;
         }
-        signal.addEventListener('abort', () => resolve(), { once: true });
+        signal?.addEventListener('abort', () => resolve(), { once: true });
       });
     const h = build({
       following: [OWN_PK, '1', '2', '3'],

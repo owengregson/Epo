@@ -31,6 +31,8 @@ import * as path from 'node:path';
 import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
 import { resolveOwnUsername } from '@/adapter/identity';
 import * as logger from '@/utils/logger';
+import { sleep } from '@/timing/primitives';
+import { HARNESS } from '@/timing/config';
 import {
   INSPECT_BANNER_TEXT,
   buildInspectTickScript,
@@ -39,10 +41,10 @@ import {
 } from '@/inspect/injection';
 
 /** Poll interval while waiting for login. */
-const LOGIN_POLL_MS = 2000;
+const LOGIN_POLL_MS = HARNESS.LOGIN_POLL_MS;
 
 /** Inspection poll interval — how often we drain buffered click records. */
-const INSPECT_POLL_MS = 300;
+const INSPECT_POLL_MS = HARNESS.INSPECT_POLL_MS;
 
 let mainWindow: BaseWindow | null = null;
 let instagramTab: InstagramTab | null = null;
@@ -57,9 +59,6 @@ function resolveOutFile(): string {
   return path.join(dir, 'clicks.jsonl');
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /** True once the persistent IG session holds a non-empty `sessionid` cookie. */
 async function isLoggedIn(): Promise<boolean> {
@@ -156,14 +155,14 @@ async function landAfterLogin(tab: InstagramTab): Promise<string> {
   if (target) {
     const url = `https://www.instagram.com/${target}/`;
     await tab.goto(url);
-    await delay(3000);
+    await sleep(3000);
     return `@${target}`;
   }
 
   const own = await resolveOwnUsername(tab);
   if (own) {
     await tab.goto(`https://www.instagram.com/${own}/`);
-    await delay(3000);
+    await sleep(3000);
     return `@${own} (your profile)`;
   }
 
@@ -172,7 +171,7 @@ async function landAfterLogin(tab: InstagramTab): Promise<string> {
   );
   if (!tab.currentUrl().includes('instagram.com')) {
     await tab.goto(IG_HOME_URL);
-    await delay(2000);
+    await sleep(2000);
   }
   return 'home';
 }
@@ -218,14 +217,14 @@ async function run(): Promise<void> {
 
   // Poll for login.
   while (mainWindow && !(await isLoggedIn())) {
-    await delay(LOGIN_POLL_MS);
+    await sleep(LOGIN_POLL_MS);
   }
   if (!mainWindow) return; // window closed during login wait
 
   // Ensure an instagram.com origin (identity resolution + our injected fetches).
   if (!tab.currentUrl().includes('instagram.com')) {
     await tab.goto(IG_HOME_URL);
-    await delay(2000);
+    await sleep(2000);
   }
 
   const landed = await landAfterLogin(tab);
@@ -250,7 +249,7 @@ async function run(): Promise<void> {
       // A navigation in flight can transiently reject evaluate — log and retry.
       logger.warn('inspect.tick evaluate failed', { error: String(e) });
     }
-    await delay(INSPECT_POLL_MS);
+    await sleep(INSPECT_POLL_MS);
   }
 }
 

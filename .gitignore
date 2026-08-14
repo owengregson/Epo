@@ -157,3 +157,4 @@ docs/adapter/field-notes-DRAFT.md
 
 # DOM inspection harness output — captured clicks may contain real profile data.
 docs/adapter/inspect/
+.claude/worktrees/

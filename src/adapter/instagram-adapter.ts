@@ -22,6 +22,11 @@ export interface InstagramAdapterOptions {
    * trusted input events instead of in-page JS (see `src/humanizer/`).
    */
   humanizer?: ActorHumanizer;
+  /**
+   * Provider of the ACTIVE driver's abort signal — a `stop()` interrupts the
+   * Actor's in-flight DOM polls instead of sitting out their timeouts.
+   */
+  abortSignal?: () => AbortSignal | undefined;
 }
 
 export class InstagramAdapter {
@@ -30,7 +35,7 @@ export class InstagramAdapter {
   readonly adapterVersion: string = SURFACE.version;
 
   constructor(tab: AdapterTab, opts: InstagramAdapterOptions = {}) {
-    this.actor = new Actor(tab, { humanizer: opts.humanizer });
+    this.actor = new Actor(tab, { humanizer: opts.humanizer, abortSignal: opts.abortSignal });
     this.sentinel = new Sentinel(tab);
   }
 }

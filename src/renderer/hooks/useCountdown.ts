@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { EpoStatus, Settings } from '@/types';
+import type { EpoStatus } from '@/types';
 
 export interface Countdown {
-  /** True while the engine is running and an ETA can be derived. */
+  /** True while the engine is running and a real deadline is pending. */
   active: boolean;
-  /** Seconds until the (estimated) next action. */
+  /** Seconds until the next action. */
   remainingSec: number;
   /** Remaining fraction of the interval (1 = just acted, 0 = due). */
   frac: number;
@@ -13,11 +13,12 @@ export interface Countdown {
 const IDLE: Countdown = { active: false, remainingSec: 0, frac: 0 };
 
 /**
- * Estimates time-to-next-action from `lastActionAt` + the delay band midpoint
- * (spec §3: derive an ETA, else show waiting). Ticks once a second while running;
- * the exact schedule is jittered internally, so this is a smooth approximation.
+ * Time-to-next-action from the engine's REAL pending deadline (`nextActionAt`,
+ * the DelayManager's registered action-delay deadline) — no more estimating from
+ * the settings band midpoint, so the countdown is exact for growth and would be
+ * exact for prune's ×1/3 pace alike. Ticks once a second while running.
  */
-export function useCountdown(status: EpoStatus | null, settings: Settings | null): Countdown {
+export function useCountdown(status: EpoStatus | null): Countdown {
   const [now, setNow] = useState(() => Date.now());
 
   const running = status?.state === 'running';
@@ -27,14 +28,15 @@ export function useCountdown(status: EpoStatus | null, settings: Settings | null
     return () => window.clearInterval(id);
   }, [running]);
 
-  if (!running || !settings || !status || status.lastActionAt == null) return IDLE;
-
-  const intervalMs = ((settings.minDelayMinutes + settings.maxDelayMinutes) / 2) * 60_000;
+  if (!running || !status || status.nextActionAt == null || status.lastActionAt == null) {
+    return IDLE;
+  }
+  const intervalMs = status.nextActionAt - status.lastActionAt;
   if (intervalMs <= 0) return IDLE;
-  const remaining = Math.max(0, intervalMs - (now - status.lastActionAt));
+  const remaining = Math.max(0, status.nextActionAt - now);
   return {
     active: true,
     remainingSec: Math.round(remaining / 1000),
-    frac: remaining / intervalMs,
+    frac: Math.min(1, Math.max(0, remaining / intervalMs)),
   };
 }

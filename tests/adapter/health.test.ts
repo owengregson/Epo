@@ -282,3 +282,49 @@ describe('Sentinel maps block signatures to labels', () => {
     expect(await new Sentinel(tab).check()).toBe('ok');
   });
 });
+
+describe('Actor — cancellable waits (driver abort signal)', () => {
+  /** A tab whose evaluate is scripted per call. */
+  class ScriptedTab implements AdapterTab {
+    evaluations = 0;
+    constructor(private readonly script: (n: number) => unknown) {}
+    async goto(): Promise<void> {}
+    async evaluate<T>(): Promise<T> {
+      this.evaluations += 1;
+      return this.script(this.evaluations) as T;
+    }
+    currentUrl(): string {
+      return 'https://www.instagram.com/';
+    }
+  }
+
+  test('waitFor aborts mid-poll when the provided signal fires', async () => {
+    const ac = new AbortController();
+    // Never satisfies `done`; the first evaluate schedules the abort.
+    const tab = new ScriptedTab((n) => {
+      if (n === 1) setTimeout(() => ac.abort(), 0);
+      return { found: false };
+    });
+    const actor = new Actor(tab, {
+      pollIntervalMs: 60_000, // an un-abortable sleep would hang the test here
+      pollTimeoutMs: 600_000,
+      abortSignal: () => ac.signal,
+    });
+
+    const err = await rejection(actor.follow('someone'));
+
+    expect(err).toBeInstanceOf(AdapterStaleError); // "control absent" shape, promptly
+    expect(tab.evaluations).toBeLessThan(3); // returned mid-poll, not after the timeout
+  });
+
+  test('an already-aborted signal short-circuits before the first attempt', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const tab = new ScriptedTab(() => ({ found: true, state: 'follow', clicked: true }));
+    const actor = new Actor(tab, { abortSignal: () => ac.signal });
+
+    await rejection(actor.follow('someone'));
+
+    expect(tab.evaluations).toBe(0); // stop means stop: no DOM touch at all
+  });
+});

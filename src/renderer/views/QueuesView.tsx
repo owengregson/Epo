@@ -11,7 +11,10 @@ import {
   stageCount,
   type QueueStageKey,
 } from '@/renderer/cards/queues/QueuePipeline';
-import { QueueRowItem } from '@/renderer/cards/queues/QueueRowItem';
+import { QueueRowItem, type QueueWindows } from '@/renderer/cards/queues/QueueRowItem';
+import { useSettings } from '@/renderer/hooks/useSettings';
+
+const DAY_MS = 24 * 3600 * 1000;
 
 export interface QueuesViewProps {
   status: EpoStatus | null;
@@ -64,6 +67,15 @@ export function QueuesView(props: QueuesViewProps): h.JSX.Element {
   const stage = QUEUE_STAGE_BY_KEY[stageKey];
   const count = stageCount(stageKey, status);
   const { rows, truncated, loading } = useQueue(stage.state, status);
+  // Live settings so the row progress bars track the USER's configured windows
+  // instead of hardcoded design defaults (which silently desync on edit).
+  const settings = useSettings();
+  const windows: QueueWindows | null = settings
+    ? {
+        followbackMs: settings.maxWaitForFollowbackDays * DAY_MS,
+        holdMs: settings.holdAfterFollowbackDays * DAY_MS,
+      }
+    : null;
 
   return (
     <Fragment>
@@ -79,7 +91,9 @@ export function QueuesView(props: QueuesViewProps): h.JSX.Element {
             ) : rows.length === 0 ? (
               <QueueNote text="Nothing here yet." />
             ) : (
-              rows.map((row) => <QueueRowItem key={row.pk} stage={stageKey} row={row} />)
+              rows.map((row) => (
+                <QueueRowItem key={row.pk} stage={stageKey} row={row} windows={windows} />
+              ))
             )}
             {!loading && truncated ? (
               <QueueNote text={`Showing the first ${rows.length} — more queued.`} />

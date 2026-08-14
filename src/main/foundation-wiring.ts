@@ -31,6 +31,9 @@ import type { Sentinel } from '@/adapter/sentinel';
 import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { SystemClock } from '@/governors/clock';
+import { ScheduleManager } from '@/timing/schedule-manager';
+import { DelayManager } from '@/timing/delay-manager';
+import { PRUNE, SCHEDULER } from '@/timing/config';
 import { RateGovernor } from '@/governors/rate-governor';
 import { RequestBudget } from '@/governors/request-budget';
 import { shapeChainList, shapeQueueList } from '@/main/foundation-reads';
@@ -97,18 +100,9 @@ import type {
 const IG_DB_FILE = 'epo.db';
 const IG_SETTINGS_FILE = 'epo-settings.json';
 
-/** R5 — how many times to poll `current_user` before degrading, and the wait between. */
-const USERNAME_RESOLVE_ATTEMPTS = 4;
-const USERNAME_RESOLVE_RETRY_MS = 1_500;
-
-/**
- * Phase 5 — how long the prune hand-off waits for the growth loop to QUIESCE at
- * its pause gate before giving up. In the common case (growth sleeping between
- * actions) the park is near-instant; this bound only bites if a growth step is
- * genuinely stuck mid-flight, in which case the hand-off is aborted (growth is
- * resumed, the prune refused) rather than risk two drivers on the one tab.
- */
-const PRUNE_PARK_TIMEOUT_MS = 90_000;
+// Timing constants (username-resolve retry, prune park timeout, watcher cadence)
+// live in the shared registry: see `SCHEDULER.*` and `PRUNE.PARK_TIMEOUT_MS` in
+// `@/timing/config`.
 
 export interface FoundationDeps {
   tab: InstagramTab;
@@ -132,6 +126,8 @@ interface BuiltGraph {
   ownUsername: string | undefined;
   /** The single clock the graph shares — used to timestamp manual-op ledger rows. */
   clock: SystemClock;
+  /** The ONE wait owner both engines share (see the `build()` wiring). */
+  delays: DelayManager;
   /** The shared block-detection sentinel — gates manual one-shot fetches (seed check). */
   sentinel: Sentinel;
   /**
@@ -199,13 +195,10 @@ export class Foundation {
    * the Engine) so the not-built status can still reflect it.
    */
   private lastOnline = true;
-  /**
-   * The opt-in scheduled-prune watcher timer (Phase 5). When the user sets a
-   * `pruneScheduleDays` cadence, this periodically auto-starts a prune run once one
-   * is due AND safe. `null` until {@link startScheduledPruneWatcher} runs; cleared
-   * on {@link dispose}.
-   */
-  private pruneSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+  /** The one ScheduleManager for Foundation-level periodic work + cadences. */
+  private readonly scheduler = new ScheduleManager({ clock: new SystemClock() });
+  /** Aborted once {@link dispose} begins — interrupts identity-resolution waits. */
+  private readonly disposeAbort = new AbortController();
 
   constructor(deps: FoundationDeps) {
     this.tab = deps.tab;
@@ -491,7 +484,7 @@ export class Foundation {
     logger.info('foundation: pausing growth engine for prune hand-off');
     engine.pause();
     this.growthPausedForPrune = true;
-    const parked = await engine.awaitParked(PRUNE_PARK_TIMEOUT_MS);
+    const parked = await engine.awaitParked(PRUNE.PARK_TIMEOUT_MS);
     if (!parked) {
       logger.warn('foundation: growth did not park in time, aborting prune hand-off');
       this.releaseTabAfterPrune(); // undo our pause — resume growth
@@ -738,10 +731,8 @@ export class Foundation {
    */
   async dispose(): Promise<void> {
     this.disposing = true;
-    if (this.pruneSchedulerTimer !== null) {
-      clearInterval(this.pruneSchedulerTimer);
-      this.pruneSchedulerTimer = null;
-    }
+    this.disposeAbort.abort();
+    this.scheduler.dispose();
     await this.teardownGraph();
     logger.info('foundation disposed');
   }
@@ -754,13 +745,15 @@ export class Foundation {
    * (`pruneScheduleDays === 0`). Idempotent; the timer is cleared on {@link dispose}.
    * Damage is bounded by the whitelist, the prune daily cap, and the sentinel.
    */
-  startScheduledPruneWatcher(intervalMs = 30 * 60_000): void {
-    if (this.pruneSchedulerTimer !== null) return;
-    this.pruneSchedulerTimer = setInterval(() => {
-      void this.maybeRunScheduledPrune();
-    }, intervalMs);
-    // Never let this timer alone hold the process open (e.g. during shutdown).
-    this.pruneSchedulerTimer.unref?.();
+  startScheduledPruneWatcher(intervalMs = SCHEDULER.AUTO_PRUNE_CHECK_MS): void {
+    // Idempotency + the never-hold-the-process-open unref both come from the
+    // ScheduleManager (`every` is a per-key no-op while the loop lives).
+    this.scheduler.every(
+      'prune:auto-watcher',
+      intervalMs,
+      () => this.maybeRunScheduledPrune(),
+      { unref: true },
+    );
   }
 
   /**
@@ -822,6 +815,7 @@ export class Foundation {
     }
     graph.requestMeteringUnsub();
     graph.relationshipReconcilerUnsub();
+    graph.delays.dispose();
     graph.store.close();
   }
 
@@ -836,6 +830,10 @@ export class Foundation {
     // exclusion both anchor on our own pk.
     store.setOwnPk(ownPk);
     const clock = new SystemClock();
+    // The shared wait owner: growth and prune wait through ONE DelayManager
+    // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
+    // from a single registry.
+    const delays = new DelayManager({ clock });
     const settings = this.resolveSettings();
 
     const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
@@ -847,9 +845,19 @@ export class Foundation {
     // locate scripts (with the JS-click fallback wherever those are absent).
     const humanizer = new Humanizer({ driver: new ElectronInputDriver(this.tab) });
 
+    // The ACTIVE driver's run token: adapter/rim waits link to this so a stop()
+    // interrupts an in-flight DOM poll or pacing sleep instead of sitting out
+    // its timeout. Pause is deliberately NOT included — a paused step finishes
+    // cleanly (the park/hand-off contract is unchanged).
+    const driverSignal = (): AbortSignal | undefined => {
+      if (this.activeDriver === 'prune') return this.graph?.pruneEngine.runSignal();
+      if (this.activeDriver === 'growth') return this.graph?.engine.runSignal();
+      return undefined;
+    };
+
     // The adapter owns the single Actor + Sentinel instances the whole rim shares;
     // the Reader is pure and held directly (E2 — no dead adapter.reader slot).
-    const adapter = new InstagramAdapter(this.tab, { humanizer });
+    const adapter = new InstagramAdapter(this.tab, { humanizer, abortSignal: driverSignal });
     // Log ONCE, at build, which Instagram surface capture this graph runs against.
     logger.info('foundation: instagram adapter surface', {
       adapterVersion: adapter.adapterVersion,
@@ -870,7 +878,12 @@ export class Foundation {
       relationshipReconciler,
     );
 
-    const pageReader = new FollowersPageReader({ tab: this.tab, reader, actor });
+    const pageReader = new FollowersPageReader({
+      tab: this.tab,
+      reader,
+      actor,
+      abortSignal: driverSignal,
+    });
 
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
@@ -943,6 +956,16 @@ export class Foundation {
       budget,
       sentinel,
       clock,
+      abortSignal: driverSignal,
+    });
+
+    // The follow-back sweep cadence, persisted through Settings so the 4h rhythm
+    // survives restarts (Settings.sweepLastRunAt; same pattern as pruneLastRunAt).
+    const sweepCadence = this.scheduler.cadence('engine:followback-sweep', {
+      getLastRunAt: () => this.resolveSettings().sweepLastRunAt,
+      setLastRunAt: (at) => {
+        void this.updateSettings({ sweepLastRunAt: at });
+      },
     });
 
     const engine = createEngine({
@@ -958,6 +981,8 @@ export class Foundation {
       acquisition,
       enricher,
       settings,
+      delays,
+      sweepCadence,
       onStatus: (s) => this.emit(s),
       onHalt: (reason) => {
         logger.warn('foundation: engine halted', { reason });
@@ -994,6 +1019,7 @@ export class Foundation {
       requestBudget: budget,
       sentinel,
       cfg: toPruneConfig(settings),
+      delays,
       lastRunAt: settings.pruneLastRunAt,
       onStatus: (s) => this.onPruneStatusCb?.(s),
       // Persist the completed run's timestamp through the one settings save
@@ -1013,6 +1039,7 @@ export class Foundation {
       ownPk,
       ownUsername,
       clock,
+      delays,
       sentinel,
       enginePromise: null,
       pruneEngine,
@@ -1313,8 +1340,9 @@ export class Foundation {
     // Robust resolution: nav profile-link href / profile navigation first, the
     // unreliable `current_user` endpoint only as a last resort (see identity.ts).
     return resolveUsernameFromTab(this.tab, {
-      attempts: USERNAME_RESOLVE_ATTEMPTS,
-      retryMs: USERNAME_RESOLVE_RETRY_MS,
+      attempts: SCHEDULER.USERNAME_RESOLVE_ATTEMPTS,
+      retryMs: SCHEDULER.USERNAME_RESOLVE_RETRY_MS,
+      signal: this.disposeAbort.signal,
     });
   }
 
@@ -1346,6 +1374,7 @@ export class Foundation {
       dailyLimit: s.pruneDailyLimit,
       lastRunAt: s.pruneLastRunAt,
       lastSentinel: null,
+      nextActionAt: null,
       scanReady: false,
     };
   }
@@ -1368,6 +1397,7 @@ export class Foundation {
       lastSentinel: null,
       lastActionAt: null,
       sessionStartedAt: null,
+      nextActionAt: null,
       netToday: 0,
       online: this.lastOnline,
       loggedIn,

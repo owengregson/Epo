@@ -228,3 +228,25 @@ test('respects batchCap: only the first N usernames are attempted', async () => 
   expect(tab.evalCalls).toHaveLength(1);
   expect(store.getAccount('102')).toBeNull();
 });
+
+test('an aborted driver signal ends the pass between usernames (nothing fetched)', async () => {
+  const tab = new EnrichTab();
+  const ac = new AbortController();
+  ac.abort();
+  const enricher = new AdapterBackedProfileEnricher({
+    tab,
+    reader: new Reader(),
+    store,
+    budget: new FakeBudget(true) as unknown as RequestBudget,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    clock,
+    sleep: noSleep,
+    abortSignal: () => ac.signal,
+  });
+  tab.bodies = { alice: profileBody('101', 'alice', 10, 10) };
+
+  const n = await enricher.enrich(['alice', 'bob']);
+
+  expect(n).toBe(0);
+  expect(tab.evalCalls).toEqual([]); // stop means stop: no fetch at all
+});

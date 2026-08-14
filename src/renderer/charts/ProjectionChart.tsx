@@ -3,7 +3,7 @@ import { h } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import type { ProjectionResult } from './growth-model';
 import { clamp, commas } from '../lib/format';
-import { prefersReducedMotion } from '../lib/motion';
+import { PROJ_DASH_DROP_MS, prefersReducedMotion } from '../lib/motion';
 
 const X0 = 8;
 const X1 = 348;
@@ -27,6 +27,7 @@ export function ProjectionChart({ result }: ProjectionChartProps): h.JSX.Element
     useRef<SVGPathElement>(null),
   ];
   const drawn = useRef(false);
+  const dashTimer = useRef<number | null>(null);
 
   const { scenarios, vmax } = result;
 
@@ -76,19 +77,23 @@ export function ProjectionChart({ result }: ProjectionChartProps): h.JSX.Element
               p.style.strokeDashoffset = '0';
             });
             // Once drawn, drop the dash so later edits update the paths freely.
-            window.setTimeout(() => {
+            dashTimer.current = window.setTimeout(() => {
               els.forEach((p) => {
                 p.style.strokeDasharray = '';
                 p.style.strokeDashoffset = '';
               });
-            }, 1300);
+            }, PROJ_DASH_DROP_MS);
           }),
         );
         io.disconnect();
       }
     });
     io.observe(svg);
-    return () => io.disconnect();
+    return () => {
+      io.disconnect();
+      // A timer left armed on unmount would touch a torn-down tree.
+      if (dashTimer.current !== null) window.clearTimeout(dashTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
