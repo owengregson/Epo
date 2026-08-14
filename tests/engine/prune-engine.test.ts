@@ -14,6 +14,7 @@ import { FakeClock } from '@/governors/clock';
 import {
   PruneEngine,
   PRUNE_PARK_MS,
+  PRUNE_PROGRESS_EMIT_MS,
   PRUNE_SCAN_FRESH_MS,
   pruneDue,
   type PruneConfig,
@@ -241,6 +242,64 @@ describe('PruneEngine.scan', () => {
       expect(opts?.shouldStop?.()).toBe(false); // live, and not aborted
     }
     h.store.close();
+  });
+
+  test('scan surfaces LIVE mid-scrape counts, throttled to one emission per PRUNE_PROGRESS_EMIT_MS', async () => {
+    const store = new KnowledgeStore(':memory:');
+    store.setOwnPk(OWN_PK);
+    const clock = new FakeClock(T0);
+    const statuses: PruneStatus[] = [];
+
+    // A following source that reports page-by-page progress: three pages inside
+    // one throttle window (only the first may emit), then one after it elapses.
+    const following = {
+      async fetchAllPks(opts?: PruneScanOpts): Promise<string[]> {
+        opts?.onProgress?.(12); // emitted (first in the window)
+        opts?.onProgress?.(24); // suppressed (same window)
+        opts?.onProgress?.(36); // suppressed
+        clock.advance(PRUNE_PROGRESS_EMIT_MS);
+        opts?.onProgress?.(48); // emitted (window elapsed)
+        return Array.from({ length: 48 }, (_, i) => `f${i}`);
+      },
+    };
+    const followers = {
+      async fetchAllPks(opts?: PruneScanOpts): Promise<string[]> {
+        clock.advance(PRUNE_PROGRESS_EMIT_MS);
+        opts?.onProgress?.(7);
+        return Array.from({ length: 7 }, (_, i) => `f${i}`); // all follow back
+      },
+    };
+    const engine = new PruneEngine({
+      store,
+      clock,
+      ownPk: OWN_PK,
+      ownFollowing: following,
+      ownFollowers: followers,
+      churnActions: new FakeChurnActions(),
+      requestBudget: new FakeBudget(),
+      sentinel: new FakeSentinel(),
+      cfg: CFG,
+      sleep: async () => {},
+      onStatus: (s) => statuses.push(s),
+    });
+
+    await engine.scan();
+
+    // The scanning-phase projections carried the counts as they grew…
+    const scanning = statuses.filter((s) => s.state === 'scanning');
+    const followingSeen = scanning.map((s) => s.following);
+    expect(followingSeen).toContain(0); // fresh census counts up from zero
+    expect(followingSeen).toContain(12);
+    expect(followingSeen).not.toContain(24); // throttled away
+    expect(followingSeen).not.toContain(36); // throttled away
+    expect(followingSeen).toContain(48);
+    expect(scanning.map((s) => s.followers)).toContain(7);
+    // …and the settled projection carries the true totals.
+    const last = statuses[statuses.length - 1];
+    expect(last.following).toBe(48);
+    expect(last.followers).toBe(7);
+    expect(last.candidates).toBe(41); // f7..f47 do not follow back
+    store.close();
   });
 
   test('stop() during scan aborts between phases: sources see shouldStop, scan resolves, state idle', async () => {

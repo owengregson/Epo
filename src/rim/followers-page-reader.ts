@@ -73,6 +73,13 @@ export interface CollectArgs {
    * (`null` for profile-info).
    */
   onObservation: (obs: Observation, cursor: string | null) => void;
+  /**
+   * Live-progress callback (optional, additive): invoked with the CUMULATIVE
+   * observed-pk count whenever a parsed page GROWS the observed set (per page,
+   * not per user — a page is the natural batch). Lets callers surface counts
+   * mid-scrape instead of only when `collect` resolves.
+   */
+  onProgress?: (observedCount: number) => void;
   budget: RequestBudget;
   sentinel: Sentinel;
   /** Hard cap on scroll rounds so a scrape is always bounded. */
@@ -200,10 +207,14 @@ export class FollowersPageReader {
                 : this.reader.parseFollowersList(body, now);
             cursor = parsed.cursor;
             page.hasMore = parsed.hasMore;
+            const sizeBefore = observed.size;
             for (const obs of parsed.observations) {
               observed.add(obs.accountPk);
               onObservation(obs, parsed.cursor);
             }
+            // Live progress: report the cumulative count once per page that
+            // actually grew the set (a stagnant/duplicate page stays silent).
+            if (observed.size > sizeBefore) args.onProgress?.(observed.size);
           })
           .catch((e: unknown) => {
             logger.warn('rim.followers-page-reader: body/parse failed', {

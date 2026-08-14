@@ -17,6 +17,12 @@ import * as logger from '@/utils/logger';
 import { ok, err, type Result } from '@/utils/result';
 import { AdapterStaleError } from '@/adapter/errors';
 import { SURFACE } from '@/adapter/ig-surface';
+import type {
+  LocateActionResult,
+  LocateRectResult,
+  LocateScrollResult,
+  LocatedRect,
+} from '@/adapter/ig-surface';
 import { sleep } from '@/timing/primitives';
 import { ADAPTER } from '@/timing/config';
 
@@ -30,12 +36,26 @@ export interface AdapterTab {
   currentUrl(): string;
 }
 
+/**
+ * The human-input port the Actor drives when one is wired (`src/humanizer/`
+ * `Humanizer` satisfies this structurally). When present, element LOCATING
+ * still happens in-page (the surface's locate scripts return bounding rects)
+ * but every click/scroll is performed through real trusted input events;
+ * when absent, behavior is unchanged (the in-page JS click scripts).
+ */
+export interface ActorHumanizer {
+  click(target: LocatedRect): Promise<void>;
+  scroll(container: LocatedRect, deltaPx: number): Promise<void>;
+}
+
 /** Tuning for the (real-browser) wait loops. Tests override with tiny values. */
 export interface ActorOptions {
   /** Poll interval while waiting for the dialog / confirm control. */
   pollIntervalMs?: number;
   /** Total time to wait before declaring a control absent. */
   pollTimeoutMs?: number;
+  /** Optional human-input engine (see {@link ActorHumanizer}). */
+  humanizer?: ActorHumanizer;
   /**
    * Provider of the ACTIVE driver's abort signal (the engine/prune run token),
    * polled per wait iteration — a `stop()` interrupts an in-flight DOM poll
@@ -82,12 +102,14 @@ export class Actor {
   private readonly tab: AdapterTab;
   private readonly pollIntervalMs: number;
   private readonly pollTimeoutMs: number;
+  private readonly humanizer?: ActorHumanizer;
   private readonly abortSignal?: () => AbortSignal | undefined;
 
   constructor(tab: AdapterTab, opts: ActorOptions = {}) {
     this.tab = tab;
     this.pollIntervalMs = opts.pollIntervalMs ?? ADAPTER.POLL_INTERVAL_MS;
     this.pollTimeoutMs = opts.pollTimeoutMs ?? ADAPTER.POLL_TIMEOUT_MS;
+    this.humanizer = opts.humanizer;
     this.abortSignal = opts.abortSignal;
   }
 
@@ -104,7 +126,7 @@ export class Actor {
     // not guaranteed to be in the DOM on the first probe. Retry the initial
     // lookup through `waitFor` until the control appears or the timeout elapses.
     const res = await this.waitFor<FindButtonResult>(
-      () => this.tab.evaluate<FindButtonResult>(SURFACE.findAndActScript('follow')),
+      () => this.findAndAct('follow'),
       (r) => Boolean(r?.found),
     );
 
@@ -144,7 +166,7 @@ export class Actor {
     // A1: retry the initial lookup through `waitFor` — hydration may not have
     // placed the action button in the DOM when `goto` resolves.
     const res = await this.waitFor<FindButtonResult>(
-      () => this.tab.evaluate<FindButtonResult>(SURFACE.findAndActScript('unfollow')),
+      () => this.findAndAct('unfollow'),
       (r) => Boolean(r?.found),
     );
 
@@ -154,7 +176,7 @@ export class Actor {
 
     if (res.needsConfirm) {
       const confirmed = await this.waitFor<ConfirmResult>(
-        () => this.tab.evaluate<ConfirmResult>(SURFACE.confirmUnfollowScript()),
+        () => this.confirmUnfollow(),
         (r) => Boolean(r?.confirmed),
       );
       if (!confirmed) {
@@ -195,7 +217,7 @@ export class Actor {
     // The followers stat opens the modal via JS (verified live), so it is
     // located by TEXT and clicked. Retry through `waitFor` for SPA hydration.
     const clicked = await this.waitFor<ClickResult>(
-      () => this.tab.evaluate<ClickResult>(SURFACE.clickFollowersStatScript()),
+      () => this.clickStat('followers'),
       (r) => Boolean(r?.clicked),
     );
     if (!clicked?.clicked) {
@@ -230,7 +252,7 @@ export class Actor {
     // The following stat is the followers stat's sibling and opens the modal
     // via JS the same way — located by TEXT, retried for SPA hydration.
     const clicked = await this.waitFor<ClickResult>(
-      () => this.tab.evaluate<ClickResult>(SURFACE.clickFollowingStatScript()),
+      () => this.clickStat('following'),
       (r) => Boolean(r?.clicked),
     );
     if (!clicked?.clicked) {
@@ -259,6 +281,13 @@ export class Actor {
    * container (largest scrollable descendant of the dialog).
    */
   async scrollFollowers(): Promise<boolean> {
+    // Humanizer path: locate the container in-page, wheel-scroll it with real
+    // trusted input events (falls back to the JS jump when either is absent).
+    const humanizer = this.humanizer;
+    const locateScroll = SURFACE.locateScrollContainerScript;
+    if (humanizer && locateScroll) {
+      return this.scrollFollowersHumanized(humanizer, locateScroll);
+    }
     // Best-effort: a small follower list that fits in the modal has NO scrollable
     // container (nothing overflows), and the list may not be hydrated on the first
     // attempt. Either way there is simply nothing to scroll — return `false`, do
@@ -280,6 +309,95 @@ export class Actor {
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
+
+  /**
+   * One find-and-act attempt. Humanizer path: the surface's LOCATE script does
+   * the same search/decision as `findAndActScript` but returns the button's
+   * rect without clicking; the click is then performed with real trusted input
+   * events. Fallback (no humanizer, or a surface version without locate
+   * scripts): the unchanged in-page JS click script.
+   */
+  private async findAndAct(op: 'follow' | 'unfollow'): Promise<FindButtonResult> {
+    const humanizer = this.humanizer;
+    const locate = SURFACE.locateActionButtonScript;
+    if (humanizer && locate) {
+      const res = await this.tab.evaluate<LocateActionResult>(locate(op));
+      if (!res?.found) return { found: false };
+      const clicked = Boolean(res.wouldClick && res.rect);
+      if (clicked && res.rect) await humanizer.click(res.rect);
+      return {
+        found: true,
+        state: res.state ?? 'unknown',
+        clicked,
+        needsConfirm: clicked && Boolean(res.needsConfirm),
+      };
+    }
+    return this.tab.evaluate<FindButtonResult>(SURFACE.findAndActScript(op));
+  }
+
+  /** One unfollow-confirm attempt (humanized when possible; JS click fallback). */
+  private async confirmUnfollow(): Promise<ConfirmResult> {
+    const humanizer = this.humanizer;
+    const locate = SURFACE.locateConfirmUnfollowScript;
+    if (humanizer && locate) {
+      const res = await this.tab.evaluate<LocateRectResult>(locate());
+      if (!res?.found || !res.rect) return { confirmed: false };
+      await humanizer.click(res.rect);
+      return { confirmed: true };
+    }
+    return this.tab.evaluate<ConfirmResult>(SURFACE.confirmUnfollowScript());
+  }
+
+  /** One stat-control click attempt (humanized when possible; JS click fallback). */
+  private async clickStat(which: 'followers' | 'following'): Promise<ClickResult> {
+    const humanizer = this.humanizer;
+    const locate =
+      which === 'followers'
+        ? SURFACE.locateFollowersStatScript
+        : SURFACE.locateFollowingStatScript;
+    if (humanizer && locate) {
+      const res = await this.tab.evaluate<LocateRectResult>(locate());
+      if (!res?.found || !res.rect) return { clicked: false };
+      await humanizer.click(res.rect);
+      return { clicked: true };
+    }
+    const script =
+      which === 'followers'
+        ? SURFACE.clickFollowersStatScript()
+        : SURFACE.clickFollowingStatScript();
+    return this.tab.evaluate<ClickResult>(script);
+  }
+
+  /**
+   * One humanized dialog-scroll round: locate the scroll container's rect +
+   * metrics in-page, then wheel-scroll toward the bottom with real input
+   * events. The per-round distance is the remaining scroll, capped at three
+   * viewports — a human flicks a few screens at a time, and the collect loop's
+   * rounds carry the walk onward anyway. Returns `false` (nothing to scroll)
+   * exactly like the JS path when the container is absent or already bottomed.
+   */
+  private async scrollFollowersHumanized(
+    humanizer: ActorHumanizer,
+    locate: () => string,
+  ): Promise<boolean> {
+    const res = await this.tab.evaluate<LocateScrollResult>(locate());
+    if (!res?.found || !res.rect) {
+      logger.debug('actor.scrollFollowers: no scroll container (list fits or not yet hydrated)');
+      return false;
+    }
+    const scrollTop = res.scrollTop ?? 0;
+    const scrollHeight = res.scrollHeight ?? 0;
+    const clientHeight = res.clientHeight ?? 0;
+    const remaining = Math.max(0, scrollHeight - scrollTop - clientHeight);
+    if (remaining <= 0) {
+      logger.debug('actor.scrollFollowers: container already at bottom');
+      return false;
+    }
+    const delta = Math.min(remaining, Math.max(600, clientHeight * 3));
+    await humanizer.scroll(res.rect, delta);
+    logger.debug('actor.scrollFollowers (humanized)', { scrollTop, scrollHeight, delta });
+    return true;
+  }
 
   /**
    * Poll `run` until `done` is satisfied, the timeout elapses, or the ACTIVE

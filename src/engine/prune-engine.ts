@@ -66,6 +66,12 @@ export interface PruneScanOpts {
   shouldStop?: () => boolean;
   scrollMinMs?: number;
   scrollMaxMs?: number;
+  /**
+   * Live-progress callback (additive): the source relays the scrape's CUMULATIVE
+   * observed count as pages land, so the scan's counts can update mid-scrape
+   * instead of only when a whole-list walk resolves.
+   */
+  onProgress?: (observedCount: number) => void;
 }
 
 /** The own-following source's single verb: one bounded full-list scrape. */
@@ -204,6 +210,14 @@ export const PRUNE_DELAY_FACTOR = PRUNE.DELAY_FACTOR;
  */
 export const PRUNE_SCAN_FRESH_MS = PRUNE.SCAN_FRESH_MS;
 
+/**
+ * Minimum spacing between LIVE mid-scan status emissions (~4/sec): each parsed
+ * page fires a progress callback, and a large account walks hundreds of pages —
+ * unthrottled, every page would push a full projection over IPC. Phase-final
+ * emissions bypass the throttle so the settled numbers always land.
+ */
+export const PRUNE_PROGRESS_EMIT_MS = 250;
+
 // ---------------------------------------------------------------------------------
 // PruneEngine
 // ---------------------------------------------------------------------------------
@@ -234,6 +248,8 @@ export class PruneEngine {
   private pendingCandidates: PruneCandidate[] | null = null;
   /** Clock time the pending candidate set was captured; drives freshness. */
   private pendingScanAt: number | null = null;
+  /** Clock time of the last THROTTLED mid-scan progress emission. */
+  private lastProgressEmitAt = 0;
 
   constructor(deps: PruneEngineDeps) {
     this.deps = deps;
@@ -516,13 +532,37 @@ export class PruneEngine {
       scrollMaxMs: this.cfg.scanMaxMs,
     };
 
-    const followingPks = await this.deps.ownFollowing.fetchAllPks(scanOpts);
+    // Live counts: a fresh census counts up from zero as pages land (throttled
+    // to ~4 emissions/sec so the IPC stream is never flooded); each phase's
+    // settled total still lands unconditionally below. The stale candidate
+    // figure is zeroed too — it belongs to the census being replaced.
+    this.followingCount = 0;
+    this.followersCount = 0;
+    this.candidateCount = 0;
+    this.emitStatus();
+
+    const followingPks = await this.deps.ownFollowing.fetchAllPks({
+      ...scanOpts,
+      onProgress: (n): void => {
+        this.followingCount = n;
+        this.emitStatusThrottled();
+      },
+    });
     this.followingCount = followingPks.length;
     if (token.signal.aborted) {
       return this.abortedScan(followingPks.length, 0, 'between-phases');
     }
+    this.emitStatus();
 
-    const followerSet = new Set(await this.deps.ownFollowers.fetchAllPks(scanOpts));
+    const followerSet = new Set(
+      await this.deps.ownFollowers.fetchAllPks({
+        ...scanOpts,
+        onProgress: (n): void => {
+          this.followersCount = n;
+          this.emitStatusThrottled();
+        },
+      }),
+    );
     this.followersCount = followerSet.size;
     if (token.signal.aborted) {
       return this.abortedScan(followingPks.length, followerSet.size, 'before-candidates');
@@ -604,6 +644,20 @@ export class PruneEngine {
 
   private emitStatus(): void {
     this.deps.onStatus?.(this.status());
+  }
+
+  /**
+   * Mid-scan progress emission, rate-limited to one per
+   * {@link PRUNE_PROGRESS_EMIT_MS} (~4/sec): page-granular progress callbacks
+   * would otherwise push a projection over IPC for every parsed page. The
+   * unconditional {@link emitStatus} calls at phase/scan boundaries are not
+   * throttled, so the settled totals always land.
+   */
+  private emitStatusThrottled(): void {
+    const now = this.deps.clock.now();
+    if (now - this.lastProgressEmitAt < PRUNE_PROGRESS_EMIT_MS) return;
+    this.lastProgressEmitAt = now;
+    this.emitStatus();
   }
 
   /**

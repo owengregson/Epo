@@ -452,6 +452,24 @@ input[type=range]::-moz-range-thumb{
 }
 .tinput.invalid:hover, .tinput.invalid:focus{border-color:#855050}
 
+/* ---------- NumberTicker — rolling odometer numerals ---------- */
+/* Em-based throughout so the ticker inherits whichever tier hosts it
+   (.g-num display, .stat .v, KeyValue bolds) without size overrides. */
+.nt{display:inline-flex; vertical-align:baseline}
+.nt-col{display:inline-block; overflow:hidden; height:1em; line-height:1}
+.nt-reel{
+  display:flex; flex-direction:column;
+  transition:transform .42s var(--ease);
+  will-change:transform;
+}
+.nt-d{display:block; height:1em; line-height:1}
+.nt-sep{display:inline-block; line-height:1}
+/* Belt & braces: the component already renders plain text under reduced
+   motion; this also stills any reel that mounted before the setting flipped. */
+@media (prefers-reduced-motion: reduce){
+  .nt-reel{transition:none}
+}
+
 /* ============================================================
    RESPONSIVE — container queries for primitive controls
    (card selectors live in cards.css; the @container wrapper is

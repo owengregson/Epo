@@ -110,6 +110,46 @@ export interface FriendshipShowResult {
   isPrivate?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Humanizer locate-script results (additive). The locate scripts perform the
+// SAME element search as the click scripts but return the target's viewport
+// bounding rect (getBoundingClientRect) WITHOUT clicking — the Humanizer then
+// performs the click/scroll with real trusted input events.
+// ---------------------------------------------------------------------------
+
+/** A viewport bounding rect as the locate scripts report it (CSS px). */
+export interface LocatedRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Result of a plain locate script (confirm control, stat controls). */
+export interface LocateRectResult {
+  found: boolean;
+  rect?: LocatedRect;
+}
+
+/** Locate-only variant of `findAndActScript`: same search + decision, no click. */
+export interface LocateActionResult {
+  found: boolean;
+  state?: 'follow' | 'follow-back' | 'following' | 'requested';
+  /** Whether the op would click this button (the Humanizer then performs it). */
+  wouldClick?: boolean;
+  needsConfirm?: boolean;
+  rect?: LocatedRect;
+}
+
+/** Locate-only variant of `scrollFollowersScript`: container rect + metrics. */
+export interface LocateScrollResult {
+  found: boolean;
+  rect?: LocatedRect;
+  scrollTop?: number;
+  scrollHeight?: number;
+  clientHeight?: number;
+}
+
 /** Ids a surface can pull out of an endpoint URL (the bodies often carry none). */
 export interface EndpointIds {
   /** Subject pk of a single-relationship URL. */
@@ -171,6 +211,17 @@ export interface IgSurface {
   clickFollowingStatScript(): string;
   dialogPresentScript(): string;
   scrollFollowersScript(): string;
+
+  // --- Humanizer locate scripts (OPTIONAL — additive) ----------------------
+  // Same element searches as the click scripts above, but they RETURN the
+  // target's bounding rect instead of clicking; the Actor uses them only when
+  // a Humanizer is wired, and falls back to the click scripts when a surface
+  // version does not provide them.
+  locateActionButtonScript?(op: 'follow' | 'unfollow'): string;
+  locateConfirmUnfollowScript?(): string;
+  locateFollowersStatScript?(): string;
+  locateFollowingStatScript?(): string;
+  locateScrollContainerScript?(): string;
 
   // --- Identity scripts ----------------------------------------------------
   readProfileHrefScript(): string;

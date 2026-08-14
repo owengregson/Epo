@@ -3,6 +3,7 @@ import { h } from 'preact';
 import type { EpoStatus } from '@/types';
 import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { Icon } from '@/renderer/ui/Icon';
+import { NumberTicker } from '@/renderer/ui/NumberTicker';
 import { GrowthChart } from '@/renderer/charts/GrowthChart';
 import { useGrowthSeries } from '@/renderer/hooks/useGrowthSeries';
 
@@ -44,7 +45,9 @@ export function GrowthCard({ status }: GrowthCardProps): h.JSX.Element {
       <CardBody>
         <div class="growth-head">
           <div>
-            <div class="g-num num">{signed(total)}</div>
+            <div class="g-num num">
+              <NumberTicker value={total} signed />
+            </div>
             <div class="g-cap">net · gained &amp; retained, minus lost</div>
           </div>
           {hasDelta ? (
