@@ -509,9 +509,11 @@ export class PruneEngine {
 
     // Live counts: a fresh census counts up from zero as pages land (throttled
     // to ~4 emissions/sec so the IPC stream is never flooded); each phase's
-    // settled total still lands unconditionally below.
+    // settled total still lands unconditionally below. The stale candidate
+    // figure is zeroed too — it belongs to the census being replaced.
     this.followingCount = 0;
     this.followersCount = 0;
+    this.candidateCount = 0;
     this.emitStatus();
 
     const followingPks = await this.deps.ownFollowing.fetchAllPks({
