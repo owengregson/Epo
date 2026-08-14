@@ -1360,6 +1360,7 @@ export class Foundation {
       lastSentinel: null,
       lastActionAt: null,
       sessionStartedAt: null,
+      nextActionAt: null,
       netToday: 0,
       online: this.lastOnline,
       loggedIn,

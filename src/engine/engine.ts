@@ -23,6 +23,16 @@ import type { ScanPlan } from './scanner';
 import type { AdvanceResult } from './chain-controller';
 import type { FollowerAcquisition } from '../rim/types';
 import type { Settings } from '../settings/settings';
+import { DelayManager } from '../timing/delay-manager';
+import {
+  type DelayPolicy,
+  type SleepFn,
+  TIMED_OUT,
+  sleep as timingSleep,
+  uniform,
+  withTimeout,
+} from '../timing/primitives';
+import { ENGINE as ENGINE_TIMING } from '../timing/config';
 import * as log from '../utils/logger';
 
 // ---------------------------------------------------------------------------------
@@ -85,36 +95,17 @@ export interface EngineSentinel {
   check(): Promise<SentinelStatus>;
 }
 
-/**
- * An interruptible sleep: resolves after `ms` OR as soon as `signal` aborts,
- * whichever comes first (it never rejects). Injected so tests can advance a
- * FakeClock instead of waiting; the default is a real `setTimeout` wired to the
- * signal (E1 — nothing in the Engine can wait un-interruptibly).
- */
-export type SleepFn = (ms: number, signal: AbortSignal) => Promise<void>;
-
-/** The default sleep: real setTimeout, resolving early (not rejecting) on abort. */
-export const defaultSleep: SleepFn = (ms, signal) =>
-  new Promise<void>((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const finish = (): void => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', finish);
-      resolve();
-    };
-    const timer = setTimeout(finish, ms);
-    signal.addEventListener('abort', finish, { once: true });
-  });
+// Back-compat re-exports: the canonical interruptible sleep + its signature now
+// live in timing/primitives (E1 — nothing in the Engine can wait un-interruptibly).
+export { sleep as defaultSleep } from '../timing/primitives';
+export type { SleepFn } from '../timing/primitives';
 
 /** How long an iteration idles when nothing is due yet (§3.1, final branch). */
-export const ENGINE_IDLE_MS = 30_000;
+export const ENGINE_IDLE_MS = ENGINE_TIMING.IDLE_MS;
 
 /** f10: bounds of the short jittered pause ending every branch that issued IG traffic. */
-export const REFILL_PACING_MIN_MS = 2_000;
-export const REFILL_PACING_MAX_MS = 5_000;
+export const REFILL_PACING_MIN_MS = ENGINE_TIMING.REFILL_PACING_MIN_MS;
+export const REFILL_PACING_MAX_MS = ENGINE_TIMING.REFILL_PACING_MAX_MS;
 
 /** R1: at most this many candidate usernames are enriched per pass. */
 export const ENRICH_BATCH_SIZE = 10;
@@ -162,6 +153,8 @@ export interface EngineStatus {
   lastSentinel: SentinelStatus | null;
   lastActionAt: number | null;
   sessionStartedAt: number | null;
+  /** Deadline (epoch ms) of the in-flight humanized action delay, else null. */
+  nextActionAt: number | null;
   netToday: number;
   /** Whether the connectivity monitor last reported the internet reachable. */
   online: boolean;
@@ -190,6 +183,15 @@ export interface EngineDeps {
   settings: Settings;
   /** Injected sleep; defaults to a real interruptible setTimeout. */
   sleep?: SleepFn;
+  /**
+   * The shared wait owner. When absent the Engine constructs a private one over
+   * its own clock/sleep/rng — existing tests that inject `sleep` keep working.
+   * The composition root injects ONE DelayManager shared with the prune engine
+   * (keys are namespaced `engine:` / `prune:`).
+   */
+  delays?: DelayManager;
+  /** Randomness for the jittered pacing draw; injectable for deterministic tests. */
+  rng?: () => number;
   /** Called with a fresh status projection after every step and lifecycle change. */
   onStatus?: (s: EngineStatus) => void;
   /** Called exactly once per halt with the reason (e.g. `sentinel:challenge`). */
@@ -209,7 +211,8 @@ interface CurrentTarget {
 
 export class Engine {
   private readonly deps: EngineDeps;
-  private readonly sleepFn: SleepFn;
+  /** The shared wait owner: every Engine wait is a named `engine:*` entry here. */
+  private readonly delays: DelayManager;
   /** Live settings — swapped by {@link applySettings} when the user saves changes. */
   private settings: Settings;
 
@@ -217,8 +220,6 @@ export class Engine {
   /** Epoch ms of the current run's idle→running transition; null when not running. */
   private sessionStartedAt: number | null = null;
   private runAbort = new AbortController();
-  /** The AbortController of the sleep currently in flight, if any. */
-  private activeSleep: AbortController | null = null;
   /** Resolvers parked by the run loop while paused; released by resume()/stop(). */
   private resumeWaiters: Array<() => void> = [];
   /**
@@ -275,7 +276,9 @@ export class Engine {
 
   constructor(deps: EngineDeps) {
     this.deps = deps;
-    this.sleepFn = deps.sleep ?? defaultSleep;
+    this.delays =
+      deps.delays ??
+      new DelayManager({ clock: deps.clock, rng: deps.rng, sleep: deps.sleep ?? timingSleep });
     this.settings = deps.settings;
     this.enricher = deps.enricher ?? {
       enrich: (usernames: string[]): Promise<number> => {
@@ -367,7 +370,7 @@ export class Engine {
   pause(): void {
     if (this.engineState !== 'running') return;
     this.engineState = 'paused';
-    this.activeSleep?.abort();
+    this.delays.cancelAll('engine:');
     // A loop parked for offline must wake to re-evaluate and park as paused.
     this.releaseOnlineWaiters();
     log.info('engine: paused');
@@ -390,7 +393,7 @@ export class Engine {
    */
   stop(): void {
     this.runAbort.abort();
-    this.activeSleep?.abort();
+    this.delays.cancelAll('engine:');
     if (this.engineState !== 'halted') this.engineState = 'idle';
     this.sessionStartedAt = null;
     this.releaseResumeWaiters();
@@ -410,7 +413,7 @@ export class Engine {
     if (this.online === online) return;
     this.online = online;
     if (!online) {
-      this.activeSleep?.abort();
+      this.delays.cancelAll('engine:');
     } else {
       this.releaseOnlineWaiters();
     }
@@ -440,6 +443,7 @@ export class Engine {
       lastSentinel: this.lastSentinel,
       lastActionAt: this.lastActionAt,
       sessionStartedAt: this.sessionStartedAt,
+      nextActionAt: this.delays.nextDeadline('engine:action-delay'),
       netToday: store.netFollowersSince(startOfToday),
       online: this.online,
     };
@@ -484,7 +488,7 @@ export class Engine {
       // the next iteration. Halting is reserved for a VERIFIED block, which the
       // Sentinel reports as a non-'ok' status (step 2), never as a rejection.
       log.warn('engine: step failed transiently, treating as idle', { error: String(err) });
-      await this.interruptibleSleep(ENGINE_IDLE_MS);
+      await this.engineWait('engine:transient-backoff', ENGINE_IDLE_MS);
       result = 'idle';
     }
     this.lastStep = result;
@@ -503,13 +507,13 @@ export class Engine {
 
     // 3. Active-hours gate.
     if (!this.deps.rate.withinActiveHours()) {
-      await this.interruptibleSleep(this.msUntilActiveWindow());
+      await this.engineWait('engine:active-hours-park', this.msUntilActiveWindow());
       return 'waited-active-hours';
     }
 
     // 4. Hard-ceiling gate — nothing more today.
     if (this.deps.rate.atHardCeiling()) {
-      await this.interruptibleSleep(this.msUntilLocalMidnight());
+      await this.engineWait('engine:daily-ceiling-park', this.msUntilLocalMidnight());
       return 'waited-ceiling';
     }
 
@@ -555,7 +559,7 @@ export class Engine {
       log.warn('engine: request budget saturated, parking', {
         remaining: this.deps.requestBudget.remaining(),
       });
-      await this.interruptibleSleep(ENGINE_IDLE_MS);
+      await this.engineWait('engine:budget-park', ENGINE_IDLE_MS);
       return 'idle';
     }
     const due = this.deps.churn.nextDue(now);
@@ -568,7 +572,7 @@ export class Engine {
       // pause/stop itself (growth won't act again until it resumes). Any other
       // state (running, or a direct step in tests) keeps THE human delay.
       if (this.stateNow() !== 'paused' && !this.runAbort.signal.aborted) {
-        await this.interruptibleSleep(this.deps.rate.nextDelayMs());
+        await this.engineWait('engine:action-delay', this.deps.rate.nextDelayMs());
       }
       return 'acted';
     }
@@ -597,7 +601,7 @@ export class Engine {
     }
 
     // 10. Nothing due yet (records waiting on follow-back/holds): short idle.
-    await this.interruptibleSleep(ENGINE_IDLE_MS);
+    await this.engineWait('engine:idle', ENGINE_IDLE_MS);
     return 'idle';
   }
 
@@ -761,40 +765,38 @@ export class Engine {
   // --- Time & sleep -----------------------------------------------------------------
 
   /**
-   * Sleep interruptibly: a per-sleep AbortController that fires on `pause()`/`stop()`
-   * and is chained to the run signal, so no wait can outlive a control command (E1).
+   * Wait through the shared DelayManager under a namespaced key, linked to the
+   * CURRENT run-generation token (E1/R2: no wait outlives a control command, and
+   * the manager's per-key replace guard mirrors the old activeSleep identity
+   * check — a stale generation's wait can never shadow the new run's). The
+   * `engine:action-delay` wait additionally emits a status right after
+   * registration, so the renderer sees the REAL next-action deadline
+   * (`nextActionAt`) while the wait is pending; other keys stay quiet to avoid
+   * doubling every step's status push.
    */
-  private async interruptibleSleep(ms: number): Promise<void> {
-    const controller = new AbortController();
-    // Capture the CURRENT generation's signal: cleanup must unhook from the signal
-    // we hooked, even if a restart has swapped `this.runAbort` by the time we wake.
-    const runSignal = this.runAbort.signal;
-    const onRunAbort = (): void => controller.abort();
-    if (runSignal.aborted) {
-      controller.abort();
-    } else {
-      runSignal.addEventListener('abort', onRunAbort, { once: true });
-    }
-    this.activeSleep = controller;
-    try {
-      await this.sleepFn(ms, controller.signal);
-    } finally {
-      // R2: only clear our own controller — a stale generation's sleep resolving
-      // after a restart must not null out the NEW loop's in-flight sleep handle.
-      if (this.activeSleep === controller) this.activeSleep = null;
-      runSignal.removeEventListener('abort', onRunAbort);
-    }
+  private async engineWait(key: string, policyOrMs: DelayPolicy | number): Promise<void> {
+    const wait = this.delays.wait(key, policyOrMs, { signal: this.runAbort.signal });
+    if (key === 'engine:action-delay') this.emitStatus();
+    await wait;
+  }
+
+  /** The CURRENT run-generation abort signal (adapter waits link to this). */
+  runSignal(): AbortSignal {
+    return this.runAbort.signal;
   }
 
   /**
    * f10: the short jittered pause ending every branch that issued Instagram traffic
    * outside step 8 (acquire / enrich / sweep / chain-advance-into-refill), so no
    * branch can hammer back-to-back. Step 8 keeps `rate.nextDelayMs()` as the human
-   * delay between ACTIONS; this is merely the between-reads floor.
+   * delay between ACTIONS; this is merely the between-reads floor. Drawn through
+   * the DelayManager's injected rng (deterministic tests — no raw Math.random).
    */
-  private async pacingSleep(): Promise<void> {
-    const span = REFILL_PACING_MAX_MS - REFILL_PACING_MIN_MS;
-    await this.interruptibleSleep(Math.round(REFILL_PACING_MIN_MS + Math.random() * span));
+  private pacingSleep(): Promise<void> {
+    return this.engineWait(
+      'engine:refill-pacing',
+      uniform(REFILL_PACING_MIN_MS, REFILL_PACING_MAX_MS),
+    );
   }
 
   /** Ms until the next local `activeHoursStart` o'clock (always strictly future). */
@@ -857,17 +859,10 @@ export class Engine {
     if (state === 'idle' || state === 'halted') return true;
     // Paused AND the loop has already reached the gate → quiesced.
     if (state === 'paused' && this.parkedNow) return true;
-    return new Promise<boolean>((resolve) => {
-      let settled = false;
-      const done = (v: boolean): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(v);
-      };
-      const timer = setTimeout(() => done(false), timeoutMs);
-      this.parkAckWaiters.push(() => done(true));
+    const parked = new Promise<true>((resolve) => {
+      this.parkAckWaiters.push(() => resolve(true));
     });
+    return (await withTimeout(parked, timeoutMs)) !== TIMED_OUT;
   }
 
   // --- Offline gate (mirrors the pause gate) -------------------------------------------
