@@ -1338,6 +1338,7 @@ export class Foundation {
       dailyLimit: s.pruneDailyLimit,
       lastRunAt: s.pruneLastRunAt,
       lastSentinel: null,
+      nextActionAt: null,
       scanReady: false,
     };
   }

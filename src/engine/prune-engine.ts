@@ -21,7 +21,16 @@ import type { KnowledgeStore } from '../store/knowledge-store';
 import type { Clock } from '../governors/clock';
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { ChurnActionOutcome } from './churn-scheduler';
-import { defaultSleep, type SleepFn } from './engine';
+import { DelayManager } from '../timing/delay-manager';
+import {
+  type DelayPolicy,
+  type SleepFn,
+  jittered,
+  sample,
+  scaled,
+  sleep as timingSleep,
+} from '../timing/primitives';
+import { PRUNE } from '../timing/config';
 import * as log from '../utils/logger';
 
 /** One day in ms — the unit `pruneScheduleDays` counts. */
@@ -125,6 +134,8 @@ export interface PruneStatus {
   /** Epoch ms of the last COMPLETED run; null when never completed. */
   lastRunAt: number | null;
   lastSentinel: SentinelStatus | null;
+  /** Deadline (epoch ms) of the in-flight inter-unfollow delay, else null. */
+  nextActionAt: number | null;
 }
 
 /** Settings-derived knobs (see `toPruneConfig` in `settings/settings.ts`). */
@@ -157,6 +168,13 @@ export interface PruneEngineDeps {
   sleep?: SleepFn;
   /** Injectable randomness for the humanized delay (deterministic tests). */
   rng?: () => number;
+  /**
+   * The shared wait owner. When absent the PruneEngine constructs a private one
+   * over its own clock/sleep/rng — existing tests that inject `sleep` keep
+   * working. The composition root injects the ONE DelayManager it shares with
+   * the growth engine (keys namespaced `prune:` / `engine:`).
+   */
+  delays?: DelayManager;
   /** Seed for `lastRunAt` (from persisted Settings); null when never run. */
   lastRunAt?: number | null;
   /** Called with a fresh status projection after every step and state change. */
@@ -166,7 +184,7 @@ export interface PruneEngineDeps {
 }
 
 /** Brief park after a blocked action / closed budget before continuing. */
-export const PRUNE_PARK_MS = 30_000;
+export const PRUNE_PARK_MS = PRUNE.PARK_MS;
 
 /**
  * Prune unfollows run at a THIRD of the growth engine's humanized inter-action
@@ -176,7 +194,7 @@ export const PRUNE_PARK_MS = 30_000;
  * inter-action delay is scaled — the scan pacing and the blocked/budget park are
  * unaffected.
  */
-export const PRUNE_DELAY_FACTOR = 1 / 3;
+export const PRUNE_DELAY_FACTOR = PRUNE.DELAY_FACTOR;
 
 /**
  * How long a completed scan's candidate set stays runnable for a 2-step run.
@@ -184,7 +202,7 @@ export const PRUNE_DELAY_FACTOR = 1 / 3;
  * (no second full-list walk); past it the cache is treated as stale and a Run
  * re-scans — so a scheduled run days later never acts on an old manual census.
  */
-export const PRUNE_SCAN_FRESH_MS = 15 * 60_000;
+export const PRUNE_SCAN_FRESH_MS = PRUNE.SCAN_FRESH_MS;
 
 // ---------------------------------------------------------------------------------
 // PruneEngine
@@ -192,14 +210,13 @@ export const PRUNE_SCAN_FRESH_MS = 15 * 60_000;
 
 export class PruneEngine {
   private readonly deps: PruneEngineDeps;
-  private readonly sleepFn: SleepFn;
+  /** The shared wait owner: every prune wait is a named `prune:*` entry here. */
+  private readonly delays: DelayManager;
   private readonly rng: () => number;
   private cfg: PruneConfig;
 
   private pruneState: PruneState = 'idle';
   private runAbort = new AbortController();
-  /** The AbortController of the sleep currently in flight, if any. */
-  private activeSleep: AbortController | null = null;
 
   private followingCount = 0;
   private followersCount = 0;
@@ -220,7 +237,9 @@ export class PruneEngine {
 
   constructor(deps: PruneEngineDeps) {
     this.deps = deps;
-    this.sleepFn = deps.sleep ?? defaultSleep;
+    this.delays =
+      deps.delays ??
+      new DelayManager({ clock: deps.clock, rng: deps.rng, sleep: deps.sleep ?? timingSleep });
     this.rng = deps.rng ?? Math.random;
     this.cfg = deps.cfg;
     this.lastRunAt = deps.lastRunAt ?? null;
@@ -359,7 +378,7 @@ export class PruneEngine {
         // window ends the run (a one-shot routine does not wait a whole window).
         if (!this.deps.requestBudget.canSpend()) {
           log.warn('prune: request budget saturated, parking');
-          await this.interruptibleSleep(PRUNE_PARK_MS);
+          await this.pruneWait('prune:park', PRUNE_PARK_MS);
           if (token.signal.aborted) break;
           if (!this.deps.requestBudget.canSpend()) {
             log.warn('prune: request budget still saturated, stopping run');
@@ -406,13 +425,13 @@ export class PruneEngine {
             // account untouched (no ledger), park briefly, and continue.
             log.warn('prune: action blocked, parking briefly', { pk: cand.pk });
             this.emitStatus();
-            await this.interruptibleSleep(PRUNE_PARK_MS);
+            await this.pruneWait('prune:park', PRUNE_PARK_MS);
             continue;
         }
         this.emitStatus();
 
         // THE humanized delay between actions (min/max from config, jittered).
-        await this.interruptibleSleep(this.nextDelayMs());
+        await this.pruneWait('prune:action-delay', this.nextDelayMs());
       }
     } catch (e) {
       // Not silent: an unexpected mid-run failure is logged loud and halts —
@@ -444,7 +463,7 @@ export class PruneEngine {
    */
   stop(): void {
     this.runAbort.abort();
-    this.activeSleep?.abort();
+    this.delays.cancelAll('prune:');
     if (this.busy()) this.setState('idle');
     log.info('prune: stopped');
   }
@@ -461,8 +480,14 @@ export class PruneEngine {
       dailyLimit: this.cfg.dailyLimit,
       lastRunAt: this.lastRunAt,
       lastSentinel: this.lastSentinel,
+      nextActionAt: this.delays.nextDeadline('prune:action-delay'),
       scanReady: this.hasFreshScan(),
     };
+  }
+
+  /** The CURRENT run/scan abort signal (adapter waits link to this). */
+  runSignal(): AbortSignal {
+    return this.runAbort.signal;
   }
 
   // --- Scan ------------------------------------------------------------------------
@@ -589,31 +614,23 @@ export class PruneEngine {
    */
   private nextDelayMs(): number {
     const { minDelayMs, maxDelayMs, jitterPercent } = this.cfg;
-    const base = minDelayMs + this.rng() * (maxDelayMs - minDelayMs);
-    const jitter = base * (jitterPercent / 100) * (this.rng() * 2 - 1);
-    return Math.round((base + jitter) * PRUNE_DELAY_FACTOR);
+    return sample(
+      scaled(jittered(minDelayMs, maxDelayMs, jitterPercent), PRUNE_DELAY_FACTOR),
+      this.rng,
+    );
   }
 
   /**
-   * Sleep interruptibly: a per-sleep AbortController chained to the run signal,
-   * so `stop()` wakes any in-flight wait immediately (mirrors `engine.ts`).
+   * Wait through the shared DelayManager under a namespaced key, linked to this
+   * run's abort token — `stop()` wakes any in-flight wait immediately (mirrors
+   * `engine.ts`). The `prune:action-delay` wait additionally emits a status
+   * right after registration, so the renderer sees the REAL next-unfollow
+   * deadline (`nextActionAt`) while the wait is pending.
    */
-  private async interruptibleSleep(ms: number): Promise<void> {
-    const controller = new AbortController();
-    const runSignal = this.runAbort.signal;
-    const onRunAbort = (): void => controller.abort();
-    if (runSignal.aborted) {
-      controller.abort();
-    } else {
-      runSignal.addEventListener('abort', onRunAbort, { once: true });
-    }
-    this.activeSleep = controller;
-    try {
-      await this.sleepFn(ms, controller.signal);
-    } finally {
-      if (this.activeSleep === controller) this.activeSleep = null;
-      runSignal.removeEventListener('abort', onRunAbort);
-    }
+  private async pruneWait(key: string, policyOrMs: DelayPolicy | number): Promise<void> {
+    const wait = this.delays.wait(key, policyOrMs, { signal: this.runAbort.signal });
+    if (key === 'prune:action-delay') this.emitStatus();
+    await wait;
   }
 }
 
