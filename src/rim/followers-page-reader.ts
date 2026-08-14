@@ -25,8 +25,8 @@ import { SystemClock, type Clock } from '@/governors/clock';
 import type { Observation } from '@/store/types';
 import type { RimTab } from '@/rim/types';
 import * as logger from '@/utils/logger';
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+import { fixed, sample, sleep, uniform } from '@/timing/primitives';
+import { RIM } from '@/timing/config';
 
 /** The list-dialog operations the scraper needs. `Actor` satisfies this. */
 export interface FollowersActor {
@@ -111,7 +111,7 @@ export class FollowersPageReader {
     this.reader = deps.reader;
     this.actor = deps.actor;
     this.clock = deps.clock ?? new SystemClock();
-    this.scrollWaitMs = deps.scrollWaitMs ?? 2000;
+    this.scrollWaitMs = deps.scrollWaitMs ?? RIM.SCROLL_WAIT_MS;
     this.sleepFn = deps.sleep ?? sleep;
     this.rng = deps.rng ?? Math.random;
   }
@@ -121,15 +121,13 @@ export class FollowersPageReader {
     const dialog = args.dialog ?? 'followers';
     const shouldStop = args.shouldStop ?? ((): boolean => false);
     // Each call draws a FRESH jittered wait when both bounds are set (the prune
-    // scan path); otherwise the fixed scrollWaitMs (growth, unchanged).
-    const nextWaitMs = (): number => {
-      if (args.scrollMinMs === undefined || args.scrollMaxMs === undefined) {
-        return this.scrollWaitMs;
-      }
-      const min = Math.max(0, args.scrollMinMs);
-      const max = Math.max(min, args.scrollMaxMs);
-      return Math.round(min + this.rng() * (max - min));
-    };
+    // scan path); otherwise the fixed scrollWaitMs (growth, unchanged). The
+    // `uniform` policy carries the min ≥ 0 / max ≥ min clamps.
+    const waitPolicy =
+      args.scrollMinMs === undefined || args.scrollMaxMs === undefined
+        ? fixed(this.scrollWaitMs)
+        : uniform(args.scrollMinMs, args.scrollMaxMs);
+    const nextWaitMs = (): number => sample(waitPolicy, this.rng);
     // The one endpoint kind this scrape parses list pages from — the paginated
     // `following/` API when the FOLLOWING dialog is open, else `followers/`.
     const listKind = dialog === 'following' ? 'following-list' : 'followers-list';

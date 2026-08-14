@@ -1,4 +1,5 @@
 import type { KnowledgeStore } from '../store/knowledge-store';
+import { jittered, sample } from '../timing/primitives';
 import type { Clock } from './clock';
 
 export interface RateGovernorConfig {
@@ -68,12 +69,12 @@ export class RateGovernor {
 
   /**
    * A humanized delay before the next action: a base uniformly in [min,max], then a
-   * symmetric ± jitter of `jitterPercent`. `rng` is injectable for deterministic tests.
+   * symmetric ± jitter of `jitterPercent` (the canonical `jittered` policy from
+   * timing/primitives — written exactly once for the whole app). `rng` is
+   * injectable for deterministic tests.
    */
   nextDelayMs(rng: () => number = Math.random): number {
     const { minDelayMs, maxDelayMs, jitterPercent } = this.cfg;
-    const base = minDelayMs + rng() * (maxDelayMs - minDelayMs);
-    const jitter = base * (jitterPercent / 100) * (rng() * 2 - 1);
-    return Math.round(base + jitter);
+    return sample(jittered(minDelayMs, maxDelayMs, jitterPercent), rng);
   }
 }
