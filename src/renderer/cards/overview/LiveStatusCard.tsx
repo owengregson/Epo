@@ -5,6 +5,7 @@ import type { EpoStatus, QueueRow, Settings } from '@/types';
 import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { Icon } from '@/renderer/ui/Icon';
 import { Meter } from '@/renderer/ui/Meter';
+import { NumberTicker } from '@/renderer/ui/NumberTicker';
 import { RadialRing } from '@/renderer/ui/RadialRing';
 import { Stat } from '@/renderer/ui/Stat';
 import { useCountdown } from '@/renderer/hooks/useCountdown';
@@ -13,11 +14,6 @@ import { durationHm, mmss, ratio, withAt } from '@/renderer/lib/format';
 
 type Step = NonNullable<EpoStatus['lastStep']>;
 type Sentinel = NonNullable<EpoStatus['lastSentinel']>;
-
-/** "+9" style signed counter (mockup shows "+0" at rest). */
-function signed(n: number): string {
-  return n >= 0 ? `+${n}` : String(n);
-}
 
 /** Human phrase for what the engine's last step did. */
 function stepLabel(step: Step): string {
@@ -164,7 +160,10 @@ export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX
           <div class="ht-top">
             <span class="k">Actions today</span>
             <span class="v">
-              <b>{done}</b> <span class="dim">/ {rate ?? '—'}</span>
+              <b>
+                <NumberTicker value={done} />
+              </b>{' '}
+              <span class="dim">/ {rate ?? '—'}</span>
             </span>
           </div>
           <Meter pct={pct} />
@@ -180,7 +179,9 @@ export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX
 
         {/* secondary instruments */}
         <div class="hero-cells">
-          <Stat label="Net today">{signed(status?.netToday ?? 0)}</Stat>
+          <Stat label="Net today">
+            <NumberTicker value={status?.netToday ?? 0} signed />
+          </Stat>
           <Stat label="Session">{sessionText}</Stat>
           <Stat label="Last action" small sub={lastSub}>
             {lastActText}

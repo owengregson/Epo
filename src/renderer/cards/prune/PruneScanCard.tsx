@@ -6,6 +6,7 @@ import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { Button } from '@/renderer/ui/Button';
 import { Stat } from '@/renderer/ui/Stat';
 import { KeyValue } from '@/renderer/ui/KeyValue';
+import { NumberTicker } from '@/renderer/ui/NumberTicker';
 import { commas, shortDate } from '@/renderer/lib/format';
 
 /** Epoch ms → coarse relative phrase ("3h ago"); falls back to a short date. */
@@ -96,9 +97,11 @@ export function PruneScanCard({
       </CardHeader>
       <CardBody>
         <div class="t-stats">
-          <Stat label="Following">{scannedEver ? commas(following) : '—'}</Stat>
-          <Stat label="Followers">{scannedEver ? commas(followers) : '—'}</Stat>
-          <Stat label="Not following back">{scannedEver ? commas(candidates) : '—'}</Stat>
+          <Stat label="Following">{scannedEver ? <NumberTicker value={following} /> : '—'}</Stat>
+          <Stat label="Followers">{scannedEver ? <NumberTicker value={followers} /> : '—'}</Stat>
+          <Stat label="Not following back">
+            {scannedEver ? <NumberTicker value={candidates} /> : '—'}
+          </Stat>
         </div>
         <KeyValue k="Pruned today">
           <b>{commas(dailyDone)}</b> <span class="dim">/ {dailyLimit > 0 ? commas(dailyLimit) : '—'}</span>
