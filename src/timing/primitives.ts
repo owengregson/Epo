@@ -40,18 +40,22 @@ export function uniform(minMs: number, maxMs: number): DelayPolicy {
 }
 
 /**
- * THE humanized delay: a base uniformly in [min,max], then a symmetric
+ * THE paced delay: a base uniformly in [min,max], then a symmetric
  * ± `jitterPercent` of that base. Consumes the rng TWICE (base, then jitter) —
  * the exact formula and draw order the RateGovernor has always used, so
  * deterministic tests seeded against the old code still hold.
  */
 export function jittered(minMs: number, maxMs: number, jitterPercent: number): DelayPolicy {
+  // Jitter is clamped to ±95% so the draw can never collapse to (or below)
+  // zero — a 100% jitter setting would otherwise turn the inter-action pace
+  // into an immediate fire. The result keeps a floor of 5% of the lower bound.
+  const j = Math.min(95, Math.max(0, jitterPercent));
   return {
     kind: 'jittered',
     sample: (rng) => {
       const base = minMs + rng() * (maxMs - minMs);
-      const jitter = base * (jitterPercent / 100) * (rng() * 2 - 1);
-      return Math.round(base + jitter);
+      const jitter = base * (j / 100) * (rng() * 2 - 1);
+      return Math.max(0, Math.round(base + jitter));
     },
   };
 }

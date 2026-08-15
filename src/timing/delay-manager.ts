@@ -38,7 +38,7 @@ export interface WaitResult {
 export interface WaitOpts {
   /** External abort (an engine's run-generation token): aborting resolves the wait. */
   signal?: AbortSignal;
-  /** Optional human-readable annotation surfaced through `pending()`. */
+  /** Optional readable annotation surfaced through `pending()`. */
   label?: string;
 }
 
