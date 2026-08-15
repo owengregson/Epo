@@ -31,6 +31,12 @@ import {
 import { sleep } from '@/timing/primitives';
 import { ADAPTER } from '@/timing/config';
 
+/** Minimum wheel distance (px) for a list-scroll step — a shorter nudge can fail
+ *  to trigger the next page load on tall viewports. One home for BOTH scroll
+ *  paths (notifications drawer / followers dialog); the viewport multipliers
+ *  stay local to each path's dialog geometry. */
+const MIN_SCROLL_STEP_PX = 600;
+
 /**
  * Minimal structural view of the tab the Actor drives. `InstagramTab` (from
  * `tab.ts`) satisfies this; tests supply a fake with the same shape.
@@ -434,7 +440,10 @@ export class Actor {
     const clientHeight = res.clientHeight ?? 0;
     const remaining = Math.max(0, scrollHeight - scrollTop - clientHeight);
     if (remaining <= 0) return false;
-    await interactor.scroll(res.rect, Math.min(remaining, Math.max(600, clientHeight * 2)));
+    await interactor.scroll(
+      res.rect,
+      Math.min(remaining, Math.max(MIN_SCROLL_STEP_PX, clientHeight * 2)),
+    );
     return true;
   }
 
@@ -611,7 +620,7 @@ export class Actor {
       logger.debug('actor.scrollFollowers: container already at bottom');
       return false;
     }
-    const delta = Math.min(remaining, Math.max(600, clientHeight * 3));
+    const delta = Math.min(remaining, Math.max(MIN_SCROLL_STEP_PX, clientHeight * 3));
     // Rest the cursor on the hover-safe point the locate script found (off the
     // username/avatar/button hover triggers) so the wheel scrolls the list and
     // not an Instagram hover-preview card. Absent → the Interactor picks its own

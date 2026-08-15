@@ -187,19 +187,24 @@ export class Reader {
   }
 
   /**
-   * Parse the activity-feed (news inbox) body into the "started following you"
-   * events it carries. `[]` on an empty feed; a shape mismatch is warned and
-   * ALSO returns `[]` — the follow-back watcher treats the fetch as failed via
-   * its own response-arrival timeout, and a drifted body must never invent
-   * follow events.
+   * STRICT parse of the activity-feed (news inbox) body into the "started
+   * following you" events it carries: `[]` on a well-formed empty feed, `null`
+   * on a shape mismatch — so callers can tell IG shape drift apart from
+   * "nobody new followed". A drifted body must never invent follow events, and
+   * (via the null) must never masquerade as a successful empty check either.
    */
-  parseActivityFeed(body: unknown): FollowEvent[] {
+  parseActivityFeedStrict(body: unknown): FollowEvent[] | null {
     const result = SURFACE.extractActivityFeed(this.coerce(body, 'activity-feed'));
     if (isShapeMismatch(result)) {
       this.warnUnexpected('activity-feed', body);
-      return [];
+      return null;
     }
     return result;
+  }
+
+  /** Lenient variant for callers that only merge facts: drift collapses to `[]`. */
+  parseActivityFeed(body: unknown): FollowEvent[] {
+    return this.parseActivityFeedStrict(body) ?? [];
   }
 
   /**

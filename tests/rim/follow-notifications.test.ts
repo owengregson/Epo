@@ -151,6 +151,36 @@ test('an inbox with no follow stories is a VALID empty result (ok: true)', async
   expect(res).toMatchObject({ ok: true, events: [] });
 });
 
+test('a shape-drifted inbox body is a TYPED failure (feed-shape-drift), never an empty success', async () => {
+  const { tab, actor, source } = build();
+  actor.onClick = () => {
+    // The response ARRIVES but carries a drifted/unrecognized shape (an IG
+    // change or a {status:'fail'} interstitial) — no stories arrays at all.
+    if (actor.clicks === 1) tab.emit(mkResp(INBOX_URL, { status: 'fail', message: 'drifted' }));
+  };
+
+  const res = await source.fetchRecent();
+
+  expect(res.ok).toBe(false);
+  expect(res.reason).toBe('feed-shape-drift');
+  expect(res.events).toEqual([]);
+});
+
+test('a drifted page mixed with a well-formed page still succeeds on the good page', async () => {
+  const { tab, actor, source } = build();
+  actor.onClick = () => {
+    if (actor.clicks === 1) {
+      tab.emit(mkResp(INBOX_URL, { status: 'fail', message: 'drifted' }));
+      tab.emit(mkResp(INBOX_URL, inboxBody([followStory('111', 2_000)], [])));
+    }
+  };
+
+  const res = await source.fetchRecent();
+
+  expect(res.ok).toBe(true);
+  expect(res.events).toEqual([{ pk: '111', username: 'u111', atMs: 2_000_000 }]);
+});
+
 test('no response within the wait window is a TYPED failure, never an empty success', async () => {
   const { source } = build({ waitMs: 200 });
   // Click succeeds; the response never arrives.

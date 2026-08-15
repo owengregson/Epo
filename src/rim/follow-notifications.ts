@@ -111,7 +111,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     this.sentinel = deps.sentinel;
     this.store = deps.store;
     this.responseWaitMs = deps.responseWaitMs ?? RIM.NOTIFICATIONS_WAIT_MS;
-    this.acceptVerifyMs = deps.acceptVerifyMs ?? 4_000;
+    this.acceptVerifyMs = deps.acceptVerifyMs ?? RIM.ACCEPT_VERIFY_MS;
     this.sleep = deps.sleep ?? sleep;
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
@@ -138,12 +138,14 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     // BEFORE clicking closes the race where a fast response beats the handler.
     // (Object properties so callback assignments stay visible to CFA.)
     const captured: {
-      /** Accumulated follow events across ALL observed feed pages (deduped). */
+      /** Accumulated follow events across ALL observed WELL-FORMED feed pages (deduped). */
       events: FollowEvent[] | null;
       sawInbox: boolean;
+      /** A feed body arrived but shape-mismatched (IG drift / fail interstitial). */
+      feedDrift: boolean;
       /** username(lower) → pk from the observed pending-requests rows. */
       pendingPks: Map<string, string> | null;
-    } = { events: null, sawInbox: false, pendingPks: null };
+    } = { events: null, sawInbox: false, feedDrift: false, pendingPks: null };
     const seenEvents = new Set<string>();
     const pendingReads: Promise<void>[] = [];
     const unsubscribe = this.tab.onResponse((resp) => {
@@ -156,8 +158,15 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
           .then((body) => {
             if (kind === 'activity-feed') {
               // MERGE every observed feed page (the initial open, the Follows
-              // filter refetch, scroll-loaded older pages) — deduped.
-              const parsed = this.reader.parseActivityFeed(body);
+              // filter refetch, scroll-loaded older pages) — deduped. STRICT
+              // parse per page: a drifted body leaves `events` untouched (so
+              // it can never read as a successful empty check) but flags the
+              // drift; one well-formed page among drifted ones still succeeds.
+              const parsed = this.reader.parseActivityFeedStrict(body);
+              if (parsed === null) {
+                captured.feedDrift = true;
+                return;
+              }
               const merged = captured.events ?? [];
               for (const e of parsed) {
                 const key = `${e.pk}|${e.atMs ?? ''}`;
@@ -204,10 +213,23 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
         logger.debug('rim.follow-notifications: Follows filter not present, reading full feed');
       }
 
-      await this.awaitCaptured(() => captured.events !== null, pendingReads, signal);
+      // A drifted page also unblocks the wait: the response ARRIVED, so there is
+      // nothing left to wait for — but only a well-formed page may count as data.
+      await this.awaitCaptured(
+        () => captured.events !== null || captured.feedDrift,
+        pendingReads,
+        signal,
+      );
 
       if (signal?.aborted) return { ok: false, events: [], accepted: [], reason: 'aborted' };
       if (captured.events === null) {
+        if (captured.feedDrift) {
+          // Every observed feed body shape-mismatched: follow-back detection is
+          // BROKEN by an IG change, not quiet — surface a loud, typed failure
+          // (an empty success here would silently disable detection).
+          logger.warn('rim.follow-notifications: activity feed shape drifted, failing check');
+          return { ok: false, events: [], accepted: [], reason: 'feed-shape-drift' };
+        }
         logger.warn('rim.follow-notifications: no activity-feed response after click', {
           sawResponse: captured.sawInbox,
           waitedMs: this.responseWaitMs,
@@ -276,7 +298,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     const deadline = Date.now() + this.responseWaitMs;
     while (!done() && Date.now() < deadline) {
       if (signal?.aborted) return;
-      await this.sleep(150, signal);
+      await this.sleep(RIM.NOTIFICATIONS_POLL_MS, signal);
       await Promise.all(pendingReads.splice(0));
     }
   }
@@ -321,7 +343,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
           break;
         }
         if (Date.now() >= deadline) break;
-        await this.sleep(200, signal);
+        await this.sleep(RIM.ACCEPT_VERIFY_POLL_MS, signal);
       }
       if (!progressed) {
         logger.warn('rim.follow-notifications: accept click did not register, stopping loop', {
