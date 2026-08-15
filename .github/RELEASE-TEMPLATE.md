@@ -49,6 +49,6 @@ Download the package for your OS from the assets below.
 
 - Your local database and session data carry over — updating is a drop-in
   replacement.
-- Epo automates Instagram actions; use it at your own risk (see the README).
+- Epo acts on your Instagram account; use it at your own risk (see the README).
 
 **Full Changelog**: https://github.com/owengregson/Epo/compare/{{PREVIOUS_TAG}}...{{VERSION}}

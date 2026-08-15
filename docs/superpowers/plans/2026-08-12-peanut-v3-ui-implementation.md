@@ -8,7 +8,7 @@
 **Goal:** Replace the placeholder Preact dashboard with the finalized "Command
 Console" UI — built as a layered design-system framework (tokens → primitives →
 cards → views → shell) — bound live to the real engine, with a native overlay
-"automation veil" on the Instagram tab.
+"activity veil" on the Instagram tab.
 
 **Architecture:** The renderer renders ONLY the left console (the Electron window
 supplies the frame; the Instagram tab + the veil are native `WebContentsView`s in

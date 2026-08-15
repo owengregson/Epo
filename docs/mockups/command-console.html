@@ -1007,7 +1007,7 @@
   .ig-grid i:nth-child(3n+2){background:linear-gradient(150deg,#28282e,#17171b)}
   .ig-grid i:nth-child(4n+1){background:linear-gradient(150deg,#1e1e23,#131316)}
 
-  /* ----- automation veil — crisp frosted glass -----
+  /* ----- activity veil — crisp frosted glass -----
      State-driven: fully visible only while the engine Runs;
      fades out and releases pointer events otherwise.
      Radial vignette focuses the chip; 1px inner hairline frames
@@ -1532,7 +1532,7 @@
               Strategy
             </div>
             <div class="field">
-              <div class="ftop"><label id="aggLabel" data-tip="One-tap pace tuning: daily activity, action delay and jitter move together — and stay locked to the preset. Per-day amounts like the plan derive from activity automatically. Choose Custom to unlock and tune each knob by hand.">Aggressiveness</label></div>
+              <div class="ftop"><label id="aggLabel" data-tip="One-tap pace tuning: daily activity, action delay and jitter move together — and stay locked to the preset. Per-day amounts like the plan derive from activity. Choose Custom to unlock and tune each knob by hand.">Aggressiveness</label></div>
               <div class="seg" role="radiogroup" aria-labelledby="aggLabel" id="aggSeg">
                 <button type="button" role="radio" aria-checked="false" tabindex="-1" data-agg="conservative">Conservative</button>
                 <button type="button" role="radio" aria-checked="true" tabindex="0" data-agg="balanced" class="active">Balanced</button>
@@ -1685,7 +1685,7 @@
             </div>
             <div class="field locked" data-lockable>
               <div class="ftop">
-                <label data-tip="Follows + unfollows per day — the engine paces itself to this rate. It is the single master for per-day volume: the hard ceiling and daily plan below derive from it automatically. Higher grows faster but raises detection risk.">Daily activity</label>
+                <label data-tip="Follows + unfollows per day — the engine paces itself to this rate. It is the single master for per-day volume: the hard ceiling and daily plan below both derive from it. Higher grows faster but raises the chance of hitting Instagram&#39;s limits.">Daily activity</label>
                 <span class="lockmark" title="Locked by preset — choose Custom to edit"><i class="fa-solid fa-lock" aria-hidden="true"></i>preset</span>
                 <output class="fv num" id="actRead">55 <span class="dim">/ day</span></output>
               </div>
@@ -1697,12 +1697,12 @@
               </div>
               <div class="hint alarm" id="actWarn" hidden>
                 <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
-                High volume sharply raises detection risk.
+                High volume sharply raises the chance of hitting Instagram&#39;s limits.
               </div>
             </div>
             <div class="field locked" data-lockable>
               <div class="ftop">
-                <label data-tip="Minimum and maximum wait between consecutive actions. Wider and slower reads more human; tighter and faster is more efficient but more pattern-like.">Action delay</label>
+                <label data-tip="Minimum and maximum wait between consecutive actions. Wider and slower is gentler on the account; tighter and faster is more efficient but more repetitive.">Action delay</label>
                 <span class="lockmark" title="Locked by preset — choose Custom to edit"><i class="fa-solid fa-lock" aria-hidden="true"></i>preset</span>
                 <output class="fv num" id="delayRead">3 – 6 min</output>
               </div>
@@ -1717,7 +1717,7 @@
             </div>
             <div class="field locked" data-lockable>
               <div class="ftop">
-                <label data-tip="Randomizes the gap between actions so timing looks human. Higher = safer but slower and less predictable; lower = faster but more pattern-like.">Jitter <span class="dim2">· timing randomness</span></label>
+                <label data-tip="Randomizes the gap between actions so timing is not uniform. Higher = safer but slower and less predictable; lower = faster but more repetitive.">Jitter <span class="dim2">· timing randomness</span></label>
                 <span class="lockmark" title="Locked by preset — choose Custom to edit"><i class="fa-solid fa-lock" aria-hidden="true"></i>preset</span>
                 <output class="fv num" id="jitRead">±25%</output>
               </div>
@@ -1729,7 +1729,7 @@
               <div class="hint" style="text-align:center">Drag a handle · arrow keys nudge ±1 h</div>
             </div>
             <div class="field">
-              <div class="ftop"><label data-tip="Cap on Instagram requests — scrapes plus actions — per window. Lower is stealthier but enriches candidates slower; higher fills the queue faster.">Request budget <span class="dim2">· per window</span></label><output class="fv num" id="budgetRead">200 <span class="dim">/ 60 min</span></output></div>
+              <div class="ftop"><label data-tip="Cap on Instagram requests — reads plus actions — per window. Lower is gentler but enriches candidates slower; higher fills the queue faster.">Request budget <span class="dim2">· per window</span></label><output class="fv num" id="budgetRead">200 <span class="dim">/ 60 min</span></output></div>
               <input type="range" id="budgetSlider" min="50" max="500" step="10" value="200" aria-label="Request budget per window">
             </div>
             <div class="field">
@@ -1843,7 +1843,7 @@
       </div>
 
       <!--
-        AUTOMATION VEIL
+        ACTIVITY VEIL
         In the real app this is a separate always-on-top Electron overlay
         view (a transparent BrowserView layered above the Instagram
         webContents) that intercepts and blocks all pointer events while
@@ -1857,8 +1857,8 @@
         <span class="shine shine-lead" aria-hidden="true"></span>
         <span class="shine shine-sharp" aria-hidden="true"></span>
         <div class="veil-chip">
-          <i class="fa-solid fa-robot" aria-hidden="true"></i>
-          Automation active<span class="vdot" aria-hidden="true"></span><span class="dim">interaction paused</span>
+          <i class="fa-solid fa-wave-square" aria-hidden="true"></i>
+          Working<span class="vdot" aria-hidden="true"></span><span class="dim">interaction paused</span>
         </div>
       </div>
     </main>

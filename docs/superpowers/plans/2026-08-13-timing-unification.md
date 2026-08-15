@@ -14,7 +14,7 @@
 - All waits resolve (never reject) on abort — the `defaultSleep` semantics from `engine.ts:97`.
 - `src/timing/config.ts` and `src/timing/primitives.ts` must stay Node-free (renderer imports them).
 - Engine/prune deps stay injectable: existing tests that inject `sleep`, `clock`, `rng` must keep passing.
-- The prune ×1/3 expectation is preserved: a 60 000 ms humanized draw scales to 20 000 ms (±1 ms rounding tolerance is acceptable but the canonical test values land exactly).
+- The prune ×1/3 expectation is preserved: a 60 000 ms paced draw scales to 20 000 ms (±1 ms rounding tolerance is acceptable but the canonical test values land exactly).
 - Run unit tests with `npx jest <path>` (avoids the sqlite rebuild in `npm test`; timing tests don't need it). Full suite (`npm test`) + `npm run lint` + `npm run build` in the final task.
 - Comment style: match the codebase — JSDoc headers explaining *why*, review-tag references (R1/f10-style) where they already exist. Don't strip existing tags when moving code.
 - Commit after every task with a conventional-commits message ending in:
@@ -182,7 +182,7 @@ export function uniform(minMs: number, maxMs: number): DelayPolicy {
 }
 
 /**
- * THE humanized delay: a base uniformly in [min,max], then a symmetric
+ * THE paced delay: a base uniformly in [min,max], then a symmetric
  * ± `jitterPercent` of that base. Consumes the rng TWICE (base, then jitter) —
  * the exact formula and draw order the RateGovernor has always used, so
  * deterministic tests seeded against the old code still hold.
@@ -336,7 +336,7 @@ export const ENGINE = {
 } as const;
 
 export const PRUNE = {
-  /** Prune unfollows run at a THIRD of growth's humanized pace (deliberate bulk cleanup). */
+  /** Prune unfollows run at a THIRD of growth's paced pace (deliberate bulk cleanup). */
   DELAY_FACTOR: 1 / 3,
   /** Brief park after a blocked action / closed budget before continuing. */
   PARK_MS: 30_000,
@@ -407,7 +407,7 @@ export const HARNESS = {
   CAPTURE_NAV_SETTLE_MS: 4_000,
   CAPTURE_DIALOG_SETTLE_MS: 2_500,
   CAPTURE_SHORT_SETTLE_MS: 1_500,
-  /** livetest defaults (env-overridable in steps.ts): humanized op delay band. */
+  /** livetest defaults (env-overridable in steps.ts): paced op delay band. */
   OP_DELAY_MIN_MS: 4_000,
   OP_DELAY_MAX_MS: 9_000,
   /** livetest defaults: enrichment pacing band. */
@@ -635,7 +635,7 @@ export interface WaitResult {
 export interface WaitOpts {
   /** External abort (an engine's run-generation token): aborting resolves the wait. */
   signal?: AbortSignal;
-  /** Optional human-readable annotation surfaced through `pending()`. */
+  /** Optional readable annotation surfaced through `pending()`. */
   label?: string;
 }
 
@@ -1015,7 +1015,7 @@ git commit -m "feat(timing): ScheduleManager — overlap-guarded tick loops and 
 
 ---
 
-### Task 5: Deduplicate the humanized formula — RateGovernor + FollowersPageReader
+### Task 5: Deduplicate the paced formula — RateGovernor + FollowersPageReader
 
 **Files:**
 - Modify: `src/governors/rate-governor.ts:69-78` (`nextDelayMs`)
@@ -1040,7 +1040,7 @@ import { jittered, sample } from '../timing/primitives';
 
 ```ts
   /**
-   * A humanized delay before the next action: a base uniformly in [min,max], then a
+   * A paced delay before the next action: a base uniformly in [min,max], then a
    * symmetric ± jitter of `jitterPercent` (the canonical `jittered` policy from
    * timing/primitives — written exactly once for the whole app). `rng` is
    * injectable for deterministic tests.
@@ -1180,7 +1180,7 @@ Run: `npx jest tests/engine/engine.test.ts` — Expected: new tests FAIL (`nextA
    ```
 3. **`EngineStatus`** gains, after `sessionStartedAt`:
    ```ts
-   /** Deadline (epoch ms) of the in-flight humanized action delay, else null. */
+   /** Deadline (epoch ms) of the in-flight paced action delay, else null. */
    nextActionAt: number | null;
    ```
 4. **Constructor.** Replace `this.sleepFn = deps.sleep ?? defaultSleep;` with:
@@ -1298,7 +1298,7 @@ test('status().nextActionAt carries the inter-unfollow deadline while waiting', 
 });
 ```
 
-Also verify the existing `inter-action delay runs at a THIRD of the humanized pace` test still asserts 60 000 → 20 000 unchanged.
+Also verify the existing `inter-action delay runs at a THIRD of the paced pace` test still asserts 60 000 → 20 000 unchanged.
 
 - [ ] **Step 2: Run to verify it fails**
 

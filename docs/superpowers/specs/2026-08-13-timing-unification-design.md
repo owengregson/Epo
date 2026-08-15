@@ -11,7 +11,7 @@ no shared abstraction:
 - The bare `sleep(ms)` promise wrapper is independently defined 8 times
   (`engine.ts`, `adapter/actor.ts`, `adapter/identity.ts`, `rim/followers-page-reader.ts`,
   `rim/profile-enricher.ts`, `livetest/steps.ts`, `capture/*`, `inspect/*`).
-- The humanized `base + jitter` delay formula exists in 3 near-verbatim copies
+- The paced `base + jitter` delay formula exists in 3 near-verbatim copies
   (`governors/rate-governor.ts:73`, `engine/prune-engine.ts:590` with a ×1/3 factor,
   `rim/followers-page-reader.ts:125` jitterless variant) plus 3 more ad-hoc jitter
   shapes in livetest and `engine.ts:797`.
@@ -58,7 +58,7 @@ primitives module and a constants registry. Clock and rng are injected everywher
   shape found in the codebase:
   - `fixed(ms)` — parks, idle beats, retry spacing
   - `uniform(minMs, maxMs)` — scan pacing, refill pacing, livetest jitter
-  - `jittered(minMs, maxMs, jitterPercent)` — the humanized formula
+  - `jittered(minMs, maxMs, jitterPercent)` — the paced formula
     (uniform base, then symmetric ± jitterPercent), written exactly once
   - `scaled(policy, factor)` — prune's ×1/3 composes instead of forking the formula
 - `sample(policy, rng)` for one-off draws (harnesses).
@@ -168,7 +168,7 @@ not wired into DelayManager (they are standalone processes).
 - ScheduleManager catches and logs task exceptions; loops keep running.
 - `dispose()` on both managers is idempotent and cancels/clears everything.
 - Engine semantics preserved: a pause/stop landing during an action still skips the
-  humanized delay (no fresh wait is opened), keeping the prune hand-off unblocked.
+  paced delay (no fresh wait is opened), keeping the prune hand-off unblocked.
 
 ## Testing
 

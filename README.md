@@ -22,7 +22,8 @@
 
 <br>
 
-> **Disclaimer.** Automating Instagram may violate Instagram's Terms of Service and can
+> **Disclaimer.** Using a third-party tool to act on your Instagram account may violate
+> Instagram's Terms of Service and can
 > get an account actioned or banned. Epo is built to be conservative, but you use it at
 > your own risk. Don't run it on an account you can't afford to lose.
 
@@ -39,7 +40,7 @@ and settings. Brushed-graphite, keyboard-friendly, and it tells you exactly what
 engine is doing right now.
 </td>
 <td width="50%" valign="top">
-<b>⏱ Paced like a human</b><br>
+<b>⏱ Deliberately paced</b><br>
 One Instagram action at a time, separated by jittered delays, held inside your active
 hours and under a hard daily ceiling. Bursts are structurally impossible — the loop does
 at most one thing per step.
@@ -120,7 +121,7 @@ accounts like yours, waits to see who follows back, keeps them briefly, then let
    graph (paginated, paced, request-bounded).
 2. **Score &amp; queue.** Candidates are ranked — following/follower ratio inside your chosen
    band, activity, privacy — and the best are queued.
-3. **Follow.** The churn scheduler follows one queued account, then waits a human delay.
+3. **Follow.** The churn scheduler follows one queued account, then waits a paced delay.
    Every real action is written to a durable ledger.
 4. **Watch for follow-backs.** A request-minimal sweep reads the head of *your* followers
    list and marks reciprocations, cost `O(new)`, never `O(all)`.
@@ -130,7 +131,7 @@ accounts like yours, waits to see who follows back, keeps them briefly, then let
    the loop going.
 
 Throughout, an **async reconciler** reads the real relationship state from ordinary
-Instagram responses. If you (or another bot) followed or unfollowed someone outside Epo,
+Instagram responses. If you (or another app) followed or unfollowed someone outside Epo,
 it heals its own records to match reality and steps aside — Epo only churns accounts it
 actually followed, so it never fights another actor or unfollows your manual follows.
 
@@ -144,7 +145,7 @@ an afterthought:
 | Guardrail | What it does |
 |---|---|
 | **One-thing-per-step loop** | Each iteration performs at most one Instagram action, in a fixed precedence. Bursts can't happen. |
-| **Human pacing** | A jittered delay separates every action; reads are floored by a short pacing pause. |
+| **Paced actions** | A jittered delay separates every action; reads are floored by a short pacing pause. |
 | **Active hours** | Nothing runs outside your configured window; the engine sleeps until it opens. |
 | **Daily hard ceiling** | A durable, uncrossable cap per day — manual actions count against it too. |
 | **Request budget** | Every real Instagram API call is metered; a saturated window parks instead of pushing. |

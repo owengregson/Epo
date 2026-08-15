@@ -1,6 +1,6 @@
-# Live counts + slot-machine tickers + scroll reset + Humanizer — design
+# Live counts + slot-machine tickers + scroll reset + Interactor — design
 
-Date: 2026-08-13 · Branch: `feat/live-counts-humanizer`
+Date: 2026-08-13 · Branch: `feat/live-counts-interactor`
 
 Coordination constraint: a parallel branch is refactoring timing
 (`src/timing/` — sleep/DelayPolicy/DelayManager) and touches
@@ -8,7 +8,7 @@ Coordination constraint: a parallel branch is refactoring timing
 `profile-enricher.ts`, `foundation-wiring.ts`, `connectivity.ts`, and renderer
 hooks. Everything here therefore prefers NEW files; edits to those shared files
 are minimal and additive (new optional fields/callbacks, new branches), and no
-delay/sleep computation code is changed — the Humanizer keeps its own local
+delay/sleep computation code is changed — the Interactor keeps its own local
 sleep + randomized timing that the merge can later unify onto `src/timing/`.
 
 ## 1 · Live mid-scrape counts
@@ -60,11 +60,11 @@ on the active `ViewKey` that sets that section's `scrollTop = 0`. Wired with
 one added line in `App.tsx` (`useView.ts` itself is left untouched — the timing
 branch edits renderer hooks).
 
-## 4 · Humanizer
+## 4 · Interactor
 
-New package `src/humanizer/` making synthetic input indistinguishable from a
-human: real trusted OS-level events via `webContents.sendInputEvent`, never
-`el.click()` / `scrollTop =` when a Humanizer is wired.
+New package `src/interaction/` driving the page through real trusted OS-level
+input events via `webContents.sendInputEvent`, never `el.click()` /
+`scrollTop =` when an Interactor is wired.
 
 - `motion-profile.ts` — PURE math, injectable rng, fully unit-tested:
   - `cursorPath(from, to, rng)` — quadratic-Bezier path with a small
@@ -83,7 +83,7 @@ human: real trusted OS-level events via `webContents.sendInputEvent`, never
   + `ElectronInputDriver` over a minimal `{ sendInputEvent }` sink; tests use a
   recording fake. Wheel deltas use DOM semantics (positive = content down) and
   the Electron impl negates for `sendInputEvent`.
-- `humanizer.ts` — facade `Humanizer` with `moveTo`, `click(rect)`,
+- `interactor.ts` — facade `Interactor` with `moveTo`, `click(rect)`,
   `scroll(rect, deltaPx)`; tracks the virtual cursor position; own local sleep
   (injectable) — deliberately NOT the engine sleep helpers (timing-branch rule).
 - Integration (all additive):
@@ -96,11 +96,11 @@ human: real trusted OS-level events via `webContents.sendInputEvent`, never
     click scripts but return `getBoundingClientRect()` rects (and, for the
     action button, its state + would-click/needs-confirm decision) WITHOUT
     clicking. Existing click scripts untouched.
-  - `actor.ts`: optional `humanizer` in `ActorOptions`; four tiny private
-    helpers route each click/scroll site through locate-script + Humanizer when
-    both the humanizer and the surface's locate script exist, else the
+  - `actor.ts`: optional `interactor` in `ActorOptions`; four tiny private
+    helpers route each click/scroll site through locate-script + Interactor when
+    both the interactor and the surface's locate script exist, else the
     unchanged JS-click path. No restructuring of existing flow.
-  - `foundation-wiring.ts`: construct `Humanizer(new ElectronInputDriver(tab))`
+  - `foundation-wiring.ts`: construct `Interactor(new ElectronInputDriver(tab))`
     next to `InstagramAdapter` and pass it into the adapter → actor (additive
     optional ctor arg on `InstagramAdapter`).
 
@@ -112,11 +112,11 @@ through one injectable rng so tests are deterministic.
 - `tests/rim/followers-page-reader.test.ts` — onProgress emission (+ sources).
 - `tests/engine/prune-engine.test.ts` — incremental counts + throttled emits.
 - `tests/renderer/ticker.test.ts` — column math.
-- `tests/humanizer/motion-profile.test.ts` — path endpoints/monotonicity,
+- `tests/interaction/motion-profile.test.ts` — path endpoints/monotonicity,
   click-point bounds/distribution, scroll-tick sums, hold bounds.
-- `tests/humanizer/humanizer.test.ts` — event sequences via the recording
+- `tests/interaction/interactor.test.ts` — event sequences via the recording
   driver (move → down → hold → up; wheel bursts inside the rect).
-- `tests/adapter/actor-humanizer.test.ts` — humanizer-routed clicks + JS
+- `tests/adapter/actor-interactor.test.ts` — interactor-routed clicks + JS
   fallback unchanged.
 
 ## Merge hazards for the timing branch
@@ -125,9 +125,9 @@ through one injectable rng so tests are deterministic.
   `emitStatusThrottled` + `lastProgressEmitAt` — keep both when merging.
 - `followers-page-reader.ts`: new optional `onProgress` arg + one call site in
   the parse closure.
-- `actor.ts`: new optional `humanizer` + private helpers; the existing
+- `actor.ts`: new optional `interactor` + private helpers; the existing
   `sleep`/`waitFor` untouched — the timing branch may replace them freely.
-- `foundation-wiring.ts`: Humanizer construction is 3 additive lines near the
+- `foundation-wiring.ts`: Interactor construction is 3 additive lines near the
   adapter.
-- Humanizer sleeps/randomized delays are self-contained in `src/humanizer/`;
+- Interactor sleeps/randomized delays are self-contained in `src/interaction/`;
   unify onto `src/timing/` primitives after the merge.

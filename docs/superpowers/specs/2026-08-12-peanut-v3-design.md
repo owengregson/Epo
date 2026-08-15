@@ -72,7 +72,7 @@ past the hard bounds.
 
 - **Private accounts:** strong score **boost**, not a hard requirement.
 - **Size band:** follower count within `[minFollowers, maxFollowers]` (default `[50, 20000]`) — skip
-  near-zero (dead/bot) and skip huge/celebrity (won't reciprocate).
+  near-zero (dead or throwaway) and skip huge/celebrity (won't reciprocate).
 - **Hard skips:** verified accounts, accounts already followed / previously churned, self, accounts
   currently in any active FollowRecord state, obvious inactivity signal when available.
 - **Ranking within the eligible pool:** ratio score is primary; private boost, activity recency, and
@@ -126,7 +126,7 @@ fallback decision):
 Single Electron app:
 - **Main process** owns all engine logic and durable state.
 - **Embedded Instagram tab** — a `WebContentsView` hosting `instagram.com` inside the app window,
-  using a **persistent partitioned `session`** (cookies survive restarts). This *is* the automation
+  using a **persistent partitioned `session`** (cookies survive restarts). This *is* the driving
   surface: visible, your real session, driven via CDP / `webContents.executeJavaScript`. No Puppeteer,
   no second Chromium, no headless invisibility.
 - **Dashboard renderer** — the UI view (§8), separate from the IG tab.
@@ -145,7 +145,7 @@ Everything Instagram-specific lives behind one **versioned** module. An IG redes
 - **Sentinel** — watches for "Action Blocked" / "Try Again Later", checkpoint/challenge redirects,
   login expiry, and rate warnings. On detection it **halts the engine** and raises a user alert.
 
-**Actions via DOM, reads via API.** Follow/unfollow are performed as human-like DOM clicks (lower
+**Actions via DOM, reads via API.** Follow/unfollow are performed as real DOM clicks (lower
 ban risk, looks native). Detection/enrichment reads use intercepted or directly-issued API calls
 (cheap, precise).
 
@@ -160,7 +160,7 @@ All services read and write through the **Knowledge Graph** (§4.5) — never st
 - **Follow-back Watcher** — request-minimal reciprocation detection (§5).
 - **Chain Controller** — runs yield analysis, promotes next target or triggers own-followers fallback.
 - **Rate Governor / Request Budget** — §5. Durable action ledger; hard ceiling enforced in code;
-  human delays, jitter, active-hours; global request budget; real `AbortSignal` for instant pause/stop.
+  inter-action delays, jitter, active-hours; global request budget; real `AbortSignal` for instant pause/stop.
 
 ### 4.4 Data flow
 
@@ -222,7 +222,7 @@ mistake here is unbounded future technical debt — so the principles below are 
 **Storage:** embedded **SQLite via `better-sqlite3`** (WAL mode, transactional, indexed) — scales to
 hundreds of thousands of accounts / millions of edges, atomic, serverless. **Versioned migrations
 (`user_version` + migration runner) from commit one.** JSON files are retained only for small
-human-editable config, not graph data. (This supersedes the atomic-JSON sketch; see §6.)
+user-editable config, not graph data. (This supersedes the atomic-JSON sketch; see §6.)
 
 ---
 
@@ -276,7 +276,7 @@ from commit one). Core tables:
 - **`action_ledger`** (append-only) — `id, account_pk, action, at, result`. **Source of truth for the
   rate governor** (survives restart — fixes the in-memory-cap bug).
 - **`request_log`** — rolling Instagram-request log for the request budget governor.
-- **`settings`** — small tunables (§7) live in a human-editable JSON file, **not** SQLite.
+- **`settings`** — small tunables (§7) live in a user-editable JSON file, **not** SQLite.
 
 **Access — the `KnowledgeStore` module** is the sole boundary: `observe(observation)` is the *only*
 write path (updates projections in the same transaction as the appended observation); typed queries
@@ -325,7 +325,7 @@ subtle shiny flair. No gradients-as-decoration, no glassmorphism, no emojis. Sys
 ## 9. Safety & resilience (built-in)
 
 - Hard daily ceiling enforced **in code** from the durable ledger; operating rate under it.
-- Global request budget covering reads + writes; human delays + jitter + active-hours.
+- Global request budget covering reads + writes; inter-action delays + jitter + active-hours.
 - **Sentinel auto-halt + alert** on block/challenge/expiry.
 - Instant abort via `AbortSignal` — no un-interruptible long sleeps.
 - No silent `catch {}`; all failures surface to the UI; `AdapterStaleError` on selector drift.
@@ -357,9 +357,9 @@ Each phase is internally parallelizable across Opus agents; phases are sequentia
 
 - No multi-account operation (single logged-in IG account).
 - No concurrent multi-target poaching (chaining is sequential by design).
-- No like/comment/DM automation.
+- No like/comment/DM actions.
 - No cloud/server component; fully local desktop app.
-- No private-API direct actioning (actions stay as human DOM clicks).
+- No private-API direct actioning (actions stay as real DOM clicks).
 
 ## 12. Phase-3 extension list ("other smart features," parked)
 

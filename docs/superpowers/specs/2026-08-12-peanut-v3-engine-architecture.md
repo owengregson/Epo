@@ -17,7 +17,7 @@ left **two structural defects that no single component test can catch**:
    pieces exist; the machine that runs them does not.
 2. **Pacing lives in the wrong place (a ban risk).** `ChurnScheduler.tick()` executes *every* due
    follow/unfollow in one pass, gated only by the daily ceiling and active-hours — **with no delay
-   between actions**. The human inter-action delay (`RateGovernor.nextDelayMs`, 3–7 min + jitter) is
+   between actions**. The inter-action delay (`RateGovernor.nextDelayMs`, 3–7 min + jitter) is
    defined but never applied in a loop. Live, this is a burst → account ban. Request volume and burst
    shape are *the* ban vectors (§5 of the main spec); the runtime must own their pacing.
 
@@ -36,7 +36,7 @@ live Instagram side.
 - **Live edges (adapters):** thin implementations of the ports that actually touch Instagram via the
   `InstagramAdapter` (Actor/Reader/Sentinel) + `InstagramTab`, each wrapped by the `RequestBudget`.
 - **One conductor (`Engine`):** the *only* place that owns wall-clock time — the interruptible loop,
-  every human delay, active-hours/ceiling waits, cadences, lifecycle, and Sentinel-triggered halt.
+  every inter-action delay, active-hours/ceiling waits, cadences, lifecycle, and Sentinel-triggered halt.
 
 The rule that makes this safe and testable: **timing is a runtime concern, never a component concern.**
 A component decides *what* should happen next; the Engine decides *when*, and paces it.
@@ -99,7 +99,7 @@ while running:
   const action = churn.nextDue(now())                           // the single most-due record needing IG traffic, or null
   if action:
       await churn.execute(action)                               // exactly ONE follow/unfollow via ChurnActions (+ record + edge)
-      await sleep(rate.nextDelayMs())                           // ← THE human delay, HERE, between actions
+      await sleep(rate.nextDelayMs())                           // ← THE inter-action delay, HERE, between actions
   else if targetComplete(currentTarget):                        // no queued candidates AND no active follow-records left
       const next = await chain.advance(currentTargetPk)
       if !next.nextTargetPk: halt('chain-exhausted'); break
@@ -176,7 +176,7 @@ edits reload the Engine's derived configs without restart.
 
 `foundation:followOne/unfollowOne/readFollowers` stay as **manual, one-shot** operations for the live
 gate and debugging — they reuse the SAME `ChurnActions`/`FollowerAcquisition` implementations the Engine
-uses (no duplicated scraping/acting logic). The Engine is the automated driver on top of the same rim.
+uses (no duplicated scraping/acting logic). The Engine is the driver on top of the same rim.
 `readFollowers`'s inline loop is extracted into the `FollowerAcquisition` adapter and both callers use it.
 
 ---

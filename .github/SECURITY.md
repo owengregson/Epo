@@ -47,8 +47,8 @@ is available.
 
 ## Not a security report
 
-Epo automates actions on an Instagram account, which may violate
+Epo acts on an Instagram account on your behalf, which may violate
 [Instagram's Terms of Use](https://help.instagram.com/581066165581870).
 Account restrictions, blocks, or bans that result from using Epo are a
-consequence of that automation — **not a security vulnerability** — and are
+consequence of that usage — **not a security vulnerability** — and are
 out of scope for this policy. You use Epo at your own risk.

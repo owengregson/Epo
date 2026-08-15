@@ -41,7 +41,7 @@ body:
       description: Which part of Epo does this touch most?
       options:
         - UI / Control Center
-        - Automation engine / scheduling
+        - Engine / scheduling
         - Data / local knowledge graph
         - Safety / rate limiting
         - Packaging / installation

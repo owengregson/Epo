@@ -34,7 +34,7 @@ on dark and light. Master geometry (viewBox 0 0 64 64):
 **Problem.** The engine assumes it is the only actor on the account's follow graph.
 `show_many` / `friendship-show` / `web_profile_info` responses carry OUR true
 follow-status toward accounts (`following` / `followed_by_viewer`) but are parsed
-NOWHERE in the live flow. So when an external system (the user or another bot)
+NOWHERE in the live flow. So when an external system (the user or another app)
 follows/unfollows, Epo's `follow_records` + `edges` diverge from reality:
 
 - **Ghost unfollow (A):** external unfollows an account Epo is holding → the timer

@@ -7,7 +7,7 @@ are captured — never guessed — by the **Task E capture harness**.
 ## What the harness captures
 
 A one-command Electron app opens a real, visible Instagram window. You log in
-once, and it automatically records the RAW artifacts later tasks need:
+once, and it records the RAW artifacts later tasks need:
 
 - **JSON API responses** (raw bodies, pretty-printed): followers-list
   (paginated), `friendships/show_many` (batched relationship status),
@@ -20,7 +20,7 @@ once, and it automatically records the RAW artifacts later tasks need:
   captured DOM/JSON while a block or checkpoint is shown.
 
 It reuses `InstagramTab` (CDP-based network observation) and depends on nothing
-that is not yet built — it captures raw bytes, and a human distils the real
+that is not yet built — it captures raw bytes, and a maintainer distils the real
 `src/adapter/field-notes.ts` from the output afterward.
 
 ## How to run it
@@ -30,7 +30,7 @@ npm run capture
 ```
 
 This rebuilds `better-sqlite3` for Electron, bundles, and launches the capture
-window. Log into Instagram in that window; capture starts automatically once the
+window. Log into Instagram in that window; capture starts once the
 `sessionid` cookie is present.
 
 - **Target account:** by default the harness captures **your own** account
@@ -43,7 +43,7 @@ window. Log into Instagram in that window; capture starts automatically once the
   If your username cannot be detected, the banner will tell you to re-run with
   `PEANUT_CAPTURE_TARGET=<username>`.
 
-- **Manual fallback:** if the followers list does not open automatically, click
+- **Manual fallback:** if the followers list does not open on its own, click
   the followers count yourself — passive capture keeps running the whole time.
   To capture the unfollow-confirm dialog, open it manually on a profile you
   follow; the 2s dialog sweep will snapshot it.
