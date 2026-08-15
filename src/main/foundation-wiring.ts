@@ -253,6 +253,14 @@ export class Foundation {
    */
   private disposing = false;
   /**
+   * True while a teardown (graph teardown, data wipe) is in progress. Unlike
+   * `disposing` it is temporary: `ensureBuilt` refuses to (re)build and an
+   * in-flight `buildResolved` aborts instead of resurrecting a store over a
+   * path that is about to be (or was just) deleted. Nesting-safe: writers save
+   * and restore the previous value.
+   */
+  private tearingDown = false;
+  /**
    * In-flight MANUAL operations (read-followers, follow/unfollow-one,
    * seed-check). Teardown awaits these before closing the store — an
    * un-tracked manual acquire used to keep writing edges into a closed
@@ -326,9 +334,10 @@ export class Foundation {
    * the engine is idle, rebuilds so follow-back/own-followers chaining recover.
    */
   async ensureBuilt(): Promise<boolean> {
-    // Shutting down: never (re)build — let reads resolve to safe empties instead
-    // of re-navigating the tab or re-opening the store mid-teardown.
-    if (this.disposing) return false;
+    // Shutting down / tearing down: never (re)build — let reads resolve to safe
+    // empties instead of re-navigating the tab or re-opening the store
+    // mid-teardown (the polled reads race teardownGraph's async drain window).
+    if (this.disposing || this.tearingDown) return false;
     // Fully built (with a real username): nothing more to do.
     if (this.graph !== null && this.graph.ownUsername !== undefined) return true;
     // A DEGRADED graph (username unresolved) is still a built graph. Username
@@ -347,6 +356,28 @@ export class Foundation {
       this.buildPromise = null;
     });
     return this.buildPromise;
+  }
+
+  /**
+   * The not-built guard copied across every IPC entry point, centralized:
+   * ensure the graph is built and hand it back, or `null` (each caller returns
+   * its own safe empty). Callers hold the RETURNED graph — never re-read
+   * `this.graph` after an await, where a concurrent teardown can null it.
+   */
+  private async builtGraph(): Promise<BuiltGraph | null> {
+    if (!(await this.ensureBuilt())) return null;
+    return this.graph;
+  }
+
+  /**
+   * Mutual exclusion (Phase 5), centralized: the prune routine holds the tab
+   * driver token — never put a second driver on the one shared tab. Returns the
+   * typed refusal status to hand back, or `null` when growth may proceed.
+   */
+  private refuseIfPruneActive(op: string): EpoStatus | null {
+    if (this.activeDriver !== 'prune') return null;
+    logger.warn(`foundation.${op}: prune active, refusing`);
+    return { ...this.builtStatus(), refusal: 'prune-running' };
   }
 
   /**
@@ -380,9 +411,15 @@ export class Foundation {
         return true;
       }
       logger.info('foundation: own username recovered, rebuilding graph', { ownUsername });
-      this.teardownGraph();
+      await this.teardownGraph();
     }
 
+    // A teardown/wipe raced this build past the ensureBuilt gate: abort instead
+    // of resurrecting a store over a path that is being torn down or deleted.
+    if (this.disposing || this.tearingDown) {
+      logger.warn('foundation: build aborted, teardown in progress');
+      return false;
+    }
     this.graph = this.build(ownPk, ownUsername);
     logger.info('foundation: dependency graph built', {
       ownPk,
@@ -488,16 +525,11 @@ export class Foundation {
 
   /** Start the engine loop — fire-and-forget (never awaits the loop). */
   async startEngine(): Promise<EpoStatus> {
-    if (!(await this.ensureBuilt()) || this.graph === null) {
-      return this.notBuiltStatus(await this.isLoggedIn());
-    }
-    // Mutual exclusion (Phase 5): the prune routine holds the tab driver token —
-    // never put a second driver on the one shared tab. Typed refusal, no start.
-    if (this.activeDriver === 'prune') {
-      logger.warn('foundation.startEngine: prune active, refusing engine start');
-      return { ...this.builtStatus(), refusal: 'prune-running' };
-    }
-    const state = this.graph.engine.status().state;
+    const graph = await this.builtGraph();
+    if (graph === null) return this.notBuiltStatus(await this.isLoggedIn());
+    const refusal = this.refuseIfPruneActive('startEngine');
+    if (refusal !== null) return refusal;
+    const state = graph.engine.status().state;
     if (state === 'running' || state === 'paused') {
       // Already the active driver — a second start is the Engine's own no-op.
       return this.builtStatus();
@@ -510,7 +542,7 @@ export class Foundation {
     // Fire-and-forget: `start()` resolves only when the loop exits; do NOT await
     // here. f14: keep the loop promise so `dispose()` can await its exit before
     // closing the store (a mid-step store call must not hit a closed DB).
-    const loop = this.graph.engine
+    const loop = graph.engine
       .start()
       .catch((e: unknown) => {
         logger.error('foundation: engine loop errored', { error: String(e) });
@@ -520,41 +552,36 @@ export class Foundation {
         this.releaseGrowthStartBridge();
         this.activity.signal('growth-loop', false);
       });
-    this.graph.enginePromise = loop;
+    graph.enginePromise = loop;
     return this.builtStatus();
   }
 
   /** Pause the engine between actions. */
   async pauseEngine(): Promise<EpoStatus> {
-    if (!(await this.ensureBuilt()) || this.graph === null) {
-      return this.notBuiltStatus(await this.isLoggedIn());
-    }
-    this.graph.engine.pause();
+    const graph = await this.builtGraph();
+    if (graph === null) return this.notBuiltStatus(await this.isLoggedIn());
+    graph.engine.pause();
     return this.builtStatus();
   }
 
   /** Resume a paused engine. */
   async resumeEngine(): Promise<EpoStatus> {
-    if (!(await this.ensureBuilt()) || this.graph === null) {
-      return this.notBuiltStatus(await this.isLoggedIn());
-    }
-    // Mutual exclusion (Phase 5): a prune holds the tab — resuming growth now
-    // would put a second driver on it. Refuse; the prune's completion resumes
-    // growth itself when it was the one that paused it (leave-alone otherwise).
-    if (this.activeDriver === 'prune') {
-      logger.warn('foundation.resumeEngine: prune active, refusing resume');
-      return { ...this.builtStatus(), refusal: 'prune-running' };
-    }
-    this.graph.engine.resume();
+    const graph = await this.builtGraph();
+    if (graph === null) return this.notBuiltStatus(await this.isLoggedIn());
+    // A prune holds the tab — resuming growth now would put a second driver on
+    // it. Refuse; the prune's completion resumes growth itself when it was the
+    // one that paused it (leave-alone otherwise).
+    const refusal = this.refuseIfPruneActive('resumeEngine');
+    if (refusal !== null) return refusal;
+    graph.engine.resume();
     return this.builtStatus();
   }
 
   /** Stop the engine loop (aborts in-flight sleeps). */
   async stopEngine(): Promise<EpoStatus> {
-    if (!(await this.ensureBuilt()) || this.graph === null) {
-      return this.notBuiltStatus(await this.isLoggedIn());
-    }
-    this.graph.engine.stop();
+    const graph = await this.builtGraph();
+    if (graph === null) return this.notBuiltStatus(await this.isLoggedIn());
+    graph.engine.stop();
     return this.builtStatus();
   }
 
@@ -570,14 +597,10 @@ export class Foundation {
   async restartFromSeed(seed: string): Promise<EpoStatus> {
     const clean = seed.trim().replace(/^@/, '');
     if (clean === '') return { ...(await this.status()), refusal: 'seed-missing' };
-    if (!(await this.ensureBuilt()) || this.graph === null) {
-      return this.notBuiltStatus(await this.isLoggedIn());
-    }
-    if (this.activeDriver === 'prune') {
-      logger.warn('foundation.restartFromSeed: prune active, refusing');
-      return { ...this.builtStatus(), refusal: 'prune-running' };
-    }
-    const graph = this.graph;
+    const graph = await this.builtGraph();
+    if (graph === null) return this.notBuiltStatus(await this.isLoggedIn());
+    const refusal = this.refuseIfPruneActive('restartFromSeed');
+    if (refusal !== null) return refusal;
     graph.engine.stop();
     if (graph.enginePromise !== null) {
       try {
@@ -624,9 +647,10 @@ export class Foundation {
    * Empty when not logged in or no snapshot exists. Never throws across IPC.
    */
   async pruneCandidates(): Promise<PruneCandidate[]> {
-    if (!(await this.ensureBuilt()) || this.graph === null) return [];
+    const graph = await this.builtGraph();
+    if (graph === null) return [];
     try {
-      return this.graph.store.getPruneScan()?.remaining ?? [];
+      return graph.store.getPruneScan()?.remaining ?? [];
     } catch (e) {
       logger.error('foundation.pruneCandidates: failed', { error: String(e) });
       return [];
@@ -642,7 +666,8 @@ export class Foundation {
   private async scanPruneHeld(): Promise<PruneScanResult> {
     const empty = { following: 0, followers: 0, candidates: [] };
     const epoch = this.pruneStopEpoch;
-    if (!(await this.ensureBuilt()) || this.graph === null) {
+    const graph = await this.builtGraph();
+    if (graph === null) {
       return { ok: false, reason: 'not-logged-in', ...empty };
     }
     // A stop that landed while the graph was still building must cancel this
@@ -665,7 +690,7 @@ export class Foundation {
       if (!(await this.acquireTabForPrune())) {
         return { ok: false, reason: 'growth-busy', ...empty };
       }
-      const result = await this.graph.pruneEngine.scan();
+      const result = await graph.pruneEngine.scan();
       return { ok: true, ...result };
     } catch (e) {
       logger.error('foundation.scanPrune: failed', { error: String(e) });
@@ -689,10 +714,10 @@ export class Foundation {
     let transferredToRun = false;
     try {
       const epoch = this.pruneStopEpoch;
-      if (!(await this.ensureBuilt()) || this.graph === null) {
+      const graph = await this.builtGraph();
+      if (graph === null) {
         return { ok: false, reason: 'not-logged-in', status: this.notBuiltPruneStatus() };
       }
-      const graph = this.graph;
       // Mirror scanPrune: a stop during the build cancels this pending run.
       if (this.pruneStopEpoch !== epoch) {
         logger.info('foundation.startPrune: cancelled by stop during build');
@@ -837,7 +862,8 @@ export class Foundation {
   }
 
   private async readFollowersHeld(target: string): Promise<ReadFollowersResult> {
-    if (!(await this.ensureBuilt()) || this.graph === null) {
+    const graph = await this.builtGraph();
+    if (graph === null) {
       logger.warn('foundation.readFollowers: not logged in, skipping', { target });
       return { target, observed: 0, ok: false, reason: 'not-logged-in' };
     }
@@ -853,7 +879,7 @@ export class Foundation {
       return { target, observed: 0, ok: false, reason: busy };
     }
     try {
-      const { observed } = await this.graph.acquisition.acquire(target);
+      const { observed } = await graph.acquisition.acquire(target);
       return { target, observed, ok: true };
     } catch (e) {
       logger.error('foundation.readFollowers: failed', { target, error: String(e) });
@@ -885,11 +911,11 @@ export class Foundation {
     action: 'follow' | 'unfollow',
     username: string,
   ): Promise<ActionResult> {
-    if (!(await this.ensureBuilt()) || this.graph === null) {
+    const graph = await this.builtGraph();
+    if (graph === null) {
       logger.warn('foundation.act: not logged in, skipping', { action, username });
       return { ok: false, username, reason: 'not-logged-in' };
     }
-    const graph = this.graph;
 
     // R3: refuse manual actions while another driver runs — sharing the tab
     // would race that driver's own navigations/actions on one WebContents.
@@ -1107,26 +1133,27 @@ export class Foundation {
    */
   private async maybeRunScheduledPrune(): Promise<void> {
     if (this.disposing || this.activeDriver !== null) return;
-    if (!(await this.ensureBuilt()) || this.graph === null) return;
+    const graph = await this.builtGraph();
+    if (graph === null) return;
     const settings = this.resolveSettings();
-    if (!pruneDue(settings.pruneScheduleDays, settings.pruneLastRunAt, this.graph.clock.now())) {
+    if (!pruneDue(settings.pruneScheduleDays, settings.pruneLastRunAt, graph.clock.now())) {
       return;
     }
     // Re-check the driver token after the await: never contend with a prune that
     // started in the meantime. (Growth running is fine — startPrune hands it off.)
     if (this.activeDriver !== null) return;
-    if (!this.graph.rate.withinActiveHours()) return;
+    if (!graph.rate.withinActiveHours()) return;
     logger.info('foundation: scheduled prune due, auto-starting', {
       scheduleDays: settings.pruneScheduleDays,
       lastRunAt: settings.pruneLastRunAt,
-      growthState: this.graph.engine.status().state,
+      growthState: graph.engine.status().state,
       weave: settings.weaveEnabled && settings.pacingModel === 'organic',
     });
     // Organic + weave: SCAN and enqueue — the growth loop drains the census woven into
     // its own sessions (no separate bulk driver). Otherwise: the legacy bulk run.
     if (settings.weaveEnabled && settings.pacingModel === 'organic') {
       const res = await this.scanPrune();
-      if (res.ok) void this.updateSettings({ pruneLastRunAt: this.graph.clock.now() });
+      if (res.ok) void this.updateSettings({ pruneLastRunAt: graph.clock.now() });
       return;
     }
     void this.startPrune();
@@ -1153,6 +1180,20 @@ export class Foundation {
   private async teardownGraph(): Promise<void> {
     const graph = this.graph;
     if (graph === null) return;
+    // The whole drain window is guarded: between `this.graph = null` and
+    // `store.close()` below, a polled read's ensureBuilt would otherwise see
+    // "not built, not disposing" and open a SECOND store over the same file.
+    const wasTearing = this.tearingDown;
+    this.tearingDown = true;
+    try {
+      await this.teardownGraphHeld(graph);
+    } finally {
+      this.tearingDown = wasTearing;
+    }
+  }
+
+  /** The body of {@link teardownGraph}, run under the `tearingDown` guard. */
+  private async teardownGraphHeld(graph: BuiltGraph): Promise<void> {
     this.graph = null;
     // Stop the mutation→push machinery before anything else: late writes from
     // draining ops must not schedule pushes into a closing store.
@@ -1194,7 +1235,7 @@ export class Foundation {
       });
       const drained = await withTimeout(
         Promise.allSettled([...this.inFlightManualOps]),
-        15_000,
+        SCHEDULER.MANUAL_OP_DRAIN_TIMEOUT_MS,
       );
       if (drained === TIMED_OUT) {
         logger.warn('foundation.teardownGraph: manual ops did not drain in time');
@@ -1522,6 +1563,15 @@ export class Foundation {
     // could not be resolved (prune scans then find nothing, loudly). The scan
     // pacing (`scanMinMs`/`scanMaxMs`) + the engine's cooperative stop reach the
     // scrapes through the sources' `fetchAllPks(opts)` — see PruneScanOpts.
+    // ONE stub for both sources: incomplete, never "an empty list" — a scan
+    // against it must FAIL its completeness gate, not compute a zero-candidate
+    // census (the two `complete:false` reasons must stay identical).
+    const unresolvedUsernameSource = (what: string): { fetchAllPks(): Promise<PruneScanFetch> } => ({
+      fetchAllPks: async (): Promise<PruneScanFetch> => {
+        logger.warn(`foundation: own username unresolved, ${what} cannot run`);
+        return { pks: [], complete: false, reason: 'own-username-unresolved' };
+      },
+    });
     const ownFollowingSource: PruneOwnFollowing = ownUsername
       ? new AdapterBackedOwnFollowingSource({
           pageReader,
@@ -1531,20 +1581,9 @@ export class Foundation {
           walker: listWalker,
           ownPk,
         })
-      : {
-          // Incomplete, never "an empty list": a scan against this stub must
-          // FAIL its completeness gate, not compute a zero-candidate census.
-          fetchAllPks: async (): Promise<PruneScanFetch> => {
-            logger.warn('foundation: own username unresolved, prune scan cannot run');
-            return { pks: [], complete: false, reason: 'own-username-unresolved' };
-          },
-        };
-    const pruneOwnFollowers: PruneOwnFollowers = liveOwnFollowers ?? {
-      fetchAllPks: async (): Promise<PruneScanFetch> => {
-        logger.warn('foundation: own username unresolved, prune followers scan cannot run');
-        return { pks: [], complete: false, reason: 'own-username-unresolved' };
-      },
-    };
+      : unresolvedUsernameSource('prune scan');
+    const pruneOwnFollowers: PruneOwnFollowers =
+      liveOwnFollowers ?? unresolvedUsernameSource('prune followers scan');
     const pruneEngine = createPruneEngine({
       store,
       clock,
@@ -1615,9 +1654,10 @@ export class Foundation {
    * Never throws across IPC — a failed read logs and returns `[]`.
    */
   async chainList(): Promise<ChainTargetView[]> {
-    if (!(await this.ensureBuilt()) || this.graph === null) return [];
+    const graph = await this.builtGraph();
+    if (graph === null) return [];
     try {
-      return shapeChainList(this.graph.store, this.graph.ownPk);
+      return shapeChainList(graph.store, graph.ownPk);
     } catch (e) {
       logger.error('foundation.chainList: failed', { error: String(e) });
       return [];
@@ -1629,9 +1669,10 @@ export class Foundation {
    * Builds the graph if needed; returns `[]` when not logged in. Never throws.
    */
   async growthSeries(days: number): Promise<NetGrowthPoint[]> {
-    if (!(await this.ensureBuilt()) || this.graph === null) return [];
+    const graph = await this.builtGraph();
+    if (graph === null) return [];
     try {
-      return this.graph.store.netGrowthSeries(days, this.graph.ownPk);
+      return graph.store.netGrowthSeries(days, graph.ownPk);
     } catch (e) {
       logger.error('foundation.growthSeries: failed', { error: String(e) });
       return [];
@@ -1652,7 +1693,8 @@ export class Foundation {
   }
 
   private async checkSeedHeld(username: string): Promise<SeedCheck> {
-    if (!(await this.ensureBuilt()) || this.graph === null) {
+    const graph = await this.builtGraph();
+    if (graph === null) {
       return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'not-logged-in' };
     }
     // R3: refuse while a driver runs — a concurrent one-shot fetch competes with
@@ -1664,7 +1706,7 @@ export class Foundation {
     try {
       const clean = username.trim().replace(/^@/, '');
       if (!clean) return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'empty' };
-      if ((await this.graph.sentinel.check()) !== 'ok') {
+      if ((await graph.sentinel.check()) !== 'ok') {
         return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'blocked' };
       }
       // The surface's in-page fetch resolves to a FetchEnvelope: it never lets
@@ -1702,7 +1744,7 @@ export class Foundation {
         return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason };
       }
 
-      const obs = SURFACE.extractProfileInfo(env.json, this.graph.clock.now());
+      const obs = SURFACE.extractProfileInfo(env.json, graph.clock.now());
       if (isShapeMismatch(obs)) {
         // Valid JSON but not the shape we know — surface drift, not an error state.
         logger.warn('foundation.checkSeed: unexpected profile body shape', { username: clean });
@@ -1714,7 +1756,7 @@ export class Foundation {
       // FACTS STREAM (docs/PRINCIPLES.md §1): this check paid for a real
       // profile read — keep it. The counts/flags become an accounts row the
       // scorer and target sources can use, whether or not the seed is adopted.
-      this.graph.store.observe(obs);
+      graph.store.observe(obs);
       const isPrivate = obs.fields.isPrivate === true;
       // A private account's followers are viewable iff we already follow it.
       const followedByViewer = SURFACE.extractProfileFollowedByViewer(env.json) === true;
@@ -1738,11 +1780,12 @@ export class Foundation {
    * Empty (and untruncated) when not logged in. Never throws across IPC.
    */
   async queueList(state: FollowState): Promise<QueueListResult> {
-    if (!(await this.ensureBuilt()) || this.graph === null) {
+    const graph = await this.builtGraph();
+    if (graph === null) {
       return { rows: [], truncated: false };
     }
     try {
-      return shapeQueueList(this.graph.store, state);
+      return shapeQueueList(graph.store, state);
     } catch (e) {
       logger.error('foundation.queueList: failed', { state, error: String(e) });
       return { rows: [], truncated: false };
@@ -1778,26 +1821,47 @@ export class Foundation {
    * the next login lazily rebuilds a fresh graph over a brand-new DB.
    */
   async clearData(): Promise<EpoStatus> {
-    await this.teardownGraph();
-
-    const dbBase = path.join(app.getPath('userData'), IG_DB_FILE);
-    for (const suffix of ['', '-wal', '-shm']) {
-      try {
-        fs.rmSync(dbBase + suffix, { force: true });
-      } catch (e) {
-        logger.error('foundation.clearData: failed to remove db file', {
-          file: dbBase + suffix,
-          error: String(e),
-        });
-      }
-    }
-
+    // Guard the ENTIRE wipe: an in-flight build must not resurrect a graph over
+    // the just-deleted path (its `buildResolved` aborts under this flag), and a
+    // polled read must not start a fresh build between the teardown and the rm.
+    const wasTearing = this.tearingDown;
+    this.tearingDown = true;
     try {
-      const igSession = session.fromPartition(IG_PARTITION);
-      await igSession.clearStorageData();
-      await igSession.clearCache();
-    } catch (e) {
-      logger.error('foundation.clearData: failed to clear IG session', { error: String(e) });
+      // A build already past the ensureBuilt gate keeps running on the OLD
+      // identity — let it settle first so the teardown below tears down whatever
+      // it produced instead of racing it.
+      if (this.buildPromise !== null) {
+        try {
+          await this.buildPromise;
+        } catch (e) {
+          logger.warn('foundation.clearData: in-flight build rejected during wipe', {
+            error: String(e),
+          });
+        }
+      }
+      await this.teardownGraph();
+
+      const dbBase = path.join(app.getPath('userData'), IG_DB_FILE);
+      for (const suffix of ['', '-wal', '-shm']) {
+        try {
+          fs.rmSync(dbBase + suffix, { force: true });
+        } catch (e) {
+          logger.error('foundation.clearData: failed to remove db file', {
+            file: dbBase + suffix,
+            error: String(e),
+          });
+        }
+      }
+
+      try {
+        const igSession = session.fromPartition(IG_PARTITION);
+        await igSession.clearStorageData();
+        await igSession.clearCache();
+      } catch (e) {
+        logger.error('foundation.clearData: failed to clear IG session', { error: String(e) });
+      }
+    } finally {
+      this.tearingDown = wasTearing;
     }
 
     // Forget the cached identity + any in-flight build; `disposing` stays false so
@@ -1868,23 +1932,33 @@ export class Foundation {
 
   /**
    * The logged-in account's numeric pk, read from the persistent session's
-   * `ds_user_id` cookie (that value IS the account pk). Cached once resolved.
+   * `ds_user_id` cookie (that value IS the account pk). The cookie is re-read on
+   * every call (a cheap partition lookup) so an IN-TAB ACCOUNT SWITCH is caught:
+   * a graph anchored to the old pk would write every edge/ledger row against the
+   * wrong account. On a detected switch the stale graph is torn down; the next
+   * `ensureBuilt` rebuilds for the new identity. A transiently ABSENT or
+   * unreadable cookie keeps the cached identity — a navigation blip must not
+   * flap a live graph (a real logout parks via the sentinel).
    */
   private async resolveOwnPk(): Promise<string | null> {
-    if (this.ownPkCache) return this.ownPkCache;
     try {
       const cookies = await session
         .fromPartition(IG_PARTITION)
         .cookies.get({ name: 'ds_user_id' });
       const cookie = cookies.find((c) => c.value.length > 0);
-      if (cookie) {
-        this.ownPkCache = cookie.value;
-        return cookie.value;
+      if (cookie === undefined) return this.ownPkCache;
+      if (this.ownPkCache !== null && this.ownPkCache !== cookie.value) {
+        logger.warn('foundation: ds_user_id changed (account switch), tearing down stale graph', {
+          from: this.ownPkCache,
+          to: cookie.value,
+        });
+        await this.teardownGraph();
       }
-      return null;
+      this.ownPkCache = cookie.value;
+      return cookie.value;
     } catch (e) {
       logger.warn('foundation.resolveOwnPk: cookie read failed', { error: String(e) });
-      return null;
+      return this.ownPkCache;
     }
   }
 
