@@ -32,8 +32,9 @@ import {
   uniform,
   withTimeout,
 } from '../timing/primitives';
-import { ENGINE as ENGINE_TIMING, PRUNE as PRUNE_TIMING } from '../timing/config';
+import { ENGINE as ENGINE_TIMING, PATTERN, PRUNE as PRUNE_TIMING } from '../timing/config';
 import { clamp, logNormal } from '../timing/distributions';
+import { startOfLocalDay } from '../timing/units';
 import * as log from '../utils/logger';
 
 // ---------------------------------------------------------------------------------
@@ -478,7 +479,9 @@ export class Engine {
    * (by identity), never the current `this.runAbort`. A `stop()`+`start()` around an
    * in-flight step creates a fresh token for the new loop; the stale loop, waking
    * from its await, sees its OWN token aborted and exits without touching the new
-   * run's state — two loops can never proceed together.
+   * run's state — two loops can never proceed together. The STEP body carries the
+   * same token (see stepOnce/`superseded`), so a stale step waking from a
+   * non-signal-linked await bails before re-driving pacing or deadlines.
    */
   async start(): Promise<void> {
     if (this.engineState === 'running' || this.engineState === 'paused') return;
@@ -600,7 +603,7 @@ export class Engine {
     const { store, rate, clock } = this.deps;
     const chainIndex =
       this.current === null ? null : (store.getTarget(this.current.pk)?.chainIndex ?? null);
-    const startOfToday = new Date(clock.now()).setHours(0, 0, 0, 0);
+    const startOfToday = startOfLocalDay(clock.now());
     const pnow = clock.now();
     const pacing = this.pacing
       ? {
@@ -669,9 +672,14 @@ export class Engine {
    * Emits `onStatus` after every step, whatever the branch.
    */
   async stepOnce(): Promise<StepResult> {
+    // R2 — the step body carries its OWN generation token: a stop()+start()
+    // around a non-signal-linked await (churn.execute / the woven unfollow)
+    // must not let the stale step resume against the NEW runAbort, re-drive
+    // pacing, or overwrite the new run's durable deadline (see step 8b).
+    const token = this.runAbort;
     let result: StepResult;
     try {
-      result = await this.step();
+      result = await this.step(token);
     } catch (err) {
       // f9 — per-step resilience: a transient rejection (a flaky `evaluate`, a
       // navigation race — including the bare `sentinel.check()` itself) must not
@@ -686,15 +694,22 @@ export class Engine {
     this.emitStatus();
     // Durable pacing snapshot (§3): persist after every step so a relaunch resumes the
     // current day plan, owed within-session state, and the trailing-hour ring exactly.
-    if (this.pacing?.serialize !== undefined) {
+    // Only the CURRENT generation persists — a superseded step's snapshot is stale.
+    if (token === this.runAbort && this.pacing?.serialize !== undefined) {
       this.deps.store.setPacingState(JSON.stringify(this.pacing.serialize()));
     }
     return result;
   }
 
-  private async step(): Promise<StepResult> {
+  /** Whether `token`'s generation has been superseded (stop()/restart) — the
+   *  step must then bail without mutating pacing or durable deadlines. */
+  private superseded(token: AbortController): boolean {
+    return token !== this.runAbort || token.signal.aborted;
+  }
+
+  private async step(token: AbortController): Promise<StepResult> {
     // 1. Stopped or halted: never touch anything.
-    if (this.runAbort.signal.aborted || this.engineState === 'halted') return 'aborted';
+    if (this.superseded(token) || this.engineState === 'halted') return 'aborted';
 
     // 2. Sentinel gate — the hard safety stop, checked before anything else.
     const sentinelStatus = await this.deps.sentinel.check();
@@ -729,7 +744,11 @@ export class Engine {
       if (this.deps.rate.actionsInLastHour() >= this.settings.hourlyVelocityCap) {
         await this.engineWait(
           'engine:velocity-park',
-          clamp(logNormal(8 * 60_000, 0.3), 5 * 60_000, 15 * 60_000),
+          clamp(
+            logNormal(ENGINE_TIMING.VELOCITY_PARK_MEDIAN_MS, ENGINE_TIMING.VELOCITY_PARK_SIGMA),
+            ENGINE_TIMING.VELOCITY_PARK_MIN_MS,
+            ENGINE_TIMING.VELOCITY_PARK_MAX_MS,
+          ),
         );
         return 'waited-session';
       }
@@ -813,6 +832,9 @@ export class Engine {
           pruneCand as { pk: string; username: string },
           actAt,
         );
+        // A stop()+start() landed during the await: the new generation owns
+        // pacing now — bail before recording, arming, or serving anything.
+        if (this.superseded(token)) return 'aborted';
         if (status === 'blocked') {
           // The rim closed before any click: the candidate was NOT consumed. Park
           // briefly and retry it next step (a persistently blocked feed self-suppresses,
@@ -823,6 +845,10 @@ export class Engine {
         kind = 'unfollow';
       } else {
         await this.deps.churn.execute(due as FollowRecord, actAt);
+        // A stop()+start() landed during the await: the new generation owns
+        // pacing now — the superseded step's owed gap is deliberately dropped
+        // rather than allowed to overwrite the new run's deadline.
+        if (this.superseded(token)) return 'aborted';
         // Systemic-breakage breaker: when every action fails identically across records,
         // the problem is the machinery (input pipeline, selector drift), not the
         // candidates — halt loudly instead of abandoning the whole queue.
@@ -848,7 +874,7 @@ export class Engine {
         nextGapMs = this.deps.rate.nextDelayMs();
       }
       this.setActionDeadline(actAt + nextGapMs);
-      if (this.stateNow() !== 'paused' && !this.runAbort.signal.aborted) {
+      if (this.stateNow() !== 'paused' && !this.superseded(token)) {
         const remaining = (this.actionDelayDeadline ?? 0) - this.deps.clock.now();
         const res = await this.engineWait('engine:action-delay', remaining);
         if (res.completed) this.setActionDeadline(null);
@@ -1118,7 +1144,10 @@ export class Engine {
   ): 'lifecycle' | 'prune' | null {
     if (due !== null && pruneCand !== null) {
       if (due.state !== 'unfollow_queued') {
-        const p = Math.min(this.settings.maxUnfollowFractionPerSession, 0.5);
+        const p = Math.min(
+          this.settings.maxUnfollowFractionPerSession,
+          PATTERN.MAX_UNFOLLOW_FRACTION_PER_SESSION,
+        );
         if (this.rng() < p) return 'prune';
       }
       return 'lifecycle';

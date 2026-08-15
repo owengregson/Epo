@@ -7,6 +7,7 @@ import type { ScannerConfig } from '../engine/scanner';
 import type { ChainConfig } from '../engine/chain-controller';
 import type { PruneConfig } from '../engine/prune-engine';
 import type { RateGovernorConfig } from '../governors/rate-governor';
+import { MS_PER_DAY, MS_PER_MINUTE } from '../timing/units';
 import type { SessionPlannerConfig } from '../timing/session-planner';
 import { PATTERN, SESSION } from '../timing/config';
 import {
@@ -184,8 +185,6 @@ export const DEFAULT_SETTINGS: Settings = {
   ...resolvePattern(PERSONAS.balanced),
 };
 
-const MS_PER_MINUTE = 60_000;
-const MS_PER_DAY = 24 * 3600 * 1000;
 
 /**
  * Load settings from `filePath`, merged over {@link DEFAULT_SETTINGS} so a partial or
@@ -456,11 +455,12 @@ export function toScorerConfig(s: Settings): ScorerConfig {
   };
 }
 
-/** Project the Churn Scheduler's config out of Settings (days → ms). */
+/** Project the Churn Scheduler's config out of Settings (days → ms). The post-
+ *  follow-back hold is deliberately absent: it belongs to the FollowbackWatcher
+ *  (see `toFollowbackConfig`), which stamps `holdUntil` on each record. */
 export function toChurnConfig(s: Settings): ChurnConfig {
   return {
     maxWaitForFollowbackMs: s.maxWaitForFollowbackDays * MS_PER_DAY,
-    holdAfterFollowbackMs: s.holdAfterFollowbackDays * MS_PER_DAY,
     maxRetries: s.maxRetries,
   };
 }

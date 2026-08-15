@@ -911,6 +911,18 @@ describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {
     expect(h.engine.nextCandidate(h.clock.now())).toEqual({ pk: 'b', username: 'ub' });
   });
 
+  test('a whitelisted skip does not decrement remaining (it was never in the actionable count)', async () => {
+    const h = build({ following: ['a', 'b'], followers: [], cfg: { whitelist: ['ua'] } });
+    await h.engine.scan();
+    // The actionable census is exactly [b]: the whitelisted a is excluded up front.
+    expect(h.engine.status().remaining).toBe(1);
+    // Walking the feed skips a permanently — but must not spend b's slot doing so.
+    expect(h.engine.nextCandidate(h.clock.now())).toEqual({ pk: 'b', username: 'ub' });
+    expect(h.engine.status().remaining).toBe(1);
+    // The skip is still durable: a is consumed from the snapshot's remaining set.
+    expect(h.store.getPruneScan()?.remaining.map((c) => c.pk)).not.toContain('a');
+  });
+
   test('atDailyCap and nextCandidate honor the prune daily cap', async () => {
     const h = build({ following: ['a', 'b', 'c'], followers: [], cfg: { dailyLimit: 2 } });
     await h.engine.scan();

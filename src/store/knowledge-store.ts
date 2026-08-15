@@ -16,6 +16,7 @@ import {
 import { projectAccount } from './projections';
 import { runMigrations } from './migrations';
 import * as logger from '../utils/logger';
+import { startOfLocalDay } from '../timing/units';
 
 interface AccountRow {
   pk: string;
@@ -980,9 +981,7 @@ export class KnowledgeStore {
     // Sum deltas into their local-day slot (keyed by that day's local midnight).
     const perDay = new Map<number, number>();
     for (const row of rows) {
-      const d = new Date(row.at);
-      d.setHours(0, 0, 0, 0);
-      const key = d.getTime();
+      const key = startOfLocalDay(row.at);
       perDay.set(key, (perDay.get(key) ?? 0) + row.delta);
     }
 

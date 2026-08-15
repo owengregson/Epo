@@ -1,5 +1,6 @@
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { jittered, sample } from '../timing/primitives';
+import { startOfLocalDay } from '../timing/units';
 import type { Clock } from './clock';
 
 export interface RateGovernorConfig {
@@ -30,9 +31,7 @@ export class RateGovernor {
 
   /** Local midnight of the clock's current day. */
   private startOfTodayLocal(): number {
-    const d = new Date(this.clock.now());
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
+    return startOfLocalDay(this.clock.now());
   }
 
   /**

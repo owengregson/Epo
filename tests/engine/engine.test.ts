@@ -593,6 +593,48 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     expect(await h.engine.stepOnce()).toBe('aborted'); // stopped engine refuses steps
   });
 
+  test("a step that outlives its generation (stop()+start() mid-action) reports 'aborted' and leaves pacing to the new run", async () => {
+    const pacing = new FakePacing(T0 + 3600_000);
+    const h = makeHarness({ pacing });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    // Gate churn.execute so the step can be caught mid-action (a non-signal-
+    // linked await — exactly where a stale generation can wake up).
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let reached!: () => void;
+    const reachedGate = new Promise<void>((r) => {
+      reached = r;
+    });
+    const orig = h.churn.execute.bind(h.churn);
+    h.churn.execute = async (r: FollowRecord) => {
+      reached();
+      await gate;
+      await orig(r);
+    };
+
+    const stale = h.engine.stepOnce(); // old generation, parked inside the action
+    await reachedGate;
+
+    h.engine.stop(); // aborts the old generation…
+    const started = h.engine.start(); // …and a NEW generation takes over
+    h.engine.pause(); // park the new loop once its in-flight step settles
+
+    release();
+    // The stale step must not claim it acted — the new generation owns pacing.
+    expect(await stale).toBe('aborted');
+
+    await new Promise((r) => setTimeout(r, 0));
+    // Exactly ONE recorded action: the new generation's own. A stale step that
+    // also recorded would double-drive the planner and clobber the deadline.
+    expect(pacing.recorded.filter((x) => x.kind === 'follow')).toHaveLength(1);
+
+    h.engine.stop();
+    await started;
+  });
+
   test('pause() interrupts the sleep and parks the loop; resume() continues it', async () => {
     const h = makeHarness();
     h.sleep.hang = true;

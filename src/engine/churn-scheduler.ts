@@ -2,6 +2,7 @@ import type { KnowledgeStore } from '../store/knowledge-store';
 import type { Clock } from '../governors/clock';
 import type { RateGovernor } from '../governors/rate-governor';
 import { type FollowRecord, compareByScoreDesc } from '../store/types';
+import { MS_PER_DAY } from '../timing/units';
 import * as log from '../utils/logger';
 
 /**
@@ -36,20 +37,21 @@ export interface ChurnActions {
   unfollow(username: string): Promise<ChurnActionOutcome>;
 }
 
-/** Lifecycle timers + retry cap for the churn state machine (§3.4). All tunable in Settings. */
+/**
+ * Lifecycle timers + retry cap for the churn state machine (§3.4). All tunable in
+ * Settings. NB: the post-follow-back HOLD is not here — `holdUntil` is stamped by the
+ * FollowbackWatcher (its `holdAfterFollowbackMs`); the scheduler only honors the stamp.
+ */
 export interface ChurnConfig {
   /** How long to wait for a follow-back before reclaiming the slot (default 4 days). */
   maxWaitForFollowbackMs: number;
-  /** How long to keep a reciprocated follow before unfollowing (default 2 days). */
-  holdAfterFollowbackMs: number;
   /** Failed follow/unfollow attempts tolerated before a record is abandoned (default 3). */
   maxRetries: number;
 }
 
 /** Design defaults (v3 §3.4). */
 export const CHURN_DEFAULTS: ChurnConfig = {
-  maxWaitForFollowbackMs: 4 * 24 * 3600 * 1000,
-  holdAfterFollowbackMs: 2 * 24 * 3600 * 1000,
+  maxWaitForFollowbackMs: 4 * MS_PER_DAY,
   maxRetries: 3,
 };
 

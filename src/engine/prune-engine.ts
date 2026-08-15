@@ -33,9 +33,7 @@ import {
 import { PRUNE } from '../timing/config';
 import { filterPruneCandidates, isPruneWhitelisted, pruneWhitelistSet } from './prune-whitelist';
 import * as log from '../utils/logger';
-
-/** One day in ms — the unit `pruneScheduleDays` counts. */
-const MS_PER_DAY = 24 * 3600 * 1000;
+import { MS_PER_DAY, startOfLocalDay } from '../timing/units';
 
 /**
  * Whether a scheduled prune run is due now. Pure and opt-in: `scheduleDays <= 0`
@@ -253,6 +251,14 @@ export const PRUNE_PARK_MS = PRUNE.PARK_MS;
  * (2026-08-15: one success then 13 straight failures, all consumed).
  */
 export const PRUNE_CONSECUTIVE_FAIL_HALT = 4;
+
+/**
+ * Consecutive BLOCKED unfollows tolerated before halting/suspending — a block is
+ * IG pushing back, so the tolerance is tighter than the fail breaker. One home
+ * for the policy: the sequential run() halt and the woven feed's suspension
+ * must trip at the same count.
+ */
+export const PRUNE_CONSECUTIVE_BLOCK_HALT = 3;
 
 /**
  * Prune unfollows run at a THIRD of the growth engine's paced inter-action
@@ -622,7 +628,7 @@ export class PruneEngine {
           // NEVER acted on, so it is NOT visited — park briefly and retry the
           // SAME candidate. Persistently blocked → halt loud rather than spin.
           consecutiveBlocked += 1;
-          if (consecutiveBlocked >= 3) {
+          if (consecutiveBlocked >= PRUNE_CONSECUTIVE_BLOCK_HALT) {
             handBackRemainder();
             this.halt('blocked-repeatedly');
             return;
@@ -788,9 +794,17 @@ export class PruneEngine {
       const followsUsNow =
         this.deps.store.getEdge(cand.pk, this.deps.ownPk, 'follows')?.status === 'active';
       if (isPruneWhitelisted(cand, wl) || followsUsNow || cand.username === null) {
-        // A permanent skip for this census: drop it and move on.
+        // A permanent skip for this census: drop it and move on. `remaining`
+        // tracks the ACTIONABLE census (whitelist already excluded at scan
+        // time), so a whitelisted skip consumes the durable row WITHOUT
+        // spending an actionable slot — decrementing here would zero the count
+        // while actionable candidates still exist.
         pending.shift();
-        this.visitCandidate(cand);
+        if (isPruneWhitelisted(cand, wl)) {
+          this.deps.store.consumePruneScanCandidate(cand.pk);
+        } else {
+          this.visitCandidate(cand);
+        }
         continue;
       }
       return { pk: cand.pk, username: cand.username };
@@ -809,7 +823,7 @@ export class PruneEngine {
     const outcome = await this.deps.churnActions.unfollow(cand.username);
     if (outcome.status === 'blocked') {
       this.feedConsecutiveBlocked += 1;
-      if (this.feedConsecutiveBlocked >= 3) {
+      if (this.feedConsecutiveBlocked >= PRUNE_CONSECUTIVE_BLOCK_HALT) {
         this.feedHalted = true;
         log.warn('prune: woven feed blocked repeatedly, suspending until next scan');
       }
@@ -1101,7 +1115,7 @@ export class PruneEngine {
 
   /** Prune-ledger rows since local midnight — the durable daily-cap count. */
   private dailyDone(): number {
-    const startOfToday = new Date(this.deps.clock.now()).setHours(0, 0, 0, 0);
+    const startOfToday = startOfLocalDay(this.deps.clock.now());
     return this.deps.store.pruneCountSince(startOfToday);
   }
 

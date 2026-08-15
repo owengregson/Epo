@@ -1,6 +1,7 @@
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { Clock } from '../governors/clock';
 import { info, warn } from '../utils/logger';
+import { MS_PER_DAY } from '../timing/units';
 
 /** One "started following you" event, as the notifications source reports it. */
 export interface FollowbackEvent {
@@ -49,7 +50,7 @@ export interface FollowbackConfig {
 
 /** Design defaults: 2-day hold; requests auto-accepted. */
 export const FOLLOWBACK_DEFAULTS: FollowbackConfig = {
-  holdAfterFollowbackMs: 2 * 24 * 3600 * 1000,
+  holdAfterFollowbackMs: 2 * MS_PER_DAY,
   autoAcceptRequests: true,
 };
 

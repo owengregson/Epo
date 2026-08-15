@@ -152,10 +152,9 @@ describe('projections from DEFAULT_SETTINGS', () => {
     });
   });
 
-  test('toChurnConfig converts days → ms (4 days → 345600000 ms)', () => {
+  test('toChurnConfig converts days → ms (4 days → 345600000 ms); the hold belongs to followback', () => {
     expect(toChurnConfig(DEFAULT_SETTINGS)).toEqual({
       maxWaitForFollowbackMs: 345_600_000,
-      holdAfterFollowbackMs: 172_800_000,
       maxRetries: 3,
     });
     expect(toChurnConfig(DEFAULT_SETTINGS).maxWaitForFollowbackMs).toBe(4 * 24 * 3600 * 1000);
