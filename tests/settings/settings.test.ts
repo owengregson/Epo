@@ -3,7 +3,6 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { SCORER_DEFAULTS } from '@/engine/scorer';
-import { FOLLOWBACK_DEFAULTS } from '@/engine/followback-watcher';
 import {
   DEFAULT_SETTINGS,
   type Settings,
@@ -12,11 +11,11 @@ import {
   toScorerConfig,
   toChurnConfig,
   toRateGovernorConfig,
-  toRequestBudgetConfig,
   toFollowbackConfig,
   toScannerConfig,
   toChainConfig,
   toPruneConfig,
+  toPacingConfig,
 } from '@/settings/settings';
 
 let dir: string;
@@ -27,6 +26,73 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+describe('organic pacing settings', () => {
+  test('toPacingConfig maps display units to the planner config', () => {
+    const s: Settings = {
+      ...DEFAULT_SETTINGS,
+      dailyOperatingRate: 30,
+      dailyVolumeVariancePct: 20,
+      restDayChancePct: 10,
+      sessionsPerDayMin: 2,
+      sessionsPerDayMax: 5,
+      gapMedianSeconds: 100,
+      gapFloorSeconds: 50,
+      hourlyVelocityCap: 18,
+    };
+    const c = toPacingConfig(s);
+    expect(c.dailyMeanActions).toBe(30);
+    expect(c.dailyHardCeiling).toBe(s.dailyHardCeiling);
+    expect(c.dayVolumeSigma).toBeCloseTo(0.2, 6);
+    expect(c.restDayProbability).toBeCloseTo(0.1, 6);
+    expect(c.sessionsPerDayMin).toBe(2);
+    expect(c.sessionsPerDayMax).toBe(5);
+    expect(c.gapMedianMs).toBe(100_000);
+    expect(c.gapFloorMs).toBe(50_000);
+    expect(c.maxActionsPerRollingHour).toBe(18);
+  });
+
+  test('sanitize clamps and orders the new knobs, and rejects a bad pacingModel', () => {
+    const file = path.join(dir, 's.json');
+    saveSettings(file, {
+      ...DEFAULT_SETTINGS,
+      persona: 'custom', // custom mode keeps (and clamps) the raw numeric knobs
+      dailyVolumeVariancePct: 999,
+      restDayChancePct: -5,
+      sessionsPerDayMin: 8,
+      sessionsPerDayMax: 3,
+      gapMedianSeconds: 40,
+      gapFloorSeconds: 200,
+      hourlyVelocityCap: 999,
+      // biome-ignore lint/suspicious/noExplicitAny: exercising the sanitizer with a bad value
+      pacingModel: 'weird' as any,
+    });
+    const s = loadSettings(file);
+    expect(s.dailyVolumeVariancePct).toBeLessThanOrEqual(60);
+    expect(s.restDayChancePct).toBeGreaterThanOrEqual(0);
+    expect(s.sessionsPerDayMax).toBeGreaterThanOrEqual(s.sessionsPerDayMin);
+    expect(s.gapFloorSeconds).toBeLessThanOrEqual(s.gapMedianSeconds);
+    expect(s.hourlyVelocityCap).toBeLessThanOrEqual(40);
+    expect(s.pacingModel).toBe('legacy');
+  });
+
+  test('a named persona derives the numeric knobs from its bundle', () => {
+    const file = path.join(dir, 'persona.json');
+    saveSettings(file, { ...DEFAULT_SETTINGS, persona: 'grower', dailyOperatingRate: 999 });
+    const s = loadSettings(file);
+    expect(s.persona).toBe('grower');
+    expect(s.dailyOperatingRate).toBe(75); // 'active' — the hand-set 999 is ignored
+    expect(s.dailyHardCeiling).toBe(Math.round(75 * 1.3));
+  });
+
+  test('a legacy file with no persona keeps its numbers as custom (migration-safe)', () => {
+    const file = path.join(dir, 'legacy.json');
+    fs.writeFileSync(file, JSON.stringify({ seed: 'x', dailyOperatingRate: 37 }), 'utf8');
+    const s = loadSettings(file);
+    expect(s.persona).toBe('custom');
+    expect(s.dailyOperatingRate).toBe(37); // preserved, not snapped to a persona default
+  });
 });
 
 describe('persistence', () => {
@@ -49,11 +115,11 @@ describe('persistence', () => {
 
   test('a partial JSON merges over defaults', () => {
     const file = path.join(dir, 'partial.json');
-    fs.writeFileSync(file, JSON.stringify({ seed: 'someone', dailyOperatingRate: 40 }), 'utf8');
+    fs.writeFileSync(file, JSON.stringify({ seed: 'someone', dailyOperatingRate: 30 }), 'utf8');
 
     const loaded = loadSettings(file);
     expect(loaded.seed).toBe('someone');
-    expect(loaded.dailyOperatingRate).toBe(40);
+    expect(loaded.dailyOperatingRate).toBe(30);
     // Untouched keys retain their defaults.
     expect(loaded.dailyHardCeiling).toBe(DEFAULT_SETTINGS.dailyHardCeiling);
     expect(loaded.minFollowers).toBe(DEFAULT_SETTINGS.minFollowers);
@@ -81,6 +147,8 @@ describe('projections from DEFAULT_SETTINGS', () => {
       maxFollowers: 20000,
       privateBoost: 0.15,
       bandEdgeScore: SCORER_DEFAULTS.bandEdgeScore,
+      mutualCap: SCORER_DEFAULTS.mutualCap,
+      mutualWeight: SCORER_DEFAULTS.mutualWeight,
     });
   });
 
@@ -95,8 +163,8 @@ describe('projections from DEFAULT_SETTINGS', () => {
 
   test('toRateGovernorConfig converts minutes → ms (3 min → 180000 ms) and carries caps', () => {
     expect(toRateGovernorConfig(DEFAULT_SETTINGS)).toEqual({
-      dailyHardCeiling: 50,
-      dailyOperatingRate: 25,
+      dailyHardCeiling: 65,
+      dailyOperatingRate: 50,
       minDelayMs: 180_000,
       maxDelayMs: 420_000,
       jitterPercent: 30,
@@ -106,23 +174,19 @@ describe('projections from DEFAULT_SETTINGS', () => {
     expect(toRateGovernorConfig(DEFAULT_SETTINGS).minDelayMs).toBe(3 * 60_000);
   });
 
-  test('toRequestBudgetConfig converts window minutes → ms (60 min → 3600000 ms)', () => {
-    expect(toRequestBudgetConfig(DEFAULT_SETTINGS)).toEqual({
-      maxRequestsPerWindow: 200,
-      windowMs: 3_600_000,
-    });
-    expect(toRequestBudgetConfig(DEFAULT_SETTINGS).windowMs).toBe(60 * 60_000);
-  });
-
-  test('toFollowbackConfig converts hold days → ms and carries the page-cap default', () => {
+  test('toFollowbackConfig converts hold days → ms and carries auto-accept', () => {
     expect(toFollowbackConfig(DEFAULT_SETTINGS)).toEqual({
       holdAfterFollowbackMs: 172_800_000,
-      maxPagesPerCheck: FOLLOWBACK_DEFAULTS.maxPagesPerCheck,
+      autoAcceptRequests: true,
     });
+  });
+
+  test('the follow-back check defaults to an HOURLY cadence (notifications-based)', () => {
+    expect(DEFAULT_SETTINGS.followbackSweepHours).toBe(1);
   });
 
   test('toScannerConfig carries the plan size', () => {
-    expect(toScannerConfig(DEFAULT_SETTINGS)).toEqual({ dailyPlanSize: 25 });
+    expect(toScannerConfig(DEFAULT_SETTINGS)).toEqual({ dailyPlanSize: 60 });
   });
 
   test('toChainConfig carries the min-yield gate', () => {
@@ -136,8 +200,8 @@ describe('projections from DEFAULT_SETTINGS', () => {
       minDelayMs: 180_000,
       maxDelayMs: 420_000,
       jitterPercent: 30,
-      scanMinMs: 2_000,
-      scanMaxMs: 5_000,
+      scanMinMs: 1_000,
+      scanMaxMs: 3_000,
     });
     expect(
       toPruneConfig({ ...DEFAULT_SETTINGS, pruneWhitelist: ['Keep_Me'], pruneDailyLimit: 5 }),
@@ -147,8 +211,8 @@ describe('projections from DEFAULT_SETTINGS', () => {
       minDelayMs: 180_000,
       maxDelayMs: 420_000,
       jitterPercent: 30,
-      scanMinMs: 2_000,
-      scanMaxMs: 5_000,
+      scanMinMs: 1_000,
+      scanMaxMs: 3_000,
     });
   });
 
@@ -195,10 +259,47 @@ describe('projections from DEFAULT_SETTINGS', () => {
       ...DEFAULT_SETTINGS,
       maxWaitForFollowbackDays: 1,
       minDelayMinutes: 5,
-      requestBudgetWindowMinutes: 30,
     };
     expect(toChurnConfig(custom).maxWaitForFollowbackMs).toBe(24 * 3600 * 1000);
     expect(toRateGovernorConfig(custom).minDelayMs).toBe(5 * 60_000);
-    expect(toRequestBudgetConfig(custom).windowMs).toBe(30 * 60_000);
+  });
+});
+
+describe('sanitizeSettings', () => {
+  const { sanitizeSettings } = require('@/settings/settings');
+
+  test('clamps hostile numeric values into safe ranges', () => {
+    const s = sanitizeSettings({
+      ...DEFAULT_SETTINGS,
+      jitterPercent: 100,
+      minDelayMinutes: -5,
+      maxDelayMinutes: 0,
+      dailyOperatingRate: 40,
+      dailyHardCeiling: 10, // below the rate → lifted to it
+    });
+    expect(s.jitterPercent).toBe(90);
+    expect(s.minDelayMinutes).toBe(0.5);
+    expect(s.maxDelayMinutes).toBeGreaterThanOrEqual(s.minDelayMinutes);
+    expect(s.dailyHardCeiling).toBeGreaterThanOrEqual(s.dailyOperatingRate);
+  });
+
+  test('repairs non-array whitelist and NaN values', () => {
+    const s = sanitizeSettings({
+      ...DEFAULT_SETTINGS,
+      pruneWhitelist: null as any,
+      maxFollowers: NaN as any,
+      minFollowers: 100,
+    });
+    expect(s.pruneWhitelist).toEqual([]);
+    expect(s.maxFollowers).toBeGreaterThanOrEqual(s.minFollowers);
+  });
+
+  test('enforces the ratio band ordering', () => {
+    const s = sanitizeSettings({ ...DEFAULT_SETTINGS, bandLow: 2.0, peakLow: 0.1 });
+    expect(s.hardLow).toBeLessThanOrEqual(s.bandLow);
+    expect(s.bandLow).toBeLessThanOrEqual(s.peakLow);
+    expect(s.peakLow).toBeLessThanOrEqual(s.peakHigh);
+    expect(s.peakHigh).toBeLessThanOrEqual(s.bandHigh);
+    expect(s.bandHigh).toBeLessThanOrEqual(s.hardHigh);
   });
 });
