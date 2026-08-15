@@ -1,4 +1,5 @@
 import type { KnowledgeStore } from '../store/knowledge-store';
+import * as logger from '../utils/logger';
 import { scoreCandidate, type ScorerConfig } from './scorer';
 
 /**
@@ -89,6 +90,9 @@ export class Scanner {
         targetPk,
         state: 'queued',
         retryCount: 0,
+        // Persist the composite score so the queue's execution order (nextDue)
+        // and display order both follow the ranking — the best candidate first.
+        score: c.score,
       });
       this.store.setRole(c.pk, 'candidate');
     }
@@ -99,5 +103,31 @@ export class Scanner {
       considered: pks.length,
       eligible: ranked.length,
     };
+  }
+
+  /**
+   * Backfill scores for `queued` records that have none. Records queued before
+   * the score column existed (migration 7) carry NULL forever, and a NULL
+   * score makes both `nextDue` and the queue display fall back to meaningless
+   * pk order — the queue then neither acts nor shows best-first. Idempotent
+   * and store-only; a record whose account still lacks counts stays unscored
+   * (it sorts last, exactly as an unknown should). Returns how many were
+   * scored.
+   */
+  rescoreQueued(): number {
+    let scored = 0;
+    for (const rec of this.store.followRecordsByState('queued')) {
+      if (rec.score !== undefined) continue;
+      const acc = this.store.getAccount(rec.accountPk);
+      if (acc === null) continue;
+      const s = scoreCandidate(acc, this.scorerCfg);
+      if (!s.eligible) continue;
+      this.store.upsertFollowRecord({ ...rec, score: s.score });
+      scored += 1;
+    }
+    if (scored > 0) {
+      logger.info('scanner: backfilled scores for legacy queued records', { scored });
+    }
+    return scored;
   }
 }

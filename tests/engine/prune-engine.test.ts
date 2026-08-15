@@ -2,7 +2,7 @@
  * PruneEngine tests (Phase 5 — auto-prune).
  *
  * Real `:memory:` KnowledgeStore beneath a FakeClock; scripted fakes for every
- * live-edge port (own-following, own-followers, churn actions, budget,
+ * live-edge port (own-following, own-followers, churn actions,
  * sentinel); an injected fake sleep so nothing waits on real timers. Covers the
  * candidate set-diff (whitelist case-insensitive on username AND pk, self
  * excluded), the prune-own daily cap, the dry-run path (simulated, no
@@ -13,12 +13,14 @@ import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
 import {
   PruneEngine,
+  PRUNE_CONSECUTIVE_FAIL_HALT,
   PRUNE_PARK_MS,
   PRUNE_PROGRESS_EMIT_MS,
   PRUNE_SCAN_FRESH_MS,
   pruneDue,
   type PruneConfig,
   type PruneEngineDeps,
+  type PruneScanFetch,
   type PruneScanOpts,
   type PruneStatus,
 } from '@/engine/prune-engine';
@@ -64,10 +66,10 @@ class FakeOwnFollowing {
   calls = 0;
   lastOpts: PruneScanOpts | undefined;
   constructor(private readonly pks: string[]) {}
-  async fetchAllPks(opts?: PruneScanOpts): Promise<string[]> {
+  async fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch> {
     this.calls += 1;
     this.lastOpts = opts;
-    return [...this.pks];
+    return { pks: [...this.pks], complete: true, reason: 'no-more-pages' };
   }
 }
 
@@ -76,10 +78,10 @@ class FakeOwnFollowers {
   calls = 0;
   lastOpts: PruneScanOpts | undefined;
   constructor(private readonly pks: string[]) {}
-  async fetchAllPks(opts?: PruneScanOpts): Promise<string[]> {
+  async fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch> {
     this.calls += 1;
     this.lastOpts = opts;
-    return [...this.pks];
+    return { pks: [...this.pks], complete: true, reason: 'no-more-pages' };
   }
 }
 
@@ -90,16 +92,6 @@ class FakeChurnActions {
   async unfollow(username: string): Promise<ChurnActionOutcome> {
     this.unfollows.push(username);
     return this.outcomes.get(username) ?? { status: 'ok' };
-  }
-}
-
-class FakeBudget {
-  constructor(private allow = true) {}
-  canSpend(): boolean {
-    return this.allow;
-  }
-  setAllow(v: boolean): void {
-    this.allow = v;
   }
 }
 
@@ -135,7 +127,6 @@ interface Harness {
   ownFollowers: FakeOwnFollowers;
   churn: FakeChurnActions;
   sentinel: FakeSentinel;
-  budget: FakeBudget;
   sleeps: number[];
   statuses: PruneStatus[];
   completedAt: number[];
@@ -146,8 +137,8 @@ const build = (over: {
   followers: string[];
   cfg?: Partial<PruneConfig>;
   sentinel?: FakeSentinel;
-  budget?: FakeBudget;
   sleep?: SleepFn;
+  refreshOwnStats?: () => Promise<void>;
 }): Harness => {
   const store = new KnowledgeStore(':memory:');
   store.setOwnPk(OWN_PK);
@@ -156,7 +147,6 @@ const build = (over: {
   const ownFollowers = new FakeOwnFollowers(over.followers);
   const churn = new FakeChurnActions();
   const sentinel = over.sentinel ?? new FakeSentinel();
-  const budget = over.budget ?? new FakeBudget();
   const sleeps: number[] = [];
   const statuses: PruneStatus[] = [];
   const completedAt: number[] = [];
@@ -174,7 +164,6 @@ const build = (over: {
     ownFollowing,
     ownFollowers,
     churnActions: churn,
-    requestBudget: budget,
     sentinel,
     cfg: { ...CFG, ...over.cfg },
     sleep:
@@ -185,6 +174,7 @@ const build = (over: {
     rng: () => 0.5,
     onStatus: (s) => statuses.push(s),
     onRunComplete: (at) => completedAt.push(at),
+    refreshOwnStats: over.refreshOwnStats,
   };
   return {
     engine: new PruneEngine(deps),
@@ -194,7 +184,6 @@ const build = (over: {
     ownFollowers,
     churn,
     sentinel,
-    budget,
     sleeps,
     statuses,
     completedAt,
@@ -204,7 +193,7 @@ const build = (over: {
 // --- scan() ------------------------------------------------------------------------
 
 describe('PruneEngine.scan', () => {
-  test('candidates = following − followers − whitelist − self (whitelist case-insensitive on username AND pk)', async () => {
+  test('scan census is RAW (following − followers − self); whitelist derives the counts', async () => {
     const h = build({
       following: [OWN_PK, '1', '2', '3', '4'],
       followers: ['2', '9'], // '2' follows back; '9' is a non-followed follower
@@ -215,7 +204,13 @@ describe('PruneEngine.scan', () => {
 
     expect(result.following).toBe(5);
     expect(result.followers).toBe(2);
-    expect(result.candidates).toEqual([{ pk: '1', username: 'u1' }]);
+    // The census carries EVERY non-follower (whitelist NOT applied) so a later
+    // whitelist edit can hide or restore rows without a re-scan…
+    expect(result.candidates).toEqual([
+      { pk: '1', username: 'u1' },
+      { pk: '3', username: 'u3' },
+      { pk: '4', username: 'u4' },
+    ]);
     // Read-only: no unfollow was attempted, nothing entered the prune ledger.
     expect(h.churn.unfollows).toEqual([]);
     expect(h.store.pruneCountSince(0)).toBe(0);
@@ -223,8 +218,87 @@ describe('PruneEngine.scan', () => {
     expect(h.statuses[0].state).toBe('scanning');
     expect(h.statuses[h.statuses.length - 1].state).toBe('idle');
     expect(h.engine.status().state).toBe('idle');
+    // …while the status counts reflect the ACTIONABLE subset (whitelist applied).
     expect(h.engine.status().candidates).toBe(1);
+
+    // A run consumes only the actionable subset — whitelisted accounts survive.
+    await h.engine.run();
+    expect(h.churn.unfollows).toEqual(['u1']);
     h.store.close();
+  });
+
+  test('scan projects the live phase + header estimate for the progress bar', async () => {
+    const h = build({ following: [OWN_PK, '1'], followers: ['9'] });
+    // Our own header counts, as the always-on profile-info observer stores them.
+    h.store.observe({
+      accountPk: OWN_PK,
+      observedAt: T0,
+      source: 'profile',
+      fields: { followers: 30, following: 20 },
+    });
+
+    await h.engine.scan();
+
+    // Phases were projected in order — each carrying BOTH header estimates (so
+    // the UI can draw one continuous bar across the hand-off) — then cleared.
+    const phases = h.statuses.map((s) => [s.scanPhase, s.scanEstimates]);
+    expect(phases).toContainEqual(['following', { following: 20, followers: 30 }]);
+    expect(phases).toContainEqual(['followers', { following: 20, followers: 30 }]);
+    const last = h.statuses[h.statuses.length - 1];
+    expect(last.scanPhase).toBeNull();
+    expect(last.scanEstimates).toBeNull();
+    expect(h.engine.status().scanPhase).toBeNull();
+    h.store.close();
+  });
+
+  test('scan awaits the active own-stats refresh BEFORE reading estimates', async () => {
+    // The store starts with NO header stats (the real failure mode: an SPA
+    // profile load never issued web_profile_info, so passive observation
+    // caught nothing). The injected refresh — standing in for the live
+    // enricher's one own-profile fetch — lands them; the projected estimates
+    // prove the scan awaited it first.
+    let refreshed = 0;
+    const h = build({
+      following: [OWN_PK, '1'],
+      followers: ['9'],
+      refreshOwnStats: async () => {
+        refreshed += 1;
+        h.store.observe({
+          accountPk: OWN_PK,
+          observedAt: T0,
+          source: 'profile',
+          fields: { followers: 30, following: 20 },
+        });
+      },
+    });
+
+    await h.engine.scan();
+
+    expect(refreshed).toBe(1);
+    const phases = h.statuses.map((s) => [s.scanPhase, s.scanEstimates]);
+    expect(phases).toContainEqual(['following', { following: 20, followers: 30 }]);
+  });
+
+  test('a rejecting own-stats refresh degrades to a bar-less scan, never a failed one', async () => {
+    const h = build({
+      following: [OWN_PK, '1'],
+      followers: ['9'],
+      refreshOwnStats: async () => {
+        throw new Error('tab gone');
+      },
+    });
+
+    const result = await h.engine.scan();
+
+    expect(result.following).toBe(2);
+    // Every phase-carrying projection has empty (null-halved) estimates — the
+    // scan ran to completion without them, and never surfaced the rejection.
+    const phased = h.statuses.filter((s) => s.scanPhase !== null);
+    expect(phased.length).toBeGreaterThan(0);
+    for (const s of phased) {
+      expect(s.scanEstimates).toEqual({ following: null, followers: null });
+    }
+    expect(h.engine.status().state).toBe('idle');
   });
 
   test('scan threads the configured pacing + a live shouldStop into BOTH sources', async () => {
@@ -253,20 +327,28 @@ describe('PruneEngine.scan', () => {
     // A following source that reports page-by-page progress: three pages inside
     // one throttle window (only the first may emit), then one after it elapses.
     const following = {
-      async fetchAllPks(opts?: PruneScanOpts): Promise<string[]> {
+      async fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch> {
         opts?.onProgress?.(12); // emitted (first in the window)
         opts?.onProgress?.(24); // suppressed (same window)
         opts?.onProgress?.(36); // suppressed
         clock.advance(PRUNE_PROGRESS_EMIT_MS);
         opts?.onProgress?.(48); // emitted (window elapsed)
-        return Array.from({ length: 48 }, (_, i) => `f${i}`);
+        return {
+          pks: Array.from({ length: 48 }, (_, i) => `f${i}`),
+          complete: true,
+          reason: 'no-more-pages',
+        };
       },
     };
     const followers = {
-      async fetchAllPks(opts?: PruneScanOpts): Promise<string[]> {
+      async fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch> {
         clock.advance(PRUNE_PROGRESS_EMIT_MS);
         opts?.onProgress?.(7);
-        return Array.from({ length: 7 }, (_, i) => `f${i}`); // all follow back
+        return {
+          pks: Array.from({ length: 7 }, (_, i) => `f${i}`), // all follow back
+          complete: true,
+          reason: 'no-more-pages',
+        };
       },
     };
     const engine = new PruneEngine({
@@ -276,7 +358,6 @@ describe('PruneEngine.scan', () => {
       ownFollowing: following,
       ownFollowers: followers,
       churnActions: new FakeChurnActions(),
-      requestBudget: new FakeBudget(),
       sentinel: new FakeSentinel(),
       cfg: CFG,
       sleep: async () => {},
@@ -308,10 +389,11 @@ describe('PruneEngine.scan', () => {
     let release: () => void = () => {};
     const gated = {
       opts: undefined as PruneScanOpts | undefined,
-      fetchAllPks(opts?: PruneScanOpts): Promise<string[]> {
+      fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch> {
         gated.opts = opts;
-        return new Promise<string[]>((resolve) => {
-          release = (): void => resolve(['1', '2']);
+        return new Promise<PruneScanFetch>((resolve) => {
+          release = (): void =>
+            resolve({ pks: ['1', '2'], complete: true, reason: 'no-more-pages' });
         });
       },
     };
@@ -325,7 +407,6 @@ describe('PruneEngine.scan', () => {
       ownFollowing: gated,
       ownFollowers: followers,
       churnActions: new FakeChurnActions(),
-      requestBudget: new FakeBudget(),
       sentinel: new FakeSentinel(),
       cfg: CFG,
       sleep: async () => {},
@@ -350,7 +431,7 @@ describe('PruneEngine.scan', () => {
 // --- run() -------------------------------------------------------------------------
 
 describe('PruneEngine.run', () => {
-  test('ok path: unfollows one at a time, reconciles the edge, records the ledger, human delay between', async () => {
+  test('ok path: unfollows one at a time, reconciles the edge, records the ledger, paced delay between', async () => {
     const h = build({
       following: [OWN_PK, '1', '2', '3'],
       followers: ['2'],
@@ -397,7 +478,7 @@ describe('PruneEngine.run', () => {
     h.store.close();
   });
 
-  test('inter-action delay runs at a THIRD of the humanized pace (PRUNE_DELAY_FACTOR)', async () => {
+  test('inter-action delay runs at a THIRD of the paced pace (PRUNE_DELAY_FACTOR)', async () => {
     const h = build({
       following: [OWN_PK, '1'],
       followers: [],
@@ -481,23 +562,48 @@ describe('PruneEngine.run', () => {
     h.store.close();
   });
 
-  test('blocked leaves the account untouched (no ledger row), parks briefly, continues', async () => {
+  test('a transient block parks briefly and RETRIES the same candidate (never skipped)', async () => {
     const h = build({
       following: [OWN_PK, '1', '2'],
       followers: [],
     });
-    h.churn.outcomes.set('u1', { status: 'blocked' });
+    // u1 is blocked exactly once, then succeeds — the old behavior skipped it
+    // permanently (consumed from the durable set without ever acting).
+    let u1Blocks = 1;
+    h.churn.unfollow = async (username: string): Promise<ChurnActionOutcome> => {
+      h.churn.unfollows.push(username);
+      if (username === 'u1' && u1Blocks > 0) {
+        u1Blocks -= 1;
+        return { status: 'blocked' };
+      }
+      return { status: 'ok' };
+    };
     h.store.observeEdge(OWN_PK, '1', 'follows', true, T0 - 1000);
 
     await h.engine.run();
 
-    expect(h.churn.unfollows).toEqual(['u1', 'u2']);
-    // Only u2's ok reached the ledger; u1 was left completely untouched.
-    expect(h.store.pruneCountSince(0)).toBe(1);
-    expect(h.store.getEdge(OWN_PK, '1', 'follows')?.status).toBe('active');
-    // The brief park was slept, then u2's inter-action delay (60s base ×1/3 = 20s).
-    expect(h.sleeps).toEqual([PRUNE_PARK_MS, 20_000]);
+    expect(h.churn.unfollows).toEqual(['u1', 'u1', 'u2']); // retried, then moved on
+    expect(h.store.pruneCountSince(0)).toBe(2); // both eventually reached the ledger
+    // The brief park, then u1's inter-action delay, then u2's (60s base ×1/3 = 20s).
+    expect(h.sleeps).toEqual([PRUNE_PARK_MS, 20_000, 20_000]);
     expect(h.engine.status().state).toBe('done');
+    h.store.close();
+  });
+
+  test('persistently blocked halts loud and never consumes the candidate', async () => {
+    const h = build({
+      following: [OWN_PK, '1'],
+      followers: [],
+    });
+    h.churn.outcomes.set('u1', { status: 'blocked' });
+
+    await h.engine.run();
+
+    expect(h.churn.unfollows).toEqual(['u1', 'u1', 'u1']); // three attempts, bounded
+    expect(h.store.pruneCountSince(0)).toBe(0); // nothing ever reached the ledger
+    expect(h.engine.status().state).toBe('halted');
+    // The candidate was never visited: the durable remaining set still holds it.
+    expect(h.store.getPruneScan()?.remaining.map((c) => c.pk)).toContain('1');
     h.store.close();
   });
 
@@ -519,22 +625,7 @@ describe('PruneEngine.run', () => {
     h.store.close();
   });
 
-  test('a still-closed request budget ends the run after one park (no blind attempts)', async () => {
-    const h = build({
-      following: [OWN_PK, '1'],
-      followers: [],
-      budget: new FakeBudget(false),
-    });
-
-    await h.engine.run();
-
-    expect(h.churn.unfollows).toEqual([]);
-    expect(h.sleeps).toEqual([PRUNE_PARK_MS]);
-    expect(h.engine.status().state).toBe('done');
-    h.store.close();
-  });
-
-  test('stop() interrupts the in-flight human delay instantly and lands in idle', async () => {
+  test('stop() interrupts the in-flight paced delay instantly and lands in idle', async () => {
     // A sleep that hangs until its signal aborts — the real defaultSleep's abort
     // path, minus the timer.
     const hangingSleep: SleepFn = (_ms, signal) =>
@@ -568,9 +659,10 @@ describe('PruneEngine.run', () => {
   test('stop() during the run’s scan phase aborts it: no unfollows, run resolves, state idle', async () => {
     let release: () => void = () => {};
     const gated = {
-      fetchAllPks(): Promise<string[]> {
-        return new Promise<string[]>((resolve) => {
-          release = (): void => resolve(['1', '2']);
+      fetchAllPks(): Promise<PruneScanFetch> {
+        return new Promise<PruneScanFetch>((resolve) => {
+          release = (): void =>
+            resolve({ pks: ['1', '2'], complete: true, reason: 'no-more-pages' });
         });
       },
     };
@@ -585,7 +677,6 @@ describe('PruneEngine.run', () => {
       ownFollowing: gated,
       ownFollowers: followers,
       churnActions: churn,
-      requestBudget: new FakeBudget(),
       sentinel: new FakeSentinel(),
       cfg: CFG,
       sleep: async () => {},
@@ -616,7 +707,6 @@ describe('PruneEngine.run', () => {
       ownFollowing: new FakeOwnFollowing(['ghost']),
       ownFollowers: new FakeOwnFollowers([]),
       churnActions: churn,
-      requestBudget: new FakeBudget(),
       sentinel: new FakeSentinel(),
       cfg: CFG,
       sleep: async () => {},
@@ -681,20 +771,28 @@ describe('PruneEngine — 2-step run (scan then consume)', () => {
     h.store.close();
   });
 
-  test('changing the whitelist invalidates a cached scan (Run re-locks)', async () => {
-    const h = build({ following: [OWN_PK, '1'], followers: [] });
+  test('a whitelist edit re-derives the cached scan live (no re-lock, no re-scan)', async () => {
+    const h = build({ following: [OWN_PK, '1', '2'], followers: [] });
 
     await h.engine.scan();
     expect(h.engine.status().scanReady).toBe(true);
+    expect(h.engine.status().candidates).toBe(2);
 
-    h.engine.applyConfig({ ...CFG, whitelist: ['someone'] });
-    expect(h.engine.status().scanReady).toBe(false);
+    // Adding to the whitelist hides that candidate immediately — Run stays
+    // unlocked over the reduced set.
+    h.engine.applyConfig({ ...CFG, whitelist: ['u1'] });
+    expect(h.engine.status().scanReady).toBe(true);
+    expect(h.engine.status().candidates).toBe(1);
+    expect(h.engine.status().remaining).toBe(1);
 
-    // An unrelated knob change leaves a fresh cache intact.
-    await h.engine.scan();
-    expect(h.engine.status().scanReady).toBe(true);
-    h.engine.applyConfig({ ...CFG, whitelist: ['someone'], dailyLimit: 7 });
-    expect(h.engine.status().scanReady).toBe(true);
+    // Removing them from the whitelist restores the candidate.
+    h.engine.applyConfig({ ...CFG, whitelist: [] });
+    expect(h.engine.status().candidates).toBe(2);
+
+    // The run honors the whitelist AS IT STANDS at run time.
+    h.engine.applyConfig({ ...CFG, whitelist: ['u2'] });
+    await h.engine.run();
+    expect(h.churn.unfollows).toEqual(['u1']);
     h.store.close();
   });
 });
@@ -725,5 +823,151 @@ describe('PruneEngine — census enrichment + growth exclusion', () => {
     expect(h.store.getEdge(OWN_PK, '1', 'follows')?.status).toBe('active');
     expect(h.store.getEdge('9', OWN_PK, 'follows')?.status).toBe('active');
     h.store.close();
+  });
+});
+
+// --- Live-graph guard + stopped-run remainder (docs/PRINCIPLES.md §2/§3) ------------
+
+describe('live-graph guard and remainder handback', () => {
+  test('a candidate who followed back AFTER the scan is skipped, never unfollowed', async () => {
+    const h = build({
+      following: [OWN_PK, '1', '2'],
+      followers: [], // census: both are non-followers
+    });
+    await h.engine.scan();
+
+    // Between scan and run, a notifications check records '1' following us.
+    h.store.observeEdge('1', OWN_PK, 'follows', true, T0 + 1);
+
+    await h.engine.run();
+
+    // '1' was spared by the live graph; only '2' was unfollowed.
+    expect(h.churn.unfollows).toEqual(['u2']);
+    // '1' was still visited (consumed), so the run reports a clean finish.
+    expect(h.engine.status().remaining).toBe(0);
+    expect(h.completedAt.length).toBe(1);
+  });
+
+  test('a STOPPED run keeps its unvisited remainder runnable (no re-scan required)', async () => {
+    const h = build({
+      following: [OWN_PK, '1', '2', '3'],
+      followers: [],
+    });
+    await h.engine.scan();
+
+    // Stop the run after the first unfollow: the paced inter-action delay is
+    // where stop() lands, so hook the sleep to fire it.
+    let stopped = false;
+    const origUnfollow = h.churn.unfollow.bind(h.churn);
+    h.churn.unfollow = async (username: string) => {
+      const out = await origUnfollow(username);
+      if (!stopped) {
+        stopped = true;
+        h.engine.stop();
+      }
+      return out;
+    };
+
+    await h.engine.run();
+
+    expect(h.engine.status().state).toBe('idle'); // a stop is not a failure
+    expect(h.churn.unfollows.length).toBe(1);
+    // The remainder is STILL runnable: scanReady holds and a second run
+    // continues from where the stop landed instead of demanding a re-scan.
+    expect(h.engine.status().scanReady).toBe(true);
+    expect(h.engine.status().remaining).toBe(2);
+
+    await h.engine.run();
+    expect(h.churn.unfollows.length).toBe(3);
+    expect(h.completedAt.length).toBe(1); // only the finishing run stamps lastRunAt
+  });
+});
+
+test('consecutive FAILED unfollows halt the run (actions-failing) with the remainder runnable', async () => {
+  const h = build({
+    following: [OWN_PK, '1', '2', '3', '4', '5', '6', '7'],
+    followers: [],
+  });
+  await h.engine.scan();
+  // Every unfollow fails (e.g. Instagram silently rejecting the mutation).
+  for (const pk of ['1', '2', '3', '4', '5', '6', '7']) {
+    h.churn.outcomes.set(`u${pk}`, { status: 'failed' });
+  }
+
+  await h.engine.run();
+
+  expect(h.engine.status().state).toBe('halted');
+  expect(h.churn.unfollows.length).toBe(4); // stopped at the breaker, not 7
+  // The unvisited remainder stays runnable for after the block clears.
+  expect(h.engine.status().scanReady).toBe(true);
+  expect(h.engine.status().remaining).toBe(3);
+  expect(h.completedAt.length).toBe(0); // never stamped as a clean run
+});
+
+describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {
+  test('nextCandidate returns the first actionable candidate, skipping whitelisted ones', async () => {
+    const h = build({ following: ['a', 'b'], followers: [], cfg: { whitelist: ['ua'] } });
+    await h.engine.scan();
+    expect(h.engine.nextCandidate(h.clock.now())).toEqual({ pk: 'b', username: 'ub' });
+  });
+
+  test('atDailyCap and nextCandidate honor the prune daily cap', async () => {
+    const h = build({ following: ['a', 'b', 'c'], followers: [], cfg: { dailyLimit: 2 } });
+    await h.engine.scan();
+    h.store.recordPruneAction('x', 'ok', h.clock.now());
+    h.store.recordPruneAction('y', 'ok', h.clock.now());
+    expect(h.engine.atDailyCap(h.clock.now())).toBe(true);
+    expect(h.engine.nextCandidate(h.clock.now())).toBeNull();
+  });
+
+  test('executeUnfollow(ok) writes the ledger, heals the edge, and consumes the candidate', async () => {
+    const h = build({ following: ['a', 'b'], followers: [] });
+    await h.engine.scan();
+    const c = h.engine.nextCandidate(h.clock.now());
+    expect(c).not.toBeNull();
+    const status = await h.engine.executeUnfollow(c as { pk: string; username: string }, h.clock.now());
+    expect(status).toBe('ok');
+    expect(h.churn.unfollows).toEqual([(c as { username: string }).username]);
+    expect(h.engine.nextCandidate(h.clock.now())?.pk).not.toBe(c?.pk); // consumed
+  });
+
+  test('a blocked unfollow keeps the candidate and suspends the feed after repeats', async () => {
+    const h = build({ following: ['a', 'b', 'c'], followers: [] });
+    await h.engine.scan();
+    const c = h.engine.nextCandidate(h.clock.now()) as { pk: string; username: string };
+    h.churn.outcomes.set(c.username, { status: 'blocked' });
+    expect(await h.engine.executeUnfollow(c, h.clock.now())).toBe('blocked');
+    expect(h.engine.nextCandidate(h.clock.now())?.pk).toBe(c.pk); // not consumed
+    await h.engine.executeUnfollow(c, h.clock.now());
+    await h.engine.executeUnfollow(c, h.clock.now());
+    expect(h.engine.nextCandidate(h.clock.now())).toBeNull(); // suspended after 3 blocks
+  });
+
+  test('consecutive failures suspend the feed (growth is unaffected)', async () => {
+    const many = ['a', 'b', 'c', 'd', 'e'];
+    const h = build({ following: many, followers: [] });
+    await h.engine.scan();
+    for (const pk of many) h.churn.outcomes.set(`u${pk}`, { status: 'failed' });
+    for (let i = 0; i < PRUNE_CONSECUTIVE_FAIL_HALT; i++) {
+      const c = h.engine.nextCandidate(h.clock.now());
+      if (c === null) break;
+      await h.engine.executeUnfollow(c, h.clock.now());
+    }
+    expect(h.engine.nextCandidate(h.clock.now())).toBeNull();
+  });
+
+  test('a fresh scan re-arms a suspended feed', async () => {
+    const many = ['a', 'b', 'c', 'd', 'e'];
+    const h = build({ following: many, followers: [] });
+    await h.engine.scan();
+    for (const pk of many) h.churn.outcomes.set(`u${pk}`, { status: 'failed' });
+    for (let i = 0; i < PRUNE_CONSECUTIVE_FAIL_HALT; i++) {
+      const c = h.engine.nextCandidate(h.clock.now());
+      if (c !== null) await h.engine.executeUnfollow(c, h.clock.now());
+    }
+    expect(h.engine.nextCandidate(h.clock.now())).toBeNull();
+    h.churn.outcomes.clear();
+    await h.engine.scan();
+    expect(h.engine.nextCandidate(h.clock.now())).not.toBeNull();
   });
 });

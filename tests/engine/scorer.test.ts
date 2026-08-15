@@ -129,6 +129,50 @@ test('private boost is capped at 1 (clamp01)', () => {
   expect(r.score).toBe(1);
 });
 
+// --- mutual-follower bonus ----------------------------------------------------
+
+test('mutuals outrank everything: capped-mutual account beats any zero-mutual account', () => {
+  const zeroMutualBest = scoreCandidate(
+    acct({ followers: 1000, following: 1100, isPrivate: true }), // peak ratio + private → base 1
+    cfg,
+  );
+  const cappedMutuals = scoreCandidate(
+    acct({ followers: 1000, following: 1450, mutuals: cfg.mutualCap }), // soft-edge ratio, 20 mutuals
+    cfg,
+  );
+  expect(cappedMutuals.score).toBeGreaterThan(zeroMutualBest.score);
+  expect(cappedMutuals.reasons).toContain('mutuals');
+  expect(zeroMutualBest.reasons).not.toContain('mutuals');
+});
+
+test('mutual bonus saturates at mutualCap: 20 and 200 mutuals score identically', () => {
+  const base = { followers: 1000, following: 1100 };
+  const at20 = scoreCandidate(acct({ ...base, mutuals: 20 }), cfg);
+  const at200 = scoreCandidate(acct({ ...base, mutuals: 200 }), cfg);
+  expect(at200.score).toBe(at20.score);
+  expect(at20.score).toBeCloseTo(1 + cfg.mutualWeight);
+});
+
+test('mutual bonus is concave: the first mutuals matter most, monotonic up to the cap', () => {
+  const base = { followers: 1000, following: 1100 };
+  const m0 = scoreCandidate(acct({ ...base, mutuals: 0 }), cfg).score;
+  const m1 = scoreCandidate(acct({ ...base, mutuals: 1 }), cfg).score;
+  const m5 = scoreCandidate(acct({ ...base, mutuals: 5 }), cfg).score;
+  const m19 = scoreCandidate(acct({ ...base, mutuals: 19 }), cfg).score;
+  const m20 = scoreCandidate(acct({ ...base, mutuals: 20 }), cfg).score;
+  expect(m1).toBeGreaterThan(m0);
+  expect(m5).toBeGreaterThan(m1);
+  expect(m20).toBeGreaterThan(m19);
+  // Concavity: the jump 0→1 exceeds the jump 19→20.
+  expect(m1 - m0).toBeGreaterThan(m20 - m19);
+});
+
+test('unknown mutuals is neutral (no bonus, no penalty beyond the base)', () => {
+  const withUnknown = scoreCandidate(acct({ followers: 1000, following: 1100 }), cfg);
+  expect(withUnknown.score).toBe(1);
+  expect(withUnknown.reasons).not.toContain('mutuals');
+});
+
 test('explicit ratio field is used when present', () => {
   const r = scoreCandidate(acct({ ratio: 1.1, followers: 1000, following: 999999 }), cfg);
   expect(r.eligible).toBe(true);

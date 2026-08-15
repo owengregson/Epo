@@ -1,7 +1,7 @@
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { Clock } from '../governors/clock';
 import type { RateGovernor } from '../governors/rate-governor';
-import type { FollowRecord } from '../store/types';
+import { type FollowRecord, compareByScoreDesc } from '../store/types';
 import * as log from '../utils/logger';
 
 /**
@@ -9,7 +9,7 @@ import * as log from '../utils/logger';
  *
  * - `'ok'`        — the click was performed and the Actor verified the transition.
  * - `'failed'`    — a click was attempted but did not confirm (retry/abandon).
- * - `'blocked'`   — budget exhausted or Sentinel non-`ok` BEFORE any click; the
+ * - `'blocked'`   — Sentinel non-`ok` BEFORE any click; the
  *                   record is left completely untouched so it retries when the
  *                   window clears. A block is NOT a failure.
  * - `'simulated'` — dry-run: no click happened. The lifecycle STATE still advances
@@ -25,7 +25,7 @@ export type ChurnActionOutcome = {
 
 /**
  * The only Instagram-touching surface the scheduler needs. The real implementation
- * wraps Actor + Sentinel + request budget; tests pass a fake that records calls and
+ * wraps Actor + Sentinel; tests pass a fake that records calls and
  * returns a configurable outcome. Both methods resolve (never reject) with a
  * {@link ChurnActionOutcome} so an outcome is a value, not a thrown exception — but
  * the scheduler still guards against rejections defensively (no silent catches;
@@ -83,7 +83,7 @@ export interface ChurnDeps {
  * ```
  *
  * The scheduler is split into three responsibilities so the Engine runtime (§3.1)
- * can pace Instagram actions one-at-a-time with a human delay between each:
+ * can pace Instagram actions one-at-a-time with a paced delay between each:
  *
  * - {@link advanceTimers} — the no-IG state transitions (timeouts + holds).
  * - {@link nextDue} — pick the single most-due record needing IG traffic.
@@ -102,10 +102,32 @@ export class ChurnScheduler {
   private readonly actions: ChurnActions;
   private readonly ownPk?: string;
   private cfg: ChurnConfig;
+  /**
+   * Consecutive `'failed'` action outcomes ACROSS records — the engine's
+   * systemic-breakage signal. A single dead/renamed account produces at most
+   * `maxRetries + 1` fails before it abandons; a broken input pipeline or a
+   * silently-drifted selector fails every record identically, forever. The
+   * engine reads this and halts loudly instead of burning the whole queue
+   * (and the daily ledger budget) on clicks that do nothing — the 2026-08-13
+   * overnight run abandoned ~20 candidates that way. Reset by any VERIFIED
+   * outcome (ok / already-in-state / simulated); `'blocked'` and the
+   * no-username paths are neutral — nothing was clicked.
+   */
+  private consecutiveFailures = 0;
 
   /** Swap the live config in place (used when Settings are updated at runtime). */
   applyConfig(cfg: ChurnConfig): void {
     this.cfg = cfg;
+  }
+
+  /** How many actions in a row have failed (see {@link consecutiveFailures}). */
+  consecutiveFailureCount(): number {
+    return this.consecutiveFailures;
+  }
+
+  /** Give a restarted engine a fresh failure window (called when it halts). */
+  resetConsecutiveFailures(): void {
+    this.consecutiveFailures = 0;
   }
 
   constructor(deps: ChurnDeps) {
@@ -153,9 +175,12 @@ export class ChurnScheduler {
    *
    * Ordering (§3.2): reclaimed slots first — `unfollow_queued` records are preferred
    * over `queued`, so we free capacity before spending it on new follows. Within
-   * `unfollow_queued`, order by `unfollowDueAt` ascending then `accountPk`; `queued`
-   * records order by `accountPk`. This method does NOT check the ceiling/active-hours
-   * (the Engine gates before calling) and does NOT act.
+   * `unfollow_queued`, order by `unfollowDueAt` ascending then `accountPk`. Among
+   * `queued` records the BEST candidate goes first: descending `score` (the
+   * Scorer's composite — ratio, mutuals, private boost), with `accountPk` only as
+   * a deterministic tie-break. A record without a score (not Scanner-created)
+   * sorts last. This method does NOT check the ceiling/active-hours (the Engine
+   * gates before calling) and does NOT act.
    */
   nextDue(now: number = this.clock.now()): FollowRecord | null {
     void now; // parity with the other methods; no time-based filtering here.
@@ -172,9 +197,7 @@ export class ChurnScheduler {
 
     const queued = this.store.followRecordsByState('queued');
     if (queued.length > 0) {
-      return queued.sort((a, b) =>
-        a.accountPk < b.accountPk ? -1 : a.accountPk > b.accountPk ? 1 : 0,
-      )[0];
+      return queued.sort(compareByScoreDesc)[0];
     }
 
     return null;
@@ -226,7 +249,12 @@ export class ChurnScheduler {
   private async executeFollow(rec: FollowRecord, now: number): Promise<void> {
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
-      log.warn('churn: skipping follow, unknown username for account', { pk: rec.accountPk });
+      // MUST make progress: `nextDue` is a pure ranking with no memory, so a
+      // bare return would hand this same record back every step forever — the
+      // engine "acts" on it eternally and every other record starves. Burn a
+      // retry (no ledger row — nothing touched Instagram) until it abandons.
+      log.warn('churn: no username for due follow, burning a retry', { pk: rec.accountPk });
+      this.retryOrAbandon(rec, 'follow');
       return;
     }
 
@@ -251,6 +279,7 @@ export class ChurnScheduler {
         });
         return;
       case 'ok':
+        this.consecutiveFailures = 0;
         if (outcome.alreadyInState === true) {
           // Phase A: nothing was clicked — an external actor already follows this
           // account. Reconcile (drops the record to `external` + writes the edge);
@@ -271,6 +300,7 @@ export class ChurnScheduler {
         return;
       case 'simulated':
         // f12: advance the lifecycle under dry-run WITHOUT a real edge or ledger row.
+        this.consecutiveFailures = 0;
         this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
         log.info('churn: dry-run follow simulated, state advanced (no edge/ledger)', {
           pk: rec.accountPk,
@@ -278,6 +308,7 @@ export class ChurnScheduler {
         });
         return;
       case 'failed':
+        this.consecutiveFailures += 1;
         this.store.recordAction(rec.accountPk, 'follow', 'fail', now);
         this.retryOrAbandon(rec, 'follow');
         return;
@@ -295,7 +326,9 @@ export class ChurnScheduler {
   private async executeUnfollow(rec: FollowRecord, now: number): Promise<void> {
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
-      log.warn('churn: skipping unfollow, unknown username for account', { pk: rec.accountPk });
+      // Same starvation guard as the follow path: progress or abandon.
+      log.warn('churn: no username for due unfollow, burning a retry', { pk: rec.accountPk });
+      this.retryOrAbandon(rec, 'unfollow');
       return;
     }
 
@@ -319,6 +352,7 @@ export class ChurnScheduler {
         });
         return;
       case 'ok':
+        this.consecutiveFailures = 0;
         if (outcome.alreadyInState === true) {
           // Phase A: nothing was clicked — already not following (an external
           // actor unfollowed for us). Reconcile the edge, close the record, and
@@ -340,6 +374,7 @@ export class ChurnScheduler {
         return;
       case 'simulated':
         // f12: advance the lifecycle under dry-run WITHOUT removing a real edge.
+        this.consecutiveFailures = 0;
         this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
         log.info('churn: dry-run unfollow simulated, state advanced (no edge/ledger)', {
           pk: rec.accountPk,
@@ -347,6 +382,7 @@ export class ChurnScheduler {
         });
         return;
       case 'failed':
+        this.consecutiveFailures += 1;
         this.store.recordAction(rec.accountPk, 'unfollow', 'fail', now);
         this.retryOrAbandon(rec, 'unfollow');
         return;

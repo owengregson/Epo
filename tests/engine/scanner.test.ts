@@ -132,3 +132,26 @@ test('an account already having a follow_record is not re-queued', () => {
 test('default plan size is 25', () => {
   expect(SCANNER_DEFAULTS.dailyPlanSize).toBe(25);
 });
+
+// --- rescoreQueued: backfill for records queued before score persistence ------------
+
+test('rescoreQueued scores legacy null-score queued records so order means something', () => {
+  seedFollower('peakPriv', { followers: 1000, following: 1100, isPrivate: true });
+  seedFollower('softPub', { followers: 1000, following: 2000 });
+  // Legacy records (pre-migration-7): queued directly, score absent.
+  store.upsertFollowRecord({ accountPk: 'peakPriv', targetPk: TARGET, state: 'queued', retryCount: 0 });
+  store.upsertFollowRecord({ accountPk: 'softPub', targetPk: TARGET, state: 'queued', retryCount: 0 });
+  // A record whose account has no counts must stay unscored (sorts last).
+  store.observe({ accountPk: 'unknown', observedAt: NOW, source: 'followers-list', fields: {} });
+  store.upsertFollowRecord({ accountPk: 'unknown', targetPk: TARGET, state: 'queued', retryCount: 0 });
+
+  const scored = scanner().rescoreQueued();
+
+  expect(scored).toBe(2);
+  const peak = store.getFollowRecord('peakPriv')!.score!;
+  const soft = store.getFollowRecord('softPub')!.score!;
+  expect(peak).toBeGreaterThan(soft);
+  expect(store.getFollowRecord('unknown')!.score).toBeUndefined();
+  // Idempotent: a second pass rescores nothing.
+  expect(scanner().rescoreQueued()).toBe(0);
+});

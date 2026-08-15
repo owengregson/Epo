@@ -5,12 +5,11 @@
  * fakes for every live-edge collaborator; an injected fake sleep that advances the
  * FakeClock and resolves immediately (unless deliberately hung to test abort).
  * A shared `events` log proves ordering — most importantly that the loop can NEVER
- * perform two actions without an interposed human delay.
+ * perform two actions without an interposed paced delay.
  */
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
 import { RateGovernor, type RateGovernorConfig } from '@/governors/rate-governor';
-import { RequestBudget } from '@/governors/request-budget';
 import {
   Engine,
   ENGINE_IDLE_MS,
@@ -22,6 +21,8 @@ import {
   type EngineChurn,
   type EngineEnricher,
   type EngineFollowback,
+  type EnginePacing,
+  type EngineUnfollowFeed,
   type EngineScanner,
   type EngineStatus,
   type SleepFn,
@@ -37,7 +38,7 @@ import { setLevel } from '@/utils/logger';
 beforeAll(() => setLevel('error'));
 
 const T0 = Date.parse('2026-08-12T12:00:00'); // local noon
-const DELAY_MS = 240_000; // fixed humanized delay (min=max, jitter 0)
+const DELAY_MS = 240_000; // fixed paced delay (min=max, jitter 0)
 const HOUR = 3_600_000;
 
 const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({
@@ -102,6 +103,9 @@ class FakeChurn implements EngineChurn {
   due: FollowRecord[] = [];
   advanceCalls = 0;
   executed: FollowRecord[] = [];
+  /** Scripted consecutive-failure readout (the systemic-breakage breaker). */
+  failStreak = 0;
+  resetCalls = 0;
   constructor(private readonly events: string[]) {}
   advanceTimers(): void {
     this.advanceCalls += 1;
@@ -113,6 +117,13 @@ class FakeChurn implements EngineChurn {
     this.due = this.due.filter((d) => d.accountPk !== r.accountPk);
     this.executed.push(r);
     this.events.push(`execute:${r.accountPk}`);
+  }
+  consecutiveFailureCount(): number {
+    return this.failStreak;
+  }
+  resetConsecutiveFailures(): void {
+    this.resetCalls += 1;
+    this.failStreak = 0;
   }
 }
 
@@ -208,10 +219,13 @@ interface HarnessOpts {
   settings?: Partial<Settings>;
   seedTarget?: boolean; // default true: t1/'targetone' active at chainIndex 0
   sentinel?: SentinelStatus[]; // scripted statuses, then 'ok'
-  budgetMax?: number; // request-budget window cap (default 999)
   useRealScanner?: boolean; // wire the REAL Scanner over the store (R1 pipeline tests)
   rng?: () => number; // injected randomness for the pacing draw
+  pacing?: EnginePacing; // organic pacing model (absent → legacy metronome)
+  unfollowFeed?: EngineUnfollowFeed; // woven prune feed
   sweepCadence?: { isDue(now: number, everyMs: number): boolean; markRun(now: number): void };
+  /** Seed the store BEFORE engine construction (e.g. a persisted action-delay deadline). */
+  preseedStore?: (store: KnowledgeStore) => void;
 }
 
 interface Harness {
@@ -277,15 +291,12 @@ const makeHarness = (opts: HarnessOpts = {}): Harness => {
     });
     store.addTarget({ accountPk: 't1', source: 'seed', status: 'active', chainIndex: 0 });
   }
+  opts.preseedStore?.(store);
 
   const engine = new Engine({
     store,
     clock,
     rate: new RateGovernor(store, clock, rateCfg),
-    requestBudget: new RequestBudget(store, clock, {
-      maxRequestsPerWindow: opts.budgetMax ?? 999,
-      windowMs: 60 * 60_000,
-    }),
     sentinel,
     churn,
     scanner: opts.useRealScanner === true ? new Scanner({ store }) : scanner,
@@ -296,6 +307,8 @@ const makeHarness = (opts: HarnessOpts = {}): Harness => {
     settings,
     sleep: sleep.fn,
     rng: opts.rng,
+    pacing: opts.pacing,
+    unfollowFeed: opts.unfollowFeed,
     sweepCadence: opts.sweepCadence,
     onStatus: (s) => statuses.push(s),
     onHalt: (reason) => halts.push(reason),
@@ -318,7 +331,7 @@ describe('Engine.stepOnce — one major thing per iteration', () => {
 
     expect(result).toBe('acted');
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']); // ONE action only
-    expect(h.sleep.calls).toEqual([DELAY_MS]); // the fake sleep saw THE human delay
+    expect(h.sleep.calls).toEqual([DELAY_MS]); // the fake sleep saw THE paced delay
     expect(h.events).toEqual(['execute:a', `sleep:${DELAY_MS}`]); // delay AFTER the action
     // Nothing else happened in this step:
     expect(h.followback.checks).toBe(0);
@@ -340,6 +353,21 @@ describe('Engine.stepOnce — one major thing per iteration', () => {
       'execute:b',
       `sleep:${DELAY_MS}`,
     ]);
+  });
+
+  test('halts with actions-failing when every action fails in a row (systemic breaker)', async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.failStreak = 7; // one below the breaker → keeps going
+    expect(await h.engine.stepOnce()).toBe('acted');
+
+    h.churn.due = [rec({ accountPk: 'b' })];
+    h.churn.failStreak = 8; // ACTIONS_FAILING_HALT → the machinery is broken
+    expect(await h.engine.stepOnce()).toBe('halted');
+    expect(h.halts).toEqual(['actions-failing']);
+    expect(h.engine.status().haltReason).toBe('actions-failing');
+    // The window is cleared so a deliberate restart gets a fresh chance.
+    expect(h.churn.resetCalls).toBe(1);
   });
 
   test('emits onStatus after every step, carrying lastStep', async () => {
@@ -592,6 +620,88 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     expect(h.engine.status().state).toBe('idle');
   });
 
+  test('resume serves the OWED inter-action delay before the next action (no instant act)', async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' }), rec({ accountPk: 'b' })];
+    h.sleep.hang = true; // the action-delay wait blocks until aborted
+
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    // Acted once ('a'), now parked in a's inter-action delay.
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
+    expect(h.sleep.calls).toEqual([DELAY_MS]);
+
+    h.engine.pause();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.engine.status().state).toBe('paused');
+    // The owed delay survives the pause: the countdown still points at it, and
+    // 'b' has NOT been executed.
+    expect(h.engine.status().nextActionAt).toBe(T0 + DELAY_MS);
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
+
+    // Resume: the loop re-enters the inter-action delay to serve the owed
+    // remainder — it does NOT execute 'b' immediately. It re-parks in that
+    // wait (still hung), so only a SECOND delay was opened and 'b' is untouched.
+    h.engine.resume();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.sleep.calls).toEqual([DELAY_MS, DELAY_MS]); // a's delay + the remainder
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']); // 'b' NOT acted early
+
+    h.engine.stop();
+    await started;
+  });
+
+  test('a persisted action-delay deadline is served before the first action of a NEW engine (relaunch)', async () => {
+    // Simulate an app relaunch mid-delay: the previous session armed the
+    // deadline (T0 + DELAY_MS) and quit; this harness's fresh Engine hydrates
+    // it from the store and must wait the remainder before acting.
+    const h = makeHarness({
+      preseedStore: (store) => store.setActionDelayDeadline(T0 + DELAY_MS),
+    });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    expect(await h.engine.stepOnce()).toBe('acted');
+
+    // The remainder wait came BEFORE the action, and the owed slot then cleared.
+    expect(h.events.slice(0, 2)).toEqual([`sleep:${DELAY_MS}`, 'execute:a']);
+    expect(h.store.getActionDelayDeadline()).toBeNull(); // consumed, then re-armed…
+  });
+
+  test('an ELAPSED persisted deadline (long app closure) acts immediately', async () => {
+    const h = makeHarness({
+      preseedStore: (store) => store.setActionDelayDeadline(T0 - 1_000), // already past
+    });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    expect(await h.engine.stepOnce()).toBe('acted');
+    expect(h.events[0]).toBe('execute:a'); // no pre-wait — the delay already elapsed offline
+  });
+
+  test('stop() mid-delay keeps the owed deadline durable (persisted for the next launch)', async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.sleep.hang = true; // park in a's inter-action delay
+
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
+
+    h.engine.stop();
+    await started;
+
+    // The deadline survives the stop in the store — a relaunch resumes it.
+    expect(h.store.getActionDelayDeadline()).toBe(T0 + DELAY_MS);
+  });
+
+  test('a fully-elapsed delay clears the persisted deadline', async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    await h.engine.stepOnce(); // fake sleep advances the clock — the delay completes
+
+    expect(h.store.getActionDelayDeadline()).toBeNull();
+  });
+
   test('awaitParked resolves once the paused loop quiesces at the gate (prune hand-off)', async () => {
     const h = makeHarness();
     h.sleep.hang = true; // parked in the idle sleep, still "running"
@@ -733,15 +843,16 @@ describe('Engine — session tracking + netToday (status projection)', () => {
     expect(h.engine.status().sessionStartedAt).toBeNull();
   });
 
-  test('netToday reflects follow_records reciprocated since local midnight', () => {
+  test('netToday is the edge-based net: gains today minus losses today', () => {
     const h = makeHarness();
+    h.store.setOwnPk('ME');
     const startOfToday = new Date(T0).setHours(0, 0, 0, 0);
-    // Reciprocated today (noon) counts; reciprocated an hour before midnight does not.
-    h.store.upsertFollowRecord(rec({ accountPk: 'x', state: 'followed_back', followedBackAt: T0 }));
-    h.store.upsertFollowRecord(
-      rec({ accountPk: 'y', state: 'followed_back', followedBackAt: startOfToday - HOUR }),
-    );
-    expect(h.engine.status().netToday).toBe(1);
+    // Gained today (counts) + gained yesterday (does not) + lost today (−1).
+    h.store.observeEdge('x', 'ME', 'follows', true, T0);
+    h.store.observeEdge('y', 'ME', 'follows', true, startOfToday - HOUR);
+    h.store.observeEdge('z', 'ME', 'follows', true, startOfToday - HOUR);
+    h.store.observeEdge('z', 'ME', 'follows', false, T0);
+    expect(h.engine.status().netToday).toBe(0); // +x −z
   });
 });
 
@@ -811,9 +922,9 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     expect(h.engine.status().currentTargetUsername).toBe('targetnine');
   });
 
-  test('R1.5: enrichment is capped per cycle; an un-enrichable target exhausts instead of spinning', async () => {
+  test('R1.5: enrichment is capped per cycle; a WALLED target backs off instead of burning', async () => {
     const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
-    follower(h, 'f1', { username: 'fone' }); // its counts never arrive: no profile scripted
+    follower(h, 'f1', { username: 'fone' }); // its counts never arrive: enrichment walled
 
     // Pass 1 rides the one-and-only acquisition; passes 2..K each cost a step.
     for (let pass = 1; pass <= MAX_ENRICH_PASSES_PER_CYCLE; pass += 1) {
@@ -823,15 +934,37 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     }
     expect(h.acquisition.calls).toEqual(['targetone']); // exactly ONE acquire
 
-    // Cap reached → the FINAL plan enqueues nothing → the target is exhausted…
+    // Cap reached and the plan enqueues nothing — but the candidate was never
+    // successfully enriched (a rate wall, not a dry target): the engine must
+    // BACK OFF and keep the target, never latch it exhausted and burn the
+    // chain during a transient outage.
+    h.chain.script = [{ nextTargetPk: null, source: 'none', reason: 'no-target-available' }];
+    expect(await h.engine.stepOnce()).toBe('idle'); // enrich-backoff park
+    expect(h.chain.advanceCalls).toEqual([]); // the chain was NOT advanced
+    expect(h.acquisition.calls.length).toBe(1);
+
+    // After the backoff a fresh cycle retries enrichment (bounded again).
     expect(await h.engine.stepOnce()).toBe('acquired');
-    // …and the next step advances the chain (here: none left → halt) instead of
-    // re-acquiring or re-enriching forever.
+    expect(h.enricher.calls.length).toBe(MAX_ENRICH_PASSES_PER_CYCLE + 1);
+  });
+
+  test('R1.5: a target whose whole pool was scored-and-rejected genuinely exhausts', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
+    // One follower whose profile DOES arrive but is hard-rejected (verified).
+    follower(h, 'f1', { username: 'fone' });
+    h.enricher.profiles.set('fone', {
+      pk: 'f1',
+      fields: { followers: 500, following: 550, isVerified: true },
+    });
+
+    expect(await h.engine.stepOnce()).toBe('acquired'); // acquire + enrich pass
+    expect(await h.engine.stepOnce()).toBe('acquired'); // plan: f1 scored → rejected → skipped
+
+    // Every candidate is now scored-and-skipped: the target is exhausted and
+    // the chain advances (none left → halt).
     h.chain.script = [{ nextTargetPk: null, source: 'none', reason: 'no-target-available' }];
     expect(await h.engine.stepOnce()).toBe('halted');
     expect(h.halts).toEqual(['chain-exhausted']);
-    expect(h.acquisition.calls.length).toBe(1);
-    expect(h.enricher.calls.length).toBe(MAX_ENRICH_PASSES_PER_CYCLE);
   });
 
   test('an enrichment pass sends at most ENRICH_BATCH_SIZE usernames', async () => {
@@ -870,6 +1003,9 @@ describe('Engine — R2: one concurrent loop (generation token)', () => {
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']); // loop 1 acted, parked in its delay
 
     h.engine.stop(); // aborts loop 1's generation token + its hanging sleep
+    // The owed inter-action delay now SURVIVES a stop; elapse it so the new
+    // loop may act at all (stop/start is no longer a way around the pacing).
+    h.clock.advance(DELAY_MS);
     const second = h.engine.start(); // restart while loop 1's step is still unwinding
     await first; // the STALE loop exits: its OWN token is aborted (identity check)
     await tick();
@@ -887,25 +1023,6 @@ describe('Engine — R2: one concurrent loop (generation token)', () => {
     await second;
     expect(h.engine.status().state).toBe('idle');
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a', 'b']);
-  });
-});
-
-describe('Engine — R4: request-budget pre-check before acting', () => {
-  test('a saturated budget parks the step: churn.execute is NOT called', async () => {
-    const h = makeHarness({ budgetMax: 0 });
-    h.churn.due = [rec({ accountPk: 'a' })];
-
-    expect(await h.engine.stepOnce()).toBe('idle');
-    expect(h.churn.executed).toEqual([]); // no blocked attempt was driven
-    expect(h.sleep.calls).toEqual([ENGINE_IDLE_MS]); // parked on the idle wait
-    expect(h.engine.status().state).not.toBe('halted');
-  });
-
-  test('with budget available the same step acts', async () => {
-    const h = makeHarness({ budgetMax: 5 });
-    h.churn.due = [rec({ accountPk: 'a' })];
-    expect(await h.engine.stepOnce()).toBe('acted');
-    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
   });
 });
 
@@ -1010,8 +1127,231 @@ describe('Engine — status projection', () => {
     expect(s.actionsToday).toBe(1);
     expect(s.remainingToday).toBe(99);
     expect(s.atHardCeiling).toBe(false);
-    expect(s.requestBudgetRemaining).toBe(999);
     expect(s.state).toBe('idle');
     expect(s.lastStep).toBeNull();
+  });
+});
+
+// --- Organic pacing model (SessionPlanner-driven) ---------------------------------
+
+class FakePacing implements EnginePacing {
+  open = true;
+  gapMs = 4 * 60_000;
+  target = 25;
+  sessions = 1;
+  recorded: Array<{ at: number; kind: string }> = [];
+  advanceCalls = 0;
+  constructor(private readonly nextStart: number) {}
+  advance(): void {
+    this.advanceCalls += 1;
+  }
+  isSessionOpen(): boolean {
+    return this.open;
+  }
+  sessionEndsAt(now: number): number | null {
+    return this.open ? now + this.gapMs : null;
+  }
+  nextSessionStartAt(): number {
+    return this.nextStart;
+  }
+  nextActionGapMs(): number {
+    return this.gapMs;
+  }
+  recordAction(now: number, kind: 'follow' | 'unfollow' | 'read-burst'): void {
+    this.recorded.push({ at: now, kind });
+  }
+  dailyTarget(): number {
+    return this.target;
+  }
+  sessionsToday(): number {
+    return this.sessions;
+  }
+  serialize(): unknown {
+    return { fake: true, recorded: this.recorded.length };
+  }
+}
+
+describe('Engine — organic pacing model', () => {
+  test('parks with waited-session when no session is open, taking no action', async () => {
+    const pacing = new FakePacing(T0 + 3_600_000);
+    pacing.open = false;
+    const h = makeHarness({ pacing });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    const result = await h.engine.stepOnce();
+
+    expect(result).toBe('waited-session');
+    expect(pacing.advanceCalls).toBeGreaterThan(0);
+    expect(h.churn.executed).toEqual([]); // the gate returns before any action
+  });
+
+  test('acts inside a session, records a follow, and arms the planner gap (not nextDelayMs)', async () => {
+    const pacing = new FakePacing(T0);
+    pacing.gapMs = 4 * 60_000;
+    const h = makeHarness({ pacing });
+    h.churn.due = [rec({ accountPk: 'a', state: 'queued' })];
+
+    const result = await h.engine.stepOnce();
+
+    expect(result).toBe('acted');
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
+    expect(pacing.recorded).toEqual([{ at: T0, kind: 'follow' }]);
+    expect(h.sleep.calls).toEqual([4 * 60_000]); // the planner's gap, not the legacy DELAY_MS
+  });
+
+  test('records an unfollow kind for a due unfollow_queued record', async () => {
+    const pacing = new FakePacing(T0);
+    const h = makeHarness({ pacing });
+    h.churn.due = [rec({ accountPk: 'u', state: 'unfollow_queued' })];
+
+    await h.engine.stepOnce();
+
+    expect(pacing.recorded).toEqual([{ at: T0, kind: 'unfollow' }]);
+  });
+
+  test('velocity backstop parks the loop when the trailing-hour ledger is at the cap', async () => {
+    const pacing = new FakePacing(T0);
+    const h = makeHarness({ pacing, settings: { hourlyVelocityCap: 3 } });
+    h.store.recordAction('x', 'follow', 'ok', T0 - 10 * 60_000);
+    h.store.recordAction('y', 'follow', 'ok', T0 - 20 * 60_000);
+    h.store.recordAction('z', 'follow', 'ok', T0 - 30 * 60_000);
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    const result = await h.engine.stepOnce();
+
+    expect(result).toBe('waited-session');
+    expect(h.churn.executed).toEqual([]);
+  });
+
+  test('persists the planner snapshot to store meta after a step', async () => {
+    const pacing = new FakePacing(T0);
+    const h = makeHarness({ pacing });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    await h.engine.stepOnce();
+
+    expect(h.store.getPacingState()).not.toBeNull();
+  });
+
+  test('status carries the pacing projection in organic mode', () => {
+    const pacing = new FakePacing(T0 + 1000);
+    pacing.open = false;
+    pacing.target = 30;
+    const h = makeHarness({ pacing });
+
+    const s = h.engine.status();
+
+    expect(s.pacing).not.toBeNull();
+    expect(s.pacing?.dailyTarget).toBe(30);
+    expect(s.pacing?.nextSessionAt).toBe(T0 + 1000);
+  });
+
+  test('legacy mode leaves status.pacing null', () => {
+    const h = makeHarness();
+    expect(h.engine.status().pacing).toBeNull();
+  });
+});
+
+// --- Woven prune feed (organic model) ---------------------------------------------
+
+class FakeFeed implements EngineUnfollowFeed {
+  candidates: Array<{ pk: string; username: string }> = [];
+  cap = false;
+  executed: Array<{ pk: string; username: string }> = [];
+  outcome: 'ok' | 'failed' | 'simulated' | 'blocked' = 'ok';
+  nextCandidate(): { pk: string; username: string } | null {
+    return this.cap ? null : (this.candidates[0] ?? null);
+  }
+  async executeUnfollow(cand: { pk: string; username: string }): Promise<
+    'ok' | 'failed' | 'simulated' | 'blocked'
+  > {
+    this.executed.push(cand);
+    if (this.outcome !== 'blocked') this.candidates = this.candidates.filter((c) => c.pk !== cand.pk);
+    return this.outcome;
+  }
+  atDailyCap(): boolean {
+    return this.cap;
+  }
+}
+
+describe('Engine — woven prune feed', () => {
+  test('weaves a prune unfollow when no lifecycle action is due, paced by the planner', async () => {
+    const pacing = new FakePacing(T0);
+    pacing.gapMs = 4 * 60_000;
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    const h = makeHarness({ pacing, unfollowFeed: feed });
+    // no churn.due → no lifecycle action
+
+    const result = await h.engine.stepOnce();
+
+    expect(result).toBe('acted');
+    expect(feed.executed).toEqual([{ pk: 'p1', username: 'prunee' }]);
+    expect(pacing.recorded).toEqual([{ at: T0, kind: 'unfollow' }]);
+    expect(h.sleep.calls).toEqual([4 * 60_000]); // the planner gap
+  });
+
+  test('does not weave when weaveEnabled is false', async () => {
+    const pacing = new FakePacing(T0);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    const h = makeHarness({ pacing, unfollowFeed: feed, settings: { weaveEnabled: false } });
+
+    const result = await h.engine.stepOnce();
+
+    expect(feed.executed).toEqual([]);
+    expect(result).not.toBe('acted');
+  });
+
+  test('does not weave when the prune daily cap is hit', async () => {
+    const pacing = new FakePacing(T0);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    feed.cap = true;
+    const h = makeHarness({ pacing, unfollowFeed: feed });
+
+    await h.engine.stepOnce();
+
+    expect(feed.executed).toEqual([]);
+  });
+
+  test('a blocked woven unfollow parks and records no action', async () => {
+    const pacing = new FakePacing(T0);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    feed.outcome = 'blocked';
+    const h = makeHarness({ pacing, unfollowFeed: feed });
+
+    const result = await h.engine.stepOnce();
+
+    expect(result).toBe('idle');
+    expect(feed.executed.length).toBe(1); // attempted
+    expect(pacing.recorded).toEqual([]); // nothing recorded on a block
+  });
+
+  test('interleaves: both available and rng below the cap picks the prune unfollow', async () => {
+    const pacing = new FakePacing(T0);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    const h = makeHarness({ pacing, unfollowFeed: feed, rng: () => 0 }); // 0 < maxUnfollowFraction
+    h.churn.due = [rec({ accountPk: 'f1', state: 'queued' })];
+
+    await h.engine.stepOnce();
+
+    expect(feed.executed.length).toBe(1);
+    expect(h.churn.executed).toEqual([]); // the follow was NOT taken this step
+  });
+
+  test('interleave never displaces a due lifecycle unfollow', async () => {
+    const pacing = new FakePacing(T0);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    const h = makeHarness({ pacing, unfollowFeed: feed, rng: () => 0 });
+    h.churn.due = [rec({ accountPk: 'u1', state: 'unfollow_queued' })];
+
+    await h.engine.stepOnce();
+
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['u1']); // lifecycle wins
+    expect(feed.executed).toEqual([]);
   });
 });

@@ -35,14 +35,40 @@ export class RateGovernor {
     return d.getTime();
   }
 
-  /** Durable count of actions recorded since local midnight (survives restart). */
+  /**
+   * Durable count of REAL Instagram actions recorded since local midnight,
+   * across BOTH ledgers (growth's action_ledger + prune's ok/fail rows) — the
+   * account has one write budget, whichever driver spends it. Survives restart.
+   */
   actionsToday(): number {
-    return this.store.actionCountSince(this.startOfTodayLocal());
+    const since = this.startOfTodayLocal();
+    return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since);
   }
 
   /** Operating-rate headroom left today, never below zero. */
   remainingToday(): number {
     return Math.max(0, this.cfg.dailyOperatingRate - this.actionsToday());
+  }
+
+  /**
+   * Real IG actions (both ledgers) in the trailing hour — the durable, restart-safe
+   * velocity signal. The organic pacing model is velocity-sensitive (detection keys on
+   * actions/minute, not just actions/day), so the engine gates on this independently of
+   * the planner's in-memory ring as a second, ledger-backed net.
+   */
+  actionsInLastHour(now: number = this.clock.now()): number {
+    const since = now - 3_600_000;
+    return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since);
+  }
+
+  /**
+   * True once today's actions reach the user's operating rate — the rate the
+   * engine is ADVERTISED to pace itself to. The engine treats this as "done for
+   * today" (parks to midnight); the hard ceiling below stays the uncrossable
+   * backstop with headroom for manual actions.
+   */
+  atOperatingRate(): boolean {
+    return this.actionsToday() >= this.cfg.dailyOperatingRate;
   }
 
   /** True once today's actions reach the hard ceiling (uncrossable in code). */
@@ -68,7 +94,7 @@ export class RateGovernor {
   }
 
   /**
-   * A humanized delay before the next action: a base uniformly in [min,max], then a
+   * A paced delay before the next action: a base uniformly in [min,max], then a
    * symmetric ± jitter of `jitterPercent` (the canonical `jittered` policy from
    * timing/primitives — written exactly once for the whole app). `rng` is
    * injectable for deterministic tests.

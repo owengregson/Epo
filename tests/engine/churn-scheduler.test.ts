@@ -242,7 +242,7 @@ test('nextDue orders unfollow_queued by unfollowDueAt then accountPk', () => {
   expect(sched.nextDue(clock.now())?.accountPk).toBe('z');
 });
 
-test('nextDue orders queued by accountPk and returns null when nothing is actionable', () => {
+test('nextDue with no scores falls back to accountPk order; null when nothing actionable', () => {
   const { store, clock, sched } = makeHarness();
   expect(sched.nextDue(clock.now())).toBeNull();
 
@@ -252,6 +252,36 @@ test('nextDue orders queued by accountPk and returns null when nothing is action
   store.upsertFollowRecord(rec({ accountPk: 'x', state: 'pending_followback', followedAt: T0 }));
 
   expect(sched.nextDue(clock.now())?.accountPk).toBe('a');
+});
+
+test('nextDue follows the BEST-scored queued candidate first, not the lowest pk', () => {
+  const { store, clock, sched } = makeHarness();
+  // 'z' has the highest score but the highest pk; the old pk-order code would
+  // have picked 'a' (a mediocre 1:1/low-mutual account). Score must win.
+  store.upsertFollowRecord(rec({ accountPk: 'a', state: 'queued', score: 0.4 }));
+  store.upsertFollowRecord(rec({ accountPk: 'b', state: 'queued', score: 1.9 }));
+  store.upsertFollowRecord(rec({ accountPk: 'z', state: 'queued', score: 2.3 }));
+
+  expect(sched.nextDue(clock.now())?.accountPk).toBe('z');
+});
+
+test('nextDue tie-breaks equal scores by accountPk (deterministic)', () => {
+  const { store, clock, sched } = makeHarness();
+  store.upsertFollowRecord(rec({ accountPk: 'n', state: 'queued', score: 1.0 }));
+  store.upsertFollowRecord(rec({ accountPk: 'c', state: 'queued', score: 1.0 }));
+  expect(sched.nextDue(clock.now())?.accountPk).toBe('c');
+});
+
+test('a scored queued record survives its follow → pending_followback transition', async () => {
+  const { store, sched } = makeHarness();
+  seedUsername(store, '9', 'user9');
+  store.upsertFollowRecord(rec({ accountPk: '9', state: 'queued', score: 1.75 }));
+
+  await sched.tick(); // queued → pending_followback
+
+  const got = store.getFollowRecord('9')!;
+  expect(got.state).toBe('pending_followback');
+  expect(got.score).toBe(1.75); // the score is preserved across the transition
 });
 
 test('execute performs exactly ONE action and transitions only that record', async () => {
@@ -408,4 +438,42 @@ test('advanceTimers + nextDue + execute matches the old tick end-state (hold →
   expect(actions.unfollowCalls).toEqual(['userr']);
   expect(store.getFollowRecord('r')!.state).toBe('unfollowed');
   expect(store.getEdge(OWN, 'r', 'follows')?.status).toBe('removed');
+});
+
+// --- Consecutive-failure counter (the engine's systemic-breakage signal) -----------
+
+test('consecutive failures accumulate ACROSS records and reset on a verified success', async () => {
+  const { store, clock, actions, sched } = makeHarness();
+  for (const pk of ['f1', 'f2', 'f3']) {
+    seedUsername(store, pk, `user${pk}`);
+    store.upsertFollowRecord(rec({ accountPk: pk }));
+  }
+
+  actions.followOk = false;
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  expect(sched.consecutiveFailureCount()).toBe(2);
+
+  // A verified success anywhere clears the window — the machinery works.
+  actions.followOk = true;
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  expect(sched.consecutiveFailureCount()).toBe(0);
+});
+
+test('blocked outcomes are NEUTRAL for the failure window (nothing was clicked)', async () => {
+  const { store, clock, actions, sched } = makeHarness();
+  seedUsername(store, 'b1', 'userb1');
+  store.upsertFollowRecord(rec({ accountPk: 'b1' }));
+
+  actions.followOk = false;
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  expect(sched.consecutiveFailureCount()).toBe(1);
+
+  // A sentinel block neither adds a failure nor forgives the streak.
+  actions.followStatus = 'blocked';
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  expect(sched.consecutiveFailureCount()).toBe(1);
+
+  sched.resetConsecutiveFailures();
+  expect(sched.consecutiveFailureCount()).toBe(0);
 });

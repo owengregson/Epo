@@ -18,7 +18,7 @@ export interface ScorerConfig {
   hardLow: number;
   /** Ratio above this is hard-excluded (score 0). */
   hardHigh: number;
-  /** Minimum follower count to qualify (skip dead/bot accounts). */
+  /** Minimum follower count to qualify (skip dead or throwaway accounts). */
   minFollowers: number;
   /** Maximum follower count to qualify (skip celebrities). */
   maxFollowers: number;
@@ -26,6 +26,18 @@ export interface ScorerConfig {
   privateBoost: number;
   /** The `ratioScore` value at the band edges (`bandLow`/`bandHigh`). */
   bandEdgeScore: number;
+  /**
+   * Mutual-follower saturation point: the follow-back advantage of shared
+   * followers steeply diminishes past this many mutuals, so the mutual curve is
+   * flat above it (20+ mutuals all score the same).
+   */
+  mutualCap: number;
+  /**
+   * Weight of the mutual-follower bonus. Mutuals are the strongest follow-back
+   * predictor we have, so the default outweighs the entire ratio component: a
+   * capped-mutuals account beats any zero-mutual account regardless of ratio.
+   */
+  mutualWeight: number;
 }
 
 /** Design defaults (v3 §3.2/§3.3). */
@@ -40,6 +52,8 @@ export const SCORER_DEFAULTS: ScorerConfig = {
   maxFollowers: 20000,
   privateBoost: 0.15,
   bandEdgeScore: 0.6,
+  mutualCap: 20,
+  mutualWeight: 1.5,
 };
 
 /** Clamp a number into the closed unit interval [0, 1]. */
@@ -80,13 +94,28 @@ export function ratioScore(r: number, cfg: ScorerConfig = SCORER_DEFAULTS): numb
   return bandEdgeScore * (1 - (r - bandHigh) / (hardHigh - bandHigh));
 }
 
+/**
+ * Concave mutual-follower curve in [0, 1]: sqrt of the capped fraction, so the
+ * FIRST few mutuals carry most of the signal (1 mutual ≈ 0.22, 5 ≈ 0.5,
+ * cap ≈ 1) and everything at or past `mutualCap` scores identically flat.
+ */
+export function mutualScore(mutuals: number, cfg: ScorerConfig = SCORER_DEFAULTS): number {
+  if (cfg.mutualCap <= 0) return 0;
+  const m = Math.max(0, Math.min(mutuals, cfg.mutualCap));
+  return Math.sqrt(m / cfg.mutualCap);
+}
+
 /** Result of scoring one candidate account. */
 export interface CandidateScore {
-  /** Composite score in [0, 1]; 0 when ineligible. */
+  /**
+   * Composite score; 0 when ineligible. The ratio + private-boost base lives in
+   * [0, 1]; the mutual bonus adds up to `mutualWeight` on top (the score is a
+   * RANKING key, not a probability), so the full range is [0, 1 + mutualWeight].
+   */
   score: number;
   /** Whether the account qualifies for the churn pipeline. */
   eligible: boolean;
-  /** Human-readable justifications (drivers for eligible, cause for rejection). */
+  /** Readable justifications (drivers for eligible, cause for rejection). */
   reasons: string[];
 }
 
@@ -96,21 +125,33 @@ export interface CandidateScore {
  * Pure and deterministic: no store, no clock, no I/O. Hard-ineligible (score 0)
  * when the ratio is hard-excluded, the account is verified, or the follower count
  * is outside `[minFollowers, maxFollowers]`. Otherwise eligible with
- * `score = clamp01(ratioScore(r) + privateBoost?)` — private accounts are
- * preferred (§3.3), a boost rather than a requirement.
+ * `score = clamp01(ratioScore(r) + privateBoost?) + mutualWeight·mutualScore(m)`
+ * — private accounts are preferred (§3.3, a boost rather than a requirement),
+ * and shared followers dominate the ranking: mutuals are the strongest
+ * follow-back predictor, saturating at `mutualCap` (20+ mutuals score alike).
  */
 export function scoreCandidate(a: AccountState, cfg: ScorerConfig = SCORER_DEFAULTS): CandidateScore {
-  const r = a.ratio ?? ratioOf(a.followers, a.following);
-  if (r === undefined) return { score: 0, eligible: false, reasons: ['no-counts'] };
-
-  const rs = ratioScore(r, cfg);
-  if (rs === 0) return { score: 0, eligible: false, reasons: ['ratio-excluded'] };
+  // Counts-known FIRST: 'no-counts' means "await enrichment" to the Scanner
+  // (the record is left in the pool), so it must only ever fire when counts
+  // are genuinely missing. An enriched account with 0 followers used to fall
+  // through here (its ratio is undefined) and sit in the pool forever as a
+  // zombie — enriched, unscorable, never skipped.
+  if (a.followers === undefined || a.following === undefined) {
+    return { score: 0, eligible: false, reasons: ['no-counts'] };
+  }
   if (a.isVerified === true) return { score: 0, eligible: false, reasons: ['verified'] };
 
   const followers = a.followers;
-  if (followers === undefined) return { score: 0, eligible: false, reasons: ['no-counts'] };
   if (followers < cfg.minFollowers) return { score: 0, eligible: false, reasons: ['too-small'] };
   if (followers > cfg.maxFollowers) return { score: 0, eligible: false, reasons: ['too-large'] };
+
+  const r = a.ratio ?? ratioOf(a.followers, a.following);
+  // Counts are known, so an undefined ratio means followers === 0 — which the
+  // min-followers gate normally catches; a 0-minimum config still excludes it.
+  if (r === undefined) return { score: 0, eligible: false, reasons: ['ratio-excluded'] };
+
+  const rs = ratioScore(r, cfg);
+  if (rs === 0) return { score: 0, eligible: false, reasons: ['ratio-excluded'] };
 
   const reasons: string[] = [];
   if (r >= cfg.peakLow && r <= cfg.peakHigh) reasons.push('peak-ratio');
@@ -122,6 +163,14 @@ export function scoreCandidate(a: AccountState, cfg: ScorerConfig = SCORER_DEFAU
     score += cfg.privateBoost;
     reasons.push('private-boost');
   }
+  score = clamp01(score);
 
-  return { score: clamp01(score), eligible: true, reasons };
+  // Mutual bonus rides ON TOP of the clamped base — the ranking must always
+  // prefer shared-follower candidates, even among base-saturated peak accounts.
+  if (a.mutuals !== undefined && a.mutuals > 0) {
+    score += cfg.mutualWeight * mutualScore(a.mutuals, cfg);
+    reasons.push('mutuals');
+  }
+
+  return { score, eligible: true, reasons };
 }

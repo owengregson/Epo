@@ -1,6 +1,5 @@
 import { FakeClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
-import { RequestBudget } from '@/governors/request-budget';
 import { KnowledgeStore } from '@/store/knowledge-store';
 
 const cfg = { dailyHardCeiling: 50, dailyOperatingRate: 25, minDelayMs: 1000, maxDelayMs: 2000,
@@ -16,23 +15,24 @@ test('operating rate decrements with recorded actions', () => {
   store.close();
 });
 
+test('actionsInLastHour counts both ledgers within the trailing hour only', () => {
+  const store = new KnowledgeStore(':memory:');
+  const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
+  const g = new RateGovernor(store, clock, cfg);
+  const now = clock.now();
+  store.recordAction('a', 'follow', 'ok', now - 30 * 60_000); // 30 min ago (in)
+  store.recordAction('b', 'follow', 'ok', now - 90 * 60_000); // 90 min ago (out)
+  store.recordPruneAction('c', 'ok', now - 10 * 60_000); // prune, 10 min ago (in)
+  expect(g.actionsInLastHour()).toBe(2);
+  store.close();
+});
+
 test('hard ceiling blocks past 50 regardless of operating rate', () => {
   const store = new KnowledgeStore(':memory:');
   const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
   const g = new RateGovernor(store, clock, cfg);
   for (let i = 0; i < 50; i++) store.recordAction(String(i), 'follow', 'ok', clock.now());
   expect(g.atHardCeiling()).toBe(true);
-  store.close();
-});
-
-test('request budget refills after window', () => {
-  const store = new KnowledgeStore(':memory:');
-  const clock = new FakeClock(1_000_000);
-  const b = new RequestBudget(store, clock, { maxRequestsPerWindow: 2, windowMs: 60_000 });
-  b.spend(); b.spend();
-  expect(b.canSpend()).toBe(false);
-  clock.advance(60_001);
-  expect(b.canSpend()).toBe(true);
   store.close();
 });
 
