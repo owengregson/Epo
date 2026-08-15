@@ -8,7 +8,7 @@ import { DualRange } from '@/renderer/ui/DualRange';
 import { Stepper } from '@/renderer/ui/Stepper';
 import { NumberInput } from '@/renderer/ui/NumberInput';
 import { Slider } from '@/renderer/ui/Slider';
-import { commas } from '@/renderer/lib/format';
+import { clamp, commas } from '@/renderer/lib/format';
 import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
 
 export interface TargetingCardProps {
@@ -26,7 +26,6 @@ const HARD_GAP = 0.1;
 
 /** Snap a ratio value to the 0.05 grid the peak steppers use (mockup snap05). */
 const snap05 = (v: number): number => Number((Math.round(v / 0.05) * 0.05).toFixed(4));
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 /**
  * Targeting — ratio band (dual range with peak plateau overlay), peak/hard-bound

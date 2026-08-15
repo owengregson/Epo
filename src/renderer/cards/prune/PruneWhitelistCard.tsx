@@ -85,7 +85,7 @@ export function PruneWhitelistCard({ whitelist, onSave }: PruneWhitelistCardProp
           <div class="hint">No protected accounts yet.</div>
         )}
         <div class="hint">
-          Whitelisted accounts are never pruned. Re-scan after changes to refresh the candidate list.
+          Whitelisted accounts are never pruned — the candidate list updates immediately.
         </div>
       </Field>
     </Card>

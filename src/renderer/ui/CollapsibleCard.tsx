@@ -20,7 +20,9 @@ export interface CollapsibleCardProps {
 /**
  * A settings-card surface with a header-integrated minimize control (top-right): the
  * body collapses to just the header. Lets a long settings page stay scannable — most
- * sections start minimized and expand on demand.
+ * sections start minimized and expand on demand. The body stays MOUNTED and slides
+ * via the `.reveal` grid-rows pattern, so collapsing animates with the house easing
+ * and child state (open disclosures, half-typed inputs) survives a minimize.
  */
 export function CollapsibleCard({
   icon,
@@ -53,7 +55,9 @@ export function CollapsibleCard({
           <Icon name={collapsed ? 'chevron-down' : 'chevron-up'} />
         </span>
       </button>
-      {collapsed ? null : children}
+      <div class={collapsed ? 'reveal' : 'reveal open'}>
+        <div class="reveal-i">{children}</div>
+      </div>
     </div>
   );
 }

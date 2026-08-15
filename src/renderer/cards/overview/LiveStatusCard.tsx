@@ -1,6 +1,5 @@
 /** @jsx h */
 import { h, Fragment } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
 import type { EpoStatus, Settings } from '@/types';
 import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { Icon } from '@/renderer/ui/Icon';
@@ -9,7 +8,9 @@ import { NumberTicker } from '@/renderer/ui/NumberTicker';
 import { RadialRing } from '@/renderer/ui/RadialRing';
 import { Stat } from '@/renderer/ui/Stat';
 import { useCountdown } from '@/renderer/hooks/useCountdown';
+import { useNow } from '@/renderer/hooks/useNow';
 import { useQueue } from '@/renderer/hooks/useQueue';
+import { dailyRateView } from '@/renderer/lib/engine-view';
 import { durationHm, mmss, ratio, withAt } from '@/renderer/lib/format';
 
 type Step = NonNullable<EpoStatus['lastStep']>;
@@ -75,6 +76,8 @@ function haltText(reason: string): string {
 export interface LiveStatusCardProps {
   status: EpoStatus | null;
   settings: Settings | null;
+  /** Entrance-stagger index (`--i`); shifts down when the sign-in gate leads. */
+  index?: number;
 }
 
 /**
@@ -82,23 +85,19 @@ export interface LiveStatusCardProps {
  * countdown ring, what fires next (head of the queued list), the compact
  * Today readout, and the Net-today / Session / Last-action cells.
  */
-export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX.Element {
-  const cd = useCountdown(status);
+export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardProps): h.JSX.Element {
+  const running = status?.state === 'running';
+
+  // ONE 1 Hz clock for the whole card — countdown, session uptime, and the
+  // last-action age all read the same tick (holds when paused/idle).
+  const now = useNow(1000, running);
+  const cd = useCountdown(status, now);
   const queued = useQueue('queued', status);
   const unfollowQ = useQueue('unfollow_queued', status);
 
-  const running = status?.state === 'running';
   const offline = status != null && !status.online;
   /** Engine is running but the connectivity monitor sees the internet down → auto-hold. */
   const offlineHold = running && offline;
-
-  // Session uptime ticks at 1 Hz ONLY while running (holds when paused/idle).
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [running]);
 
   // What the engine will REALLY do next mirrors nextDue's precedence: reclaim
   // slots first — any due unfollow fires before a new follow. The card used to
@@ -109,10 +108,8 @@ export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX
   const next = nextUnfollow ?? nextFollow;
   const nextVerb = nextUnfollow !== null ? 'unfollow' : 'follow';
 
-  const done = status?.actionsToday ?? 0;
-  const rate = settings?.dailyOperatingRate ?? null;
+  const { done, rate, pct } = dailyRateView(status, settings);
   const left = rate != null ? Math.max(0, rate - done) : null;
-  const pct = rate != null && rate > 0 ? Math.min(100, (done / rate) * 100) : 0;
 
   const startedAt = status?.sessionStartedAt ?? null;
   const sessionText = startedAt != null ? durationHm(now - startedAt) : '—';
@@ -134,7 +131,7 @@ export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX
         : `${stepLabel(lastStep)} · sentinel ${sentinelLabel(lastSentinel)}`;
 
   return (
-    <Card raised index={0}>
+    <Card raised index={index}>
       <CardHeader icon="stopwatch">Live Status</CardHeader>
       <CardBody>
         {/* next action: small depleting ring + prominent countdown.

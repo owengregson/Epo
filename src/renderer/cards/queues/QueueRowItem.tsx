@@ -4,14 +4,13 @@ import type { QueueRow } from '@/types';
 import { Icon } from '@/renderer/ui/Icon';
 import { clamp, monogram, pctInt, ratio, withAt } from '@/renderer/lib/format';
 import type { QueueStageKey } from './QueuePipeline';
-
-const DAY_MS = 24 * 3600 * 1000;
+import { MS_PER_DAY } from '@/timing/units';
 
 /** Fallback follow-back window while settings load (`maxWaitForFollowbackDays` = 4). */
-const FOLLOWBACK_WINDOW_MS = 4 * DAY_MS;
+const FOLLOWBACK_WINDOW_MS = 4 * MS_PER_DAY;
 
 /** Fallback post-followback hold while settings load (`holdAfterFollowbackDays` = 2). */
-const HOLD_MS = 2 * DAY_MS;
+const HOLD_MS = 2 * MS_PER_DAY;
 
 /** The live settings-derived windows, passed down from the view (null while loading). */
 export interface QueueWindows {
@@ -54,7 +53,7 @@ function deriveContext(
         return { ctx: 'awaiting follow-back', barFrac: null, brass: false };
       }
       const elapsed = Math.max(0, now - row.followedAt);
-      const days = Math.floor(elapsed / DAY_MS);
+      const days = Math.floor(elapsed / MS_PER_DAY);
       return {
         ctx: days <= 0 ? 'followed today' : `followed ${days}d ago`,
         barFrac: clamp(elapsed / followbackWindowMs, 0, 1),
@@ -70,7 +69,7 @@ function deriveContext(
       if (remaining <= 0) {
         return { ctx: 'hold complete', barFrac: 1, brass: false };
       }
-      const days = Math.ceil(remaining / DAY_MS);
+      const days = Math.ceil(remaining / MS_PER_DAY);
       return {
         ctx: `hold ends in ${days}d`,
         barFrac: clamp(1 - remaining / holdMs, 0, 1),

@@ -15,6 +15,8 @@
  * ≈ R·P·RR net/day. A deterministic wiggle models real follow/unfollow churn.
  */
 
+import { clamp } from '../lib/format';
+
 /** Scenario bases: [cautious, expected, optimistic]. */
 const PROJ_SCEN: ReadonlyArray<{ P0: number; RR: number }> = [
   { P0: 0.08, RR: 0.55 },
@@ -26,10 +28,6 @@ const PROJ_SCEN: ReadonlyArray<{ P0: number; RR: number }> = [
 const PROJ_CENTER = 0.15;
 /** >1 → the three cases fan out super-linearly as the yield scalar rises. */
 const YIELD_SPREAD_EXP = 2;
-
-function clampN(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
-}
 
 /** Deterministic pseudo-noise in [-1, 1] from an integer seed (stable across recalcs). */
 export function pnoise(i: number): number {
@@ -43,8 +41,8 @@ export function projP(base: number, ym: number, pb: number, bandWidth: number, R
   // ym^EXP, so stratification grows with the scalar rather than an even multiply.
   let p = Math.max(0, PROJ_CENTER * ym + (base - PROJ_CENTER) * ym ** YIELD_SPREAD_EXP);
   p *= 1 + pb * 0.6; // private boost
-  p *= clampN(1 + (0.6 - bandWidth) * 0.25, 0.85, 1.15); // band tightness
-  p *= clampN(1 - Math.max(0, R - 60) / 320, 0.8, 1); // volume penalty
+  p *= clamp(1 + (0.6 - bandWidth) * 0.25, 0.85, 1.15); // band tightness
+  p *= clamp(1 - Math.max(0, R - 60) / 320, 0.8, 1); // volume penalty
   return Math.min(0.6, p);
 }
 

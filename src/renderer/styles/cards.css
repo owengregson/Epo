@@ -74,15 +74,14 @@
 .growth-grid{stroke:rgba(255,255,255,.05); stroke-width:1}
 .growth-grid.dash{stroke-dasharray:2 4}
 .growth-ylab{fill:var(--faint); font-size:var(--fs-xs); font-family:var(--mono)}
+/* Paint only — the draw-in reveal is driven per-frame by GrowthChart.tsx from
+   the GROWTH_REVEAL_* constants in lib/motion.ts (rAF), never by CSS. */
 .growth-line{
   stroke:var(--silver); stroke-width:1.8; fill:none;
   stroke-linecap:round; stroke-linejoin:round;
-  transition:stroke-dashoffset 1.4s .3s var(--ease);
 }
-.growth-area{fill:url(#growthGrad); opacity:0; transition:opacity .9s 1.2s ease}
-.growth-dot{fill:var(--chrome); stroke:var(--bg); stroke-width:2; opacity:0; transition:opacity .4s 1.7s ease}
-.growth-on .growth-area{opacity:1}
-.growth-on .growth-dot{opacity:1}
+.growth-area{fill:url(#growthGrad); opacity:0}
+.growth-dot{fill:var(--chrome); stroke:var(--bg); stroke-width:2; opacity:0}
 .growth-x{
   display:flex; justify-content:space-between;
   margin-top:var(--sp-2);

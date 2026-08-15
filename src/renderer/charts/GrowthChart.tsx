@@ -49,6 +49,9 @@ export function GrowthChart({ points }: GrowthChartProps): h.JSX.Element {
   const areaD = hasData ? `${lineD}L${X1},${yZero} L${X0},${yZero} Z` : '';
   const endPt: [number, number] = coords.length ? coords[coords.length - 1] : [X1, yZero];
   const signed = (v: number): string => (v > 0 ? `+${Math.round(v)}` : String(Math.round(v)));
+  // Announce the trend's CURRENT value, signed — a churn-heavy net-negative
+  // series must not read as growth.
+  const latestNet = points.length ? points[points.length - 1].cumulativeNet : 0;
 
   useEffect(() => {
     if (!hasData) return;
@@ -98,7 +101,7 @@ export function GrowthChart({ points }: GrowthChartProps): h.JSX.Element {
       <svg
         class="growth-svg"
         viewBox="0 0 400 118"
-        aria-label={`Cumulative net follower growth, up ${Math.round(vmax)}`}
+        aria-label={`Cumulative net follower growth, ${signed(latestNet)}`}
       >
         <defs>
           <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">

@@ -27,11 +27,16 @@
   box-shadow:var(--elev-4);
 }
 .view.entering .card{
-  animation:cardIn .45s var(--ease) both;
-  /* Cap the stagger so a long page's tail still finishes inside the entering hold
-     window (VIEW_ENTER_HOLD_MS) — otherwise late cards pop to full opacity when the
-     `.entering` class is cleared mid-animation. */
-  animation-delay:calc(min(var(--i,0), 8) * 65ms + 60ms);
+  /* Stagger math is single-sourced from CARD_STAGGER in lib/motion.ts: the App
+     root publishes --card-in-dur / --card-stagger-step / --card-stagger-base /
+     --card-stagger-cap, and VIEW_ENTER_HOLD_MS is DERIVED from the same table —
+     so the tail always finishes inside the entering hold and late cards can't
+     pop to full opacity when `.entering` clears. (Fallbacks mirror the table.) */
+  animation:cardIn var(--card-in-dur, .45s) var(--ease) both;
+  animation-delay:calc(
+    min(var(--i,0), var(--card-stagger-cap, 8)) * var(--card-stagger-step, 65ms)
+    + var(--card-stagger-base, 60ms)
+  );
 }
 @keyframes cardIn{
   from{opacity:0; transform:translateY(14px) scale(.985)}
@@ -107,12 +112,17 @@
 /* ---------- Reveal — animated mount/unmount collapse ---------- */
 /* Grid-row 0fr→1fr animates the block's NATURAL height (no measured
    max-height), so conditional blocks slide the card open/closed instead of
-   snapping. Keep the element mounted and toggle `.open`. */
+   snapping. Keep the element mounted and toggle `.open`. Closed content goes
+   visibility:hidden AFTER the slide (delayed transition), so clipped-away
+   controls also leave the tab order and the accessibility tree. */
 .reveal{
-  display:grid; grid-template-rows:0fr; opacity:0;
+  display:grid; grid-template-rows:0fr; opacity:0; visibility:hidden;
+  transition:grid-template-rows .34s var(--ease), opacity .34s var(--ease), visibility 0s .34s;
+}
+.reveal.open{
+  grid-template-rows:1fr; opacity:1; visibility:visible;
   transition:grid-template-rows .34s var(--ease), opacity .34s var(--ease);
 }
-.reveal.open{grid-template-rows:1fr; opacity:1}
 .reveal-i{overflow:hidden; min-height:0}
 @media (prefers-reduced-motion: reduce){
   .reveal{transition:none}
@@ -420,15 +430,19 @@ input[type=range]::-moz-range-thumb{
 .ck-cap{fill:var(--faint); font-size:7px; font-weight:700; letter-spacing:.16em} /* 7px: sized to the clock-face viewBox */
 
 /* ---------- reusable confirmation modal ---------- */
+/* z-index 80: the modal layer sits ABOVE the toasts (70) so a raised toast is
+   dimmed and blocked like everything else; the tooltip layer stays at 100.
+   The closed scrim swaps to visibility:hidden AFTER the opacity fade (delayed
+   visibility transition), so its invisible buttons leave the tab order. */
 .scrim{
-  position:absolute; inset:0; z-index:60;
+  position:absolute; inset:0; z-index:80;
   display:flex; align-items:center; justify-content:center;
   background:rgba(5,5,7,.62);
   -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);
-  opacity:0; pointer-events:none;
-  transition:opacity .22s ease;
+  opacity:0; pointer-events:none; visibility:hidden;
+  transition:opacity .22s ease, visibility 0s .22s;
 }
-.scrim.open{opacity:1; pointer-events:auto}
+.scrim.open{opacity:1; pointer-events:auto; visibility:visible; transition:opacity .22s ease}
 .modal{
   width:340px; max-width:calc(100% - var(--sp-6) - var(--sp-6));
   padding:var(--sp-5);
@@ -444,10 +458,10 @@ input[type=range]::-moz-range-thumb{
 .modal-a{display:flex; justify-content:flex-end; gap:var(--sp-2); margin-top:var(--sp-5)}
 .modal .tbtn{height:var(--h-lg); padding:0 var(--sp-4)}
 .tbtn.confirm-danger{
-  color:#e29090; border-color:#553838;
+  color:var(--danger-text-strong); border-color:var(--danger-border);
   background:linear-gradient(180deg,#2b1d1d,#211717);
 }
-.tbtn.confirm-danger:hover{color:#efabab; border-color:#6b4646}
+.tbtn.confirm-danger:hover{color:var(--danger-text-hover); border-color:var(--danger-border-hover)}
 
 /* ---------- seed username validity check ---------- */
 .seedwrap{position:relative; margin-top:var(--sp-2)}
@@ -466,10 +480,10 @@ input[type=range]::-moz-range-thumb{
 }
 .tinput.valid:hover, .tinput.valid:focus{border-color:#4d8465}
 .tinput.invalid{
-  border-color:#6b3d3d;
+  border-color:var(--danger-border-hover);
   box-shadow:var(--inset-shadow), 0 0 0 1px rgba(201,106,106,.22);
 }
-.tinput.invalid:hover, .tinput.invalid:focus{border-color:#855050}
+.tinput.invalid:hover, .tinput.invalid:focus{border-color:var(--danger-border-strong)}
 
 /* ---------- NumberTicker — rolling odometer numerals ---------- */
 /* Em-based throughout so the ticker inherits whichever tier hosts it
@@ -549,6 +563,11 @@ input[type=range]::-moz-range-thumb{
   outline: 1px solid var(--border-focus);
   outline-offset: -2px;
   border-radius: var(--r-sm);
+}
+/* The collapsed header's bottom padding eases in sync with the body's .reveal
+   slide, so the card's total height animates as one motion (no padding snap). */
+.card-h-toggle {
+  transition: padding-bottom 0.34s var(--ease);
 }
 .card.collapsed .card-h-toggle {
   padding-bottom: var(--sp-3);

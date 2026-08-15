@@ -32,3 +32,23 @@ export function hoursOpen(s: Settings, nowHour: number): boolean {
   const b = s.activeHoursEnd;
   return a <= b ? nowHour >= a && nowHour < b : nowHour >= a || nowHour < b;
 }
+
+export interface DailyRateView {
+  /** Actions recorded today. */
+  done: number;
+  /** The configured daily operating rate, or null before settings load. */
+  rate: number | null;
+  /** Meter fill 0..100 (capped). */
+  pct: number;
+}
+
+/**
+ * The Actions-today meter model, shared by the Live Status hero and the
+ * Rate & Safety card so the two readouts can never drift apart.
+ */
+export function dailyRateView(status: EpoStatus | null, settings: Settings | null): DailyRateView {
+  const done = status?.actionsToday ?? 0;
+  const rate = settings?.dailyOperatingRate ?? null;
+  const pct = rate != null && rate > 0 ? Math.min(100, (done / rate) * 100) : 0;
+  return { done, rate, pct };
+}

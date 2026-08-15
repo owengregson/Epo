@@ -17,7 +17,7 @@ export interface SignInCardProps {
 export function SignInCard({ pending, onLogin }: SignInCardProps): h.JSX.Element {
   const opening = pending === 'login';
   return (
-    <Card raised>
+    <Card raised index={0}>
       <CardHeader icon="user-lock">Not signed in</CardHeader>
       <CardBody>
         <div class="hint">

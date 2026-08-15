@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useRef } from 'preact/hooks';
 import type { EpoStatus } from '@/types';
 
 export interface Countdown {
@@ -16,10 +16,10 @@ const IDLE: Countdown = { active: false, remainingSec: 0, frac: 0 };
  * Time-to-next-action from the engine's REAL pending deadline (`nextActionAt`,
  * the DelayManager's registered action-delay deadline) — no more estimating from
  * the settings band midpoint, so the countdown is exact for growth and would be
- * exact for prune's ×1/3 pace alike. Ticks once a second while running.
+ * exact for prune's ×1/3 pace alike. The caller supplies `now` (its `useNow`
+ * tick) so one clock drives every readout in the card — no second interval.
  */
-export function useCountdown(status: EpoStatus | null): Countdown {
-  const [now, setNow] = useState(() => Date.now());
+export function useCountdown(status: EpoStatus | null, now: number): Countdown {
   /** First sighting of a RESTORED deadline (no lastActionAt) — anchors the
    *  ring's denominator so it depletes across ticks instead of re-deriving
    *  from the same `now` as the numerator (which pinned it at "full" until
@@ -27,12 +27,6 @@ export function useCountdown(status: EpoStatus | null): Countdown {
   const restored = useRef<{ deadline: number; seenAt: number } | null>(null);
 
   const running = status?.state === 'running';
-  useEffect(() => {
-    if (!running) return;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [running]);
-
   if (!running || !status || status.nextActionAt == null) {
     return IDLE;
   }

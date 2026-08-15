@@ -1,6 +1,7 @@
 /** @jsx h */
 import { h, Fragment } from 'preact';
-import type { LogEntry, EpoStatus, Settings } from '@/types';
+import type { EpoStatus, Settings } from '@/types';
+import type { LogLine } from '@/renderer/hooks/useLogFeed';
 import { SignInCard } from '@/renderer/cards/overview/SignInCard';
 import { LiveStatusCard } from '@/renderer/cards/overview/LiveStatusCard';
 import { GrowthCard } from '@/renderer/cards/overview/GrowthCard';
@@ -12,7 +13,7 @@ import { usePeekFit } from '@/renderer/hooks/usePeekFit';
 export interface OverviewViewProps {
   status: EpoStatus | null;
   settings: Settings | null;
-  logLines: LogEntry[];
+  logLines: LogLine[];
   loggedOut: boolean;
   pending: string | null;
   onLogin(): void;
@@ -28,14 +29,18 @@ export interface OverviewViewProps {
 export function OverviewView(props: OverviewViewProps): h.JSX.Element {
   usePeekFit('view-overview', props.loggedOut);
 
+  // The sign-in gate takes stagger slot 0 when it leads; every other card
+  // shifts down one so the entrance cascade matches the visual order.
+  const base = props.loggedOut ? 1 : 0;
+
   return (
     <Fragment>
       {props.loggedOut ? <SignInCard pending={props.pending} onLogin={props.onLogin} /> : null}
-      <LiveStatusCard status={props.status} settings={props.settings} />
-      <GrowthCard status={props.status} />
-      <NowTargetingCard status={props.status} />
-      <RateSafetyCard status={props.status} settings={props.settings} />
-      <ActivityCard logLines={props.logLines} />
+      <LiveStatusCard status={props.status} settings={props.settings} index={base} />
+      <GrowthCard status={props.status} index={base + 1} />
+      <NowTargetingCard status={props.status} index={base + 2} />
+      <RateSafetyCard status={props.status} settings={props.settings} index={base + 3} />
+      <ActivityCard logLines={props.logLines} index={base + 4} />
     </Fragment>
   );
 }

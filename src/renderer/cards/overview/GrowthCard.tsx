@@ -17,6 +17,8 @@ function signed(n: number): string {
 
 export interface GrowthCardProps {
   status: EpoStatus | null;
+  /** Entrance-stagger index (`--i`); shifts down when the sign-in gate leads. */
+  index?: number;
 }
 
 /**
@@ -24,7 +26,7 @@ export interface GrowthCardProps {
  * (gained & retained, minus lost) with a momentum delta: growth in the recent
  * half of the window versus the prior half.
  */
-export function GrowthCard({ status }: GrowthCardProps): h.JSX.Element {
+export function GrowthCard({ status, index = 1 }: GrowthCardProps): h.JSX.Element {
   const points = useGrowthSeries(DAYS, status);
 
   const total = points.length > 0 ? points[points.length - 1].cumulativeNet : 0;
@@ -38,7 +40,7 @@ export function GrowthCard({ status }: GrowthCardProps): h.JSX.Element {
   const delta = recent - prior;
 
   return (
-    <Card index={1}>
+    <Card index={index}>
       <CardHeader icon="arrow-trend-up" aux="last 14 days">
         Net Follower Growth
       </CardHeader>

@@ -28,6 +28,16 @@
   --live: #d8dde3; /* near-white steel: the single "live/go" accent */
   --warn: #d8b768; /* muted brass */
   --danger: #c96a6a;
+  /* Danger ramp — every destructive/invalid treatment draws from these
+     (confirm-danger button, error toasts, danger-hover borders, invalid
+     inputs) so the red family stays one tint. */
+  --danger-text: #e2a3a3; /* error toast body */
+  --danger-text-strong: #e29090; /* destructive confirm button */
+  --danger-text-hover: #efabab;
+  --danger-border-soft: #4a3333; /* danger-hover on a neutral button */
+  --danger-border: #553838; /* resting destructive border */
+  --danger-border-hover: #6b4646; /* hovered destructive / invalid input */
+  --danger-border-strong: #855050; /* focused invalid input */
   --ok: #6db28a;
 
   /* Interaction borders — the three brightening steps controls move through */

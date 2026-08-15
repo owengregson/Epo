@@ -158,6 +158,12 @@
 .tbtn:active {
   transform: translateY(1px);
 }
+/* House keyboard-focus convention (matches .seg/.chip/.toggle/.dual-h). */
+.tbtn:focus-visible,
+.toast__close:focus-visible {
+  outline: 2px solid var(--silver);
+  outline-offset: 2px;
+}
 /* the natural next control carries the primary sheen for the current engine
    state — the cluster itself is the state readout */
 .console[data-state='running'] #btnPause,
@@ -175,7 +181,7 @@
 }
 .tbtn.danger:hover {
   color: var(--danger);
-  border-color: #4a3333;
+  border-color: var(--danger-border-soft);
 }
 .tbtn[disabled] {
   opacity: 0.4;
@@ -217,6 +223,11 @@
 .nav button:hover {
   color: var(--silver);
   background: var(--hover-veil);
+}
+/* Inset offset keeps the ring inside the pill's rounded bounds. */
+.nav button:focus-visible {
+  outline: 2px solid var(--silver);
+  outline-offset: -2px;
 }
 .nav button.active {
   color: var(--chrome);
@@ -390,8 +401,8 @@
   animation: toastIn 0.24s var(--ease) both;
 }
 .toast[data-kind='error'] {
-  border-color: #553838;
-  color: #e2a3a3;
+  border-color: var(--danger-border);
+  color: var(--danger-text);
 }
 .toast__msg {
   flex: 1;

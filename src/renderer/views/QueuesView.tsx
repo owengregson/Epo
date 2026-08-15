@@ -8,13 +8,13 @@ import { commas } from '@/renderer/lib/format';
 import {
   QueuePipeline,
   QUEUE_STAGE_BY_KEY,
+  QUEUE_STAGE_PANEL_ID,
   stageCount,
   type QueueStageKey,
 } from '@/renderer/cards/queues/QueuePipeline';
 import { QueueRowItem, type QueueWindows } from '@/renderer/cards/queues/QueueRowItem';
 import { useSettings } from '@/renderer/hooks/useSettings';
-
-const DAY_MS = 24 * 3600 * 1000;
+import { MS_PER_DAY } from '@/timing/units';
 
 export interface QueuesViewProps {
   status: EpoStatus | null;
@@ -72,8 +72,8 @@ export function QueuesView(props: QueuesViewProps): h.JSX.Element {
   const settings = useSettings();
   const windows: QueueWindows | null = settings
     ? {
-        followbackMs: settings.maxWaitForFollowbackDays * DAY_MS,
-        holdMs: settings.holdAfterFollowbackDays * DAY_MS,
+        followbackMs: settings.maxWaitForFollowbackDays * MS_PER_DAY,
+        holdMs: settings.holdAfterFollowbackDays * MS_PER_DAY,
       }
     : null;
 
@@ -84,8 +84,9 @@ export function QueuesView(props: QueuesViewProps): h.JSX.Element {
       <Card index={0}>
         <CardHeader>{stage.title}</CardHeader>
         <div class="qrows">
-          {/* Keyed by stage so a tab switch remounts the list and replays qfade. */}
-          <div class="qlist" key={stageKey}>
+          {/* Keyed by stage so a tab switch remounts the list and replays qfade.
+              The id is the pipeline tabs' aria-controls target. */}
+          <div class="qlist" id={QUEUE_STAGE_PANEL_ID} role="tabpanel" key={stageKey}>
             {loading ? (
               <QueueNote text="Loading…" />
             ) : rows.length === 0 ? (

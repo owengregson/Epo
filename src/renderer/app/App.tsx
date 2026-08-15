@@ -2,6 +2,7 @@
 import { h } from 'preact';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import type { Settings } from '@/types';
+import { CARD_STAGGER } from '../lib/motion';
 import { useEngineStatus } from '../hooks/useEngineStatus';
 import { useToasts } from '../hooks/useToasts';
 import { useScrollReset } from '../hooks/useScrollReset';
@@ -155,8 +156,16 @@ export function App(): h.JSX.Element {
     ),
   };
 
+  // Publish the card-entrance stagger table (lib/motion.ts CARD_STAGGER) as CSS
+  // custom properties so primitives.css and VIEW_ENTER_HOLD_MS share one source.
+  const staggerVars =
+    `--card-in-dur:${CARD_STAGGER.DUR_MS}ms;` +
+    `--card-stagger-step:${CARD_STAGGER.STEP_MS}ms;` +
+    `--card-stagger-base:${CARD_STAGGER.BASE_MS}ms;` +
+    `--card-stagger-cap:${CARD_STAGGER.CAP}`;
+
   return (
-    <div class="console" data-state={status?.state ?? 'idle'}>
+    <div class="console" data-state={status?.state ?? 'idle'} style={staggerVars}>
       <Header
         state={status?.state}
         pending={pending}

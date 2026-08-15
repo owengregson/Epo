@@ -1,6 +1,7 @@
 /** @jsx h */
 import { h } from 'preact';
 import type { LogEntry } from '@/types';
+import type { LogLine } from '@/renderer/hooks/useLogFeed';
 import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { clockTime } from '@/renderer/lib/format';
 
@@ -20,18 +21,20 @@ function levelClass(level: LogEntry['level']): 'info' | 'warn' | 'error' {
 }
 
 export interface ActivityCardProps {
-  logLines: LogEntry[];
+  logLines: LogLine[];
+  /** Entrance-stagger index (`--i`); shifts down when the sign-in gate leads. */
+  index?: number;
 }
 
 /**
  * Activity — the newest slice of the streamed structured log, newest first
  * (the full rolling buffer lives in the shell's log feed).
  */
-export function ActivityCard({ logLines }: ActivityCardProps): h.JSX.Element {
+export function ActivityCard({ logLines, index = 4 }: ActivityCardProps): h.JSX.Element {
   const recent = logLines.slice(-VISIBLE_LINES).reverse();
 
   return (
-    <Card index={4}>
+    <Card index={index}>
       <CardHeader icon="wave-square">Activity</CardHeader>
       <CardBody>
         <div class="log">
@@ -43,7 +46,7 @@ export function ActivityCard({ logLines }: ActivityCardProps): h.JSX.Element {
             recent.map((line) => {
               const lv = levelClass(line.level);
               return (
-                <div class="ln" key={`${line.at}:${line.message}`}>
+                <div class="ln" key={line.seq}>
                   <span class="ts num">{clockTime(line.at)}</span>
                   <span class={`lv ${lv}`}>{lv}</span>
                   <span class="msg">{line.message}</span>

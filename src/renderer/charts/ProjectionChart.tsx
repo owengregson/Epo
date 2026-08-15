@@ -3,12 +3,23 @@ import { h } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import type { ProjectionResult } from './growth-model';
 import { clamp, commas } from '../lib/format';
-import { PROJ_DASH_DROP_MS, prefersReducedMotion } from '../lib/motion';
+import { prefersReducedMotion } from '../lib/motion';
 
 const X0 = 8;
 const X1 = 348;
 const Y0 = 104;
 const Y1 = 12;
+
+/** Settle margin after the measured CSS draw-in before the dash is stripped. */
+const DASH_DROP_GUARD_MS = 100;
+
+/** "1.2s" / "300ms" (first item of a comma list) → milliseconds. */
+function cssTimeMs(value: string): number {
+  const first = value.split(',')[0].trim();
+  const n = Number.parseFloat(first);
+  if (Number.isNaN(n)) return 0;
+  return first.endsWith('ms') ? n : n * 1000;
+}
 
 export interface ProjectionChartProps {
   result: ProjectionResult;
@@ -77,12 +88,16 @@ export function ProjectionChart({ result }: ProjectionChartProps): h.JSX.Element
               p.style.strokeDashoffset = '0';
             });
             // Once drawn, drop the dash so later edits update the paths freely.
+            // The delay is MEASURED from the .proj-line transition (duration +
+            // delay) so a stylesheet retune can never strip the dash mid-draw.
+            const cs = getComputedStyle(els[0]);
+            const drawMs = cssTimeMs(cs.transitionDuration) + cssTimeMs(cs.transitionDelay);
             dashTimer.current = window.setTimeout(() => {
               els.forEach((p) => {
                 p.style.strokeDasharray = '';
                 p.style.strokeDashoffset = '';
               });
-            }, PROJ_DASH_DROP_MS);
+            }, drawMs + DASH_DROP_GUARD_MS);
           }),
         );
         io.disconnect();

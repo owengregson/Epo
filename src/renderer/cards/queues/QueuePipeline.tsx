@@ -77,14 +77,40 @@ export interface QueuePipelineProps {
   onSelect: (key: QueueStageKey) => void;
 }
 
+/** The DOM id of the stage row-list panel the tabs control (QueuesView). */
+export const QUEUE_STAGE_PANEL_ID = 'queue-stage-list';
+
 /**
  * The connected stage selector — the actual flow of an account through the
  * churn lifecycle. Four `.qstage` tabs joined by `.qflow` chevrons, faithful
  * to the mockup's `.qpipe` markup; counts are bound to the live status.
+ * Keyboard: the tabs pattern (roving tabindex + arrow keys), mirroring
+ * `Segmented`, so both selectors behave identically for keyboard users.
  */
 export function QueuePipeline({ status, active, onSelect }: QueuePipelineProps): h.JSX.Element {
+  const idx = Math.max(
+    0,
+    QUEUE_STAGES.findIndex((s) => s.key === active),
+  );
+
+  const onKeyDown = (e: KeyboardEvent): void => {
+    const dir =
+      e.key === 'ArrowRight' || e.key === 'ArrowDown'
+        ? 1
+        : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+          ? -1
+          : 0;
+    if (!dir) return;
+    e.preventDefault();
+    const nx = (idx + dir + QUEUE_STAGES.length) % QUEUE_STAGES.length;
+    onSelect(QUEUE_STAGES[nx].key);
+    const group = e.currentTarget as HTMLElement;
+    const btn = group.querySelectorAll('button')[nx] as HTMLButtonElement | undefined;
+    btn?.focus();
+  };
+
   return (
-    <div class="qpipe num" role="tablist" aria-label="Lifecycle pipeline">
+    <div class="qpipe num" role="tablist" aria-label="Lifecycle pipeline" onKeyDown={onKeyDown}>
       {QUEUE_STAGES.map((stage, i) => (
         <Fragment key={stage.key}>
           {i > 0 ? (
@@ -97,6 +123,8 @@ export function QueuePipeline({ status, active, onSelect }: QueuePipelineProps):
             class={stage.key === active ? 'qstage active' : 'qstage'}
             role="tab"
             aria-selected={stage.key === active ? 'true' : 'false'}
+            aria-controls={QUEUE_STAGE_PANEL_ID}
+            tabIndex={stage.key === active ? 0 : -1}
             data-q={stage.key}
             onClick={() => onSelect(stage.key)}
           >

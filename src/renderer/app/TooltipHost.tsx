@@ -1,6 +1,6 @@
 /** @jsx h */
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
 interface TipState {
   text: string;
@@ -9,6 +9,10 @@ interface TipState {
 
 /** Delay before a tooltip appears on hover. */
 const SHOW_DELAY_MS = 250;
+/** Minimum gutter between the bubble and the viewport edge. */
+const EDGE_PX = 8;
+/** Gap between the bubble and its anchor. */
+const GAP_PX = 8;
 
 /**
  * The single global tooltip popover. Listens for hover over any `[data-tip]`
@@ -18,6 +22,7 @@ const SHOW_DELAY_MS = 250;
  */
 export function TooltipHost(): h.JSX.Element {
   const [tip, setTip] = useState<TipState | null>(null);
+  const [shown, setShown] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const current = useRef<Element | null>(null);
   const timer = useRef<number | undefined>();
@@ -55,34 +60,31 @@ export function TooltipHost(): h.JSX.Element {
     };
   }, []);
 
-  // Position the popover once it (and its measured size) exists.
-  useEffect(() => {
+  // Measure-then-show: the bubble mounts INVISIBLE (no `.show`, opacity 0),
+  // this layout effect measures its real size and positions it before paint,
+  // and only then `.show` is added — so the open animation always starts from
+  // the final spot. One flip rule (above unless it would leave the top gutter),
+  // no estimated sizes to drift from the CSS.
+  useLayoutEffect(() => {
     const el = ref.current;
-    if (!el || !tip) return;
+    if (!el || !tip) {
+      setShown(false);
+      return;
+    }
     const tw = el.offsetWidth;
     const th = el.offsetHeight;
-    const left = Math.max(8, Math.min(tip.rect.left, window.innerWidth - tw - 8));
-    let top = tip.rect.top - th - 8;
-    if (top < 8) top = tip.rect.bottom + 8;
+    const left = Math.max(EDGE_PX, Math.min(tip.rect.left, window.innerWidth - tw - EDGE_PX));
+    let top = tip.rect.top - th - GAP_PX;
+    if (top < EDGE_PX) top = tip.rect.bottom + GAP_PX;
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
+    setShown(true);
   }, [tip]);
-
-  // An initial position from the anchor rect, applied in the SAME render that adds
-  // `.show` — so the reveal animates from near its final spot instead of visibly
-  // snapping from (0,0). The effect above then refines it with the measured size.
-  const style = tip
-    ? {
-        left: `${Math.max(8, Math.min(tip.rect.left, window.innerWidth - 258))}px`,
-        top: `${tip.rect.top > 56 ? tip.rect.top - 44 : tip.rect.bottom + 8}px`,
-      }
-    : undefined;
 
   return (
     <div
-      class={tip ? 'tip show' : 'tip'}
+      class={tip && shown ? 'tip show' : 'tip'}
       ref={ref}
-      style={style}
       role="tooltip"
       aria-hidden={tip ? 'false' : 'true'}
     >
