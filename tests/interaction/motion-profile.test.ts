@@ -5,20 +5,20 @@
  * and cadence bounds, and hold-duration bounds.
  */
 import {
-  HOLD_MAX_MS,
-  HOLD_MIN_MS,
+  PRESS_MAX_MS,
+  PRESS_MIN_MS,
   MOVE_MAX_MS,
   MOVE_MIN_MS,
-  clickPoint,
-  cursorPath,
-  fittsDurationMs,
+  targetPoint,
+  pathBetween,
+  travelDurationMs,
   gaussian,
-  holdDurationMs,
-  scrollPlan,
+  pressDurationMs,
+  wheelPlan,
   stepDelays,
   type ElementRect,
   type Point,
-} from '@/humanizer/motion-profile';
+} from '@/interaction/motion-profile';
 
 /** mulberry32 — a tiny deterministic PRNG for reproducible sampling. */
 const mulberry32 = (seed: number) => (): number => {
@@ -49,30 +49,30 @@ describe('gaussian', () => {
   });
 });
 
-describe('holdDurationMs', () => {
+describe('pressDurationMs', () => {
   test('always within the documented 40–120 ms band', () => {
     const rng = mulberry32(2);
     for (let i = 0; i < 1000; i++) {
-      const ms = holdDurationMs(rng);
-      expect(ms).toBeGreaterThanOrEqual(HOLD_MIN_MS);
-      expect(ms).toBeLessThanOrEqual(HOLD_MAX_MS);
+      const ms = pressDurationMs(rng);
+      expect(ms).toBeGreaterThanOrEqual(PRESS_MIN_MS);
+      expect(ms).toBeLessThanOrEqual(PRESS_MAX_MS);
     }
   });
 
   test('varies (not a constant)', () => {
     const rng = mulberry32(3);
-    const draws = new Set(Array.from({ length: 50 }, () => holdDurationMs(rng)));
+    const draws = new Set(Array.from({ length: 50 }, () => pressDurationMs(rng)));
     expect(draws.size).toBeGreaterThan(10);
   });
 });
 
-describe('clickPoint', () => {
+describe('targetPoint', () => {
   const rect: ElementRect = { x: 100, y: 200, width: 120, height: 40 };
 
   test('every sample stays strictly inside the rect, off the edges', () => {
     const rng = mulberry32(4);
     for (let i = 0; i < 2000; i++) {
-      const p = clickPoint(rect, rng);
+      const p = targetPoint(rect, rng);
       expect(p.x).toBeGreaterThan(rect.x);
       expect(p.x).toBeLessThan(rect.x + rect.width);
       expect(p.y).toBeGreaterThan(rect.y);
@@ -85,7 +85,7 @@ describe('clickPoint', () => {
     const cx = rect.x + rect.width / 2;
     const cy = rect.y + rect.height / 2;
     for (let i = 0; i < 2000; i++) {
-      const p = clickPoint(rect, rng);
+      const p = targetPoint(rect, rng);
       expect(p.x === cx && p.y === cy).toBe(false);
     }
   });
@@ -96,7 +96,7 @@ describe('clickPoint', () => {
     let sy = 0;
     const n = 2000;
     for (let i = 0; i < n; i++) {
-      const p = clickPoint(rect, rng);
+      const p = targetPoint(rect, rng);
       sx += p.x;
       sy += p.y;
     }
@@ -108,7 +108,7 @@ describe('clickPoint', () => {
     const tiny: ElementRect = { x: 10, y: 10, width: 5, height: 5 };
     const rng = mulberry32(7);
     for (let i = 0; i < 500; i++) {
-      const p = clickPoint(tiny, rng);
+      const p = targetPoint(tiny, rng);
       expect(p.x).toBeGreaterThan(tiny.x);
       expect(p.x).toBeLessThan(tiny.x + tiny.width);
       expect(p.y).toBeGreaterThan(tiny.y);
@@ -117,13 +117,13 @@ describe('clickPoint', () => {
   });
 });
 
-describe('cursorPath', () => {
+describe('pathBetween', () => {
   const from: Point = { x: 40, y: 60 };
   const to: Point = { x: 640, y: 420 };
 
   test('starts at from and ends EXACTLY at the target', () => {
     for (let seed = 10; seed < 30; seed++) {
-      const path = cursorPath(from, to, mulberry32(seed));
+      const path = pathBetween(from, to, mulberry32(seed));
       expect(path[0]).toEqual(from);
       expect(path[path.length - 1]).toEqual(to);
       expect(path.length).toBeGreaterThanOrEqual(4);
@@ -132,7 +132,7 @@ describe('cursorPath', () => {
 
   test('without overshoot, distance to the target is monotonically non-increasing (≤2px tolerance)', () => {
     for (let seed = 30; seed < 50; seed++) {
-      const path = cursorPath(from, to, mulberry32(seed), { overshoot: false });
+      const path = pathBetween(from, to, mulberry32(seed), { overshoot: false });
       for (let i = 1; i < path.length; i++) {
         expect(dist(path[i], to)).toBeLessThanOrEqual(dist(path[i - 1], to) + 2);
       }
@@ -141,7 +141,7 @@ describe('cursorPath', () => {
 
   test('with overshoot, some point passes the target before settling exactly onto it', () => {
     for (let seed = 50; seed < 60; seed++) {
-      const path = cursorPath(from, to, mulberry32(seed), { overshoot: true });
+      const path = pathBetween(from, to, mulberry32(seed), { overshoot: true });
       const total = dist(from, to);
       const maxProgress = Math.max(...path.map((p) => dist(from, p)));
       expect(maxProgress).toBeGreaterThan(total + 1); // went past
@@ -151,7 +151,7 @@ describe('cursorPath', () => {
   });
 
   test('the path visibly bows away from the straight line (never ruler-straight)', () => {
-    const path = cursorPath(from, to, mulberry32(60), { overshoot: false });
+    const path = pathBetween(from, to, mulberry32(60), { overshoot: false });
     // Max perpendicular deviation from the from→to line across the path.
     const dx = to.x - from.x;
     const dy = to.y - from.y;
@@ -164,7 +164,7 @@ describe('cursorPath', () => {
 
   test('the arc is SMOOTH: consecutive segment headings turn gently (no zig-zag shiver)', () => {
     for (let seed = 62; seed < 72; seed++) {
-      const path = cursorPath(from, to, mulberry32(seed), { overshoot: false });
+      const path = pathBetween(from, to, mulberry32(seed), { overshoot: false });
       for (let i = 2; i < path.length; i++) {
         const a = Math.atan2(path[i - 1].y - path[i - 2].y, path[i - 1].x - path[i - 2].x);
         const b = Math.atan2(path[i].y - path[i - 1].y, path[i].x - path[i - 1].x);
@@ -178,24 +178,24 @@ describe('cursorPath', () => {
   });
 
   test('noise varies between runs: two seeds trace different paths to the same target', () => {
-    const a = cursorPath(from, to, mulberry32(73), { overshoot: false });
-    const b = cursorPath(from, to, mulberry32(74), { overshoot: false });
+    const a = pathBetween(from, to, mulberry32(73), { overshoot: false });
+    const b = pathBetween(from, to, mulberry32(74), { overshoot: false });
     const differs = a.some((p, i) => b[i] === undefined || p.x !== b[i].x || p.y !== b[i].y);
     expect(differs).toBe(true);
   });
 
   test('a zero-length move degenerates to [from, to]', () => {
     const p: Point = { x: 5, y: 5 };
-    expect(cursorPath(p, p, mulberry32(61))).toEqual([p, p]);
+    expect(pathBetween(p, p, mulberry32(61))).toEqual([p, p]);
   });
 });
 
-describe('fittsDurationMs', () => {
+describe('travelDurationMs', () => {
   test('always within the whole-move clamp', () => {
     const rng = mulberry32(70);
     for (const d of [0, 10, 100, 500, 2000]) {
       for (let i = 0; i < 50; i++) {
-        const ms = fittsDurationMs(d, 40, rng);
+        const ms = travelDurationMs(d, 40, rng);
         expect(ms).toBeGreaterThanOrEqual(MOVE_MIN_MS);
         expect(ms).toBeLessThanOrEqual(MOVE_MAX_MS);
       }
@@ -204,7 +204,7 @@ describe('fittsDurationMs', () => {
 
   test('longer moves take longer (noise held fixed)', () => {
     const flat: () => number = () => 0.5; // gaussian(0.5, …) → deterministic noise
-    expect(fittsDurationMs(1200, 40, flat)).toBeGreaterThan(fittsDurationMs(80, 40, flat));
+    expect(travelDurationMs(1200, 40, flat)).toBeGreaterThan(travelDurationMs(80, 40, flat));
   });
 });
 
@@ -237,10 +237,10 @@ describe('stepDelays', () => {
   });
 });
 
-describe('scrollPlan', () => {
+describe('wheelPlan', () => {
   test('signed tick sum lands within the documented 96–105 % band of the request', () => {
     for (let seed = 90; seed < 120; seed++) {
-      const plan = scrollPlan(1800, mulberry32(seed));
+      const plan = wheelPlan(1800, mulberry32(seed));
       const sum = plan.reduce((a, t) => a + t.deltaPx, 0);
       expect(sum).toBeGreaterThanOrEqual(1800 * 0.96 - 1);
       expect(sum).toBeLessThanOrEqual(1800 * 1.05 + 1);
@@ -248,15 +248,15 @@ describe('scrollPlan', () => {
   });
 
   test('a downward request scrolls down; an upward request scrolls up', () => {
-    const down = scrollPlan(900, mulberry32(121), { overshoot: false });
+    const down = wheelPlan(900, mulberry32(121), { overshoot: false });
     for (const t of down) expect(t.deltaPx).toBeGreaterThan(0);
-    const up = scrollPlan(-900, mulberry32(122), { overshoot: false });
+    const up = wheelPlan(-900, mulberry32(122), { overshoot: false });
     for (const t of up) expect(t.deltaPx).toBeLessThan(0);
   });
 
   test('overshoot plans contain opposite-sign corrective ticks yet still sum in band', () => {
     for (let seed = 130; seed < 140; seed++) {
-      const plan = scrollPlan(1500, mulberry32(seed), { overshoot: true });
+      const plan = wheelPlan(1500, mulberry32(seed), { overshoot: true });
       expect(plan.some((t) => t.deltaPx < 0)).toBe(true); // the correction
       const sum = plan.reduce((a, t) => a + t.deltaPx, 0);
       expect(sum).toBeGreaterThanOrEqual(1500 * 0.96 - 1);
@@ -264,9 +264,9 @@ describe('scrollPlan', () => {
     }
   });
 
-  test('pauses stay within the human cadence bounds (30–90 ms, micro-pauses ≤ 450 ms)', () => {
+  test('pauses stay within the cadence bounds (30–90 ms, micro-pauses ≤ 450 ms)', () => {
     for (let seed = 140; seed < 160; seed++) {
-      for (const t of scrollPlan(2400, mulberry32(seed))) {
+      for (const t of wheelPlan(2400, mulberry32(seed))) {
         expect(t.pauseMs).toBeGreaterThanOrEqual(30);
         expect(t.pauseMs).toBeLessThanOrEqual(450);
       }
@@ -274,6 +274,6 @@ describe('scrollPlan', () => {
   });
 
   test('zero distance yields an empty plan', () => {
-    expect(scrollPlan(0, mulberry32(161))).toEqual([]);
+    expect(wheelPlan(0, mulberry32(161))).toEqual([]);
   });
 });

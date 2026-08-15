@@ -1,10 +1,10 @@
 /**
- * Actor × Humanizer integration: with a humanizer wired, element LOCATING
+ * Actor × Interactor integration: with a interactor wired, element LOCATING
  * stays in-page (the surface's locate scripts, matched here by their
- * `actor:locate-*` markers) but every click/scroll goes through the humanizer;
+ * `actor:locate-*` markers) but every click/scroll goes through the interactor;
  * without one, the unchanged in-page JS click scripts run.
  */
-import { Actor, type ActorHumanizer } from '@/adapter/actor';
+import { Actor, type ActorInteractor } from '@/adapter/actor';
 import type {
   LocateActionResult,
   LocateRectResult,
@@ -17,15 +17,19 @@ beforeAll(() => setLevel('error'));
 
 const RECT: LocatedRect = { x: 300, y: 200, width: 120, height: 40 };
 
-/** A recording fake humanizer (satisfies ActorHumanizer structurally). */
-class FakeHumanizer implements ActorHumanizer {
+/** A recording fake interactor (satisfies ActorInteractor structurally). */
+class FakeInteractor implements ActorInteractor {
   clicks: LocatedRect[] = [];
-  scrolls: { container: LocatedRect; deltaPx: number }[] = [];
+  scrolls: { container: LocatedRect; deltaPx: number; restPoint?: { x: number; y: number } }[] = [];
   async click(target: LocatedRect): Promise<void> {
     this.clicks.push(target);
   }
-  async scroll(container: LocatedRect, deltaPx: number): Promise<void> {
-    this.scrolls.push({ container, deltaPx });
+  async scroll(
+    container: LocatedRect,
+    deltaPx: number,
+    restPoint?: { x: number; y: number },
+  ): Promise<void> {
+    this.scrolls.push({ container, deltaPx, restPoint });
   }
 }
 
@@ -66,13 +70,13 @@ const marker =
 
 const buildActor = (
   tab: ScriptedTab,
-  humanizer?: ActorHumanizer,
-): Actor => new Actor(tab, { pollIntervalMs: 1, pollTimeoutMs: 5, humanizer });
+  interactor?: ActorInteractor,
+): Actor => new Actor(tab, { pollIntervalMs: 1, pollTimeoutMs: 5, interactor });
 
-describe('follow/unfollow with a humanizer', () => {
-  test('follow: locate script finds the button, the HUMANIZER clicks its rect, state verified', async () => {
+describe('follow/unfollow with a interactor', () => {
+  test('follow: locate script finds the button, the Interactor clicks its rect, state verified', async () => {
     const tab = new ScriptedTab();
-    const h = new FakeHumanizer();
+    const h = new FakeInteractor();
     // Locate: a Follow button that would be clicked.
     tab.on(marker('actor:locate-action'), (): LocateActionResult => ({
       found: true,
@@ -88,7 +92,7 @@ describe('follow/unfollow with a humanizer', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.clicked).toBe(true);
-    expect(h.clicks).toEqual([RECT]); // the humanizer performed the click
+    expect(h.clicks).toEqual([RECT]); // the interactor performed the click
     // The in-page JS CLICK script never ran (no evaluate without a locate/probe marker).
     for (const s of tab.evaluated) {
       expect(s.includes('actor:locate-action') || s.includes('actor:probe-state')).toBe(true);
@@ -97,7 +101,7 @@ describe('follow/unfollow with a humanizer', () => {
 
   test('follow: an already-Following button is a no-click idempotent ok', async () => {
     const tab = new ScriptedTab();
-    const h = new FakeHumanizer();
+    const h = new FakeInteractor();
     tab.on(marker('actor:locate-action'), (): LocateActionResult => ({
       found: true,
       state: 'following',
@@ -113,9 +117,9 @@ describe('follow/unfollow with a humanizer', () => {
     expect(h.clicks).toEqual([]); // nothing pressed
   });
 
-  test('unfollow: humanizer clicks the button AND the confirm control', async () => {
+  test('unfollow: interactor clicks the button AND the confirm control', async () => {
     const tab = new ScriptedTab();
-    const h = new FakeHumanizer();
+    const h = new FakeInteractor();
     const confirmRect: LocatedRect = { x: 400, y: 500, width: 200, height: 44 };
     tab.on(marker('actor:locate-action'), (): LocateActionResult => ({
       found: true,
@@ -138,10 +142,10 @@ describe('follow/unfollow with a humanizer', () => {
   });
 });
 
-describe('dialogs and scrolling with a humanizer', () => {
-  test('openFollowersDialog: the stat rect is humanizer-clicked, then the dialog awaited', async () => {
+describe('dialogs and scrolling with a interactor', () => {
+  test('openFollowersDialog: the stat rect is interactor-clicked, then the dialog awaited', async () => {
     const tab = new ScriptedTab();
-    const h = new FakeHumanizer();
+    const h = new FakeInteractor();
     tab.on(
       marker('actor:locate-stat-followers'),
       (): LocateRectResult => ({ found: true, rect: RECT }),
@@ -154,9 +158,40 @@ describe('dialogs and scrolling with a humanizer', () => {
     expect(h.clicks).toEqual([RECT]);
   });
 
-  test('scrollFollowers: remaining distance is humanizer-scrolled, capped at 3 viewports', async () => {
+  test('openFollowersDialog: a click the SPA never registered is retried (re-navigate + re-click)', async () => {
     const tab = new ScriptedTab();
-    const h = new FakeHumanizer();
+    const h = new FakeInteractor();
+    tab.on(
+      marker('actor:locate-stat-followers'),
+      (): LocateRectResult => ({ found: true, rect: RECT }),
+    );
+    // Attempt 1's click never lands (dialog stays absent through the poll);
+    // attempt 2's click works — the dialog appears once a second click happened.
+    tab.on((s) => s.includes('present:'), () => ({ present: h.clicks.length >= 2 }));
+
+    await buildActor(tab, h).openFollowersDialog('target');
+
+    expect(h.clicks).toEqual([RECT, RECT]); // one click per attempt
+  });
+
+  test('openFollowersDialog: both attempts without a dialog throw AdapterStaleError', async () => {
+    const tab = new ScriptedTab();
+    const h = new FakeInteractor();
+    tab.on(
+      marker('actor:locate-stat-followers'),
+      (): LocateRectResult => ({ found: true, rect: RECT }),
+    );
+    tab.on((s) => s.includes('present:'), () => ({ present: false }));
+
+    await expect(buildActor(tab, h).openFollowersDialog('target')).rejects.toThrow(
+      /dialog/,
+    );
+    expect(h.clicks).toEqual([RECT, RECT]); // it did retry before giving up
+  });
+
+  test('scrollFollowers: remaining distance is interactor-scrolled, capped at 3 viewports', async () => {
+    const tab = new ScriptedTab();
+    const h = new FakeInteractor();
     tab.on(marker('actor:locate-scroll'), (): LocateScrollResult => ({
       found: true,
       rect: { x: 100, y: 100, width: 400, height: 600 },
@@ -172,9 +207,26 @@ describe('dialogs and scrolling with a humanizer', () => {
     expect(h.scrolls[0].deltaPx).toBe(1800); // min(4400 remaining, 3 × 600 viewport)
   });
 
+  test('scrollFollowers: the hover-safe rest point is forwarded to the interactor', async () => {
+    const tab = new ScriptedTab();
+    const h = new FakeInteractor();
+    tab.on(marker('actor:locate-scroll'), (): LocateScrollResult => ({
+      found: true,
+      rect: { x: 100, y: 100, width: 400, height: 600 },
+      scrollTop: 0,
+      scrollHeight: 5000,
+      clientHeight: 600,
+      safePoint: { x: 108, y: 400 },
+    }));
+
+    await buildActor(tab, h).scrollFollowers();
+
+    expect(h.scrolls[0].restPoint).toEqual({ x: 108, y: 400 }); // wheels off the hover triggers
+  });
+
   test('scrollFollowers: an already-bottomed container reports false, no scroll', async () => {
     const tab = new ScriptedTab();
-    const h = new FakeHumanizer();
+    const h = new FakeInteractor();
     tab.on(marker('actor:locate-scroll'), (): LocateScrollResult => ({
       found: true,
       rect: { x: 100, y: 100, width: 400, height: 600 },
@@ -189,15 +241,40 @@ describe('dialogs and scrolling with a humanizer', () => {
 
   test('scrollFollowers: a missing container reports false (list fits — nothing to scroll)', async () => {
     const tab = new ScriptedTab();
-    const h = new FakeHumanizer();
+    const h = new FakeInteractor();
     tab.on(marker('actor:locate-scroll'), (): LocateScrollResult => ({ found: false }));
 
     expect(await buildActor(tab, h).scrollFollowers()).toBe(false);
     expect(h.scrolls).toEqual([]);
   });
+
+  test('clickOwnProfileLink: the nav avatar rect is Interactor-clicked (no JS click)', async () => {
+    const tab = new ScriptedTab();
+    const h = new FakeInteractor();
+    tab.on(
+      marker('actor:locate-profile-link'),
+      (): LocateRectResult => ({ found: true, rect: RECT }),
+    );
+
+    expect(await buildActor(tab, h).clickOwnProfileLink()).toBe(true);
+    expect(h.clicks).toEqual([RECT]);
+    // Only the locate script ran — the in-page a.click() path never did.
+    for (const s of tab.evaluated) {
+      expect(s.includes('actor:locate-profile-link')).toBe(true);
+    }
+  });
+
+  test('clickOwnProfileLink: link not hydrated yet reports false, nothing pressed', async () => {
+    const tab = new ScriptedTab();
+    const h = new FakeInteractor();
+    tab.on(marker('actor:locate-profile-link'), (): LocateRectResult => ({ found: false }));
+
+    expect(await buildActor(tab, h).clickOwnProfileLink()).toBe(false);
+    expect(h.clicks).toEqual([]);
+  });
 });
 
-describe('fallback without a humanizer (behavior unchanged)', () => {
+describe('fallback without a interactor (behavior unchanged)', () => {
   test('follow runs the in-page JS click script, never a locate script', async () => {
     const tab = new ScriptedTab();
     // The JS findAndAct script embeds the op constant; the locate scripts carry

@@ -1,14 +1,14 @@
 /**
- * Humanizer facade: event sequences through a recording InputDriver, with an
+ * Interactor facade: event sequences through a recording InputDriver, with an
  * injected rng + sleep recorder (no real timers, fully deterministic).
  */
-import { Humanizer } from '@/humanizer/humanizer';
+import { Interactor } from '@/interaction/interactor';
 import {
   ElectronInputDriver,
-  type HumanInputEvent,
+  type PointerInputEvent,
   type InputDriver,
-} from '@/humanizer/input-driver';
-import { HOLD_MAX_MS, HOLD_MIN_MS, type ElementRect } from '@/humanizer/motion-profile';
+} from '@/interaction/input-driver';
+import { PRESS_MAX_MS, PRESS_MIN_MS, type ElementRect } from '@/interaction/motion-profile';
 
 const mulberry32 = (seed: number) => (): number => {
   seed = (seed + 0x6d2b79f5) | 0;
@@ -40,10 +40,10 @@ class RecordingDriver implements InputDriver {
   }
 }
 
-const build = (seed: number): { h: Humanizer; driver: RecordingDriver; sleeps: number[] } => {
+const build = (seed: number): { h: Interactor; driver: RecordingDriver; sleeps: number[] } => {
   const driver = new RecordingDriver();
   const sleeps: number[] = [];
-  const h = new Humanizer({
+  const h = new Interactor({
     driver,
     rng: mulberry32(seed),
     sleep: async (ms) => {
@@ -58,7 +58,7 @@ const inside = (p: { x: number; y: number }, r: ElementRect): boolean =>
 
 const TARGET: ElementRect = { x: 500, y: 300, width: 140, height: 44 };
 
-describe('Humanizer.click', () => {
+describe('Interactor.click', () => {
   test('emits moves, then down → hold → up at ONE interior point of the hitbox', async () => {
     for (let seed = 1; seed < 15; seed++) {
       const { h, driver, sleeps } = build(seed);
@@ -84,8 +84,8 @@ describe('Humanizer.click', () => {
 
       // The hold (the sleep between down and up) is inside the 40–120 ms band.
       const hold = sleeps[sleeps.length - 1];
-      expect(hold).toBeGreaterThanOrEqual(HOLD_MIN_MS);
-      expect(hold).toBeLessThanOrEqual(HOLD_MAX_MS);
+      expect(hold).toBeGreaterThanOrEqual(PRESS_MIN_MS);
+      expect(hold).toBeLessThanOrEqual(PRESS_MAX_MS);
     }
   });
 
@@ -107,7 +107,7 @@ describe('Humanizer.click', () => {
   });
 });
 
-describe('Humanizer.moveTo', () => {
+describe('Interactor.moveTo', () => {
   test('emits intermediate moves ending exactly at the destination and updates position', async () => {
     const { h, driver } = build(31);
     await h.moveTo(800, 500);
@@ -128,8 +128,8 @@ describe('Humanizer.moveTo', () => {
   });
 });
 
-describe('Humanizer.scroll', () => {
-  // Placed right of the Humanizer's whole idle-start zone (x ≤ 720), so the
+describe('Interactor.scroll', () => {
+  // Placed right of the Interactor's whole idle-start zone (x ≤ 720), so the
   // cursor always begins OUTSIDE and the enter-the-container move is exercised.
   const CONTAINER: ElementRect = { x: 800, y: 120, width: 400, height: 500 };
 
@@ -152,7 +152,7 @@ describe('Humanizer.scroll', () => {
     expect(sum).toBeLessThanOrEqual(1600 * 1.05 + 1);
   });
 
-  test('individual notches are human-sized (no single full-distance mega-tick)', async () => {
+  test('individual notches are bounded in size (no single full-distance mega-tick)', async () => {
     const { h, driver } = build(42);
     await h.scroll(CONTAINER, 2000);
     const wheels = driver.events.filter((e) => e.kind === 'wheel');
@@ -164,11 +164,37 @@ describe('Humanizer.scroll', () => {
     await h.scroll(CONTAINER, 0);
     expect(driver.events).toEqual([]);
   });
+
+  test('a restPoint anchors every wheel there (hover-safe), even when already inside', async () => {
+    const { h, driver } = build(44);
+    const rest = { x: 806, y: 360 }; // just inside the left gutter of CONTAINER
+    // Warm the cursor to somewhere else inside the container first…
+    await h.scroll(CONTAINER, 200);
+    driver.events.length = 0;
+    // …then a scroll WITH a restPoint must re-settle onto it before wheeling.
+    await h.scroll(CONTAINER, 1600, rest);
+
+    const firstWheelAt = driver.events.findIndex((e) => e.kind === 'wheel');
+    expect(firstWheelAt).toBeGreaterThan(0); // moved before the first wheel
+    const lastMoveBefore = driver.events
+      .slice(0, firstWheelAt)
+      .filter((e) => e.kind === 'move')
+      .at(-1)!;
+    expect(lastMoveBefore.x).toBe(rest.x);
+    expect(lastMoveBefore.y).toBe(rest.y);
+    // The burst stays anchored at the safe spot: only tiny cumulative idle drift
+    // (a few px per notch) — never wandering onto an adjacent hover trigger.
+    for (const w of driver.events.filter((e) => e.kind === 'wheel')) {
+      expect(Math.abs(w.x - rest.x)).toBeLessThanOrEqual(30);
+      expect(Math.abs(w.y - rest.y)).toBeLessThanOrEqual(30);
+      expect(inside(w, CONTAINER)).toBe(true);
+    }
+  });
 });
 
 describe('ElectronInputDriver', () => {
-  test('maps port calls onto trusted sendInputEvent payloads (wheel sign inverted)', () => {
-    const sent: HumanInputEvent[] = [];
+  test('maps port calls onto sendInputEvent payloads (wheel sign inverted)', () => {
+    const sent: PointerInputEvent[] = [];
     const driver = new ElectronInputDriver({ sendInputEvent: (e) => sent.push(e) });
 
     driver.mouseMove(10.6, 20.2);
