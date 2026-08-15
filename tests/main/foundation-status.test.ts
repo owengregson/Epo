@@ -32,7 +32,6 @@ describe('Foundation status (not built)', () => {
       actionsToday: 0,
       remainingToday: 0,
       atHardCeiling: false,
-      requestBudgetRemaining: 0,
       queued: 0,
       pendingFollowback: 0,
       followedBackHeld: 0,
@@ -44,6 +43,8 @@ describe('Foundation status (not built)', () => {
       nextActionAt: null,
       netToday: 0,
       online: true,
+      haltReason: null,
+      pacing: null,
       loggedIn: false,
     });
 

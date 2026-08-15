@@ -8,7 +8,13 @@
  * the store's single-boundary rule is preserved.
  */
 
-import type { AccountState, FollowRecord, FollowState, Target } from '@/store/types';
+import {
+  type AccountState,
+  type FollowRecord,
+  type FollowState,
+  type Target,
+  compareByScoreDesc,
+} from '@/store/types';
 import type {
   ChainTargetView,
   QueueListResult,
@@ -45,16 +51,50 @@ export function shapeChainList(store: ChainReadStore, ownPk: string): ChainTarge
 }
 
 /**
+ * Order a queue's records the way the pipeline actually processes them, so the
+ * DISPLAY matches reality:
+ *  - `queued`             → best candidate first (Scorer's composite `score`),
+ *                           the same ranking `nextDue` follows to pick the next
+ *                           account to act on (shared {@link compareByScoreDesc}).
+ *  - `pending_followback` → oldest follow first (closest to the follow-back timeout).
+ *  - `followed_back`      → nearest hold expiry first.
+ *  - `unfollow_queued`    → nearest due first (how `nextDue` reclaims slots).
+ * Any other/terminal state keeps its natural order.
+ *
+ * Ordering runs over the WHOLE record set BEFORE the cap, so the capped page is
+ * genuinely the top-N — never an arbitrary DB-order slice that then hides the
+ * best candidates behind the truncation note.
+ */
+function orderedForDisplay(records: FollowRecord[], state: FollowState): FollowRecord[] {
+  const byTimeAsc = (key: keyof FollowRecord) =>
+    [...records].sort((a, b) => ((a[key] as number) ?? 0) - ((b[key] as number) ?? 0));
+  switch (state) {
+    case 'queued':
+      return [...records].sort(compareByScoreDesc);
+    case 'pending_followback':
+      return byTimeAsc('followedAt');
+    case 'followed_back':
+      return byTimeAsc('holdUntil');
+    case 'unfollow_queued':
+      return byTimeAsc('unfollowDueAt');
+    default:
+      return records;
+  }
+}
+
+/**
  * A capped page of the follow_records in `state`, each joined to its account for the
- * username/ratio/private badge the row shows. `truncated` is true when more records
- * exist than the cap returns (the UI notes it rather than silently dropping them).
+ * username/ratio/mutuals/private badge the row shows. Records are ORDERED (see
+ * {@link orderedForDisplay}) before the cap, so the page is the top-N. `truncated`
+ * is true when more records exist than the cap returns (the UI notes it rather than
+ * silently dropping them).
  */
 export function shapeQueueList(
   store: QueueReadStore,
   state: FollowState,
   cap: number = QUEUE_ROW_CAP,
 ): QueueListResult {
-  const records = store.followRecordsByState(state);
+  const records = orderedForDisplay(store.followRecordsByState(state), state);
   const truncated = records.length > cap;
   const rows: QueueRow[] = records.slice(0, cap).map((r) => {
     const acc = store.getAccount(r.accountPk);
@@ -63,6 +103,8 @@ export function shapeQueueList(
       username: acc?.username ?? null,
       ratio: acc?.ratio ?? null,
       isPrivate: acc?.isPrivate ?? null,
+      mutuals: acc?.mutuals ?? null,
+      score: r.score ?? null,
       followedAt: r.followedAt,
       holdUntil: r.holdUntil,
       unfollowDueAt: r.unfollowDueAt,

@@ -24,20 +24,27 @@ import * as path from 'node:path';
 
 import { type InstagramTab, IG_HOME_URL, IG_PARTITION } from '@/adapter/tab';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
-import { Humanizer } from '@/humanizer/humanizer';
-import { ElectronInputDriver } from '@/humanizer/input-driver';
+import { Interactor } from '@/interaction/interactor';
+import {
+  ElectronInputDriver,
+  ObservedInputDriver,
+  type CursorObserver,
+} from '@/interaction/input-driver';
 import { Reader } from '@/adapter/reader';
+import type { Actor } from '@/adapter/actor';
 import type { Sentinel } from '@/adapter/sentinel';
-import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
+import {
+  resolveOwnUsername as resolveUsernameFromTab,
+  usernameFromProfileUrl,
+} from '@/adapter/identity';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { SystemClock } from '@/governors/clock';
 import { ScheduleManager } from '@/timing/schedule-manager';
 import { DelayManager } from '@/timing/delay-manager';
-import { PRUNE, SCHEDULER } from '@/timing/config';
+import { TIMED_OUT, sleep, withTimeout } from '@/timing/primitives';
+import { ADAPTER, POLL, PRUNE, SCHEDULER } from '@/timing/config';
 import { RateGovernor } from '@/governors/rate-governor';
-import { RequestBudget } from '@/governors/request-budget';
 import { shapeChainList, shapeQueueList } from '@/main/foundation-reads';
-import { installRequestMetering } from '@/rim/request-metering';
 import {
   RelationshipReconciler,
   installRelationshipReconciler,
@@ -47,7 +54,14 @@ import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
 import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
+import { ListPageWalker } from '@/rim/list-page-walker';
+import { TabActivity } from '@/main/tab-activity';
+import {
+  type ActivityReporter,
+  NOOP_ACTIVITY_REPORTER,
+} from '@/adapter/activity-reporter';
 import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
+import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import {
   SURFACE,
@@ -57,32 +71,45 @@ import {
 } from '@/adapter/ig-surface';
 import { ChurnScheduler, type ChurnActionOutcome } from '@/engine/churn-scheduler';
 import { Scanner } from '@/engine/scanner';
-import { FollowbackWatcher, type OwnFollowersSource } from '@/engine/followback-watcher';
+import { FollowbackWatcher } from '@/engine/followback-watcher';
+import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
 import { ChainController, type TargetDiscovery } from '@/engine/chain-controller';
-import { createEngine, type Engine, type EngineStatus } from '@/engine/engine';
+import {
+  createEngine,
+  type Engine,
+  type EngineStatus,
+  type EngineUnfollowFeed,
+} from '@/engine/engine';
 import {
   createPruneEngine,
   pruneDue,
+  type PruneCandidate,
   type PruneEngine,
   type PruneOwnFollowers,
   type PruneOwnFollowing,
+  type PruneScanFetch,
   type PruneStatus,
 } from '@/engine/prune-engine';
 import type { FollowerAcquisition } from '@/rim/types';
 import {
   DEFAULT_SETTINGS,
   loadSettings,
+  sanitizeSettings,
   saveSettings,
   toRateGovernorConfig,
-  toRequestBudgetConfig,
   toChurnConfig,
   toScorerConfig,
   toScannerConfig,
   toFollowbackConfig,
   toChainConfig,
   toPruneConfig,
+  toPacingConfig,
   type Settings,
 } from '@/settings/settings';
+import { SessionPlanner, type PlannerSnapshot } from '@/timing/session-planner';
+import { samplePhaseOffset } from '@/timing/circadian';
+import { patternCircadianProfile } from '@/settings/pattern-map';
+import { CIRCADIAN } from '@/timing/config';
 import * as logger from '@/utils/logger';
 import type {
   ActionResult,
@@ -110,6 +137,27 @@ export interface FoundationDeps {
   onStatus?: (status: EpoStatus) => void;
   /** Push each fresh prune status projection to the renderer. */
   onPruneStatus?: (status: PruneStatus) => void;
+  /**
+   * Optional tap on the Interactor's synthetic cursor (position + button state).
+   * Main wires this to the overlay veil's digital-cursor display; it observes
+   * driver output only and never influences the input pipeline.
+   */
+  cursorObserver?: CursorObserver;
+  /**
+   * The tab-activity state machine's output (see {@link TabActivity}):
+   * fired on every hold-set change with whether ANY routine currently drives
+   * the Instagram page + the live hold names. Main wires `active` straight to
+   * the overlay veil, so the veil is up for the WHOLE of any tab-driving routine
+   * (graph build / identity navigation included) and every manual one-off op —
+   * not just while a status projection reads `running`.
+   */
+  onActivity?: (active: boolean, holds: string[]) => void;
+  /**
+   * Live "what is it doing right now" tap. Every tab-driving layer reports its
+   * current phase through this (direct JSON-API reads vs real page driving), and
+   * main forwards it to the overlay veil's readout. Purely observational.
+   */
+  activityReporter?: ActivityReporter;
 }
 
 /** The lazily-built dependency graph, cached once `ownPk` is resolvable. */
@@ -118,9 +166,12 @@ interface BuiltGraph {
   engine: Engine;
   acquisition: FollowerAcquisition;
   churnActions: AdapterBackedChurnActions;
-  requestMeteringUnsub: () => void;
+  /** The adapter's actor — kept for the paced own-profile landing click. */
+  actor: Actor;
   /** Disposer for the passive relationship reconciler (Phase A). */
   relationshipReconcilerUnsub: () => void;
+  /** Disposer for the always-on profile-info observer (header counts → store). */
+  profileInfoUnsub: () => void;
   ownPk: string;
   /** Our own username at build time, or `undefined` when it could not be resolved. */
   ownUsername: string | undefined;
@@ -145,20 +196,24 @@ interface BuiltGraph {
   prunePromise: Promise<void> | null;
   /** Live component handles kept so runtime Settings changes can reload configs. */
   rate: RateGovernor;
-  budget: RequestBudget;
   churn: ChurnScheduler;
   scanner: Scanner;
   followback: FollowbackWatcher;
   chain: ChainController;
+  /** The organic pacing planner, present only when `Settings.pacingModel === 'organic'`. */
+  pacing: SessionPlanner | undefined;
 }
 
 export class Foundation {
   private readonly tab: InstagramTab;
   private readonly onStatusCb?: (status: EpoStatus) => void;
   private readonly onPruneStatusCb?: (status: PruneStatus) => void;
+  private readonly cursorObserver?: CursorObserver;
+  /** Live phase readout tap (veil); a no-op when main wires none. */
+  private readonly reporter: ActivityReporter;
   private graph: BuiltGraph | null = null;
   /**
-   * The TAB DRIVER TOKEN (Phase 5 mutual exclusion): which automated routine
+   * The TAB DRIVER TOKEN (Phase 5 mutual exclusion): which long-running routine
    * currently owns the shared Instagram tab. Growth `startEngine` is refused
    * while `'prune'` holds the token; `startPrune`/`scanPrune` are refused while
    * the growth loop is running or paused. Set around each run, cleared when the
@@ -173,6 +228,13 @@ export class Foundation {
    * cleared in {@link releaseTabAfterPrune}.
    */
   private growthPausedForPrune = false;
+  /**
+   * Bumped by every {@link stopPrune}. A prune scan/run request that was
+   * waiting on the lazy graph build compares this to the value it captured at
+   * entry — a mismatch means the user pressed Stop while the build was in
+   * flight, and the pending scan/run cancels instead of starting anyway.
+   */
+  private pruneStopEpoch = 0;
   /**
    * f6 — the in-flight build promise. Memoized so two concurrent IPC calls landing
    * in `ensureBuilt` at once share ONE build instead of each calling `build()`
@@ -191,6 +253,23 @@ export class Foundation {
    */
   private disposing = false;
   /**
+   * In-flight MANUAL operations (read-followers, follow/unfollow-one,
+   * seed-check). Teardown awaits these before closing the store — an
+   * un-tracked manual acquire used to keep writing edges into a closed
+   * better-sqlite3 handle when the app quit mid-read.
+   */
+  private readonly inFlightManualOps = new Set<Promise<unknown>>();
+  /** Epoch ms of the last failed own-username resolution attempt (backoff). */
+  private usernameRetryAt = 0;
+  /**
+   * Graph-mutation push machinery (docs/PRINCIPLES.md §2 — the UI mirrors the
+   * graph): the store fires on every write, this trailing throttle coalesces
+   * a burst into one fresh dual-status push, so counts tick WHILE a scan/
+   * sweep/enrichment is running instead of when it resolves.
+   */
+  private graphPushTimer: ReturnType<typeof setTimeout> | null = null;
+  private mutationUnsub: (() => void) | null = null;
+  /**
    * Last connectivity reported by the ConnectivityMonitor. Kept here (not only in
    * the Engine) so the not-built status can still reflect it.
    */
@@ -199,11 +278,30 @@ export class Foundation {
   private readonly scheduler = new ScheduleManager({ clock: new SystemClock() });
   /** Aborted once {@link dispose} begins — interrupts identity-resolution waits. */
   private readonly disposeAbort = new AbortController();
+  /**
+   * The veil's stateful authority: named holds at every source of tab
+   * work (build, growth loop, prune scan/run, manual ops). Active while
+   * ANY hold exists — see {@link TabActivity}.
+   */
+  private readonly activity: TabActivity;
+  /**
+   * True between a growth start and the engine's first status emit: the
+   * `growth-start` bridge hold spans the gap so the veil never dips while the
+   * loop spins up (the status-stream `growth-loop` signal takes over on the
+   * first emit).
+   */
+  private pendingGrowthStart = false;
 
   constructor(deps: FoundationDeps) {
     this.tab = deps.tab;
     this.onStatusCb = deps.onStatus;
     this.onPruneStatusCb = deps.onPruneStatus;
+    this.cursorObserver = deps.cursorObserver;
+    this.reporter = deps.activityReporter ?? NOOP_ACTIVITY_REPORTER;
+    this.activity = new TabActivity((active, holds) => {
+      logger.info('foundation: tab activity', { active, holds });
+      deps.onActivity?.(active, holds);
+    });
     logger.info('foundation created (graph deferred until login)');
   }
 
@@ -233,6 +331,16 @@ export class Foundation {
     if (this.disposing) return false;
     // Fully built (with a real username): nothing more to do.
     if (this.graph !== null && this.graph.ownUsername !== undefined) return true;
+    // A DEGRADED graph (username unresolved) is still a built graph. Username
+    // recovery is retried on a BACKOFF, never on every call: the resolution
+    // attempt navigates the tab and fetches `current_user` up to 4 times
+    // (~23 s), and 16 routine IPC reads used to re-trigger it each — a
+    // sustained navigation/fetch loop the rate governor never saw.
+    if (this.graph !== null) {
+      const sinceLastAttempt = Date.now() - this.usernameRetryAt;
+      if (sinceLastAttempt < SCHEDULER.USERNAME_REBUILD_BACKOFF_MS) return true;
+      this.usernameRetryAt = Date.now();
+    }
     // Coalesce concurrent builds/retries onto a single in-flight promise (f6).
     if (this.buildPromise !== null) return this.buildPromise;
     this.buildPromise = this.buildOrRetry().finally(() => {
@@ -248,8 +356,16 @@ export class Foundation {
    * recovers AND the engine is not mid-run (so a live loop is never torn out).
    */
   private async buildOrRetry(): Promise<boolean> {
+    // The pk resolve is passive (a cookie read) — no hold, so pre-login status
+    // polls never flash the veil over the login screen. Everything PAST it can
+    // navigate the tab (identity resolution), so it runs under a `build` hold.
     const ownPk = await this.resolveOwnPk();
     if (ownPk === null) return false;
+    return this.activity.with('build', () => this.buildResolved(ownPk));
+  }
+
+  /** The tab-driving tail of {@link buildOrRetry} (runs under the `build` hold). */
+  private async buildResolved(ownPk: string): Promise<boolean> {
     const ownUsername = await this.resolveOwnUsername();
 
     if (this.graph !== null) {
@@ -272,6 +388,17 @@ export class Foundation {
       ownPk,
       ownUsername: ownUsername ?? '(unknown)',
     });
+    // §2 live mirror: every store write (facts stream in per row) schedules a
+    // throttled push of BOTH status projections, so the renderer's counts move
+    // during scans/sweeps rather than at their end.
+    this.mutationUnsub = this.graph.store.onMutation(() => this.scheduleGraphPush());
+    // Push fresh projections the moment the graph exists. The renderer's first
+    // status pull races this lazy build and gets the all-zero not-built shape;
+    // the idle engine emits nothing on its own, so without this push the queues
+    // / prune counts stay wrong until a keep-alive pull happens to land after
+    // the build (the "numbers don't match the queues after reload" bug).
+    this.onStatusCb?.(this.builtStatus());
+    this.onPruneStatusCb?.(this.graph.pruneEngine.status());
     return true;
   }
 
@@ -287,15 +414,79 @@ export class Foundation {
     } catch (e) {
       logger.error('foundation.login: navigation failed', { error: String(e) });
     }
-    await this.ensureBuilt();
+    const built = await this.ensureBuilt();
+    // Default page: once logged in, rest on the user's OWN profile (fire-and-
+    // forget — the login result must not wait out the click/nav settle).
+    if (built) void this.landOnOwnProfile();
     return this.status();
+  }
+
+  /**
+   * Land the tab on the user's OWN profile — the app's default page. Waits for
+   * the lazy graph (i.e. a logged-in session) within a bounded poll, then runs
+   * as a proper tracked activity: the Actor locates the nav profile-avatar
+   * link and the Interactor moves the cursor to it and clicks with native
+   * input events (an in-page `a.click()` is ignored by the SPA — verified
+   * live), retrying once. Fire-and-forget from startup/login; every failure
+   * mode resolves quietly (a cosmetic landing must never break startup).
+   */
+  async landOnOwnProfile(): Promise<void> {
+    // Wait (bounded) for a logged-in graph: session-restore resolves the pk
+    // cookie almost immediately; a logged-out tab just runs out the poll.
+    for (let i = 0; i < ADAPTER.PROFILE_LAND_ATTEMPTS; i++) {
+      if (this.disposing) return;
+      if (await this.ensureBuilt()) break;
+      if (i === ADAPTER.PROFILE_LAND_ATTEMPTS - 1) {
+        logger.info('foundation: not logged in, profile landing skipped');
+        return;
+      }
+      await sleep(ADAPTER.PROFILE_LAND_RETRY_MS, this.disposeAbort.signal);
+    }
+    const graph = this.graph;
+    if (graph === null || this.disposing) return;
+    // Never contend with an active driver for the tab.
+    if (this.activeDriver !== null) return;
+
+    const target = graph.ownUsername ?? null;
+    const onProfile = (): boolean => {
+      const u = usernameFromProfileUrl(this.tab.currentUrl());
+      return u !== null && (target === null || u === target);
+    };
+    if (onProfile()) return;
+
+    await this.activity.with('open-profile', async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (this.disposing || this.activeDriver !== null) return;
+        let clicked = false;
+        try {
+          clicked = await graph.actor.clickOwnProfileLink();
+        } catch (e) {
+          logger.warn('foundation: profile landing click failed', { error: String(e) });
+          return;
+        }
+        if (clicked) {
+          for (let i = 0; i < ADAPTER.NAV_SETTLE_ROUNDS; i++) {
+            await sleep(ADAPTER.NAV_SETTLE_MS, this.disposeAbort.signal);
+            if (onProfile()) {
+              logger.info('foundation: landed on own profile', { username: target });
+              return;
+            }
+          }
+          logger.warn('foundation: profile click did not navigate, retrying', { attempt });
+        } else {
+          // Link not hydrated yet — give the page a beat and retry once.
+          await sleep(ADAPTER.PROFILE_LAND_RETRY_MS, this.disposeAbort.signal);
+        }
+      }
+      logger.warn('foundation: could not land on own profile');
+    });
   }
 
   // -------------------------------------------------------------------------
   // Engine controls (build-if-needed)
   // -------------------------------------------------------------------------
 
-  /** Start the automated loop — fire-and-forget (never awaits the loop). */
+  /** Start the engine loop — fire-and-forget (never awaits the loop). */
   async startEngine(): Promise<EpoStatus> {
     if (!(await this.ensureBuilt()) || this.graph === null) {
       return this.notBuiltStatus(await this.isLoggedIn());
@@ -304,7 +495,7 @@ export class Foundation {
     // never put a second driver on the one shared tab. Typed refusal, no start.
     if (this.activeDriver === 'prune') {
       logger.warn('foundation.startEngine: prune active, refusing engine start');
-      return this.builtStatus();
+      return { ...this.builtStatus(), refusal: 'prune-running' };
     }
     const state = this.graph.engine.status().state;
     if (state === 'running' || state === 'paused') {
@@ -312,6 +503,10 @@ export class Foundation {
       return this.builtStatus();
     }
     this.activeDriver = 'growth';
+    // Veil: bridge the spin-up gap — held until the engine's first status emit
+    // (where the `growth-loop` signal takes over) or, as a backstop, loop exit.
+    this.pendingGrowthStart = true;
+    this.activity.hold('growth-start');
     // Fire-and-forget: `start()` resolves only when the loop exits; do NOT await
     // here. f14: keep the loop promise so `dispose()` can await its exit before
     // closing the store (a mid-step store call must not hit a closed DB).
@@ -322,6 +517,8 @@ export class Foundation {
       })
       .finally(() => {
         if (this.activeDriver === 'growth') this.activeDriver = null;
+        this.releaseGrowthStartBridge();
+        this.activity.signal('growth-loop', false);
       });
     this.graph.enginePromise = loop;
     return this.builtStatus();
@@ -346,7 +543,7 @@ export class Foundation {
     // growth itself when it was the one that paused it (leave-alone otherwise).
     if (this.activeDriver === 'prune') {
       logger.warn('foundation.resumeEngine: prune active, refusing resume');
-      return this.builtStatus();
+      return { ...this.builtStatus(), refusal: 'prune-running' };
     }
     this.graph.engine.resume();
     return this.builtStatus();
@@ -361,6 +558,55 @@ export class Foundation {
     return this.builtStatus();
   }
 
+  /**
+   * Restart the chain from `seed`, explicitly: stop the loop and await its
+   * exit, persist the seed (no renderer debounce race — the old flow started
+   * the engine before the seed's autosave landed, so it ran the PREVIOUS
+   * seed), retire every active target, re-activate the seed at the chain's
+   * next index when it is already known, and start. This is the ONE sanctioned
+   * way to re-run an exhausted seed — the engine's own bootstrap deliberately
+   * refuses to resurrect one.
+   */
+  async restartFromSeed(seed: string): Promise<EpoStatus> {
+    const clean = seed.trim().replace(/^@/, '');
+    if (clean === '') return { ...(await this.status()), refusal: 'seed-missing' };
+    if (!(await this.ensureBuilt()) || this.graph === null) {
+      return this.notBuiltStatus(await this.isLoggedIn());
+    }
+    if (this.activeDriver === 'prune') {
+      logger.warn('foundation.restartFromSeed: prune active, refusing');
+      return { ...this.builtStatus(), refusal: 'prune-running' };
+    }
+    const graph = this.graph;
+    graph.engine.stop();
+    if (graph.enginePromise !== null) {
+      try {
+        await graph.enginePromise;
+      } catch (e) {
+        logger.error('foundation.restartFromSeed: loop rejected on stop', { error: String(e) });
+      }
+    }
+    await this.updateSettings({ seed: clean });
+    // Scrap the current session: every active target is retired; queued
+    // records against them stop refilling and the chain restarts fresh.
+    for (const t of graph.store.listTargets()) {
+      if (t.status === 'active') graph.store.setTargetStatus(t.accountPk, 'exhausted');
+    }
+    // A seed the graph has already seen re-enters DELIBERATELY at the next
+    // chain index; an unseen one bootstraps through the normal seed path.
+    const pk = graph.store.pkByUsername(clean);
+    if (pk !== null) {
+      graph.store.addTarget({
+        accountPk: pk,
+        source: 'seed',
+        status: 'active',
+        chainIndex: graph.store.nextChainIndex(),
+      });
+    }
+    logger.info('foundation: restarting chain from seed', { seed: clean, knownPk: pk });
+    return this.startEngine();
+  }
+
   // -------------------------------------------------------------------------
   // Auto-prune controls (Phase 5) — same tab/rim, mutually exclusive with growth
   // -------------------------------------------------------------------------
@@ -371,10 +617,40 @@ export class Foundation {
    * neither the growth engine nor a second scan can drive the tab concurrently.
    * Never throws across IPC — refusals and failures are typed results.
    */
+  /**
+   * The PERSISTED scan's not-yet-visited candidates (raw census — the renderer
+   * filters against the live whitelist), so the candidates list auto-populates
+   * from saved data on app launch instead of sitting empty until a fresh scan.
+   * Empty when not logged in or no snapshot exists. Never throws across IPC.
+   */
+  async pruneCandidates(): Promise<PruneCandidate[]> {
+    if (!(await this.ensureBuilt()) || this.graph === null) return [];
+    try {
+      return this.graph.store.getPruneScan()?.remaining ?? [];
+    } catch (e) {
+      logger.error('foundation.pruneCandidates: failed', { error: String(e) });
+      return [];
+    }
+  }
+
   async scanPrune(): Promise<PruneScanResult> {
+    // Veil: held from IPC entry — the lazy build's navigations and the dialog
+    // work all drive the tab, not just the post-first-status stretch.
+    return this.activity.with('prune-scan', () => this.scanPruneHeld());
+  }
+
+  private async scanPruneHeld(): Promise<PruneScanResult> {
     const empty = { following: 0, followers: 0, candidates: [] };
+    const epoch = this.pruneStopEpoch;
     if (!(await this.ensureBuilt()) || this.graph === null) {
       return { ok: false, reason: 'not-logged-in', ...empty };
+    }
+    // A stop that landed while the graph was still building must cancel this
+    // pending scan — pre-build there is no engine to stop, so the stop is
+    // recorded as an epoch bump and honored here instead of being lost.
+    if (this.pruneStopEpoch !== epoch) {
+      logger.info('foundation.scanPrune: cancelled by stop during build');
+      return { ok: false, reason: 'stopped', ...empty };
     }
     const refusal = this.pruneRefusalReason();
     if (refusal !== null) {
@@ -406,35 +682,52 @@ export class Foundation {
    * (mutual exclusion) or while a prune scan/run is already active.
    */
   async startPrune(): Promise<PruneControlResult> {
-    if (!(await this.ensureBuilt()) || this.graph === null) {
-      return { ok: false, reason: 'not-logged-in', status: this.notBuiltPruneStatus() };
+    // Veil: held from IPC entry; on a successful launch the hold transfers to
+    // the fire-and-forget run (released when the run settles), and every
+    // refusal path releases it on the way out.
+    this.activity.hold('prune-run');
+    let transferredToRun = false;
+    try {
+      const epoch = this.pruneStopEpoch;
+      if (!(await this.ensureBuilt()) || this.graph === null) {
+        return { ok: false, reason: 'not-logged-in', status: this.notBuiltPruneStatus() };
+      }
+      const graph = this.graph;
+      // Mirror scanPrune: a stop during the build cancels this pending run.
+      if (this.pruneStopEpoch !== epoch) {
+        logger.info('foundation.startPrune: cancelled by stop during build');
+        return { ok: false, reason: 'stopped', status: graph.pruneEngine.status() };
+      }
+      const refusal = this.pruneRefusalReason();
+      if (refusal !== null) {
+        logger.warn('foundation.startPrune: refused', { reason: refusal });
+        return { ok: false, reason: refusal, status: graph.pruneEngine.status() };
+      }
+      this.activeDriver = 'prune';
+      // Borrow the tab BEFORE the run starts: pause a running growth engine and
+      // await its park. Await here (not inside the fire-and-forget run) so the
+      // caller's result reflects a clean hand-off; the UI's run spinner covers it.
+      if (!(await this.acquireTabForPrune())) {
+        this.activeDriver = null;
+        return { ok: false, reason: 'growth-busy', status: graph.pruneEngine.status() };
+      }
+      const run = graph.pruneEngine
+        .run()
+        .catch((e: unknown) => {
+          logger.error('foundation: prune run errored', { error: String(e) });
+        })
+        .finally(() => {
+          if (this.activeDriver === 'prune') this.activeDriver = null;
+          // Resume growth iff this prune paused it — after the run fully settles.
+          this.releaseTabAfterPrune();
+          this.activity.release('prune-run');
+        });
+      graph.prunePromise = run;
+      transferredToRun = true;
+      return { ok: true, status: graph.pruneEngine.status() };
+    } finally {
+      if (!transferredToRun) this.activity.release('prune-run');
     }
-    const graph = this.graph;
-    const refusal = this.pruneRefusalReason();
-    if (refusal !== null) {
-      logger.warn('foundation.startPrune: refused', { reason: refusal });
-      return { ok: false, reason: refusal, status: graph.pruneEngine.status() };
-    }
-    this.activeDriver = 'prune';
-    // Borrow the tab BEFORE the run starts: pause a running growth engine and
-    // await its park. Await here (not inside the fire-and-forget run) so the
-    // caller's result reflects a clean hand-off; the UI's run spinner covers it.
-    if (!(await this.acquireTabForPrune())) {
-      this.activeDriver = null;
-      return { ok: false, reason: 'growth-busy', status: graph.pruneEngine.status() };
-    }
-    const run = graph.pruneEngine
-      .run()
-      .catch((e: unknown) => {
-        logger.error('foundation: prune run errored', { error: String(e) });
-      })
-      .finally(() => {
-        if (this.activeDriver === 'prune') this.activeDriver = null;
-        // Resume growth iff this prune paused it — after the run fully settles.
-        this.releaseTabAfterPrune();
-      });
-    graph.prunePromise = run;
-    return { ok: true, status: graph.pruneEngine.status() };
   }
 
   /**
@@ -443,6 +736,9 @@ export class Foundation {
    * resolve promptly and the tab is left clean.
    */
   async stopPrune(): Promise<PruneStatus> {
+    // Recorded even when no engine exists yet: a scan/run request awaiting the
+    // graph build checks this epoch and cancels itself instead of starting.
+    this.pruneStopEpoch += 1;
     if (this.graph === null) return this.notBuiltPruneStatus();
     this.graph.pruneEngine.stop();
     return this.graph.pruneEngine.status();
@@ -480,14 +776,22 @@ export class Foundation {
   private async acquireTabForPrune(): Promise<boolean> {
     if (this.graph === null) return false;
     const engine = this.graph.engine;
-    if (engine.status().state !== 'running') return true; // tab already free
-    logger.info('foundation: pausing growth engine for prune hand-off');
-    engine.pause();
-    this.growthPausedForPrune = true;
+    const state = engine.status().state;
+    if (state === 'idle' || state === 'halted') return true; // tab already free
+    if (state === 'running') {
+      logger.info('foundation: pausing growth engine for prune hand-off');
+      engine.pause();
+      this.growthPausedForPrune = true;
+    }
+    // ALWAYS wait for quiescence — including when the USER paused: `pause()`
+    // returns while the in-flight growth step (a follow click, an acquisition
+    // scroll) is still running, and handing the tab to prune at that moment
+    // put two drivers on one WebContents. `awaitParked` resolves immediately
+    // when the loop already sits at the pause gate.
     const parked = await engine.awaitParked(PRUNE.PARK_TIMEOUT_MS);
     if (!parked) {
       logger.warn('foundation: growth did not park in time, aborting prune hand-off');
-      this.releaseTabAfterPrune(); // undo our pause — resume growth
+      this.releaseTabAfterPrune(); // undo our pause (if it was ours) — resume growth
       return false;
     }
     return true;
@@ -513,13 +817,31 @@ export class Foundation {
   // Manual live-gate ops (build-if-needed; same rim the Engine uses — §6)
   // -------------------------------------------------------------------------
 
+  /**
+   * Track a manual op's promise for the teardown drain: `dispose()` awaits
+   * every in-flight manual op before closing the store beneath it.
+   */
+  private trackManualOp<T>(run: () => Promise<T>): Promise<T> {
+    const p = run();
+    this.inFlightManualOps.add(p);
+    void p.finally(() => this.inFlightManualOps.delete(p));
+    return p;
+  }
+
   /** Read a target's followers into the knowledge graph via the shared rim. */
   async readFollowers(target: string): Promise<ReadFollowersResult> {
+    // Veil: a manual read drives the tab exactly like the engine's own scrapes.
+    return this.trackManualOp(() =>
+      this.activity.with('manual-read', () => this.readFollowersHeld(target)),
+    );
+  }
+
+  private async readFollowersHeld(target: string): Promise<ReadFollowersResult> {
     if (!(await this.ensureBuilt()) || this.graph === null) {
       logger.warn('foundation.readFollowers: not logged in, skipping', { target });
       return { target, observed: 0, ok: false, reason: 'not-logged-in' };
     }
-    // R3: refuse manual reads while an automated driver runs — a second
+    // R3: refuse manual reads while another driver runs — a second
     // concurrent `collect()` subscription on the shared tab's onResponse stream
     // would let one target ingest another's follower pages (corrupt edges).
     const busy = this.busyDriverReason();
@@ -553,13 +875,23 @@ export class Foundation {
     action: 'follow' | 'unfollow',
     username: string,
   ): Promise<ActionResult> {
+    // Veil: a manual follow/unfollow is a paced navigation + click sequence.
+    return this.trackManualOp(() =>
+      this.activity.with('manual-action', () => this.actHeld(action, username)),
+    );
+  }
+
+  private async actHeld(
+    action: 'follow' | 'unfollow',
+    username: string,
+  ): Promise<ActionResult> {
     if (!(await this.ensureBuilt()) || this.graph === null) {
       logger.warn('foundation.act: not logged in, skipping', { action, username });
       return { ok: false, username, reason: 'not-logged-in' };
     }
     const graph = this.graph;
 
-    // R3: refuse manual actions while an automated driver runs — sharing the tab
+    // R3: refuse manual actions while another driver runs — sharing the tab
     // would race that driver's own navigations/actions on one WebContents.
     const busy = this.busyDriverReason();
     if (busy !== null) {
@@ -582,7 +914,7 @@ export class Foundation {
     }
 
     try {
-      // R4: the rim returns a discriminated outcome (it does its own budget/sentinel
+      // R4: the rim returns a discriminated outcome (it does its own sentinel
       // gate + dry-run). R3: unlike the engine path, NO scheduler writes the ledger
       // for a manual op, so we record it here — otherwise the action would be
       // invisible to the governor and could silently exceed the ceiling.
@@ -608,7 +940,7 @@ export class Foundation {
    *  - `'ok'`        → ledger `ok` (+ the directed `ownPk→pk` edge when the pk is
    *                    known); the manual result is a success.
    *  - `'simulated'` → dry-run: NO ledger row, NO edge (mirrors f12) — success.
-   *  - `'blocked'`   → budget/sentinel closed before any click: NO ledger — failure.
+   *  - `'blocked'`   → sentinel closed before any click: NO ledger — failure.
    *  - `'failed'`    → ledger `fail` — failure.
    *
    * The ledger is keyed on the numeric pk when known, else the username (the ceiling
@@ -651,7 +983,7 @@ export class Foundation {
         });
         return { ok: true, username };
       case 'blocked':
-        logger.warn('foundation.act: manual action blocked (budget/sentinel), no ledger', {
+        logger.warn('foundation.act: manual action blocked (sentinel), no ledger', {
           action,
           username,
         });
@@ -667,27 +999,34 @@ export class Foundation {
   }
 
   /**
-   * Best-effort numeric pk for a manually-actioned username. Identity is the pk, but
-   * the manual IPC path only carries a username and the store exposes no reverse
-   * username→pk index, so this is `undefined` today. Kept as an explicit seam: the
-   * ledger falls back to the username key (still counted by the ceiling) and the
-   * directed edge is written only when a pk is available.
+   * Best-effort numeric pk for a manually-actioned username, via the store's
+   * reverse username→pk index. When the account has never been observed the pk
+   * is unknown (`undefined`): the ledger falls back to the username key (still
+   * counted by the ceiling) and no edge is written — but any account the app
+   * has seen (scraped, enriched, queued) resolves, so a manual follow/unfollow
+   * records the real `ownPk→pk` edge and the engine can never re-queue an
+   * account the user just manually followed.
    */
-  private manualActionPk(_username: string): string | undefined {
-    return undefined;
-  }
-
-  /** True while the built engine's loop is actively running (R3 serialization gate). */
-  private isEngineRunning(): boolean {
-    return this.graph !== null && this.graph.engine.status().state === 'running';
+  private manualActionPk(username: string): string | undefined {
+    return this.graph?.store.pkByUsername(username) ?? undefined;
   }
 
   /**
-   * Why a MANUAL op may not touch the tab now (R3): the growth loop is running,
-   * or the prune routine holds the driver token. Null when the tab is free.
+   * True while the built engine may still be driving the tab (R3 serialization
+   * gate) — running, OR paused with a step still mid-flight (`pause()` returns
+   * before the in-flight step ends; only the pause gate proves quiescence).
+   */
+  private isEngineDriving(): boolean {
+    return this.graph?.engine.isDrivingTab() === true;
+  }
+
+  /**
+   * Why a MANUAL op may not touch the tab now (R3): the growth loop is (or may
+   * still be) driving it, or the prune routine holds the driver token. Null
+   * when the tab is free.
    */
   private busyDriverReason(): string | null {
-    if (this.isEngineRunning()) return 'engine-running';
+    if (this.isEngineDriving()) return 'engine-running';
     if (this.activeDriver === 'prune') return 'prune-running';
     return null;
   }
@@ -748,11 +1087,15 @@ export class Foundation {
   startScheduledPruneWatcher(intervalMs = SCHEDULER.AUTO_PRUNE_CHECK_MS): void {
     // Idempotency + the never-hold-the-process-open unref both come from the
     // ScheduleManager (`every` is a per-key no-op while the loop lives).
+    // `immediate` (docs/PRINCIPLES.md §3 — schedules are durable): work that
+    // came due WHILE THE APP WAS CLOSED runs at launch, not one interval later
+    // (the due-check reads the persisted `pruneLastRunAt`, and the safety
+    // gates — logged in, tab free, active hours — still all apply).
     this.scheduler.every(
       'prune:auto-watcher',
       intervalMs,
       () => this.maybeRunScheduledPrune(),
-      { unref: true },
+      { unref: true, immediate: true },
     );
   }
 
@@ -777,7 +1120,15 @@ export class Foundation {
       scheduleDays: settings.pruneScheduleDays,
       lastRunAt: settings.pruneLastRunAt,
       growthState: this.graph.engine.status().state,
+      weave: settings.weaveEnabled && settings.pacingModel === 'organic',
     });
+    // Organic + weave: SCAN and enqueue — the growth loop drains the census woven into
+    // its own sessions (no separate bulk driver). Otherwise: the legacy bulk run.
+    if (settings.weaveEnabled && settings.pacingModel === 'organic') {
+      const res = await this.scanPrune();
+      if (res.ok) void this.updateSettings({ pruneLastRunAt: this.graph.clock.now() });
+      return;
+    }
     void this.startPrune();
   }
 
@@ -787,10 +1138,30 @@ export class Foundation {
    * (f14). Shared by
    * {@link dispose} and the R5 rebuild path. A no-op when nothing is built.
    */
+  /** Trailing-throttled dual-status push driven by store mutations (§2). */
+  private scheduleGraphPush(): void {
+    if (this.graphPushTimer !== null || this.disposing) return;
+    this.graphPushTimer = setTimeout(() => {
+      this.graphPushTimer = null;
+      const graph = this.graph;
+      if (graph === null || this.disposing) return;
+      this.onStatusCb?.(this.builtStatus());
+      this.onPruneStatusCb?.(graph.pruneEngine.status());
+    }, POLL.GRAPH_PUSH_THROTTLE_MS);
+  }
+
   private async teardownGraph(): Promise<void> {
     const graph = this.graph;
     if (graph === null) return;
     this.graph = null;
+    // Stop the mutation→push machinery before anything else: late writes from
+    // draining ops must not schedule pushes into a closing store.
+    this.mutationUnsub?.();
+    this.mutationUnsub = null;
+    if (this.graphPushTimer !== null) {
+      clearTimeout(this.graphPushTimer);
+      this.graphPushTimer = null;
+    }
     // A prune hand-off in flight has nothing to resume once the graph is gone.
     this.growthPausedForPrune = false;
     graph.engine.stop();
@@ -813,8 +1184,24 @@ export class Foundation {
         });
       }
     }
-    graph.requestMeteringUnsub();
+    // Manual ops in flight (a read-followers scrape, a follow-one click, a
+    // seed check) still hold live store/tab references — wait them out
+    // (bounded; the dispose abort already interrupts their sleeps) before the
+    // store closes underneath them.
+    if (this.inFlightManualOps.size > 0) {
+      logger.info('foundation.teardownGraph: waiting for in-flight manual ops', {
+        count: this.inFlightManualOps.size,
+      });
+      const drained = await withTimeout(
+        Promise.allSettled([...this.inFlightManualOps]),
+        15_000,
+      );
+      if (drained === TIMED_OUT) {
+        logger.warn('foundation.teardownGraph: manual ops did not drain in time');
+      }
+    }
     graph.relationshipReconcilerUnsub();
+    graph.profileInfoUnsub();
     graph.delays.dispose();
     graph.store.close();
   }
@@ -837,19 +1224,30 @@ export class Foundation {
     const settings = this.resolveSettings();
 
     const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
-    const budget = new RequestBudget(store, clock, toRequestBudgetConfig(settings));
 
-    // Humanizer: every Actor click/scroll becomes real trusted input events
-    // (sendInputEvent) shaped by the human motion profile; the tab is the one
+    // Interactor: every Actor click/scroll becomes native input events
+    // (sendInputEvent) shaped by the motion profile; the tab is the one
     // Electron seam it drives. Element locating stays in-page via the surface's
     // locate scripts (with the JS-click fallback wherever those are absent).
-    const humanizer = new Humanizer({ driver: new ElectronInputDriver(this.tab) });
+    // When a cursor observer is wired (the veil's digital-cursor display), the
+    // driver is decorated so every synthetic move/press also reports the
+    // virtual cursor's state — pure observation, the event stream is unchanged.
+    const electronDriver = new ElectronInputDriver(this.tab);
+    const interactor = new Interactor({
+      driver: this.cursorObserver
+        ? new ObservedInputDriver(electronDriver, this.cursorObserver)
+        : electronDriver,
+    });
 
     // The ACTIVE driver's run token: adapter/rim waits link to this so a stop()
     // interrupts an in-flight DOM poll or pacing sleep instead of sitting out
     // its timeout. Pause is deliberately NOT included — a paused step finishes
     // cleanly (the park/hand-off contract is unchanged).
     const driverSignal = (): AbortSignal | undefined => {
+      // Shutdown interrupts EVERY adapter wait — manual ops included: they
+      // used to have no signal at all, so dispose() could not break their
+      // in-flight DOM polls/sleeps and the store closed underneath them.
+      if (this.disposing) return this.disposeAbort.signal;
       if (this.activeDriver === 'prune') return this.graph?.pruneEngine.runSignal();
       if (this.activeDriver === 'growth') return this.graph?.engine.runSignal();
       return undefined;
@@ -857,7 +1255,11 @@ export class Foundation {
 
     // The adapter owns the single Actor + Sentinel instances the whole rim shares;
     // the Reader is pure and held directly (E2 — no dead adapter.reader slot).
-    const adapter = new InstagramAdapter(this.tab, { humanizer, abortSignal: driverSignal });
+    const adapter = new InstagramAdapter(this.tab, {
+      interactor,
+      abortSignal: driverSignal,
+      reporter: this.reporter,
+    });
     // Log ONCE, at build, which Instagram surface capture this graph runs against.
     logger.info('foundation: instagram adapter surface', {
       adapterVersion: adapter.adapterVersion,
@@ -865,9 +1267,6 @@ export class Foundation {
     const actor = adapter.actor;
     const sentinel = adapter.sentinel;
     const reader = new Reader();
-
-    // R2: one budget spend per real IG response, from the tab's onResponse pipeline.
-    const requestMeteringUnsub = installRequestMetering(this.tab, budget, reader);
 
     // Phase A: heal external follow/unfollow drift from the SAME response
     // pipeline — every relationship-bearing body reconciles our own follow-status
@@ -878,41 +1277,102 @@ export class Foundation {
       relationshipReconciler,
     );
 
+    // Always-on profile-info observer: ANY profile the tab loads (the startup
+    // landing on our own page, dialog navigations, seed checks) answers a
+    // web-profile-info request carrying follower/following counts. Store them
+    // all — our OWN header counts size the scan progress bars and back the
+    // census coverage guard, and other profiles enrich candidate scoring for
+    // free. Passive parse of already-captured traffic; never issues requests.
+    const profileInfoUnsub = this.tab.onResponse((resp) => {
+      if (reader.matchEndpoint(resp.url) !== 'web-profile-info') return;
+      if (resp.status >= 400 || !resp.mimeType.toLowerCase().includes('json')) return;
+      resp
+        .getBody()
+        .then((body) => {
+          const obs = reader.parseProfileInfo(body, clock.now());
+          if (obs) store.observe(obs);
+        })
+        .catch((e: unknown) => {
+          logger.warn('foundation: profile-info observe failed', { error: String(e) });
+        });
+    });
+
     const pageReader = new FollowersPageReader({
       tab: this.tab,
       reader,
       actor,
       abortSignal: driverSignal,
+      reporter: this.reporter,
+    });
+    // The prune scan's FAST census path: direct friendships-API pagination at
+    // full page size (~4× the dialog's scroll batches). The sources fall back
+    // to the dialog-scroll pageReader when the direct walk cannot fetch.
+    const listWalker = new ListPageWalker({
+      tab: this.tab,
+      reader,
+      abortSignal: driverSignal,
+      reporter: this.reporter,
     });
 
+    // Growth acquisition now pages the friendships API directly (cursor-resumed,
+    // demand-bounded via the walker); the dialog-scroll pageReader is its
+    // fallback, and tab+reader serve the one-off seed pk-resolution fetch.
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
-      budget,
       sentinel,
+      walker: listWalker,
+      tab: this.tab,
+      reader,
       ownPk,
     });
     const churnActions = new AdapterBackedChurnActions({
       adapter,
-      budget,
       store,
       ownPk,
       dryRun: settings.dryRun,
     });
 
-    // Own-followers source needs our username; degrade gracefully to an empty
-    // source when it could not be resolved (follow-back sweeps then no-op).
-    // f11: pass `store` so the sweep's parsed follower profiles are persisted as
-    // real `accounts` rows the own-followers fallback target-source can rank.
-    // The live instance also serves the prune scan's whole-list followers port
-    // (`fetchAllPks`) — one scraper, two ports (see the prune wiring below).
+    // The prune scan's whole-followers-list scraper. Needs our username for the
+    // dialog fallback path; when it could not be resolved the prune port below
+    // degrades to a loud incomplete result. (The follow-back watcher no longer
+    // pages this list — it reads the notifications feed instead.)
     const liveOwnFollowers = ownUsername
-      ? new AdapterBackedOwnFollowersSource({ pageReader, ownUsername, budget, sentinel, store })
+      ? new AdapterBackedOwnFollowersSource({
+          pageReader,
+          ownUsername,
+          sentinel,
+          store,
+          walker: listWalker,
+          ownPk,
+        })
       : null;
-    const ownFollowersSource: OwnFollowersSource = liveOwnFollowers ?? {
-      nextPage: async () => ({ pks: [], cursor: null, hasMore: false }),
-    };
-    const ownFollowersTarget = new AdapterBackedOwnFollowersTargetSource({ store, ownPk });
+
+    // R1: the profile enricher — the engine's pool-refill step calls this to fetch
+    // follower/following counts for candidates the followers-list left count-less,
+    // so scoring can actually decide (without it every candidate scores `no-counts`
+    // and the pool never shrinks). Sentinel-gated and paced internally. Constructed
+    // here (before the chain pieces) because the fallback target source also
+    // enriches a bounded sample before ranking.
+    const enricher = new AdapterBackedProfileEnricher({
+      tab: this.tab,
+      reader,
+      store,
+      sentinel,
+      clock,
+      abortSignal: driverSignal,
+      reporter: this.reporter,
+    });
+
+    // The chain's fallback next-target chooser. The enricher is essential:
+    // own followers arrive from list pages with NO counts, and ranking
+    // "highest follower count" over all-unknowns used to promote an arbitrary
+    // (lexicographically-smallest-pk) account as the next target.
+    const ownFollowersTarget = new AdapterBackedOwnFollowersTargetSource({
+      store,
+      ownPk,
+      enricher,
+    });
 
     const churn = new ChurnScheduler({
       store,
@@ -922,41 +1382,49 @@ export class Foundation {
       ownPk,
       cfg: toChurnConfig(settings),
     });
+    // Reload catch-up: apply the timer-driven transitions (follow-back window /
+    // hold expiries) that elapsed while the app was closed, BEFORE the first
+    // status is projected. Store-only and idempotent — without this, records
+    // whose windows lapsed offline sit in their old stages (and the queues UI
+    // under-reports "due") until the engine's first step runs.
+    churn.advanceTimers(clock.now());
     const scanner = new Scanner({
       store,
       scorerCfg: toScorerConfig(settings),
       cfg: toScannerConfig(settings),
     });
+    // Follow-back detection reads the NOTIFICATIONS feed (one click on the
+    // bell, one observed news-inbox response) — cheap enough for the hourly
+    // default cadence. Sentinel-gated; a stop() interrupts the response wait.
+    const followNotifications = new AdapterBackedFollowNotifications({
+      tab: this.tab,
+      actor: adapter.actor,
+      reader,
+      sentinel,
+      store,
+      abortSignal: driverSignal,
+      reporter: this.reporter,
+    });
     const followback = new FollowbackWatcher({
       store,
       clock,
       ownPk,
-      followers: ownFollowersSource,
+      notifications: followNotifications,
       cfg: toFollowbackConfig(settings),
     });
 
-    // Real discovery is deferred (arch §7); the own-followers fallback carries the chain.
-    const discovery: TargetDiscovery = { discover: async () => [] };
+    // Live discovery over the already-harvested graph: propose the biggest
+    // enriched PUBLIC hubs inside the exhausted target's audience, projected at
+    // that target's realized follow-back rate — zero extra requests. The
+    // ChainController's minimum-yield gate (minFollowBackRate/minPoolSize) now
+    // actually decides promote-vs-fallback instead of filtering an empty stub.
+    const discovery: TargetDiscovery = new StoreBackedTargetDiscovery({ store, ownPk });
     const chain = new ChainController({
       store,
       ownPk,
       discovery,
       ownFollowers: ownFollowersTarget,
       cfg: toChainConfig(settings),
-    });
-
-    // R1: the profile enricher — the engine's pool-refill step calls this to fetch
-    // follower/following counts for candidates the followers-list left count-less,
-    // so scoring can actually decide (without it every candidate scores `no-counts`
-    // and the pool never shrinks). Budget/sentinel-gated and paced internally.
-    const enricher = new AdapterBackedProfileEnricher({
-      tab: this.tab,
-      reader,
-      store,
-      budget,
-      sentinel,
-      clock,
-      abortSignal: driverSignal,
     });
 
     // The follow-back sweep cadence, persisted through Settings so the 4h rhythm
@@ -968,11 +1436,48 @@ export class Foundation {
       },
     });
 
+    // Organic pacing model (§macro-timing-realism): a durable SessionPlanner hydrated
+    // from store meta, injected ONLY when the user selected it (Settings.pacingModel).
+    // Absent → the engine runs its legacy active-hours + operating-rate metronome. The
+    // per-install circadian phase offset lives in the snapshot, so it is stable across
+    // restarts and freshly drawn on first run.
+    let pacingSnap: PlannerSnapshot | null = null;
+    const pacingSnapRaw = store.getPacingState();
+    if (pacingSnapRaw !== null) {
+      try {
+        pacingSnap = JSON.parse(pacingSnapRaw) as PlannerSnapshot;
+      } catch (e) {
+        logger.warn('foundation: bad pacing snapshot, starting fresh', { error: String(e) });
+      }
+    }
+    const phaseOffset =
+      pacingSnap?.phaseOffsetHours ?? samplePhaseOffset(CIRCADIAN.PHASE_JITTER_MAX_HOURS, Math.random);
+    const pacing =
+      settings.pacingModel === 'organic'
+        ? new SessionPlanner({
+            // The circadian shape follows the user's qualitative day/week choice (§5.6).
+            profile: patternCircadianProfile(settings.pattern, phaseOffset),
+            cfg: toPacingConfig(settings),
+            snapshot: pacingSnap,
+          })
+        : undefined;
+
+    // Woven prune feed (§5.2): the growth loop drains unfollows from the PruneEngine's
+    // scanned census, interleaved with its follows. The PruneEngine is built after the
+    // engine, so the feed delegates through a ref set once it exists (only ever CALLED
+    // at run time, long after both are constructed).
+    let pruneEngineRef: PruneEngine | undefined;
+    const unfollowFeed: EngineUnfollowFeed = {
+      nextCandidate: (now) => pruneEngineRef?.nextCandidate(now) ?? null,
+      executeUnfollow: (cand, now) =>
+        (pruneEngineRef as PruneEngine).executeUnfollow(cand, now),
+      atDailyCap: (now) => pruneEngineRef?.atDailyCap(now) ?? true,
+    };
+
     const engine = createEngine({
       store,
       clock,
       rate,
-      requestBudget: budget,
       sentinel,
       churn,
       scanner,
@@ -982,31 +1487,62 @@ export class Foundation {
       enricher,
       settings,
       delays,
+      pacing,
+      unfollowFeed,
       sweepCadence,
       onStatus: (s) => this.emit(s),
       onHalt: (reason) => {
         logger.warn('foundation: engine halted', { reason });
+        // Systemic-failure triage: state decisively whether input events are
+        // reaching the page (adapter/selector problem) or not (pipeline dead).
+        if (reason === 'actions-failing' && typeof this.tab.probeInput === 'function') {
+          void this.tab
+            .probeInput()
+            .then((received) => {
+              if (received) {
+                logger.warn(
+                  'foundation: input probe OK — events reach the page; actions-failing is a page/selector issue',
+                );
+              } else {
+                logger.error(
+                  'foundation: input probe FAILED — dispatched events are NOT reaching the page',
+                );
+              }
+            })
+            .catch((e: unknown) =>
+              logger.warn('foundation: input probe errored', { error: String(e) }),
+            );
+        }
       },
     });
 
     // Phase 5 — the auto-prune routine, sharing the SAME tab-backed rim
-    // (pageReader / churnActions / budget / sentinel) the growth engine uses.
+    // (pageReader / churnActions / sentinel) the growth engine uses.
     // Both scan sources degrade to a warned empty scrape when our username
     // could not be resolved (prune scans then find nothing, loudly). The scan
     // pacing (`scanMinMs`/`scanMaxMs`) + the engine's cooperative stop reach the
     // scrapes through the sources' `fetchAllPks(opts)` — see PruneScanOpts.
     const ownFollowingSource: PruneOwnFollowing = ownUsername
-      ? new AdapterBackedOwnFollowingSource({ pageReader, ownUsername, budget, sentinel, store })
+      ? new AdapterBackedOwnFollowingSource({
+          pageReader,
+          ownUsername,
+          sentinel,
+          store,
+          walker: listWalker,
+          ownPk,
+        })
       : {
-          fetchAllPks: async (): Promise<string[]> => {
-            logger.warn('foundation: own username unresolved, prune scan yields nothing');
-            return [];
+          // Incomplete, never "an empty list": a scan against this stub must
+          // FAIL its completeness gate, not compute a zero-candidate census.
+          fetchAllPks: async (): Promise<PruneScanFetch> => {
+            logger.warn('foundation: own username unresolved, prune scan cannot run');
+            return { pks: [], complete: false, reason: 'own-username-unresolved' };
           },
         };
     const pruneOwnFollowers: PruneOwnFollowers = liveOwnFollowers ?? {
-      fetchAllPks: async (): Promise<string[]> => {
-        logger.warn('foundation: own username unresolved, prune followers scan yields nothing');
-        return [];
+      fetchAllPks: async (): Promise<PruneScanFetch> => {
+        logger.warn('foundation: own username unresolved, prune followers scan cannot run');
+        return { pks: [], complete: false, reason: 'own-username-unresolved' };
       },
     };
     const pruneEngine = createPruneEngine({
@@ -1016,26 +1552,42 @@ export class Foundation {
       ownFollowing: ownFollowingSource,
       ownFollowers: pruneOwnFollowers,
       churnActions,
-      requestBudget: budget,
       sentinel,
       cfg: toPruneConfig(settings),
       delays,
       lastRunAt: settings.pruneLastRunAt,
+      // A run stops at the active-hours edge instead of rolling past local
+      // midnight (where the daily count re-zeroes and one run could spend 2×
+      // the cap). Same governor window the growth engine parks on.
+      withinActiveHours: (): boolean => rate.withinActiveHours(),
       onStatus: (s) => this.onPruneStatusCb?.(s),
       // Persist the completed run's timestamp through the one settings save
       // path (also reloads live configs — harmless, and keeps one write path).
       onRunComplete: (at) => {
         void this.updateSettings({ pruneLastRunAt: at });
       },
+      // A scan's first act: ONE active profile-info fetch for our own account,
+      // so the header counts sizing the progress bar (and backing the census
+      // coverage guard) are fresh in the store — the passive observer alone
+      // can miss them entirely (SPA profile loads don't always issue
+      // web_profile_info).
+      refreshOwnStats: ownUsername
+        ? async (): Promise<void> => {
+            await enricher.enrich([ownUsername]);
+          }
+        : undefined,
     });
+    // Back the woven-feed adapter now that the PruneEngine exists.
+    pruneEngineRef = pruneEngine;
 
     return {
       store,
       engine,
       acquisition,
       churnActions,
-      requestMeteringUnsub,
+      actor,
       relationshipReconcilerUnsub,
+      profileInfoUnsub,
       ownPk,
       ownUsername,
       clock,
@@ -1045,11 +1597,11 @@ export class Foundation {
       pruneEngine,
       prunePromise: null,
       rate,
-      budget,
       churn,
       scanner,
       followback,
       chain,
+      pacing,
     };
   }
 
@@ -1089,15 +1641,22 @@ export class Foundation {
   /**
    * One-shot read-only precheck of a seed username: whether it exists and whether
    * its followers list is visible (public). Uses the surface's envelope-returning
-   * profile-info fetch through the shared tab, budget- and sentinel-gated. Never
+   * profile-info fetch through the shared tab, sentinel-gated. Never
    * throws across IPC.
    */
   async checkSeed(username: string): Promise<SeedCheck> {
+    // Veil: the seed check is a real in-page API fetch — requesting counts.
+    return this.trackManualOp(() =>
+      this.activity.with('seed-check', () => this.checkSeedHeld(username)),
+    );
+  }
+
+  private async checkSeedHeld(username: string): Promise<SeedCheck> {
     if (!(await this.ensureBuilt()) || this.graph === null) {
       return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'not-logged-in' };
     }
     // R3: refuse while a driver runs — a concurrent one-shot fetch competes with
-    // that driver's own IG traffic and its budget/sentinel gating.
+    // that driver's own IG traffic and its sentinel gating.
     const busy = this.busyDriverReason();
     if (busy !== null) {
       return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: busy };
@@ -1105,9 +1664,6 @@ export class Foundation {
     try {
       const clean = username.trim().replace(/^@/, '');
       if (!clean) return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'empty' };
-      if (!this.graph.budget.canSpend()) {
-        return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'budget' };
-      }
       if ((await this.graph.sentinel.check()) !== 'ok') {
         return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'blocked' };
       }
@@ -1155,6 +1711,10 @@ export class Foundation {
       if (obs === null) {
         return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'not-found' };
       }
+      // FACTS STREAM (docs/PRINCIPLES.md §1): this check paid for a real
+      // profile read — keep it. The counts/flags become an accounts row the
+      // scorer and target sources can use, whether or not the seed is adopted.
+      this.graph.store.observe(obs);
       const isPrivate = obs.fields.isPrivate === true;
       // A private account's followers are viewable iff we already follow it.
       const followedByViewer = SURFACE.extractProfileFollowedByViewer(env.json) === true;
@@ -1259,7 +1819,9 @@ export class Foundation {
    * without a restart. When not built, the merge is only persisted (§5).
    */
   async updateSettings(partial: Partial<Settings>): Promise<Settings> {
-    const next: Settings = { ...this.resolveSettings(), ...partial };
+    // Sanitize AFTER the merge: IPC payloads are unvalidated renderer input, and
+    // a hand-edited settings file already passed through the same clamps at load.
+    const next: Settings = sanitizeSettings({ ...this.resolveSettings(), ...partial });
     this.settingsCache = next;
     try {
       saveSettings(this.settingsFilePath(), next);
@@ -1275,12 +1837,14 @@ export class Foundation {
     const g = this.graph;
     if (g === null) return;
     g.rate.applyConfig(toRateGovernorConfig(s));
-    g.budget.applyConfig(toRequestBudgetConfig(s));
     g.churn.applyConfig(toChurnConfig(s));
     g.scanner.applyConfig(toScannerConfig(s), toScorerConfig(s));
     g.followback.applyConfig(toFollowbackConfig(s));
     g.chain.applyConfig(toChainConfig(s));
     g.pruneEngine.applyConfig(toPruneConfig(s));
+    // Organic pacing knobs update live (gap/velocity/volume); a legacy↔organic model
+    // switch takes effect on the next graph build (the planner is a construction-time dep).
+    g.pacing?.applyConfig(toPacingConfig(s));
     g.churnActions.setDryRun(s.dryRun);
     g.engine.applySettings(s);
     logger.info('foundation: settings reloaded into live engine configs');
@@ -1351,7 +1915,20 @@ export class Foundation {
   // -------------------------------------------------------------------------
 
   private emit(status: EngineStatus): void {
+    // Veil state machine: the growth loop holds the veil exactly while RUNNING
+    // (paused/idle/halted release it — a parked engine issues no requests). The
+    // signal is level-triggered, then the start bridge retires on the first
+    // emit — in that order, so the hand-off never dips the veil.
+    this.activity.signal('growth-loop', status.state === 'running');
+    this.releaseGrowthStartBridge();
     this.onStatusCb?.({ ...status, loggedIn: this.graph !== null });
+  }
+
+  /** Retire the `growth-start` bridge hold (idempotent; see {@link startEngine}). */
+  private releaseGrowthStartBridge(): void {
+    if (!this.pendingGrowthStart) return;
+    this.pendingGrowthStart = false;
+    this.activity.release('growth-start');
   }
 
   private builtStatus(): EpoStatus {
@@ -1376,6 +1953,10 @@ export class Foundation {
       lastSentinel: null,
       nextActionAt: null,
       scanReady: false,
+      scanPhase: null,
+      scanAt: null,
+      scanEstimates: null,
+      graph: { following: 0, followers: 0, notFollowingBack: 0 },
     };
   }
 
@@ -1388,7 +1969,6 @@ export class Foundation {
       actionsToday: 0,
       remainingToday: 0,
       atHardCeiling: false,
-      requestBudgetRemaining: 0,
       queued: 0,
       pendingFollowback: 0,
       followedBackHeld: 0,
@@ -1400,6 +1980,8 @@ export class Foundation {
       nextActionAt: null,
       netToday: 0,
       online: this.lastOnline,
+      haltReason: null,
+      pacing: null,
       loggedIn,
     };
   }

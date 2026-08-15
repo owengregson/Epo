@@ -10,7 +10,7 @@
  * pane is live.
  */
 
-import { app, BaseWindow, WebContentsView } from 'electron';
+import { app, BaseWindow, WebContentsView, powerSaveBlocker } from 'electron';
 import * as path from 'node:path';
 import { InstagramTab } from '@/adapter/tab';
 import { OverlayVeil } from '@/main/overlay/veil-view';
@@ -20,10 +20,30 @@ import { registerIpc } from '@/main/ipc';
 import * as logger from '@/utils/logger';
 import type { LogEntry, LogLevel } from '@/types';
 
+// ---------------------------------------------------------------------------
+// Background-run survival (measured, 2026-08-14 input lab):
+//
+// With stock settings, ANY backgrounded state — window blurred, occluded by
+// another window, hidden, or minimized — marks the page `visibilityState:
+// 'hidden'`, stops requestAnimationFrame COMPLETELY (0 frames vs 180/1.5s),
+// and clamps timers ~15× (escalating to ~1/minute after 5 min hidden). CDP
+// input still arrives, but Instagram's SPA cannot hydrate pages or advance its
+// UI state machine in that state, so every action times out. These switches
+// (plus `backgroundThrottling: false` on the tab, set in `tab.ts`) keep the
+// renderer fully alive regardless of window state — verified: all background
+// scenarios then measure identical to foreground.
+// Must run before `app.whenReady()`.
+// ---------------------------------------------------------------------------
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
 /** Fixed width of the dashboard sidebar; the IG tab fills the remainder. */
 const SIDEBAR_WIDTH = 460;
 
-let mainWindow: BaseWindow | null = null;
+// Kept for parity with the view refs (cleared on 'closed'); nothing reads it
+// since the activate→createWindow path was removed (see app.whenReady below).
+let _mainWindow: BaseWindow | null = null;
 let _dashboardView: WebContentsView | null = null;
 let instagramTab: InstagramTab | null = null;
 let overlayVeil: OverlayVeil | null = null;
@@ -40,7 +60,7 @@ function createWindow(): void {
     title: 'Epo',
     backgroundColor: '#0e0e10',
   });
-  mainWindow = win;
+  _mainWindow = win;
 
   // --- Dashboard renderer (left) ------------------------------------------
   const dash = new WebContentsView({
@@ -63,7 +83,7 @@ function createWindow(): void {
   tab.attach(win);
   void tab.goto('https://www.instagram.com/');
 
-  // --- Automation veil (stacked above the tab) ----------------------------
+  // --- Activity veil (stacked above the tab) ------------------------------
   const veil = new OverlayVeil();
   overlayVeil = veil;
   veil.attach(win); // added after the tab → renders on top of it
@@ -94,33 +114,48 @@ function createWindow(): void {
 
   // --- Foundation (composition root) + IPC ---------------------------------
   // Push each engine status projection to the renderer (§5 — pushed, not polled).
-  // The veil is up (and blocking the tab) whenever an automated routine is
-  // driving Instagram — the growth engine running, OR the auto-prune scanning or
-  // unfollowing. The two states arrive on separate status streams (and during a
-  // prune hand-off growth is PAUSED while prune drives), so track each and raise
-  // the veil when either is active.
-  let veilGrowthActive = false;
-  let veilPruneActive = false;
-  const refreshVeil = (): void => veil.setActive(veilGrowthActive || veilPruneActive);
+  // The veil mirrors the Foundation's TabActivity state machine: it is up
+  // (and blocking the tab) exactly while ANY routine holds the page — graph
+  // build/identity navigation, the growth loop, a prune scan/run from the moment
+  // the IPC lands, and every manual one-off op — not merely while a status
+  // projection reads `running`.
   const found = new Foundation({
     tab,
+    // Digital cursor: mirror the Interactor's simulated pointer onto the veil.
+    // The tap observes synthetic driver output only — the user's real mouse
+    // never reaches it (and the veil page itself has no mouse listeners).
+    cursorObserver: {
+      moved: (x, y) => veil.cursorMoved(x, y),
+      pressed: (down) => veil.cursorPressed(down),
+    },
+    onActivity: (active) => veil.setActive(active),
+    // Live phase readout on the veil: each tab-driving layer reports what it is
+    // doing (direct JSON-API reads vs real page driving) as it starts, and
+    // clears when done — so the overlay shows "API · Reading follower list · 250"
+    // instead of only the static "Working" chip.
+    activityReporter: {
+      report: (info) => veil.setActivity(info),
+      clear: () => veil.setActivity(null),
+    },
     onStatus: (status) => {
       if (!dash.webContents.isDestroyed()) {
         dash.webContents.send('epo:status', status);
       }
-      veilGrowthActive = status.state === 'running';
-      refreshVeil();
     },
     onPruneStatus: (status) => {
       if (!dash.webContents.isDestroyed()) {
         dash.webContents.send('epo:prune-status', status);
       }
-      veilPruneActive = status.state === 'scanning' || status.state === 'running';
-      refreshVeil();
     },
   });
   foundation = found;
   _disposeIpc = registerIpc({ tab, foundation: found });
+
+  // Default page: rest on the user's OWN profile, not the home feed. The
+  // Foundation waits for the logged-in graph, then the Interactor moves the
+  // simulated cursor to the nav avatar link and clicks it (under the veil's
+  // activity machine). A logged-out tab quietly stays on the login page.
+  void found.landOnOwnProfile();
 
   // --- Connectivity monitor (offline-hold for the engine loop) -------------
   const connectivity = new ConnectivityMonitor((online) => {
@@ -138,18 +173,25 @@ function createWindow(): void {
   // window just drops the UI refs — `window-all-closed` then quits the app.
   win.on('closed', () => {
     _dashboardView = null;
-    mainWindow = null;
+    _mainWindow = null;
   });
 
   logger.info('Epo window ready');
 }
 
 app.whenReady().then(() => {
+  // macOS App Nap throttles the MAIN process's timers when the app is hidden —
+  // the motion profile's step pacing and the engine's action-delay deadlines
+  // all run on main-process timers, so an unattended run must never nap. Held
+  // for the app's lifetime (released implicitly at process exit); the display
+  // may still sleep — only app suspension is blocked.
+  powerSaveBlocker.start('prevent-app-suspension');
   createWindow();
 
-  app.on('activate', () => {
-    if (!shuttingDown && mainWindow === null) createWindow();
-  });
+  // NB: no `activate` → createWindow() handler. `window-all-closed` always
+  // quits (below), so a live app never has a null window to re-create — and
+  // re-running createWindow() would re-register live IPC handlers (a throw)
+  // and construct a second Foundation/InstagramTab over the first.
 });
 
 // Closing the window closes the whole app — including the engine loop, the

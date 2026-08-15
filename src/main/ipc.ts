@@ -22,6 +22,7 @@ import type {
   FollowState,
   NetGrowthPoint,
   EpoStatus,
+  PruneCandidate,
   PruneControlResult,
   PruneScanResult,
   PruneStatus,
@@ -58,7 +59,7 @@ export function registerIpc(ctx: IpcContext): () => void {
       } catch (e) {
         const reason = e instanceof Error ? e.message : String(e);
         logger.error('foundation:readFollowers failed', { target, error: reason });
-        return { target, observed: 0 };
+        return { target, observed: 0, ok: false, reason };
       }
     },
   );
@@ -115,6 +116,11 @@ export function registerIpc(ctx: IpcContext): () => void {
     return foundation.stopEngine();
   });
 
+  ipcMain.handle('engine:restartFromSeed', async (_event, seed: string): Promise<EpoStatus> => {
+    logger.info('engine:restartFromSeed');
+    return foundation.restartFromSeed(seed);
+  });
+
   ipcMain.handle('engine:status', async (): Promise<EpoStatus> => {
     return foundation.status();
   });
@@ -155,6 +161,15 @@ export function registerIpc(ctx: IpcContext): () => void {
 
   ipcMain.handle('prune:status', async (): Promise<PruneStatus> => {
     return foundation.pruneStatus();
+  });
+
+  ipcMain.handle('prune:candidates', async (): Promise<PruneCandidate[]> => {
+    try {
+      return await foundation.pruneCandidates();
+    } catch (e) {
+      logger.error('prune:candidates failed', { error: String(e) });
+      return [];
+    }
   });
 
   // --- Read-only list projections + settings (§5) ----------------------------
@@ -252,11 +267,13 @@ export function registerIpc(ctx: IpcContext): () => void {
     'engine:pause',
     'engine:resume',
     'engine:stop',
+    'engine:restartFromSeed',
     'engine:status',
     'prune:scan',
     'prune:start',
     'prune:stop',
     'prune:status',
+    'prune:candidates',
     'chain:list',
     'growth:series',
     'seed:check',

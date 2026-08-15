@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Automation veil</title>
+    <title>Activity veil</title>
     <style>
       /* Standalone overlay page layered above the Instagram tab. Its own layer is
          transparent so the tab shows through, dimmed by the veil's radial gradient.
@@ -14,6 +14,12 @@
         height: 100%;
         overflow: hidden;
         background: transparent;
+      }
+      /* `[hidden]` must win over the author `display` rules below (an element
+         with `display: inline-flex`/`flex` otherwise ignores the attribute and
+         renders as an empty box — which shows up as a phantom gap in the chip). */
+      [hidden] {
+        display: none !important;
       }
       .veil {
         position: absolute;
@@ -127,6 +133,54 @@
         color: #9a9aa2;
         font-weight: 500;
       }
+      /* Live phase readout: swaps the idle "interaction paused" wording for what
+         the app is doing RIGHT NOW, with a mode tag distinguishing direct
+         JSON-API traffic from real page driving. */
+      .chip .phase {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: #eef1f4;
+        font-weight: 500;
+      }
+      .chip .mode {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 5px;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        border: 1px solid transparent;
+      }
+      /* API work: cool/technical. Page work: warm/brass. */
+      .chip .mode.api {
+        color: #9fd0ff;
+        background: rgba(64, 132, 214, 0.16);
+        border-color: rgba(120, 178, 255, 0.32);
+      }
+      .chip .mode.page {
+        color: #f0cf9a;
+        background: rgba(196, 142, 56, 0.16);
+        border-color: rgba(226, 178, 96, 0.32);
+      }
+      /* API traffic has no on-page motion to watch, so the tag pulses to show
+         work is still flowing. */
+      .chip .mode.api::after {
+        content: '';
+        display: inline-block;
+        width: 4px;
+        height: 4px;
+        margin-left: 5px;
+        vertical-align: 1px;
+        border-radius: 50%;
+        background: currentColor;
+        animation: blink 1.1s ease-in-out infinite;
+      }
+      @keyframes blink {
+        0%, 100% { opacity: 0.25; }
+        50% { opacity: 1; }
+      }
       @keyframes pulse {
         0% {
           box-shadow: 0 0 0 0 rgba(216, 221, 227, 0.35);
@@ -138,27 +192,195 @@
           box-shadow: 0 0 0 0 rgba(216, 221, 227, 0);
         }
       }
+      /* ---- Progress panel ---------------------------------------------------
+         The dynamic readout beneath the chip. Unlike the chip (which names the
+         phase in one line), this shows the WORK: a real bar when the phase has
+         a known denominator, an indeterminate sweep when it does not, plus the
+         live count and a per-phase elapsed timer. Sits in the veil's centered
+         column, so it fades with the veil like everything else. */
+      .stack {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+      .panel {
+        width: 300px;
+        padding: 11px 13px 12px;
+        border-radius: 11px;
+        background: linear-gradient(180deg, rgba(28, 28, 33, 0.96), rgba(16, 16, 19, 0.97));
+        border: 1px solid rgba(238, 241, 244, 0.13);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 12px 30px rgba(0, 0, 0, 0.6);
+        font: 500 11px -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+        color: #eef1f4;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 0.28s ease, transform 0.28s ease;
+      }
+      body.active .panel.on {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .panel-top {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 9px;
+      }
+      .panel-what {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .panel-detail {
+        margin-left: 6px;
+        color: #9a9aa2;
+        font-weight: 400;
+      }
+      .panel-detail:empty {
+        margin-left: 0;
+      }
+      .panel-num {
+        flex: 0 0 auto;
+        color: #d8dde3;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+      }
+      .track {
+        position: relative;
+        height: 5px;
+        border-radius: 99px;
+        background: rgba(255, 255, 255, 0.09);
+        overflow: hidden;
+      }
+      .track i {
+        position: absolute;
+        inset: 0 auto 0 0;
+        display: block;
+        width: 0;
+        border-radius: 99px;
+        background: linear-gradient(90deg, #6aa6e8, #9fd0ff);
+        transition: width 0.35s cubic-bezier(0.22, 0.9, 0.28, 1);
+      }
+      .panel.page .track i {
+        background: linear-gradient(90deg, #c48e38, #f0cf9a);
+      }
+      /* Unknown denominator → a sweeping band instead of a fake fill. */
+      .track.indet i {
+        width: 34%;
+        transition: none;
+        animation: sweep 1.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+      }
+      @keyframes sweep {
+        0% { transform: translateX(-110%); }
+        100% { transform: translateX(320%); }
+      }
+      .panel-foot {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 8px;
+        color: #9a9aa2;
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
       @media (prefers-reduced-motion: reduce) {
         .shine {
           display: none;
         }
+        .track.indet i {
+          animation: none;
+          width: 100%;
+          opacity: 0.5;
+        }
+      }
+      /* Digital cursor — the Interactor's SIMULATED pointer, mirrored for the
+         user. It sits BEFORE .veil in the DOM so it paints beneath the dim
+         gradient (under the frosted layer, like part of the page), and it is
+         pure display: pointer-events none and zero mouse listeners, so the
+         user's real cursor never drives or disturbs it. Position comes only
+         from main-process pushes of the synthetic input stream. */
+      .dcursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 32px;
+        height: 32px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.4s ease;
+        /* scale (press feedback) pivots on the arrow tip, not the box corner */
+        transform-origin: 5px 5px;
+        will-change: transform;
+      }
+      body.active .dcursor.on {
+        opacity: 1;
+      }
+      .dcursor svg {
+        display: block;
+        width: 100%;
+        height: 100%;
       }
     </style>
   </head>
   <body>
+    <!-- macOS arrow from MacTahoe-icon-theme (cursors/src/svg-shadow/default.svg,
+         GPL-3.0, © vinceliuice). 32×32 canvas; hotspot (5,5) per the theme's
+         config/default.cursor. Painted before .veil → underneath the dim layer. -->
+    <div class="dcursor" id="dcursor" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+        <defs>
+          <filter id="dcursor-shadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="1" />
+            <feOffset dx="1.5" dy="1.5" result="offsetblur" />
+            <feComponentTransfer><feFuncA type="linear" slope="0.3" /></feComponentTransfer>
+            <feMerge>
+              <feMergeNode />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <g filter="url(#dcursor-shadow)">
+          <path fill="#fff" fill-rule="evenodd" d="m5.502 3.878 8.383 8.401c1.052 1.056.305 2.858-1.186 2.858h-1.224l1.216 2.888c.213.506.216 1.066.01 1.575a2.057 2.057 0 0 1-3.806.021l-1.278-3.038-.833.738c-1.08.956-2.784.19-2.784-1.255V4.5c0-.784.947-1.176 1.501-.62" clip-rule="evenodd" />
+          <path fill="#000" fill-rule="evenodd" d="M5 5.148c0-.131.159-.197.251-.104l7.908 7.925a.685.685 0 0 1-.485 1.169l-2.704-.002 1.8 4.276a1.059 1.059 0 1 1-1.953.822L7.999 14.91l-1.86 1.648a.686.686 0 0 1-1.132-.412L5 16.045Z" clip-rule="evenodd" />
+        </g>
+      </svg>
+    </div>
     <div class="veil">
       <span class="shine shine-lead"></span>
       <span class="shine shine-sharp"></span>
-      <div class="chip">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="4" y="8" width="16" height="12" rx="3" />
-          <path d="M12 4v4" />
-          <circle cx="12" cy="3" r="1" fill="currentColor" stroke="none" />
-          <circle cx="9" cy="13" r="1.2" fill="currentColor" stroke="none" />
-          <circle cx="15" cy="13" r="1.2" fill="currentColor" stroke="none" />
-          <path d="M9.5 17h5" />
-        </svg>
-        Automation active<span class="dot"></span><span class="dim">interaction paused</span>
+      <div class="stack">
+        <div class="chip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12h3.5l2.5-6 4 12 2.5-6H21" />
+          </svg>
+          Working<span class="dot"></span
+          ><span class="dim" id="veil-idle">interaction paused</span
+          ><span class="phase" id="veil-phase" hidden
+            ><span class="mode" id="veil-mode"></span
+            ><span id="veil-label"></span
+          ></span>
+        </div>
+        <!-- Dynamic progress panel: real bar when the phase knows its total,
+             indeterminate sweep when it does not. Driven by __veilActivity. -->
+        <div class="panel" id="veil-panel" aria-hidden="true">
+          <div class="panel-top">
+            <span class="panel-what"
+              ><span id="veil-panel-label"></span
+              ><span class="panel-detail" id="veil-panel-detail"></span
+            ></span>
+            <span class="panel-num" id="veil-panel-num"></span>
+          </div>
+          <div class="track" id="veil-track"><i id="veil-fill"></i></div>
+          <div class="panel-foot">
+            <span id="veil-panel-mode"></span>
+            <span id="veil-panel-elapsed"></span>
+          </div>
+        </div>
       </div>
     </div>
     <script>
@@ -183,6 +405,177 @@
         document.body.classList.toggle('active', !!active);
         if (active) kickShine();
       };
+
+      // ---- Live phase readout ----------------------------------------------
+      // Main pushes {kind:'api'|'page', label, count?} as each phase of tab work
+      // begins, and null when it ends. 'api' = talking to Instagram's private
+      // JSON endpoints directly; 'page' = actually driving the DOM (clicking,
+      // scrolling). Display only — no listeners, no feedback into the run.
+      (function () {
+        var idle = document.getElementById('veil-idle');
+        var phase = document.getElementById('veil-phase');
+        var mode = document.getElementById('veil-mode');
+        var label = document.getElementById('veil-label');
+
+        var panel = document.getElementById('veil-panel');
+        var pLabel = document.getElementById('veil-panel-label');
+        var pDetail = document.getElementById('veil-panel-detail');
+        var pNum = document.getElementById('veil-panel-num');
+        var track = document.getElementById('veil-track');
+        var fill = document.getElementById('veil-fill');
+        var pMode = document.getElementById('veil-panel-mode');
+        var pElapsed = document.getElementById('veil-panel-elapsed');
+
+        var startedAt = 0;      // when the CURRENT phase began (for elapsed)
+        var phaseKey = '';      // label|kind — a change restarts the timer
+        var timer = null;
+
+        function fmtElapsed(ms) {
+          var s = Math.floor(ms / 1000);
+          if (s < 60) return s + 's';
+          var m = Math.floor(s / 60);
+          return m + 'm ' + (s % 60) + 's';
+        }
+        function tickElapsed() {
+          pElapsed.textContent = startedAt ? fmtElapsed(Date.now() - startedAt) : '';
+        }
+        function stopTimer() {
+          if (timer !== null) {
+            clearInterval(timer);
+            timer = null;
+          }
+        }
+
+        window.__veilActivity = function (info) {
+          if (!info || !info.label) {
+            phase.hidden = true;
+            idle.hidden = false;
+            panel.classList.remove('on');
+            stopTimer();
+            startedAt = 0;
+            phaseKey = '';
+            return;
+          }
+          var kind = info.kind === 'api' ? 'api' : 'page';
+          var hasCount = typeof info.count === 'number';
+          var hasTotal = typeof info.total === 'number' && info.total > 0;
+
+          // --- chip: the one-line "what" ---
+          mode.className = 'mode ' + kind;
+          mode.textContent = kind === 'api' ? 'API' : 'PAGE';
+          label.textContent = info.label;
+          idle.hidden = true;
+          phase.hidden = false;
+
+          // --- panel: the live "how far" ---
+          // A new phase (different label/kind) restarts the elapsed timer; a
+          // count update within the same phase keeps it running.
+          var key = kind + '|' + info.label;
+          if (key !== phaseKey) {
+            phaseKey = key;
+            startedAt = Date.now();
+            stopTimer();
+            timer = setInterval(tickElapsed, 1000);
+          }
+          panel.className = 'panel on ' + kind;
+          pLabel.textContent = info.label;
+          pDetail.textContent = info.detail || '';
+          pMode.textContent =
+            kind === 'api' ? 'Instagram API' : 'Driving the page';
+
+          if (hasTotal) {
+            var done = Math.max(0, Math.min(info.count || 0, info.total));
+            var pct = Math.round((done / info.total) * 100);
+            track.classList.remove('indet');
+            fill.style.width = pct + '%';
+            pNum.textContent =
+              done.toLocaleString() + ' / ' + info.total.toLocaleString();
+          } else {
+            // No honest denominator — sweep, and show the raw running count.
+            track.classList.add('indet');
+            fill.style.width = '';
+            pNum.textContent = hasCount ? info.count.toLocaleString() : '';
+          }
+          tickElapsed();
+        };
+      })();
+
+      // ---- Digital cursor ---------------------------------------------------
+      // Mirrors the Interactor's virtual pointer. Targets arrive as coalesced
+      // main-process pushes (__cursorTo); a rAF loop chases them with
+      // time-corrected exponential smoothing so on-screen motion is per-pixel
+      // smooth regardless of push cadence. Display only: no mouse listeners
+      // exist on this page, so the user's real cursor can never feed into it.
+      (function () {
+        var el = document.getElementById('dcursor');
+        var HOT_X = 5, HOT_Y = 5; // arrow-tip hotspot within the 32px canvas
+        var tx = 0, ty = 0;   // latest reported (target) position
+        var cx = 0, cy = 0;   // displayed (interpolated) position
+        var down = false;
+        var placed = false;   // first fix snaps instead of gliding in from (0,0)
+        var raf = null;
+        var last = 0;
+
+        function render() {
+          el.style.transform =
+            'translate3d(' + (cx - HOT_X) + 'px,' + (cy - HOT_Y) + 'px,0)' +
+            (down ? ' scale(0.88)' : '');
+        }
+        function tick(now) {
+          raf = null;
+          var dt = Math.min(64, now - last);
+          last = now;
+          // ~45 ms time constant: fast enough to track a flick, slow enough
+          // that 15–30 ms input steps melt into one continuous glide.
+          var k = 1 - Math.exp(-dt / 45);
+          cx += (tx - cx) * k;
+          cy += (ty - cy) * k;
+          if (Math.abs(tx - cx) < 0.25 && Math.abs(ty - cy) < 0.25) {
+            cx = tx;
+            cy = ty;
+            render();
+            return; // settled — loop resumes on the next push
+          }
+          render();
+          raf = requestAnimationFrame(tick);
+        }
+        function kick() {
+          if (raf === null) {
+            last = performance.now();
+            raf = requestAnimationFrame(tick);
+          }
+        }
+
+        /** New simulated position (viewport px, same space as the tab). */
+        window.__cursorTo = function (x, y) {
+          tx = x;
+          ty = y;
+          if (!placed) {
+            placed = true;
+            cx = x;
+            cy = y;
+            el.classList.add('on');
+            render();
+            return;
+          }
+          kick();
+        };
+        /** Simulated left button state (press feedback: slight tip-pivot dip). */
+        window.__cursorBtn = function (isDown) {
+          down = !!isDown;
+          render();
+        };
+        /** Forget the position between runs so the next run snaps, not glides. */
+        window.__cursorReset = function () {
+          placed = false;
+          down = false;
+          el.classList.remove('on');
+          if (raf !== null) {
+            cancelAnimationFrame(raf);
+            raf = null;
+          }
+        };
+      })();
     </script>
   </body>
 </html>

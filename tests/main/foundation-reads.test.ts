@@ -107,6 +107,8 @@ describe('shapeQueueList', () => {
         username: 'bravo',
         ratio: 0.8,
         isPrivate: true,
+        mutuals: null,
+        score: null,
         followedAt: 100,
         holdUntil: 200,
         unfollowDueAt: 300,
@@ -144,5 +146,50 @@ describe('shapeQueueList', () => {
     const { rows, truncated } = shapeQueueList(store, 'queued');
     expect(rows).toHaveLength(QUEUE_ROW_CAP);
     expect(truncated).toBe(false);
+  });
+
+  test('queued rows are ordered best-score first, matching the follow order', () => {
+    const records = [
+      record('low', { score: 0.3 }),
+      record('top', { score: 2.4 }),
+      record('mid', { score: 1.1 }),
+      record('none'), // scoreless (non-Scanner record) sorts last
+    ];
+    const store: QueueReadStore = {
+      followRecordsByState: () => records,
+      getAccount: (pk) => account(pk),
+    };
+    const { rows } = shapeQueueList(store, 'queued');
+    expect(rows.map((r) => r.pk)).toEqual(['top', 'mid', 'low', 'none']);
+    expect(rows[0].score).toBe(2.4);
+  });
+
+  test('ordering happens BEFORE the cap: the page is the true top-N', () => {
+    // Best record inserted LAST — a slice-then-sort would drop it.
+    const records = [
+      record('c', { score: 0.5 }),
+      record('b', { score: 1.0 }),
+      record('a', { score: 9.9 }),
+    ];
+    const store: QueueReadStore = {
+      followRecordsByState: () => records,
+      getAccount: (pk) => account(pk),
+    };
+    const { rows, truncated } = shapeQueueList(store, 'queued', 2);
+    expect(truncated).toBe(true);
+    expect(rows.map((r) => r.pk)).toEqual(['a', 'b']);
+  });
+
+  test('lifecycle stages order by their governing timestamp (nearest deadline first)', () => {
+    const records = [
+      record('late', { state: 'followed_back', holdUntil: 900 }),
+      record('soon', { state: 'followed_back', holdUntil: 100 }),
+    ];
+    const store: QueueReadStore = {
+      followRecordsByState: () => records,
+      getAccount: (pk) => account(pk),
+    };
+    const { rows } = shapeQueueList(store, 'followed_back');
+    expect(rows.map((r) => r.pk)).toEqual(['soon', 'late']);
   });
 });
