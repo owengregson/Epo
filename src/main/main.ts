@@ -10,9 +10,10 @@
  * pane is live.
  */
 
-import { app, BaseWindow, WebContentsView, powerSaveBlocker } from 'electron';
+import { app, BaseWindow, WebContentsView, nativeImage, powerSaveBlocker } from 'electron';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { InstagramTab } from '@/adapter/tab';
+import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
 import { OverlayVeil } from '@/main/overlay/veil-view';
 import { Foundation } from '@/main/foundation-wiring';
 import { ConnectivityMonitor } from '@/main/connectivity';
@@ -81,7 +82,7 @@ function createWindow(): void {
   const tab = new InstagramTab();
   instagramTab = tab;
   tab.attach(win);
-  void tab.goto('https://www.instagram.com/');
+  void tab.goto(IG_HOME_URL);
 
   // --- Activity veil (stacked above the tab) ------------------------------
   const veil = new OverlayVeil();
@@ -179,7 +180,23 @@ function createWindow(): void {
   logger.info('Epo window ready');
 }
 
+/**
+ * Unpackaged runs (`npm run dev` / `npm start`) have no .app bundle for macOS
+ * to read an icon from, so the Dock shows Electron's stock icon. Set it
+ * explicitly from the source asset. Packaged builds skip this — the bundle's
+ * `icon.icns` (electron-builder, from `build/`) is authoritative there.
+ */
+function setDevDockIcon(): void {
+  if (process.platform !== 'darwin' || app.isPackaged) return;
+  // Bundled main lives at dist/main/main.js; the icon stays in build/.
+  const iconPath = path.resolve(__dirname, '../../build/icon.png');
+  if (!fs.existsSync(iconPath)) return;
+  const icon = nativeImage.createFromPath(iconPath);
+  if (!icon.isEmpty()) app.dock?.setIcon(icon);
+}
+
 app.whenReady().then(() => {
+  setDevDockIcon();
   // macOS App Nap throttles the MAIN process's timers when the app is hidden —
   // the motion profile's step pacing and the engine's action-delay deadlines
   // all run on main-process timers, so an unattended run must never nap. Held

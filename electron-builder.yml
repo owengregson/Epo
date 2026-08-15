@@ -1,6 +1,7 @@
 # electron-builder configuration for `npm run dist` (standalone packaging).
-# The 1024x1024 app icon lives at build/icon.png; electron-builder derives
-# the platform formats (.icns/.ico) from it via directories.buildResources.
+# The app icon lives in build/: icon.icns (pre-built via iconutil from the
+# 1024x1024 icon.png — regenerate both when icon.svg changes) is used for mac;
+# .ico for win is derived from icon.png via directories.buildResources.
 appId: com.owengregson.epo
 productName: Epo
 

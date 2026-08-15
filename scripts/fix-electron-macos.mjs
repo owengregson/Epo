@@ -12,7 +12,7 @@
  * except when the binary is missing AND cannot be reinstalled.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { copyFileSync, existsSync } from 'node:fs';
 
 if (process.platform !== 'darwin') {
   process.exit(0);
@@ -53,7 +53,26 @@ try {
   console.warn('[fix-electron-macos] xattr clear failed (continuing):', e.message);
 }
 
-// 3. Ad-hoc deep-sign so the runtime + nested helpers/frameworks are trusted locally.
+// 3. Brand the dev bundle: unpackaged runs surface the bundle's Info.plist name
+//    and icns in the Dock, so patch them to Epo's. Must happen BEFORE the
+//    codesign step below — editing the bundle afterward would invalidate the
+//    fresh signature. Idempotent: plutil rewrites the same values every run.
+const PLIST = `${APP}/Contents/Info.plist`;
+const ICNS = 'build/icon.icns';
+try {
+  run('plutil', ['-replace', 'CFBundleName', '-string', 'Epo', PLIST]);
+  run('plutil', ['-replace', 'CFBundleDisplayName', '-string', 'Epo', PLIST]);
+  if (existsSync(ICNS)) {
+    copyFileSync(ICNS, `${APP}/Contents/Resources/electron.icns`);
+  }
+  // Bump the bundle's mtime so LaunchServices/Dock drop their cached icon.
+  run('touch', [APP]);
+  console.log('[fix-electron-macos] dev bundle branded as Epo (name + icon).');
+} catch (e) {
+  console.warn('[fix-electron-macos] dev branding failed (continuing):', e.message);
+}
+
+// 4. Ad-hoc deep-sign so the runtime + nested helpers/frameworks are trusted locally.
 try {
   run('codesign', ['--force', '--deep', '--sign', '-', APP]);
   console.log('[fix-electron-macos] Electron.app de-quarantined and ad-hoc signed.');
