@@ -8,7 +8,7 @@ import { Stat } from '@/renderer/ui/Stat';
 import { useChainList } from '@/renderer/hooks/useChainList';
 import { commas, monogram, pctInt, withAt } from '@/renderer/lib/format';
 
-/** Human label for a target's source. */
+/** Display label for a target's source. */
 function sourceLabel(source: ChainTargetView['source']): string {
   switch (source) {
     case 'seed':

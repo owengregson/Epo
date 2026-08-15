@@ -76,6 +76,14 @@ body {
   color: var(--silver);
   border-color: #45454e;
 }
+/* Controls that carry their own affordance (the card minimize chevron) get the hover
+   tooltip but NOT the "?" help badge. */
+.card-collapse {
+  cursor: pointer;
+}
+.card-collapse::after {
+  content: none;
+}
 .tip {
   position: fixed;
   left: 0;
@@ -93,12 +101,15 @@ body {
   font-weight: 500;
   pointer-events: none;
   opacity: 0;
-  transform: translateY(3px);
-  transition: opacity 0.16s ease, transform 0.16s var(--ease);
+  transform: translateY(6px) scale(0.96);
+  transform-origin: top center;
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .tip.show {
   opacity: 1;
-  transform: none;
+  transform: translateY(0) scale(1);
 }
 
 /* ---------- reduced motion ---------- */

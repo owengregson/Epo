@@ -6,13 +6,10 @@ import type { ViewKey } from '../hooks/useView';
 import { useSettingsDraft } from '../hooks/useSettingsDraft';
 import { Card, CardBody } from '../ui/Card';
 import { SeedSessionCard } from '../cards/settings/SeedSessionCard';
-import { StrategyCard } from '../cards/settings/StrategyCard';
-import { ProjectionCard } from '../cards/settings/ProjectionCard';
+import { BehaviorCard } from '../cards/settings/BehaviorCard';
 import { TargetingCard } from '../cards/settings/TargetingCard';
-import { LifecycleCard } from '../cards/settings/LifecycleCard';
-import { SafetyCard } from '../cards/settings/SafetyCard';
-import { CadenceCard } from '../cards/settings/CadenceCard';
-import { DryRunCard } from '../cards/settings/DryRunCard';
+import { AdvancedCard } from '../cards/settings/AdvancedCard';
+import { ProjectionCard } from '../cards/settings/ProjectionCard';
 import { DataCard } from '../cards/settings/DataCard';
 
 export interface SettingsViewProps {
@@ -25,9 +22,11 @@ export interface SettingsViewProps {
 }
 
 /**
- * Settings view — Seed·Session, Strategy, Projected Growth, Targeting, Lifecycle,
- * Safety, Cadence, Dry-run, Data & Session. Every knob binds to the real Settings object through
- * the draft hook, which autosaves (debounced) via `settings:update`.
+ * Settings view — Seed·session (always open), then collapsible Behavior, Targeting,
+ * Advanced, Projected growth, and Data·session sections (all minimized by default). Every
+ * knob binds to the real Settings object through the draft hook, which autosaves
+ * (debounced) via `settings:update`; the qualitative Behavior knobs derive the numeric
+ * pacing config in one edit.
  */
 export function SettingsView({ settings, onSaved, confirm, goTo, seedPrompt }: SettingsViewProps): h.JSX.Element {
   const s = useSettingsDraft(settings, onSaved);
@@ -56,14 +55,11 @@ export function SettingsView({ settings, onSaved, confirm, goTo, seedPrompt }: S
   return (
     <Fragment>
       <SeedSessionCard draft={s.draft} patch={s.patch} confirm={confirm} goTo={goTo} requiredPrompt={seedPrompt} />
-      <StrategyCard preset={s.preset} setPreset={s.setPreset} />
-      <ProjectionCard draft={s.draft} />
-      <TargetingCard draft={s.draft} patch={s.patch} set={s.set} />
-      <LifecycleCard draft={s.draft} set={s.set} />
-      <SafetyCard draft={s.draft} locked={s.locked} setRate={s.setRate} patch={s.patch} set={s.set} />
-      <CadenceCard draft={s.draft} set={s.set} />
-      <DryRunCard draft={s.draft} set={s.set} />
-      <DataCard confirm={confirm} onResetSettings={onResetSettings} onClearData={onClearData} />
+      <BehaviorCard draft={s.draft} patch={s.patch} set={s.set} index={1} />
+      <TargetingCard draft={s.draft} patch={s.patch} set={s.set} index={2} />
+      <AdvancedCard draft={s.draft} set={s.set} index={3} />
+      <ProjectionCard draft={s.draft} index={4} />
+      <DataCard confirm={confirm} onResetSettings={onResetSettings} onClearData={onClearData} index={5} />
     </Fragment>
   );
 }

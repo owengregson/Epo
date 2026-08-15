@@ -82,7 +82,7 @@ export interface ReadFollowersResult {
    * (R3) or before login returns `ok: false` with a `reason` and `observed: 0`.
    */
   ok?: boolean;
-  /** Human-readable reason when `ok` is false (e.g. `engine-running`). */
+  /** Readable reason when `ok` is false (e.g. `engine-running`). */
   reason?: string;
 }
 
@@ -90,7 +90,7 @@ export interface ReadFollowersResult {
 export interface ActionResult {
   ok: boolean;
   username: string;
-  /** Human-readable failure reason when `ok` is false. */
+  /** Readable failure reason when `ok` is false. */
   reason?: string;
 }
 
@@ -103,6 +103,13 @@ export interface ActionResult {
 export interface EpoStatus extends EngineStatus {
   /** True once the persisted IG session has a `ds_user_id` cookie. */
   loggedIn: boolean;
+  /**
+   * Set when a control command (start/resume) was REFUSED rather than applied
+   * (e.g. `prune-running` while a prune holds the tab). Without this the
+   * renderer's button just spun and reverted with zero feedback — a refusal is
+   * not an IPC rejection, so nothing ever surfaced. Absent on success.
+   */
+  refusal?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +137,10 @@ export interface QueueRow {
   username: string | null;
   ratio: number | null;
   isPrivate: boolean | null;
+  /** Mutual-follower count (shared audience), when known. */
+  mutuals?: number | null;
+  /** The Scorer's composite rank (higher = better); drives the queued order. */
+  score?: number | null;
   followedAt?: number;
   holdUntil?: number;
   unfollowDueAt?: number;
@@ -150,7 +161,9 @@ export interface NetGrowthPoint {
 /**
  * Result of a read-only prune scan (`prune:scan`). `ok: false` carries a typed
  * reason (e.g. `growth-running`, `prune-running`, `not-logged-in`) the UI
- * surfaces; the counts/candidates are then empty.
+ * surfaces; the counts/candidates are then empty. `candidates` is the RAW
+ * census (whitelist NOT applied) — the UI derives the visible/actionable list
+ * against the live whitelist so edits react without a re-scan.
  */
 export interface PruneScanResult {
   ok: boolean;
@@ -158,6 +171,9 @@ export interface PruneScanResult {
   following: number;
   followers: number;
   candidates: PruneCandidate[];
+  /** True when the user stopped the scan mid-walk: the census is PARTIAL — an
+   *  empty candidate set here must never read as "everyone follows back". */
+  aborted?: boolean;
 }
 
 /**
@@ -195,11 +211,13 @@ export type IpcInvokeChannel =
   | 'engine:pause'
   | 'engine:resume'
   | 'engine:stop'
+  | 'engine:restartFromSeed'
   | 'engine:status'
   | 'prune:scan'
   | 'prune:start'
   | 'prune:stop'
   | 'prune:status'
+  | 'prune:candidates'
   | 'chain:list'
   | 'growth:series'
   | 'seed:check'
@@ -230,13 +248,13 @@ export interface EpoBridge {
   login(): Promise<EpoStatus>;
   /** Read a target account's followers into the knowledge graph. */
   readFollowers(target: string): Promise<ReadFollowersResult>;
-  /** Follow a single account by username via a human-like DOM click. */
+  /** Follow a single account by username via a DOM click. */
   followOne(username: string): Promise<ActionResult>;
-  /** Unfollow a single account by username via a human-like DOM click. */
+  /** Unfollow a single account by username via a DOM click. */
   unfollowOne(username: string): Promise<ActionResult>;
   /** Fetch a status snapshot for the control shell. */
   status(): Promise<EpoStatus>;
-  /** Start the automated engine loop (builds the graph if needed). */
+  /** Start the engine loop (builds the graph if needed). */
   startEngine(): Promise<EpoStatus>;
   /** Pause the engine between actions. */
   pauseEngine(): Promise<EpoStatus>;
@@ -244,10 +262,14 @@ export interface EpoBridge {
   resumeEngine(): Promise<EpoStatus>;
   /** Stop the engine loop (aborts in-flight sleeps). */
   stopEngine(): Promise<EpoStatus>;
+  /** Scrap the current chain and restart from `seed` (persists the seed first). */
+  restartFromSeed(seed: string): Promise<EpoStatus>;
   /** Fetch the engine status snapshot (same projection as {@link status}). */
   engineStatus(): Promise<EpoStatus>;
-  /** READ-ONLY auto-prune scan: following − followers − whitelist (no unfollows). */
+  /** READ-ONLY auto-prune scan: the raw following − followers census (no unfollows). */
   scanPrune(): Promise<PruneScanResult>;
+  /** The persisted scan's not-yet-visited candidates (raw census) — restores the list on launch. */
+  pruneCandidates(): Promise<PruneCandidate[]>;
   /** Start one auto-prune run (mutually exclusive with the growth engine). */
   startPrune(): Promise<PruneControlResult>;
   /** Stop an active prune scan/run between actions. */

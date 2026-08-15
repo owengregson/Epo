@@ -51,6 +51,6 @@ await build({
 });
 
 if (existsSync('src/renderer/index.html')) cpSync('src/renderer/index.html', 'dist/renderer/index.html');
-// Static overlay page (the automation veil) served by the main process.
+// Static overlay page (the activity veil) served by the main process.
 if (existsSync('src/main/overlay')) cpSync('src/main/overlay', 'dist/main/overlay', { recursive: true });
 console.log('Build complete.');

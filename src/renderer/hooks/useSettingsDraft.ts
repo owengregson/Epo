@@ -46,13 +46,33 @@ export function useSettingsDraft(
   const timer = useRef<number | undefined>();
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
+  /** Freshest draft (the debounced save reads it at fire time, not capture time). */
+  const draftRef = useRef<Settings | null>(draft);
+  draftRef.current = draft;
+  /**
+   * Keys the USER edited since the last save — the debounced autosave sends
+   * ONLY these. Saving the whole draft used to silently revert every setting
+   * written outside this view (the Prune view's partials, backend-owned
+   * `pruneLastRunAt`/`sweepLastRunAt`) to whatever this view last saw.
+   */
+  const dirty = useRef(new Set<keyof Settings>());
 
-  // Adopt async-loaded settings the first time they arrive.
+  // Adopt externally-changed settings: first arrival wholesale; afterwards,
+  // merge external values for every key the user is NOT currently editing —
+  // so a prune-view save (or a backend write) can never be clobbered here.
   useEffect(() => {
-    if (draft === null && initial !== null) {
-      setDraft(initial);
-      setPreset(detectPreset(initial));
-    }
+    if (initial === null) return;
+    setDraft((prev) => {
+      if (prev === null) {
+        setPreset(detectPreset(initial));
+        return initial;
+      }
+      const merged: Settings = { ...initial };
+      for (const k of dirty.current) {
+        (merged as unknown as Record<string, unknown>)[k] = prev[k];
+      }
+      return merged;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial]);
 
@@ -63,12 +83,20 @@ export function useSettingsDraft(
     [],
   );
 
-  const scheduleSave = useCallback((next: Settings) => {
+  const scheduleSave = useCallback(() => {
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
+      const current = draftRef.current;
+      if (current === null || dirty.current.size === 0) return;
+      // Send ONLY the edited keys; the backend merges over its own canon.
+      const partial: Partial<Settings> = {};
+      for (const k of dirty.current) {
+        (partial as unknown as Record<string, unknown>)[k] = current[k];
+      }
+      dirty.current = new Set();
       setSaving(true);
       window.epo
-        .updateSettings(next)
+        .updateSettings(partial)
         .then((saved) => onSavedRef.current(saved))
         .catch(() => {
           /* foundation logs; the draft keeps the user's values */
@@ -81,8 +109,9 @@ export function useSettingsDraft(
     (part: Partial<Settings>) => {
       setDraft((prev) => {
         if (!prev) return prev;
+        for (const k of Object.keys(part) as Array<keyof Settings>) dirty.current.add(k);
         const next = { ...prev, ...part };
-        scheduleSave(next);
+        scheduleSave();
         return next;
       });
     },
@@ -122,6 +151,7 @@ export function useSettingsDraft(
 
   const replace = useCallback((next: Settings) => {
     if (timer.current) window.clearTimeout(timer.current);
+    dirty.current = new Set(); // pending edits are superseded — nothing to save
     setDraft(next);
     setPreset(detectPreset(next));
   }, []);

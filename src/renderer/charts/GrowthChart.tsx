@@ -32,14 +32,23 @@ export function GrowthChart({ points }: GrowthChartProps): h.JSX.Element {
   const clipRef = useRef<SVGRectElement>(null);
 
   const hasData = points.length >= 2 && points.some((p) => p.cumulativeNet !== 0);
+  // Domain covers LOSSES too: a churn-heavy day genuinely produces a negative
+  // cumulative net, and a gain-only [0, vmax] scale used to fling the line far
+  // below the viewBox (the chart just disappeared).
   const vmax = Math.max(1, ...points.map((p) => p.cumulativeNet));
+  const vmin = Math.min(0, ...points.map((p) => p.cumulativeNet));
+  const span = vmax - vmin;
+  const yOf = (v: number): number => Y0 - (Y0 - Y1) * ((v - vmin) / span);
+  const yZero = yOf(0);
   const coords: [number, number][] = points.map((p, i) => [
     X0 + (X1 - X0) * (points.length > 1 ? i / (points.length - 1) : 0),
-    Y0 - (Y0 - Y1) * (p.cumulativeNet / vmax),
+    yOf(p.cumulativeNet),
   ]);
   const lineD = hasData ? smoothPath(coords) : '';
-  const areaD = hasData ? `${lineD}L${X1},${Y0} L${X0},${Y0} Z` : '';
-  const endPt: [number, number] = coords.length ? coords[coords.length - 1] : [X1, Y0];
+  // The area fills between the line and the ZERO baseline (not the frame floor).
+  const areaD = hasData ? `${lineD}L${X1},${yZero} L${X0},${yZero} Z` : '';
+  const endPt: [number, number] = coords.length ? coords[coords.length - 1] : [X1, yZero];
+  const signed = (v: number): string => (v > 0 ? `+${Math.round(v)}` : String(Math.round(v)));
 
   useEffect(() => {
     if (!hasData) return;
@@ -103,14 +112,17 @@ export function GrowthChart({ points }: GrowthChartProps): h.JSX.Element {
         <line class="growth-grid dash" x1="8" y1="12" x2="362" y2="12" />
         <line class="growth-grid dash" x1="8" y1="58" x2="362" y2="58" />
         <line class="growth-grid" x1="8" y1="104" x2="362" y2="104" />
+        {vmin < 0 ? (
+          <line class="growth-grid" x1="8" y1={yZero} x2="362" y2={yZero} />
+        ) : null}
         <text class="growth-ylab" x="370" y="15">
-          +{Math.round(vmax)}
+          {signed(vmax)}
         </text>
         <text class="growth-ylab" x="370" y="61">
-          +{Math.round(vmax / 2)}
+          {signed((vmax + vmin) / 2)}
         </text>
         <text class="growth-ylab" x="370" y="107">
-          0
+          {signed(vmin)}
         </text>
         {hasData ? (
           <Fragment>

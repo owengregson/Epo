@@ -19,6 +19,13 @@ export const EASE = 'cubic-bezier(0.22, 0.9, 0.28, 1)';
 /** View-transition timings (ms) — must match the `.view` keyframes in layout.css. */
 export const VIEW_EXIT_MS = 165;
 export const VIEW_ENTER_MS = 340;
+/**
+ * How long the `.entering` class is held after a view swap. Longer than the crossfade
+ * (VIEW_ENTER_MS) so the STAGGERED card entrance (capped at index 8: 8·65 + 60 + 450 ≈
+ * 1030 ms) fully completes before the class is cleared — otherwise late cards snap to full
+ * opacity mid-animation.
+ */
+export const VIEW_ENTER_HOLD_MS = 1100;
 
 /** Growth-chart reveal timings (ms) — match the mockup's draw-in. */
 export const GROWTH_REVEAL_DELAY_MS = 300;

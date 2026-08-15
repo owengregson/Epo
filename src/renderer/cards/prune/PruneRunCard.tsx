@@ -27,7 +27,7 @@ function sentinelLabel(s: PruneSentinel): string {
   }
 }
 
-/** Human state label + badge tone for the prune state chip. */
+/** Readable state label + badge tone for the prune state chip. */
 function stateChip(state: PruneStatus['state'] | undefined): { label: string; tone: BadgeTone } {
   switch (state) {
     case 'scanning':
@@ -93,7 +93,11 @@ export function PruneRunCard({
   const total = prune !== null && prune.candidates > 0 ? prune.candidates : candidates;
   const unfollowed = prune?.unfollowed ?? 0;
   const remaining = prune?.remaining ?? 0;
-  const pct = total > 0 ? (unfollowed / total) * 100 : 0;
+  // Progress = candidates VISITED, not verified unfollows: dry-run, failed and
+  // skipped candidates all advance the run (a dry-run used to sit at 0% for an
+  // entire run while the footer counted down, looking hung).
+  const visited = Math.max(0, total - remaining);
+  const pct = total > 0 ? (visited / total) * 100 : 0;
 
   const dailyDone = prune?.dailyDone ?? 0;
   const dailyLimit = prune?.dailyLimit ?? 0;
@@ -163,7 +167,7 @@ export function PruneRunCard({
           </Button>
         )}
         <div class="hint" hidden={!readyToRun || active}>
-          Unfollows run one at a time with humanized delays; the daily limit and whitelist always apply.
+          Unfollows run one at a time with paced delays; the daily limit and whitelist always apply.
         </div>
         <div class="hint" hidden={readyToRun || active}>
           Run a scan first — it unlocks pruning and shows exactly who a run would drop.
@@ -185,7 +189,7 @@ export function PruneRunCard({
           >
             <Stepper
               min={5}
-              max={200}
+              max={500}
               step={5}
               value={settings.pruneDailyLimit}
               onChange={(v) => onSave({ pruneDailyLimit: v })}

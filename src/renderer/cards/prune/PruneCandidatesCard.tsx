@@ -1,6 +1,6 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { PruneScanResult } from '@/types';
+import type { PruneCandidate } from '@/types';
 import { Card, CardHeader } from '@/renderer/ui/Card';
 import { commas, monogram, withAt } from '@/renderer/lib/format';
 
@@ -21,26 +21,28 @@ function CandidateNote({ text }: { text: string }): h.JSX.Element {
 }
 
 export interface PruneCandidatesCardProps {
-  /** This session's scan result; null until a scan has completed. */
-  scan: PruneScanResult | null;
+  /** True once a scan has completed this session (an empty list then means "all reciprocal"). */
+  scanned: boolean;
+  /** The VISIBLE candidate list — already derived against the live whitelist by the view. */
+  candidates: PruneCandidate[];
   /** True while a scan is in flight (shows the loading note). */
   scanning: boolean;
 }
 
 /**
  * Prune · Candidates — the accounts a run would unfollow, from this session's
- * read-only scan. Rendered rows are capped at {@link MAX_ROWS} with a
- * truncation note; whitelisted accounts are already excluded by the scan.
+ * read-only scan, filtered against the LIVE whitelist (an edit hides/restores
+ * rows instantly, no re-scan). Rendered rows are capped at {@link MAX_ROWS}
+ * with a truncation note.
  */
-export function PruneCandidatesCard({ scan, scanning }: PruneCandidatesCardProps): h.JSX.Element {
-  const candidates = scan?.candidates ?? [];
+export function PruneCandidatesCard({ scanned, candidates, scanning }: PruneCandidatesCardProps): h.JSX.Element {
   const shown = candidates.slice(0, MAX_ROWS);
 
   return (
     <Card index={2}>
       <CardHeader
         icon="users-slash"
-        aux={scan !== null ? `${commas(candidates.length)} to prune` : undefined}
+        aux={scanned ? `${commas(candidates.length)} to prune` : undefined}
       >
         Prune · Candidates
       </CardHeader>
@@ -48,7 +50,7 @@ export function PruneCandidatesCard({ scan, scanning }: PruneCandidatesCardProps
         <div class="qlist prune-list">
           {scanning ? (
             <CandidateNote text="Scanning…" />
-          ) : scan === null ? (
+          ) : !scanned ? (
             <CandidateNote text="Run a scan to list accounts that don’t follow you back." />
           ) : candidates.length === 0 ? (
             <CandidateNote text="Everyone you follow follows you back." />

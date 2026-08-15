@@ -1,7 +1,8 @@
 /** @jsx h */
 import { h, Fragment } from 'preact';
-import { useCallback, useState } from 'preact/hooks';
-import type { EpoStatus, PruneScanResult, Settings } from '@/types';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import type { EpoStatus, PruneCandidate, PruneScanResult, Settings } from '@/types';
+import { filterPruneCandidates } from '@/engine/prune-whitelist';
 import type { ConfirmOptions } from '../hooks/useConfirm';
 import type { ToastKind } from '../hooks/useToasts';
 import { usePruneStatus } from '../hooks/usePruneStatus';
@@ -13,7 +14,7 @@ import { PruneCandidatesCard } from '../cards/prune/PruneCandidatesCard';
 import { PruneWhitelistCard } from '../cards/prune/PruneWhitelistCard';
 import { PruneScheduleCard } from '../cards/prune/PruneScheduleCard';
 
-/** Human message for a typed prune refusal (`ok: false` from scan/start). */
+/** Readable message for a typed prune refusal (`ok: false` from scan/start). */
 function refusalMessage(reason: string | undefined): string {
   switch (reason) {
     case 'growth-running':
@@ -60,9 +61,48 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
   const growthRunning = status?.state === 'running';
 
   // 2-step gate: Run is locked until a fresh, complete scan is ready. The backend
-  // `scanReady` flag is authoritative (it expires and clears when consumed or when
-  // the whitelist changes); the session scan only bridges the first paint.
+  // `scanReady` flag is authoritative (it expires and clears when consumed); the
+  // session scan only bridges the first paint. Whitelist edits do NOT lock Run —
+  // the candidate set re-derives live instead.
   const readyToRun = prune !== null ? prune.scanReady : scan !== null;
+
+  // RESTORED candidates (docs/PRINCIPLES.md §2 — the UI mirrors the graph):
+  // on launch, a persisted scan's not-yet-visited census populates the list
+  // immediately instead of sitting empty until a fresh scan. A session scan
+  // supersedes it; re-pulled whenever the backend reports a ready scan while
+  // no session scan exists (e.g. a scheduled scan completed).
+  const [restored, setRestored] = useState<PruneCandidate[] | null>(null);
+  const remainingCount = prune?.remaining ?? 0;
+  useEffect(() => {
+    // The saved census populates the list whenever unvisited rows exist —
+    // even when it has EXPIRED for running (Run stays gated on `scanReady`;
+    // the list itself must never blank out just because time passed).
+    if (scan !== null || remainingCount === 0) return;
+    let alive = true;
+    window.epo
+      .pruneCandidates()
+      .then((rows) => {
+        if (alive) setRestored(rows);
+      })
+      .catch(() => {
+        /* foundation logs; the empty state stands */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [scan, remainingCount]);
+
+  // The scan census is RAW (whitelist not applied); derive the visible and
+  // runnable list against the LIVE whitelist so an edit reacts instantly —
+  // adding a user hides their row, removing them brings it back.
+  const rawCandidates = scan?.candidates ?? (remainingCount > 0 ? restored : null);
+  const visibleCandidates = useMemo(
+    () =>
+      rawCandidates === null
+        ? null
+        : filterPruneCandidates(rawCandidates, settings?.pruneWhitelist ?? []),
+    [rawCandidates, settings?.pruneWhitelist],
+  );
 
   /** Persist a prune-settings partial and relay the saved object to the shell. */
   const save = useCallback(
@@ -86,6 +126,12 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
           toast('error', refusalMessage(res.reason));
           return;
         }
+        if (res.aborted === true) {
+          // A stopped scan is a PARTIAL census — presenting its empty candidate
+          // list would read as "everyone you follow follows you back".
+          toast('info', 'Scan stopped — the census is incomplete.');
+          return;
+        }
         setScan(res);
       })
       .catch((e: unknown) =>
@@ -94,7 +140,7 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
       .finally(() => setScanning(false));
   }, [toast]);
 
-  const knownCandidates = scan !== null ? scan.candidates.length : (prune?.candidates ?? 0);
+  const knownCandidates = visibleCandidates !== null ? visibleCandidates.length : (prune?.candidates ?? 0);
 
   const onRun = useCallback(async (): Promise<void> => {
     const n = knownCandidates;
@@ -115,6 +161,11 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
     try {
       const res = await window.epo.startPrune();
       if (!res.ok) toast('error', refusalMessage(res.reason));
+      // The run consumes the reviewed census — the session's scan snapshot is
+      // stale from this moment (it used to keep listing accounts already
+      // unfollowed, and the next Run dialog quoted a count that no longer
+      // existed). The live prune status stream carries the truth from here.
+      else setScan(null);
     } catch (e) {
       toast('error', `Prune failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -159,7 +210,11 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
         settings={settings}
         onSave={save}
       />
-      <PruneCandidatesCard scan={scan} scanning={scanning} />
+      <PruneCandidatesCard
+        scanned={visibleCandidates !== null}
+        candidates={visibleCandidates ?? []}
+        scanning={scanning}
+      />
       {settings !== null ? (
         <Fragment>
           <PruneWhitelistCard whitelist={settings.pruneWhitelist} onSave={save} />

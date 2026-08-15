@@ -2,7 +2,7 @@
 import { h, Fragment } from 'preact';
 import { useRef } from 'preact/hooks';
 import type { Settings } from '@/types';
-import { Card, CardHeader } from '@/renderer/ui/Card';
+import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
 import { Field } from '@/renderer/ui/Field';
 import { DualRange } from '@/renderer/ui/DualRange';
 import { Stepper } from '@/renderer/ui/Stepper';
@@ -15,6 +15,7 @@ export interface TargetingCardProps {
   draft: Settings;
   patch: SettingsDraftController['patch'];
   set: SettingsDraftController['set'];
+  index?: number;
 }
 
 /** Absolute limits for the hard-bound steppers (mockup range). */
@@ -31,7 +32,7 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.m
  * Targeting — ratio band (dual range with peak plateau overlay), peak/hard-bound
  * steppers, follower range, and the private-account boost.
  */
-export function TargetingCard({ draft: d, patch, set }: TargetingCardProps): h.JSX.Element {
+export function TargetingCard({ draft: d, patch, set, index }: TargetingCardProps): h.JSX.Element {
   // The peak plateau keeps its PROPORTIONAL position inside the band (mockup:
   // peakFracLo/peakFracHi). Anchored once from the draft; band drags re-fit the
   // peak from these fractions, manual stepper edits re-anchor them.
@@ -76,9 +77,7 @@ export function TargetingCard({ draft: d, patch, set }: TargetingCardProps): h.J
   };
 
   return (
-    <Card index={3}>
-      <CardHeader icon="bullseye">Targeting</CardHeader>
-
+    <CollapsibleCard icon="bullseye" title="Targeting" index={index} defaultCollapsed>
       <Field
         label={
           <Fragment>
@@ -233,6 +232,45 @@ export function TargetingCard({ draft: d, patch, set }: TargetingCardProps): h.J
           ariaLabel="Private account boost"
         />
       </Field>
-    </Card>
+
+      <Field
+        label={
+          <Fragment>
+            Min follow-back rate <span class="dim2">· chain-hop threshold</span>
+          </Fragment>
+        }
+        tip="A chain target must convert at least this fraction of follows into follow-backs. Below it, the chain hops onward. Raise for quality; lower to keep chains alive longer."
+        value={d.minFollowBackRate.toFixed(2)}
+      >
+        <Slider
+          min={0}
+          max={1}
+          step={0.05}
+          value={d.minFollowBackRate}
+          onInput={(v) => set('minFollowBackRate', v)}
+          ariaLabel="Minimum follow-back rate"
+        />
+      </Field>
+
+      <Field
+        label={
+          <Fragment>
+            Min pool size <span class="dim2">· chain-hop threshold</span>
+          </Fragment>
+        }
+        tip="Minimum follower pool a chain target needs to be worth mining. Small pools exhaust quickly and force frequent, riskier hops."
+        value={commas(d.minPoolSize)}
+        hint="Targets below either threshold are skipped and the chain hops forward."
+      >
+        <Slider
+          min={0}
+          max={5000}
+          step={50}
+          value={d.minPoolSize}
+          onInput={(v) => set('minPoolSize', v)}
+          ariaLabel="Minimum pool size"
+        />
+      </Field>
+    </CollapsibleCard>
   );
 }

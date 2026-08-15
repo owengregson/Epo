@@ -1,7 +1,7 @@
 /** @jsx h */
 import { h, Fragment } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import type { EpoStatus, QueueRow, Settings } from '@/types';
+import type { EpoStatus, Settings } from '@/types';
 import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { Icon } from '@/renderer/ui/Icon';
 import { Meter } from '@/renderer/ui/Meter';
@@ -15,11 +15,11 @@ import { durationHm, mmss, ratio, withAt } from '@/renderer/lib/format';
 type Step = NonNullable<EpoStatus['lastStep']>;
 type Sentinel = NonNullable<EpoStatus['lastSentinel']>;
 
-/** Human phrase for what the engine's last step did. */
+/** Readable phrase for what the engine's last step did. */
 function stepLabel(step: Step): string {
   switch (step) {
     case 'acted':
-      return 'followed';
+      return 'acted';
     case 'swept-followback':
       return 'swept follow-backs';
     case 'advanced-chain':
@@ -53,14 +53,23 @@ function sentinelLabel(s: Sentinel): string {
   }
 }
 
-/** The most recently acted-on row (max `followedAt`) from the pending queue. */
-function mostRecentActed(rows: QueueRow[]): QueueRow | null {
-  let best: QueueRow | null = null;
-  for (const r of rows) {
-    if (r.followedAt == null) continue;
-    if (best === null || (best.followedAt ?? 0) < r.followedAt) best = r;
+/** Readable sentence for an engine halt reason (raw reason shown when unknown). */
+function haltText(reason: string): string {
+  if (reason.startsWith('sentinel:')) {
+    return `Halted — Instagram flagged the session (${reason.slice('sentinel:'.length)}). Resolve it in the tab, then start again.`;
   }
-  return best;
+  switch (reason) {
+    case 'actions-failing':
+      return 'Halted — every recent action failed to register. Something systemic (Instagram change, input pipeline) needs a look before restarting.';
+    case 'chain-exhausted':
+      return 'Halted — the target chain is exhausted. Restart from a new seed.';
+    case 'seed-missing':
+      return 'Halted — no seed account is configured.';
+    case 'seed-unresolved':
+      return 'Halted — the seed account could not be resolved.';
+    default:
+      return `Halted — ${reason}.`;
+  }
 }
 
 export interface LiveStatusCardProps {
@@ -76,7 +85,7 @@ export interface LiveStatusCardProps {
 export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX.Element {
   const cd = useCountdown(status);
   const queued = useQueue('queued', status);
-  const pendingQ = useQueue('pending_followback', status);
+  const unfollowQ = useQueue('unfollow_queued', status);
 
   const running = status?.state === 'running';
   const offline = status != null && !status.online;
@@ -91,7 +100,14 @@ export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX
     return () => window.clearInterval(id);
   }, [running]);
 
-  const next = queued.rows.length > 0 ? queued.rows[0] : null;
+  // What the engine will REALLY do next mirrors nextDue's precedence: reclaim
+  // slots first — any due unfollow fires before a new follow. The card used to
+  // read only the queued list and claim "follow @x" while an unfollow was due.
+  const nextUnfollow =
+    (status?.unfollowDue ?? 0) > 0 && unfollowQ.rows.length > 0 ? unfollowQ.rows[0] : null;
+  const nextFollow = queued.rows.length > 0 ? queued.rows[0] : null;
+  const next = nextUnfollow ?? nextFollow;
+  const nextVerb = nextUnfollow !== null ? 'unfollow' : 'follow';
 
   const done = status?.actionsToday ?? 0;
   const rate = settings?.dailyOperatingRate ?? null;
@@ -103,8 +119,13 @@ export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX
 
   const lastStep = status?.lastStep ?? null;
   const lastSentinel = status?.lastSentinel ?? null;
-  const lastActed = mostRecentActed(pendingQ.rows);
-  const lastActText = lastStep != null && lastActed?.username ? withAt(lastActed.username) : '—';
+  // The truthful last-action source is `lastActionAt` (the engine stamps it
+  // only when churn genuinely executed). The old handle-from-the-pending-queue
+  // display broke two ways: the page is oldest-first and capped, so past 100
+  // pending records it showed an account followed DAYS ago — and it rendered a
+  // handle beside non-action steps like "waited · ceiling".
+  const lastActionAt = status?.lastActionAt ?? null;
+  const lastActText = lastActionAt != null ? `${durationHm(Math.max(0, now - lastActionAt))} ago` : '—';
   const lastSub =
     lastStep == null
       ? '—'
@@ -137,6 +158,11 @@ export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX
           {offlineHold ? <span class="rchip">Reconnecting…</span> : null}
         </div>
         {offline && !offlineHold ? <div class="hint">Offline — no internet connection detected.</div> : null}
+        {status?.state === 'halted' && status.haltReason != null ? (
+          <div class="hint alarm" role="alert">
+            {haltText(status.haltReason)}
+          </div>
+        ) : null}
 
         {/* what fires next */}
         <div class="hero-what num">
@@ -145,7 +171,7 @@ export function LiveStatusCard({ status, settings }: LiveStatusCardProps): h.JSX
           <span class="hw-act">
             {next ? (
               <Fragment>
-                follow <b>{withAt(next.username)}</b>
+                {nextVerb} <b>{withAt(next.username)}</b>
               </Fragment>
             ) : (
               '—'

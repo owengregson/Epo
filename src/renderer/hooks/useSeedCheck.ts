@@ -8,7 +8,7 @@ export interface SeedCheckController {
   /** Update the field; debounces a real verification 1s after the last edit. */
   setValue(next: string): void;
   status: SeedStatus;
-  /** Human error/context message when invalid (or a private-account note). */
+  /** Readable error/context message when invalid (or a private-account note). */
   message?: string;
   /** True only for a verified, harvestable seed. */
   valid: boolean;
@@ -26,8 +26,6 @@ function reasonMessage(reason: string | undefined, name: string): string {
       return 'Log in to Instagram before verifying a seed.';
     case 'blocked':
       return 'Instagram is rate-limiting — try again shortly.';
-    case 'budget':
-      return 'Request budget exhausted — try again shortly.';
     default:
       return `Couldn’t verify @${name} — account not found, or its followers aren’t visible.`;
   }

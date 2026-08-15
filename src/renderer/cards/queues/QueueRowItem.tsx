@@ -41,9 +41,13 @@ function deriveContext(
   const followbackWindowMs = windows?.followbackMs ?? FOLLOWBACK_WINDOW_MS;
   const holdMs = windows?.holdMs ?? HOLD_MS;
   switch (stage) {
-    case 'queued':
-      // Ranked candidate, not yet followed — nothing time-based to show.
-      return { ctx: 'candidate', barFrac: null, brass: false };
+    case 'queued': {
+      // Ranked candidate, not yet followed — show WHY it ranks where it does:
+      // the mutual-follower count (the dominant score driver) when known.
+      const m = row.mutuals;
+      const ctx = m !== null && m !== undefined && m > 0 ? `candidate · ${m} mutuals` : 'candidate';
+      return { ctx, barFrac: null, brass: false };
+    }
 
     case 'awaiting': {
       if (row.followedAt === undefined) {

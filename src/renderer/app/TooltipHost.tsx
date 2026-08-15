@@ -68,8 +68,24 @@ export function TooltipHost(): h.JSX.Element {
     el.style.top = `${top}px`;
   }, [tip]);
 
+  // An initial position from the anchor rect, applied in the SAME render that adds
+  // `.show` — so the reveal animates from near its final spot instead of visibly
+  // snapping from (0,0). The effect above then refines it with the measured size.
+  const style = tip
+    ? {
+        left: `${Math.max(8, Math.min(tip.rect.left, window.innerWidth - 258))}px`,
+        top: `${tip.rect.top > 56 ? tip.rect.top - 44 : tip.rect.bottom + 8}px`,
+      }
+    : undefined;
+
   return (
-    <div class={tip ? 'tip show' : 'tip'} ref={ref} role="tooltip" aria-hidden={tip ? 'false' : 'true'}>
+    <div
+      class={tip ? 'tip show' : 'tip'}
+      ref={ref}
+      style={style}
+      role="tooltip"
+      aria-hidden={tip ? 'false' : 'true'}
+    >
       {tip?.text}
     </div>
   );

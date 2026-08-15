@@ -2,7 +2,8 @@
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import type { Settings } from '@/types';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
+import { CardBody } from '@/renderer/ui/Card';
+import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
 import { Slider } from '@/renderer/ui/Slider';
 import { ProjectionChart } from '@/renderer/charts/ProjectionChart';
 import { computeProjection } from '@/renderer/charts/growth-model';
@@ -11,6 +12,7 @@ import { pctInt } from '@/renderer/lib/format';
 
 export interface ProjectionCardProps {
   draft: Settings;
+  index?: number;
 }
 
 /**
@@ -18,7 +20,7 @@ export interface ProjectionCardProps {
  * the current draft settings. The audience-yield slider is view-local (it models
  * a hypothesis, not a persisted setting).
  */
-export function ProjectionCard({ draft }: ProjectionCardProps): h.JSX.Element {
+export function ProjectionCard({ draft, index }: ProjectionCardProps): h.JSX.Element {
   const [yieldSlider, setYieldSlider] = useState(() => sliderFromYieldMult(1));
   const mult = yieldMultFromSlider(yieldSlider);
 
@@ -33,10 +35,13 @@ export function ProjectionCard({ draft }: ProjectionCardProps): h.JSX.Element {
   });
 
   return (
-    <Card index={2}>
-      <CardHeader icon="arrow-trend-up" aux="next 30 days · if sustained">
-        Projected Growth
-      </CardHeader>
+    <CollapsibleCard
+      icon="arrow-trend-up"
+      title="Projected growth"
+      aux="next 30 days · if sustained"
+      index={index}
+      defaultCollapsed
+    >
       <CardBody>
         <ProjectionChart result={result} />
         <div class="growth-x num">
@@ -86,6 +91,6 @@ export function ProjectionCard({ draft }: ProjectionCardProps): h.JSX.Element {
           />
         </div>
       </CardBody>
-    </Card>
+    </CollapsibleCard>
   );
 }

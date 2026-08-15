@@ -37,7 +37,7 @@ export function PruneScheduleCard({ settings, onSave }: PruneScheduleCardProps):
         <div class="kv">
           <div class="k">
             <div>
-              <div data-tip="Re-run the prune automatically every N days. Off means prunes only happen when you press Run.">
+              <div data-tip="Re-run the prune on its own every N days. Off means prunes only happen when you press Run.">
                 Auto-prune schedule
               </div>
               <div class="hint">

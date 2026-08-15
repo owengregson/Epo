@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { prefersReducedMotion, VIEW_ENTER_MS } from '../lib/motion';
+import { prefersReducedMotion, VIEW_ENTER_HOLD_MS } from '../lib/motion';
 
 export type ViewKey = 'overview' | 'chain' | 'queues' | 'prune' | 'settings';
 
@@ -34,7 +34,10 @@ export function useView(initial: ViewKey = 'overview'): ViewController {
   // Clear the initial "entering" flag once the mount animation has played, so
   // returning to this view later re-triggers it.
   useEffect(() => {
-    const t = window.setTimeout(() => setEntering((e) => (e === initial ? null : e)), VIEW_ENTER_MS);
+    const t = window.setTimeout(
+      () => setEntering((e) => (e === initial ? null : e)),
+      VIEW_ENTER_HOLD_MS,
+    );
     return () => {
       window.clearTimeout(t);
       timers.current.forEach(window.clearTimeout);
@@ -67,7 +70,7 @@ export function useView(initial: ViewKey = 'overview'): ViewController {
           window.setTimeout(() => {
             setEntering((e) => (e === next ? null : e));
             setExiting((x) => (x === cur ? null : x));
-          }, VIEW_ENTER_MS),
+          }, VIEW_ENTER_HOLD_MS),
         );
         return next;
       });

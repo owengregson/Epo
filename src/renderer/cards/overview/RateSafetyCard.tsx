@@ -5,7 +5,7 @@ import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { Badge } from '@/renderer/ui/Badge';
 import { KeyValue } from '@/renderer/ui/KeyValue';
 import { Meter } from '@/renderer/ui/Meter';
-import { activeHoursText, budgetUsed, hoursOpen } from '@/renderer/lib/engine-view';
+import { activeHoursText, hoursOpen } from '@/renderer/lib/engine-view';
 
 export interface RateSafetyCardProps {
   status: EpoStatus | null;
@@ -13,15 +13,12 @@ export interface RateSafetyCardProps {
 }
 
 /**
- * Rate & Safety — today's operating-rate meter, the request-budget meter for
- * the current window (brass = spend it carefully), and the active-hours gate.
+ * Rate & Safety — today's operating-rate meter and the active-hours gate.
  */
 export function RateSafetyCard({ status, settings }: RateSafetyCardProps): h.JSX.Element {
   const done = status?.actionsToday ?? 0;
   const rate = settings?.dailyOperatingRate ?? null;
   const ratePct = rate != null && rate > 0 ? Math.min(100, (done / rate) * 100) : 0;
-
-  const budget = status !== null && settings !== null ? budgetUsed(status, settings) : null;
 
   const open = settings !== null && hoursOpen(settings, new Date().getHours());
 
@@ -39,18 +36,6 @@ export function RateSafetyCard({ status, settings }: RateSafetyCardProps): h.JSX
             </span>
           </div>
           <Meter pct={ratePct} />
-        </div>
-
-        <div class="kv-block">
-          <div class="top">
-            <span class="k">
-              Request budget <span class="dim2">· this window</span>
-            </span>
-            <span class="v num warn">
-              {budget ? budget.used : '—'} <span class="dim">/ {budget ? budget.max : '—'}</span>
-            </span>
-          </div>
-          <Meter brass pct={budget ? budget.pct : 0} />
         </div>
 
         <KeyValue k="Active hours">

@@ -28,7 +28,10 @@
 }
 .view.entering .card{
   animation:cardIn .45s var(--ease) both;
-  animation-delay:calc(var(--i,0) * 65ms + 60ms);
+  /* Cap the stagger so a long page's tail still finishes inside the entering hold
+     window (VIEW_ENTER_HOLD_MS) — otherwise late cards pop to full opacity when the
+     `.entering` class is cleared mid-animation. */
+  animation-delay:calc(min(var(--i,0), 8) * 65ms + 60ms);
 }
 @keyframes cardIn{
   from{opacity:0; transform:translateY(14px) scale(.985)}
@@ -98,6 +101,22 @@
   width:0;
 }
 .bar.brass i{background:var(--grad-meter-brass)}
+/* Live meters: the fill is driven per-frame (useCountUp) — updates faster than
+   the transition delay would perpetually restart it and freeze the fill. */
+.bar.live i{transition:none}
+/* ---------- Reveal — animated mount/unmount collapse ---------- */
+/* Grid-row 0fr→1fr animates the block's NATURAL height (no measured
+   max-height), so conditional blocks slide the card open/closed instead of
+   snapping. Keep the element mounted and toggle `.open`. */
+.reveal{
+  display:grid; grid-template-rows:0fr; opacity:0;
+  transition:grid-template-rows .34s var(--ease), opacity .34s var(--ease);
+}
+.reveal.open{grid-template-rows:1fr; opacity:1}
+.reveal-i{overflow:hidden; min-height:0}
+@media (prefers-reduced-motion: reduce){
+  .reveal{transition:none}
+}
 .kv-block{padding:var(--sp-2) 0}
 .kv-block + .kv-block{border-top:1px solid var(--divider)}
 .kv-block .top{display:flex; justify-content:space-between; align-items:baseline; gap:var(--sp-3)}
@@ -456,7 +475,19 @@ input[type=range]::-moz-range-thumb{
 /* Em-based throughout so the ticker inherits whichever tier hosts it
    (.g-num display, .stat .v, KeyValue bolds) without size overrides. */
 .nt{display:inline-flex; vertical-align:baseline}
-.nt-col{display:inline-block; overflow:hidden; height:1em; line-height:1}
+/* Rolling digits fade at the window edges. The fade zones live in the
+   GLYPH-FREE margins of the 1em line box (Inter digit ink spans
+   0.164em–0.892em; fades end at 0.14em / start at 0.92em with margin), so a
+   settled digit's ink sits entirely in the opaque band — never dimmed, never
+   clipped — while a digit in motion melts smoothly through the edges. No
+   padding tricks: the box is the plain 1em window (border-box safe). */
+.nt-col{
+  display:inline-block; overflow:hidden; height:1em; line-height:1;
+  -webkit-mask-image:linear-gradient(to bottom,
+    transparent 0, #000 0.14em, #000 0.92em, transparent 1em);
+  mask-image:linear-gradient(to bottom,
+    transparent 0, #000 0.14em, #000 0.92em, transparent 1em);
+}
 .nt-reel{
   display:flex; flex-direction:column;
   transition:transform .42s var(--ease);
@@ -481,3 +512,92 @@ input[type=range]::-moz-range-thumb{
 @container console (max-width:300px){
   .ticklabels,.dual-scale{font-size:var(--fs-xs)}
 }
+
+/* Pattern-card day-shape preview (§5.6): 24 hourly intensity bars. */
+.pattern-preview {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 44px;
+  padding: 4px;
+  background: var(--inset-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  box-shadow: var(--inset-shadow);
+}
+.pattern-preview__bar {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 1px;
+  background: var(--grad-meter, var(--active-fill));
+  opacity: 0.9;
+}
+
+/* Collapsible-card header: the whole title row is the toggle button. */
+.card-h-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.card-h-toggle:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+.card.collapsed .card-h-toggle {
+  padding-bottom: var(--sp-3);
+}
+/* The chevron affordance (top-right). Reset the header's letter-spacing/uppercase so
+   the glyph isn't shifted/clipped, and give it its own box. */
+.card-collapse {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -2px -6px -2px 0;
+  color: var(--faint);
+  letter-spacing: normal;
+  transition: color 0.12s var(--ease);
+}
+.card-collapse .fa-solid {
+  font-size: var(--fs-md);
+  line-height: 1;
+}
+.card-h-toggle:hover .card-collapse {
+  color: var(--text);
+}
+/* A toggle row at card level gets the same horizontal padding as a .field. */
+.field-toggle {
+  padding: var(--sp-3) var(--sp-4);
+}
+.field + .field-toggle,
+.field-toggle + .field-toggle,
+.field-toggle + .field {
+  border-top: 1px solid var(--divider);
+}
+.field-toggle .kv {
+  padding: 0;
+}
+
+/* Behavior card "Advanced" disclosure. */
+.pattern-advanced { border-top: 1px solid var(--divider); }
+.pattern-advanced > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--faint);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.pattern-advanced > summary::-webkit-details-marker { display: none; }
+.pattern-advanced[open] > summary { color: var(--text); }
+.pattern-advanced > .field:first-of-type { border-top: 1px solid var(--divider); }

@@ -63,7 +63,19 @@ export function App(): h.JSX.Element {
     async (name: string, label: string, fn: () => Promise<unknown>) => {
       setPending(name);
       try {
-        await fn();
+        const res = await fn();
+        // A control REFUSAL is not an IPC rejection — it comes back as a normal
+        // status carrying `refusal` (e.g. a prune holds the tab). Without this
+        // the button just spun and reverted with zero feedback.
+        const refusal =
+          typeof res === 'object' && res !== null && 'refusal' in res
+            ? (res as { refusal?: string }).refusal
+            : undefined;
+        if (refusal === 'prune-running') {
+          toasts.push('info', `${label} refused — a prune holds the tab; it resumes growth when done.`);
+        } else if (refusal !== undefined) {
+          toasts.push('error', `${label} refused: ${refusal}`);
+        }
       } catch (e) {
         toasts.push('error', `${label} failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {

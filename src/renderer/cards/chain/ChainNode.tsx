@@ -28,6 +28,24 @@ const SOURCE_LABELS: Record<ChainTargetView['source'], string> = {
  * handle + badge header and yield subline — with no card wrapper and no
  * inline styles; all tone comes from the shared classes in cards.css.
  */
+/**
+ * Status-truthful tail for a node's subline. The old markup hardcoded
+ * "exhausted & chained" on every seed node — including a seed that IS the
+ * live current target — and "exhausted" on every non-current node regardless
+ * of its stored status.
+ */
+function statusText(props: ChainNodeProps): string {
+  if (props.current) return `followed ${props.yield.total}`;
+  switch (props.status) {
+    case 'exhausted':
+      return 'exhausted & chained';
+    case 'retained':
+      return 'retired';
+    default:
+      return `followed ${props.yield.total}`; // active but not adopted this session
+  }
+}
+
 export function ChainNode(props: ChainNodeProps): h.JSX.Element {
   const seed = props.source === 'seed' || props.chainIndex === 0;
 
@@ -38,24 +56,24 @@ export function ChainNode(props: ChainNodeProps): h.JSX.Element {
         <div class="cn-body">
           <div class="h">
             <span class="handle">{withAt(props.username)}</span>
-            {seed ? (
-              <Badge>Seed</Badge>
-            ) : props.current ? (
+            {seed ? <Badge>Seed</Badge> : null}
+            {props.current ? (
               <Badge tone="live">Current · Hop {props.chainIndex ?? 0}</Badge>
-            ) : (
+            ) : seed ? null : (
               <Badge>{SOURCE_LABELS[props.source]}</Badge>
             )}
           </div>
           {seed ? (
-            <div class="sub">
-              Origin account<span class="sep">·</span>exhausted &amp; chained
+            <div class="sub num">
+              Origin account<span class="sep">·</span>
+              {statusText(props)}
             </div>
           ) : (
             <div class="sub num">
               {pctInt(props.yield.followBackRate)}% back<span class="sep">·</span>pool{' '}
               {commas(props.yield.poolSize)}
               <span class="sep">·</span>
-              {props.current ? `followed ${props.yield.total}` : 'exhausted'}
+              {statusText(props)}
             </div>
           )}
         </div>

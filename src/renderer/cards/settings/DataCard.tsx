@@ -1,7 +1,7 @@
 /** @jsx h */
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
-import { Card, CardHeader } from '@/renderer/ui/Card';
+import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
 import { Button } from '@/renderer/ui/Button';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 
@@ -9,6 +9,7 @@ export interface DataCardProps {
   confirm(options: ConfirmOptions): Promise<boolean>;
   onResetSettings(): Promise<void>;
   onClearData(): Promise<void>;
+  index?: number;
 }
 
 /** Which destructive action is currently awaiting the backend. */
@@ -20,7 +21,7 @@ type PendingAction = 'reset' | 'clear' | null;
  * the knowledge DB and signs out of Instagram (settings kept). Each button
  * spins while its action is in flight, and both lock while either is pending.
  */
-export function DataCard({ confirm, onResetSettings, onClearData }: DataCardProps): h.JSX.Element {
+export function DataCard({ confirm, onResetSettings, onClearData, index }: DataCardProps): h.JSX.Element {
   const [pending, setPending] = useState<PendingAction>(null);
 
   const resetSettings = async (): Promise<void> => {
@@ -60,8 +61,7 @@ export function DataCard({ confirm, onResetSettings, onClearData }: DataCardProp
   };
 
   return (
-    <Card index={8}>
-      <CardHeader icon="database">Data &amp; Session</CardHeader>
+    <CollapsibleCard icon="database" title="Data & session" index={index} defaultCollapsed>
       <div class="field">
         <div class="ftop">
           <label>Reset settings</label>
@@ -101,6 +101,6 @@ export function DataCard({ confirm, onResetSettings, onClearData }: DataCardProp
           Clear data &amp; log out
         </Button>
       </div>
-    </Card>
+    </CollapsibleCard>
   );
 }

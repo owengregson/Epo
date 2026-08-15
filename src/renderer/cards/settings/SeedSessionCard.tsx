@@ -46,6 +46,30 @@ export function SeedSessionCard({
     }
   }, [requiredPrompt]);
 
+  // Adopt EXTERNAL seed changes (e.g. a settings reset that already persisted):
+  // `useSeedCheck` seeds its value once at mount, so after a reset the field —
+  // and the auto-persist effect below — used to shove the OLD seed straight
+  // back over the freshly-reset settings. `lastSeen` tracks the last draft
+  // value this card itself produced; any other change is external.
+  const lastSeen = useRef(draft.seed);
+  useEffect(() => {
+    if (draft.seed !== lastSeen.current) {
+      lastSeen.current = draft.seed;
+      seed.setValue(draft.seed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.seed]);
+
+  // A verified seed persists right away (via the draft autosave) — Start checks
+  // the saved settings, so a seed living only in this field would still trip
+  // the "Seed is required." guard.
+  useEffect(() => {
+    if (seed.valid && clean !== draft.seed) {
+      lastSeen.current = clean;
+      patch({ seed: clean });
+    }
+  }, [seed.valid, clean, draft.seed, patch]);
+
   const invalid = required || seed.status === 'invalid';
   const inputClass = `tinput${invalid ? ' invalid' : seed.status === 'valid' ? ' valid' : ''}`;
   const statusClass = seed.status === 'idle' ? 'seed-status' : `seed-status show ${seed.status}`;
@@ -58,8 +82,12 @@ export function SeedSessionCard({
       danger: true,
     });
     if (!ok) return;
-    patch({ seed: clean });
-    await window.epo.startEngine();
+    lastSeen.current = clean;
+    patch({ seed: clean }); // keep the local draft in step (the backend persists too)
+    // The EXPLICIT restart: persists the seed main-side (no autosave debounce
+    // race), retires the active chain, and starts fresh — a bare startEngine()
+    // used to just resume the existing chain with the previous seed.
+    await window.epo.restartFromSeed(clean);
     goTo('overview');
   };
 
