@@ -106,6 +106,13 @@ test('candidatePksForTarget excludes accounts we already follow (external or man
   expect(s.candidatePksForTarget('T').sort()).toEqual(['A', 'C']);
 });
 
+test('candidatePksForTarget excludes our OWN account (we follow the target → we are in its list)', () => {
+  s.setOwnPk('ME');
+  s.observeEdge('A', 'T', 'follows', true, 100);
+  s.observeEdge('ME', 'T', 'follows', true, 100); // our own row from the target's followers list
+  expect(s.candidatePksForTarget('T')).toEqual(['A']);
+});
+
 test('setRole + getAccount().role round-trips', () => {
   s.observe({ accountPk: '9', observedAt: 100, source: 'profile', fields: { followers: 1, following: 1 } });
   expect(s.getAccount('9')!.role).toBeUndefined();

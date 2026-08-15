@@ -1,5 +1,5 @@
 /**
- * InstagramTab — the embedded, visible Instagram automation surface.
+ * InstagramTab — the embedded, visible Instagram browsing surface.
  *
  * Wraps an Electron `WebContentsView` on a PERSISTENT partitioned session
  * (`persist:ig`) so cookies/login survive app restarts. This is the single
@@ -23,10 +23,10 @@ import type {
   BaseWindow,
   Debugger,
   Event as ElectronEvent,
-  MouseInputEvent,
-  MouseWheelInputEvent,
   WebContents,
 } from 'electron';
+import type { PointerInputEvent } from '@/interaction/input-driver';
+import { toCdpMouseParams } from '@/interaction/cdp-input';
 import * as logger from '@/utils/logger';
 import { SURFACE } from '@/adapter/ig-surface';
 import type { ResponseHandler, TabResponse, Unsubscribe } from '@/types';
@@ -66,6 +66,8 @@ export class InstagramTab {
   private readonly responseHandlers = new Set<ResponseHandler>();
   private readonly pending = new Map<string, PendingResponse>();
   private debuggerReady = false;
+  /** Serializes CDP input dispatches so move/down/up order is guaranteed. */
+  private inputChain: Promise<void> = Promise.resolve();
 
   constructor() {
     const igSession = session.fromPartition(IG_PARTITION);
@@ -80,6 +82,13 @@ export class InstagramTab {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        // Background-run survival (measured, 2026-08-14 input lab): without
+        // this, a blurred/occluded/hidden/minimized window stops the page's
+        // rAF entirely and clamps its timers ~15× — Instagram's SPA then
+        // cannot hydrate or advance its UI, and every action times out even
+        // though CDP input arrives. Together with the app-level switches in
+        // `main.ts` this keeps the tab fully alive in every window state.
+        backgroundThrottling: false,
       },
     });
     this.view.webContents.setUserAgent(IG_USER_AGENT);
@@ -167,15 +176,92 @@ export class InstagramTab {
   }
 
   /**
-   * Synthesize a REAL trusted input event (mouse move / down / up / wheel) into
-   * the tab's webContents. Unlike an in-page `el.click()`, events delivered
-   * through `sendInputEvent` enter Chromium's input pipeline and are
-   * indistinguishable from OS input (`isTrusted` mouse events) — the Humanizer
-   * (`src/humanizer/`) drives all its gestures through this single seam, and
-   * the tab stays the only Electron-touching layer.
+   * Dispatch an input event (mouse move / down / up / wheel) into the tab's
+   * webContents. The Interactor (`src/interaction/`) routes all of its gestures
+   * through this single seam, and the tab stays the only Electron-touching layer.
+   *
+   * Transport is CDP `Input.dispatchMouseEvent` on the already-attached
+   * debugger — NOT `webContents.sendInputEvent`, which Electron documents as
+   * working only while the host window is FOCUSED. An unattended overnight run
+   * keeps the window in the background, so under `sendInputEvent` every click
+   * was silently dropped (the 2026-08-13 all-night run: every follow reported
+   * `clicked: true` while the page never received a thing). CDP injection is
+   * the Puppeteer/Playwright mechanism: trusted events, focus-independent, and
+   * unaffected by the veil view stacked above the tab.
+   *
+   * Fire-and-forget by contract (the driver seam is synchronous), but events
+   * are SERIALIZED through a promise chain so down/up ordering is preserved,
+   * with failures logged. Falls back to `sendInputEvent` (focus-dependent) only
+   * if the debugger is unavailable — in which case the Reader is dead anyway.
    */
-  sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent): void {
-    this.liveContents().sendInputEvent(event);
+  sendInputEvent(event: PointerInputEvent): void {
+    this.inputChain = this.inputChain
+      .then(async () => {
+        const wc = this.liveContents();
+        const dbg = wc.debugger;
+        if (this.debuggerReady && dbg.isAttached()) {
+          await dbg.sendCommand('Input.dispatchMouseEvent', toCdpMouseParams(event));
+          return;
+        }
+        logger.warn('tab.sendInputEvent: debugger unavailable, falling back to sendInputEvent', {
+          type: event.type,
+        });
+        wc.sendInputEvent(event);
+      })
+      .catch((e: unknown) => {
+        logger.error('tab.sendInputEvent: input dispatch failed', {
+          type: event.type,
+          error: String(e),
+        });
+      });
+  }
+
+  /**
+   * Diagnostic: capture the tab's current visual state as a PNG buffer.
+   * Used by debug harnesses (and available to future triage paths) to SEE
+   * what was on screen when an expected control was missing.
+   */
+  async captureScreenshot(): Promise<Buffer> {
+    const image = await this.liveContents().capturePage();
+    return image.toPNG();
+  }
+
+  /**
+   * Diagnostic: verify the input pipeline end-to-end. Installs a one-shot
+   * mousemove listener in the page, dispatches a real input event through the
+   * same seam the Interactor uses, and reports whether the page received it.
+   * Called when the engine halts with `actions-failing` so the log states
+   * decisively whether the machinery is broken (events not arriving) or the
+   * failure is at the page/selector layer (events arrive, page won't react).
+   */
+  async probeInput(): Promise<boolean> {
+    try {
+      await this.liveContents().executeJavaScript(
+        `(() => {
+          window.__epoInputProbe = false;
+          document.addEventListener(
+            'mousemove',
+            () => { window.__epoInputProbe = true; },
+            { once: true, capture: true },
+          );
+          return true;
+        })()`,
+        true,
+      );
+      this.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        const got = await this.liveContents().executeJavaScript(
+          'window.__epoInputProbe === true',
+          true,
+        );
+        if (got === true) return true;
+      }
+      return false;
+    } catch (e) {
+      logger.warn('tab.probeInput failed', { error: String(e) });
+      return false;
+    }
   }
 
   /**
@@ -231,6 +317,14 @@ export class InstagramTab {
       })
       .catch((e: unknown) => {
         logger.error('tab.Network.enable failed', { error: String(e) });
+      });
+    // The page always believes it is focused (Playwright's default): an
+    // unfocused window otherwise fires window blur handlers that some SPAs
+    // use to pause work. Best-effort — input and reads work without it.
+    dbg
+      .sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
+      .catch((e: unknown) => {
+        logger.warn('tab.focus-state enable failed', { error: String(e) });
       });
   }
 

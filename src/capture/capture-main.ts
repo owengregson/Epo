@@ -2,7 +2,7 @@
  * Task E capture app — Electron entry point.
  *
  * One command (`npm run capture`) launches a visible Instagram window. The user
- * logs in ONCE; the harness then AUTOMATICALLY captures the real Instagram API
+ * logs in ONCE; the harness then captures the real Instagram API
  * response shapes, DOM structures, and signatures that Tasks 7-8 will be built
  * and tested against. It reuses `InstagramTab` (CDP-based network observation)
  * and depends on nothing not-yet-built.
@@ -164,7 +164,7 @@ async function run(): Promise<void> {
   await tab.goto(IG_HOME_URL);
   await cap.setStatus(
     'Please log in to Instagram in this window…',
-    'Capture begins automatically once you are logged in.',
+    'Capture begins once you are logged in.',
   );
 
   // Poll for login.
@@ -240,7 +240,7 @@ async function finish(): Promise<void> {
     harness.writeDraftNotes();
     const counts = harness.getCounts();
     logger.info('capture: SUMMARY', { counts, outDir });
-    // Human-friendly summary to stdout (console.log always prints).
+    // Readable summary to stdout (console.log always prints).
     console.log('\n=== Epo capture summary ===');
     console.log(`output: ${outDir}`);
     const classNames = Object.keys(counts).sort();

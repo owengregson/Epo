@@ -16,6 +16,7 @@ export type Classification =
   | 'friendship-show'
   | 'followers-list'
   | 'following-list'
+  | 'friend-requests'
   | 'show-many'
   | 'profile-info'
   | 'activity-feed'

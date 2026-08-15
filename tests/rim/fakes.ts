@@ -15,8 +15,10 @@ export class FakeTab implements RimTab {
   async goto(u: string): Promise<void> {
     this.url = u;
   }
-  async evaluate<T>(): Promise<T> {
-    return undefined as unknown as T;
+  /** When set, receives every evaluated script (source text) and supplies the result. */
+  onEvaluate?: (script: string) => unknown;
+  async evaluate<T>(fnOrString?: unknown): Promise<T> {
+    return (this.onEvaluate ? this.onEvaluate(String(fnOrString)) : undefined) as T;
   }
   onResponse(handler: ResponseHandler): Unsubscribe {
     this.handlers.add(handler);
@@ -35,27 +37,6 @@ export class FakeTab implements RimTab {
   /** Deliver to every handler ever registered, even after unsubscribe. */
   emitRaw(resp: TabResponse): void {
     for (const h of this.captured) h(resp);
-  }
-}
-
-/** A budget that counts spends and can be toggled off. Cast to `RequestBudget`. */
-export class FakeBudget {
-  spends = 0;
-  private allow: boolean;
-  constructor(allow = true) {
-    this.allow = allow;
-  }
-  canSpend(): boolean {
-    return this.allow;
-  }
-  spend(): void {
-    this.spends += 1;
-  }
-  remaining(): number {
-    return this.allow ? 999 : 0;
-  }
-  setAllow(v: boolean): void {
-    this.allow = v;
   }
 }
 

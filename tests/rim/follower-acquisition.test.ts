@@ -1,11 +1,11 @@
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
+import { ListPageWalker } from '@/rim/list-page-walker';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import type { RequestBudget } from '@/governors/request-budget';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
-import { FakeTab, FakeBudget, FakeSentinel, FakeActor, followersUrl, followersBody, mkResp } from './fakes';
+import { FakeTab, FakeSentinel, FakeActor, followersUrl, followersBody, mkResp } from './fakes';
 
 const reader = new Reader();
 const clock = new FakeClock(2_000_000);
@@ -16,51 +16,212 @@ beforeEach(() => {
 });
 afterEach(() => store.close());
 
-test('observes followers, back-fills follower→target edges, and persists the cursor', async () => {
-  const tab = new FakeTab();
-  const actor = new FakeActor();
+/** 2xx JSON FetchEnvelope (what the in-page fetch scripts resolve to). */
+const okEnv = (body: unknown): unknown => ({
+  ok: true,
+  status: 200,
+  contentType: 'application/json',
+  json: body,
+});
 
-  // page1 on open (pks a,b), page2 on the first scroll (pks c,d; last page).
-  const pages = [
-    mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)),
-    mkResp(followersUrl('999', 'C1'), followersBody(['c', 'd'], 'C2', false)),
-  ];
-  let i = 0;
-  actor.onOpen = () => tab.emit(pages[i++]);
-  actor.onScroll = () => {
-    if (i < pages.length) tab.emit(pages[i++]);
-  };
+/** A web_profile_info body carrying the target's own pk + counts. */
+const profileBody = (pk: string, username: string): unknown => ({
+  data: {
+    user: {
+      id: pk,
+      username,
+      edge_followed_by: { count: 500 },
+      edge_follow: { count: 480 },
+      edge_mutual_followed_by: { count: 4 },
+      is_private: false,
+      is_verified: false,
+    },
+  },
+});
 
-  const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
-  const acquisition = new AdapterBackedAcquisition({
-    pageReader,
-    store,
-    budget: new FakeBudget() as unknown as RequestBudget,
-    sentinel: new FakeSentinel() as unknown as Sentinel,
-    clock,
-    cfg: { maxRounds: 5, noNewStop: 2 },
+describe('direct API walk (the request-efficient path)', () => {
+  test('resolves pk via one profile fetch, pages the API directly, writes edges + cursor', async () => {
+    const tab = new FakeTab();
+    tab.onEvaluate = (script) => {
+      if (script.includes('web_profile_info')) return okEnv(profileBody('999', 'target'));
+      // Two followers pages, then the API says the list is done. The built
+      // script embeds the cursor as encodeURIComponent("C1"), so match on "C1".
+      if (script.includes('"C1"')) return okEnv(followersBody(['c', 'd'], null, false));
+      return okEnv(followersBody(['a', 'b'], 'C1', true));
+    };
+    const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
+    const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      walker,
+      tab,
+      reader,
+      clock,
+    });
+
+    const result = await acquisition.acquire('target');
+
+    expect(result.targetPk).toBe('999');
+    expect(result.observed).toBe(4);
+    for (const pk of ['a', 'b', 'c', 'd']) {
+      const edge = store.getEdge(pk, '999', 'follows');
+      expect(edge).not.toBeNull();
+      expect(edge!.status).toBe('active');
+    }
+    // The target's own counts were enriched for free by the resolve fetch.
+    expect(store.getAccount('999')!.followers).toBe(500);
+    expect(store.getAccount('999')!.mutuals).toBe(4);
+    // A completed list leaves no resume cursor.
+    expect(store.getScrapeCursor('999')).toBeNull();
   });
 
-  const result = await acquisition.acquire('target');
+  test('resumes from the persisted cursor instead of re-paging from the head', async () => {
+    store.observe({ accountPk: '999', observedAt: 1_000, source: 'profile', fields: { username: 'target' } });
+    store.setScrapeCursor('999', 'C1', 1_000);
 
-  expect(result.observed).toBe(4);
-  expect(result.targetPk).toBe('999');
+    const tab = new FakeTab();
+    const seenUrls: string[] = [];
+    tab.onEvaluate = (script) => {
+      seenUrls.push(script);
+      // The walk must START at C1; that page ends the list.
+      return okEnv(followersBody(['c', 'd'], null, false));
+    };
+    const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
+    const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      walker,
+      tab,
+      reader,
+      clock,
+    });
 
-  // Every observed follower is now an account in the store.
-  for (const pk of ['a', 'b', 'c', 'd']) {
-    expect(store.getAccount(pk)).not.toBeNull();
-  }
+    const result = await acquisition.acquire('target');
 
-  // R1: every follower — including a,b seen on the FIRST page before any later
-  // page — has an active follower→target edge.
-  for (const pk of ['a', 'b', 'c', 'd']) {
-    const edge = store.getEdge(pk, '999', 'follows');
-    expect(edge).not.toBeNull();
-    expect(edge!.status).toBe('active');
-  }
+    expect(result.targetPk).toBe('999');
+    // No profile-info fetch (pk was already known) — only list-page scripts.
+    expect(seenUrls.every((s) => !s.includes('web_profile_info'))).toBe(true);
+    // The first (and only) fetched page carried the resume cursor (embedded as
+    // encodeURIComponent("C1")).
+    expect(seenUrls[0]).toContain('max_id');
+    expect(seenUrls[0]).toContain('"C1"');
+    expect(result.observed).toBe(2);
+  });
 
-  // R4: the final resume cursor is persisted per target.
-  expect(store.getScrapeCursor('999')).toBe('C2');
+  test('stops early once the pk target is reached (demand-driven, not a census)', async () => {
+    store.observe({ accountPk: '999', observedAt: 1_000, source: 'profile', fields: { username: 'target' } });
+
+    const tab = new FakeTab();
+    let page = 0;
+    tab.onEvaluate = () => {
+      // Each page yields 2 fresh pks and always claims more pages exist.
+      const base = page * 2;
+      page += 1;
+      return okEnv(followersBody([`p${base}`, `p${base + 1}`], `C${page}`, true));
+    };
+    const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
+    const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      walker,
+      tab,
+      reader,
+      clock,
+      cfg: { targetNewPks: 5, maxPages: 100, maxCoverageFraction: 0.5, maxRounds: 5, noNewStop: 2 },
+    });
+
+    const result = await acquisition.acquire('target');
+
+    // Stops at the first page that pushes the observed set to >= 5 (3 pages = 6).
+    expect(result.observed).toBe(6);
+    expect(page).toBe(3);
+    // A partial walk persists a real resume cursor for the next refill.
+    expect(store.getScrapeCursor('999')).toBe('C3');
+  });
+
+  test('caps coverage at maxCoverageFraction of the target audience, then stops', async () => {
+    // Target has 20 followers; 50 % cap = 10. We already observed 8 of them.
+    store.observe({
+      accountPk: '999',
+      observedAt: 1_000,
+      source: 'profile',
+      fields: { username: 'target', followers: 20, following: 20 },
+    });
+    for (let i = 0; i < 8; i++) store.observeEdge(`old${i}`, '999', 'follows', true, 1_000);
+
+    const tab = new FakeTab();
+    let page = 0;
+    tab.onEvaluate = () => {
+      const base = page * 2;
+      page += 1;
+      return okEnv(followersBody([`n${base}`, `n${base + 1}`], `K${page}`, true));
+    };
+    const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
+    const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      walker,
+      tab,
+      reader,
+      clock,
+      cfg: { targetNewPks: 250, maxPages: 100, maxCoverageFraction: 0.5, maxRounds: 5, noNewStop: 2 },
+    });
+
+    // Budget = cap(10) − observed(8) = 2 new pks → one page of 2, then stop.
+    const first = await acquisition.acquire('target');
+    expect(first.observed).toBe(2);
+    expect(page).toBe(1);
+
+    // Now at 10 observed = the cap. A second acquire scrapes NOTHING more and
+    // yields the target so the engine's exhaustion path advances the chain.
+    const second = await acquisition.acquire('target');
+    expect(second).toEqual({ observed: 0, targetPk: '999' });
+    expect(page).toBe(1); // no further API pages fetched
+  });
+});
+
+describe('dialog-scroll fallback', () => {
+  test('used when no walker is wired; back-fills edges + persists cursor', async () => {
+    const tab = new FakeTab();
+    const actor = new FakeActor();
+    const pages = [
+      mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)),
+      mkResp(followersUrl('999', 'C1'), followersBody(['c', 'd'], 'C2', false)),
+    ];
+    let i = 0;
+    actor.onOpen = () => tab.emit(pages[i++]);
+    actor.onScroll = () => {
+      if (i < pages.length) tab.emit(pages[i++]);
+    };
+
+    const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      clock,
+      cfg: { targetNewPks: 60, maxPages: 8, maxCoverageFraction: 0.5, maxRounds: 5, noNewStop: 2 },
+    });
+
+    const result = await acquisition.acquire('target');
+
+    expect(result.observed).toBe(4);
+    expect(result.targetPk).toBe('999');
+    for (const pk of ['a', 'b', 'c', 'd']) {
+      const edge = store.getEdge(pk, '999', 'follows');
+      expect(edge).not.toBeNull();
+      expect(edge!.status).toBe('active');
+    }
+    expect(store.getScrapeCursor('999')).toBe('C2');
+  });
 });
 
 test('bails without scraping when the sentinel is blocked', async () => {
@@ -70,7 +231,6 @@ test('bails without scraping when the sentinel is blocked', async () => {
   const acquisition = new AdapterBackedAcquisition({
     pageReader,
     store,
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel(['challenge']) as unknown as Sentinel,
     clock,
   });

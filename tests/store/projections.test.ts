@@ -30,3 +30,18 @@ test('newer high-confidence read updates the field', () => {
   expect(s.followers).toBe(130);
   expect(s.ratio).toBeCloseTo(120 / 130);
 });
+
+test('an OLDER equal-confidence read never clobbers fresher stats or rewinds provenance', () => {
+  let s = projectAccount(null, obs('1', 'profile', { followers: 100, following: 120 }, 200));
+  // Two profile bodies raced their async reads; the stale one resolves last.
+  s = projectAccount(s, obs('1', 'profile', { followers: 999, following: 120 }, 150));
+  expect(s.followers).toBe(100); // fresher value survives
+  expect(s.statsObservedAt).toBe(200); // provenance never moves backwards
+});
+
+test('a strictly higher-confidence read may win even when older', () => {
+  let s = projectAccount(null, obs('1', 'show-many', { followers: 50 }, 200));
+  s = projectAccount(s, obs('1', 'profile', { followers: 100, following: 120 }, 150));
+  expect(s.followers).toBe(100);
+  expect(s.statsObservedAt).toBe(200); // dated by the newest input
+});

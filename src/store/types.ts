@@ -1,11 +1,15 @@
 export type Source =
-  | 'followers-list' | 'show-many' | 'profile' | 'activity-feed' | 'search' | 'action';
+  | 'followers-list' | 'following-list' | 'friend-requests' | 'show-many' | 'profile'
+  | 'activity-feed' | 'search' | 'action';
 export const SOURCE_CONFIDENCE: Record<Source, number> = {
-  'followers-list': 40, search: 40, 'activity-feed': 60, 'show-many': 80, profile: 90, action: 100,
+  'followers-list': 40, 'following-list': 40, 'friend-requests': 40, search: 40,
+  'activity-feed': 60, 'show-many': 80, profile: 90, action: 100,
 };
 export type EnrichmentLevel = 'stub' | 'listed' | 'profiled';
 export interface AccountFields {
   username?: string; followers?: number; following?: number;
+  /** How many accounts WE follow also follow this one ("followed by x and N others"). */
+  mutuals?: number;
   isPrivate?: boolean; isVerified?: boolean; activitySignal?: number;
 }
 export interface Observation {
@@ -13,9 +17,17 @@ export interface Observation {
 }
 export interface AccountState {
   pk: string; username?: string; enrichment: EnrichmentLevel;
-  followers?: number; following?: number; ratio?: number;
+  followers?: number; following?: number; ratio?: number; mutuals?: number;
   isPrivate?: boolean; isVerified?: boolean; activitySignal?: number;
   role?: string;
+  /**
+   * Set when a profile-enrichment fetch returned a PERMANENTLY unusable body
+   * (deleted/suspended account, unparseable payload). Enrichment selection
+   * skips marked accounts so a dead account at the head of the pool can never
+   * consume every enrichment pass of every cycle. Transient failures (rate
+   * wall, sentinel) never set this.
+   */
+  enrichFailedAt?: number;
   statsObservedAt?: number; statsSource?: Source; firstSeenAt: number; lastSeenAt: number;
 }
 export type EdgeType = 'follows';
@@ -41,6 +53,13 @@ export interface FollowRecord {
   holdUntil?: number;
   unfollowDueAt?: number;
   retryCount: number;
+  /**
+   * The Scorer's composite score at enqueue time (higher = better). Drives the
+   * follow ORDER (`nextDue`) and the queue-list DISPLAY order, so the best
+   * candidate acts and shows first. Undefined for records not created by the
+   * Scanner (e.g. an externally-observed follow being reconciled).
+   */
+  score?: number;
 }
 
 /** A node in the poaching chain (§3.5). Maps 1:1 to a row in the `targets` table. */
@@ -51,5 +70,38 @@ export interface Target {
   chainIndex: number | null;
 }
 
+/**
+ * The durable snapshot of the latest COMPLETED prune scan (Phase 5): the census
+ * counts plus the candidates a run has not yet visited. Saved when a scan
+ * completes, consumed row-by-row as a run acts, cleared when the whitelist
+ * changes or a new scan begins — so a restart restores exactly the prune data
+ * that was live when the app quit. Structurally matches the engine's
+ * `PruneCandidate` ({pk, username}).
+ */
+export interface PruneScanSnapshot {
+  /** Epoch ms the scan completed — drives the run-without-rescan freshness window. */
+  at: number;
+  following: number;
+  followers: number;
+  /** Size of the candidate set the scan yielded (fixed; `remaining` shrinks). */
+  candidateCount: number;
+  /** Candidates not yet visited by a run, in scan order. */
+  remaining: Array<{ pk: string; username: string | null }>;
+}
+
 export const ratioOf = (followers?: number, following?: number): number | undefined =>
   followers && followers > 0 && following !== undefined ? following / followers : undefined;
+
+/**
+ * Order follow-records BEST-first: descending `score` (the Scorer's composite),
+ * with a scoreless record sorting last and `accountPk` as the deterministic
+ * tie-break. The single source of ordering shared by the churn scheduler's
+ * `nextDue` (execution order) and the queue-list reader (display order), so a
+ * candidate acts and shows in the same rank — never pk/insertion order.
+ */
+export const compareByScoreDesc = (a: FollowRecord, b: FollowRecord): number => {
+  const sa = a.score ?? Number.NEGATIVE_INFINITY;
+  const sb = b.score ?? Number.NEGATIVE_INFINITY;
+  if (sa !== sb) return sb - sa;
+  return a.accountPk < b.accountPk ? -1 : a.accountPk > b.accountPk ? 1 : 0;
+};

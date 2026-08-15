@@ -25,11 +25,18 @@ import type { Observation } from '@/store/types';
 // Re-export the stable result types so existing consumers keep one import site.
 export type {
   EndpointKind,
+  FollowEvent,
   FollowersListResult,
   FriendshipShowResult,
   ShowManyEntry,
 } from '@/adapter/ig-surface';
-import type { EndpointKind, FollowersListResult, FriendshipShowResult, ShowManyEntry } from '@/adapter/ig-surface';
+import type {
+  EndpointKind,
+  FollowEvent,
+  FollowersListResult,
+  FriendshipShowResult,
+  ShowManyEntry,
+} from '@/adapter/ig-surface';
 
 export class Reader {
   /**
@@ -92,7 +99,11 @@ export class Reader {
    */
   parseFollowingList(body: unknown, at: number): FollowersListResult {
     const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false };
-    const result = SURFACE.extractFollowersList(this.coerce(body, 'following-list'), at);
+    const result = SURFACE.extractFollowersList(
+      this.coerce(body, 'following-list'),
+      at,
+      'following-list',
+    );
     if (isShapeMismatch(result)) {
       this.warnUnexpected('following-list', body);
       return empty;
@@ -145,20 +156,73 @@ export class Reader {
    * `SURFACE.extractFriendshipShow` directly when the caller needs to
    * distinguish "no relationship" from "unparsed".
    */
-  parseFriendshipShow(body: unknown, _at: number, pk: string): FriendshipShowResult {
+  parseFriendshipShow(body: unknown, _at: number, pk: string): FriendshipShowResult | null {
     const result = SURFACE.extractFriendshipShow(this.coerce(body, 'friendship-show'), pk);
     if (isShapeMismatch(result)) {
+      // An unexpected shape (error body, drift) must NOT map to all-false: a
+      // false "we do not follow them" fact terminates held records downstream.
       this.warnUnexpected('friendship-show', body);
-      return { pk, following: false, followedBy: false, isPrivate: undefined };
+      return null;
     }
     return result;
   }
 
   /**
-   * Relationship facts (whether WE follow each pk) from a response body, routed
-   * by endpoint. Pure; used by the RelationshipReconciler to heal divergence
-   * caused by external follow/unfollow changes. `[]` on any endpoint that
-   * carries no viewer-side relationship (or on no-match).
+   * Parse the incoming follow-requests page (`friendships/pending/` — the
+   * followers-list shape) into observations labelled with their own
+   * provenance. Typed empty result on no-match.
+   */
+  parsePendingRequests(body: unknown, at: number): FollowersListResult {
+    const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false };
+    const result = SURFACE.extractFollowersList(
+      this.coerce(body, 'friend-requests'),
+      at,
+      'friend-requests',
+    );
+    if (isShapeMismatch(result)) {
+      this.warnUnexpected('friend-requests', body);
+      return empty;
+    }
+    return result;
+  }
+
+  /**
+   * Parse the activity-feed (news inbox) body into the "started following you"
+   * events it carries. `[]` on an empty feed; a shape mismatch is warned and
+   * ALSO returns `[]` — the follow-back watcher treats the fetch as failed via
+   * its own response-arrival timeout, and a drifted body must never invent
+   * follow events.
+   */
+  parseActivityFeed(body: unknown): FollowEvent[] {
+    const result = SURFACE.extractActivityFeed(this.coerce(body, 'activity-feed'));
+    if (isShapeMismatch(result)) {
+      this.warnUnexpected('activity-feed', body);
+      return [];
+    }
+    return result;
+  }
+
+  /**
+   * The endpoint kinds that actually carry viewer-side relationship facts —
+   * the ONLY bodies worth the async read + parse in the reconciler. List pages
+   * and the activity feed parse to nothing here.
+   */
+  relationshipBearing(url: string): boolean {
+    const kind = this.matchEndpoint(url);
+    return kind === 'show-many' || kind === 'friendship-show' || kind === 'web-profile-info';
+  }
+
+  /**
+   * Relationship facts (whether WE own a follow/pending-request toward each pk)
+   * from a response body, routed by endpoint. Pure; used by the
+   * RelationshipReconciler to heal divergence caused by external follow/
+   * unfollow changes. `[]` on any endpoint that carries no viewer-side
+   * relationship (or on no-match).
+   *
+   * `weFollow` is `following || outgoingRequest`: a pending request to a
+   * private account is OUR relationship — reporting it as "not following"
+   * would make the reconciler destroy the follow record while the request
+   * awaits acceptance.
    */
   relationshipFacts(
     url: string,
@@ -167,19 +231,26 @@ export class Reader {
   ): Array<{ pk: string; weFollow: boolean }> {
     switch (this.matchEndpoint(url)) {
       case 'show-many':
-        return this.parseShowMany(body, at).map((e) => ({ pk: e.pk, weFollow: e.following }));
+        return this.parseShowMany(body, at).map((e) => ({
+          pk: e.pk,
+          weFollow: e.following || e.outgoingRequest,
+        }));
       case 'friendship-show': {
         const pk = this.extractPkFromUrl(url);
         if (pk === null) return [];
         const r = this.parseFriendshipShow(body, at, pk);
-        return [{ pk, weFollow: r.following }];
+        if (r === null) return []; // unparsed ≠ "no relationship"
+        return [{ pk, weFollow: r.following || r.outgoingRequest }];
       }
       case 'web-profile-info': {
         const obs = this.parseProfileInfo(body, at);
         const followed = this.profileFollowedByViewer(body);
+        const requested = SURFACE.extractProfileRequestedByViewer(
+          this.coerce(body, 'web-profile-info'),
+        );
         // Emit only when BOTH the pk and the viewer-side flag are present.
         if (obs === null || followed === null) return [];
-        return [{ pk: obs.accountPk, weFollow: followed }];
+        return [{ pk: obs.accountPk, weFollow: followed || requested === true }];
       }
       default:
         return [];

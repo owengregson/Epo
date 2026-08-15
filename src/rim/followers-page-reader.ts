@@ -11,8 +11,6 @@
  * Folded review fixes:
  *  - R1: derive `targetPk` from the followers-list URL the first time a page
  *        matches; profile-info is enrichment only.
- *  - R2: never `spend()` here (the request-metering pipeline owns that); only
- *        *check* `budget.canSpend()` before each scroll round.
  *  - R3: re-run `sentinel.check()` at the TOP of each scroll round; break non-`ok`.
  *  - R5: drain correctly — `unsubscribe()` first, then loop `allSettled` until the
  *        in-flight parse set stops growing, before returning.
@@ -20,10 +18,13 @@
 
 import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import type { RequestBudget } from '@/governors/request-budget';
 import { SystemClock, type Clock } from '@/governors/clock';
 import type { Observation } from '@/store/types';
 import type { RimTab } from '@/rim/types';
+import {
+  type ActivityReporter,
+  NOOP_ACTIVITY_REPORTER,
+} from '@/adapter/activity-reporter';
 import * as logger from '@/utils/logger';
 import { fixed, sample, sleep, uniform } from '@/timing/primitives';
 import { RIM } from '@/timing/config';
@@ -54,6 +55,8 @@ export interface FollowersPageReaderDeps {
    * breaks a scrape mid-wait, not just between rounds.
    */
   abortSignal?: () => AbortSignal | undefined;
+  /** Live activity readout for the veil; defaults to a no-op. */
+  reporter?: ActivityReporter;
 }
 
 /** One scrape run's parameters. */
@@ -71,6 +74,12 @@ export interface CollectArgs {
    * (profile-info enrichment). The caller decides store writes / edges; the
    * cursor of the page the observation came from is passed for convenience
    * (`null` for profile-info).
+   *
+   * CONTRACT (docs/PRINCIPLES.md §1 — facts stream): implementations MUST
+   * write each observation through to the store as it arrives, never collect
+   * it for an end-of-walk flush — a truncated/aborted collect must keep every
+   * row it saw. The returned `observedPks` array exists for completeness
+   * verdicts and counts, not as the carrier of facts.
    */
   onObservation: (obs: Observation, cursor: string | null) => void;
   /**
@@ -80,7 +89,6 @@ export interface CollectArgs {
    * mid-scrape instead of only when `collect` resolves.
    */
   onProgress?: (observedCount: number) => void;
-  budget: RequestBudget;
   sentinel: Sentinel;
   /** Hard cap on scroll rounds so a scrape is always bounded. */
   maxRounds: number;
@@ -101,6 +109,15 @@ export interface CollectArgs {
    * still drained and returned (a stop never loses parsed data).
    */
   shouldStop?: () => boolean;
+  /**
+   * When true, a dialog that fails to OPEN rethrows (after teardown) instead of
+   * resolving with an empty result. The prune scan sets this: an unopened list
+   * must read as "scan failed", never as "the list is empty" — an empty
+   * followers read would otherwise mark every followed account a candidate.
+   * Growth callers keep the default (false): a target whose dialog won't open
+   * degrades to a no-yield scrape and the chain moves on.
+   */
+  throwOnOpenFailure?: boolean;
 }
 
 /** What a scrape yields back to its caller. */
@@ -108,6 +125,13 @@ export interface CollectResult {
   observedPks: string[];
   targetPk: string | null;
   cursor: string | null;
+  /**
+   * Why the scroll loop ended ('no-more-pages', 'stagnant', 'max-rounds',
+   * 'stop-requested', 'sentinel:*', 'blocked-response', 'open-failed').
+   * Callers that need a FULL census (prune) must treat anything but a natural
+   * drain as an incomplete list, never as "this is everything".
+   */
+  endReason: string;
 }
 
 export class FollowersPageReader {
@@ -119,6 +143,7 @@ export class FollowersPageReader {
   private readonly sleepFn: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly rng: () => number;
   private readonly abortSignal?: () => AbortSignal | undefined;
+  private readonly reporter: ActivityReporter;
 
   constructor(deps: FollowersPageReaderDeps) {
     this.tab = deps.tab;
@@ -129,10 +154,11 @@ export class FollowersPageReader {
     this.sleepFn = deps.sleep ?? sleep;
     this.rng = deps.rng ?? Math.random;
     this.abortSignal = deps.abortSignal;
+    this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
   }
 
   async collect(args: CollectArgs): Promise<CollectResult> {
-    const { targetUsername, onObservation, budget, sentinel, maxRounds, noNewStop } = args;
+    const { targetUsername, onObservation, sentinel, maxRounds, noNewStop } = args;
     const dialog = args.dialog ?? 'followers';
     // The caller's cooperative stop, folded with the ACTIVE driver's abort
     // signal — either ends the scrape at the next check.
@@ -150,6 +176,22 @@ export class FollowersPageReader {
     // The one endpoint kind this scrape parses list pages from — the paginated
     // `following/` API when the FOLLOWING dialog is open, else `followers/`.
     const listKind = dialog === 'following' ? 'following-list' : 'followers-list';
+
+    // Live veil readout: unlike the direct API walk, this scrape DRIVES the page
+    // (opens the modal and scrolls it), so it reads as a 'page' phase.
+    const activityLabel =
+      dialog === 'following' ? 'Scrolling following list' : 'Scrolling follower list';
+    // No honest denominator here: the scroll scrape stops on stagnation/rounds,
+    // not at a known count, so it reports NO total and the overlay shows an
+    // indeterminate sweep rather than a fabricated percentage.
+    const reportActivity = (count: number): void =>
+      this.reporter.report({
+        kind: 'page',
+        label: activityLabel,
+        count,
+        detail: `@${targetUsername}`,
+      });
+    reportActivity(0);
 
     const observed = new Set<string>();
     let targetPk: string | null = null;
@@ -214,7 +256,10 @@ export class FollowersPageReader {
             }
             // Live progress: report the cumulative count once per page that
             // actually grew the set (a stagnant/duplicate page stays silent).
-            if (observed.size > sizeBefore) args.onProgress?.(observed.size);
+            if (observed.size > sizeBefore) {
+              args.onProgress?.(observed.size);
+              reportActivity(observed.size);
+            }
           })
           .catch((e: unknown) => {
             logger.warn('rim.followers-page-reader: body/parse failed', {
@@ -225,12 +270,26 @@ export class FollowersPageReader {
       );
     });
 
+    // Why the scroll loop ended — logged at the end so a truncated scrape is
+    // diagnosable from a normal (info-level) log instead of silent.
+    let endReason = 'max-rounds';
+    let roundsRun = 0;
+    // An open-dialog failure captured for the (opt-in) rethrow AFTER teardown:
+    // the interceptor must unsubscribe and the pending parses drain first.
+    let openFailure: unknown = null;
+
     try {
       // The dialog is opened here (navigation fires profile-info + the first page).
-      if (dialog === 'following') {
-        await this.actor.openFollowingDialog(targetUsername);
-      } else {
-        await this.actor.openFollowersDialog(targetUsername);
+      try {
+        if (dialog === 'following') {
+          await this.actor.openFollowingDialog(targetUsername);
+        } else {
+          await this.actor.openFollowersDialog(targetUsername);
+        }
+      } catch (e) {
+        openFailure = e;
+        endReason = 'open-failed';
+        throw e;
       }
       // Let the FIRST followers page load + parse before the scroll loop begins —
       // the initial page arrives shortly after the modal opens, and small lists may
@@ -240,44 +299,48 @@ export class FollowersPageReader {
 
       let stagnantRounds = 0;
       for (let round = 0; round < maxRounds; round++) {
+        roundsRun = round + 1;
         // Cooperative abort (Phase 5 prune scan): the caller asked us to stop.
         if (shouldStop()) {
+          endReason = 'stop-requested';
           logger.info('rim.followers-page-reader: stop requested, ending scrape', {
             targetUsername,
           });
           break;
         }
         // A captured response reported an error/HTML wall — stop scrolling.
-        if (halted.hit) break;
+        if (halted.hit) {
+          endReason = 'blocked-response';
+          break;
+        }
         // R3: re-check the Sentinel at the TOP of each round; halt on any block.
         const status = await sentinel.check();
         if (status !== 'ok') {
+          endReason = `sentinel:${status}`;
           logger.warn('rim.followers-page-reader: sentinel non-ok, stopping scroll', {
             targetUsername,
             status,
           });
           break;
         }
-        // R2: the budget is spent by the metering pipeline; here we only respect it.
-        if (!budget.canSpend()) {
-          logger.warn('rim.followers-page-reader: request budget exhausted, stopping', {
-            targetUsername,
-          });
-          break;
-        }
-
         const before = observed.size;
         await this.actor.scrollFollowers();
         await this.sleepFn(nextWaitMs(), this.abortSignal?.());
 
         if (observed.size === before) {
           stagnantRounds += 1;
-          if (stagnantRounds >= noNewStop) break;
+          if (stagnantRounds >= noNewStop) {
+            endReason = 'stagnant';
+            break;
+          }
         } else {
           stagnantRounds = 0;
         }
         // The last captured page reported no further pages — nothing left to scroll.
-        if (page.hasMore === false) break;
+        if (page.hasMore === false) {
+          endReason = 'no-more-pages';
+          break;
+        }
       }
     } catch (e) {
       logger.error('rim.followers-page-reader: collect failed', {
@@ -293,8 +356,21 @@ export class FollowersPageReader {
         previousLength = pending.length;
         await Promise.allSettled(pending);
       }
+      this.reporter.clear();
     }
 
-    return { observedPks: [...observed], targetPk, cursor };
+    logger.info('rim.followers-page-reader: scrape ended', {
+      targetUsername,
+      dialog,
+      observed: observed.size,
+      rounds: roundsRun,
+      reason: endReason,
+    });
+
+    // Prune-scan semantics: an unopened dialog is a FAILED scrape, not an empty
+    // list — rethrown only after the interceptor is torn down and drained.
+    if (openFailure !== null && args.throwOnOpenFailure === true) throw openFailure;
+
+    return { observedPks: [...observed], targetPk, cursor, endReason };
   }
 }

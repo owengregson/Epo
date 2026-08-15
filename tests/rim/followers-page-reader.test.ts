@@ -1,13 +1,11 @@
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import type { RequestBudget } from '@/governors/request-budget';
 import { FakeClock } from '@/governors/clock';
 import type { Observation } from '@/store/types';
 import type { TabResponse } from '@/types';
 import {
   FakeTab,
-  FakeBudget,
   FakeSentinel,
   FakeActor,
   followersUrl,
@@ -42,7 +40,6 @@ test('collects observed pks, the URL-derived target pk, and the final cursor', a
   const result = await makeReader(tab, actor).collect({
     targetUsername: 'target',
     onObservation: (obs) => seen.push(obs),
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     maxRounds: 5,
     noNewStop: 2,
@@ -52,6 +49,43 @@ test('collects observed pks, the URL-derived target pk, and the final cursor', a
   expect(result.targetPk).toBe('999'); // R1: derived from the followers URL
   expect(result.cursor).toBe('C2'); // R4: the last page's next_max_id
   expect(seen.map((o) => o.accountPk).sort()).toEqual(['a', 'b', 'c', 'd']);
+});
+
+test('an open-dialog failure resolves empty by default (growth path unchanged)', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  actor.onOpen = () => {
+    throw new Error('AdapterStaleError: dialog');
+  };
+
+  const result = await makeReader(tab, actor).collect({
+    targetUsername: 'target',
+    onObservation: () => {},
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    maxRounds: 5,
+    noNewStop: 2,
+  });
+
+  expect(result.observedPks).toEqual([]);
+});
+
+test('throwOnOpenFailure: an open-dialog failure REJECTS instead of reading as empty', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  actor.onOpen = () => {
+    throw new Error('AdapterStaleError: dialog');
+  };
+
+  await expect(
+    makeReader(tab, actor).collect({
+      targetUsername: 'target',
+      onObservation: () => {},
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      maxRounds: 5,
+      noNewStop: 2,
+      throwOnOpenFailure: true,
+    }),
+  ).rejects.toThrow('AdapterStaleError: dialog');
 });
 
 test('R3: a non-ok sentinel at the top of round 2 stops the scroll loop', async () => {
@@ -71,7 +105,6 @@ test('R3: a non-ok sentinel at the top of round 2 stops the scroll loop', async 
   const result = await makeReader(tab, actor).collect({
     targetUsername: 'target',
     onObservation: () => {},
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: sentinel as unknown as Sentinel,
     maxRounds: 10,
     noNewStop: 5,
@@ -83,25 +116,6 @@ test('R3: a non-ok sentinel at the top of round 2 stops the scroll loop', async 
   expect(result.targetPk).toBe('999');
 });
 
-test('R2: an exhausted budget stops the scroll loop before scrolling', async () => {
-  const tab = new FakeTab();
-  const actor = new FakeActor();
-  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)));
-
-  const result = await makeReader(tab, actor).collect({
-    targetUsername: 'target',
-    onObservation: () => {},
-    budget: new FakeBudget(false) as unknown as RequestBudget, // canSpend() === false
-    sentinel: new FakeSentinel() as unknown as Sentinel,
-    maxRounds: 10,
-    noNewStop: 2,
-  });
-
-  expect(actor.scrollCalls).toBe(0); // budget gate closed before the first scroll
-  // The page captured on open is still observed and its pk resolved.
-  expect([...result.observedPks].sort()).toEqual(['a', 'b']);
-  expect(result.targetPk).toBe('999');
-});
 
 test('onProgress reports the cumulative observed count once per page that grows the set', async () => {
   const tab = new FakeTab();
@@ -124,7 +138,6 @@ test('onProgress reports the cumulative observed count once per page that grows 
     targetUsername: 'target',
     onObservation: () => {},
     onProgress: (n) => progress.push(n),
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     maxRounds: 5,
     noNewStop: 2,
@@ -178,7 +191,6 @@ test('scrollMinMs/scrollMaxMs: every wait is a fresh jittered draw within [min,m
   await makePacedReader(tab, actor, { sleeps, rng: () => draws[i++ % draws.length] }).collect({
     targetUsername: 'target',
     onObservation: () => {},
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     maxRounds: 3,
     noNewStop: 5,
@@ -203,7 +215,6 @@ test('an inverted min/max pair is clamped so the wait never falls below the min'
   await makePacedReader(tab, actor, { sleeps, rng: () => 1 }).collect({
     targetUsername: 'target',
     onObservation: () => {},
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     maxRounds: 1,
     noNewStop: 5,
@@ -229,7 +240,6 @@ test('shouldStop flipping true breaks the scroll loop early (fewer rounds than m
   const result = await makeReader(tab, actor).collect({
     targetUsername: 'target',
     onObservation: () => {},
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     maxRounds: 10,
     noNewStop: 5,
@@ -251,7 +261,6 @@ test('shouldStop true from the start skips the initial post-open wait and all sc
   const result = await makePacedReader(tab, actor, { sleeps, rng: () => 0.5 }).collect({
     targetUsername: 'target',
     onObservation: () => {},
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     maxRounds: 10,
     noNewStop: 5,
@@ -279,7 +288,6 @@ test('default path (no min/max/shouldStop) keeps the fixed scrollWaitMs pacing',
   }).collect({
     targetUsername: 'target',
     onObservation: () => {},
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     maxRounds: 2,
     noNewStop: 5,
@@ -315,7 +323,6 @@ test('R5: drain awaits a response that lands during teardown', async () => {
   const result = await makeReader(tab, actor).collect({
     targetUsername: 'target',
     onObservation: () => {},
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     maxRounds: 0, // skip scrolling; exercise open + drain only
     noNewStop: 1,
@@ -344,7 +351,6 @@ test('an aborted driver signal ends the scroll loop like shouldStop', async () =
   const result = await paced.collect({
     targetUsername: 'target',
     onObservation: () => {},
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     maxRounds: 10,
     noNewStop: 5,

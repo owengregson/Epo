@@ -164,6 +164,18 @@ describe('Reader.parseFollowersList', () => {
     expect(out.hasMore).toBe(false);
   });
 
+  test('hasMore is resilient to which flag the response carries', () => {
+    const users = [{ pk: '7', username: 'u7', is_private: false, is_verified: false }];
+    // `big_list` alone (no has_more) still means more pages.
+    expect(r.parseFollowersList({ users, big_list: true }, AT).hasMore).toBe(true);
+    // A present pagination cursor alone still means more pages.
+    const withCursor = r.parseFollowersList({ users, next_max_id: '25' }, AT);
+    expect(withCursor.hasMore).toBe(true);
+    expect(withCursor.cursor).toBe('25');
+    // No flag and no cursor is genuinely the end.
+    expect(r.parseFollowersList({ users }, AT).hasMore).toBe(false);
+  });
+
   test('accepts a raw JSON string body', () => {
     const out = r.parseFollowersList(JSON.stringify(followersPage1), AT);
     expect(out.observations).toHaveLength(12);
@@ -187,6 +199,7 @@ describe('Reader.parseProfileInfo', () => {
       username: 'user_005',
       followers: 561,
       following: 305,
+      mutuals: 18,
       isPrivate: true,
       isVerified: false,
     });
@@ -233,6 +246,7 @@ describe('Reader.parseShowMany', () => {
     expect(byPk.get('1000000001')).toEqual({
       pk: '1000000001',
       following: true,
+      outgoingRequest: false,
       isPrivate: true,
     });
     expect(byPk.get('1000000002')!.following).toBe(false);
@@ -257,25 +271,32 @@ describe('Reader.parseFriendshipShow', () => {
       pk: '999',
       following: true,
       followedBy: true,
+      outgoingRequest: false,
       isPrivate: true,
     });
   });
 
   test('public account variant', () => {
     const out = r.parseFriendshipShow(friendshipShowPublic, AT, '1000000042');
-    expect(out.followedBy).toBe(true);
-    expect(out.isPrivate).toBe(false);
-    expect(out.pk).toBe('1000000042');
+    expect(out?.followedBy).toBe(true);
+    expect(out?.isPrivate).toBe(false);
+    expect(out?.pk).toBe('1000000042');
   });
 
-  test('no-match body -> false flags, pk preserved', () => {
-    const out = r.parseFriendshipShow({ nope: true }, AT, '42');
-    expect(out).toEqual({
-      pk: '42',
-      following: false,
-      followedBy: false,
-      isPrivate: undefined,
-    });
+  test('no-match body -> null (unparsed is NOT "no relationship")', () => {
+    // An error body ({"status":"fail"}-style) must never parse to all-false:
+    // a false "we do not follow them" fact terminates held records downstream.
+    expect(r.parseFriendshipShow({ nope: true }, AT, '42')).toBeNull();
+  });
+
+  test('a pending private-account request reads as outgoingRequest', () => {
+    const out = r.parseFriendshipShow(
+      { following: false, followed_by: false, outgoing_request: true, is_private: true },
+      AT,
+      '77',
+    );
+    expect(out?.following).toBe(false);
+    expect(out?.outgoingRequest).toBe(true);
   });
 });
 
@@ -344,7 +365,94 @@ describe('SURFACE.extractFriendshipShow shape-mismatch sentinel', () => {
       pk: '42',
       following: false,
       followedBy: false,
+      outgoingRequest: false,
       isPrivate: undefined,
     });
+  });
+});
+
+describe('SURFACE.listPageScript (direct list pagination)', () => {
+  test('first page: full-size count, no max_id; the walker parses via followers-list', () => {
+    const script = SURFACE.listPageScript('49542389667', 'followers', null);
+    expect(script).toContain('/api/v1/friendships/');
+    expect(script).toContain('"49542389667"');
+    expect(script).toContain("/followers/?count=50'");
+    expect(script).not.toContain('max_id');
+    // The fetched URL must be one the endpoint table routes to followers-list,
+    // so request metering / reconciliation see the walked pages too.
+    expect(
+      SURFACE.matchEndpoint(
+        'https://www.instagram.com/api/v1/friendships/49542389667/followers/?count=50',
+      ),
+    ).toBe('followers-list');
+  });
+
+  test('later pages resume from the cursor; the following variant hits following/', () => {
+    const script = SURFACE.listPageScript('42', 'following', 'QVFEabc==');
+    expect(script).toContain("/following/?count=50'");
+    expect(script).toContain('max_id');
+    expect(script).toContain('"QVFEabc=="');
+  });
+});
+
+// --- activity feed (news inbox → follow-back events) --------------------------------
+
+describe('parseActivityFeed', () => {
+  const inbox = (newStories: unknown[], oldStories: unknown[]): unknown => ({
+    counts: {},
+    new_stories: newStories,
+    old_stories: oldStories,
+  });
+
+  test('routes the news-inbox URL to activity-feed', () => {
+    expect(
+      r.matchEndpoint('https://www.instagram.com/api/v1/news/inbox/'),
+    ).toBe('activity-feed');
+  });
+
+  test('extracts follow events via story_type OR the text matcher (either signal admits)', () => {
+    const body = inbox(
+      [
+        // Canonical: story_type 101 + text.
+        {
+          story_type: 101,
+          args: { profile_id: 11, profile_name: 'alpha', timestamp: 2.5, text: 'alpha started following you.' },
+        },
+        // Drifted story_type but recognizable text → still admitted.
+        {
+          story_type: 999,
+          args: { profile_id: '22', text: 'beta started following you.' },
+        },
+      ],
+      [
+        // Non-follow story → ignored.
+        { story_type: 60, args: { profile_id: 33, text: 'gamma liked your photo.', timestamp: 9 } },
+        // Follow type with no text → still admitted (type signal alone).
+        { story_type: 101, args: { profile_id: 44, timestamp: 7 } },
+      ],
+    );
+
+    expect(r.parseActivityFeed(body)).toEqual([
+      { pk: '11', username: 'alpha', atMs: 2500 },
+      { pk: '22', username: null, atMs: null },
+      { pk: '44', username: null, atMs: 7000 },
+    ]);
+  });
+
+  test('an empty feed parses to an empty list (valid: nobody followed recently)', () => {
+    expect(r.parseActivityFeed(inbox([], []))).toEqual([]);
+  });
+
+  test('a body with NO story containers is shape drift → [] (warned), never invented events', () => {
+    expect(r.parseActivityFeed({ status: 'fail' })).toEqual([]);
+    expect(r.parseActivityFeed('not json at all {')).toEqual([]);
+  });
+
+  test('entries without a usable profile_id are skipped', () => {
+    const body = inbox(
+      [{ story_type: 101, args: { text: 'x started following you.' } }],
+      [],
+    );
+    expect(r.parseActivityFeed(body)).toEqual([]);
   });
 });

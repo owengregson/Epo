@@ -1,13 +1,12 @@
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import { Reader } from '@/adapter/reader';
 import { SURFACE } from '@/adapter/ig-surface';
-import type { RequestBudget } from '@/governors/request-budget';
 import type { Sentinel } from '@/adapter/sentinel';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
 import type { ResponseHandler, Unsubscribe } from '@/types';
-import { FakeBudget, FakeSentinel } from './fakes';
+import { FakeSentinel } from './fakes';
 import { setLevel } from '@/utils/logger';
 
 beforeAll(() => setLevel('error'));
@@ -92,30 +91,59 @@ afterEach(() => store.close());
 interface Built {
   enricher: AdapterBackedProfileEnricher;
   tab: EnrichTab;
-  budget: FakeBudget;
   sentinel: FakeSentinel;
+  activity: Array<{ kind: string; label: string; count?: number; total?: number } | null>;
 }
 
 const build = (opts?: {
-  budgetAllows?: boolean;
   sentinel?: FakeSentinel;
   batchCap?: number;
 }): Built => {
   const tab = new EnrichTab();
-  const budget = new FakeBudget(opts?.budgetAllows ?? true);
   const sentinel = opts?.sentinel ?? new FakeSentinel();
+  const activity: Array<{
+    kind: string;
+    label: string;
+    count?: number;
+    total?: number;
+  } | null> = [];
   const enricher = new AdapterBackedProfileEnricher({
     tab,
     reader: new Reader(),
     store,
-    budget: budget as unknown as RequestBudget,
     sentinel: sentinel as unknown as Sentinel,
     clock,
     batchCap: opts?.batchCap,
     sleep: noSleep,
+    reporter: {
+      report: (info) => activity.push(info),
+      clear: () => activity.push(null),
+    },
   });
-  return { enricher, tab, budget, sentinel };
+  return { enricher, tab, sentinel, activity };
 };
+
+test('paces even when the sentinel blocks, so a persistent block cannot spin', async () => {
+  const tab = new EnrichTab();
+  const sentinel = new FakeSentinel([], 'challenge'); // every check is non-ok
+  const sleeps: number[] = [];
+  const enricher = new AdapterBackedProfileEnricher({
+    tab,
+    reader: new Reader(),
+    store,
+    sentinel: sentinel as unknown as Sentinel,
+    clock,
+    sleep: async (ms: number) => {
+      sleeps.push(ms);
+    },
+  });
+
+  const n = await enricher.enrich(['a', 'b', 'c']);
+
+  expect(n).toBe(0); // nothing enriched (all blocked)
+  expect(tab.evalCalls).toEqual([]); // never even fetched — blocked before evaluate
+  expect(sleeps.length).toBe(2); // paced after the 1st and 2nd (no wait after the last)
+});
 
 test('enriches each username: fetches web_profile_info, parses, and store.observe writes counts', async () => {
   const { enricher, tab } = build();
@@ -147,17 +175,6 @@ test('the fetch script targets web_profile_info with the app-id header and encod
   expect(script).toContain(`'x-ig-app-id': '${SURFACE.appId}'`);
   expect(script).toContain("credentials: 'include'");
   expect(script).toContain('encodeURIComponent("alice")');
-});
-
-test('an exhausted budget skips every username and enriches none (no fetch)', async () => {
-  const { enricher, tab } = build({ budgetAllows: false });
-  tab.bodies = { alice: profileBody('101', 'alice', 10, 10) };
-
-  const n = await enricher.enrich(['alice']);
-
-  expect(n).toBe(0);
-  expect(tab.evalCalls).toEqual([]); // budget gated before any fetch
-  expect(store.getAccount('101')).toBeNull();
 });
 
 test('a non-ok sentinel skips that username and returns the count of the rest', async () => {
@@ -237,7 +254,6 @@ test('an aborted driver signal ends the pass between usernames (nothing fetched)
     tab,
     reader: new Reader(),
     store,
-    budget: new FakeBudget(true) as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     clock,
     sleep: noSleep,
@@ -249,4 +265,69 @@ test('an aborted driver signal ends the pass between usernames (nothing fetched)
 
   expect(n).toBe(0);
   expect(tab.evalCalls).toEqual([]); // stop means stop: no fetch at all
+});
+
+test('reports determinate progress for the veil, advancing on SKIPS too, then clears', async () => {
+  // 'bob' has no scripted body → it is skipped; progress must still advance,
+  // otherwise the overlay bar stalls whenever a profile is unavailable.
+  const { enricher, tab, activity } = build();
+  tab.bodies = {
+    alice: profileBody('101', 'alice', 1200, 300),
+    carol: profileBody('103', 'carol', 900, 800),
+  };
+
+  await enricher.enrich(['alice', 'bob', 'carol']);
+
+  const reports = activity.filter(Boolean) as Array<{
+    kind: string;
+    label: string;
+    count?: number;
+    total?: number;
+  }>;
+  expect(reports.every((r) => r.kind === 'api' && r.label === 'Reading profiles')).toBe(true);
+  // A real denominator (the batch size) → the overlay draws a true bar.
+  expect(reports.every((r) => r.total === 3)).toBe(true);
+  // One report per username STARTED, including the skipped one.
+  expect(reports.map((r) => r.count)).toEqual([0, 1, 2]);
+  expect(activity[activity.length - 1]).toBeNull(); // cleared at the end
+});
+
+test('a 404 marks the account permanently un-enrichable; a 200 soft-block does NOT', async () => {
+  const { enricher, tab } = build();
+  // Both accounts are already known in the store (from a followers page).
+  for (const [pk, username] of [
+    ['77', 'gone_forever'],
+    ['88', 'soft_blocked'],
+  ]) {
+    store.observe({ accountPk: pk, observedAt: 1, source: 'followers-list', fields: { username } });
+  }
+  // gone_forever → definitive 404; soft_blocked → 2xx body with no data.user
+  // (a challenge-wall shape), which is AMBIGUOUS and must not mark.
+  tab.bodies.gone_forever = undefined;
+  tab.evaluate = async <T,>(fnOrString: string | (() => T | Promise<T>)): Promise<T> => {
+    const s = String(fnOrString);
+    if (s.includes(JSON.stringify('gone_forever'))) {
+      return { ok: false, status: 404, contentType: 'application/json', textHead: '{}' } as T;
+    }
+    return {
+      ok: true,
+      status: 200,
+      contentType: 'application/json',
+      json: { status: 'fail', spam: true },
+    } as T;
+  };
+
+  const enriched = await enricher.enrich(['gone_forever', 'soft_blocked']);
+
+  expect(enriched).toBe(0);
+  expect(store.getAccount('77')?.enrichFailedAt).toBeDefined(); // 404 → permanent
+  expect(store.getAccount('88')?.enrichFailedAt).toBeUndefined(); // wall → retryable
+});
+
+test('a later successful stats observation heals the enrich-failed marker', async () => {
+  store.observe({ accountPk: '77', observedAt: 1, source: 'followers-list', fields: { username: 'x' } });
+  store.markEnrichmentFailed('x', 2);
+  expect(store.getAccount('77')?.enrichFailedAt).toBe(2);
+  store.observe({ accountPk: '77', observedAt: 3, source: 'profile', fields: { followers: 10, following: 5 } });
+  expect(store.getAccount('77')?.enrichFailedAt).toBeUndefined();
 });

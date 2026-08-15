@@ -18,6 +18,7 @@ import type {
   BlockSignature,
   EndpointIds,
   EndpointKind,
+  FollowEvent,
   FollowersListResult,
   FriendshipShowResult,
   IgSurface,
@@ -54,6 +55,15 @@ const IG_ORIGIN = 'https://www.instagram.com';
 const IG_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+
+/**
+ * Page size for DIRECT friendships-list pagination (`listPageScript`). The
+ * dialog's own scroll batches carry ~12 users; the API itself accepts a larger
+ * `count` — 50 is the widely-exercised value (Instagram's own web surfaces and
+ * long-standing third-party tooling both request it), well under any observed
+ * rejection threshold.
+ */
+const LIST_PAGE_COUNT = 50;
 
 /**
  * Observed max user-ids per `show_many` request. Conservative; the Follow-back
@@ -111,6 +121,13 @@ const ENDPOINT_TABLE: ReadonlyArray<{
     kind: 'activity-feed',
     pattern: /\/api\/v1\/news\/inbox\//,
   },
+  {
+    // GET /api/v1/friendships/pending/ — incoming follow requests (private
+    // accounts). Fired when the notifications drawer's "Follow requests"
+    // entry opens the pending panel; body carries the followers-list shape.
+    kind: 'friend-requests',
+    pattern: /\/api\/v1\/friendships\/pending\//,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -124,7 +141,8 @@ const ENDPOINT_TABLE: ReadonlyArray<{
 //                     id,                               // numeric pk (string)
 //                     username, is_private, is_verified,
 //                     edge_followed_by: { count },      // FOLLOWERS count
-//                     edge_follow:      { count } } } }  // FOLLOWING count
+//                     edge_follow:      { count },       // FOLLOWING count
+//                     edge_mutual_followed_by: { count } } } }  // MUTUALS ("followed by x and N others")
 //
 // friendships/show/<pk>  { following, followed_by,      // followed_by => THEY follow us (follow-back!)
 //                          is_private, incoming_request, outgoing_request, blocking }
@@ -142,6 +160,9 @@ const JSON_PATHS = {
     isVerified: 'is_verified',
     nextMaxId: 'next_max_id',
     hasMore: 'has_more',
+    // Alternate more-pages flag: the friendships list endpoints carry
+    // `big_list` on some responses instead of (or as well as) `has_more`.
+    bigList: 'big_list',
   },
   webProfileInfo: {
     user: 'data.user',
@@ -149,24 +170,54 @@ const JSON_PATHS = {
     username: 'username',
     followersCount: 'edge_followed_by.count',
     followingCount: 'edge_follow.count',
+    // MUTUALS: how many accounts WE follow also follow this profile — the
+    // number behind the header's "Followed by x and N others". A strong
+    // follow-back predictor, captured in the same profile-info fetch as the
+    // counts (no extra request).
+    mutualCount: 'edge_mutual_followed_by.count',
     isPrivate: 'is_private',
     isVerified: 'is_verified',
     // Whether WE already follow this account. For a private account this is what
     // makes its followers list viewable (we can read followers of anyone we follow).
     followedByViewer: 'followed_by_viewer',
+    // Whether we have a PENDING follow request to this (private) account —
+    // `followed_by_viewer` is false while the request awaits acceptance.
+    requestedByViewer: 'requested_by_viewer',
   },
   friendshipShow: {
     following: 'following',
     followedBy: 'followed_by',
     isPrivate: 'is_private',
+    // A follow-REQUEST we sent that a private account has not yet accepted.
+    // `following` is FALSE for a pending request, so any consumer that treats
+    // "not following" as ground truth MUST also read this flag — otherwise the
+    // reconciler destroys every private-account follow request on sight.
+    outgoingRequest: 'outgoing_request',
   },
   showMany: {
     statuses: 'friendship_statuses',
     following: 'following',
     isPrivate: 'is_private',
+    outgoingRequest: 'outgoing_request',
   },
   currentUser: {
     username: 'user.username',
+  },
+  // news/inbox — the activity feed the notifications drawer fetches. Follow
+  // events live in the story arrays; `story_type` 101 is the long-standing
+  // "started following you" type, with the text matcher as a belt-and-braces
+  // qualifier (either signal admits an entry, so one drifting doesn't blind us).
+  activityFeed: {
+    storySections: ['new_stories', 'old_stories'] as readonly string[],
+    storyType: 'story_type',
+    followStoryType: 101,
+    args: 'args',
+    profileId: 'profile_id',
+    profileName: 'profile_name',
+    /** Feed timestamps are epoch SECONDS (float). */
+    timestamp: 'timestamp',
+    text: 'text',
+    followText: /started following you/i,
   },
 } as const;
 
@@ -193,21 +244,41 @@ const SELECTORS = {
    * (observed: "FollowingDown chevron icon"), so match the leading word only.
    */
   profileActionButtonRole: 'header button, header [role="button"]',
-  /**
-   * Defensive fallback anchor used only when the primary yields no state-text
-   * match — tolerates a future layout change that moves the button out of the
-   * `<header>` without breaking the verified path. Still matched by TEXT, never
-   * by class; the first state-matching button in document order wins.
-   */
-  profileActionButtonRoleFallback:
-    'main button, main [role="button"], button, [role="button"]',
   followText: /^\s*follow(\s|$)/i,
   followingText: /^\s*following/i,
   requestedText: /^\s*requested/i,
   followBackText: /^\s*follow back/i,
-  /** The confirm control in the unfollow dialog — exact text "Unfollow". */
-  unfollowConfirmText: /^\s*unfollow\s*$/i,
+  /**
+   * The confirm control in the unfollow / cancel-request dialog. PREFIX match
+   * (`\b`, not `$`): the menu item's text can carry a suffix (e.g. "Unfollow
+   * @name" or icon alt text) and the exact-match variant went blind to it.
+   * Only one menu item leads with either word, so the prefix stays unambiguous.
+   */
+  unfollowConfirmText: /^\s*(unfollow|cancel request)\b/i,
+  /**
+   * The left-nav notifications control. It is NOT an href link (clicking
+   * toggles the activity drawer in place), so it is located by the accessible
+   * name Instagram puts on the bell/heart icon and its nav row.
+   */
+  notificationsLabelText: /^\s*notifications\s*$/i,
+  /** The "Follow requests" entry inside the open notifications drawer. */
+  followRequestsEntryText: /^\s*follow requests\b/i,
+  /** The per-row accept control in the follow-requests panel. */
+  confirmRequestText: /^\s*confirm\s*$/i,
+  /** The "Follows" category filter chip inside the notifications drawer. */
+  followsFilterText: /^\s*follows\s*$/i,
+  /** The drawer's close (X) control, by accessible name. */
+  drawerCloseLabelText: /^\s*close\s*$/i,
 } as const;
+
+// NOTE (2026-08-14): the old document-wide fallback anchor
+// (`main button, …, button, [role="button"]`) was REMOVED deliberately. It
+// could match a "Follow" button belonging to a DIFFERENT account (suggestion
+// carousels, hover cards) while the header was still hydrating, click it, and
+// then "verify" against the same wrong button — writing a ledger row, a state
+// transition, and a graph edge for an account that was never followed. The
+// verified `<header>` anchor is the only safe scope; when Instagram moves the
+// button, the loud `AdapterStaleError` is the designed failure mode.
 
 // Followers-dialog scroll container: class names are unstable, so the scroll
 // script locates, within the dialog, the descendant with the greatest
@@ -344,12 +415,11 @@ function findAndActScript(op: 'follow' | 'unfollow'): string {
     requested: regexLiteral(SELECTORS.requestedText),
     follow: regexLiteral(SELECTORS.followText),
   };
-  // A2: search the verified primary anchor first; only if it yields no
-  // state-text match, fall back to the broader selector and take the FIRST
-  // state-matching button in document order. Never matched by class.
+  // A2: search ONLY the verified header anchor. A broader fallback is unsafe:
+  // it can match another account's Follow button (suggestion carousels, hover
+  // cards) mid-hydration; drift must fail loud, never click the wrong control.
   return `(() => {
   const SEL = ${JSON.stringify(SELECTORS.profileActionButtonRole)};
-  const SEL2 = ${JSON.stringify(SELECTORS.profileActionButtonRoleFallback)};
   const RX = ${JSON.stringify(regexes)};
   const OP = ${JSON.stringify(op)};
   const mk = (o) => new RegExp(o.source, o.flags);
@@ -370,8 +440,7 @@ function findAndActScript(op: 'follow' | 'unfollow'): string {
     }
     return null;
   };
-  let hit = search(SEL);
-  if (!hit) hit = search(SEL2);
+  const hit = search(SEL);
   if (!hit) return { found: false };
   const btn = hit.btn;
   const state = hit.state;
@@ -381,7 +450,7 @@ function findAndActScript(op: 'follow' | 'unfollow'): string {
     if (state === 'follow' || state === 'follow-back') { btn.click(); clicked = true; }
   } else {
     if (state === 'following') { btn.click(); clicked = true; needsConfirm = true; }
-    else if (state === 'requested') { btn.click(); clicked = true; }
+    else if (state === 'requested') { btn.click(); clicked = true; needsConfirm = true; }
   }
   return { found: true, state: state, clicked: clicked, needsConfirm: needsConfirm };
 })()`;
@@ -401,7 +470,6 @@ function probeStateScript(): string {
   };
   return `(() => { /* actor:probe-state */
   const SEL = ${JSON.stringify(SELECTORS.profileActionButtonRole)};
-  const SEL2 = ${JSON.stringify(SELECTORS.profileActionButtonRoleFallback)};
   const RX = ${JSON.stringify(regexes)};
   const mk = (o) => new RegExp(o.source, o.flags);
   const followBack = mk(RX.followBack);
@@ -421,8 +489,7 @@ function probeStateScript(): string {
     }
     return null;
   };
-  let state = search(SEL);
-  if (!state) state = search(SEL2);
+  const state = search(SEL);
   if (!state) return { found: false, state: 'unknown' };
   return { found: true, state: state };
 })()`;
@@ -435,11 +502,18 @@ function confirmUnfollowScript(): string {
   const RX = ${JSON.stringify(rx)};
   const rx = new RegExp(RX.source, RX.flags);
   const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
-  const dialog = document.querySelector(${JSON.stringify(SELECTORS.dialog)});
-  const scope = dialog || document;
-  const nodes = Array.from(scope.querySelectorAll('button, [role="button"], [role="menuitem"]'));
-  for (const n of nodes) {
-    if (rx.test(norm(n.textContent))) { n.click(); return { confirmed: true }; }
+  // ALL dialog-ish scopes, not just the first [role=dialog]: the unfollow menu
+  // can mount as a second dialog behind another overlay, and scoping to the
+  // first one went blind to it. Document is the final fallback.
+  const scopes = Array.prototype.slice.call(
+    document.querySelectorAll('[role="dialog"], [role="alertdialog"]'),
+  );
+  scopes.push(document);
+  for (const scope of scopes) {
+    const nodes = Array.from(scope.querySelectorAll('button, [role="button"], [role="menuitem"]'));
+    for (const n of nodes) {
+      if (rx.test(norm(n.textContent))) { n.click(); return { confirmed: true }; }
+    }
   }
   return { confirmed: false };
 })()`;
@@ -532,11 +606,11 @@ function scrollFollowersScript(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Humanizer LOCATE scripts (additive, 2026-08-13). Each performs the SAME
+// Interactor LOCATE scripts (additive, 2026-08-13). Each performs the SAME
 // element search as its click-script counterpart above but returns the
 // target's viewport bounding rect (getBoundingClientRect) WITHOUT clicking —
-// the Humanizer then clicks/scrolls with real trusted input events. The click
-// scripts above are untouched and remain the no-humanizer fallback. Marker
+// the Interactor then clicks/scrolls with native input events. The click
+// scripts above are untouched and remain the no-interactor fallback. Marker
 // comments (`actor:locate-*`) identify each script to test fakes.
 // ---------------------------------------------------------------------------
 
@@ -547,7 +621,7 @@ const RECT_JS = `(el) => { const r = el.getBoundingClientRect();
 /**
  * Locate-only variant of {@link findAndActScript}: same primary→fallback
  * search and the same would-click decision table, but NO click — the rect and
- * decision come back for the Humanizer to act on.
+ * decision come back for the Interactor to act on.
  */
 function locateActionButtonScript(op: 'follow' | 'unfollow'): string {
   const regexes = {
@@ -558,7 +632,6 @@ function locateActionButtonScript(op: 'follow' | 'unfollow'): string {
   };
   return `(() => { /* actor:locate-action */
   const SEL = ${JSON.stringify(SELECTORS.profileActionButtonRole)};
-  const SEL2 = ${JSON.stringify(SELECTORS.profileActionButtonRoleFallback)};
   const RX = ${JSON.stringify(regexes)};
   const OP = ${JSON.stringify(op)};
   const rectOf = ${RECT_JS};
@@ -580,8 +653,7 @@ function locateActionButtonScript(op: 'follow' | 'unfollow'): string {
     }
     return null;
   };
-  let hit = search(SEL);
-  if (!hit) hit = search(SEL2);
+  const hit = search(SEL);
   if (!hit) return { found: false };
   const state = hit.state;
   let wouldClick = false;
@@ -590,7 +662,7 @@ function locateActionButtonScript(op: 'follow' | 'unfollow'): string {
     if (state === 'follow' || state === 'follow-back') wouldClick = true;
   } else {
     if (state === 'following') { wouldClick = true; needsConfirm = true; }
-    else if (state === 'requested') wouldClick = true;
+    else if (state === 'requested') { wouldClick = true; needsConfirm = true; }
   }
   return { found: true, state: state, wouldClick: wouldClick, needsConfirm: needsConfirm, rect: rectOf(hit.btn) };
 })()`;
@@ -604,11 +676,16 @@ function locateConfirmUnfollowScript(): string {
   const rx = new RegExp(RX.source, RX.flags);
   const rectOf = ${RECT_JS};
   const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
-  const dialog = document.querySelector(${JSON.stringify(SELECTORS.dialog)});
-  const scope = dialog || document;
-  const nodes = Array.from(scope.querySelectorAll('button, [role="button"], [role="menuitem"]'));
-  for (const n of nodes) {
-    if (rx.test(norm(n.textContent))) return { found: true, rect: rectOf(n) };
+  // ALL dialog-ish scopes (see confirmUnfollowScript) — never just the first.
+  const scopes = Array.prototype.slice.call(
+    document.querySelectorAll('[role="dialog"], [role="alertdialog"]'),
+  );
+  scopes.push(document);
+  for (const scope of scopes) {
+    const nodes = Array.from(scope.querySelectorAll('button, [role="button"], [role="menuitem"]'));
+    for (const n of nodes) {
+      if (rx.test(norm(n.textContent))) return { found: true, rect: rectOf(n) };
+    }
   }
   return { found: false };
 })()`;
@@ -617,7 +694,7 @@ function locateConfirmUnfollowScript(): string {
 /**
  * Locate-only variant of the stat click scripts: the CLICKABLE ancestor's rect
  * for the followers or following count control (same text tests, same
- * `clickableOf` resolution — the Humanizer must press what the JS would click).
+ * `clickableOf` resolution — the Interactor must press what the JS would click).
  */
 function locateStatScript(which: 'followers' | 'following'): string {
   const followers = regexLiteral(SELECTORS.followersStatText);
@@ -646,9 +723,240 @@ function locateStatScript(which: 'followers' | 'following'): string {
 }
 
 /**
+ * Locate-only variant of CLICK_PROFILE_LINK: the same avatar-anchor search
+ * (nav scopes first, body fallback like READ_PROFILE_HREF), but it returns the
+ * link's viewport rect instead of clicking — the Interactor presses it with native
+ * input events (the SPA can ignore a synthetic `a.click()` here).
+ */
+function locateProfileLinkScript(): string {
+  return `(() => { /* actor:locate-profile-link */
+  const rectOf = ${RECT_JS};
+  const isProfilePath = (h) => /^\\/[A-Za-z0-9._]+\\/$/.test(h || '');
+  const scopes = Array.prototype.slice.call(document.querySelectorAll('nav, [role="navigation"]'));
+  scopes.push(document.body);
+  for (const scope of scopes) {
+    if (!scope) continue;
+    const anchors = scope.querySelectorAll('a[href]');
+    for (const a of anchors) {
+      const h = a.getAttribute('href');
+      if (isProfilePath(h) && a.querySelector('img')) return { found: true, rect: rectOf(a) };
+    }
+  }
+  return { found: false };
+})()`;
+}
+
+/**
+ * Locate the left-nav NOTIFICATIONS control's rect. The control is not an href
+ * link (clicking toggles the activity drawer in place), so it is found by
+ * accessible name: an `svg[aria-label]` or `[aria-label]` element whose label
+ * says "Notifications", resolved to its clickable ancestor — the element the
+ * page itself treats as the button. Nav scopes are searched first so a stray "Notifications"
+ * string in page content can never win over the rail.
+ */
+function locateNotificationsLinkScript(): string {
+  const rx = regexLiteral(SELECTORS.notificationsLabelText);
+  return `(() => { /* actor:locate-notifications */
+  const RX = ${JSON.stringify(rx)};
+  const rx = new RegExp(RX.source, RX.flags);
+  const rectOf = ${RECT_JS};
+  const clickableOf = (el) => el.closest('a, button, [role="button"], [role="link"]') || el.parentElement || el;
+  const scopes = Array.prototype.slice.call(document.querySelectorAll('nav, [role="navigation"]'));
+  scopes.push(document.body);
+  for (const scope of scopes) {
+    if (!scope) continue;
+    const labeled = scope.querySelectorAll('svg[aria-label], [aria-label]');
+    for (const el of labeled) {
+      const label = el.getAttribute('aria-label') || '';
+      if (rx.test(label)) return { found: true, rect: rectOf(clickableOf(el)) };
+    }
+  }
+  return { found: false };
+})()`;
+}
+
+/**
+ * Locate the "Follow requests" entry inside the OPEN notifications drawer.
+ * Text-matched on the smallest element whose own text leads with the label,
+ * resolved to its clickable ancestor. Drawer/dialog scopes are searched first
+ * so page content can never win; `found: false` when the entry is absent
+ * (public account or nothing pending) — a soft skip for the caller.
+ */
+function locateFollowRequestsEntryScript(): string {
+  const rx = regexLiteral(SELECTORS.followRequestsEntryText);
+  return `(() => { /* actor:locate-follow-requests */
+  const RX = ${JSON.stringify(rx)};
+  const rx = new RegExp(RX.source, RX.flags);
+  const rectOf = ${RECT_JS};
+  const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
+  const clickableOf = (el) => el.closest('a, button, [role="button"], [role="link"], [role="menuitem"]') || el;
+  const scopes = Array.prototype.slice.call(
+    document.querySelectorAll('[role="dialog"], [role="alertdialog"], aside'),
+  );
+  scopes.push(document.body);
+  for (const scope of scopes) {
+    if (!scope) continue;
+    const nodes = scope.querySelectorAll('span, div, a, button, [role="button"]');
+    for (const n of nodes) {
+      // Smallest matching element: its own text matches but no matching child does
+      // (otherwise every ancestor of the label would match first).
+      if (!rx.test(norm(n.textContent))) continue;
+      let smallest = true;
+      for (const c of n.children) {
+        if (rx.test(norm(c.textContent))) { smallest = false; break; }
+      }
+      if (smallest) return { found: true, rect: rectOf(clickableOf(n)) };
+    }
+  }
+  return { found: false };
+})()`;
+}
+
+/**
+ * Locate the "Follows" category filter chip inside the open notifications
+ * drawer (exact text, smallest element, drawer scopes first) — clicking it
+ * narrows the feed to follow events. Soft: absent on layouts without filters.
+ */
+function locateNotificationsFollowsFilterScript(): string {
+  const rx = regexLiteral(SELECTORS.followsFilterText);
+  return `(() => { /* actor:locate-follows-filter */
+  const RX = ${JSON.stringify(rx)};
+  const rx = new RegExp(RX.source, RX.flags);
+  const rectOf = ${RECT_JS};
+  const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
+  const clickableOf = (el) => el.closest('a, button, [role="button"], [role="tab"], [role="link"]') || el;
+  const scopes = Array.prototype.slice.call(
+    document.querySelectorAll('[role="dialog"], [role="alertdialog"], aside'),
+  );
+  scopes.push(document.body);
+  for (const scope of scopes) {
+    if (!scope) continue;
+    const nodes = scope.querySelectorAll('span, div, button, [role="button"], [role="tab"]');
+    for (const n of nodes) {
+      if (!rx.test(norm(n.textContent))) continue;
+      let smallest = true;
+      for (const c of n.children) {
+        if (rx.test(norm(c.textContent))) { smallest = false; break; }
+      }
+      if (smallest) return { found: true, rect: rectOf(clickableOf(n)) };
+    }
+  }
+  return { found: false };
+})()`;
+}
+
+/**
+ * Locate the notifications drawer's CLOSE (X) control by accessible name —
+ * pressing it is the supported way to leave the drawer so the tab is genuinely
+ * neutral for whatever acts next. Soft: the caller falls back to toggling the
+ * bell when no close control exists.
+ */
+function locateNotificationsCloseScript(): string {
+  const rx = regexLiteral(SELECTORS.drawerCloseLabelText);
+  return `(() => { /* actor:locate-drawer-close */
+  const RX = ${JSON.stringify(rx)};
+  const rx = new RegExp(RX.source, RX.flags);
+  const rectOf = ${RECT_JS};
+  const clickableOf = (el) => el.closest('a, button, [role="button"]') || el.parentElement || el;
+  const scopes = Array.prototype.slice.call(
+    document.querySelectorAll('[role="dialog"], [role="alertdialog"], aside'),
+  );
+  scopes.push(document.body);
+  for (const scope of scopes) {
+    if (!scope) continue;
+    const labeled = scope.querySelectorAll('svg[aria-label], [aria-label]');
+    for (const el of labeled) {
+      const label = el.getAttribute('aria-label') || '';
+      if (rx.test(label)) return { found: true, rect: rectOf(clickableOf(el)) };
+    }
+  }
+  return { found: false };
+})()`;
+}
+
+/**
+ * Locate the notifications drawer's scroll container (largest scrollable
+ * descendant of the drawer scope) + metrics — the caller wheel-scrolls it to
+ * load older notification pages. `found: false` when the list fits.
+ */
+function locateNotificationsScrollScript(): string {
+  return `(() => { /* actor:locate-notifications-scroll */
+  const rectOf = ${RECT_JS};
+  const scopes = Array.prototype.slice.call(
+    document.querySelectorAll('[role="dialog"], [role="alertdialog"], aside'),
+  );
+  for (const scope of scopes) {
+    if (!scope) continue;
+    const nodes = Array.from(scope.querySelectorAll('*'));
+    let best = null;
+    let bestH = 0;
+    for (const el of nodes) {
+      const style = window.getComputedStyle(el);
+      const oy = style.overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) {
+        if (el.scrollHeight > bestH) { bestH = el.scrollHeight; best = el; }
+      }
+    }
+    if (best) {
+      return {
+        found: true,
+        rect: rectOf(best),
+        scrollTop: best.scrollTop,
+        scrollHeight: best.scrollHeight,
+        clientHeight: best.clientHeight,
+      };
+    }
+  }
+  return { found: false };
+})()`;
+}
+
+/**
+ * Locate the FIRST "Confirm" control in the open follow-requests panel, plus
+ * the username of the row it belongs to (nearest ancestor containing a
+ * profile-path link) and how many Confirm controls remain — the caller uses
+ * the username/count to verify each accept made progress.
+ */
+function locateConfirmFollowRequestScript(): string {
+  const rx = regexLiteral(SELECTORS.confirmRequestText);
+  return `(() => { /* actor:locate-confirm-request */
+  const RX = ${JSON.stringify(rx)};
+  const rx = new RegExp(RX.source, RX.flags);
+  const rectOf = ${RECT_JS};
+  const norm = (t) => (t || '').replace(/\\s+/g, ' ').trim();
+  const isProfilePath = (h) => /^\\/[A-Za-z0-9._]+\\/?$/.test(h || '');
+  const scopes = Array.prototype.slice.call(
+    document.querySelectorAll('[role="dialog"], [role="alertdialog"], aside'),
+  );
+  scopes.push(document.body);
+  for (const scope of scopes) {
+    if (!scope) continue;
+    const buttons = Array.prototype.filter.call(
+      scope.querySelectorAll('button, [role="button"]'),
+      (b) => rx.test(norm(b.textContent)),
+    );
+    if (buttons.length === 0) continue;
+    const btn = buttons[0];
+    // The row's username: walk up until an ancestor holds a profile link.
+    let username = null;
+    let node = btn.parentElement;
+    for (let depth = 0; node && depth < 8 && username === null; depth++, node = node.parentElement) {
+      const anchors = node.querySelectorAll('a[href]');
+      for (const a of anchors) {
+        const h = a.getAttribute('href');
+        if (isProfilePath(h)) { username = h.replace(/\\//g, ''); break; }
+      }
+    }
+    return { found: true, rect: rectOf(btn), username: username, remaining: buttons.length };
+  }
+  return { found: false };
+})()`;
+}
+
+/**
  * Locate-only variant of {@link scrollFollowersScript}: the same
  * largest-scrollable-descendant heuristic, but it reports the container's rect
- * and scroll metrics instead of jumping `scrollTop` — the Humanizer then
+ * and scroll metrics instead of jumping `scrollTop` — the Interactor then
  * scrolls it with real wheel events.
  */
 function locateScrollContainerScript(): string {
@@ -667,13 +975,49 @@ function locateScrollContainerScript(): string {
     }
   }
   if (!best) return { found: false };
-  return {
+
+  // Hover-safe rest point: a spot inside the container that is NOT over a
+  // username link, avatar image, or follow button — so a wheel there scrolls
+  // the list instead of opening Instagram's hover-preview card (which overlays
+  // the row and eats the wheel). Probe elementFromPoint across the container's
+  // left/right gutters and mid columns at several row heights; the gutters
+  // (row background, no interactive child) are the most reliable and tried
+  // first. Absent when nothing safe is found (a dense list) — the caller then
+  // uses its default entry point.
+  const r = best.getBoundingClientRect();
+  const INTERACTIVE = 'a, button, [role="button"], img, canvas, video, [role="link"]';
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const vh = window.innerHeight || document.documentElement.clientHeight || r.bottom;
+  const topV = clamp(r.top, 0, vh);
+  const botV = clamp(r.bottom, 0, vh);
+  const isSafe = (x, y) => {
+    const el = document.elementFromPoint(Math.round(x), Math.round(y));
+    if (!el) return false;
+    if (el !== best && !best.contains(el)) return false; // outside the scroller
+    return !el.closest(INTERACTIVE);
+  };
+  // Gutters first (left padding, then right — inset past the ~15px scrollbar),
+  // then interior columns as a fallback.
+  const xs = [r.left + 6, r.left + 14, r.right - 26, r.right - 18,
+              r.left + r.width * 0.5, r.left + r.width * 0.34, r.left + r.width * 0.66];
+  const yFracs = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74];
+  let safe = null;
+  for (let yi = 0; yi < yFracs.length && !safe; yi++) {
+    const y = topV + (botV - topV) * yFracs[yi];
+    for (let xi = 0; xi < xs.length; xi++) {
+      if (isSafe(xs[xi], y)) { safe = { x: xs[xi], y: y }; break; }
+    }
+  }
+
+  const out = {
     found: true,
     rect: rectOf(best),
     scrollTop: best.scrollTop,
     scrollHeight: best.scrollHeight,
     clientHeight: best.clientHeight,
   };
+  if (safe) out.safePoint = safe;
+  return out;
 })()`;
 }
 
@@ -681,7 +1025,11 @@ function locateScrollContainerScript(): string {
 // Response extractors
 // ---------------------------------------------------------------------------
 
-function extractFollowersList(body: unknown, at: number): FollowersListResult | ShapeMismatch {
+function extractFollowersList(
+  body: unknown,
+  at: number,
+  source: 'followers-list' | 'following-list' | 'friend-requests' = 'followers-list',
+): FollowersListResult | ShapeMismatch {
   const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false };
   if (!isRecord(body)) return empty;
 
@@ -697,7 +1045,7 @@ function extractFollowersList(body: unknown, at: number): FollowersListResult | 
     observations.push({
       accountPk: pk,
       observedAt: at,
-      source: 'followers-list',
+      source,
       fields: {
         username: typeof entry[p.userName] === 'string'
           ? (entry[p.userName] as string)
@@ -712,7 +1060,13 @@ function extractFollowersList(body: unknown, at: number): FollowersListResult | 
   const cursor = typeof nextMaxId === 'string' && nextMaxId.length > 0
     ? nextMaxId
     : null;
-  return { observations, cursor, hasMore: getPath(body, p.hasMore) === true };
+  // More-pages detection must be resilient to which flag this response carries:
+  // `has_more`, the alternate `big_list`, or neither — a present pagination
+  // cursor ALWAYS means another page exists. A false negative here ends the
+  // scroll loop after one page and silently truncates a whole-list scan.
+  const hasMore =
+    getPath(body, p.hasMore) === true || getPath(body, p.bigList) === true || cursor !== null;
+  return { observations, cursor, hasMore };
 }
 
 function extractProfileInfo(body: unknown, at: number): Observation | null | ShapeMismatch {
@@ -720,7 +1074,15 @@ function extractProfileInfo(body: unknown, at: number): Observation | null | Sha
 
   const p = JSON_PATHS.webProfileInfo;
   const user = getPath(body, p.user);
-  if (!isRecord(user)) return null;
+  if (!isRecord(user)) {
+    // Distinguish "genuinely no user" from "unexpected shape": a body whose
+    // `data` container exists with an empty/null user is Instagram saying the
+    // profile is gone; anything else (a `{status:'fail'}` soft-block body,
+    // shape drift) must surface as SHAPE_MISMATCH so consumers never treat a
+    // transient wall as proof of a deleted account.
+    const data = (body as Record<string, unknown>).data;
+    return isRecord(data) ? null : SHAPE_MISMATCH;
+  }
 
   const pk = asStringId(user[p.id]);
   if (pk === null) return SHAPE_MISMATCH;
@@ -735,6 +1097,7 @@ function extractProfileInfo(body: unknown, at: number): Observation | null | Sha
         : undefined,
       followers: asCount(getPath(user, p.followersCount)),
       following: asCount(getPath(user, p.followingCount)),
+      mutuals: asCount(getPath(user, p.mutualCount)),
       isPrivate: asBool(user[p.isPrivate]),
       isVerified: asBool(user[p.isVerified]),
     },
@@ -747,6 +1110,15 @@ function extractProfileFollowedByViewer(body: unknown): boolean | null {
   const user = getPath(body, p.user);
   if (!isRecord(user)) return null;
   const v = user[p.followedByViewer];
+  return typeof v === 'boolean' ? v : null;
+}
+
+function extractProfileRequestedByViewer(body: unknown): boolean | null {
+  if (!isRecord(body)) return null;
+  const p = JSON_PATHS.webProfileInfo;
+  const user = getPath(body, p.user);
+  if (!isRecord(user)) return null;
+  const v = user[p.requestedByViewer];
   return typeof v === 'boolean' ? v : null;
 }
 
@@ -763,6 +1135,9 @@ function extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch {
     out.push({
       pk,
       following: status[p.following] === true,
+      // A pending request to a private account: `following` is false but the
+      // relationship is OURS — consumers must not read it as "not following".
+      outgoingRequest: status[p.outgoingRequest] === true,
       isPrivate: asBool(status[p.isPrivate]),
     });
   }
@@ -772,10 +1147,19 @@ function extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch {
 function extractFriendshipShow(body: unknown, pk: string): FriendshipShowResult | ShapeMismatch {
   if (!isRecord(body)) return SHAPE_MISMATCH;
   const p = JSON_PATHS.friendshipShow;
+  // Guard on the expected keys, not merely "is it an object": an error body
+  // (e.g. {"status":"fail"}) would otherwise parse cleanly to all-false — a
+  // FALSE "we do not follow them" fact that flows into the reconciler and
+  // terminates held records. The interface contract demands SHAPE_MISMATCH so
+  // "no relationship" and "unparsed" stay distinguishable.
+  if (typeof body[p.following] !== 'boolean' && typeof body[p.followedBy] !== 'boolean') {
+    return SHAPE_MISMATCH;
+  }
   return {
     pk,
     following: body[p.following] === true,
     followedBy: body[p.followedBy] === true,
+    outgoingRequest: body[p.outgoingRequest] === true,
     isPrivate: asBool(body[p.isPrivate]),
   };
 }
@@ -783,6 +1167,48 @@ function extractFriendshipShow(body: unknown, pk: string): FriendshipShowResult 
 function extractCurrentUsername(body: unknown): string | null {
   const username = getPath(body, JSON_PATHS.currentUser.username);
   return typeof username === 'string' && username.length > 0 ? username : null;
+}
+
+/**
+ * Parse the news-inbox (activity feed) body into "started following you"
+ * events. An entry qualifies through EITHER signal — the numeric follow
+ * `story_type` or the text matcher — so a drift in one doesn't blind the
+ * follow-back watcher. `SHAPE_MISMATCH` when the body carries NONE of the
+ * expected story containers (drift / error body); empty sections are a valid
+ * "no recent follows" result.
+ */
+function extractActivityFeed(body: unknown): FollowEvent[] | ShapeMismatch {
+  if (!isRecord(body)) return SHAPE_MISMATCH;
+  const p = JSON_PATHS.activityFeed;
+
+  const sections = p.storySections
+    .map((key) => body[key])
+    .filter((section): section is unknown[] => Array.isArray(section));
+  if (sections.length === 0) return SHAPE_MISMATCH;
+
+  const out: FollowEvent[] = [];
+  for (const section of sections) {
+    for (const entry of section) {
+      if (!isRecord(entry)) continue;
+      const args = entry[p.args];
+      if (!isRecord(args)) continue;
+      const text = args[p.text];
+      const isFollow =
+        entry[p.storyType] === p.followStoryType ||
+        (typeof text === 'string' && p.followText.test(text));
+      if (!isFollow) continue;
+      const pk = asStringId(args[p.profileId]);
+      if (pk === null) continue;
+      const name = args[p.profileName];
+      const ts = asCount(args[p.timestamp]);
+      out.push({
+        pk,
+        username: typeof name === 'string' && name.length > 0 ? name : null,
+        atMs: ts !== undefined ? Math.round(ts * 1000) : null,
+      });
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -813,6 +1239,7 @@ const STALE_LABELS: Record<StaleComponent, string> = {
   'unfollow-confirm': String(SELECTORS.unfollowConfirmText),
   'followers-stat': String(SELECTORS.followersStatText),
   'following-stat': String(SELECTORS.followingStatText),
+  'notifications-link': String(SELECTORS.notificationsLabelText),
   dialog: SELECTORS.dialog,
 };
 
@@ -847,11 +1274,13 @@ export const SURFACE_2026_08_12: IgSurface = {
   },
 
   extractFollowersList,
+  extractProfileRequestedByViewer,
   extractProfileInfo,
   extractProfileFollowedByViewer,
   extractShowMany,
   extractFriendshipShow,
   extractCurrentUsername,
+  extractActivityFeed,
 
   profileInfoScript: (username: string): string =>
     envelopeFetchScript(
@@ -863,9 +1292,35 @@ export const SURFACE_2026_08_12: IgSurface = {
     envelopeFetchScript(
       `'/api/v1/friendships/show/' + encodeURIComponent(${JSON.stringify(pk)}) + '/'`,
     ),
+  listPageScript: (pk: string, which: 'followers' | 'following', maxId: string | null): string =>
+    envelopeFetchScript(
+      `'/api/v1/friendships/' + encodeURIComponent(${JSON.stringify(pk)}) + '/${which}/?count=${LIST_PAGE_COUNT}'` +
+        (maxId === null
+          ? ''
+          : ` + '&max_id=' + encodeURIComponent(${JSON.stringify(maxId)})`),
+    ),
+  // The friendships list `max_id` is a ROW OFFSET (verified live: pages hand
+  // back "50", "100", …), so the window just past everything received starts
+  // at the number of rows fetched. Used to verify an end-of-list claim that
+  // arrived WITHOUT a resume cursor. Failure mode is safe either way: if a
+  // future capture makes cursors opaque, IG ignores the bogus offset and
+  // returns head rows — all duplicates — which still reads as "nothing new
+  // past the end" (a confirmation, never a false continuation).
+  listEndProbeCursor: (rowsFetched: number): string => String(rowsFetched),
 
+  // Sentinel text probe. NOT the whole body: during actions the tab sits on a
+  // CANDIDATE's profile, whose bio/captions/comments are stranger-controlled
+  // text — a bio containing "try again later" would otherwise permanently halt
+  // the engine. Block interstitials render as dialogs/alerts or headline the
+  // page, so the probe reads only dialog/alert containers and top headings.
   bodyTextProbeScript: (): string =>
-    `(() => (document.body ? document.body.innerText : ''))()`,
+    `(() => {
+  const parts = [];
+  const push = (el) => { if (el && el.innerText) parts.push(el.innerText); };
+  for (const el of document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="alert"]')) push(el);
+  for (const el of document.querySelectorAll('h1, h2')) push(el);
+  return parts.join('\\n');
+})()`,
 
   findAndActScript,
   probeStateScript,
@@ -880,6 +1335,13 @@ export const SURFACE_2026_08_12: IgSurface = {
   locateConfirmUnfollowScript,
   locateFollowersStatScript: (): string => locateStatScript('followers'),
   locateFollowingStatScript: (): string => locateStatScript('following'),
+  locateProfileLinkScript,
+  locateNotificationsLinkScript,
+  locateNotificationsFollowsFilterScript,
+  locateNotificationsCloseScript,
+  locateNotificationsScrollScript,
+  locateFollowRequestsEntryScript,
+  locateConfirmFollowRequestScript,
   locateScrollContainerScript,
 
   readProfileHrefScript: (): string => READ_PROFILE_HREF,

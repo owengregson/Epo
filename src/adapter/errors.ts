@@ -8,6 +8,51 @@
  * happens we want the failure to be LOUD and attributable — never a silently
  * swallowed no-op that lets the engine believe an action succeeded.
  */
+/**
+ * Thrown when an Actor operation was interrupted by the ACTIVE driver's abort
+ * signal (a user `stop()`/pause) rather than failing. Distinguishing this from
+ * a timeout matters: a timeout is selector drift (loud `AdapterStaleError`, a
+ * failed ledger row, a burned retry), while an abort is a normal control
+ * command — the record must be left completely untouched so it retries when
+ * the engine next runs.
+ */
+export class ActionAbortedError extends Error {
+  /** The adapter operation that was interrupted, e.g. `actor.follow`. */
+  readonly component: string;
+
+  constructor(component: string) {
+    super(`Adapter action aborted [${component}]: driver stop/pause interrupted the wait`);
+    this.name = 'ActionAbortedError';
+    this.component = component;
+    Object.setPrototypeOf(this, ActionAbortedError.prototype);
+  }
+}
+
+/**
+ * Thrown when an Actor operation could not complete because Instagram put a
+ * BLOCK/interstitial dialog on screen instead of the expected control ("Try
+ * Again Later", "We restrict certain activity", …). Distinguishing this from
+ * `AdapterStaleError` matters: drift is a code problem (loud stale, failed
+ * ledger row), while a block is Instagram throttling the ACTION — the record/
+ * candidate must be left untouched and the caller backs off (observed live
+ * 2026-08-15: a prune run had every second unfollow's confirm menu replaced
+ * by an interstitial, and each one burned a candidate as "failed").
+ */
+export class ActionBlockedError extends Error {
+  /** The adapter operation that was blocked, e.g. `actor.unfollow`. */
+  readonly component: string;
+  /** The on-screen text that matched a block signature. */
+  readonly matchedText: string;
+
+  constructor(component: string, matchedText: string) {
+    super(`Adapter action blocked [${component}]: Instagram interstitial: ${matchedText}`);
+    this.name = 'ActionBlockedError';
+    this.component = component;
+    this.matchedText = matchedText;
+    Object.setPrototypeOf(this, ActionBlockedError.prototype);
+  }
+}
+
 export class AdapterStaleError extends Error {
   /** The adapter operation that failed, e.g. `actor.follow`. */
   readonly component: string;

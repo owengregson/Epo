@@ -11,6 +11,14 @@ type Db = BetterSqlite3.Database;
  */
 export const runMigrations = (db: Db): void => {
   const current = db.pragma('user_version', { simple: true }) as number;
+  if (current > MIGRATIONS.length) {
+    // A database touched by a NEWER build: its schema is unknown to this code.
+    // Proceeding would run old SQL against new tables — refuse loudly instead.
+    throw new Error(
+      `store: database schema version ${current} is newer than this build supports ` +
+        `(${MIGRATIONS.length}); refusing to open it`,
+    );
+  }
   for (let version = current; version < MIGRATIONS.length; version++) {
     const sql = MIGRATIONS[version];
     const apply = db.transaction(() => {

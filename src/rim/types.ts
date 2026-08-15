@@ -25,7 +25,7 @@ export interface RimTab {
 /**
  * The follower-acquisition port (§2, NEW). One implementation (the adapter-backed
  * `AdapterBackedAcquisition`) is shared by the manual `readFollowers` IPC path and
- * the Engine's automated pool-refill, so the scraping loop lives in exactly one
+ * the Engine's own pool-refill, so the collection loop lives in exactly one
  * place.
  */
 export interface FollowerAcquisition {

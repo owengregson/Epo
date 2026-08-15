@@ -2,9 +2,9 @@
  * Live action smoke-test — Electron entry point.
  *
  * One command (`npm run livetest`) launches a visible Instagram window. The user
- * logs in ONCE; the harness then AUTOMATICALLY exercises EVERY real action the
- * bot performs — acquire, enrich, score/plan, follow, follow-back check, unfollow,
- * sentinel — against live Instagram, paced and bounded like a cautious human, and
+ * logs in ONCE; the harness then exercises EVERY real action the app
+ * performs — acquire, enrich, score/plan, follow, follow-back check, unfollow,
+ * sentinel — against live Instagram, conservatively paced and bounded, and
  * prints a PASS/FAIL report to the terminal. It reuses the production adapter/rim/
  * store; nothing here reimplements them.
  *
@@ -20,6 +20,13 @@
 
 import { app, BaseWindow, session } from 'electron';
 import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
+
+// Same background-run switches as production `main.ts` (measured 2026-08-14):
+// the livetest must exercise the identical renderer environment, including
+// running while the window is backgrounded/occluded.
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 import { LiveTestHarness } from '@/livetest/steps';
 import * as logger from '@/utils/logger';
 import { sleep } from '@/timing/primitives';
@@ -75,7 +82,7 @@ async function run(): Promise<void> {
 
   await tab.goto(IG_HOME_URL);
   await test.setStatus(
-    'Log in — the live action test runs automatically once you are logged in.',
+    'Log in — the live action test begins once you are logged in.',
     'Nothing runs until a session cookie appears.',
   );
 
@@ -104,7 +111,7 @@ async function run(): Promise<void> {
     return;
   }
 
-  const line = `${summary.verdict} · ${summary.actionsPerformed} action(s), ${summary.requestsSpent} request(s)`;
+  const line = `${summary.verdict} · ${summary.actionsPerformed} action(s)`;
   await test.setStatus('Done — see terminal. Close the window when finished.', line);
 }
 

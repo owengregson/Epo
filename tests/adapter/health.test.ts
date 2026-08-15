@@ -1,6 +1,6 @@
 import { Actor, type AdapterTab } from '@/adapter/actor';
 import { Sentinel, type SentinelTab } from '@/adapter/sentinel';
-import { AdapterStaleError } from '@/adapter/errors';
+import { ActionAbortedError, ActionBlockedError, AdapterStaleError } from '@/adapter/errors';
 import { SURFACE } from '@/adapter/ig-surface';
 
 /**
@@ -175,41 +175,34 @@ describe('Actor A1: initial control lookup retries through waitFor (SPA hydratio
   });
 });
 
-describe('Actor A2: broadened (fallback) button anchor', () => {
+describe('Actor A2: header-scoped button anchor (no document-wide fallback)', () => {
   /**
-   * The button exists ONLY under the fallback selector — the primary anchor
-   * yields nothing. The fake reports found only when the generated script
-   * embeds the fallback selector, so a Follow that succeeds proves the script
-   * searches the fallback anchor.
+   * The action scripts must search ONLY the verified `<header>` anchor. A
+   * document-wide fallback used to exist and could click a DIFFERENT account's
+   * Follow button (suggestion carousels, hover cards) mid-hydration, then
+   * "verify" against the same wrong button. Drift must fail loud instead.
    */
-  class FallbackOnlyTab implements AdapterTab {
-    gotoCalls: string[] = [];
-    async goto(url: string): Promise<void> {
-      this.gotoCalls.push(url);
+  test('the generated action/probe scripts embed no document-wide selector', () => {
+    for (const src of [
+      SURFACE.findAndActScript('follow'),
+      SURFACE.findAndActScript('unfollow'),
+      SURFACE.probeStateScript(),
+      SURFACE.locateActionButtonScript ? SURFACE.locateActionButtonScript('follow') : '',
+    ]) {
+      expect(src).toContain('header button'); // the verified anchor
+      expect(src).not.toContain('main button'); // no broadened scope
+      expect(src).not.toContain('SEL2'); // no fallback tier at all
     }
-    async evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T> {
-      const src = String(fnOrString);
-      // The fallback selector is JSON-embedded in the script (its quotes get
-      // escaped), so detect it by a distinctive quote-free substring unique to
-      // the fallback anchor ('main button'; the primary is 'header button').
-      const hasFallback = src.includes('main button');
-      if (src.includes('const OP =')) {
-        return (hasFallback ? { found: true, state: 'follow', clicked: true } : { found: false }) as T;
-      }
-      if (src.includes('actor:probe-state')) {
-        return (hasFallback ? { found: true, state: 'following' } : { found: false, state: 'unknown' }) as T;
-      }
-      return null as T;
-    }
-    currentUrl(): string {
-      return 'https://www.instagram.com/';
-    }
-  }
+  });
 
-  test('match only under the fallback selector -> follow succeeds', async () => {
-    const tab = new FallbackOnlyTab();
-    const res = await new Actor(tab, { pollIntervalMs: 0, pollTimeoutMs: 0 }).follow('someone');
-    expect(res.ok).toBe(true);
+  test('a button absent from the header -> loud AdapterStaleError, never a click', async () => {
+    // The page has NO header-anchored match; the old fallback would have found
+    // (and clicked) a stray Follow control elsewhere in the document.
+    const tab = new ScriptTab({ find: () => ({ found: false }) });
+    const err = await rejection(
+      new Actor(tab, { pollIntervalMs: 0, pollTimeoutMs: 0 }).follow('someone'),
+    );
+    expect(err).toBeInstanceOf(AdapterStaleError);
   });
 });
 
@@ -313,7 +306,10 @@ describe('Actor — cancellable waits (driver abort signal)', () => {
 
     const err = await rejection(actor.follow('someone'));
 
-    expect(err).toBeInstanceOf(AdapterStaleError); // "control absent" shape, promptly
+    // An abort is a CONTROL COMMAND, not selector drift: it must surface as
+    // ActionAbortedError (callers map it to 'blocked' — record untouched),
+    // never as AdapterStaleError (which burns a retry + a failed ledger row).
+    expect(err).toBeInstanceOf(ActionAbortedError);
     expect(tab.evaluations).toBeLessThan(3); // returned mid-poll, not after the timeout
   });
 
@@ -326,5 +322,61 @@ describe('Actor — cancellable waits (driver abort signal)', () => {
     await rejection(actor.follow('someone'));
 
     expect(tab.evaluations).toBe(0); // stop means stop: no DOM touch at all
+  });
+});
+
+describe('Actor block detection: an interstitial in place of the expected control', () => {
+  /** Tab whose body-text probe reports a block dialog; other scripts scripted. */
+  class BlockedTab implements AdapterTab {
+    gotoCalls: string[] = [];
+    constructor(
+      private readonly opts: { find: unknown; bodyText: string; probe?: unknown },
+    ) {}
+    async goto(url: string): Promise<void> {
+      this.gotoCalls.push(url);
+    }
+    async evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T> {
+      const src = String(fnOrString);
+      if (src.includes('actor:probe-state')) {
+        return (this.opts.probe ?? { found: false, state: 'unknown' }) as T;
+      }
+      if (src.includes('const OP =')) return this.opts.find as T;
+      if (src.includes('confirmed')) return { confirmed: false } as T;
+      // The Sentinel-style body-text probe (dialog/alert/heading text).
+      return this.opts.bodyText as T;
+    }
+    currentUrl(): string {
+      return 'https://www.instagram.com/';
+    }
+  }
+
+  test('unfollow: missing confirm + "Try Again Later" dialog -> ActionBlockedError, not stale', async () => {
+    const tab = new BlockedTab({
+      find: { found: true, state: 'following', clicked: true, needsConfirm: true },
+      bodyText: 'Try Again Later We restrict certain activity to protect our community.',
+    });
+    const err = await rejection(fastActor(tab).unfollow('someone'));
+    expect(err).toBeInstanceOf(ActionBlockedError);
+    expect((err as ActionBlockedError).component).toBe('actor.unfollow');
+  });
+
+  test('unfollow: missing confirm + unrelated dialog text -> still AdapterStaleError (drift stays loud)', async () => {
+    const tab = new BlockedTab({
+      find: { found: true, state: 'following', clicked: true, needsConfirm: true },
+      bodyText: 'Add to favorites',
+    });
+    const err = await rejection(fastActor(tab).unfollow('someone'));
+    expect(err).toBeInstanceOf(AdapterStaleError);
+  });
+
+  test('follow: verify never confirms + block dialog -> ActionBlockedError instead of a failed Result', async () => {
+    const tab = new BlockedTab({
+      find: { found: true, state: 'follow', clicked: true, needsConfirm: false },
+      probe: { found: true, state: 'follow' }, // never flips to following
+      bodyText: 'Action Blocked',
+    });
+    const err = await rejection(fastActor(tab).follow('someone'));
+    expect(err).toBeInstanceOf(ActionBlockedError);
+    expect((err as ActionBlockedError).component).toBe('actor.follow');
   });
 });

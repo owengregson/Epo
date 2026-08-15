@@ -2,17 +2,16 @@
  * LiveTestHarness — the engine of the live action smoke-test.
  *
  * It attaches to a live, logged-in `InstagramTab` and drives EVERY real action
- * the bot performs — acquire → enrich → score/plan → follow → follow-back check →
+ * the app performs — acquire → enrich → score/plan → follow → follow-back check →
  * unfollow → sentinel — against real Instagram, then prints a PASS/FAIL report.
  * It reuses the exact production rim/adapter/store (no reimplementation); this
  * file is only the glue + reporting on top of them.
  *
  * SAFETY (this runs on the user's REAL account — it must never look like a burst):
- *  - Every real Instagram operation is separated by a jittered, human-scale delay
+ *  - Every real Instagram operation is separated by a jittered, jittered delay
  *    (reads/profile-fetches ~4–9s; the follow→unfollow gap ~30–75s).
  *  - Counts are TINY and bounded: acquire scrolls at most a few pages, enrich
  *    touches at most 5 profiles, and there is EXACTLY one follow + one unfollow.
- *  - A REAL RequestBudget (~300/60min) stays armed; if it can't spend, the harness
  *    STOPS and reports — it never bypasses the safety net.
  *  - The Sentinel is checked immediately BEFORE the follow and BEFORE the unfollow;
  *    any non-`ok` result ABORTS the sequence right there (no more clicks/navigation).
@@ -31,10 +30,9 @@ import type { Sentinel } from '@/adapter/sentinel';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
-import { RequestBudget } from '@/governors/request-budget';
-import { installRequestMetering } from '@/rim/request-metering';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
-import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
+import { ACQUISITION_DEFAULTS, AdapterBackedAcquisition } from '@/rim/follower-acquisition';
+import { ListPageWalker } from '@/rim/list-page-walker';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { Scanner } from '@/engine/scanner';
@@ -92,8 +90,6 @@ export interface LiveTestSummary {
   skips: number;
   /** Real follow/unfollow clicks performed (0 in dry-run). */
   actionsPerformed: number;
-  /** Metered Instagram requests spent during the run. */
-  requestsSpent: number;
   dryRun: boolean;
 }
 
@@ -107,8 +103,6 @@ interface LiveTestConfig {
   enrichPaceMinMs: number;
   enrichPaceMaxMs: number;
   followUnfollowGapMs: number;
-  budgetMax: number;
-  budgetWindowMs: number;
   acquireMaxRounds: number;
   enrichCap: number;
 }
@@ -118,7 +112,6 @@ interface Graph {
   store: KnowledgeStore;
   reader: Reader;
   sentinel: Sentinel;
-  budget: RequestBudget;
   acquisition: FollowerAcquisition;
   enricher: AdapterBackedProfileEnricher;
   churnActions: AdapterBackedChurnActions;
@@ -134,7 +127,6 @@ export class LiveTestHarness {
   private readonly results: StepResult[] = [];
 
   private store: KnowledgeStore | null = null;
-  private meteringUnsub: (() => void) | null = null;
 
   private aborted = false;
   private abortReason = '';
@@ -151,8 +143,6 @@ export class LiveTestHarness {
       enrichPaceMinMs: envInt('EPO_TEST_ENRICH_PACE_MIN_MS', HARNESS.ENRICH_PACE_MIN_MS),
       enrichPaceMaxMs: envInt('EPO_TEST_ENRICH_PACE_MAX_MS', HARNESS.ENRICH_PACE_MAX_MS),
       followUnfollowGapMs: envInt('EPO_TEST_FOLLOW_UNFOLLOW_GAP_MS', HARNESS.FOLLOW_UNFOLLOW_GAP_MS),
-      budgetMax: envInt('EPO_TEST_BUDGET_MAX', 300),
-      budgetWindowMs: envInt('EPO_TEST_BUDGET_WINDOW_MIN', 60) * 60_000,
       acquireMaxRounds: envInt('EPO_TEST_ACQUIRE_ROUNDS', 3),
       enrichCap: envInt('EPO_TEST_ENRICH_CAP', 5),
     };
@@ -199,7 +189,7 @@ export class LiveTestHarness {
 
     // --- Step 2: Acquire ----------------------------------------------------
     await this.setStatus(`Acquiring followers of @${target || '(none)'}…`);
-    await this.humanDelay();
+    await this.pacedDelay();
     await this.step('2. Acquire', async () => {
       if (!target) {
         return this.failAbort('no target — set EPO_TEST_TARGET or ensure own username resolves', 'no target');
@@ -221,7 +211,7 @@ export class LiveTestHarness {
 
     // --- Step 3: Enrich (the critical validation) ---------------------------
     await this.setStatus('Enriching candidate profiles (follower/following counts)…');
-    await this.humanDelay();
+    await this.pacedDelay();
     await this.step('3. Enrich', async () => {
       if (!targetPk) return { status: 'FAIL', detail: 'no targetPk from acquire; cannot select candidates' };
       const followerPks = graph.store.followersOf(targetPk);
@@ -300,19 +290,25 @@ export class LiveTestHarness {
         this.record('5. Follow', 'SKIP', `aborted: ${this.abortReason}`);
       } else {
         await this.setStatus(`Following @${followUser}…`);
-        await this.humanDelay();
+        await this.pacedDelay();
         try {
-          if (!graph.budget.canSpend()) {
-            this.record('5. Follow', 'FAIL', 'request budget exhausted — stopping (safety net, no bypass)');
-            this.abort('budget exhausted before follow');
-          } else {
+          {
             const pre = await graph.sentinel.check();
             if (pre !== 'ok') {
               this.record('5. Follow', 'FAIL', `sentinel '${pre}' before follow — aborting (no click)`);
               this.abort(`sentinel ${pre} before follow`);
             } else {
               const outcome = await graph.churnActions.follow(followUser);
-              if (outcome.status === 'ok') {
+              if (outcome.status === 'ok' && outcome.alreadyInState === true) {
+                // NOTHING was clicked — the account was ALREADY followed (a
+                // real pre-existing relationship). Step 7 must NOT "restore
+                // net-zero" by unfollowing a follow that was never ours.
+                this.record(
+                  '5. Follow',
+                  'PASS',
+                  `already following @${followUser} (no click) — unfollow step will be skipped`,
+                );
+              } else if (outcome.status === 'ok') {
                 didFollowClick = true;
                 followClickAt = Date.now();
                 this.realActions += 1;
@@ -320,7 +316,7 @@ export class LiveTestHarness {
               } else if (outcome.status === 'simulated') {
                 this.record('5. Follow', 'PASS', `outcome=simulated (dry-run, no click) @${followUser}`);
               } else if (outcome.status === 'blocked') {
-                this.record('5. Follow', 'FAIL', 'outcome=blocked (budget/sentinel closed before click)');
+                this.record('5. Follow', 'FAIL', 'outcome=blocked (sentinel closed before click)');
                 this.abort('follow blocked');
               } else {
                 // A click may have landed without confirming — ensure step 7 restores.
@@ -341,13 +337,13 @@ export class LiveTestHarness {
         this.record('6. Follow-back check', 'SKIP', `aborted: ${this.abortReason}`);
       } else {
         await this.setStatus(`Checking follow-back state for @${followUser}…`);
-        await this.humanDelay();
+        await this.pacedDelay();
         try {
           followUserPk = await this.resolveUserPk(graph.reader, followUser);
           if (!followUserPk) {
             this.record('6. Follow-back check', 'FAIL', `could not resolve pk for @${followUser} (web_profile_info)`);
           } else {
-            await this.humanDelay();
+            await this.pacedDelay();
             const show = await this.fetchFriendshipShow(graph.reader, followUserPk);
             if (!show.parsed) {
               this.record('6. Follow-back check', 'FAIL', `friendships/show did not parse for pk ${followUserPk}`);
@@ -370,20 +366,18 @@ export class LiveTestHarness {
         );
       } else {
         try {
-          // Enforce the human follow→unfollow gap (jittered ~0.7–1.6x the base).
+          // Enforce the follow→unfollow gap (jittered ~0.7–1.6x the base).
           const jitteredGap = jittered(
             this.cfg.followUnfollowGapMs * 0.7,
             this.cfg.followUnfollowGapMs * 1.6,
           );
           const remaining = jitteredGap - (Date.now() - followClickAt);
           if (remaining > 0) {
-            await this.setStatus(`Waiting ${Math.round(remaining / 1000)}s before unfollow (human gap)…`);
+            await this.setStatus(`Waiting ${Math.round(remaining / 1000)}s before unfollow (gap)…`);
             await sleep(remaining);
           }
           await this.setStatus(`Unfollowing @${followUser} (restore net-zero)…`);
-          if (!graph.budget.canSpend()) {
-            this.record('7. Unfollow', 'FAIL', `request budget exhausted — MANUALLY UNFOLLOW @${followUser}`);
-          } else {
+          {
             const pre = await graph.sentinel.check();
             if (pre !== 'ok') {
               this.record(
@@ -437,16 +431,8 @@ export class LiveTestHarness {
     return this.finish();
   }
 
-  /** Release the metering subscription and close the temp store. Idempotent. */
+  /** Close the temp store. Idempotent. */
   dispose(): void {
-    if (this.meteringUnsub) {
-      try {
-        this.meteringUnsub();
-      } catch (e) {
-        logger.warn('livetest: metering unsubscribe failed', { error: String(e) });
-      }
-      this.meteringUnsub = null;
-    }
     if (this.store) {
       try {
         this.store.close();
@@ -474,11 +460,6 @@ export class LiveTestHarness {
     const store = new KnowledgeStore(dbPath);
     const clock = new SystemClock();
 
-    // A REAL request budget stays armed (safety net); never inflated.
-    const budget = new RequestBudget(store, clock, {
-      maxRequestsPerWindow: this.cfg.budgetMax,
-      windowMs: this.cfg.budgetWindowMs,
-    });
     // Active hours 0–24 so wall-clock hours never gate; constructed for parity only.
     const rate = new RateGovernor(store, clock, {
       ...toRateGovernorConfig(DEFAULT_SETTINGS),
@@ -489,10 +470,7 @@ export class LiveTestHarness {
     const reader = new Reader();
     const adapter = new InstagramAdapter(this.tab);
 
-    // R2: one budget spend per real IG response, from the tab's onResponse pipeline.
-    this.meteringUnsub = installRequestMetering(this.tab, budget, reader);
-
-    // Reads/scrolls are paced human-scale (a single jittered wait, bounded by maxRounds).
+    // Reads/scrolls are paced (a single jittered wait, bounded by maxRounds).
     const pageReader = new FollowersPageReader({
       tab: this.tab,
       reader,
@@ -500,20 +478,27 @@ export class LiveTestHarness {
       scrollWaitMs: jittered(this.cfg.opDelayMinMs, this.cfg.opDelayMaxMs),
     });
 
+    // Production parity: the direct cursor-resumed walk first, dialog fallback.
+    const listWalker = new ListPageWalker({ tab: this.tab, reader });
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
-      budget,
       sentinel: adapter.sentinel,
+      walker: listWalker,
+      tab: this.tab,
+      reader,
       ownPk,
-      cfg: { maxRounds: this.cfg.acquireMaxRounds, noNewStop: 2 },
+      cfg: {
+        ...ACQUISITION_DEFAULTS,
+        maxRounds: this.cfg.acquireMaxRounds,
+        noNewStop: 2,
+      },
     });
 
     const enricher = new AdapterBackedProfileEnricher({
       tab: this.tab,
       reader,
       store,
-      budget,
       sentinel: adapter.sentinel,
       batchCap: this.cfg.enrichCap,
       paceMs: this.cfg.enrichPaceMinMs,
@@ -523,7 +508,6 @@ export class LiveTestHarness {
 
     const churnActions = new AdapterBackedChurnActions({
       adapter,
-      budget,
       store,
       ownPk,
       dryRun: this.cfg.dryRun,
@@ -535,13 +519,12 @@ export class LiveTestHarness {
     logger.info('livetest: graph built', {
       ownPk,
       ownUsername: ownUsername ?? '(unknown)',
-      budgetMax: this.cfg.budgetMax,
       acquireMaxRounds: this.cfg.acquireMaxRounds,
       enrichCap: this.cfg.enrichCap,
       dryRun: this.cfg.dryRun,
     });
 
-    return { store, reader, sentinel: adapter.sentinel, budget, acquisition, enricher, churnActions, scanner, scorerCfg, rate };
+    return { store, reader, sentinel: adapter.sentinel, acquisition, enricher, churnActions, scanner, scorerCfg, rate };
   }
 
   // -------------------------------------------------------------------------
@@ -583,7 +566,7 @@ export class LiveTestHarness {
     else logger.info(`livetest ${line}`);
   }
 
-  private async humanDelay(): Promise<void> {
+  private async pacedDelay(): Promise<void> {
     await sleep(jittered(this.cfg.opDelayMinMs, this.cfg.opDelayMaxMs));
   }
 
@@ -653,7 +636,11 @@ export class LiveTestHarness {
       typeof body === 'object' &&
       ('following' in body || 'followed_by' in body || body.status === 'ok');
     const res = reader.parseFriendshipShow(body, Date.now(), pk);
-    return { parsed, following: res.following, followedBy: res.followedBy };
+    return {
+      parsed: parsed && res !== null,
+      following: res?.following ?? false,
+      followedBy: res?.followedBy ?? false,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -689,7 +676,6 @@ export class LiveTestHarness {
 
   /** Compute totals, print the STEP|STATUS|DETAIL table + verdict, return the summary. */
   private finish(): LiveTestSummary {
-    const requestsSpent = this.store ? this.store.requestCountSince(0) : 0;
     const passes = this.results.filter((r) => r.status === 'PASS').length;
     const fails = this.results.filter((r) => r.status === 'FAIL').length;
     const skips = this.results.filter((r) => r.status === 'SKIP').length;
@@ -710,7 +696,6 @@ export class LiveTestHarness {
     }
     console.log(bar);
     console.log(`Instagram actions performed (real follow/unfollow clicks): ${this.realActions}`);
-    console.log(`Instagram requests spent (metered): ${requestsSpent}`);
     console.log(`Mode: ${this.cfg.dryRun ? 'DRY-RUN (no real follow/unfollow click)' : 'LIVE'}`);
     if (this.aborted) console.log(`Aborted early: ${this.abortReason}`);
     console.log(`Verdict: ${verdict}`);
@@ -719,7 +704,6 @@ export class LiveTestHarness {
     logger.info('livetest: complete', {
       verdict,
       actionsPerformed: this.realActions,
-      requestsSpent,
       passes,
       fails,
       skips,
@@ -732,7 +716,6 @@ export class LiveTestHarness {
       fails,
       skips,
       actionsPerformed: this.realActions,
-      requestsSpent,
       dryRun: this.cfg.dryRun,
     };
   }

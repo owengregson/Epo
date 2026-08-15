@@ -36,9 +36,14 @@ export class RelationshipReconciler {
     this.clock = deps.clock;
   }
 
-  /** Cheap pre-check for the passive install: is this URL a known IG endpoint? */
+  /**
+   * Cheap pre-check for the passive install: does this URL carry viewer-side
+   * relationship facts at all? Gating on "any known endpoint" used to pay a
+   * full CDP body read + JSON.parse for every followers/following page a
+   * 200-page walk fetched — all of which parse to zero facts here.
+   */
   matches(url: string): boolean {
-    return this.reader.matchEndpoint(url) !== null;
+    return this.reader.relationshipBearing(url);
   }
 
   /**

@@ -55,14 +55,19 @@ export const projectAccount = (existing: AccountState | null, obs: Observation):
   const statsTime = existing?.statsObservedAt;
   const statsSource = existing?.statsSource;
   const statsConf = statsSource !== undefined ? SOURCE_CONFIDENCE[statsSource] : undefined;
-  // "sufficient" = strictly newer OR at-least-equal confidence vs. current stats provenance.
+  // "sufficient" = (at least as new AND at least as confident) OR strictly more
+  // confident. An OLDER observation of merely EQUAL confidence must never win:
+  // two profile reads of the same account can race their async body reads, and
+  // the stale one would otherwise overwrite the fresher counts AND rewind
+  // `statsObservedAt` backwards.
   const statsSufficient =
     statsTime === undefined ||
-    now > statsTime ||
-    (statsConf !== undefined && incomingConf >= statsConf);
+    statsConf === undefined ||
+    (now >= statsTime && incomingConf >= statsConf) ||
+    incomingConf > statsConf;
 
   let statsTouched = false;
-  const applyStat = (key: 'followers' | 'following' | 'activitySignal'): void => {
+  const applyStat = (key: 'followers' | 'following' | 'mutuals' | 'activitySignal'): void => {
     const incoming = f[key];
     if (incoming === undefined) return;
     if (base[key] === undefined || statsSufficient) {
@@ -72,11 +77,14 @@ export const projectAccount = (existing: AccountState | null, obs: Observation):
   };
   applyStat('followers');
   applyStat('following');
+  applyStat('mutuals');
   applyStat('activitySignal');
   // Only advance the shared stats provenance when the incoming read was actually
   // sufficient; a mere gap-fill by a weaker/older read keeps the stronger provenance.
+  // Provenance time never moves backwards (a strictly-more-confident-but-older
+  // read may win the VALUE, but the projection stays dated by its newest input).
   if (statsTouched && statsSufficient) {
-    base.statsObservedAt = now;
+    base.statsObservedAt = statsTime === undefined ? now : Math.max(statsTime, now);
     base.statsSource = obs.source;
   }
 

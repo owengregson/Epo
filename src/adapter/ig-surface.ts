@@ -23,6 +23,7 @@ export { SHAPE_MISMATCH, isShapeMismatch, type ShapeMismatch } from '@/adapter/p
 export type EndpointKind =
   | 'followers-list'
   | 'following-list'
+  | 'friend-requests'
   | 'show-many'
   | 'friendship-show'
   | 'web-profile-info'
@@ -84,7 +85,18 @@ export type StaleComponent =
   | 'unfollow-confirm'
   | 'followers-stat'
   | 'following-stat'
+  | 'notifications-link'
   | 'dialog';
+
+/** One "started following you" event parsed from the activity feed. */
+export interface FollowEvent {
+  /** The follower's pk. */
+  pk: string;
+  /** The follower's username when the feed carries it. */
+  username: string | null;
+  /** Event time in epoch MS when the feed carries it (feeds report seconds). */
+  atMs: number | null;
+}
 
 /** Result of parsing one paginated followers page. */
 export interface FollowersListResult {
@@ -98,6 +110,12 @@ export interface FollowersListResult {
 export interface ShowManyEntry {
   pk: string;
   following: boolean;
+  /**
+   * TRUE when we have a PENDING follow request to this (private) account.
+   * `following` is FALSE while a request awaits acceptance, so "do we own this
+   * relationship" is `following || outgoingRequest` — never `following` alone.
+   */
+  outgoingRequest: boolean;
   isPrivate?: boolean;
 }
 
@@ -107,14 +125,16 @@ export interface FriendshipShowResult {
   following: boolean;
   /** `followedBy` => THEY follow us (the follow-back signal). */
   followedBy: boolean;
+  /** TRUE while our follow request to a private account awaits acceptance. */
+  outgoingRequest: boolean;
   isPrivate?: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// Humanizer locate-script results (additive). The locate scripts perform the
+// Interactor locate-script results (additive). The locate scripts perform the
 // SAME element search as the click scripts but return the target's viewport
-// bounding rect (getBoundingClientRect) WITHOUT clicking — the Humanizer then
-// performs the click/scroll with real trusted input events.
+// bounding rect (getBoundingClientRect) WITHOUT clicking — the Interactor then
+// performs the click/scroll with native input events.
 // ---------------------------------------------------------------------------
 
 /** A viewport bounding rect as the locate scripts report it (CSS px). */
@@ -131,11 +151,21 @@ export interface LocateRectResult {
   rect?: LocatedRect;
 }
 
+/** Locate result for the follow-requests Confirm control: rect + WHO it accepts. */
+export interface LocateConfirmRequestResult {
+  found: boolean;
+  rect?: LocatedRect;
+  /** Username parsed from the row's profile link; null when unresolvable. */
+  username?: string | null;
+  /** How many Confirm controls the panel currently shows (progress signal). */
+  remaining?: number;
+}
+
 /** Locate-only variant of `findAndActScript`: same search + decision, no click. */
 export interface LocateActionResult {
   found: boolean;
   state?: 'follow' | 'follow-back' | 'following' | 'requested';
-  /** Whether the op would click this button (the Humanizer then performs it). */
+  /** Whether the op would click this button (the Interactor then performs it). */
   wouldClick?: boolean;
   needsConfirm?: boolean;
   rect?: LocatedRect;
@@ -148,6 +178,15 @@ export interface LocateScrollResult {
   scrollTop?: number;
   scrollHeight?: number;
   clientHeight?: number;
+  /**
+   * A viewport point inside the scroll container that is NOT over a username
+   * link, avatar, or follow button (probed via `elementFromPoint`). Wheeling
+   * here scrolls the LIST rather than triggering Instagram's hover-preview card,
+   * which would otherwise overlay a row and swallow the wheel events. Absent
+   * when no safe spot was found (a dense list) — the Interactor then falls back
+   * to its default interior entry point.
+   */
+  safePoint?: { x: number; y: number };
 }
 
 /** Ids a surface can pull out of an endpoint URL (the bodies often carry none). */
@@ -175,8 +214,17 @@ export interface IgSurface {
   extractIds(kind: EndpointKind, url: string): EndpointIds;
 
   // --- Response extractors (already-parsed JSON bodies) -------------------
-  /** Parse a followers page. `SHAPE_MISMATCH` on an unexpected record shape. */
-  extractFollowersList(body: unknown, at: number): FollowersListResult | ShapeMismatch;
+  /**
+   * Parse a followers/following page. `SHAPE_MISMATCH` on an unexpected record
+   * shape. `source` labels the observations' provenance (default
+   * `'followers-list'`); the following-list endpoint shares the shape but its
+   * observations must not claim the wrong endpoint.
+   */
+  extractFollowersList(
+    body: unknown,
+    at: number,
+    source?: 'followers-list' | 'following-list' | 'friend-requests',
+  ): FollowersListResult | ShapeMismatch;
   /**
    * Parse a profile-info body into a profile observation. `null` when the user
    * is genuinely absent; `SHAPE_MISMATCH` when a user is present but unreadable.
@@ -184,6 +232,8 @@ export interface IgSurface {
   extractProfileInfo(body: unknown, at: number): Observation | null | ShapeMismatch;
   /** Whether the viewer already follows this profile; `null` when absent. */
   extractProfileFollowedByViewer(body: unknown): boolean | null;
+  /** Whether the viewer has a PENDING follow request to this profile; `null` when absent. */
+  extractProfileRequestedByViewer(body: unknown): boolean | null;
   /** Parse the batched relationship map. `SHAPE_MISMATCH` on unexpected shape. */
   extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch;
   /**
@@ -193,11 +243,33 @@ export interface IgSurface {
   extractFriendshipShow(body: unknown, pk: string): FriendshipShowResult | ShapeMismatch;
   /** The logged-in username from a `current_user` body, or `null`. */
   extractCurrentUsername(body: unknown): string | null;
+  /**
+   * Parse the activity-feed (news inbox) body into the "started following you"
+   * events it carries. `SHAPE_MISMATCH` when the body is present but carries
+   * none of the expected story containers; an empty list is a VALID result (no
+   * recent follows).
+   */
+  extractActivityFeed(body: unknown): FollowEvent[] | ShapeMismatch;
 
   // --- In-page FETCH scripts (each resolves to a FetchEnvelope) -----------
   profileInfoScript(username: string): string;
   currentUserScript(): string;
   friendshipShowScript(pk: string): string;
+  /**
+   * Fetch ONE page of a friendships list (`followers` or `following`) straight
+   * from the paginated API — the same endpoint the list dialog paginates, but
+   * at the API's full page size instead of the dialog's small scroll batches.
+   * `maxId` is the previous page's resume cursor (`null` for the first page);
+   * the body parses with {@link extractFollowersList}.
+   */
+  listPageScript(pk: string, which: 'followers' | 'following', maxId: string | null): string;
+  /**
+   * A synthesized cursor pointing just PAST `rowsFetched` rows — used to probe
+   * one page beyond a claimed end-of-list so the end is VERIFIED, not trusted.
+   * Must be safe when cursor semantics drift: a bogus value should make IG
+   * return already-seen rows (a confirmation), never new phantom data.
+   */
+  listEndProbeCursor(rowsFetched: number): string;
 
   // --- In-page non-fetch probes -------------------------------------------
   /** Read the page's visible body text (Sentinel's block-text backstop). */
@@ -212,16 +284,42 @@ export interface IgSurface {
   dialogPresentScript(): string;
   scrollFollowersScript(): string;
 
-  // --- Humanizer locate scripts (OPTIONAL — additive) ----------------------
+  // --- Interactor locate scripts (OPTIONAL — additive) ----------------------
   // Same element searches as the click scripts above, but they RETURN the
   // target's bounding rect instead of clicking; the Actor uses them only when
-  // a Humanizer is wired, and falls back to the click scripts when a surface
+  // a Interactor is wired, and falls back to the click scripts when a surface
   // version does not provide them.
   locateActionButtonScript?(op: 'follow' | 'unfollow'): string;
   locateConfirmUnfollowScript?(): string;
   locateFollowersStatScript?(): string;
   locateFollowingStatScript?(): string;
   locateScrollContainerScript?(): string;
+  /** The nav profile-avatar link's rect — the Interactor clicks it to land on our profile. */
+  locateProfileLinkScript?(): string;
+  /**
+   * The nav notifications (bell/heart) control's rect — clicking it opens the
+   * activity drawer, which fires the news-inbox fetch the Reader observes.
+   */
+  locateNotificationsLinkScript?(): string;
+  /** The "Follows" category filter chip inside the open drawer (soft-optional). */
+  locateNotificationsFollowsFilterScript?(): string;
+  /** The drawer's CLOSE (X) control — the supported way to leave the drawer. */
+  locateNotificationsCloseScript?(): string;
+  /** The drawer's scroll container + metrics (for loading older pages). */
+  locateNotificationsScrollScript?(): string;
+  /**
+   * The "Follow requests" entry INSIDE the open notifications drawer —
+   * clicking it opens the pending-requests panel, which fires the
+   * friendships/pending fetch. `found: false` when no requests entry exists
+   * (public account / nothing pending) — a soft skip, never stale.
+   */
+  locateFollowRequestsEntryScript?(): string;
+  /**
+   * The FIRST "Confirm" control in the open follow-requests panel, plus the
+   * row's username (from its profile link) so the caller knows WHO it is
+   * accepting and can verify progress between clicks.
+   */
+  locateConfirmFollowRequestScript?(): string;
 
   // --- Identity scripts ----------------------------------------------------
   readProfileHrefScript(): string;

@@ -148,7 +148,7 @@ function reportRecord(rec: InspectRecord): void {
 
 /**
  * Decide the landing page after login: explicit target, else own profile, else
- * home. Returns a human-readable description of where we landed.
+ * home. Returns a readable description of where we landed.
  */
 async function landAfterLogin(tab: InstagramTab): Promise<string> {
   const target = process.env.EPO_INSPECT_TARGET?.trim();
@@ -208,7 +208,7 @@ async function run(): Promise<void> {
   try {
     await tab.evaluate<boolean>(
       buildPreLoginBannerScript(
-        'Please log in to Instagram. Element inspection begins automatically once you are logged in.',
+        'Please log in to Instagram. Element inspection begins once you are logged in.',
       ),
     );
   } catch (e) {

@@ -1,10 +1,10 @@
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
-import type { RequestBudget } from '@/governors/request-budget';
+import { ActionBlockedError } from '@/adapter/errors';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
 import { ok, err, type Result } from '@/utils/result';
-import { FakeBudget, FakeSentinel } from './fakes';
+import { FakeSentinel } from './fakes';
 
 /** A fake action-actor recording calls and returning a scripted Result. */
 class FakeActionActor {
@@ -36,37 +36,25 @@ interface Built {
   actions: AdapterBackedChurnActions;
   actor: FakeActionActor;
   sentinel: FakeSentinel;
-  budget: FakeBudget;
 }
 
 const build = (opts: {
-  budgetAllows?: boolean;
   sentinel?: FakeSentinel;
   dryRun?: boolean;
   ownPk?: string;
 }): Built => {
   const actor = new FakeActionActor();
   const sentinel = opts.sentinel ?? new FakeSentinel();
-  const budget = new FakeBudget(opts.budgetAllows ?? true);
   const adapter = { actor, sentinel } as unknown as InstagramAdapter;
   const actions = new AdapterBackedChurnActions({
     adapter,
-    budget: budget as unknown as RequestBudget,
     store,
     ownPk: opts.ownPk,
     dryRun: opts.dryRun ?? false,
     clock,
   });
-  return { actions, actor, sentinel, budget };
+  return { actions, actor, sentinel };
 };
-
-test('R4: an exhausted budget BLOCKS the action without touching the actor or sentinel', async () => {
-  const { actions, actor, sentinel } = build({ budgetAllows: false });
-  const r = await actions.follow('bob');
-  expect(r).toEqual({ status: 'blocked' });
-  expect(actor.followCalls).toEqual([]);
-  expect(sentinel.checks).toBe(0); // budget is gated first
-});
 
 test('R4: a blocked sentinel BLOCKS the action without touching the actor', async () => {
   const { actions, actor } = build({ sentinel: new FakeSentinel(['challenge']) });
@@ -118,4 +106,17 @@ test('C2: the own account is observed once so ownPk-anchored edges have an endpo
   expect(store.getAccount('me')).toBeNull();
   await actions.follow('bob');
   expect(store.getAccount('me')).not.toBeNull();
+});
+
+test('an ActionBlockedError from the actor maps to BLOCKED (record/candidate untouched)', async () => {
+  const { actions, actor } = build({});
+  actor.unfollow = async () => {
+    throw new ActionBlockedError('actor.unfollow', '/try again later/i');
+  };
+
+  const outcome = await actions.unfollow('bob');
+
+  // Blocked, never 'failed': the schedulers leave the record untouched and
+  // back off instead of burning a retry/candidate on Instagram throttling.
+  expect(outcome.status).toBe('blocked');
 });

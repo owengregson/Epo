@@ -7,15 +7,14 @@
  */
 import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
+import { ListPageWalker } from '@/rim/list-page-walker';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import type { RequestBudget } from '@/governors/request-budget';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
 import type { TabResponse } from '@/types';
 import {
   FakeTab,
-  FakeBudget,
   FakeSentinel,
   FakeActor,
   followersUrl,
@@ -56,7 +55,6 @@ const buildSource = (): { source: AdapterBackedOwnFollowingSource; actor: FakeAc
   const source = new AdapterBackedOwnFollowingSource({
     pageReader,
     ownUsername: 'me',
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     store,
     cfg: { maxRounds: 5, noNewStop: 2 },
@@ -67,7 +65,7 @@ const buildSource = (): { source: AdapterBackedOwnFollowingSource; actor: FakeAc
 test('fetchAllPks opens the FOLLOWING dialog (never followers) and yields every pk', async () => {
   const { source, actor } = buildSource();
 
-  const pks = await source.fetchAllPks();
+  const { pks } = await source.fetchAllPks();
 
   expect([...pks].sort()).toEqual(['a', 'b', 'c']);
   expect(actor.openFollowingCalls).toBe(1);
@@ -92,13 +90,12 @@ test('a followers-list response is ignored while the following dialog drives the
   const source = new AdapterBackedOwnFollowingSource({
     pageReader,
     ownUsername: 'me',
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     store,
     cfg: { maxRounds: 2, noNewStop: 1 },
   });
 
-  const pks = await source.fetchAllPks();
+  const { pks } = await source.fetchAllPks();
   expect(pks).toEqual(['real']);
   expect(store.getAccount('stray')).toBeNull();
 });
@@ -128,14 +125,13 @@ test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape'
   const source = new AdapterBackedOwnFollowingSource({
     pageReader,
     ownUsername: 'me',
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     store,
     cfg: { maxRounds: 2, noNewStop: 5 },
   });
 
   let stop = false;
-  const pks = await source.fetchAllPks({
+  const { pks } = await source.fetchAllPks({
     shouldStop: () => stop,
     scrollMinMs: 1_000,
     scrollMaxMs: 3_000,
@@ -150,7 +146,7 @@ test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape'
   actor.scrollCalls = 0;
   sleeps.length = 0;
   actor.onOpen = () => tab.emit(mkResp(followingUrl('42'), followersBody(['z'], null, false)));
-  const stopped = await source.fetchAllPks({ shouldStop: () => stop });
+  const { pks: stopped } = await source.fetchAllPks({ shouldStop: () => stop });
   expect(actor.scrollCalls).toBe(0);
   expect(sleeps).toEqual([]);
   expect(stopped).toEqual(['z']); // the open-page capture is still returned
@@ -160,7 +156,7 @@ test('fetchAllPks threads onProgress into the scrape (live mid-scan counts)', as
   const { source } = buildSource();
 
   const progress: number[] = [];
-  const pks = await source.fetchAllPks({ onProgress: (n) => progress.push(n) });
+  const { pks } = await source.fetchAllPks({ onProgress: (n) => progress.push(n) });
 
   // Page 1 (open) lands 2 pks, scroll 1 lands 1 more; stagnant pages are silent.
   expect(progress).toEqual([2, 3]);
@@ -174,11 +170,124 @@ test('a blocked sentinel yields an empty scrape (warned, never a throw)', async 
   const source = new AdapterBackedOwnFollowingSource({
     pageReader,
     ownUsername: 'me',
-    budget: new FakeBudget() as unknown as RequestBudget,
     sentinel: new FakeSentinel(['action-blocked']) as unknown as Sentinel,
     store,
   });
 
-  await expect(source.fetchAllPks()).resolves.toEqual([]);
+  await expect(source.fetchAllPks()).resolves.toMatchObject({ pks: [], complete: false });
   expect(actor.openFollowingCalls).toBe(0); // never touched the tab
+});
+
+describe('direct list-page walker fast path', () => {
+  const okEnv = (body: unknown): unknown => ({
+    ok: true,
+    status: 200,
+    contentType: 'application/json',
+    json: body,
+  });
+
+  const buildWithWalker = (
+    envelopes: unknown[],
+  ): { source: AdapterBackedOwnFollowingSource; tab: FakeTab; actor: FakeActor } => {
+    const tab = new FakeTab();
+    const actor = new FakeActor();
+    let i = 0;
+    tab.onEvaluate = () => envelopes[i++];
+    const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
+    const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {} });
+    const source = new AdapterBackedOwnFollowingSource({
+      pageReader,
+      ownUsername: 'me',
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      store,
+      walker,
+      ownPk: '42',
+    });
+    return { source, tab, actor };
+  };
+
+  test('a wired walker pages the API directly — the FOLLOWING dialog is never opened', async () => {
+    const { source, actor } = buildWithWalker([
+      okEnv(followersBody(['a', 'b'], 'C1', true)),
+      okEnv(followersBody(['c'], null, false)),
+      okEnv(followersBody([], null, false)), // the walker's end-verification probe
+    ]);
+
+    const { pks } = await source.fetchAllPks();
+
+    expect([...pks].sort()).toEqual(['a', 'b', 'c']);
+    expect(actor.openFollowingCalls).toBe(0); // no dialog, no scrolling
+    expect(actor.scrollCalls).toBe(0);
+    // The walked profiles still become stored account rows (prune usernames).
+    for (const pk of ['a', 'b', 'c']) {
+      expect(store.getAccount(pk)?.username).toBe(`u${pk}`);
+    }
+  });
+
+  test('a failed direct walk falls back to the dialog-scroll scrape', async () => {
+    const { source, tab, actor } = buildWithWalker([
+      { ok: false, status: 429, contentType: 'text/html', textHead: 'wall' },
+    ]);
+    actor.onOpen = () =>
+      tab.emit(mkResp(followingUrl('42'), followersBody(['d'], null, false)));
+
+    const { pks } = await source.fetchAllPks();
+
+    expect(pks).toEqual(['d']); // the dialog path produced the census
+    expect(actor.openFollowingCalls).toBe(1);
+  });
+});
+
+// --- Facts stream (docs/PRINCIPLES.md §1): partial walks still enrich -----------------
+
+test('every parsed row reconciles the we-follow edge IMMEDIATELY — a stopped walk keeps what it saw', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
+  actor.onOpen = () =>
+    tab.emit(mkResp(followingUrl('42'), followersBody(['a', 'b'], 'C1', true)));
+
+  store.setOwnPk('me-pk');
+  const source = new AdapterBackedOwnFollowingSource({
+    pageReader,
+    ownUsername: 'me',
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    store,
+    ownPk: 'me-pk',
+    cfg: { maxRounds: 5, noNewStop: 2 },
+  });
+
+  // Immediate stop: only the on-open page lands; the walk is INCOMPLETE.
+  const res = await source.fetchAllPks({ shouldStop: () => true });
+  expect(res.complete).toBe(false);
+
+  // The knowledge already paid for is in the graph anyway: accounts AND edges.
+  for (const pk of ['a', 'b']) {
+    expect(store.getAccount(pk)?.username).toBe(`u${pk}`);
+    expect(store.getEdge('me-pk', pk, 'follows')?.status).toBe('active');
+  }
+});
+
+test('a following row for a still-QUEUED candidate heals the drift on sight (external)', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+  const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
+  actor.onOpen = () =>
+    tab.emit(mkResp(followingUrl('42'), followersBody(['q'], null, false)));
+
+  store.setOwnPk('me-pk');
+  // A queued candidate we ALREADY follow (externally) — the row must drop it.
+  store.upsertFollowRecord({ accountPk: 'q', targetPk: null, state: 'queued', retryCount: 0 });
+
+  const source = new AdapterBackedOwnFollowingSource({
+    pageReader,
+    ownUsername: 'me',
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    store,
+    ownPk: 'me-pk',
+    cfg: { maxRounds: 5, noNewStop: 2 },
+  });
+  await source.fetchAllPks({ shouldStop: () => true });
+
+  expect(store.getFollowRecord('q')!.state).toBe('external');
 });

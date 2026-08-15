@@ -11,22 +11,25 @@
  * can log which Instagram surface these selectors were verified against.
  */
 
-import { Actor, type ActorHumanizer, type AdapterTab } from '@/adapter/actor';
+import { Actor, type ActorInteractor, type AdapterTab } from '@/adapter/actor';
 import { Sentinel } from '@/adapter/sentinel';
 import { SURFACE } from '@/adapter/ig-surface';
+import type { ActivityReporter } from '@/adapter/activity-reporter';
 
 /** Optional adapter extras (additive; construction without them is unchanged). */
 export interface InstagramAdapterOptions {
   /**
-   * Human-input engine: when present the Actor clicks/scrolls through real
-   * trusted input events instead of in-page JS (see `src/humanizer/`).
+   * Input engine: when present the Actor clicks/scrolls through native
+   * input events instead of in-page JS (see `src/interaction/`).
    */
-  humanizer?: ActorHumanizer;
+  interactor?: ActorInteractor;
   /**
    * Provider of the ACTIVE driver's abort signal — a `stop()` interrupts the
    * Actor's in-flight DOM polls instead of sitting out their timeouts.
    */
   abortSignal?: () => AbortSignal | undefined;
+  /** Live activity readout for the veil (page-driving phases); optional. */
+  reporter?: ActivityReporter;
 }
 
 export class InstagramAdapter {
@@ -35,7 +38,11 @@ export class InstagramAdapter {
   readonly adapterVersion: string = SURFACE.version;
 
   constructor(tab: AdapterTab, opts: InstagramAdapterOptions = {}) {
-    this.actor = new Actor(tab, { humanizer: opts.humanizer, abortSignal: opts.abortSignal });
+    this.actor = new Actor(tab, {
+      interactor: opts.interactor,
+      abortSignal: opts.abortSignal,
+      reporter: opts.reporter,
+    });
     this.sentinel = new Sentinel(tab);
   }
 }

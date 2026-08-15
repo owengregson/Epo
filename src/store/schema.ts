@@ -122,4 +122,80 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_prune_ledger_at ON prune_ledger(at);
   `,
+
+  // --- Migration 3: durable prune scan snapshot -----------------------------------
+  // The latest COMPLETED prune scan (singleton meta row) plus its not-yet-visited
+  // candidates, so a restart restores the census counts and the reviewed runnable
+  // set instead of resetting the prune panel to zeros. The candidates table is
+  // consumed row-by-row as a run visits each account, so a mid-run quit leaves
+  // exactly the unvisited remainder. Append-only: never edit the migrations above.
+  `
+  CREATE TABLE prune_scan (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),   -- singleton row
+    at              INTEGER NOT NULL,
+    following_count INTEGER NOT NULL,
+    followers_count INTEGER NOT NULL,
+    candidate_count INTEGER NOT NULL
+  );
+  CREATE TABLE prune_scan_remaining (
+    pk        TEXT PRIMARY KEY,
+    username  TEXT
+  );
+  `,
+  // --- Migration 4: drop the request-budget log ---------------------------------
+  // The request-budget governor was removed (request volume is not a ban vector
+  // Instagram meters this way); its rolling log is dead weight. Append-only:
+  // the table stays in migration 0 for fresh DBs and is dropped right here.
+  `
+  DROP TABLE IF EXISTS request_log;
+  `,
+
+  // --- Migration 5: durable key/value meta ---------------------------------------
+  // First use: `followers_baseline_at` — the moment of the FIRST complete
+  // followers census. Everything known at that moment is pre-existing STOCK,
+  // not growth; the net-growth series only counts edge events after it (so an
+  // initial census can never render as "+3000 followers in one day").
+  `
+  CREATE TABLE meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  `,
+
+  // --- Migration 6: mutual-follower count ------------------------------------------
+  // `mutuals` = how many accounts WE follow also follow this one (the profile
+  // header's "followed by x and N others"), captured by profile-info enrichment.
+  // A strong follow-back predictor the Scorer weights heavily. Append-only:
+  // never edit the migrations above.
+  `
+  ALTER TABLE accounts ADD COLUMN mutuals INTEGER;
+  `,
+
+  // --- Migration 7: persisted candidate score --------------------------------------
+  // The Scorer's composite score, stored ON the follow_record so the queue's
+  // EXECUTION order (nextDue) and DISPLAY order (queue list) both honor it —
+  // the best candidate is followed and shown first. Before this, the score was
+  // computed at scan time then discarded, so ordering fell back to account_pk /
+  // insertion order (the "improperly sorted" bug). Higher = better; nullable for
+  // records created outside the Scanner. Append-only: never edit the above.
+  `
+  ALTER TABLE follow_records ADD COLUMN score REAL;
+  CREATE INDEX idx_follow_records_state_score ON follow_records(state, score);
+  `,
+
+  // --- Migration 8: enrichment-failure marker + hot-query indexes -------------------
+  // `enrich_failed_at`: stamped when a profile-enrichment fetch returns a
+  // PERMANENTLY unusable body (deleted/suspended/unparseable account), so the
+  // enrichment batch selector skips it — without this, ~20 dead accounts at the
+  // head of a pool consume every enrichment pass of every refill cycle and the
+  // fresh candidates behind them are never reached. Transient failures (rate
+  // wall, sentinel) never stamp it.
+  // The two indexes cover the hottest un-indexed reads: pkByUsername's
+  // case-insensitive lookup and the per-target follow_record scans
+  // (queuedCountFor / targetYield).
+  `
+  ALTER TABLE accounts ADD COLUMN enrich_failed_at INTEGER;
+  CREATE INDEX idx_accounts_username_nocase ON accounts(username COLLATE NOCASE);
+  CREATE INDEX idx_follow_records_target ON follow_records(target_pk);
+  `,
 ];

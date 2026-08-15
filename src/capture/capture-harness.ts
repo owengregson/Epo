@@ -5,8 +5,8 @@
  * Instagram JSON API responses and DOM structures that Tasks 7-8 (Reader /
  * Actor / Sentinel) will be built and tested against. It deliberately depends on
  * NOTHING that is not yet built — no Reader, no Adapter, no Store. It captures
- * raw bytes and raw HTML and writes an inventory, and a human distils the real
- * the versioned surface module (`src/adapter/versions/*`) from its output later.
+ * raw bytes and raw HTML and writes an inventory, and a maintainer distils the
+ * versioned surface module (`src/adapter/versions/*`) from its output later.
  *
  * Everything here is defensive: the response handler must NEVER throw out of the
  * tab's CDP callback (that would poison the observer), so every branch logs and
@@ -374,7 +374,7 @@ export class CaptureHarness {
    */
   async driveCaptureFlow(target: string): Promise<void> {
     const FALLBACK =
-      "If the followers list didn't open automatically, click the followers count yourself — capture continues.";
+      "If the followers list didn't open on its own, click the followers count yourself — capture continues.";
 
     // (a) Profile
     await this.setStatus('Capturing profile…', `target: @${target}`);

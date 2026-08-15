@@ -107,3 +107,4 @@ describe('resolveOwnUsername strategy precedence', () => {
     await expect(resolveOwnUsername(tab, opts)).resolves.toBeUndefined();
   });
 });
+
