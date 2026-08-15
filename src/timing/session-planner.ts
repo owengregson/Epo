@@ -22,12 +22,13 @@
  */
 
 import { type CircadianProfile, intensityAt } from './circadian';
+import { SESSION } from './config';
 import { clamp, logNormal, normal01 } from './distributions';
 import { type Rng, sample } from './primitives';
+import { MS_PER_HOUR } from './units';
 
-const MS_PER_HOUR = 3_600_000;
-/** A gap larger than this ends the session (Catledge & Pitkow 1995 / GA4 default). */
-const SESSION_BOUNDARY_MS = 30 * 60_000;
+/** A gap larger than this ends the session — one home: the timing registry. */
+const SESSION_BOUNDARY_MS = SESSION.SESSION_BOUNDARY_MS;
 
 export type PlannerActionKind = 'follow' | 'unfollow' | 'read-burst';
 

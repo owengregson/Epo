@@ -97,6 +97,14 @@ describe('distributions/logNormalMixture', () => {
     expect(sample(logNormalMixture(comps), seq(0.9, 0, 0))).toBe(6 * 3600_000);
   });
 
+  test('an all-zero weight set falls back to the FIRST component (documented contract)', () => {
+    const comps = [
+      { weight: 0, medianMs: 1_000, sigma: 0 },
+      { weight: 0, medianMs: 9_000, sigma: 0 },
+    ];
+    expect(sample(logNormalMixture(comps), seq(0.5, 0, 0))).toBe(1_000);
+  });
+
   test('two well-separated components produce a bimodal sample set', () => {
     const rng = mulberry32(4);
     const xs = Array.from({ length: 10000 }, () => sample(logNormalMixture(comps), rng));

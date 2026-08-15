@@ -12,6 +12,7 @@
  */
 
 import type { Rng } from './primitives';
+import { MS_PER_DAY } from './units';
 
 /** One Gaussian bump on the 24-hour circle. */
 export interface CircadianBump {
@@ -33,8 +34,6 @@ export interface CircadianProfile {
   /** Per-install horizontal jitter (hours), drawn once and persisted. */
   phaseOffsetHours: number;
 }
-
-const MS_PER_DAY = 24 * 3600_000;
 
 /** Circular distance between two hours on the 24-hour clock. */
 function hourDistance(a: number, b: number): number {

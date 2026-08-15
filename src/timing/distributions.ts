@@ -63,7 +63,7 @@ export function logNormalMixture(components: LogNormalComponent[]): DelayPolicy 
     sample: (rng) => {
       const target = total > 0 ? rng() * total : 0;
       let acc = 0;
-      let chosen = comps[comps.length - 1];
+      let chosen = comps[0];
       for (const c of comps) {
         acc += Math.max(0, c.weight);
         if (target < acc) {

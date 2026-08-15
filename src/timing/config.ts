@@ -20,6 +20,13 @@ export const ENGINE = {
    * endpoint; the target is retried, never burned.
    */
   ENRICH_BACKOFF_MS: 10 * 60_000,
+  /** Velocity-backstop park (organic mode): log-normal pause when the ledger-backed
+   *  rolling-hour cap trips — long enough to drain the window, jittered so repeated
+   *  parks never tick at a fixed period. */
+  VELOCITY_PARK_MEDIAN_MS: 8 * 60_000,
+  VELOCITY_PARK_SIGMA: 0.3,
+  VELOCITY_PARK_MIN_MS: 5 * 60_000,
+  VELOCITY_PARK_MAX_MS: 15 * 60_000,
 } as const;
 
 export const PRUNE = {
@@ -59,6 +66,9 @@ export const SCHEDULER = {
    * must never run on every routine IPC read.
    */
   USERNAME_REBUILD_BACKOFF_MS: 5 * 60_000,
+  /** teardownGraph: bounded wait for in-flight manual ops (scrapes, single
+   *  follow/unfollow clicks) to drain before the store closes under them. */
+  MANUAL_OP_DRAIN_TIMEOUT_MS: 15_000,
 } as const;
 
 export const ADAPTER = {
@@ -128,6 +138,11 @@ export const RIM = {
   NOTIFICATIONS_SCROLL_ROUNDS: 2,
   /** How long to wait after a drawer scroll for an older feed page to land. */
   NOTIFICATIONS_SCROLL_WAIT_MS: 2_000,
+  /** Poll interval while waiting for the captured inbox response to parse. */
+  NOTIFICATIONS_POLL_MS: 150,
+  /** Deadline + poll interval for verifying an accept click consumed its row. */
+  ACCEPT_VERIFY_MS: 4_000,
+  ACCEPT_VERIFY_POLL_MS: 200,
   /** Jittered pause between Confirm clicks while accepting follow requests. */
   ACCEPT_PACE_MIN_MS: 1_500,
   ACCEPT_PACE_MAX_MS: 3_000,
@@ -191,18 +206,17 @@ export const CIRCADIAN = {
   PHASE_JITTER_MAX_HOURS: 1.5,
 } as const;
 
+/**
+ * NB: the PER-LEVEL pacing values (sessions/day, gap median/floor, rolling-hour
+ * cap, day-volume variance, rest-day probability) are NOT here — they vary by
+ * qualitative knob and live in their single home, the level tables of
+ * `settings/pattern-map.ts` (RHYTHM / CAUTION / VARIANCE_PCT / REST_DAY_PCT).
+ * SESSION/PATTERN hold only the level-independent constants.
+ */
 export const SESSION = {
-  /** Sessions per day: the day's target volume is distributed across this many
-   *  circadian-placed sessions (2–5 typical). Distributing a fixed target — rather than
-   *  summing independent per-session budgets and capping — is what makes realized daily
-   *  volume track the configured mean. */
-  SESSIONS_PER_DAY_MIN: 3,
-  SESSIONS_PER_DAY_MAX: 6,
-  /** Within-session inter-action gap: log-normal, mode ≈1–2 min (WWW-2015 within-session cluster). */
-  GAP_MEDIAN_MS: 95_000,
+  /** Within-session gap log-space spread; larger = heavier tail (WWW-2015 cluster shape). */
   GAP_SIGMA: 0.75,
-  /** Hard floor: IG ≥30–60s velocity guidance. Cap keeps the within-session tail sane. */
-  GAP_FLOOR_MS: 45_000,
+  /** Cap keeps the within-session log-normal tail sane. */
   GAP_CAP_MS: 8 * 60_000,
   /** A gap larger than this counts as a new session (Catledge & Pitkow 1995 / GA4 default). */
   SESSION_BOUNDARY_MS: 30 * 60_000,
@@ -210,20 +224,12 @@ export const SESSION = {
    *  decaying over ~1.5 min — creates within-session clustering that winds down (Hawkes). */
   HAWKES_ALPHA: 0.35,
   HAWKES_TAU_MS: 90_000,
-  /** Hard velocity backstop for an ESTABLISHED account (IG ~20–30 follows/hr established). */
-  MAX_ACTIONS_PER_ROLLING_HOUR: 22,
 } as const;
 
 export const PATTERN = {
-  /** Day-to-day volume CV ≈28% — a flat exact-N daily count is a fingerprint. */
-  DAY_VOLUME_SIGMA: 0.28,
-  /** ~1 light day per ~2 weeks; humans skip days. */
-  REST_DAY_PROBABILITY: 0.08,
   /** A rest day is near-zero, not exactly zero. */
   REST_DAY_MAX_FRACTION: 0.15,
   /** Keep any single session from being unfollow-dominated (mix within a burst — NOT an
    *  aggregate follow:unfollow ratio; the churn lifecycle legitimately runs ~1:1). */
   MAX_UNFOLLOW_FRACTION_PER_SESSION: 0.5,
-  /** Between-session/long-gap power-law tail exponent (web-browsing α≈1.2; email≈1.0). */
-  TAIL_EXPONENT: 1.2,
 } as const;

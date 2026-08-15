@@ -63,16 +63,23 @@ const ACTIVITY: Record<PatternSettings['activityLevel'], number> = {
   active: 75,
   aggressive: 100,
 };
+// Day-to-day volume CV — a flat exact-N daily count is a fingerprint ('natural' ≈28%).
 const VARIANCE_PCT: Record<PatternSettings['consistency'], number> = {
   clockwork: 12,
   natural: 28,
   erratic: 45,
 };
+// Probability of a near-zero light day — humans skip days ('natural' ≈ 1 per ~2 weeks).
 const REST_DAY_PCT: Record<PatternSettings['consistency'], number> = {
   clockwork: 0,
   natural: 8,
   erratic: 18,
 };
+// Sessions per day + within-session gap median. The day's target volume is DISTRIBUTED
+// across this many circadian-placed sessions — distributing a fixed target (rather than
+// summing independent per-session budgets and capping) is what makes realized daily
+// volume track the configured mean. Gap medians sit in the ≈1–3 min within-session
+// cluster (WWW-2015); the log-space spread is SESSION.GAP_SIGMA in timing/config.ts.
 const RHYTHM: Record<
   PatternSettings['rhythm'],
   { min: number; max: number; gapMedianSeconds: number }
@@ -81,6 +88,8 @@ const RHYTHM: Record<
   sessions: { min: 3, max: 6, gapMedianSeconds: 95 },
   bursts: { min: 2, max: 4, gapMedianSeconds: 55 },
 };
+// Rolling-hour velocity backstop (established-account band is ~20–30 actions/hr) and
+// the within-session gap hard floor (≥30–60 s velocity guidance).
 const CAUTION: Record<PatternSettings['caution'], { cap: number; floorSeconds: number }> = {
   cautious: { cap: 14, floorSeconds: 60 },
   standard: { cap: 22, floorSeconds: 45 },
