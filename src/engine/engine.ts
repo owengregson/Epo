@@ -101,6 +101,9 @@ export interface EngineRate {
   nextDelayMs(): number;
   actionsToday(): number;
   remainingToday(): number;
+  /** ms until the action counter resets (the next active-hours cycle start) —
+   *  the park horizon once a daily cap is hit. */
+  msUntilCycleReset(): number;
   /** Real IG actions (both ledgers) in the trailing hour — the durable velocity signal. */
   actionsInLastHour(): number;
 }
@@ -724,7 +727,7 @@ export class Engine {
       //    superseded by the planner's daily-volume distribution (isSessionOpen goes
       //    false once the day's drawn target is spent).
       if (this.deps.rate.atHardCeiling()) {
-        await this.engineWait('engine:daily-ceiling-park', this.msUntilLocalMidnight());
+        await this.engineWait('engine:daily-ceiling-park', this.deps.rate.msUntilCycleReset());
         return 'waited-ceiling';
       }
       // 4. Session gate — park until the next circadian session when none is open
@@ -762,7 +765,7 @@ export class Engine {
       // 4. Daily-volume gate — the operating rate is the engine's real daily stop;
       //    the hard ceiling is the uncrossable backstop.
       if (this.deps.rate.atHardCeiling() || this.deps.rate.atOperatingRate()) {
-        await this.engineWait('engine:daily-ceiling-park', this.msUntilLocalMidnight());
+        await this.engineWait('engine:daily-ceiling-park', this.deps.rate.msUntilCycleReset());
         return 'waited-ceiling';
       }
     }
@@ -1221,14 +1224,6 @@ export class Engine {
     const next = new Date(now);
     next.setHours(this.settings.activeHoursStart, 0, 0, 0);
     if (next.getTime() <= now) next.setDate(next.getDate() + 1);
-    return next.getTime() - now;
-  }
-
-  /** Ms until the next local midnight (the daily ledger rolls over there). */
-  private msUntilLocalMidnight(): number {
-    const now = this.deps.clock.now();
-    const next = new Date(now);
-    next.setHours(24, 0, 0, 0);
     return next.getTime() - now;
   }
 

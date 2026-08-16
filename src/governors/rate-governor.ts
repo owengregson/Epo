@@ -29,18 +29,44 @@ export class RateGovernor {
     this.cfg = cfg;
   }
 
-  /** Local midnight of the clock's current day. */
-  private startOfTodayLocal(): number {
-    return startOfLocalDay(this.clock.now());
+  /**
+   * The moment the CURRENT active-hours cycle began: the most recent occurrence
+   * of `activeHoursStart` o'clock. The daily budget belongs to an active-hours
+   * CYCLE, not the calendar day — an overnight window's post-midnight tail
+   * (e.g. 11→3: work done at 00:30) keeps counting against the cycle it belongs
+   * to, and the counter resets the moment a fresh window opens instead of at
+   * midnight. A degenerate `start === end` window falls back to local midnight.
+   */
+  cycleStartMs(now: number = this.clock.now()): number {
+    const { activeHoursStart: start, activeHoursEnd: end } = this.cfg;
+    if (start === end) return startOfLocalDay(now);
+    const d = new Date(now);
+    d.setHours(start, 0, 0, 0);
+    if (d.getTime() > now) {
+      // The start hour hasn't arrived yet today — the cycle opened yesterday.
+      d.setDate(d.getDate() - 1);
+      d.setHours(start, 0, 0, 0); // re-normalize across a DST-shifted date change
+    }
+    return d.getTime();
+  }
+
+  /** ms until the NEXT cycle start — when {@link actionsToday} resets. */
+  msUntilCycleReset(now: number = this.clock.now()): number {
+    const { activeHoursStart: start, activeHoursEnd: end } = this.cfg;
+    const d = new Date(this.cycleStartMs(now));
+    d.setDate(d.getDate() + 1);
+    d.setHours(start === end ? 0 : start, 0, 0, 0);
+    return Math.max(1, d.getTime() - now);
   }
 
   /**
-   * Durable count of REAL Instagram actions recorded since local midnight,
-   * across BOTH ledgers (growth's action_ledger + prune's ok/fail rows) — the
-   * account has one write budget, whichever driver spends it. Survives restart.
+   * Durable count of REAL Instagram actions recorded in the CURRENT active-hours
+   * cycle (see {@link cycleStartMs}), across BOTH ledgers (growth's
+   * action_ledger + prune's ok/fail rows) — the account has one write budget,
+   * whichever driver spends it. Survives restart.
    */
   actionsToday(): number {
-    const since = this.startOfTodayLocal();
+    const since = this.cycleStartMs();
     return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since);
   }
 

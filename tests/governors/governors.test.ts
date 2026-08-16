@@ -68,6 +68,52 @@ describe('withinActiveHours', () => {
   });
 });
 
+describe('active-hours cycle counting (actions reset when the window opens)', () => {
+  const at = (iso: string): FakeClock => new FakeClock(Date.parse(iso));
+  const govern = (start: number, end: number, clock: FakeClock, store: KnowledgeStore) =>
+    new RateGovernor(store, clock, { ...cfg, activeHoursStart: start, activeHoursEnd: end });
+
+  test('actions before the current cycle start do not count (normal 9→17 window)', () => {
+    const store = new KnowledgeStore(':memory:');
+    const clock = at('2026-08-15T12:00:00');
+    // 08:00 today — BEFORE the window opened; belongs to the previous cycle.
+    store.recordAction('a', 'follow', 'ok', Date.parse('2026-08-15T08:00:00'));
+    // 09:30 today — inside the current cycle.
+    store.recordAction('b', 'follow', 'ok', Date.parse('2026-08-15T09:30:00'));
+    expect(govern(9, 17, clock, store).actionsToday()).toBe(1);
+    store.close();
+  });
+
+  test("an overnight window's post-midnight tail stays in YESTERDAY's cycle (11→3)", () => {
+    const store = new KnowledgeStore(':memory:');
+    // Prune work at 00:30 — after midnight but inside the cycle that opened
+    // yesterday 11:00. At 02:00 it still counts...
+    store.recordPruneAction('p1', 'ok', Date.parse('2026-08-15T00:30:00'));
+    expect(govern(11, 3, at('2026-08-15T02:00:00'), store).actionsToday()).toBe(1);
+    // ...but once a FRESH cycle opens at 11:00, the counter has reset.
+    expect(govern(11, 3, at('2026-08-15T12:00:00'), store).actionsToday()).toBe(0);
+    expect(govern(11, 3, at('2026-08-15T22:22:00'), store).actionsToday()).toBe(0);
+    store.close();
+  });
+
+  test('a degenerate start === end window falls back to local midnight', () => {
+    const store = new KnowledgeStore(':memory:');
+    store.recordAction('a', 'follow', 'ok', Date.parse('2026-08-14T23:00:00'));
+    store.recordAction('b', 'follow', 'ok', Date.parse('2026-08-15T01:00:00'));
+    expect(govern(8, 8, at('2026-08-15T02:00:00'), store).actionsToday()).toBe(1);
+    store.close();
+  });
+
+  test('msUntilCycleReset points at the NEXT window opening', () => {
+    const store = new KnowledgeStore(':memory:');
+    // 22:22 with an 11→3 window: the counter resets tomorrow 11:00.
+    const now = Date.parse('2026-08-15T22:22:00');
+    const g = govern(11, 3, new FakeClock(now), store);
+    expect(g.msUntilCycleReset()).toBe(Date.parse('2026-08-16T11:00:00') - now);
+    store.close();
+  });
+});
+
 test('delay respects bounds with jitter off', () => {
   const store = new KnowledgeStore(':memory:');
   const g = new RateGovernor(store, new FakeClock(0), cfg);
