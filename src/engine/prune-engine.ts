@@ -145,7 +145,7 @@ export interface PruneStatus {
   unfollowed: number;
   /** Candidates not yet visited by the current/last run. */
   remaining: number;
-  /** Prune-ledger rows since local midnight (ok + fail + simulated). */
+  /** Prune-ledger rows this active-hours cycle (ok + fail + simulated). */
   dailyDone: number;
   dailyLimit: number;
   /** Epoch ms of the last COMPLETED run; null when never completed. */
@@ -238,6 +238,13 @@ export interface PruneEngineDeps {
    * "one-shot" run spend 2× the daily cap. Absent = no hours gate (tests).
    */
   withinActiveHours?: () => boolean;
+  /**
+   * The start of the CURRENT active-hours cycle (RateGovernor.cycleStartMs) —
+   * the prune daily cap counts from here, same boundary as the growth budget,
+   * so an overnight window's post-midnight tail spends the cycle it belongs to.
+   * Absent = local-midnight fallback (tests / no governor).
+   */
+  cycleStartMs?: (now: number) => number;
 }
 
 /** Brief park after a blocked action before continuing. */
@@ -551,7 +558,7 @@ export class PruneEngine {
       }
     };
     // Attempts THIS run that wrote a ledger row (ok/fail/simulated). Bounds the
-    // run on its own, so a run crossing local midnight — where dailyDone()
+    // run on its own, so a run crossing the cycle boundary — where dailyDone()
     // re-zeroes — can never spend 2× the daily cap in one sitting.
     let actedThisRun = 0;
     let consecutiveBlocked = 0;
@@ -1113,10 +1120,12 @@ export class PruneEngine {
     );
   }
 
-  /** Prune-ledger rows since local midnight — the durable daily-cap count. */
+  /** Prune-ledger rows since the active-hours cycle start — the durable daily-cap count. */
   private dailyDone(): number {
-    const startOfToday = startOfLocalDay(this.deps.clock.now());
-    return this.deps.store.pruneCountSince(startOfToday);
+    const now = this.deps.clock.now();
+    // Same boundary as the growth budget: the active-hours cycle start.
+    const since = this.deps.cycleStartMs?.(now) ?? startOfLocalDay(now);
+    return this.deps.store.pruneCountSince(since);
   }
 
   private halt(reason: string): void {

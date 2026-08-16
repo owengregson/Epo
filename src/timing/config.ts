@@ -36,12 +36,13 @@ export const PRUNE = {
   PARK_MS: 30_000,
   /**
    * How long a completed scan's candidate set stays runnable for a 2-step run.
-   * Generous (was 15 min — expired while users reviewed the list, graying Run
-   * and blanking candidates): the run's LIVE-GRAPH guard skips any candidate
-   * whose follows-us edge appeared after the scan, so staleness in the
-   * dangerous direction is caught per candidate, not by expiry.
+   * Generous — 4 days (was 15 min, then 6 h; both expired while users reviewed
+   * the list or let the weave drain it, graying Run and blanking candidates):
+   * the run's LIVE-GRAPH guard skips any candidate whose follows-us edge
+   * appeared after the scan, so staleness in the dangerous direction is caught
+   * per candidate, not by expiry.
    */
-  SCAN_FRESH_MS: 6 * 3600_000,
+  SCAN_FRESH_MS: 4 * 24 * 3600_000,
   /** How long the prune hand-off waits for the growth loop to park before aborting. */
   PARK_TIMEOUT_MS: 90_000,
 } as const;

@@ -1599,6 +1599,9 @@ export class Foundation {
       // midnight (where the daily count re-zeroes and one run could spend 2×
       // the cap). Same governor window the growth engine parks on.
       withinActiveHours: (): boolean => rate.withinActiveHours(),
+      // The prune cap shares the growth budget's boundary: the active-hours
+      // cycle start, not calendar midnight.
+      cycleStartMs: (now: number): number => rate.cycleStartMs(now),
       onStatus: (s) => this.onPruneStatusCb?.(s),
       // Persist the completed run's timestamp through the one settings save
       // path (also reloads live configs — harmless, and keeps one write path).

@@ -139,6 +139,7 @@ const build = (over: {
   sentinel?: FakeSentinel;
   sleep?: SleepFn;
   refreshOwnStats?: () => Promise<void>;
+  cycleStartMs?: (now: number) => number;
 }): Harness => {
   const store = new KnowledgeStore(':memory:');
   store.setOwnPk(OWN_PK);
@@ -175,6 +176,7 @@ const build = (over: {
     onStatus: (s) => statuses.push(s),
     onRunComplete: (at) => completedAt.push(at),
     refreshOwnStats: over.refreshOwnStats,
+    cycleStartMs: over.cycleStartMs,
   };
   return {
     engine: new PruneEngine(deps),
@@ -902,6 +904,41 @@ test('consecutive FAILED unfollows halt the run (actions-failing) with the remai
   expect(h.engine.status().scanReady).toBe(true);
   expect(h.engine.status().remaining).toBe(3);
   expect(h.completedAt.length).toBe(0); // never stamped as a clean run
+});
+
+describe('PruneEngine — daily cap counts from the active-hours cycle start', () => {
+  test('prune work recorded BEFORE the current cycle opened does not spend the cap', async () => {
+    const h = build({
+      following: ['a', 'b'],
+      followers: [],
+      cfg: { dailyLimit: 1 },
+      // The current cycle opened 30 minutes ago (same calendar day).
+      cycleStartMs: (now) => now - 30 * 60_000,
+    });
+    // An unfollow from an hour ago: same day, but the PREVIOUS cycle's work.
+    h.store.recordPruneAction('x', 'ok', h.clock.now());
+    h.clock.advance(3_600_000);
+    expect(h.engine.atDailyCap(h.clock.now())).toBe(false);
+    expect(h.engine.status().dailyDone).toBe(0);
+  });
+
+  test('without an injected cycle boundary the cap falls back to local midnight', async () => {
+    const h = build({ following: ['a', 'b'], followers: [], cfg: { dailyLimit: 1 } });
+    h.store.recordPruneAction('x', 'ok', h.clock.now());
+    h.clock.advance(3_600_000); // same local day
+    expect(h.engine.atDailyCap(h.clock.now())).toBe(true);
+  });
+});
+
+describe('PruneEngine — scan freshness window', () => {
+  test('a completed scan stays runnable for 4 days, then expires', async () => {
+    const h = build({ following: ['a', 'b'], followers: [] });
+    await h.engine.scan();
+    h.clock.advance(3 * 24 * 3_600_000); // 3 days on — still fresh
+    expect(h.engine.status().scanReady).toBe(true);
+    h.clock.advance(24 * 3_600_000 + 60_000); // past 4 days — stale
+    expect(h.engine.status().scanReady).toBe(false);
+  });
 });
 
 describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {

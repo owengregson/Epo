@@ -18,7 +18,7 @@ describe('timing/config — registry invariants', () => {
     expect(PRUNE.PARK_MS).toBe(30_000);
     // 6h (was 15 min): the run's live-graph guard skips post-scan follow-backs
     // per candidate, so freshness no longer needs to be the safety mechanism.
-    expect(PRUNE.SCAN_FRESH_MS).toBe(6 * 3600_000);
+    expect(PRUNE.SCAN_FRESH_MS).toBe(4 * 24 * 3600_000);
     expect(PRUNE.PARK_TIMEOUT_MS).toBe(90_000);
     expect(CONNECTIVITY.PROBE_INTERVAL_MS).toBe(20_000);
     expect(CONNECTIVITY.REQUEST_TIMEOUT_MS).toBe(5_000);
