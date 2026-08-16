@@ -1,37 +1,76 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
   <defs>
-    <linearGradient id="tile" x1="180" y1="120" x2="860" y2="920" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#232329"/><stop offset="55%" stop-color="#141417"/><stop offset="100%" stop-color="#0e0e11"/>
+    <!-- Tile shape (macOS-native inset squircle) — clips every glass layer. -->
+    <clipPath id="tile">
+      <rect x="96" y="96" width="832" height="832" rx="186" ry="186"/>
+    </clipPath>
+
+    <!-- Dark liquid-glass body: deep, faintly cool graphite. -->
+    <linearGradient id="glass" x1="140" y1="120" x2="900" y2="940" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#282b33"/>
+      <stop offset="46%" stop-color="#161922"/>
+      <stop offset="100%" stop-color="#0a0b0f"/>
     </linearGradient>
-    <radialGradient id="sheen" cx="0.32" cy="0.10" r="0.9">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.09"/><stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    <!-- Top-left specular sheen (the glass catching light). -->
+    <radialGradient id="sheen" cx="0.3" cy="0.12" r="0.85">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
     </radialGradient>
-    <mask id="c" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+    <!-- Faint cool refraction glow in the lower-right (liquid depth). -->
+    <radialGradient id="tint" cx="0.78" cy="0.86" r="0.7">
+      <stop offset="0%" stop-color="#4b6488" stop-opacity="0.16"/>
+      <stop offset="70%" stop-color="#4b6488" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Bottom inner shade — glass thickness. -->
+    <linearGradient id="depth" x1="0" y1="520" x2="0" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.42"/>
+    </linearGradient>
+    <!-- Top edge rim highlight. -->
+    <linearGradient id="rim" x1="0" y1="96" x2="0" y2="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="46"/>
+    </filter>
+
+    <!-- The Epo "e" silhouette (locked brand mark, viewBox 0..64). -->
+    <mask id="e" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
       <rect x="7" y="7" width="50" height="50" rx="16" ry="16" fill="#fff"/>
       <rect x="15" y="15" width="34" height="13" rx="7" ry="7" fill="#000"/>
       <rect x="15" y="36" width="34" height="13" rx="7" ry="7" fill="#000"/>
       <rect x="43" y="36" width="21" height="10" fill="#000"/>
     </mask>
+    <!-- Brushed-metal body + shadow + top-edge shine (treatment B). -->
     <linearGradient id="b" x1="0" y1="6" x2="0" y2="58" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#f2f4f8"/><stop offset="18%" stop-color="#cbcfd6"/><stop offset="44%" stop-color="#eef1f5"/>
-      <stop offset="57%" stop-color="#adb1b9"/><stop offset="80%" stop-color="#ced1d7"/><stop offset="100%" stop-color="#e9ecf1"/>
+      <stop offset="0%" stop-color="#f4f6fa"/><stop offset="18%" stop-color="#cdd1d8"/><stop offset="44%" stop-color="#eff2f6"/>
+      <stop offset="57%" stop-color="#aeb2ba"/><stop offset="80%" stop-color="#d0d3d9"/><stop offset="100%" stop-color="#ebeef2"/>
     </linearGradient>
     <linearGradient id="s" x1="0" y1="30" x2="0" y2="57" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#3a3d44" stop-opacity="0"/><stop offset="100%" stop-color="#2a2c32" stop-opacity="0.9"/>
+      <stop offset="0%" stop-color="#31343b" stop-opacity="0"/><stop offset="100%" stop-color="#212329" stop-opacity="0.92"/>
     </linearGradient>
     <linearGradient id="h" x1="0" y1="7" x2="0" y2="40" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#ffffff" stop-opacity="0.98"/><stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
   </defs>
 
-  <!-- graphite squircle tile -->
-  <rect x="92" y="100" width="840" height="840" rx="188" ry="188" fill="url(#tile)" stroke="#2c2c33" stroke-width="2"/>
-  <rect x="92" y="100" width="840" height="840" rx="188" ry="188" fill="url(#sheen)"/>
-  <rect x="93" y="101" width="838" height="200" rx="187" ry="187" fill="#ffffff" opacity="0.05"/>
+  <!-- ===== Liquid-glass tile ===== -->
+  <g clip-path="url(#tile)">
+    <rect x="96" y="96" width="832" height="832" fill="url(#glass)"/>
+    <ellipse cx="360" cy="250" rx="560" ry="430" fill="#ffffff" opacity="0.12" filter="url(#soft)"/>
+    <rect x="96" y="96" width="832" height="832" fill="url(#tint)"/>
+    <rect x="96" y="96" width="832" height="832" fill="url(#sheen)"/>
+    <rect x="96" y="96" width="832" height="832" fill="url(#depth)"/>
+    <rect x="96" y="96" width="832" height="832" fill="url(#rim)"/>
+  </g>
+  <!-- Crisp glass rim: dark outer + light inner. -->
+  <rect x="96" y="96" width="832" height="832" rx="186" ry="186" fill="none" stroke="#000000" stroke-opacity="0.45" stroke-width="2.5"/>
+  <rect x="97.5" y="97.5" width="829" height="829" rx="185" ry="185" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5"/>
 
-  <!-- metallic e, centered, scaled from the 64-unit mark -->
-  <g transform="translate(286 286) scale(7.0625)">
-    <g mask="url(#c)">
+  <!-- ===== Metallic "e", centered, 8% padding to the tile edges ===== -->
+  <g transform="translate(64.717 64.717) scale(13.9776)">
+    <g mask="url(#e)">
       <rect width="64" height="64" fill="url(#b)"/>
       <rect width="64" height="64" fill="url(#s)"/>
       <rect width="64" height="64" fill="url(#h)"/>
