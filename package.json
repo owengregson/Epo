@@ -35,7 +35,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
     "@electron/rebuild": "^4.2.0",
-    "@swc/core": "^1.15.47",
+    "@swc/core": "^1.16.0",
     "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^9.6.0",
     "@types/jest": "^30.0.0",
