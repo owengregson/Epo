@@ -31,6 +31,7 @@ import {
   sleep as timingSleep,
 } from '../timing/primitives';
 import { PRUNE } from '../timing/config';
+import { cyclePlan } from '../timing/cycle-plan';
 import { filterPruneCandidates, isPruneWhitelisted, pruneWhitelistSet } from './prune-whitelist';
 import * as log from '../utils/logger';
 import { MS_PER_DAY, startOfLocalDay } from '../timing/units';
@@ -582,9 +583,12 @@ export class PruneEngine {
         }
 
         // Gate 1 — the prune-own daily cap (durable) AND the per-run bound.
-        if (this.dailyDone() >= this.cfg.dailyLimit || actedThisRun >= this.cfg.dailyLimit) {
+        // Both gate on the cycle PLAN (a fluctuating draw just under the
+        // configured limit) so no two days stop at the exact same number.
+        const plan = this.dailyPlan();
+        if (this.dailyDone() >= plan || actedThisRun >= plan) {
           truncated = 'cap';
-          log.info('prune: daily cap reached, stopping run', { limit: this.cfg.dailyLimit });
+          log.info('prune: daily cap reached, stopping run', { plan, limit: this.cfg.dailyLimit });
           break;
         }
 
@@ -758,7 +762,9 @@ export class PruneEngine {
       unfollowed: this.unfollowedThisRun,
       remaining: this.remaining,
       dailyDone: this.dailyDone(),
-      dailyLimit: this.cfg.dailyLimit,
+      // The PLAN, not the configured limit — the meter's denominator must be
+      // the number today actually stops at, or it would stick just short.
+      dailyLimit: this.dailyPlan(),
       lastRunAt: this.lastRunAt,
       lastSentinel: this.lastSentinel,
       nextActionAt: this.delays.nextDeadline('prune:action-delay'),
@@ -781,7 +787,7 @@ export class PruneEngine {
 
   /** Whether the prune daily cap is reached (all unfollows look alike to IG). */
   atDailyCap(_now: number): boolean {
-    return this.dailyDone() >= this.cfg.dailyLimit;
+    return this.dailyDone() >= this.dailyPlan();
   }
 
   /**
@@ -1120,12 +1126,24 @@ export class PruneEngine {
     );
   }
 
+  /** The current active-hours cycle start (growth's boundary, or local midnight). */
+  private cycleStart(): number {
+    const now = this.deps.clock.now();
+    return this.deps.cycleStartMs?.(now) ?? startOfLocalDay(now);
+  }
+
   /** Prune-ledger rows since the active-hours cycle start — the durable daily-cap count. */
   private dailyDone(): number {
-    const now = this.deps.clock.now();
-    // Same boundary as the growth budget: the active-hours cycle start.
-    const since = this.deps.cycleStartMs?.(now) ?? startOfLocalDay(now);
-    return this.deps.store.pruneCountSince(since);
+    return this.deps.store.pruneCountSince(this.cycleStart());
+  }
+
+  /**
+   * Today's planned prune volume: a deterministic per-cycle draw just under
+   * `dailyLimit` (see timing/cycle-plan.ts), so the amount pruned per day
+   * fluctuates instead of landing on the exact configured limit every day.
+   */
+  private dailyPlan(): number {
+    return cyclePlan(this.cfg.dailyLimit, this.cycleStart());
   }
 
   private halt(reason: string): void {

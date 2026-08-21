@@ -36,7 +36,8 @@ export function hoursOpen(s: Settings, nowHour: number): boolean {
 export interface DailyRateView {
   /** Actions recorded today. */
   done: number;
-  /** The configured daily operating rate, or null before settings load. */
+  /** Today's planned volume (falls back to the configured operating rate
+   *  before status arrives), or null before either loads. */
   rate: number | null;
   /** Meter fill 0..100 (capped). */
   pct: number;
@@ -44,11 +45,14 @@ export interface DailyRateView {
 
 /**
  * The Actions-today meter model, shared by the Live Status hero and the
- * Rate & Safety card so the two readouts can never drift apart.
+ * Rate & Safety card so the two readouts can never drift apart. The
+ * denominator is the engine's per-cycle PLAN — the number today actually
+ * stops at — so the meter completes instead of sticking just short of the
+ * configured rate.
  */
 export function dailyRateView(status: EpoStatus | null, settings: Settings | null): DailyRateView {
   const done = status?.actionsToday ?? 0;
-  const rate = settings?.dailyOperatingRate ?? null;
+  const rate = status?.plannedToday ?? settings?.dailyOperatingRate ?? null;
   const pct = rate != null && rate > 0 ? Math.min(100, (done / rate) * 100) : 0;
   return { done, rate, pct };
 }

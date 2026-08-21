@@ -31,6 +31,7 @@ describe('Foundation status (not built)', () => {
       chainIndex: null,
       actionsToday: 0,
       remainingToday: 0,
+      plannedToday: 0,
       atHardCeiling: false,
       queued: 0,
       pendingFollowback: 0,

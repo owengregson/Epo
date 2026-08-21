@@ -230,6 +230,17 @@ export const SESSION = {
 export const PATTERN = {
   /** A rest day is near-zero, not exactly zero. */
   REST_DAY_MAX_FRACTION: 0.15,
+  /**
+   * Band for the per-cycle volume plan (timing/cycle-plan.ts): each active-hours
+   * cycle draws its day plan uniformly in [MIN, MAX] × the configured cap, so
+   * the amount done per day fluctuates just under the cap instead of hitting
+   * the exact same number every day. The cap itself stays the hard limit.
+   */
+  CYCLE_PLAN_MIN_FRACTION: 0.85,
+  CYCLE_PLAN_MAX_FRACTION: 0.97,
+  /** Below this cap the rounding granularity makes an under-shoot either a
+   *  no-op or brutal (a cap of 2 would halve) — tiny caps pass through. */
+  CYCLE_PLAN_MIN_CAP: 10,
   /** Keep any single session from being unfollow-dominated (mix within a burst — NOT an
    *  aggregate follow:unfollow ratio; the churn lifecycle legitimately runs ~1:1). */
   MAX_UNFOLLOW_FRACTION_PER_SESSION: 0.5,

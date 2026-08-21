@@ -1,4 +1,5 @@
 import type { KnowledgeStore } from '../store/knowledge-store';
+import { cyclePlan } from '../timing/cycle-plan';
 import { jittered, sample } from '../timing/primitives';
 import { startOfLocalDay } from '../timing/units';
 import type { Clock } from './clock';
@@ -70,9 +71,20 @@ export class RateGovernor {
     return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since);
   }
 
-  /** Operating-rate headroom left today, never below zero. */
+  /**
+   * The volume PLANNED for the current cycle: a deterministic per-cycle draw
+   * just under the operating rate (see timing/cycle-plan.ts), so the amount
+   * done per day fluctuates instead of landing on the exact configured number
+   * every day. The operating rate and hard ceiling stay the fixed limits; this
+   * is where a normal day actually stops.
+   */
+  plannedToday(): number {
+    return cyclePlan(this.cfg.dailyOperatingRate, this.cycleStartMs());
+  }
+
+  /** Headroom left against today's plan, never below zero. */
   remainingToday(): number {
-    return Math.max(0, this.cfg.dailyOperatingRate - this.actionsToday());
+    return Math.max(0, this.plannedToday() - this.actionsToday());
   }
 
   /**
@@ -87,13 +99,13 @@ export class RateGovernor {
   }
 
   /**
-   * True once today's actions reach the user's operating rate — the rate the
-   * engine is ADVERTISED to pace itself to. The engine treats this as "done for
-   * today" (parks to midnight); the hard ceiling below stays the uncrossable
-   * backstop with headroom for manual actions.
+   * True once today's actions reach the cycle's PLAN (a fluctuating draw just
+   * under the user's operating rate). The engine treats this as "done for
+   * today" (parks to the next cycle); the hard ceiling below stays the
+   * uncrossable backstop with headroom for manual actions.
    */
   atOperatingRate(): boolean {
-    return this.actionsToday() >= this.cfg.dailyOperatingRate;
+    return this.actionsToday() >= this.plannedToday();
   }
 
   /** True once today's actions reach the hard ceiling (uncrossable in code). */

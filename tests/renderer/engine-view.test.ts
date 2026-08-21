@@ -1,11 +1,20 @@
 import { dailyRateView, hoursOpen } from '@/renderer/lib/engine-view';
 import type { EpoStatus, Settings } from '@/types';
 
-const statusWith = (actionsToday: number): EpoStatus => ({ actionsToday }) as EpoStatus;
+const statusWith = (actionsToday: number, plannedToday?: number): EpoStatus =>
+  ({ actionsToday, plannedToday }) as EpoStatus;
 const settingsWith = (dailyOperatingRate: number): Settings => ({ dailyOperatingRate }) as Settings;
 
 describe('dailyRateView — the shared Actions-today meter model', () => {
-  it('derives done, rate, and the capped percent', () => {
+  it("prefers the engine's cycle plan as the denominator so the meter can complete", () => {
+    expect(dailyRateView(statusWith(11, 22), settingsWith(25))).toEqual({
+      done: 11,
+      rate: 22,
+      pct: 50,
+    });
+  });
+
+  it('falls back to the configured rate before the plan arrives', () => {
     expect(dailyRateView(statusWith(10), settingsWith(25))).toEqual({
       done: 10,
       rate: 25,

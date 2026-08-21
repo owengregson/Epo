@@ -53,6 +53,7 @@ describe('pruneDue (scheduled auto-run predicate)', () => {
 import type { SleepFn } from '@/engine/engine';
 import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import type { SentinelStatus } from '@/adapter/sentinel';
+import { cyclePlan } from '@/timing/cycle-plan';
 import { setLevel } from '@/utils/logger';
 
 beforeAll(() => setLevel('error'));
@@ -927,6 +928,35 @@ describe('PruneEngine — daily cap counts from the active-hours cycle start', (
     h.store.recordPruneAction('x', 'ok', h.clock.now());
     h.clock.advance(3_600_000); // same local day
     expect(h.engine.atDailyCap(h.clock.now())).toBe(true);
+  });
+});
+
+describe('PruneEngine — per-cycle plan (fluctuates just under the daily limit)', () => {
+  const CYCLE_START = T0 - 30 * 60_000;
+
+  test('the cap trips at the cycle plan, before the configured limit', async () => {
+    const h = build({
+      following: ['a', 'b'],
+      followers: [],
+      cfg: { dailyLimit: 50 },
+      cycleStartMs: () => CYCLE_START,
+    });
+    const plan = cyclePlan(50, CYCLE_START);
+    expect(plan).toBeLessThan(50);
+    for (let i = 0; i < plan - 1; i += 1) h.store.recordPruneAction(`p${i}`, 'ok', h.clock.now());
+    expect(h.engine.atDailyCap(h.clock.now())).toBe(false);
+    h.store.recordPruneAction('last', 'ok', h.clock.now());
+    expect(h.engine.atDailyCap(h.clock.now())).toBe(true);
+  });
+
+  test('status reports the plan as the daily limit so the meter can complete', async () => {
+    const h = build({
+      following: ['a', 'b'],
+      followers: [],
+      cfg: { dailyLimit: 50 },
+      cycleStartMs: () => CYCLE_START,
+    });
+    expect(h.engine.status().dailyLimit).toBe(cyclePlan(50, CYCLE_START));
   });
 });
 

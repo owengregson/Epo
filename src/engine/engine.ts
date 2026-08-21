@@ -101,6 +101,9 @@ export interface EngineRate {
   nextDelayMs(): number;
   actionsToday(): number;
   remainingToday(): number;
+  /** The volume planned for this cycle — a fluctuating draw just under the
+   *  operating rate; where {@link atOperatingRate} actually trips. */
+  plannedToday(): number;
   /** ms until the action counter resets (the next active-hours cycle start) —
    *  the park horizon once a daily cap is hit. */
   msUntilCycleReset(): number;
@@ -224,6 +227,8 @@ export interface EngineStatus {
   chainIndex: number | null;
   actionsToday: number;
   remainingToday: number;
+  /** Today's planned volume (the fluctuating per-cycle stop, under the rate). */
+  plannedToday: number;
   atHardCeiling: boolean;
   queued: number;
   pendingFollowback: number;
@@ -626,6 +631,7 @@ export class Engine {
       chainIndex,
       actionsToday: rate.actionsToday(),
       remainingToday: rate.remainingToday(),
+      plannedToday: rate.plannedToday(),
       atHardCeiling: rate.atHardCeiling(),
       queued: store.followRecordsByState('queued').length,
       pendingFollowback: store.followRecordsByState('pending_followback').length,

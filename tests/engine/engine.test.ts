@@ -1167,7 +1167,9 @@ describe('Engine — status projection', () => {
     expect(s.followedBackHeld).toBe(1);
     expect(s.unfollowDue).toBe(1);
     expect(s.actionsToday).toBe(1);
-    expect(s.remainingToday).toBe(99);
+    // The cycle plan fluctuates under the rate; remaining derives from it.
+    expect(s.plannedToday).toBeLessThan(100);
+    expect(s.remainingToday).toBe(s.plannedToday - 1);
     expect(s.atHardCeiling).toBe(false);
     expect(s.state).toBe('idle');
     expect(s.lastStep).toBeNull();

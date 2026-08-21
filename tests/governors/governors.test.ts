@@ -1,18 +1,56 @@
 import { FakeClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
 import { KnowledgeStore } from '@/store/knowledge-store';
+import { cyclePlan } from '@/timing/cycle-plan';
 
 const cfg = { dailyHardCeiling: 50, dailyOperatingRate: 25, minDelayMs: 1000, maxDelayMs: 2000,
   jitterPercent: 0, activeHoursStart: 0, activeHoursEnd: 24 };
 
-test('operating rate decrements with recorded actions', () => {
+test('the day plan decrements with recorded actions', () => {
   const store = new KnowledgeStore(':memory:');
   const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
   const g = new RateGovernor(store, clock, cfg);
-  expect(g.remainingToday()).toBe(25);
+  const plan = g.plannedToday();
+  expect(g.remainingToday()).toBe(plan);
   store.recordAction('1', 'follow', 'ok', clock.now());
-  expect(g.remainingToday()).toBe(24);
+  expect(g.remainingToday()).toBe(plan - 1);
   store.close();
+});
+
+describe('per-cycle plan (fluctuates just under the operating rate)', () => {
+  test('plannedToday is the cyclePlan draw under the operating rate', () => {
+    const store = new KnowledgeStore(':memory:');
+    const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
+    const g = new RateGovernor(store, clock, cfg);
+    expect(g.plannedToday()).toBe(cyclePlan(cfg.dailyOperatingRate, g.cycleStartMs()));
+    expect(g.plannedToday()).toBeLessThan(cfg.dailyOperatingRate);
+    store.close();
+  });
+
+  test('atOperatingRate trips at the plan, before the configured rate', () => {
+    const store = new KnowledgeStore(':memory:');
+    const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
+    const g = new RateGovernor(store, clock, cfg);
+    const plan = g.plannedToday();
+    for (let i = 0; i < plan - 1; i++) store.recordAction(String(i), 'follow', 'ok', clock.now());
+    expect(g.atOperatingRate()).toBe(false);
+    store.recordAction('last', 'follow', 'ok', clock.now());
+    expect(g.atOperatingRate()).toBe(true);
+    expect(g.actionsToday()).toBeLessThan(cfg.dailyOperatingRate);
+    store.close();
+  });
+
+  test('the hard ceiling is untouched by the plan', () => {
+    const store = new KnowledgeStore(':memory:');
+    const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
+    const g = new RateGovernor(store, clock, cfg);
+    for (let i = 0; i < cfg.dailyHardCeiling - 1; i++)
+      store.recordAction(String(i), 'follow', 'ok', clock.now());
+    expect(g.atHardCeiling()).toBe(false);
+    store.recordAction('last', 'follow', 'ok', clock.now());
+    expect(g.atHardCeiling()).toBe(true);
+    store.close();
+  });
 });
 
 test('actionsInLastHour counts both ledgers within the trailing hour only', () => {
