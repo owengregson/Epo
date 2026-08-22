@@ -198,4 +198,11 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX idx_accounts_username_nocase ON accounts(username COLLATE NOCASE);
   CREATE INDEX idx_follow_records_target ON follow_records(target_pk);
   `,
+
+  // --- Migration: profile bio text (the fact behind the prune bio filter).
+  // NULL = never observed; '' = fetched and genuinely empty — the distinction
+  // is what lets the prune engine know whether a fetch is still needed.
+  `
+  ALTER TABLE accounts ADD COLUMN bio TEXT;
+  `,
 ];

@@ -29,6 +29,7 @@ interface AccountRow {
   is_private: number | null;
   is_verified: number | null;
   activity_signal: number | null;
+  bio: string | null;
   role: string | null;
   enrich_failed_at: number | null;
   stats_observed_at: number | null;
@@ -84,6 +85,7 @@ const rowToState = (row: AccountRow): AccountState => ({
   isPrivate: boolOrUndef(row.is_private),
   isVerified: boolOrUndef(row.is_verified),
   activitySignal: numOrUndef(row.activity_signal),
+  bio: strOrUndef(row.bio),
   role: strOrUndef(row.role),
   enrichFailedAt: numOrUndef(row.enrich_failed_at),
   statsObservedAt: numOrUndef(row.stats_observed_at),
@@ -209,11 +211,11 @@ export class KnowledgeStore {
         .prepare(
           `INSERT INTO accounts (
              pk, username, enrichment, followers, following, ratio, mutuals,
-             is_private, is_verified, activity_signal,
+             is_private, is_verified, activity_signal, bio,
              stats_observed_at, stats_source, first_seen_at, last_seen_at
            ) VALUES (
              @pk, @username, @enrichment, @followers, @following, @ratio, @mutuals,
-             @is_private, @is_verified, @activity_signal,
+             @is_private, @is_verified, @activity_signal, @bio,
              @stats_observed_at, @stats_source, @first_seen_at, @last_seen_at
            )
            ON CONFLICT(pk) DO UPDATE SET
@@ -226,6 +228,7 @@ export class KnowledgeStore {
              is_private = excluded.is_private,
              is_verified = excluded.is_verified,
              activity_signal = excluded.activity_signal,
+             bio = excluded.bio,
              stats_observed_at = excluded.stats_observed_at,
              stats_source = excluded.stats_source,
              first_seen_at = excluded.first_seen_at,
@@ -246,6 +249,7 @@ export class KnowledgeStore {
           is_private: boolToInt(next.isPrivate),
           is_verified: boolToInt(next.isVerified),
           activity_signal: orNull(next.activitySignal),
+          bio: orNull(next.bio),
           stats_observed_at: orNull(next.statsObservedAt),
           stats_source: orNull(next.statsSource),
           first_seen_at: next.firstSeenAt,

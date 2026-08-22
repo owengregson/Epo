@@ -10,6 +10,8 @@ import { Icon } from '@/renderer/ui/Icon';
 export interface PruneWhitelistCardProps {
   /** The persisted whitelist (usernames, matched case-insensitively). */
   whitelist: string[];
+  /** Bio words/phrases that protect an account from prune unfollows. */
+  bioFilterWords: string[];
   /** Persist a partial settings change (the view saves + relays onSaved). */
   onSave(part: Partial<Settings>): void;
 }
@@ -18,8 +20,14 @@ export interface PruneWhitelistCardProps {
  * Prune · Whitelist — accounts that are never pruned. Add via the input
  * (Enter or the + button; trimmed, lowercased, deduped) and remove by clicking
  * an entry's chip. Every change persists immediately through `settings:update`.
+ * Below it, the bio filter: words/phrases that protect any account whose
+ * profile bio contains one (checked just before each unfollow).
  */
-export function PruneWhitelistCard({ whitelist, onSave }: PruneWhitelistCardProps): h.JSX.Element {
+export function PruneWhitelistCard({
+  whitelist,
+  bioFilterWords,
+  onSave,
+}: PruneWhitelistCardProps): h.JSX.Element {
   const [value, setValue] = useState('');
   const clean = value.trim().replace(/^@/, '').toLowerCase();
 
@@ -32,6 +40,20 @@ export function PruneWhitelistCard({ whitelist, onSave }: PruneWhitelistCardProp
 
   const remove = (username: string): void => {
     onSave({ pruneWhitelist: whitelist.filter((u) => u !== username) });
+  };
+
+  const [wordValue, setWordValue] = useState('');
+  const cleanWord = wordValue.trim().toLowerCase();
+
+  const addWord = (): void => {
+    if (!cleanWord) return;
+    setWordValue('');
+    if (bioFilterWords.some((w) => w.toLowerCase() === cleanWord)) return;
+    onSave({ pruneBioFilterWords: [...bioFilterWords, cleanWord] });
+  };
+
+  const removeWord = (word: string): void => {
+    onSave({ pruneBioFilterWords: bioFilterWords.filter((w) => w !== word) });
   };
 
   return (
@@ -86,6 +108,56 @@ export function PruneWhitelistCard({ whitelist, onSave }: PruneWhitelistCardProp
         )}
         <div class="hint">
           Whitelisted accounts are never pruned — the candidate list updates immediately.
+        </div>
+      </Field>
+      <Field
+        label="Protected bio words"
+        htmlFor="bioWordInput"
+        tip="Anyone whose profile bio contains one of these words or phrases is never unfollowed by a prune run. Matched anywhere in the bio, ignoring case."
+      >
+        <div class="wl-add">
+          <input
+            class="tinput"
+            type="text"
+            id="bioWordInput"
+            value={wordValue}
+            placeholder="word or phrase"
+            spellcheck={false}
+            autocomplete="off"
+            aria-label="Bio word or phrase to protect"
+            onInput={(e) => setWordValue((e.currentTarget as HTMLInputElement).value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addWord();
+              }
+            }}
+          />
+          <Button icon="plus" title="Add protected bio word" disabled={!cleanWord} onClick={addWord}>
+            Add
+          </Button>
+        </div>
+        {bioFilterWords.length > 0 ? (
+          <div class="chips wl-chips">
+            {bioFilterWords.map((w) => (
+              <button
+                key={w}
+                type="button"
+                class="chip wl-chip"
+                aria-label={`Remove "${w}" from the protected bio words`}
+                onClick={() => removeWord(w)}
+              >
+                {w}
+                <Icon name="xmark" />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div class="hint">No protected bio words yet.</div>
+        )}
+        <div class="hint">
+          Bios are checked just before each unfollow, so matches are honored even when a
+          bio was unknown at scan time.
         </div>
       </Field>
     </Card>

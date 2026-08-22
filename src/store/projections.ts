@@ -100,6 +100,9 @@ export const projectAccount = (existing: AccountState | null, obs: Observation):
   if (f.isVerified !== undefined && (base.isVerified === undefined || idSufficient)) {
     base.isVerified = f.isVerified;
   }
+  if (f.bio !== undefined && (base.bio === undefined || idSufficient)) {
+    base.bio = f.bio;
+  }
 
   base.ratio = ratioOf(base.followers, base.following);
   base.firstSeenAt = existing ? Math.min(existing.firstSeenAt, now) : now;

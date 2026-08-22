@@ -26,6 +26,7 @@ const OWN_PK = 'ME';
 const CFG: PruneConfig = {
   dailyLimit: 50,
   whitelist: [],
+  bioFilterWords: [],
   minDelayMs: 60_000,
   maxDelayMs: 60_000,
   jitterPercent: 0,

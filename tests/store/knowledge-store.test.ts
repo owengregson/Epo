@@ -11,6 +11,15 @@ test('observe then getAccount projects state', () => {
   expect(a.enrichment).toBe('profiled');
 });
 
+test('bio persists, re-projects, and distinguishes empty from never-observed', () => {
+  s.observe({ accountPk: '7', observedAt: 100, source: 'followers-list', fields: { username: 'z' } });
+  expect(s.getAccount('7')!.bio).toBeUndefined(); // never observed
+  s.observe({ accountPk: '7', observedAt: 200, source: 'profile', fields: { bio: 'Dog mom 🐶' } });
+  expect(s.getAccount('7')!.bio).toBe('Dog mom 🐶');
+  s.observe({ accountPk: '7', observedAt: 300, source: 'profile', fields: { bio: '' } });
+  expect(s.getAccount('7')!.bio).toBe(''); // fetched-and-empty is a fact, not absence
+});
+
 test('action-delay deadline round-trips through durable meta (set, overwrite, clear)', () => {
   expect(s.getActionDelayDeadline()).toBeNull();
   s.setActionDelayDeadline(1_234_567);

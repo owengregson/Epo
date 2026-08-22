@@ -82,6 +82,9 @@ export interface Settings {
   // --- Auto-prune: unfollow non-reciprocating accounts (separate from growth). ---
   /** Usernames never auto-pruned (case-insensitive; pk entries also match). */
   pruneWhitelist: string[];
+  /** Bio words/phrases that protect an account from prune unfollows
+   *  (case-insensitive substring match on the profile bio). */
+  pruneBioFilterWords: string[];
   /** Max prune unfollows per local day (its OWN ledger, independent of growth). */
   pruneDailyLimit: number;
   /** Re-run the prune every N days; 0 = scheduling off (one-shot only). */
@@ -166,6 +169,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dryRun: false,
 
   pruneWhitelist: [],
+  pruneBioFilterWords: [],
   pruneDailyLimit: 50,
   pruneScheduleDays: 0,
   pruneLastRunAt: null,
@@ -294,6 +298,7 @@ export function sanitizeSettings(s: Settings): Settings {
   out.autoAcceptFollowRequests = boolVal(s.autoAcceptFollowRequests, d.autoAcceptFollowRequests);
 
   out.pruneWhitelist = strArr(s.pruneWhitelist);
+  out.pruneBioFilterWords = strArr(s.pruneBioFilterWords);
   out.pruneDailyLimit = intNum(s.pruneDailyLimit, d.pruneDailyLimit, 1, 1000);
   out.pruneScheduleDays = num(s.pruneScheduleDays, d.pruneScheduleDays, 0, 365);
   out.pruneLastRunAt = epochOrNull(s.pruneLastRunAt);
@@ -540,6 +545,7 @@ export function toPruneConfig(s: Settings): PruneConfig {
   return {
     dailyLimit: s.pruneDailyLimit,
     whitelist: s.pruneWhitelist,
+    bioFilterWords: s.pruneBioFilterWords,
     minDelayMs: s.minDelayMinutes * MS_PER_MINUTE,
     maxDelayMs: s.maxDelayMinutes * MS_PER_MINUTE,
     jitterPercent: s.jitterPercent,

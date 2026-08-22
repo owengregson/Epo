@@ -217,7 +217,11 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
       />
       {settings !== null ? (
         <Fragment>
-          <PruneWhitelistCard whitelist={settings.pruneWhitelist} onSave={save} />
+          <PruneWhitelistCard
+            whitelist={settings.pruneWhitelist}
+            bioFilterWords={settings.pruneBioFilterWords}
+            onSave={save}
+          />
           <PruneScheduleCard settings={settings} onSave={save} />
         </Fragment>
       ) : (

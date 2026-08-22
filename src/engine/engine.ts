@@ -146,7 +146,7 @@ export interface EngineUnfollowFeed {
   executeUnfollow(
     cand: { pk: string; username: string },
     now: number,
-  ): Promise<'ok' | 'failed' | 'simulated' | 'blocked'>;
+  ): Promise<'ok' | 'failed' | 'simulated' | 'blocked' | 'skipped'>;
   atDailyCap(now: number): boolean;
 }
 
@@ -849,6 +849,11 @@ export class Engine {
           // briefly and retry it next step (a persistently blocked feed self-suppresses,
           // so growth keeps going rather than the whole engine halting).
           await this.engineWait('engine:prune-park', PRUNE_TIMING.PARK_MS);
+          return 'idle';
+        }
+        if (status === 'skipped') {
+          // Bio filter: the candidate was consumed WITHOUT an action — no ledger
+          // row, nothing to pace or park; the next step just picks the next thing.
           return 'idle';
         }
         kind = 'unfollow';

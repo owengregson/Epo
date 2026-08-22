@@ -1602,6 +1602,10 @@ export class Foundation {
       // The prune cap shares the growth budget's boundary: the active-hours
       // cycle start, not calendar midnight.
       cycleStartMs: (now: number): number => rate.cycleStartMs(now),
+      // Bio-filter lookups for candidates the graph holds no bio for: one
+      // profile-info fetch through the shared enricher (which observes the
+      // whole profile into the store — the bio arrives as a stored fact).
+      enrichProfile: (username: string): Promise<number> => enricher.enrich([username]),
       onStatus: (s) => this.onPruneStatusCb?.(s),
       // Persist the completed run's timestamp through the one settings save
       // path (also reloads live configs — harmless, and keeps one write path).

@@ -1302,12 +1302,12 @@ class FakeFeed implements EngineUnfollowFeed {
   candidates: Array<{ pk: string; username: string }> = [];
   cap = false;
   executed: Array<{ pk: string; username: string }> = [];
-  outcome: 'ok' | 'failed' | 'simulated' | 'blocked' = 'ok';
+  outcome: 'ok' | 'failed' | 'simulated' | 'blocked' | 'skipped' = 'ok';
   nextCandidate(): { pk: string; username: string } | null {
     return this.cap ? null : (this.candidates[0] ?? null);
   }
   async executeUnfollow(cand: { pk: string; username: string }): Promise<
-    'ok' | 'failed' | 'simulated' | 'blocked'
+    'ok' | 'failed' | 'simulated' | 'blocked' | 'skipped'
   > {
     this.executed.push(cand);
     if (this.outcome !== 'blocked') this.candidates = this.candidates.filter((c) => c.pk !== cand.pk);
@@ -1357,6 +1357,20 @@ describe('Engine — woven prune feed', () => {
     await h.engine.stepOnce();
 
     expect(feed.executed).toEqual([]);
+  });
+
+  test('a bio-filter skip records no action and does not park (candidate was consumed)', async () => {
+    const pacing = new FakePacing(T0);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    feed.outcome = 'skipped';
+    const h = makeHarness({ pacing, unfollowFeed: feed });
+
+    const result = await h.engine.stepOnce();
+
+    expect(result).toBe('idle');
+    expect(pacing.recorded).toEqual([]); // nothing acted, nothing to pace
+    expect(h.sleep.calls).not.toContain(30_000); // no blocked-style park either
   });
 
   test('a blocked woven unfollow parks and records no action', async () => {

@@ -196,6 +196,7 @@ describe('projections from DEFAULT_SETTINGS', () => {
     expect(toPruneConfig(DEFAULT_SETTINGS)).toEqual({
       dailyLimit: 50,
       whitelist: [],
+      bioFilterWords: [],
       minDelayMs: 180_000,
       maxDelayMs: 420_000,
       jitterPercent: 30,
@@ -203,10 +204,16 @@ describe('projections from DEFAULT_SETTINGS', () => {
       scanMaxMs: 3_000,
     });
     expect(
-      toPruneConfig({ ...DEFAULT_SETTINGS, pruneWhitelist: ['Keep_Me'], pruneDailyLimit: 5 }),
+      toPruneConfig({
+        ...DEFAULT_SETTINGS,
+        pruneWhitelist: ['Keep_Me'],
+        pruneDailyLimit: 5,
+        pruneBioFilterWords: ['dog mom'],
+      }),
     ).toEqual({
       dailyLimit: 5,
       whitelist: ['Keep_Me'],
+      bioFilterWords: ['dog mom'],
       minDelayMs: 180_000,
       maxDelayMs: 420_000,
       jitterPercent: 30,

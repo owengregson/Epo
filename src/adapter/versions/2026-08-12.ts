@@ -177,6 +177,8 @@ const JSON_PATHS = {
     mutualCount: 'edge_mutual_followed_by.count',
     isPrivate: 'is_private',
     isVerified: 'is_verified',
+    // The profile's bio text — the fact behind the prune bio filter.
+    biography: 'biography',
     // Whether WE already follow this account. For a private account this is what
     // makes its followers list viewable (we can read followers of anyone we follow).
     followedByViewer: 'followed_by_viewer',
@@ -1100,6 +1102,7 @@ function extractProfileInfo(body: unknown, at: number): Observation | null | Sha
       mutuals: asCount(getPath(user, p.mutualCount)),
       isPrivate: asBool(user[p.isPrivate]),
       isVerified: asBool(user[p.isVerified]),
+      bio: typeof user[p.biography] === 'string' ? (user[p.biography] as string) : undefined,
     },
   };
 }

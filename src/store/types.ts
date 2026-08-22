@@ -11,6 +11,8 @@ export interface AccountFields {
   /** How many accounts WE follow also follow this one ("followed by x and N others"). */
   mutuals?: number;
   isPrivate?: boolean; isVerified?: boolean; activitySignal?: number;
+  /** Profile bio text ('' = fetched and empty; absent = not observed yet). */
+  bio?: string;
 }
 export interface Observation {
   accountPk: string; observedAt: number; source: Source; fields: AccountFields;
@@ -19,6 +21,8 @@ export interface AccountState {
   pk: string; username?: string; enrichment: EnrichmentLevel;
   followers?: number; following?: number; ratio?: number; mutuals?: number;
   isPrivate?: boolean; isVerified?: boolean; activitySignal?: number;
+  /** Profile bio text ('' = fetched and empty; absent = not observed yet). */
+  bio?: string;
   role?: string;
   /**
    * Set when a profile-enrichment fetch returned a PERMANENTLY unusable body

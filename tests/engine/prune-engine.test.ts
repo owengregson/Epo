@@ -113,6 +113,7 @@ class FakeSentinel {
 const CFG: PruneConfig = {
   dailyLimit: 50,
   whitelist: [],
+  bioFilterWords: [],
   minDelayMs: 60_000,
   maxDelayMs: 60_000, // min = max → deterministic base delay
   jitterPercent: 0,
@@ -141,6 +142,7 @@ const build = (over: {
   sleep?: SleepFn;
   refreshOwnStats?: () => Promise<void>;
   cycleStartMs?: (now: number) => number;
+  enrichProfile?: (username: string) => Promise<number>;
 }): Harness => {
   const store = new KnowledgeStore(':memory:');
   store.setOwnPk(OWN_PK);
@@ -178,6 +180,7 @@ const build = (over: {
     onRunComplete: (at) => completedAt.push(at),
     refreshOwnStats: over.refreshOwnStats,
     cycleStartMs: over.cycleStartMs,
+    enrichProfile: over.enrichProfile,
   };
   return {
     engine: new PruneEngine(deps),
@@ -928,6 +931,121 @@ describe('PruneEngine — daily cap counts from the active-hours cycle start', (
     h.store.recordPruneAction('x', 'ok', h.clock.now());
     h.clock.advance(3_600_000); // same local day
     expect(h.engine.atDailyCap(h.clock.now())).toBe(true);
+  });
+});
+
+describe('PruneEngine — bio filter (protected words in the profile bio)', () => {
+  const bioObs = (h: Harness, pk: string, bio: string): void =>
+    h.store.observe({ accountPk: pk, observedAt: h.clock.now(), source: 'profile', fields: { bio } });
+
+  test('a candidate whose stored bio matches is skipped; others are unfollowed', async () => {
+    const h = build({
+      following: [OWN_PK, '1', '2'],
+      followers: [],
+      cfg: { bioFilterWords: ['dog'] },
+    });
+    bioObs(h, '1', 'Dog mom 🐶');
+    bioObs(h, '2', 'photographer');
+
+    await h.engine.run();
+
+    expect(h.churn.unfollows).toEqual(['u2']);
+    expect(h.store.pruneCountSince(0)).toBe(1); // the skip spends no cap
+    h.store.close();
+  });
+
+  test('an unknown bio is fetched via the enricher before deciding; a match protects', async () => {
+    const enriched: string[] = [];
+    const h: Harness = build({
+      following: [OWN_PK, '1'],
+      followers: [],
+      cfg: { bioFilterWords: ['dog'] },
+      enrichProfile: async (username) => {
+        enriched.push(username);
+        bioObs(h, '1', 'proud DOG dad');
+        return 1;
+      },
+    });
+
+    await h.engine.run();
+
+    expect(enriched).toEqual(['u1']);
+    expect(h.churn.unfollows).toEqual([]);
+    h.store.close();
+  });
+
+  test('a fetched-and-empty bio is a fact, not a failure: the unfollow proceeds', async () => {
+    const h: Harness = build({
+      following: [OWN_PK, '1'],
+      followers: [],
+      cfg: { bioFilterWords: ['dog'] },
+      enrichProfile: async () => {
+        bioObs(h, '1', '');
+        return 1;
+      },
+    });
+
+    await h.engine.run();
+
+    expect(h.churn.unfollows).toEqual(['u1']);
+    h.store.close();
+  });
+
+  test('a bio fetch failing repeatedly halts the run loudly (never unfollows blind)', async () => {
+    const h = build({
+      following: [OWN_PK, '1'],
+      followers: [],
+      cfg: { bioFilterWords: ['dog'] },
+      enrichProfile: async () => 0,
+    });
+
+    await h.engine.run();
+
+    expect(h.churn.unfollows).toEqual([]);
+    expect(h.engine.status().state).toBe('halted');
+    h.store.close();
+  });
+
+  test('with no filter words configured the enricher is never consulted', async () => {
+    let enrichCalls = 0;
+    const h = build({
+      following: [OWN_PK, '1'],
+      followers: [],
+      enrichProfile: async () => {
+        enrichCalls += 1;
+        return 1;
+      },
+    });
+
+    await h.engine.run();
+
+    expect(enrichCalls).toBe(0);
+    expect(h.churn.unfollows).toEqual(['u1']);
+    h.store.close();
+  });
+
+  test('woven feed: nextCandidate consumes a stored-bio match; executeUnfollow skips a fresh one', async () => {
+    const h: Harness = build({
+      following: [OWN_PK, '1', '2'],
+      followers: [],
+      cfg: { bioFilterWords: ['dog'] },
+      enrichProfile: async () => {
+        bioObs(h, '2', 'dog walker'); // '2' only becomes known at check time
+        return 1;
+      },
+    });
+    bioObs(h, '1', 'dog mom'); // '1' is known before selection
+
+    await h.engine.scan();
+    const cand = h.engine.nextCandidate(h.clock.now());
+    expect(cand).toEqual({ pk: '2', username: 'u2' }); // '1' consumed at selection
+
+    const status = await h.engine.executeUnfollow(cand!, h.clock.now());
+    expect(status).toBe('skipped');
+    expect(h.churn.unfollows).toEqual([]);
+    expect(h.store.pruneCountSince(0)).toBe(0); // no ledger row for either skip
+    expect(h.engine.nextCandidate(h.clock.now())).toBeNull(); // census fully consumed
+    h.store.close();
   });
 });
 

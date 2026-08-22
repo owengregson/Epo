@@ -202,7 +202,13 @@ describe('Reader.parseProfileInfo', () => {
       mutuals: 18,
       isPrivate: true,
       isVerified: false,
+      bio: '',
     });
+  });
+
+  test('extracts the biography so the prune bio filter has a fact to match on', () => {
+    const body = { data: { user: { id: '9', username: 'x', biography: 'Dog mom 🐶 | photographer' } } };
+    expect(r.parseProfileInfo(body, AT)!.fields.bio).toBe('Dog mom 🐶 | photographer');
   });
 
   test('second profile fixture: counts preserved for ratio math', () => {

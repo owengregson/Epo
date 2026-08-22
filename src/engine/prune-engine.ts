@@ -32,6 +32,7 @@ import {
 } from '../timing/primitives';
 import { PRUNE } from '../timing/config';
 import { cyclePlan } from '../timing/cycle-plan';
+import { bioMatchesFilter } from './prune-bio-filter';
 import { filterPruneCandidates, isPruneWhitelisted, pruneWhitelistSet } from './prune-whitelist';
 import * as log from '../utils/logger';
 import { MS_PER_DAY, startOfLocalDay } from '../timing/units';
@@ -186,6 +187,9 @@ export interface PruneConfig {
   dailyLimit: number;
   /** Usernames (case-insensitive) or pks never pruned. */
   whitelist: string[];
+  /** Bio words/phrases that protect an account from prune unfollows
+   *  (case-insensitive substring match — see prune-bio-filter.ts). */
+  bioFilterWords: string[];
   minDelayMs: number;
   maxDelayMs: number;
   jitterPercent: number;
@@ -246,6 +250,13 @@ export interface PruneEngineDeps {
    * Absent = local-midnight fallback (tests / no governor).
    */
   cycleStartMs?: (now: number) => number;
+  /**
+   * Fetch + store one profile (the rim ProfileEnricher, batch of one), so the
+   * bio filter can decide on candidates whose bio the graph doesn't hold yet.
+   * Resolves to the number of profiles actually observed (0 = fetch failed —
+   * rate wall, sentinel). Absent = the filter decides on stored bios only.
+   */
+  enrichProfile?: (username: string) => Promise<number>;
 }
 
 /** Brief park after a blocked action before continuing. */
@@ -632,6 +643,35 @@ export class PruneEngine {
           continue;
         }
 
+        // BIO FILTER: a bio containing a protected word shields the account.
+        // The bio is read from the graph, fetched once when unknown. A failed
+        // fetch is handled like a blocked action — retry the SAME candidate,
+        // halt loud if persistent — never an unfollow decided blind.
+        if (this.cfg.bioFilterWords.length > 0) {
+          const check = await this.candidateBio(cand);
+          if (!check.ok) {
+            consecutiveBlocked += 1;
+            if (consecutiveBlocked >= PRUNE_CONSECUTIVE_BLOCK_HALT) {
+              handBackRemainder();
+              this.halt('blocked-repeatedly');
+              return;
+            }
+            log.warn('prune: bio check unavailable, parking briefly', {
+              pk: cand.pk,
+              consecutiveBlocked,
+            });
+            this.emitStatus();
+            await this.pruneWait('prune:park', PRUNE_PARK_MS);
+            continue;
+          }
+          if (bioMatchesFilter(check.bio, this.cfg.bioFilterWords)) {
+            log.info('prune: candidate bio matches a protected word, skipping', { pk: cand.pk });
+            this.visitCandidate(cand);
+            index += 1;
+            continue;
+          }
+        }
+
         const outcome = await this.deps.churnActions.unfollow(cand.username);
         const now = this.deps.clock.now();
         if (outcome.status === 'blocked') {
@@ -806,7 +846,12 @@ export class PruneEngine {
       const cand = pending[0];
       const followsUsNow =
         this.deps.store.getEdge(cand.pk, this.deps.ownPk, 'follows')?.status === 'active';
-      if (isPruneWhitelisted(cand, wl) || followsUsNow || cand.username === null) {
+      // Stored-bio matches are consumed here (sync selection can't fetch);
+      // unknown bios pass through — executeUnfollow does the authoritative check.
+      const bioProtected =
+        this.cfg.bioFilterWords.length > 0 &&
+        bioMatchesFilter(this.deps.store.getAccount(cand.pk)?.bio, this.cfg.bioFilterWords);
+      if (isPruneWhitelisted(cand, wl) || followsUsNow || cand.username === null || bioProtected) {
         // A permanent skip for this census: drop it and move on. `remaining`
         // tracks the ACTIONABLE census (whitelist already excluded at scan
         // time), so a whitelisted skip consumes the durable row WITHOUT
@@ -829,10 +874,37 @@ export class PruneEngine {
    * Perform one woven unfollow (the growth engine owns the tab + sentinel gate). Writes
    * the ledger row + heals the own-follow edge (§1), consumes the candidate, and tracks
    * the feed's own fail/block breakers. `blocked` leaves the candidate runnable (never
-   * consumed). Returns the outcome status for the caller's pacing/park decision.
+   * consumed); `skipped` means the bio filter consumed the candidate WITHOUT an action
+   * (no ledger row — the caller has nothing to pace). Returns the outcome status for
+   * the caller's pacing/park decision.
    */
-  async executeUnfollow(cand: PruneCandidate, now: number): Promise<ChurnActionOutcome['status']> {
+  async executeUnfollow(
+    cand: PruneCandidate,
+    now: number,
+  ): Promise<ChurnActionOutcome['status'] | 'skipped'> {
     if (cand.username === null) return 'failed';
+    // BIO FILTER (see the run loop's twin): fetch-once when unknown; a failed
+    // fetch behaves exactly like a blocked click — candidate left runnable,
+    // feed self-suppresses if persistent — never an unfollow decided blind.
+    if (this.cfg.bioFilterWords.length > 0) {
+      const check = await this.candidateBio(cand);
+      if (!check.ok) {
+        this.feedConsecutiveBlocked += 1;
+        if (this.feedConsecutiveBlocked >= PRUNE_CONSECUTIVE_BLOCK_HALT) {
+          this.feedHalted = true;
+          log.warn('prune: woven feed bio checks failing repeatedly, suspending until next scan');
+        }
+        this.emitStatus();
+        return 'blocked';
+      }
+      if (bioMatchesFilter(check.bio, this.cfg.bioFilterWords)) {
+        log.info('prune: candidate bio matches a protected word, skipping', { pk: cand.pk });
+        this.dropFromPending(cand);
+        this.visitCandidate(cand);
+        this.emitStatus();
+        return 'skipped';
+      }
+    }
     const outcome = await this.deps.churnActions.unfollow(cand.username);
     if (outcome.status === 'blocked') {
       this.feedConsecutiveBlocked += 1;
@@ -1144,6 +1216,27 @@ export class PruneEngine {
    */
   private dailyPlan(): number {
     return cyclePlan(this.cfg.dailyLimit, this.cycleStart());
+  }
+
+  /**
+   * The candidate's bio for the filter decision: the graph's stored value, or
+   * one enricher fetch when the graph has never observed it. `ok: false` means
+   * it could not be known NOW (fetch failed/no enricher reach) — the caller
+   * treats that like a blocked action, never as "no match". `bio: undefined`
+   * with `ok: true` is a decided fact: the profile genuinely carries no bio
+   * (or no enricher is wired, where stored facts are all the filter has).
+   */
+  private async candidateBio(
+    cand: PruneCandidate,
+  ): Promise<{ ok: true; bio: string | undefined } | { ok: false }> {
+    const stored = this.deps.store.getAccount(cand.pk)?.bio;
+    if (stored !== undefined) return { ok: true, bio: stored };
+    if (this.deps.enrichProfile === undefined || cand.username === null) {
+      return { ok: true, bio: undefined };
+    }
+    const observed = await this.deps.enrichProfile(cand.username);
+    if (observed === 0) return { ok: false };
+    return { ok: true, bio: this.deps.store.getAccount(cand.pk)?.bio };
   }
 
   private halt(reason: string): void {
