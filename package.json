@@ -33,14 +33,14 @@
     "preact": "^10.29.8"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.8",
+    "@biomejs/biome": "^2.5.10",
     "@electron/rebuild": "^4.2.0",
-    "@swc/core": "^1.16.0",
+    "@swc/core": "^1.16.1",
     "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^9.6.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.2.0",
-    "electron": "^43.4.0",
+    "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "jest": "^30.4.2",
