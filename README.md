@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="project/assets/hero-dark.svg">
-    <img src="project/assets/hero.svg" width="720" alt="Epo — Instagram growth, engineered">
+    <img src="project/assets/hero.svg" width="350" alt="Epo — Instagram growth, engineered">
   </picture>
 </p>
 
