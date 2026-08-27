@@ -1,0 +1,161 @@
+/*
+ * The intro tour — a guided coach-marks overlay across the whole window.
+ * A single spotlight ring cuts a hole in the dim (the oversized box-shadow
+ * trick) and one raised tip card narrates. Lives OUTSIDE .console, so every
+ * --sp/--fs var resolves against :root's viewport clamps (tokens.css).
+ *
+ * z-index 90: above the confirm scrim (80) — nothing else may hold the shell
+ * while the tour does — and below the tooltip bubble (100).
+ */
+
+.tour {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+/* Full dim for centered steps (welcome / finish). */
+.tour-veil {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 5, 7, 0.66);
+  animation: tourFade 0.3s ease;
+}
+/* The spotlight: the ring's giant shadow IS the dim, so the hole is free.
+   Geometry comes inline from Tour.tsx; the transition makes step-to-step
+   moves glide instead of jump. */
+.tour-ring {
+  position: absolute;
+  border-radius: 10px;
+  border: 1px solid rgba(238, 241, 244, 0.55);
+  box-shadow:
+    0 0 0 9999px rgba(5, 5, 7, 0.66),
+    0 0 24px rgba(238, 241, 244, 0.12);
+  pointer-events: none;
+  transition:
+    left 0.34s var(--ease),
+    top 0.34s var(--ease),
+    width 0.34s var(--ease),
+    height 0.34s var(--ease);
+  animation: tourFade 0.3s ease;
+}
+
+/* The tip card (modal vocabulary: elevated + sheen + elev-6). Remounted per
+   step (keyed), so the entrance replays as the tour walks. */
+.tour-card {
+  position: absolute;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  padding: var(--sp-5);
+  background: var(--elevated);
+  background-image: var(--sheen);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--elev-6);
+  animation: tourCardIn 0.34s var(--ease) both;
+}
+/* Centered via inset+margin (not transform — the entrance animates transform). */
+.tour-card.centered {
+  inset: 0;
+  margin: auto;
+  width: 400px;
+  height: fit-content;
+}
+/* A spotlight step whose target has not been measured yet: keep the card out
+   of sight for that frame instead of flashing it centered. */
+.tour-card.measuring {
+  visibility: hidden;
+}
+.tour-kicker {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.tour-t {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--chrome);
+}
+.tour-b {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-base);
+  color: var(--muted);
+  line-height: 1.6;
+}
+.tour-a {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-5);
+}
+.tour-a .tbtn {
+  height: var(--h-lg);
+  padding: 0 var(--sp-4);
+}
+/* The primary action carries the raised sheen (transport's lit-button recipe). */
+.tour-next {
+  background: var(--grad-raised);
+  background-image: var(--sheen);
+  border-color: var(--border-active);
+  color: var(--chrome);
+}
+.tour-dots {
+  display: flex;
+  gap: 5px;
+  margin-right: auto;
+}
+.tour-dots .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  transition: background 0.2s;
+}
+.tour-dots .dot.on {
+  background: var(--chrome);
+}
+.tour-x {
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-3);
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: var(--sp-1);
+  color: var(--faint);
+  cursor: pointer;
+  font-size: var(--fs-lg);
+  line-height: 1;
+  transition: color 0.15s;
+}
+.tour-x:hover {
+  color: var(--silver);
+}
+.tour-x:focus-visible {
+  outline: 2px solid var(--silver);
+  outline-offset: 2px;
+}
+
+@keyframes tourFade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes tourCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-veil,
+  .tour-ring,
+  .tour-card {
+    animation: none;
+    transition: none;
+  }
+}

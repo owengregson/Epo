@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { prefersReducedMotion, VIEW_ENTER_HOLD_MS } from '../lib/motion';
 
-export type ViewKey = 'overview' | 'chain' | 'queues' | 'prune' | 'settings';
+export type ViewKey = 'overview' | 'chain' | 'queues' | 'settings';
 
 export interface ViewController {
   /** The currently displayed view. */

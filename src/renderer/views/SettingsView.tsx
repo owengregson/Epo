@@ -19,6 +19,8 @@ export interface SettingsViewProps {
   goTo(view: ViewKey): void;
   /** Bumped by the shell when Start was pressed without a seed. */
   seedPrompt: number;
+  /** Re-open the intro tour (the Data & session card offers a replay). */
+  onReplayTour(): void;
 }
 
 /**
@@ -28,7 +30,14 @@ export interface SettingsViewProps {
  * (debounced) via `settings:update`; the qualitative Behavior knobs derive the numeric
  * pacing config in one edit.
  */
-export function SettingsView({ settings, onSaved, confirm, goTo, seedPrompt }: SettingsViewProps): h.JSX.Element {
+export function SettingsView({
+  settings,
+  onSaved,
+  confirm,
+  goTo,
+  seedPrompt,
+  onReplayTour,
+}: SettingsViewProps): h.JSX.Element {
   const s = useSettingsDraft(settings, onSaved);
 
   /** Restore defaults on the backend, then adopt them without re-saving. */
@@ -54,12 +63,21 @@ export function SettingsView({ settings, onSaved, confirm, goTo, seedPrompt }: S
 
   return (
     <Fragment>
-      <SeedSessionCard draft={s.draft} patch={s.patch} confirm={confirm} goTo={goTo} requiredPrompt={seedPrompt} />
+      {/* The wrapper is the intro tour's spotlight anchor for the seed step. */}
+      <div data-tour="seed">
+        <SeedSessionCard draft={s.draft} patch={s.patch} confirm={confirm} goTo={goTo} requiredPrompt={seedPrompt} />
+      </div>
       <BehaviorCard draft={s.draft} patch={s.patch} set={s.set} index={1} />
       <TargetingCard draft={s.draft} patch={s.patch} set={s.set} index={2} />
       <AdvancedCard draft={s.draft} set={s.set} index={3} />
       <ProjectionCard draft={s.draft} index={4} />
-      <DataCard confirm={confirm} onResetSettings={onResetSettings} onClearData={onClearData} index={5} />
+      <DataCard
+        confirm={confirm}
+        onResetSettings={onResetSettings}
+        onClearData={onClearData}
+        onReplayTour={onReplayTour}
+        index={5}
+      />
     </Fragment>
   );
 }

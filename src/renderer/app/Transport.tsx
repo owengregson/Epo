@@ -29,7 +29,7 @@ export function Transport({ state, pending, onStart, onPauseResume, onCancel }: 
   const cancelSpin = pending === 'stop';
 
   return (
-    <div class="transport" role="group" aria-label="Engine transport">
+    <div class="transport" role="group" aria-label="Engine transport" data-tour="transport">
       <button
         class="tbtn"
         id="btnStart"

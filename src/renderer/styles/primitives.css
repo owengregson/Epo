@@ -26,12 +26,15 @@
   border-color:var(--border-strong);
   box-shadow:var(--elev-4);
 }
-.view.entering .card{
+.view.entering .card,
+.stage-view.active .card{
   /* Stagger math is single-sourced from CARD_STAGGER in lib/motion.ts: the App
      root publishes --card-in-dur / --card-stagger-step / --card-stagger-base /
      --card-stagger-cap, and VIEW_ENTER_HOLD_MS is DERIVED from the same table —
      so the tail always finishes inside the entering hold and late cards can't
-     pop to full opacity when `.entering` clears. (Fallbacks mirror the table.) */
+     pop to full opacity when `.entering` clears. (Fallbacks mirror the table.)
+     Stage-hosted pages (.stage-view) replay the same stagger on each visit:
+     their display:none→block flip restarts the animation. */
   animation:cardIn var(--card-in-dur, .45s) var(--ease) both;
   animation-delay:calc(
     min(var(--i,0), var(--card-stagger-cap, 8)) * var(--card-stagger-step, 65ms)

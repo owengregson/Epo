@@ -24,6 +24,8 @@ const CURSOR_FLUSH_MS = 16;
 export class OverlayVeil {
   private readonly view: WebContentsView;
   private active = false;
+  /** True while the Graph stage covers the tab region (veil must not paint). */
+  private obscured = false;
   private ready = false;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   /** Latest simulated cursor position not yet pushed to the page. */
@@ -63,6 +65,28 @@ export class OverlayVeil {
   }
 
   /**
+   * While the Graph stage covers the tab region the veil sits ABOVE the
+   * stage in native z-order, so an active run would paint the frosted overlay
+   * over the graph. Obscuring force-hides the view regardless of activity;
+   * un-obscuring restores whatever the activity state wants (instantly, no
+   * fade — the stage swap itself is the transition).
+   */
+  setObscured(obscured: boolean): void {
+    if (obscured === this.obscured) return;
+    this.obscured = obscured;
+    if (obscured) {
+      if (this.hideTimer) {
+        clearTimeout(this.hideTimer);
+        this.hideTimer = null;
+      }
+      this.view.setVisible(false);
+    } else if (this.active) {
+      this.view.setVisible(true);
+      this.run('window.__veil && window.__veil(true)');
+    }
+  }
+
+  /**
    * Live "what is it doing right now" readout on the veil chip. `null` clears
    * back to the idle wording. Pushed from the ActivityReporter tap wired in the
    * composition root, so the chip distinguishes direct JSON-API work ("Reading
@@ -87,7 +111,9 @@ export class OverlayVeil {
       this.hideTimer = null;
     }
     if (this.active) {
-      this.view.setVisible(true); // event-blocking + visible immediately
+      // Event-blocking + visible immediately — unless the graph stage has the
+      // region, in which case the page state advances but the view stays hidden.
+      if (!this.obscured) this.view.setVisible(true);
       this.run('window.__veil && window.__veil(true)');
     } else {
       this.run('window.__veil && window.__veil(false)');

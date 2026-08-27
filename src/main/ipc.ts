@@ -20,8 +20,10 @@ import type {
   ActionResult,
   ChainTargetView,
   FollowState,
+  GraphSnapshot,
   NetGrowthPoint,
   EpoStatus,
+  StageMode,
   PruneCandidate,
   PruneControlResult,
   PruneScanResult,
@@ -35,6 +37,12 @@ import type { Settings } from '@/settings/settings';
 export interface IpcContext {
   tab: InstagramTab;
   foundation: Foundation;
+  /**
+   * Swap what fills the window region right of the console: the Instagram tab
+   * ('tab') or the renderer's Graph stage ('graph'). Owned by `main.ts`, which
+   * holds the window layout.
+   */
+  setStage(mode: StageMode): void;
 }
 
 /**
@@ -42,7 +50,7 @@ export interface IpcContext {
  * every handler (used on window teardown to avoid duplicate registration).
  */
 export function registerIpc(ctx: IpcContext): () => void {
-  const { tab, foundation } = ctx;
+  const { tab, foundation, setStage } = ctx;
 
   // --- Manual live-gate ops --------------------------------------------------
 
@@ -257,6 +265,31 @@ export function registerIpc(ctx: IpcContext): () => void {
     tab.hide();
   });
 
+  // --- Graph view ------------------------------------------------------------
+
+  ipcMain.handle('graph:snapshot', async (): Promise<GraphSnapshot | null> => {
+    try {
+      return await foundation.graphSnapshot();
+    } catch (e) {
+      logger.error('graph:snapshot failed', { error: String(e) });
+      return null;
+    }
+  });
+
+  ipcMain.handle('stage:set', async (_event, mode: unknown): Promise<void> => {
+    if (mode === 'tab' || mode === 'graph' || mode === 'prune') setStage(mode);
+  });
+
+  // --- Intro tour ------------------------------------------------------------
+
+  // Park/unpark the app while the renderer's tour is on screen (see
+  // Foundation.setTourHold): no self-starting work, growth paused for the
+  // duration. Main engages the hold itself at launch when the tour is pending;
+  // the renderer releases it when the tour closes.
+  ipcMain.handle('tour:hold', async (_event, held: unknown): Promise<void> => {
+    foundation.setTourHold(held === true);
+  });
+
   const channels = [
     'foundation:login',
     'foundation:readFollowers',
@@ -284,6 +317,9 @@ export function registerIpc(ctx: IpcContext): () => void {
     'data:clear',
     'tab:show',
     'tab:hide',
+    'graph:snapshot',
+    'stage:set',
+    'tour:hold',
   ];
   return () => {
     for (const channel of channels) ipcMain.removeHandler(channel);

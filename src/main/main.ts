@@ -10,16 +10,27 @@
  * pane is live.
  */
 
-import { app, BaseWindow, WebContentsView, nativeImage, powerSaveBlocker } from 'electron';
+import { app, BaseWindow, WebContentsView, nativeImage, powerSaveBlocker, screen } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
+import {
+  MIN_WINDOW,
+  loadWindowState,
+  saveWindowState,
+  type WindowState,
+} from '@/main/window-state';
+import { claimAppIdentity } from '@/main/app-identity';
 import { OverlayVeil } from '@/main/overlay/veil-view';
 import { Foundation } from '@/main/foundation-wiring';
 import { ConnectivityMonitor } from '@/main/connectivity';
 import { registerIpc } from '@/main/ipc';
 import * as logger from '@/utils/logger';
 import type { LogEntry, LogLevel } from '@/types';
+
+// Identity first: the userData path derives from the app name, so this must
+// run before anything in the process resolves `app.getPath('userData')`.
+claimAppIdentity();
 
 // ---------------------------------------------------------------------------
 // Background-run survival (measured, 2026-08-14 input lab):
@@ -42,6 +53,9 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 /** Fixed width of the dashboard sidebar; the IG tab fills the remainder. */
 const SIDEBAR_WIDTH = 460;
 
+/** Height of the renderer's stage bar — must match `.stagebar` in graph.css. */
+const STAGE_BAR_HEIGHT = 44;
+
 // Kept for parity with the view refs (cleared on 'closed'); nothing reads it
 // since the activate→createWindow path was removed (see app.whenReady below).
 let _mainWindow: BaseWindow | null = null;
@@ -52,16 +66,60 @@ let foundation: Foundation | null = null;
 let _disposeIpc: (() => void) | null = null;
 let connectivityMonitor: ConnectivityMonitor | null = null;
 
+/** Where the main window's persisted geometry lives (a settings-file sibling). */
+function windowStateFile(): string {
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+
 function createWindow(): void {
+  // Reopen with the geometry the last session closed with. The saved position
+  // is validated against the CURRENT displays (an unplugged monitor drops it
+  // back to OS placement, never an off-screen window).
+  const displays = screen.getAllDisplays().map((d) => d.workArea);
+  const state = loadWindowState(windowStateFile(), displays);
   const win = new BaseWindow({
-    width: 1440,
-    height: 920,
-    minWidth: 1024,
-    minHeight: 640,
+    width: state.width,
+    height: state.height,
+    ...(state.x !== undefined && state.y !== undefined ? { x: state.x, y: state.y } : {}),
+    minWidth: MIN_WINDOW.width,
+    minHeight: MIN_WINDOW.height,
     title: 'Epo',
     backgroundColor: '#0e0e10',
   });
+  if (state.maximized) win.maximize();
   _mainWindow = win;
+
+  // Persist geometry as it changes (debounced — resize/move fire per frame).
+  // getNormalBounds() keeps reporting the un-maximized rect while maximized,
+  // so a maximized close still restores to a sane normal size.
+  let boundsTimer: ReturnType<typeof setTimeout> | null = null;
+  const persistBounds = (): void => {
+    if (win.isDestroyed()) return;
+    const b = win.getNormalBounds();
+    const next: WindowState = {
+      x: b.x,
+      y: b.y,
+      width: b.width,
+      height: b.height,
+      maximized: win.isMaximized(),
+    };
+    try {
+      saveWindowState(windowStateFile(), next);
+    } catch (e) {
+      logger.warn('main: window-state persist failed', { error: String(e) });
+    }
+  };
+  const queuePersistBounds = (): void => {
+    if (boundsTimer !== null) clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(persistBounds, 500);
+  };
+  win.on('move', queuePersistBounds);
+  win.on('maximize', queuePersistBounds);
+  win.on('unmaximize', queuePersistBounds);
+  win.on('close', () => {
+    if (boundsTimer !== null) clearTimeout(boundsTimer);
+    persistBounds();
+  });
 
   // --- Dashboard renderer (left) ------------------------------------------
   const dash = new WebContentsView({
@@ -73,6 +131,9 @@ function createWindow(): void {
     },
   });
   _dashboardView = dash;
+  // Bottom layer, full window: the page renders the console column PLUS the
+  // stage area (the stage bar and, in graph mode, the graph canvas). The tab
+  // and veil views stack above it, covering the stage body in 'tab' mode.
   win.contentView.addChildView(dash);
   void dash.webContents.loadFile(
     path.join(__dirname, '..', 'renderer', 'index.html'),
@@ -90,19 +151,28 @@ function createWindow(): void {
   veil.attach(win); // added after the tab → renders on top of it
 
   // --- Layout --------------------------------------------------------------
+  // The stage bar (the renderer's Instagram ⟷ Graph selector) owns the top
+  // strip of the stage area, so the tab view starts below it. 'stage:set'
+  // swaps the stage body: 'graph' hides the tab view (it KEEPS RUNNING — the
+  // hidden state is one the background-run switches above are measured to
+  // survive, so the engine never notices) and mutes the veil; 'tab' restores
+  // both.
   const layout = (): void => {
     const { width, height } = win.getContentBounds();
-    dash.setBounds({ x: 0, y: 0, width: SIDEBAR_WIDTH, height });
+    dash.setBounds({ x: 0, y: 0, width, height });
     const tabBounds = {
       x: SIDEBAR_WIDTH,
-      y: 0,
+      y: STAGE_BAR_HEIGHT,
       width: Math.max(0, width - SIDEBAR_WIDTH),
-      height,
+      height: Math.max(0, height - STAGE_BAR_HEIGHT),
     };
     tab.setBounds(tabBounds);
     veil.setBounds(tabBounds); // the veil tracks the tab region exactly
   };
-  win.on('resize', layout);
+  win.on('resize', () => {
+    layout();
+    queuePersistBounds();
+  });
   layout();
 
   // --- Stream structured logs to the renderer log pane --------------------
@@ -150,7 +220,28 @@ function createWindow(): void {
     },
   });
   foundation = found;
-  _disposeIpc = registerIpc({ tab, foundation: found });
+
+  // First launch (intro tour pending): park the app BEFORE any self-starting
+  // work below (profile landing, scheduled-prune watcher) can begin — the tour
+  // must run over a quiet app. The renderer's tour releases the hold when it
+  // closes ('tour:hold'), which then runs the deferred startup work.
+  if (found.tourPending()) found.setTourHold(true);
+
+  _disposeIpc = registerIpc({
+    tab,
+    foundation: found,
+    setStage: (mode) => {
+      if (mode === 'tab') {
+        tab.show();
+        veil.setObscured(false);
+      } else {
+        // Graph or Prune stage: the renderer owns the region; the tab keeps
+        // running hidden and the veil stays out of the way.
+        tab.hide();
+        veil.setObscured(true);
+      }
+    },
+  });
 
   // Default page: rest on the user's OWN profile, not the home feed. The
   // Foundation waits for the logged-in graph, then the Interactor moves the

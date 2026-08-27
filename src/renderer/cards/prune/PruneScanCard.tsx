@@ -6,22 +6,9 @@ import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import { useCountUp } from '@/renderer/hooks/useCountUp';
 import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { Button } from '@/renderer/ui/Button';
-import { Stat } from '@/renderer/ui/Stat';
 import { KeyValue } from '@/renderer/ui/KeyValue';
 import { Meter } from '@/renderer/ui/Meter';
-import { NumberTicker } from '@/renderer/ui/NumberTicker';
-import { commas, shortDate } from '@/renderer/lib/format';
-
-/** Epoch ms → coarse relative phrase ("3h ago"); falls back to a short date. */
-function relTime(atMs: number): string {
-  const mins = Math.floor(Math.max(0, Date.now() - atMs) / 60_000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return days < 7 ? `${days}d ago` : shortDate(atMs);
-}
+import { commas, relTime } from '@/renderer/lib/format';
 
 export interface PruneScanCardProps {
   /** Live prune projection (carries the last persisted scan's counts). */
@@ -42,9 +29,10 @@ export interface PruneScanCardProps {
 }
 
 /**
- * Prune · Scan — the read-only census. One button walks the full following +
- * followers lists and reports Following / Followers / Not-following-back, plus
- * today's prune-ledger spend and when the last run completed. While a scan is
+ * Prune · Scan — the read-only census walk. One button walks the full
+ * following + followers lists (the numbers themselves live on the census
+ * card), with a continuous progress bar across both phases, today's
+ * prune-ledger spend, and when the last scan/run completed. While a scan is
  * live (pushed `state === 'scanning'`) the same button becomes a confirm-gated
  * Stop. Nothing here unfollows; the run controls live in {@link PruneRunCard}.
  */
@@ -69,25 +57,15 @@ export function PruneScanCard({
     (isScanning ? prune?.following : undefined) ?? scan?.following ?? prune?.following ?? 0;
   const followers =
     (isScanning ? prune?.followers : undefined) ?? scan?.followers ?? prune?.followers ?? 0;
-  // "Not following back" is LIVE during a scan (docs/PRINCIPLES.md §2): scan
-  // sources stream every row's edge into the graph, and the pushed projection
-  // carries the graph-derived count — so this ticks WHILE the walk runs. At
-  // completion the settled candidate verdict (whitelist/chain exclusions
-  // applied) takes over.
-  const candidates = isScanning
-    ? (prune?.graph.notFollowingBack ?? 0)
-    : scan !== null
-      ? scan.candidates.length
-      : (prune?.candidates ?? 0);
 
   // Smooth count-ups: mid-scan pushes land in page-sized jumps; while a scan is
   // LIVE the chase is PACED — linear motion sized to the push cadence, so the
-  // numbers (and the bar riding them) climb continuously between pages instead
-  // of sprinting and idling. Off-scan (including the completion settle) it
-  // reverts to the quick ease-out. Snaps on reset either way.
+  // bar riding these climbs continuously between pages instead of sprinting
+  // and idling. Off-scan (including the completion settle) it reverts to the
+  // quick ease-out. Snaps on reset either way. (The census tiles themselves
+  // live on PruneCensusCard, which runs the same live math.)
   const followingDisplay = useCountUp(following, { paced: isScanning });
   const followersDisplay = useCountUp(followers, { paced: isScanning });
-  const candidatesDisplay = useCountUp(candidates, { paced: isScanning });
 
   // Live scan progress: the completion flash fires only when the scan
   // genuinely finishes (a stopped scan never flashes complete).
@@ -161,10 +139,6 @@ export function PruneScanCard({
   const lastBarRef = useRef(liveBar);
   if (showBar) lastBarRef.current = liveBar;
   const barView = showBar ? liveBar : lastBarRef.current;
-  const scannedEver =
-    isScanning ||
-    scan !== null ||
-    (prune !== null && (prune.following > 0 || prune.followers > 0));
   const pruneRunning = prune?.state === 'running';
   const busy = isScanning || pruneRunning;
 
@@ -184,22 +158,11 @@ export function PruneScanCard({
   const lastRunAt = prune?.lastRunAt ?? null;
 
   return (
-    <Card raised index={0}>
+    <Card index={1}>
       <CardHeader icon="magnifying-glass-chart" aux={isScanning ? 'scanning…' : undefined}>
         Prune · Scan
       </CardHeader>
       <CardBody>
-        <div class="t-stats">
-          <Stat label="Following">
-            {scannedEver ? <NumberTicker value={followingDisplay} /> : '—'}
-          </Stat>
-          <Stat label="Followers">
-            {scannedEver ? <NumberTicker value={followersDisplay} /> : '—'}
-          </Stat>
-          <Stat label="Not following back">
-            {scannedEver ? <NumberTicker value={candidatesDisplay} /> : '—'}
-          </Stat>
-        </div>
         <div class={showBar ? 'reveal open' : 'reveal'}>
           <div class="reveal-i">
             <div class="kv-block">

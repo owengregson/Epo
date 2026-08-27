@@ -132,6 +132,14 @@ describe('persistence', () => {
     expect(fs.existsSync(file)).toBe(true);
     expect(fs.existsSync(`${file}.tmp`)).toBe(false);
   });
+
+  test('tourCompletedAt persists a valid epoch and degrades garbage to null', () => {
+    const file = path.join(dir, 'tour.json');
+    saveSettings(file, { ...DEFAULT_SETTINGS, tourCompletedAt: 1_700_000_000_000 });
+    expect(loadSettings(file).tourCompletedAt).toBe(1_700_000_000_000);
+    fs.writeFileSync(file, JSON.stringify({ tourCompletedAt: 'yes' }), 'utf8');
+    expect(loadSettings(file).tourCompletedAt).toBeNull();
+  });
 });
 
 describe('projections from DEFAULT_SETTINGS', () => {

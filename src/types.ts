@@ -158,6 +158,80 @@ export interface NetGrowthPoint {
   cumulativeNet: number;
 }
 
+// ---------------------------------------------------------------------------
+// Network-graph projection (renderer -> main, via invoke) — the Graph view
+// ---------------------------------------------------------------------------
+
+/**
+ * Every status a graph node can carry, in legend order. A node's `statuses`
+ * entry indexes into this tuple. The first seven mirror the churn lifecycle
+ * (`FollowState`); the last three describe relationship-only nodes that have
+ * no follow record (organic followers, manual follows, and both at once).
+ * `waiting` and `held` are the two TIMED statuses — their `progress` runs
+ * 0..1 toward the follow-back timeout / the hold release.
+ */
+export const GRAPH_NODE_STATUSES = [
+  'known',
+  'queued',
+  'waiting',
+  'held',
+  'unfollow_queued',
+  'unfollowed',
+  'abandoned',
+  'external',
+  'follows_you',
+  'you_follow',
+  'mutual',
+] as const;
+export type GraphNodeStatus = (typeof GRAPH_NODE_STATUSES)[number];
+
+/** A cluster anchor on the graph canvas: you, or one chain target. */
+export interface GraphHub {
+  pk: string;
+  username: string | null;
+  kind: 'self' | 'target';
+  /** Chain-target lifecycle when `kind` is 'target'; null for the self hub. */
+  targetStatus: 'active' | 'exhausted' | 'retained' | null;
+  chainIndex: number | null;
+  /** Nodes whose primary cluster is this hub (set by the shaper). */
+  memberCount: number;
+}
+
+/**
+ * The whole knowledge graph shaped for the Graph view's canvas. Columnar and
+ * typed-array-backed on purpose: tens of thousands of nodes cross the IPC
+ * boundary as a handful of flat buffers (structured-clone-friendly) instead
+ * of an object per account. Index `i` across every parallel array describes
+ * one node; `hubIndex[i]` names its primary cluster ("who knows them" — the
+ * chain target whose follower list surfaced it, or the self hub for your own
+ * followers/follows).
+ */
+export interface GraphSnapshot {
+  /** Epoch ms the snapshot (and its timer `progress` values) was computed. */
+  at: number;
+  hubs: GraphHub[];
+  /** Node identity (account pk) — stable across refreshes. */
+  pks: string[];
+  usernames: (string | null)[];
+  /** Index into {@link GRAPH_NODE_STATUSES}, one per node. */
+  statuses: Uint8Array;
+  /** 0..1 timer progress for the timed statuses (waiting/held); -1 untimed. */
+  progress: Float32Array;
+  /** Index into `hubs`; every node has a primary cluster. */
+  hubIndex: Int32Array;
+  /** Known follower count per node (a size cue); -1 when unknown. */
+  followers: Float64Array;
+  /** Per-status node totals (the legend), consistent with `statuses`. */
+  counts: Record<GraphNodeStatus, number>;
+}
+
+/**
+ * What fills the window region right of the console: the embedded IG tab, the
+ * network graph, or the prune screen (both non-'tab' modes hide the native
+ * tab view, which keeps running underneath).
+ */
+export type StageMode = 'tab' | 'graph' | 'prune';
+
 /**
  * Result of a read-only prune scan (`prune:scan`). `ok: false` carries a typed
  * reason (e.g. `growth-running`, `prune-running`, `not-logged-in`) the UI
@@ -227,7 +301,10 @@ export type IpcInvokeChannel =
   | 'settings:reset'
   | 'data:clear'
   | 'tab:show'
-  | 'tab:hide';
+  | 'tab:hide'
+  | 'graph:snapshot'
+  | 'stage:set'
+  | 'tour:hold';
 
 /** Payload pushed on each renderer-facing event channel. */
 export interface EpoEventPayloads {
@@ -300,6 +377,16 @@ export interface EpoBridge {
   showTab(): Promise<void>;
   /** Hide the embedded Instagram tab. */
   hideTab(): Promise<void>;
+  /** The full knowledge graph shaped for the Graph view (null before login). */
+  graphSnapshot(): Promise<GraphSnapshot | null>;
+  /** Swap the window region right of the console: the IG tab or the graph stage. */
+  setStage(mode: StageMode): Promise<void>;
+  /**
+   * Park/unpark the app while the intro tour is on screen: no self-starting
+   * work (lazy build, profile landing, scheduled prune), and a running growth
+   * engine is paused, then restored on release.
+   */
+  setTourHold(held: boolean): Promise<void>;
   /** Subscribe to a push channel (the streaming log or pushed status). */
   on<C extends EpoEventChannel>(
     channel: C,

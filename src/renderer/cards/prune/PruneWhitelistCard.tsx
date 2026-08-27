@@ -57,7 +57,7 @@ export function PruneWhitelistCard({
   };
 
   return (
-    <Card index={3}>
+    <Card index={2}>
       <CardHeader icon="shield-halved" aux={whitelist.length > 0 ? `${whitelist.length} protected` : undefined}>
         Prune · Whitelist
       </CardHeader>

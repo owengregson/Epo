@@ -1,5 +1,5 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
+import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import type { EpoStatus, PruneCandidate, PruneScanResult, Settings } from '@/types';
 import { filterPruneCandidates } from '@/engine/prune-whitelist';
@@ -8,8 +8,10 @@ import type { ToastKind } from '../hooks/useToasts';
 import { usePruneStatus } from '../hooks/usePruneStatus';
 import { commas } from '../lib/format';
 import { Card, CardBody } from '../ui/Card';
+import { Badge } from '../ui/Badge';
+import { PruneCensusCard } from '../cards/prune/PruneCensusCard';
 import { PruneScanCard } from '../cards/prune/PruneScanCard';
-import { PruneRunCard } from '../cards/prune/PruneRunCard';
+import { PruneRunCard, stateChip } from '../cards/prune/PruneRunCard';
 import { PruneCandidatesCard } from '../cards/prune/PruneCandidatesCard';
 import { PruneWhitelistCard } from '../cards/prune/PruneWhitelistCard';
 import { PruneScheduleCard } from '../cards/prune/PruneScheduleCard';
@@ -41,11 +43,12 @@ export interface PruneViewProps {
 }
 
 /**
- * Prune view — Phase 5 auto-prune. Scan (read-only census), Run (confirm-gated
- * unfollow controls with the live meter), Candidates (who a run would drop),
- * Whitelist (never-pruned accounts), and Schedule (recurring cadence + daily
- * cap). Prune settings persist immediately as partials through
- * `settings:update`; the live projection arrives via {@link usePruneStatus}.
+ * Prune view — Phase 5 auto-prune, laid out as a full PAGE on the wide stage:
+ * a hero strip (title + live state badge), the Census card across the top
+ * (tiles + reciprocity bar), then two card columns — Scan / Run / Schedule on
+ * the left, Candidates / Whitelist on the right. Prune settings persist
+ * immediately as partials through `settings:update`; the live projection
+ * arrives via {@link usePruneStatus}.
  */
 export function PruneView({ status, settings, onSaved, confirm, toast }: PruneViewProps): h.JSX.Element {
   const prune = usePruneStatus();
@@ -184,51 +187,74 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
       .finally(() => setPending(null));
   }, [toast]);
 
+  const chip = stateChip(prune?.state);
+
   return (
-    <Fragment>
-      <PruneScanCard
-        prune={prune}
-        scan={scan}
-        scanning={scanning}
-        growthRunning={growthRunning}
-        stopping={pending === 'stop'}
-        onScan={onScan}
-        onStop={onStop}
-        confirm={confirm}
-      />
-      <PruneRunCard
-        prune={prune}
-        growthRunning={growthRunning}
-        readyToRun={readyToRun}
-        candidates={knownCandidates}
-        pending={pending}
-        onRun={() => {
-          void onRun();
-        }}
-        onStop={onStop}
-        confirm={confirm}
-        settings={settings}
-        onSave={save}
-      />
-      <PruneCandidatesCard
-        scanned={visibleCandidates !== null}
-        candidates={visibleCandidates ?? []}
-        scanning={scanning}
-      />
-      {settings !== null ? (
-        <Fragment>
-          <PruneWhitelistCard
-            whitelist={settings.pruneWhitelist}
-            bioFilterWords={settings.pruneBioFilterWords}
+    <div class="prune-page">
+      <header class="prune-hero">
+        <div>
+          <h2>Prune</h2>
+          <p>Scan who follows back, review the candidates, unfollow at a safe pace.</p>
+        </div>
+        <Badge tone={chip.tone}>{chip.label}</Badge>
+      </header>
+      {/* The wrapper is the intro tour's spotlight anchor for the prune step. */}
+      <div data-tour="prune-census">
+        <PruneCensusCard
+          prune={prune}
+          scan={scan}
+          scanning={scanning}
+          visibleCount={visibleCandidates !== null ? visibleCandidates.length : null}
+          whitelistCount={settings?.pruneWhitelist.length ?? 0}
+        />
+      </div>
+      <div class="prune-cols">
+        <div class="prune-col">
+          <PruneScanCard
+            prune={prune}
+            scan={scan}
+            scanning={scanning}
+            growthRunning={growthRunning}
+            stopping={pending === 'stop'}
+            onScan={onScan}
+            onStop={onStop}
+            confirm={confirm}
+          />
+          <PruneRunCard
+            prune={prune}
+            growthRunning={growthRunning}
+            readyToRun={readyToRun}
+            candidates={knownCandidates}
+            pending={pending}
+            onRun={() => {
+              void onRun();
+            }}
+            onStop={onStop}
+            confirm={confirm}
+            settings={settings}
             onSave={save}
           />
-          <PruneScheduleCard settings={settings} onSave={save} />
-        </Fragment>
-      ) : (
-        <Card index={3}>
-          <CardBody>Loading settings…</CardBody>
-        </Card>
-      )}
-    </Fragment>
+          {settings !== null ? <PruneScheduleCard settings={settings} onSave={save} /> : null}
+        </div>
+        <div class="prune-col">
+          <PruneCandidatesCard
+            scanned={visibleCandidates !== null}
+            candidates={visibleCandidates ?? []}
+            scanning={scanning}
+          />
+          {settings !== null ? (
+            <PruneWhitelistCard
+              whitelist={settings.pruneWhitelist}
+              bioFilterWords={settings.pruneBioFilterWords}
+              onSave={save}
+            />
+          ) : (
+            <Card index={2}>
+              <CardBody>Loading settings…</CardBody>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

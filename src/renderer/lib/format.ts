@@ -42,6 +42,17 @@ export function shortDate(atMs: number): string {
   return new Date(atMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+/** Epoch ms → coarse relative phrase ("3h ago"); falls back to a short date. */
+export function relTime(atMs: number): string {
+  const mins = Math.floor(Math.max(0, Date.now() - atMs) / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return days < 7 ? `${days}d ago` : shortDate(atMs);
+}
+
 /** First letter of a handle, uppercased, for monogram avatars. "@chloe" → "C". */
 export function monogram(handle: string | null | undefined): string {
   const h = (handle || '').replace(/^@/, '');

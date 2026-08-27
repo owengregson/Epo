@@ -1,0 +1,432 @@
+/*
+ * The stage area — the stage bar (Instagram / Graph / Prune selector), the
+ * network-graph canvas host with its floating legend, tooltip, and empty
+ * states, and the stage-hosted Prune page scaffolding. The canvas draws its
+ * own content; everything here is chrome around it, in the console's
+ * graphite vocabulary.
+ *
+ * NB: the console's --sp-* rhythm vars are container-scoped to `.console`
+ * (layout.css), so overlay surfaces out here that reuse console primitives
+ * (the .tbtn button) re-declare static equivalents locally.
+ */
+
+/* ---------- stage pane: bar + body ---------- */
+.stagepane {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 44px mirrors STAGE_BAR_HEIGHT in src/main/main.ts — keep the two in sync;
+   the native Instagram view starts exactly below this strip. */
+.stagebar {
+  flex: 0 0 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+    var(--bg);
+}
+
+/* The stage selector — the console's own recessed segmented control (the
+   .seg recipe, primitives.css) stretched across the FULL bar width, plus a
+   raised active segment that SLIDES between the equal-width tabs. The thumb
+   geometry is data-driven (--seg-n / --seg-i, set by StageBar.tsx), so tabs
+   can be added or removed without touching this file. Static px stand in for
+   the console-scoped --sp rhythm out here. */
+.stageseg {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--inset-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--inset-shadow);
+}
+.stageseg button {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  height: var(--h-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--r-sm, 5px);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+.stageseg button:hover {
+  color: var(--silver);
+}
+.stageseg button:focus-visible {
+  outline: 2px solid var(--silver);
+  outline-offset: -2px;
+}
+.stageseg button.active {
+  color: var(--chrome);
+}
+.stageseg button .fa-solid,
+.stageseg button .fa-brands {
+  font-size: 10px;
+  color: var(--faint);
+  transition: color 0.15s;
+}
+.stageseg button:hover .fa-solid,
+.stageseg button:hover .fa-brands,
+.stageseg button.active .fa-solid,
+.stageseg button.active .fa-brands {
+  color: var(--silver);
+}
+/* Live context riding inside a tab (the graph's node count). */
+.stageseg-aux {
+  margin-left: 4px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: color 0.15s;
+}
+.stageseg button.active .stageseg-aux {
+  color: var(--silver);
+}
+/* The raised active segment (the .seg active recipe), gliding under the
+   labels. One slot = one equal flex share of the track (2px pad each side,
+   2px gaps); translateX percentages resolve against the thumb's own width,
+   so one step is exactly one slot plus one gap. */
+.stageseg-thumb {
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px - (var(--seg-n, 3) - 1) * 2px) / var(--seg-n, 3));
+  box-sizing: border-box;
+  border-radius: var(--r-sm, 5px);
+  background-color: var(--active-fill);
+  background-image: var(--sheen);
+  border: 1px solid var(--border-hover);
+  box-shadow: var(--elev-1);
+  transform: translateX(calc(var(--seg-i, 0) * (100% + 2px)));
+  transition: transform 0.26s var(--ease, ease);
+  pointer-events: none;
+}
+
+.stagepane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  background: var(--bg);
+}
+
+/* ---------- stage-hosted console pages (Prune) ---------- */
+/* A console page living on the stage: kept mounted (state survives tab
+   round-trips), shown class-driven like ViewStage's sections, replaying the
+   shared viewIn entrance (keyframes in layout.css) each time it is selected. */
+.stage-view {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(0, 0, 0, 0.05)),
+    var(--bg);
+}
+.stage-view.active {
+  display: block;
+  animation: viewIn 0.34s var(--ease, ease) both;
+}
+
+/* Prune as a full PAGE on the wide stage: a hero strip, the census card
+   across the top, then two independent card columns. The page and each
+   column are console-named size containers carrying the shared --sp rhythm
+   (layout.css), so console cards keep their container-query typography at
+   any pane width. */
+.prune-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 18px 22px 34px;
+}
+.prune-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-1) var(--sp-1) var(--sp-4);
+}
+.prune-hero h2 {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--chrome);
+  line-height: 1.2;
+}
+.prune-hero p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: var(--fs-base);
+}
+.prune-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+  align-items: start;
+}
+.prune-col {
+  min-width: 0;
+}
+/* Resolves against .prune-page (the columns' nearest container ancestor):
+   below this width side-by-side columns would starve, so they stack. */
+@container console (max-width: 720px) {
+  .prune-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- the graph canvas host ---------- */
+/* Kept MOUNTED in every stage mode (camera + layout slots survive) but only
+   DISPLAYED while its tab is selected — off-tab the legend overlay must not
+   bleed under the Prune page, and the display flip restarts the reveal (and
+   the legend/empty-state entrances) on every visit. */
+.graph-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: none;
+  background:
+    radial-gradient(120% 90% at 50% 40%, rgba(255, 255, 255, 0.02), transparent 60%),
+    var(--bg);
+}
+.graph-stage.on {
+  display: block;
+  animation: gsReveal 0.3s var(--ease, ease);
+}
+@keyframes gsReveal {
+  from {
+    opacity: 0.3;
+    transform: scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.graph-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+}
+.graph-stage.dragging canvas {
+  cursor: grabbing;
+}
+
+/* Centered quiet message: pre-login, loading, or an empty graph. */
+.graph-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--faint);
+  font-size: var(--fs-base);
+  pointer-events: none;
+  animation: gsFade 0.35s ease;
+}
+@keyframes gsFade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Hover tooltip (screen-space, follows the pointer). */
+.graph-tip {
+  position: absolute;
+  z-index: 3;
+  max-width: 200px;
+  padding: 7px 9px;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: var(--elev-2);
+  pointer-events: none;
+  font-size: var(--fs-md);
+  animation: gsFade 0.15s ease;
+}
+.graph-tip__title {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-base);
+  margin-bottom: 2px;
+}
+.graph-tip__line {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* ---------- floating legend (top-right of the stage) ---------- */
+.graph-legend {
+  /* Static stand-ins for the console-scoped rhythm vars (see header note). */
+  --sp-0: 2px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 11px;
+  --sp-4: 15px;
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  width: 232px;
+  background: rgba(20, 20, 23, 0.88);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--elev-2);
+  backdrop-filter: blur(6px);
+  overflow: hidden;
+  animation: glIn 0.35s var(--ease, ease);
+}
+@keyframes glIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.graph-legend__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.graph-legend__head:hover {
+  color: var(--text);
+}
+.graph-legend__total {
+  margin-left: auto;
+  color: var(--text);
+  font-family: var(--mono);
+  letter-spacing: 0;
+}
+.graph-legend__chev {
+  transition: transform 0.25s var(--ease, ease);
+}
+.graph-legend.collapsed .graph-legend__chev {
+  transform: rotate(-90deg);
+}
+.graph-legend__body {
+  max-height: 480px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.3s var(--ease, ease), opacity 0.22s;
+}
+.graph-legend.collapsed .graph-legend__body {
+  max-height: 0;
+  opacity: 0;
+}
+.graph-legend__foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 10px 11px;
+  border-top: 1px solid var(--border);
+}
+.graph-legend__hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* Legend rows (inside the overlay). */
+.gleg {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 8px 8px;
+}
+.gleg-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.gleg-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.gleg-row.off .gleg-label,
+.gleg-row.off .gleg-count {
+  color: var(--faint);
+  text-decoration: line-through;
+}
+.gleg-row.off .gleg-dot {
+  opacity: 0.25;
+}
+.gleg-dot {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 9px;
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.2s;
+}
+.gleg-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  transition: color 0.15s;
+}
+.gleg-row:hover .gleg-label {
+  color: var(--text);
+}
+.gleg-count {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}

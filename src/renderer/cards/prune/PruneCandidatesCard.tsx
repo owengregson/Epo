@@ -39,7 +39,7 @@ export function PruneCandidatesCard({ scanned, candidates, scanning }: PruneCand
   const shown = candidates.slice(0, MAX_ROWS);
 
   return (
-    <Card index={2}>
+    <Card index={1}>
       <CardHeader
         icon="users-slash"
         aux={scanned ? `${commas(candidates.length)} to prune` : undefined}

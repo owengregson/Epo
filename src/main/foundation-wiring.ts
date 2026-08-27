@@ -44,7 +44,7 @@ import { DelayManager } from '@/timing/delay-manager';
 import { TIMED_OUT, sleep, withTimeout } from '@/timing/primitives';
 import { ADAPTER, POLL, PRUNE, SCHEDULER } from '@/timing/config';
 import { RateGovernor } from '@/governors/rate-governor';
-import { shapeChainList, shapeQueueList } from '@/main/foundation-reads';
+import { shapeChainList, shapeGraphSnapshot, shapeQueueList } from '@/main/foundation-reads';
 import {
   RelationshipReconciler,
   installRelationshipReconciler,
@@ -110,11 +110,13 @@ import { SessionPlanner, type PlannerSnapshot } from '@/timing/session-planner';
 import { samplePhaseOffset } from '@/timing/circadian';
 import { patternCircadianProfile } from '@/settings/pattern-map';
 import { CIRCADIAN } from '@/timing/config';
+import { MS_PER_DAY } from '@/timing/units';
 import * as logger from '@/utils/logger';
 import type {
   ActionResult,
   ChainTargetView,
   FollowState,
+  GraphSnapshot,
   NetGrowthPoint,
   EpoStatus,
   PruneControlResult,
@@ -229,6 +231,25 @@ export class Foundation {
    */
   private growthPausedForPrune = false;
   /**
+   * True while the renderer's intro tour is on screen (`tour:hold` IPC; set at
+   * launch by main when the tour is pending). While held, nothing self-starts:
+   * the lazy graph build, the startup profile landing, and the scheduled-prune
+   * watcher all wait, and a RUNNING growth engine is paused for the duration.
+   * See {@link setTourHold}.
+   */
+  private tourHold = false;
+  /**
+   * The tour hold PAUSED a running growth engine, so releasing the hold must
+   * resume it (a user's own pause is never undone — same contract as
+   * {@link growthPausedForPrune}).
+   */
+  private growthPausedForTour = false;
+  /**
+   * A profile landing was requested while the tour hold was up; run it when
+   * the hold releases so the app still comes to rest on the user's own page.
+   */
+  private profileLandDeferred = false;
+  /**
    * Bumped by every {@link stopPrune}. A prune scan/run request that was
    * waiting on the lazy graph build compares this to the value it captured at
    * entry — a mismatch means the user pressed Stop while the build was in
@@ -338,6 +359,10 @@ export class Foundation {
     // empties instead of re-navigating the tab or re-opening the store
     // mid-teardown (the polled reads race teardownGraph's async drain window).
     if (this.disposing || this.tearingDown) return false;
+    // Intro tour on screen: nothing may navigate the tab, so no (re)build and
+    // no degraded-username recovery. An already-built graph keeps serving
+    // reads; a missing one waits for the hold to release (see setTourHold).
+    if (this.tourHold) return this.graph !== null;
     // Fully built (with a real username): nothing more to do.
     if (this.graph !== null && this.graph.ownUsername !== undefined) return true;
     // A DEGRADED graph (username unresolved) is still a built graph. Username
@@ -468,6 +493,13 @@ export class Foundation {
    * mode resolves quietly (a cosmetic landing must never break startup).
    */
   async landOnOwnProfile(): Promise<void> {
+    // Intro tour on screen: the landing (a build + a cursor-driven click) is
+    // exactly the kind of self-starting work the hold parks. Remember it was
+    // requested; setTourHold(false) runs it.
+    if (this.tourHold) {
+      this.profileLandDeferred = true;
+      return;
+    }
     // Wait (bounded) for a logged-in graph: session-restore resolves the pk
     // cookie almost immediately; a logged-out tab just runs out the poll.
     for (let i = 0; i < ADAPTER.PROFILE_LAND_ATTEMPTS; i++) {
@@ -1088,6 +1120,55 @@ export class Foundation {
   }
 
   /**
+   * True while the persisted intro tour has never been completed — main parks
+   * self-starting work at launch (via {@link setTourHold}) until the
+   * renderer's tour closes and releases the hold over `tour:hold`.
+   */
+  tourPending(): boolean {
+    return this.resolveSettings().tourCompletedAt === null;
+  }
+
+  /**
+   * Park/unpark the app for the intro tour (`tour:hold`). While held, nothing
+   * self-starts — the lazy graph build, the startup profile landing, and the
+   * scheduled-prune watcher all wait — and a RUNNING growth engine is paused,
+   * then resumed on release IFF this hold paused it (a user's own pause is
+   * never undone; same contract as the prune hand-off). An active prune run
+   * is deliberately left alone: it has no pause verb, and aborting it would
+   * discard a partial census — replaying the tour mid-prune just runs over it.
+   */
+  setTourHold(held: boolean): void {
+    if (this.tourHold === held) return;
+    this.tourHold = held;
+    logger.info('foundation: tour hold', { held });
+    if (held) {
+      const engine = this.graph?.engine;
+      if (engine !== undefined && engine.status().state === 'running') {
+        logger.info('foundation: pausing growth engine for the tour');
+        engine.pause();
+        this.growthPausedForTour = true;
+      }
+      return;
+    }
+    // Release: restore the pre-tour state first, then run what was deferred.
+    if (this.growthPausedForTour) {
+      this.growthPausedForTour = false;
+      const engine = this.graph?.engine;
+      if (engine !== undefined && engine.status().state === 'paused') {
+        logger.info('foundation: resuming growth engine after the tour');
+        engine.resume();
+      }
+    }
+    if (this.profileLandDeferred) {
+      this.profileLandDeferred = false;
+      void this.landOnOwnProfile();
+    }
+    // A scheduled prune that came due during the hold runs now, not one
+    // watcher interval later (docs/PRINCIPLES.md §3 — schedules are durable).
+    void this.maybeRunScheduledPrune();
+  }
+
+  /**
    * Close the engine + store on window teardown. Idempotent.
    *
    * f14 — ordering matters: stop the engine, AWAIT the loop's exit (so no step is
@@ -1132,7 +1213,7 @@ export class Foundation {
    * "not already driving the tab" (no active prune) and "inside active hours".
    */
   private async maybeRunScheduledPrune(): Promise<void> {
-    if (this.disposing || this.activeDriver !== null) return;
+    if (this.disposing || this.tourHold || this.activeDriver !== null) return;
     const graph = await this.builtGraph();
     if (graph === null) return;
     const settings = this.resolveSettings();
@@ -1203,8 +1284,10 @@ export class Foundation {
       clearTimeout(this.graphPushTimer);
       this.graphPushTimer = null;
     }
-    // A prune hand-off in flight has nothing to resume once the graph is gone.
+    // A prune or tour hand-off in flight has nothing to resume once the graph
+    // is gone.
     this.growthPausedForPrune = false;
+    this.growthPausedForTour = false;
     graph.engine.stop();
     graph.pruneEngine.stop();
     if (graph.enginePromise !== null) {
@@ -1796,6 +1879,27 @@ export class Foundation {
     } catch (e) {
       logger.error('foundation.queueList: failed', { state, error: String(e) });
       return { rows: [], truncated: false };
+    }
+  }
+
+  /**
+   * The whole knowledge graph shaped for the Graph view (§2 — the view refetches
+   * on the mutation-driven status pushes, so its canvas ticks live during scans
+   * and sweeps). Null before login/build — there is nothing to draw. Never
+   * throws across IPC.
+   */
+  async graphSnapshot(): Promise<GraphSnapshot | null> {
+    const graph = await this.builtGraph();
+    if (graph === null) return null;
+    try {
+      const settings = this.resolveSettings();
+      return shapeGraphSnapshot(graph.store.graphSnapshotRows(), {
+        now: graph.clock.now(),
+        followbackWaitMs: settings.maxWaitForFollowbackDays * MS_PER_DAY,
+      });
+    } catch (e) {
+      logger.error('foundation.graphSnapshot: failed', { error: String(e) });
+      return null;
     }
   }
 

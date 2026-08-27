@@ -1,6 +1,6 @@
 /** @jsx h */
 import { h } from 'preact';
-import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { Settings } from '@/types';
 import { CARD_STAGGER } from '../lib/motion';
 import { useEngineStatus } from '../hooks/useEngineStatus';
@@ -20,6 +20,12 @@ import { ChainView } from '../views/ChainView';
 import { QueuesView } from '../views/QueuesView';
 import { PruneView } from '../views/PruneView';
 import { SettingsView } from '../views/SettingsView';
+import { StageBar } from './StageBar';
+import { Tour } from '../tour/Tour';
+import { GraphStage } from '../graph/GraphStage';
+import { useGraphBoard } from '../hooks/useGraphBoard';
+import { commas } from '../lib/format';
+import type { StageMode } from '@/types';
 
 /**
  * The dashboard shell. Owns the single engine-status subscription, the settings
@@ -42,6 +48,69 @@ export function App(): h.JSX.Element {
   // Bumped when Start is pressed without a seed; SettingsView relays it to the
   // seed card, which focuses + flags the field.
   const [seedPrompt, setSeedPrompt] = useState(0);
+
+  // The stage bar (top of the main region) swaps the stage body between the
+  // embedded Instagram tab and the graph canvas. 'stage:set' tells main.ts to
+  // hide/show the native tab view; the GraphStage itself stays mounted either
+  // way, so its camera and layout slots survive round-trips.
+  const [stage, setStage] = useState<StageMode>('tab');
+  const graphBoard = useGraphBoard(stage === 'graph');
+  useEffect(() => {
+    void window.epo.setStage(stage);
+  }, [stage]);
+
+  // The intro tour. Auto-opens once per install (persisted `tourCompletedAt`);
+  // replayable from Settings → Data & session. Any way out — Finish, Skip, ×,
+  // Esc — persists completion, so it never nags twice.
+  const [tourOpen, setTourOpen] = useState(false);
+  const tourAutoChecked = useRef(false);
+  useEffect(() => {
+    if (settings === null || tourAutoChecked.current) return;
+    tourAutoChecked.current = true;
+    if (settings.tourCompletedAt !== null) return;
+    // Let the console's entrance animations land before dimming it.
+    const t = window.setTimeout(() => setTourOpen(true), 900);
+    return () => window.clearTimeout(t);
+  }, [settings]);
+  // The tour runs over a QUIET app: while it is open the foundation holds all
+  // self-starting work and pauses a running engine ('tour:hold'). On FIRST
+  // launch main engages the hold itself (before this renderer even loads);
+  // a replay engages it here. Every close path releases it, returning the app
+  // to its pre-tour state (deferred startup work runs, a paused engine resumes).
+  const openTour = useCallback(() => {
+    void window.epo.setTourHold(true);
+    setTourOpen(true);
+  }, []);
+  const closeTour = useCallback(() => {
+    setTourOpen(false);
+    // Land ready to go: Overview + the Instagram tab (where login happens).
+    goTo('overview');
+    setStage('tab');
+    void window.epo.setTourHold(false);
+    window.epo
+      .updateSettings({ tourCompletedAt: Date.now() })
+      .then(setSettings)
+      .catch(() => {
+        /* foundation logs; worst case the tour offers itself again next launch */
+      });
+  }, [goTo]);
+
+  // ⌘/Ctrl+1–4 jump between the console views (hints live on the nav tips).
+  useEffect(() => {
+    const KEYS: ViewKey[] = ['overview', 'chain', 'queues', 'settings'];
+    const onKey = (e: KeyboardEvent): void => {
+      if (tourOpen) return; // the tour owns the keyboard while open
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      const n = Number.parseInt(e.key, 10);
+      const key = n >= 1 && n <= KEYS.length ? KEYS[n - 1] : undefined;
+      if (key !== undefined) {
+        e.preventDefault();
+        goTo(key);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [goTo, tourOpen]);
 
   // Canonical settings, loaded once (rate meters + dry-run indicator read it; the
   // Settings view edits a draft and reports saves back through onSaved).
@@ -136,15 +205,6 @@ export function App(): h.JSX.Element {
     ),
     chain: <ChainView status={status} />,
     queues: <QueuesView status={status} />,
-    prune: (
-      <PruneView
-        status={status}
-        settings={settings}
-        onSaved={setSettings}
-        confirm={confirmCtl.confirm}
-        toast={toasts.push}
-      />
-    ),
     settings: (
       <SettingsView
         settings={settings}
@@ -152,6 +212,7 @@ export function App(): h.JSX.Element {
         confirm={confirmCtl.confirm}
         goTo={goTo}
         seedPrompt={seedPrompt}
+        onReplayTour={openTour}
       />
     ),
   };
@@ -165,7 +226,10 @@ export function App(): h.JSX.Element {
     `--card-stagger-cap:${CARD_STAGGER.CAP}`;
 
   return (
-    <div class="console" data-state={status?.state ?? 'idle'} style={staggerVars}>
+    // The stagger table rides the shell root so BOTH card hosts inherit it:
+    // the console column and the stage-hosted prune column.
+    <div class="shell" style={staggerVars}>
+      <div class="console" data-state={status?.state ?? 'idle'}>
       <Header
         state={status?.state}
         pending={pending}
@@ -191,6 +255,34 @@ export function App(): h.JSX.Element {
           ))}
         </div>
       ) : null}
+      </div>
+      <div class="stagepane">
+        <StageBar
+          stage={stage}
+          onSelect={setStage}
+          aux={
+            stage === 'graph' && graphBoard.snapshot !== null
+              ? `${commas(graphBoard.snapshot.pks.length)} nodes`
+              : undefined
+          }
+        />
+        <div class="stagepane-body" data-tour="stagebody">
+          <GraphStage board={graphBoard} active={stage === 'graph'} />
+          {/* Prune lives on the stage (kept mounted so scan results survive
+              tab round-trips) and renders its own wide page (.prune-page,
+              graph.css) with the shared console rhythm (layout.css). */}
+          <div class={stage === 'prune' ? 'stage-view active' : 'stage-view'}>
+            <PruneView
+              status={status}
+              settings={settings}
+              onSaved={setSettings}
+              confirm={confirmCtl.confirm}
+              toast={toasts.push}
+            />
+          </div>
+        </div>
+      </div>
+      <Tour open={tourOpen} onClose={closeTour} goTo={goTo} setStage={setStage} />
     </div>
   );
 }

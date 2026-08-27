@@ -27,8 +27,9 @@ function sentinelLabel(s: PruneSentinel): string {
   }
 }
 
-/** Readable state label + badge tone for the prune state chip. */
-function stateChip(state: PruneStatus['state'] | undefined): { label: string; tone: BadgeTone } {
+/** Readable state label + badge tone for the prune state chip (also the
+ *  prune page's hero badge — see PruneView). */
+export function stateChip(state: PruneStatus['state'] | undefined): { label: string; tone: BadgeTone } {
   switch (state) {
     case 'scanning':
       return { label: 'Scanning', tone: 'live' };
@@ -117,7 +118,7 @@ export function PruneRunCard({
   };
 
   return (
-    <Card index={1}>
+    <Card index={2}>
       <CardHeader icon="user-minus" aux={active ? `${commas(remaining)} remaining` : undefined}>
         Prune · Run
       </CardHeader>

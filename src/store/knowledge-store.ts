@@ -7,6 +7,11 @@ import {
   type EnrichmentLevel,
   type FollowRecord,
   type FollowState,
+  type GraphAccountRow,
+  type GraphCrowdRow,
+  type GraphHubRow,
+  type GraphRecordRow,
+  type GraphSourceRows,
   type Observation,
   type PruneScanSnapshot,
   type Source,
@@ -1063,6 +1068,71 @@ export class KnowledgeStore {
         .get(this.ownPk) as { c: number }
     ).c;
     return { following, followers, notFollowingBack };
+  }
+
+  /**
+   * Everything the Graph view's snapshot shaper reads, in one call: the chain
+   * targets (the cluster hubs), every follow_record, every observed follower
+   * of a chain target, and both sides of our own relationship edges — each
+   * joined to its account row for username/followers. Bulk JOINed reads on
+   * purpose: the view holds tens of thousands of nodes, so per-pk lookups
+   * would dominate. Row order of `hubs`/`crowd` is CHAIN order, which the
+   * shaper relies on ("first hub wins" when an account follows several
+   * targets). Null until {@link setOwnPk} (pre-login there is no graph to
+   * anchor).
+   */
+  graphSnapshotRows(): GraphSourceRows | null {
+    if (this.ownPk === null) return null;
+    const hubs = this.db
+      .prepare(
+        `SELECT t.account_pk AS pk, a.username AS username, t.status AS status,
+                t.chain_index AS chainIndex
+         FROM targets t LEFT JOIN accounts a ON a.pk = t.account_pk
+         ORDER BY t.chain_index IS NULL, t.chain_index ASC, t.account_pk ASC`,
+      )
+      .all() as GraphHubRow[];
+    const records = this.db
+      .prepare(
+        `SELECT fr.account_pk AS pk, fr.state AS state, fr.followed_at AS followedAt,
+                fr.followed_back_at AS followedBackAt, fr.hold_until AS holdUntil,
+                fr.target_pk AS targetPk, a.username AS username, a.followers AS followers
+         FROM follow_records fr LEFT JOIN accounts a ON a.pk = fr.account_pk`,
+      )
+      .all() as GraphRecordRow[];
+    const crowd = this.db
+      .prepare(
+        `SELECT e.src_pk AS pk, e.dst_pk AS hubPk, a.username AS username,
+                a.followers AS followers
+         FROM edges e
+         JOIN targets t ON t.account_pk = e.dst_pk
+         LEFT JOIN accounts a ON a.pk = e.src_pk
+         WHERE e.type = 'follows' AND e.status = 'active'
+         ORDER BY t.chain_index IS NULL, t.chain_index ASC, t.account_pk ASC`,
+      )
+      .all() as GraphCrowdRow[];
+    const ownFollowers = this.db
+      .prepare(
+        `SELECT e.src_pk AS pk, a.username AS username, a.followers AS followers
+         FROM edges e LEFT JOIN accounts a ON a.pk = e.src_pk
+         WHERE e.dst_pk = ? AND e.type = 'follows' AND e.status = 'active'`,
+      )
+      .all(this.ownPk) as GraphAccountRow[];
+    const ownFollowing = this.db
+      .prepare(
+        `SELECT e.dst_pk AS pk, a.username AS username, a.followers AS followers
+         FROM edges e LEFT JOIN accounts a ON a.pk = e.dst_pk
+         WHERE e.src_pk = ? AND e.type = 'follows' AND e.status = 'active'`,
+      )
+      .all(this.ownPk) as GraphAccountRow[];
+    return {
+      ownPk: this.ownPk,
+      ownUsername: this.getAccount(this.ownPk)?.username ?? null,
+      hubs,
+      records,
+      crowd,
+      ownFollowers,
+      ownFollowing,
+    };
   }
 
   targetPks(): Set<string> {

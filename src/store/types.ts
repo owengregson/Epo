@@ -66,6 +66,52 @@ export interface FollowRecord {
   score?: number;
 }
 
+// --- Graph-view source rows -------------------------------------------------
+// Raw joined reads feeding the Graph view's snapshot (shaped in
+// `src/main/foundation-reads.ts`). Nullable columns stay `| null` — these are
+// SQL rows, not projected state.
+
+/** The account fields every graph row carries for display. */
+export interface GraphAccountRow {
+  pk: string;
+  username: string | null;
+  followers: number | null;
+}
+
+/** One follow_record joined to its account. */
+export interface GraphRecordRow extends GraphAccountRow {
+  state: FollowState;
+  followedAt: number | null;
+  followedBackAt: number | null;
+  holdUntil: number | null;
+  targetPk: string | null;
+}
+
+/** One observed follower of a chain target (`hubPk`), in chain order. */
+export interface GraphCrowdRow extends GraphAccountRow {
+  hubPk: string;
+}
+
+/** One chain target, joined to its account username, in chain order. */
+export interface GraphHubRow {
+  pk: string;
+  username: string | null;
+  status: Target['status'];
+  chainIndex: number | null;
+}
+
+/** Everything the graph-view shaper reads, in one store call. */
+export interface GraphSourceRows {
+  ownPk: string;
+  ownUsername: string | null;
+  hubs: GraphHubRow[];
+  records: GraphRecordRow[];
+  /** Followers of chain targets (chain order — the first hub seen wins). */
+  crowd: GraphCrowdRow[];
+  ownFollowers: GraphAccountRow[];
+  ownFollowing: GraphAccountRow[];
+}
+
 /** A node in the poaching chain (§3.5). Maps 1:1 to a row in the `targets` table. */
 export interface Target {
   accountPk: string;

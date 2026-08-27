@@ -7,7 +7,6 @@ const ITEMS: ReadonlyArray<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: 'gauge-high', label: 'Overview' },
   { key: 'chain', icon: 'link', label: 'Chain' },
   { key: 'queues', icon: 'layer-group', label: 'Queues' },
-  { key: 'prune', icon: 'user-minus', label: 'Prune' },
   { key: 'settings', icon: 'sliders', label: 'Settings' },
 ];
 
@@ -16,10 +15,11 @@ export interface NavProps {
   onGo(key: ViewKey): void;
 }
 
-/** The five-way view rail. Icon-only when the console is very narrow (CSS). */
+/** The four-way view rail (Prune lives on the stage bar). Icon-only when the
+ * console is very narrow (CSS). */
 export function Nav({ current, onGo }: NavProps): h.JSX.Element {
   return (
-    <nav class="nav" aria-label="Console views">
+    <nav class="nav" aria-label="Console views" data-tour="nav">
       {ITEMS.map((it) => (
         <button
           key={it.key}

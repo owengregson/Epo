@@ -28,7 +28,7 @@ export function PruneScheduleCard({ settings, onSave }: PruneScheduleCardProps):
   const scheduled = days > 0;
 
   return (
-    <Card index={4}>
+    <Card index={3}>
       <CardHeader icon="calendar-check">Prune · Schedule</CardHeader>
 
       {/* Label left, switch right. The .kv row has no side padding of its own —

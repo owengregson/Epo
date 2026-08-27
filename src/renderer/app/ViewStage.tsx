@@ -2,7 +2,7 @@
 import { h } from 'preact';
 import type { ViewController, ViewKey } from '../hooks/useView';
 
-const ORDER: readonly ViewKey[] = ['overview', 'chain', 'queues', 'prune', 'settings'];
+const ORDER: readonly ViewKey[] = ['overview', 'chain', 'queues', 'settings'];
 
 export interface ViewStageProps {
   controller: ViewController;

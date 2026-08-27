@@ -126,6 +126,10 @@ export interface Settings {
   //     not distributions. `persona` is a named bundle; 'custom' means hand-tuned knobs. ---
   persona: PersonaId;
   pattern: PatternSettings;
+
+  // --- Shell / onboarding. ---
+  /** Epoch ms when the intro tour was finished or dismissed; null = offer it on launch. */
+  tourCompletedAt: number | null;
 }
 
 /**
@@ -187,6 +191,8 @@ export const DEFAULT_SETTINGS: Settings = {
   persona: 'balanced',
   pattern: { ...PERSONAS.balanced },
   ...resolvePattern(PERSONAS.balanced),
+
+  tourCompletedAt: null,
 };
 
 
@@ -302,6 +308,7 @@ export function sanitizeSettings(s: Settings): Settings {
   out.pruneDailyLimit = intNum(s.pruneDailyLimit, d.pruneDailyLimit, 1, 1000);
   out.pruneScheduleDays = num(s.pruneScheduleDays, d.pruneScheduleDays, 0, 365);
   out.pruneLastRunAt = epochOrNull(s.pruneLastRunAt);
+  out.tourCompletedAt = epochOrNull(s.tourCompletedAt);
   out.pruneScanMinSeconds = num(s.pruneScanMinSeconds, d.pruneScanMinSeconds, 0.5, 300);
   out.pruneScanMaxSeconds = Math.max(
     num(s.pruneScanMaxSeconds, d.pruneScanMaxSeconds, 0.5, 600),

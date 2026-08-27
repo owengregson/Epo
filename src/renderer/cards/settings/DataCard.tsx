@@ -9,6 +9,8 @@ export interface DataCardProps {
   confirm(options: ConfirmOptions): Promise<boolean>;
   onResetSettings(): Promise<void>;
   onClearData(): Promise<void>;
+  /** Re-open the intro tour (the walkthrough the shell shows on first launch). */
+  onReplayTour(): void;
   index?: number;
 }
 
@@ -16,12 +18,19 @@ export interface DataCardProps {
 type PendingAction = 'reset' | 'clear' | null;
 
 /**
- * Data & Session — the two confirm-gated reset actions. "Reset settings"
- * restores defaults (data + session untouched); "Clear data & log out" wipes
- * the knowledge DB and signs out of Instagram (settings kept). Each button
- * spins while its action is in flight, and both lock while either is pending.
+ * Data & Session — the intro-tour replay plus the two confirm-gated reset
+ * actions. "Reset settings" restores defaults (data + session untouched);
+ * "Clear data & log out" wipes the knowledge DB and signs out of Instagram
+ * (settings kept). Each destructive button spins while its action is in
+ * flight, and both lock while either is pending.
  */
-export function DataCard({ confirm, onResetSettings, onClearData, index }: DataCardProps): h.JSX.Element {
+export function DataCard({
+  confirm,
+  onResetSettings,
+  onClearData,
+  onReplayTour,
+  index,
+}: DataCardProps): h.JSX.Element {
   const [pending, setPending] = useState<PendingAction>(null);
 
   const resetSettings = async (): Promise<void> => {
@@ -62,6 +71,18 @@ export function DataCard({ confirm, onResetSettings, onClearData, index }: DataC
 
   return (
     <CollapsibleCard icon="database" title="Data & session" index={index} defaultCollapsed>
+      <div class="field">
+        <div class="ftop">
+          <label>Intro tour</label>
+        </div>
+        <div class="hint">
+          Walk through the console again — the stage, transport, consoles, graph, prune, and
+          settings.
+        </div>
+        <Button wide icon="circle-play" onClick={onReplayTour}>
+          Replay the intro tour
+        </Button>
+      </div>
       <div class="field">
         <div class="ftop">
           <label>Reset settings</label>

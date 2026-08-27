@@ -5,7 +5,40 @@
  * frame; here the frame is the native Electron window).
  */
 
+/* ---------- shell: console + stage area ---------- */
+/* The dashboard view spans the whole window (bottom layer): the console
+   column on the left, and the stage area (stage bar + graph canvas) on the
+   right. In 'tab' mode the native Instagram view covers the stage BODY; the
+   stage bar strip above it always belongs to this page. */
+.shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+/* 460px mirrors SIDEBAR_WIDTH in src/main/main.ts — keep the two in sync. */
+.shell > .console {
+  flex: 0 0 460px;
+  min-width: 0;
+}
+
 /* ---------- console root ---------- */
+/* The console — and the stage-hosted Prune page plus each of its card
+   columns — is a size container: its cards respond to ITS width (cqi), and
+   the card-internal rhythm tracks that width — same px as the root scale at
+   the design width, compressing/expanding with the pane not the page. */
+.console,
+.prune-page,
+.prune-col {
+  container-type: inline-size;
+  container-name: console;
+  --sp-0: clamp(1.5px, 0.43cqi, 2.5px);
+  --sp-1: clamp(3px, 0.85cqi, 5px);
+  --sp-2: clamp(6px, 1.7cqi, 9px);
+  --sp-3: clamp(9px, 2.55cqi, 13px);
+  --sp-4: clamp(12px, 3.4cqi, 18px);
+  --sp-5: clamp(15px, 4.26cqi, 22px);
+  --sp-6: clamp(18px, 5.1cqi, 27px);
+}
 .console {
   width: 100%;
   height: 100%;
@@ -18,18 +51,6 @@
   min-height: 0;
   position: relative;
   overflow: hidden;
-  /* the console is a size container: its cards respond to ITS width (cqi) */
-  container-type: inline-size;
-  container-name: console;
-  /* card-internal rhythm tracks the console's own width — same px as the root
-     scale at the design width, compressing/expanding with the pane not the page */
-  --sp-0: clamp(1.5px, 0.43cqi, 2.5px);
-  --sp-1: clamp(3px, 0.85cqi, 5px);
-  --sp-2: clamp(6px, 1.7cqi, 9px);
-  --sp-3: clamp(9px, 2.55cqi, 13px);
-  --sp-4: clamp(12px, 3.4cqi, 18px);
-  --sp-5: clamp(15px, 4.26cqi, 22px);
-  --sp-6: clamp(18px, 5.1cqi, 27px);
 }
 
 /* ---------- header: brand + state, then transport ---------- */
@@ -190,14 +211,18 @@
 }
 
 /* ---------- nav rail ---------- */
+/* Flex, not a fixed column count: the rail splits its width evenly among
+   however many view buttons render (Prune moved to the stage bar; items may
+   come and go without touching this rule). */
 .nav {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  display: flex;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-4);
   border-bottom: 1px solid var(--border);
 }
 .nav button {
+  flex: 1 1 0;
+  min-width: 0;
   appearance: none;
   border: 1px solid transparent;
   cursor: pointer;
