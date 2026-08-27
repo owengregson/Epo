@@ -145,7 +145,7 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            targets: --mac dmg zip
+            targets: --mac dmg zip --arm64 --x64
           - os: windows-latest
             targets: --win nsis portable
 
