@@ -1,0 +1,16 @@
+# zizmor configuration (consumed by the actions-hygiene workflow).
+rules:
+  # dependabot-auto-merge.yml runs on pull_request_target deliberately: the
+  # job needs a write token to approve/enable auto-merge, is hard-gated to
+  # PRs AUTHORED by dependabot[bot], never checks out or executes PR code,
+  # and decides purely from Dependabot's own metadata. This is the pattern
+  # GitHub documents for Dependabot automation.
+  dangerous-triggers:
+    ignore:
+      - dependabot-auto-merge.yml
+  # release.yml's setup-node runs with caching DISABLED (no `cache:` input);
+  # zizmor still flags any cache-capable action in a tag-publishing workflow.
+  # Nothing in the job restores a cache, so there is no poisoning path.
+  cache-poisoning:
+    ignore:
+      - release.yml

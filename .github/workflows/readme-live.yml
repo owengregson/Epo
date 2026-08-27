@@ -34,10 +34,12 @@ jobs:
       TZ: UTC
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '25.x'
           cache: npm
@@ -60,7 +62,7 @@ jobs:
       # (only possible if the stamp date logic ever changes, but cheap to keep).
       - name: Publish to the readme-live branch
         run: |
-          if git fetch --depth=1 origin readme-live 2>/dev/null; then
+          if git fetch --depth=1 "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" readme-live 2>/dev/null; then
             same=true
             for f in growth.svg growth-dark.svg pace.svg pace-dark.svg; do
               if ! git cat-file -p "FETCH_HEAD:charts/$f" 2>/dev/null | cmp -s - "out/charts/$f"; then
