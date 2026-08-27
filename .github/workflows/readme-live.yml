@@ -1,0 +1,88 @@
+# The README's live panels. Every night this renders the two chart pairs the
+# README embeds from the `readme-live` branch:
+#
+#   charts/growth.svg + growth-dark.svg — 30 days simulated by the app's own
+#     growth model (src/renderer/charts/growth-model.ts) on the default settings
+#   charts/pace.svg + pace-dark.svg — one real day planned by the shipping
+#     SessionPlanner (src/timing) on the default settings
+#
+# The renderer (src/readme/render-live-charts.ts) imports the real app code —
+# the honesty of the panels is the point; the data is never faked. The branch
+# stays a single orphan commit (force-pushed) so nightly art never bloats
+# history. raw.githubusercontent.com caches ~5 min, plenty for a nightly
+# cadence. Electron's binary and native builds are skipped: the renderer is
+# plain Node.
+name: readme-live
+
+on:
+  schedule:
+    - cron: '10 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: readme-live
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: UTC
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '25.x'
+          cache: npm
+
+      # No lifecycle scripts: the renderer needs esbuild (platform binary ships
+      # as an optional dependency, no postinstall) and the app's TypeScript —
+      # not Electron's binary and not better-sqlite3's native build.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - name: Render the four chart SVGs
+        run: |
+          npx esbuild src/readme/render-live-charts.ts --bundle --platform=node \
+            --outfile=dist/readme/render-live-charts.cjs
+          node dist/readme/render-live-charts.cjs out/charts
+
+      # Skip the push when tonight's output is byte-identical to the branch
+      # (only possible if the stamp date logic ever changes, but cheap to keep).
+      - name: Publish to the readme-live branch
+        run: |
+          if git fetch --depth=1 origin readme-live 2>/dev/null; then
+            same=true
+            for f in growth.svg growth-dark.svg pace.svg pace-dark.svg; do
+              if ! git cat-file -p "FETCH_HEAD:charts/$f" 2>/dev/null | cmp -s - "out/charts/$f"; then
+                same=false
+                break
+              fi
+            done
+            if [ "$same" = true ]; then
+              echo 'Output unchanged — nothing to publish.'
+              exit 0
+            fi
+          fi
+          mkdir -p publish/charts
+          cp out/charts/*.svg publish/charts/
+          cd publish
+          git init -q -b readme-live
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              add -A
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "readme-live: $(date -u +%F)"
+          git push --force \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+            readme-live

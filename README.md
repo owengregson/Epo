@@ -1,227 +1,295 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="project/assets/hero-dark.svg">
-    <img src="project/assets/hero.svg" width="350" alt="Epo — Instagram growth, engineered">
+    <source media="(prefers-color-scheme: dark)" srcset="project/assets/hero-dark.png">
+    <img src="project/assets/hero.png" width="860" alt="Epo: Instagram growth on autopilot">
   </picture>
 </p>
 
 <p align="center">
-  <b>A safe, observable Instagram follow/unfollow growth engine.</b><br>
-  A local-first desktop app that logs in once, then grows an account the patient way —
-  one paced action at a time, on a durable event-sourced knowledge graph, with the
-  brakes built in rather than bolted on.
+  <a href="../../releases/latest"><img src="project/assets/buttons/download.svg" height="46" alt="Download for macOS / Windows"></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="../../releases"><img src="project/assets/buttons/releases.svg" height="46" alt="All releases"></a>
 </p>
 
 <p align="center">
-  <a href="../../releases/latest"><b>Download</b></a> &nbsp;·&nbsp;
-  <a href="#getting-started">Getting started</a> &nbsp;·&nbsp;
-  <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
-  <a href="#the-safety-model">Safety</a> &nbsp;·&nbsp;
-  <a href="#build--package">Build</a>
+  Epo is a desktop app that grows your Instagram account for you. It follows people who
+  are likely to follow back, waits, then unfollows. It runs slowly on purpose, inside
+  limits you set, and shows you everything it does.
 </p>
 
 <br>
 
-> **Disclaimer.** Using a third-party tool to act on your Instagram account may violate
-> Instagram's Terms of Service and can
-> get an account actioned or banned. Epo is built to be conservative, but you use it at
-> your own risk. Don't run it on an account you can't afford to lose.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/growth-dark.svg">
+    <img src="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/growth.svg" width="820" alt="Followers gained over 30 days on the default settings, simulated by the app's own growth model">
+  </picture>
+</p>
+
+<p align="center">
+  <sub>Simulated by the same growth model that ships in the app, on the default settings.
+  Regenerated every night.</sub>
+</p>
+
+> **Before you start.** Tools like this one are against Instagram's terms of service.
+> An account that runs one can be restricted or banned. Epo is careful by design, but
+> the risk never reaches zero. Do not run it on an account you cannot afford to lose.
 
 <br>
 
-## Features
+<p align="center">
+  <img src="project/assets/headers/features.svg" height="54" alt="Features">
+</p>
 
 <table>
 <tr>
 <td width="50%" valign="top">
-<b>⌦ Command Console</b><br>
-A single-window instrument panel — live status, targeting, the poaching chain, queues,
-and settings. Brushed-graphite, keyboard-friendly, and it tells you exactly what the
-engine is doing right now.
+<img src="project/assets/icons/local.svg" width="40" alt=""><br>
+<b>Your data stays on your computer</b><br>
+No server, no sign-up. Everything Epo knows lives in one local database file you can
+delete any time.
 </td>
 <td width="50%" valign="top">
-<b>⏱ Deliberately paced</b><br>
-One Instagram action at a time, separated by jittered delays, held inside your active
-hours and under a hard daily ceiling. Bursts are structurally impossible — the loop does
-at most one thing per step.
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<b>🛡 Safety sentinel</b><br>
-Every loop iteration classifies the page first. A checkpoint, challenge, or logout halts
-the engine immediately with a reason — it never keeps clicking into a wall.
-</td>
-<td width="50%" valign="top">
-<b>🗄 Local-first knowledge graph</b><br>
-Everything lives in a local, event-sourced SQLite database (WAL, durable through power
-loss). Accounts, edges, the action ledger, and the churn lifecycle are all projections
-you can resume from.
+<img src="project/assets/icons/pace.svg" width="40" alt=""><br>
+<b>One action at a time</b><br>
+Epo does one thing, waits a random delay, then does the next. It stays inside your
+active hours and under your daily cap.
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<b>🤝 Async reconciliation</b><br>
-Manage the same account by hand or with another tool? Epo reads the true follow state
-from ordinary traffic and backs off — it only ever unfollows accounts <i>it</i> followed,
-and never re-follows someone you already follow.
+<img src="project/assets/icons/sentinel.svg" width="40" alt=""><br>
+<b>It knows when to stop</b><br>
+Epo checks the page before every step. A checkpoint, challenge, or logout stops it
+immediately, with the reason on screen.
 </td>
 <td width="50%" valign="top">
-<b>🧩 Version-marked adapter</b><br>
-Every Instagram-specific literal lives in one dated module. When Instagram changes its
-API or markup, a tiny fragment updates and the rest of the app stays version-agnostic.
+<img src="project/assets/icons/reconcile.svg" width="40" alt=""><br>
+<b>Your own follows are safe</b><br>
+Use Instagram normally while Epo runs. It works around what you do by hand and only
+unfollows accounts it followed itself.
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<b>💾 Resumes anywhere</b><br>
-Target, database, progress, and stats persist between sessions. Lose the internet and the
-engine auto-holds, then auto-resumes when you're back; the app always relaunches idle.
+<img src="project/assets/icons/resume.svg" width="40" alt=""><br>
+<b>It picks up where it left off</b><br>
+Quit the app, lose the connection, or let the laptop sleep — Epo pauses cleanly and
+resumes where it stopped.
 </td>
 <td width="50%" valign="top">
-<b>🧪 Dry-run &amp; tested</b><br>
-A full dry-run exercises the entire state machine without touching a button, and the core
-engine ships behind a suite of unit tests (no browser, no wall-clock, no real timers).
+<img src="project/assets/icons/console.svg" width="40" alt=""><br>
+<b>Watch it work</b><br>
+The console shows the plan, the queues, and every action live as it happens.
 </td>
 </tr>
 </table>
 
 <br>
 
-## Getting started
+<p align="center">
+  <img src="project/assets/headers/how-it-works.svg" height="54" alt="How it works">
+</p>
 
-Epo is a desktop app. There are two ways to run it.
+Epo follows people who are likely to follow back, gives them time, then unfollows and
+moves on. One pass looks like this:
 
-**1. Install a build** *(recommended once releases are published)* — grab the latest
-`.dmg`/`.zip` (macOS) or installer/portable `.exe` (Windows) from the
-[Releases page](../../releases/latest), open it, and log in.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="project/assets/diagrams/loop-dark.svg">
+    <img src="project/assets/diagrams/loop.svg" width="820" alt="The Epo growth loop: pick a seed, read followers, choose, follow, watch follow-backs, unfollow, then move to the next target">
+  </picture>
+</p>
 
-**2. From source:**
+1. **Pick a seed.** An account in your niche whose followers would probably like yours too.
+2. **Read.** Epo reads the seed's follower list into its local database, one page at a time.
+3. **Choose.** It scores each profile and keeps active accounts inside the follower range you set.
+4. **Follow.** One account at a time, each action written to a log.
+5. **Watch.** It checks your newest followers on a schedule and marks who followed back.
+6. **Unfollow.** Follow-backs are kept for a time you choose, then unfollowed. No
+   follow-back means an earlier unfollow. Accounts with your protected bio words are
+   never touched.
+7. **Next.** When a seed runs dry, Epo moves to the next one in your chain.
 
-```bash
-npm install
-npm start        # builds and launches the app
-```
-
-On first launch, Epo opens an embedded Instagram tab. **Log in there once** (complete any
-2FA/checkpoint yourself). The session is stored in a persistent, partitioned profile, so
-you won't need to log in again — and clearing your data in Settings is how you log out.
-
-Then, in **Settings**, set a **seed account** (whose followers Epo will poach) and tune
-targeting and cadence. Press **Start**. That's it — the console takes over from there.
-
-<br>
-
-## How it works
-
-Epo grows an account by *poaching*: it follows the kind of people who already follow
-accounts like yours, waits to see who follows back, keeps them briefly, then lets them go.
-
-1. **Poach.** Starting from your seed, Epo reads that target's followers into the knowledge
-   graph (paginated, paced, request-bounded).
-2. **Score &amp; queue.** Candidates are ranked — following/follower ratio inside your chosen
-   band, activity, privacy — and the best are queued.
-3. **Follow.** The churn scheduler follows one queued account, then waits a paced delay.
-   Every real action is written to a durable ledger.
-4. **Watch for follow-backs.** A request-minimal sweep reads the head of *your* followers
-   list and marks reciprocations, cost `O(new)`, never `O(all)`.
-5. **Hold, then unfollow.** Reciprocated follows are held for a configurable window, then
-   queued for unfollow; non-reciprocators are reclaimed after a timeout.
-6. **Advance the chain.** When a target is exhausted, Epo moves to the next one and keeps
-   the loop going.
-
-Throughout, an **async reconciler** reads the real relationship state from ordinary
-Instagram responses. If you (or another app) followed or unfollowed someone outside Epo,
-it heals its own records to match reality and steps aside — Epo only churns accounts it
-actually followed, so it never fights another actor or unfollows your manual follows.
+You can keep using Instagram on any device the whole time. Epo notices what you did by
+hand, fixes its own records to match, and never unfollows anyone you followed yourself.
 
 <br>
 
-## The safety model
+<p align="center">
+  <img src="project/assets/headers/autopilot.svg" height="54" alt="A day on autopilot">
+</p>
 
-Request volume and burstiness are the main ban vectors, so the brakes are the design, not
-an afterthought:
+This chart is not a mock-up. A nightly job runs the same planner that ships in the app
+and draws one real planned day, so it changes every night.
 
-| Guardrail | What it does |
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/pace-dark.svg">
+    <img src="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/pace.svg" width="820" alt="One planned day of Epo activity: paced actions inside the active-hours window, under the daily cap">
+  </picture>
+</p>
+
+<p align="center">
+  <sub>Each dot is one planned action. The band is the active-hours window. The dashed
+  line is the daily cap.</sub>
+</p>
+
+<br>
+
+<p align="center">
+  <img src="project/assets/headers/safety.svg" height="54" alt="Safety limits">
+</p>
+
+Volume and bursts are what get accounts flagged. The limits are built into the engine,
+and the important ones can't be turned off:
+
+| Limit | What it does |
 |---|---|
-| **One-thing-per-step loop** | Each iteration performs at most one Instagram action, in a fixed precedence. Bursts can't happen. |
-| **Paced actions** | A jittered delay separates every action; reads are floored by a short pacing pause. |
-| **Active hours** | Nothing runs outside your configured window; the engine sleeps until it opens. |
-| **Daily hard ceiling** | A durable, uncrossable cap per day — manual actions count against it too. |
-| **Request budget** | Every real Instagram API call is metered; a saturated window parks instead of pushing. |
-| **Sentinel** | Classifies the page each step and halts on any checkpoint/challenge/logout. |
-| **Interruptible** | Pause/stop takes effect *between* actions instantly; no wait can outlive a control command. |
-| **Dry-run** | Exercises the whole lifecycle without a single click. |
+| **One action per step** | The loop does at most one Instagram action per pass. |
+| **Random delays** | A varied pause separates every action. |
+| **Active hours** | Outside your window, Epo sleeps. |
+| **Daily cap** | A hard limit per day. It survives restarts, and manual actions count too. |
+| **Request budget** | Every call to Instagram is counted. When the budget is spent, Epo waits. |
+| **Page check** | A checkpoint, challenge, or logout means an immediate stop, with the reason on screen. |
+| **Instant controls** | Pause and Stop take effect immediately. |
+| **Practice mode** | Runs the whole plan without doing anything real, so you can watch first. |
 
 <br>
 
-## Configuration
+<p align="center">
+  <img src="project/assets/headers/getting-started.svg" height="54" alt="Getting started">
+</p>
 
-Everything is configured in-app, in **Settings**, and persists across sessions:
-
-- **Seed &amp; session** — the account to poach from; reset/log-out lives here too.
-- **Targeting** — the following/follower ratio band and its peak, which follow the slider
-  proportionally.
-- **Cadence &amp; safety** — active hours, daily limit, request budget, follow-back sweep
-  cadence, lifecycle timers (how long to wait for a follow-back, how long to hold).
-- **Dry-run** — simulate without acting.
-- **Data** — reset settings, or clear all data (which also logs you out), each behind a
-  confirmation.
-
-<br>
-
-## Build &amp; package
-
-```bash
-npm run dev      # build (dev) + launch
-npm test         # jest unit suite
-npm run lint     # eslint (flat config)
-npm run build    # bundle main + renderer to dist/
-
-npm run dist     # standalone app for the host OS (electron-builder)
-npm run dist:mac # macOS .dmg + .zip
-npm run dist:win # Windows NSIS installer + portable
-```
-
-`npm run dist` produces an installable app under `release/`. Builds are currently
-**unsigned** — on macOS, right-click → *Open* the first time (or
-`xattr -d com.apple.quarantine` the app); on Windows, dismiss SmartScreen. Signing and
-notarization are a later step.
+1. **Download** the latest build for macOS or Windows from
+   [the releases page](../../releases/latest).
+2. **Open it.** Builds are unsigned for now. Mac: right-click → *Open* the first time.
+   Windows: *More info* → *Run anyway*.
+3. **Sign in once.** Epo opens Instagram's own sign-in page inside the app. The session
+   is saved on your computer.
+4. **Set your plan.** In *Settings*, pick a seed account and check the hours and caps.
+   The defaults are careful.
+5. **Press Start.** The console takes it from there.
 
 <br>
 
-## For developers
+<p align="center">
+  <img src="project/assets/headers/settings.svg" height="54" alt="Settings">
+</p>
 
-Epo is TypeScript end-to-end, strict mode, bundled by esbuild.
+Everything is set in the app and survives a restart:
+
+| Group | What you tune |
+|---|---|
+| **Seed and targets** | The seed account and the chain after it. |
+| **Choosing** | The follower range Epo looks for. |
+| **Pace** | Active hours, daily cap, request budget, and follow-back checks. |
+| **Timing** | How long to wait for a follow-back, how long to keep one, and protected bio words. |
+| **Practice mode** | Run the whole plan with no real actions. |
+| **Data** | Reset settings, or erase everything and sign out. |
+
+<br>
+
+<p align="center">
+  <img src="project/assets/headers/faq.svg" height="54" alt="FAQ">
+</p>
+
+**Does Epo need my Instagram password?**
+No. You sign in on Instagram's own page inside the app. Your password never goes
+anywhere else.
+
+**Can my account still get banned?**
+Yes. No tool can promise otherwise. Epo keeps volume low and stops when Instagram
+pushes back — that lowers the risk, it doesn't remove it.
+
+**How fast will I grow?**
+Slowly, on purpose. Results build over weeks. Speed is what gets accounts flagged.
+
+**Can I use Instagram normally while it runs?**
+Yes, on any device. Epo works around what you do by hand.
+
+**Does my computer have to stay on?**
+Epo works while the app is open, inside your active hours. It pauses and resumes on
+its own.
+
+**Where does my data live?**
+In one file on your computer. There is no Epo server and no analytics.
+
+**What does it cost?**
+Nothing. Open source, MIT license.
+
+<br>
+
+<p align="center">
+  <img src="project/assets/headers/compatibility.svg" height="54" alt="Compatibility">
+</p>
+
+| | |
+|---|---|
+| **Runs on** | macOS (Apple silicon and Intel) · Windows 10 and 11 |
+| **Needs** | An Instagram account you own. No other software, no browser plug-ins. |
+| **Talks to** | Instagram only. There is no Epo server. |
+| **Your data** | One local SQLite file. *Settings → Clear all data* erases it and signs you out. |
+
+<br>
+
+<p align="center">
+  <img src="project/assets/headers/developers.svg" height="54" alt="For developers">
+</p>
+
+Epo is TypeScript end to end, strict mode, bundled by esbuild: an Electron shell
+around a Preact renderer and an event-sourced SQLite store.
 
 ```
 src/
-  main/        Electron main process — window, IPC, foundation wiring, connectivity
-  renderer/    Preact "Command Console" UI (app · views · cards · ui primitives · styles)
-  engine/      the paced runtime: churn scheduler, scanner, chain, follow-back watcher
-  adapter/     version-marked Instagram surface (reader · actor · sentinel · versions/*)
-  rim/         browser-facing ports (acquisition, page readers, reconciler, metering)
-  governors/   clock, rate governor, request budget
-  store/       event-sourced SQLite knowledge graph (schema · migrations · projections)
+  main/         Electron main process: window, IPC, wiring, connectivity
+  renderer/     the Preact "Command Console" UI
+  engine/       the paced runtime: scheduler, scanner, chain, follow-back watcher
+  timing/       cadence: active hours, delays, per-cycle volume plans
+  adapter/      version-marked Instagram surface (reader · actor · sentinel · versions/*)
+  rim/          browser-facing ports: acquisition, page readers, reconciler, metering
+  governors/    clock, rate governor, request budget
+  interaction/  input dispatch that keeps working while the window is in the background
+  store/        event-sourced SQLite knowledge graph: schema, migrations, projections
+  settings/     durable settings
 ```
 
-Design principles: the engine owns all wall-clock time and is fully unit-testable with
-fakes (no browser, no timers); the store is the single source of truth; and **all**
-Instagram-specific knowledge is quarantined in `src/adapter/versions/<date>.ts`, so a
-platform change touches one small module.
+Three rules shape the code: facts are written to the store the moment they exist; the
+UI redraws from store projections, which is why counts move mid-scan; and every
+Instagram-specific literal lives in `src/adapter/versions/<date>.ts`, so a platform
+change touches one dated file. The full set is in
+[docs/PRINCIPLES.md](docs/PRINCIPLES.md).
+
+Before a change is done, all four must pass:
 
 ```bash
-npm test              # the full unit suite
-npx tsc --noEmit      # type-check
+npx jest             # unit suite: in-memory, no browser, no real timers
+npx tsc --noEmit     # type-check
+npm run lint         # biome
+npm run build:dev    # bundle
 ```
 
-CI runs type-check, lint, tests, and a build on every push and PR; tagged `v*` releases
-build macOS and Windows artifacts.
+DOM-level adapter changes also need `npm run livetest` against a real session.
+
+Build and package:
+
+```bash
+npm start            # build and launch
+npm run dist         # installable build under release/ (electron-builder)
+npm run dist:mac     # macOS .dmg + .zip
+npm run dist:win     # Windows installer + portable
+```
+
+CI type-checks, lints, tests, and builds every push; a `v*` tag builds the macOS and
+Windows apps. Deeper notes live in [docs/](docs/): [PRINCIPLES.md](docs/PRINCIPLES.md),
+[HANDOFF.md](docs/HANDOFF.md), and the adapter notes in [docs/adapter/](docs/adapter/).
+
+Licensed [MIT](LICENSE).
 
 <br>
 
-## License
+<p align="center">
+  <img src="project/assets/divider.svg" height="22" alt="">
+</p>
 
-[MIT](LICENSE).
-
-<p align="center"><sub><b>Epo</b> by <a href="https://github.com/owengregson">@owengregson</a></sub></p>
+<p align="center"><sub><b>EPO</b> by <a href="https://github.com/owengregson">@owengregson</a></sub></p>

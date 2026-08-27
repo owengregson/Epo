@@ -64,6 +64,12 @@ export interface ProjectionInput {
   holdDays: number;
   /** Horizon in days (default 30). */
   days?: number;
+  /**
+   * Offsets the deterministic wiggle's noise index (default 0). The nightly
+   * README chart passes a date-derived phase so the turbulence visibly changes
+   * between runs while the model itself stays untouched.
+   */
+  noisePhase?: number;
 }
 
 export interface Scenario {
@@ -88,6 +94,7 @@ export function computeProjection(input: ProjectionInput): ProjectionResult {
   const days = input.days ?? 30;
   const R = input.rate;
   const lag = input.waitDays + input.holdDays;
+  const phase = input.noisePhase ?? 0;
 
   const scenarios = PROJ_SCEN.map((sc, si): Scenario => {
     const P = projP(sc.P0, input.yieldMult, input.privateBoost, input.bandWidth, R);
@@ -96,7 +103,7 @@ export function computeProjection(input: ProjectionInput): ProjectionResult {
     for (let t = 0; t <= days; t++) {
       const base = projNet(t, R, P, sc.RR, lag);
       const taper = Math.sin((Math.PI * t) / days); // 0 at both ends → clean start & endpoint
-      pts.push(Math.max(0, base + amp * pnoise(t * 7 + si * 101) * taper));
+      pts.push(Math.max(0, base + amp * pnoise(t * 7 + si * 101 + phase) * taper));
     }
     return { P, pts, end: projNet(days, R, P, sc.RR, lag) };
   }) as [Scenario, Scenario, Scenario];
