@@ -10,23 +10,23 @@
  * pane is live.
  */
 
-import { app, BaseWindow, WebContentsView, nativeImage, powerSaveBlocker, screen } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { app, BaseWindow, nativeImage, powerSaveBlocker, screen, WebContentsView } from 'electron';
 import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
+import { claimAppIdentity } from '@/main/app-identity';
+import { ConnectivityMonitor } from '@/main/connectivity';
+import { Foundation } from '@/main/foundation-wiring';
+import { registerIpc } from '@/main/ipc';
+import { OverlayVeil } from '@/main/overlay/veil-view';
 import {
-  MIN_WINDOW,
   loadWindowState,
+  MIN_WINDOW,
   saveWindowState,
   type WindowState,
 } from '@/main/window-state';
-import { claimAppIdentity } from '@/main/app-identity';
-import { OverlayVeil } from '@/main/overlay/veil-view';
-import { Foundation } from '@/main/foundation-wiring';
-import { ConnectivityMonitor } from '@/main/connectivity';
-import { registerIpc } from '@/main/ipc';
-import * as logger from '@/utils/logger';
 import type { LogEntry, LogLevel } from '@/types';
+import * as logger from '@/utils/logger';
 
 // Identity first: the userData path derives from the app name, so this must
 // run before anything in the process resolves `app.getPath('userData')`.

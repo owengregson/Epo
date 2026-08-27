@@ -10,8 +10,8 @@
  * then hides once the fade completes.
  */
 
-import { WebContentsView, type BaseWindow, type Rectangle } from 'electron';
 import * as path from 'node:path';
+import { type BaseWindow, type Rectangle, WebContentsView } from 'electron';
 import type { ActivityInfo } from '@/adapter/activity-reporter';
 import * as logger from '@/utils/logger';
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { FollowState, EpoStatus, QueueRow } from '@/types';
+import type { EpoStatus, FollowState, QueueRow } from '@/types';
 
 export interface QueueResult {
   rows: QueueRow[];

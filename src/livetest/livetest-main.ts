@@ -19,7 +19,7 @@
  */
 
 import { app, BaseWindow, session } from 'electron';
-import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
+import { IG_HOME_URL, IG_PARTITION, InstagramTab } from '@/adapter/tab';
 import { claimAppIdentity } from '@/main/app-identity';
 
 // Identity first (name + userData path) — same reasoning as in `main.ts`; the
@@ -32,10 +32,11 @@ claimAppIdentity();
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
 import { LiveTestHarness } from '@/livetest/steps';
-import * as logger from '@/utils/logger';
-import { sleep } from '@/timing/primitives';
 import { HARNESS } from '@/timing/config';
+import { sleep } from '@/timing/primitives';
+import * as logger from '@/utils/logger';
 
 /** Poll interval while waiting for login. */
 const LOGIN_POLL_MS = HARNESS.LOGIN_POLL_MS;

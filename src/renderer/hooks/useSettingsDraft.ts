@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { Settings } from '@/types';
 import { ceilFor, planFor } from '../lib/settings-derive';
-import { detectPreset, presetPatch, type Aggressiveness } from '../lib/strategy-presets';
+import { type Aggressiveness, detectPreset, presetPatch } from '../lib/strategy-presets';
 
 /** Debounce before persisting an edit (settings apply live — spec §3). */
 const AUTOSAVE_MS = 600;

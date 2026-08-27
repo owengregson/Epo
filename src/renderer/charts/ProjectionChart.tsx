@@ -1,9 +1,9 @@
 /** @jsx h */
 import { h } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
-import type { ProjectionResult } from './growth-model';
 import { clamp, commas } from '../lib/format';
 import { prefersReducedMotion } from '../lib/motion';
+import type { ProjectionResult } from './growth-model';
 
 const X0 = 8;
 const X1 = 348;

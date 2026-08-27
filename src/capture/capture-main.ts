@@ -17,16 +17,16 @@
  *   6. On window close: write manifest + draft notes, print a summary, quit.
  */
 
-import { app, BaseWindow, session } from 'electron';
 import { mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
-import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
+import { app, BaseWindow, session } from 'electron';
 import { resolveOwnUsername } from '@/adapter/identity';
+import { IG_HOME_URL, IG_PARTITION, InstagramTab } from '@/adapter/tab';
 import { CaptureHarness } from '@/capture/capture-harness';
-import * as logger from '@/utils/logger';
-import { sleep } from '@/timing/primitives';
-import { HARNESS } from '@/timing/config';
 import { claimAppIdentity } from '@/main/app-identity';
+import { HARNESS } from '@/timing/config';
+import { sleep } from '@/timing/primitives';
+import * as logger from '@/utils/logger';
 
 // Identity first (name + userData path) — same reasoning as in `main.ts`; the
 // capture harness shares the production userData directory and login partition.

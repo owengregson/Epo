@@ -19,7 +19,7 @@
     "livetest": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/livetest/livetest-main.js",
     "inspect": "npm run fix:electron && npm run rebuild:electron && npm run build && electron dist/inspect/inspect-main.js",
     "test": "npm run rebuild:node && jest",
-    "lint": "biome lint src",
+    "lint": "biome ci src",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win"

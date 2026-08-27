@@ -1,7 +1,7 @@
-import type { KnowledgeStore } from '../store/knowledge-store';
 import type { Clock } from '../governors/clock';
-import { info, warn } from '../utils/logger';
+import type { KnowledgeStore } from '../store/knowledge-store';
 import { MS_PER_DAY } from '../timing/units';
+import { info, warn } from '../utils/logger';
 
 /** One "started following you" event, as the notifications source reports it. */
 export interface FollowbackEvent {

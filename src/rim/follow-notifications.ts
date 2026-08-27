@@ -22,18 +22,18 @@
  * empty feed must remain distinguishable from a failed read.
  */
 
-import type { Actor } from '@/adapter/actor';
-import type { Reader, FollowEvent } from '@/adapter/reader';
-import type { Sentinel } from '@/adapter/sentinel';
-import { SURFACE, type LocateConfirmRequestResult } from '@/adapter/ig-surface';
 import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { Actor } from '@/adapter/actor';
+import { type LocateConfirmRequestResult, SURFACE } from '@/adapter/ig-surface';
+import type { FollowEvent, Reader } from '@/adapter/reader';
+import type { Sentinel } from '@/adapter/sentinel';
 import type { RimTab } from '@/rim/types';
-import { sample, sleep, uniform } from '@/timing/primitives';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
+import { sample, sleep, uniform } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
 export type { FollowEvent } from '@/adapter/reader';

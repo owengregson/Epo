@@ -15,15 +15,15 @@
  * with fakes: no browser, no wall-clock, no real timers.
  */
 
-import type { KnowledgeStore } from '../store/knowledge-store';
-import type { FollowRecord } from '../store/types';
-import type { Clock } from '../governors/clock';
 import type { SentinelStatus } from '../adapter/sentinel';
-import type { ScanPlan } from './scanner';
-import type { AdvanceResult } from './chain-controller';
+import type { Clock } from '../governors/clock';
 import type { FollowerAcquisition } from '../rim/types';
 import type { Settings } from '../settings/settings';
+import type { KnowledgeStore } from '../store/knowledge-store';
+import type { FollowRecord } from '../store/types';
+import { ENGINE as ENGINE_TIMING, PATTERN, PRUNE as PRUNE_TIMING } from '../timing/config';
 import { DelayManager, type WaitResult } from '../timing/delay-manager';
+import { clamp, logNormal } from '../timing/distributions';
 import {
   type DelayPolicy,
   type SleepFn,
@@ -32,10 +32,10 @@ import {
   uniform,
   withTimeout,
 } from '../timing/primitives';
-import { ENGINE as ENGINE_TIMING, PATTERN, PRUNE as PRUNE_TIMING } from '../timing/config';
-import { clamp, logNormal } from '../timing/distributions';
 import { startOfLocalDay } from '../timing/units';
 import * as log from '../utils/logger';
+import type { AdvanceResult } from './chain-controller';
+import type { ScanPlan } from './scanner';
 
 // ---------------------------------------------------------------------------------
 // Ports: the narrow, structural slices of each collaborator the Engine needs.
@@ -155,10 +155,10 @@ export interface EngineSentinel {
   check(): Promise<SentinelStatus>;
 }
 
+export type { SleepFn } from '../timing/primitives';
 // Back-compat re-exports: the canonical interruptible sleep + its signature now
 // live in timing/primitives (E1 — nothing in the Engine can wait un-interruptibly).
 export { sleep as defaultSleep } from '../timing/primitives';
-export type { SleepFn } from '../timing/primitives';
 
 /** How long an iteration idles when nothing is due yet (§3.1, final branch). */
 export const ENGINE_IDLE_MS = ENGINE_TIMING.IDLE_MS;

@@ -1,9 +1,9 @@
 /** @jsx h */
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
-import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
-import { Button } from '@/renderer/ui/Button';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
+import { Button } from '@/renderer/ui/Button';
+import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
 
 export interface DataCardProps {
   confirm(options: ConfirmOptions): Promise<boolean>;

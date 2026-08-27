@@ -1,15 +1,15 @@
 /** @jsx h */
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { Settings } from '@/types';
-import { Card, CardHeader } from '@/renderer/ui/Card';
+import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
+import { useSeedCheck } from '@/renderer/hooks/useSeedCheck';
+import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
+import type { ViewKey } from '@/renderer/hooks/useView';
 import { Button } from '@/renderer/ui/Button';
+import { Card, CardHeader } from '@/renderer/ui/Card';
 import { Field } from '@/renderer/ui/Field';
 import { Icon } from '@/renderer/ui/Icon';
-import { useSeedCheck } from '@/renderer/hooks/useSeedCheck';
-import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
-import type { ViewKey } from '@/renderer/hooks/useView';
-import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
+import type { Settings } from '@/types';
 
 export interface SeedSessionCardProps {
   draft: Settings;

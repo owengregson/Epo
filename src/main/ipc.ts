@@ -15,15 +15,14 @@
 import { ipcMain } from 'electron';
 import type { InstagramTab } from '@/adapter/tab';
 import type { Foundation } from '@/main/foundation-wiring';
-import * as logger from '@/utils/logger';
+import type { Settings } from '@/settings/settings';
 import type {
   ActionResult,
   ChainTargetView,
+  EpoStatus,
   FollowState,
   GraphSnapshot,
   NetGrowthPoint,
-  EpoStatus,
-  StageMode,
   PruneCandidate,
   PruneControlResult,
   PruneScanResult,
@@ -31,8 +30,9 @@ import type {
   QueueListResult,
   ReadFollowersResult,
   SeedCheck,
+  StageMode,
 } from '@/types';
-import type { Settings } from '@/settings/settings';
+import * as logger from '@/utils/logger';
 
 export interface IpcContext {
   tab: InstagramTab;

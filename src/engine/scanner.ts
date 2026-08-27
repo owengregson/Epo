@@ -1,6 +1,6 @@
 import type { KnowledgeStore } from '../store/knowledge-store';
 import * as logger from '../utils/logger';
-import { scoreCandidate, type ScorerConfig } from './scorer';
+import { type ScorerConfig, scoreCandidate } from './scorer';
 
 /**
  * Tunable knobs for a single scan/plan pass. Exposed in Settings; this module never

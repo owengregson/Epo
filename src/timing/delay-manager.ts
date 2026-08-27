@@ -17,9 +17,9 @@ import type { Clock } from '../governors/clock';
 import {
   type DelayPolicy,
   type Rng,
+  sleep as realSleep,
   type SleepFn,
   sample,
-  sleep as realSleep,
 } from './primitives';
 
 /** One registered in-flight wait — why we're waiting and until when. */

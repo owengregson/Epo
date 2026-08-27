@@ -1,31 +1,30 @@
 /** @jsx h */
 import { h } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import type { Settings } from '@/types';
-import { CARD_STAGGER } from '../lib/motion';
-import { useEngineStatus } from '../hooks/useEngineStatus';
-import { useToasts } from '../hooks/useToasts';
-import { useScrollReset } from '../hooks/useScrollReset';
-import { useView, type ViewKey } from '../hooks/useView';
-import { useLogFeed } from '../hooks/useLogFeed';
+import type { Settings, StageMode } from '@/types';
+import { GraphStage } from '../graph/GraphStage';
 import { useConfirm } from '../hooks/useConfirm';
+import { useEngineStatus } from '../hooks/useEngineStatus';
+import { useGraphBoard } from '../hooks/useGraphBoard';
+import { useLogFeed } from '../hooks/useLogFeed';
+import { useScrollReset } from '../hooks/useScrollReset';
+import { useToasts } from '../hooks/useToasts';
+import { useView, type ViewKey } from '../hooks/useView';
+import { commas } from '../lib/format';
+import { CARD_STAGGER } from '../lib/motion';
+import { Tour } from '../tour/Tour';
+import { ChainView } from '../views/ChainView';
+import { OverviewView } from '../views/OverviewView';
+import { PruneView } from '../views/PruneView';
+import { QueuesView } from '../views/QueuesView';
+import { SettingsView } from '../views/SettingsView';
+import { ConfirmHost } from './ConfirmHost';
 import { Header } from './Header';
 import { Nav } from './Nav';
-import { ViewStage } from './ViewStage';
-import { Ticker } from './Ticker';
-import { ConfirmHost } from './ConfirmHost';
-import { TooltipHost } from './TooltipHost';
-import { OverviewView } from '../views/OverviewView';
-import { ChainView } from '../views/ChainView';
-import { QueuesView } from '../views/QueuesView';
-import { PruneView } from '../views/PruneView';
-import { SettingsView } from '../views/SettingsView';
 import { StageBar } from './StageBar';
-import { Tour } from '../tour/Tour';
-import { GraphStage } from '../graph/GraphStage';
-import { useGraphBoard } from '../hooks/useGraphBoard';
-import { commas } from '../lib/format';
-import type { StageMode } from '@/types';
+import { Ticker } from './Ticker';
+import { TooltipHost } from './TooltipHost';
+import { ViewStage } from './ViewStage';
 
 /**
  * The dashboard shell. Owns the single engine-status subscription, the settings

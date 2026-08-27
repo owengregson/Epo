@@ -1,7 +1,7 @@
 /** @jsx h */
 import { h } from 'preact';
-import { Icon } from '../ui/Icon';
 import type { ViewKey } from '../hooks/useView';
+import { Icon } from '../ui/Icon';
 
 const ITEMS: ReadonlyArray<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: 'gauge-high', label: 'Overview' },

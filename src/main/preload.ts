@@ -8,19 +8,19 @@
  * Both push channels (`log` and pushed `status`) flow through the same map.
  */
 
-import { contextBridge, ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
+import type { Settings } from '@/settings/settings';
 import type {
   ActionResult,
   ChainTargetView,
-  FollowState,
-  GraphSnapshot,
-  NetGrowthPoint,
   EpoBridge,
-  StageMode,
   EpoEventChannel,
   EpoEventPayloads,
   EpoStatus,
+  FollowState,
+  GraphSnapshot,
+  NetGrowthPoint,
   PruneCandidate,
   PruneControlResult,
   PruneScanResult,
@@ -28,8 +28,8 @@ import type {
   QueueListResult,
   ReadFollowersResult,
   SeedCheck,
+  StageMode,
 } from '@/types';
-import type { Settings } from '@/settings/settings';
 
 /** Renderer-facing channel -> underlying IPC channel. */
 const EVENT_CHANNELS: Record<EpoEventChannel, string> = {

@@ -17,25 +17,25 @@
  * so `stop()` also lands between scroll rounds mid-scan.
  */
 
-import type { KnowledgeStore } from '../store/knowledge-store';
-import type { Clock } from '../governors/clock';
 import type { SentinelStatus } from '../adapter/sentinel';
-import type { ChurnActionOutcome } from './churn-scheduler';
+import type { Clock } from '../governors/clock';
+import type { KnowledgeStore } from '../store/knowledge-store';
+import { PRUNE } from '../timing/config';
+import { cyclePlan } from '../timing/cycle-plan';
 import { DelayManager } from '../timing/delay-manager';
 import {
   type DelayPolicy,
-  type SleepFn,
   jittered,
+  type SleepFn,
   sample,
   scaled,
   sleep as timingSleep,
 } from '../timing/primitives';
-import { PRUNE } from '../timing/config';
-import { cyclePlan } from '../timing/cycle-plan';
+import { MS_PER_DAY, startOfLocalDay } from '../timing/units';
+import * as log from '../utils/logger';
+import type { ChurnActionOutcome } from './churn-scheduler';
 import { bioMatchesFilter } from './prune-bio-filter';
 import { filterPruneCandidates, isPruneWhitelisted, pruneWhitelistSet } from './prune-whitelist';
-import * as log from '../utils/logger';
-import { MS_PER_DAY, startOfLocalDay } from '../timing/units';
 
 /**
  * Whether a scheduled prune run is due now. Pure and opt-in: `scheduleDays <= 0`

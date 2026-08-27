@@ -20,19 +20,19 @@
  * actually enriched (observed).
  */
 
-import type { Reader } from '@/adapter/reader';
-import type { Sentinel } from '@/adapter/sentinel';
-import { SURFACE, asFetchEnvelope } from '@/adapter/ig-surface';
 import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import type { KnowledgeStore } from '@/store/knowledge-store';
-import { SystemClock, type Clock } from '@/governors/clock';
+import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
+import type { Reader } from '@/adapter/reader';
+import type { Sentinel } from '@/adapter/sentinel';
+import { type Clock, SystemClock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
-import * as logger from '@/utils/logger';
-import { sample, sleep, uniform } from '@/timing/primitives';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
+import { sample, sleep, uniform } from '@/timing/primitives';
+import * as logger from '@/utils/logger';
 
 /** Default number of usernames enriched per pass. */
 const DEFAULT_BATCH_CAP = 25;

@@ -1,22 +1,21 @@
 import * as fs from 'node:fs';
-
-import { type ScorerConfig, SCORER_DEFAULTS } from '../engine/scorer';
+import type { ChainConfig } from '../engine/chain-controller';
 import type { ChurnConfig } from '../engine/churn-scheduler';
 import type { FollowbackConfig } from '../engine/followback-watcher';
-import type { ScannerConfig } from '../engine/scanner';
-import type { ChainConfig } from '../engine/chain-controller';
 import type { PruneConfig } from '../engine/prune-engine';
+import type { ScannerConfig } from '../engine/scanner';
+import { SCORER_DEFAULTS, type ScorerConfig } from '../engine/scorer';
 import type { RateGovernorConfig } from '../governors/rate-governor';
-import { MS_PER_DAY, MS_PER_MINUTE } from '../timing/units';
-import type { SessionPlannerConfig } from '../timing/session-planner';
 import { PATTERN, SESSION } from '../timing/config';
+import type { SessionPlannerConfig } from '../timing/session-planner';
+import { MS_PER_DAY, MS_PER_MINUTE } from '../timing/units';
+import { warn } from '../utils/logger';
 import {
-  PERSONAS,
   type PatternSettings,
+  PERSONAS,
   type PersonaId,
   resolvePattern,
 } from './pattern-map';
-import { warn } from '../utils/logger';
 
 /**
  * The single user-facing knob set (v3 §4). Every component's config is a pure

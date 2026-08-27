@@ -1,14 +1,14 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
-import type { EpoStatus, Settings } from '@/types';
-import type { LogLine } from '@/renderer/hooks/useLogFeed';
-import { SignInCard } from '@/renderer/cards/overview/SignInCard';
-import { LiveStatusCard } from '@/renderer/cards/overview/LiveStatusCard';
+import { Fragment, h } from 'preact';
+import { ActivityCard } from '@/renderer/cards/overview/ActivityCard';
 import { GrowthCard } from '@/renderer/cards/overview/GrowthCard';
+import { LiveStatusCard } from '@/renderer/cards/overview/LiveStatusCard';
 import { NowTargetingCard } from '@/renderer/cards/overview/NowTargetingCard';
 import { RateSafetyCard } from '@/renderer/cards/overview/RateSafetyCard';
-import { ActivityCard } from '@/renderer/cards/overview/ActivityCard';
+import { SignInCard } from '@/renderer/cards/overview/SignInCard';
+import type { LogLine } from '@/renderer/hooks/useLogFeed';
 import { usePeekFit } from '@/renderer/hooks/usePeekFit';
+import type { EpoStatus, Settings } from '@/types';
 
 export interface OverviewViewProps {
   status: EpoStatus | null;

@@ -13,23 +13,23 @@
  * fails loud instead of silently reporting success.
  */
 
-import * as logger from '@/utils/logger';
-import { ok, err, type Result } from '@/utils/result';
-import { ActionAbortedError, ActionBlockedError, AdapterStaleError } from '@/adapter/errors';
-import { SURFACE } from '@/adapter/ig-surface';
-import type {
-  LocateActionResult,
-  LocateConfirmRequestResult,
-  LocateRectResult,
-  LocateScrollResult,
-  LocatedRect,
-} from '@/adapter/ig-surface';
 import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { sleep } from '@/timing/primitives';
+import { ActionAbortedError, ActionBlockedError, AdapterStaleError } from '@/adapter/errors';
+import type {
+  LocateActionResult,
+  LocateConfirmRequestResult,
+  LocatedRect,
+  LocateRectResult,
+  LocateScrollResult,
+} from '@/adapter/ig-surface';
+import { SURFACE } from '@/adapter/ig-surface';
 import { ADAPTER } from '@/timing/config';
+import { sleep } from '@/timing/primitives';
+import * as logger from '@/utils/logger';
+import { err, ok, type Result } from '@/utils/result';
 
 /** Minimum wheel distance (px) for a list-scroll step — a shorter nudge can fail
  *  to trigger the next page load on tall viewports. One home for BOTH scroll

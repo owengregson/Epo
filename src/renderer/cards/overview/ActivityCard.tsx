@@ -1,9 +1,9 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { LogEntry } from '@/types';
 import type { LogLine } from '@/renderer/hooks/useLogFeed';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { clockTime } from '@/renderer/lib/format';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
+import type { LogEntry } from '@/types';
 
 /** How many of the newest lines the Overview pane shows. */
 const VISIBLE_LINES = 7;

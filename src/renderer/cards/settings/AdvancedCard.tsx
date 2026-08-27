@@ -1,11 +1,11 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { Settings } from '@/types';
+import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
+import { Chips } from '@/renderer/ui/Chips';
 import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
 import { Field } from '@/renderer/ui/Field';
-import { Chips } from '@/renderer/ui/Chips';
 import { Stepper } from '@/renderer/ui/Stepper';
-import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
+import type { Settings } from '@/types';
 
 export interface AdvancedCardProps {
   draft: Settings;

@@ -11,10 +11,10 @@
  * can log which Instagram surface these selectors were verified against.
  */
 
-import { Actor, type ActorInteractor, type AdapterTab } from '@/adapter/actor';
-import { Sentinel } from '@/adapter/sentinel';
-import { SURFACE } from '@/adapter/ig-surface';
 import type { ActivityReporter } from '@/adapter/activity-reporter';
+import { Actor, type ActorInteractor, type AdapterTab } from '@/adapter/actor';
+import { SURFACE } from '@/adapter/ig-surface';
+import { Sentinel } from '@/adapter/sentinel';
 
 /** Optional adapter extras (additive; construction without them is unchanged). */
 export interface InstagramAdapterOptions {

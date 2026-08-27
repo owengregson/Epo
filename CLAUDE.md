@@ -36,6 +36,6 @@ Non-negotiable highlights:
 ## Verification
 
 `npx jest` (fast, in-memory), `npx tsc --noEmit`, `npm run lint`
-(`biome lint src`), `npm run build:dev`. All four must be green before a
-change is done. DOM-level adapter changes additionally need
+(`biome ci src` — lint + format + import organizing), `npm run build:dev`.
+All four must be green before a change is done. DOM-level adapter changes additionally need
 `npm run livetest` against a real session.

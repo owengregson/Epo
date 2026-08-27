@@ -1,8 +1,8 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { PruneCandidate } from '@/types';
-import { Card, CardHeader } from '@/renderer/ui/Card';
 import { commas, monogram, withAt } from '@/renderer/lib/format';
+import { Card, CardHeader } from '@/renderer/ui/Card';
+import type { PruneCandidate } from '@/types';
 
 /** Rendered-row cap — the candidate set can run to thousands (perf). */
 const MAX_ROWS = 200;

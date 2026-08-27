@@ -1,5 +1,5 @@
 /** @jsx h */
-import { h, type ComponentChildren } from 'preact';
+import { type ComponentChildren, h } from 'preact';
 import { Icon } from './Icon';
 
 export type HintKind = 'default' | 'warn' | 'alarm';

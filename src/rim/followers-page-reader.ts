@@ -16,18 +16,18 @@
  *        in-flight parse set stops growing, before returning.
  */
 
-import type { Reader } from '@/adapter/reader';
-import type { Sentinel } from '@/adapter/sentinel';
-import { SystemClock, type Clock } from '@/governors/clock';
-import type { Observation } from '@/store/types';
-import type { RimTab } from '@/rim/types';
 import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import * as logger from '@/utils/logger';
-import { fixed, sample, sleep, uniform } from '@/timing/primitives';
+import type { Reader } from '@/adapter/reader';
+import type { Sentinel } from '@/adapter/sentinel';
+import { type Clock, SystemClock } from '@/governors/clock';
+import type { RimTab } from '@/rim/types';
+import type { Observation } from '@/store/types';
 import { RIM } from '@/timing/config';
+import { fixed, sample, sleep, uniform } from '@/timing/primitives';
+import * as logger from '@/utils/logger';
 
 /** The list-dialog operations the scraper needs. `Actor` satisfies this. */
 export interface FollowersActor {

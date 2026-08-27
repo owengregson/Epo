@@ -1,12 +1,12 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
-import type { ChainTargetView, EpoStatus } from '@/types';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
-import { Avatar } from '@/renderer/ui/Avatar';
-import { Badge } from '@/renderer/ui/Badge';
-import { Stat } from '@/renderer/ui/Stat';
+import { Fragment, h } from 'preact';
 import { useChainList } from '@/renderer/hooks/useChainList';
 import { commas, monogram, pctInt, withAt } from '@/renderer/lib/format';
+import { Avatar } from '@/renderer/ui/Avatar';
+import { Badge } from '@/renderer/ui/Badge';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
+import { Stat } from '@/renderer/ui/Stat';
+import type { ChainTargetView, EpoStatus } from '@/types';
 
 /** Display label for a target's source. */
 function sourceLabel(source: ChainTargetView['source']): string {

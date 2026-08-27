@@ -1,10 +1,10 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
-import type { Settings } from '@/types';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
+import { Fragment, h } from 'preact';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 import { Field } from '@/renderer/ui/Field';
-import { Toggle } from '@/renderer/ui/Toggle';
 import { Stepper } from '@/renderer/ui/Stepper';
+import { Toggle } from '@/renderer/ui/Toggle';
+import type { Settings } from '@/types';
 
 /** Cadence adopted when the schedule toggle turns on (weekly — a sane default). */
 const DEFAULT_SCHEDULE_DAYS = 7;

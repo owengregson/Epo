@@ -1,16 +1,16 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
+import { Fragment, h } from 'preact';
 import type { Settings } from '@/types';
-import type { ConfirmOptions } from '../hooks/useConfirm';
-import type { ViewKey } from '../hooks/useView';
-import { useSettingsDraft } from '../hooks/useSettingsDraft';
-import { Card, CardBody } from '../ui/Card';
-import { SeedSessionCard } from '../cards/settings/SeedSessionCard';
-import { BehaviorCard } from '../cards/settings/BehaviorCard';
-import { TargetingCard } from '../cards/settings/TargetingCard';
 import { AdvancedCard } from '../cards/settings/AdvancedCard';
-import { ProjectionCard } from '../cards/settings/ProjectionCard';
+import { BehaviorCard } from '../cards/settings/BehaviorCard';
 import { DataCard } from '../cards/settings/DataCard';
+import { ProjectionCard } from '../cards/settings/ProjectionCard';
+import { SeedSessionCard } from '../cards/settings/SeedSessionCard';
+import { TargetingCard } from '../cards/settings/TargetingCard';
+import type { ConfirmOptions } from '../hooks/useConfirm';
+import { useSettingsDraft } from '../hooks/useSettingsDraft';
+import type { ViewKey } from '../hooks/useView';
+import { Card, CardBody } from '../ui/Card';
 
 export interface SettingsViewProps {
   settings: Settings | null;

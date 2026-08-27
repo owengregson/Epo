@@ -1,5 +1,5 @@
 /** @jsx h */
-import { h, type ComponentChildren } from 'preact';
+import { type ComponentChildren, h } from 'preact';
 import { useState } from 'preact/hooks';
 import { Icon } from './Icon';
 

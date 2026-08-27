@@ -1,7 +1,7 @@
 /** @jsx h */
 import { h } from 'preact';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
 import { Button } from '@/renderer/ui/Button';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 
 export interface SignInCardProps {
   /** The shell's in-flight control name (`'login'` while the tab is opening). */

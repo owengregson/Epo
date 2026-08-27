@@ -1,14 +1,14 @@
 /** @jsx h */
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
-import type { Settings } from '@/types';
+import { computeProjection } from '@/renderer/charts/growth-model';
+import { ProjectionChart } from '@/renderer/charts/ProjectionChart';
+import { pctInt } from '@/renderer/lib/format';
+import { sliderFromYieldMult, yieldMultFromSlider } from '@/renderer/lib/settings-derive';
 import { CardBody } from '@/renderer/ui/Card';
 import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
 import { Slider } from '@/renderer/ui/Slider';
-import { ProjectionChart } from '@/renderer/charts/ProjectionChart';
-import { computeProjection } from '@/renderer/charts/growth-model';
-import { sliderFromYieldMult, yieldMultFromSlider } from '@/renderer/lib/settings-derive';
-import { pctInt } from '@/renderer/lib/format';
+import type { Settings } from '@/types';
 
 export interface ProjectionCardProps {
   draft: Settings;

@@ -1,11 +1,11 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { PruneScanResult, PruneStatus } from '@/types';
 import { useCountUp } from '@/renderer/hooks/useCountUp';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
-import { Stat } from '@/renderer/ui/Stat';
-import { NumberTicker } from '@/renderer/ui/NumberTicker';
 import { commas, ratio, relTime } from '@/renderer/lib/format';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
+import { NumberTicker } from '@/renderer/ui/NumberTicker';
+import { Stat } from '@/renderer/ui/Stat';
+import type { PruneScanResult, PruneStatus } from '@/types';
 
 export interface PruneCensusCardProps {
   /** Live prune projection (carries the last persisted scan's counts). */

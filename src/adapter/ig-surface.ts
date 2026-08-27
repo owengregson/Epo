@@ -11,13 +11,13 @@
  * everything else in the app stays untouched.
  */
 
-import type { Observation } from '@/store/types';
 import type { ShapeMismatch } from '@/adapter/parse-helpers';
+import type { Observation } from '@/store/types';
 
 // Re-export the shape-mismatch sentinel as part of the stable surface (it is
 // defined in `parse-helpers.ts` so version modules can import it at runtime
 // without a module cycle).
-export { SHAPE_MISMATCH, isShapeMismatch, type ShapeMismatch } from '@/adapter/parse-helpers';
+export { isShapeMismatch, SHAPE_MISMATCH, type ShapeMismatch } from '@/adapter/parse-helpers';
 
 /** The endpoint kinds the surface knows how to route. */
 export type EndpointKind =

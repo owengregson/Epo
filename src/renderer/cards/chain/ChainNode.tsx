@@ -1,9 +1,9 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
-import type { ChainTargetView } from '@/types';
+import { Fragment, h } from 'preact';
+import { commas, monogram, pctInt, withAt } from '@/renderer/lib/format';
 import { Avatar } from '@/renderer/ui/Avatar';
 import { Badge } from '@/renderer/ui/Badge';
-import { monogram, withAt, commas, pctInt } from '@/renderer/lib/format';
+import type { ChainTargetView } from '@/types';
 
 export interface ChainNodeProps extends ChainTargetView {
   /** True when this node is the engine's active target. */

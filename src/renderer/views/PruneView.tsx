@@ -1,20 +1,20 @@
 /** @jsx h */
 import { h } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import type { EpoStatus, PruneCandidate, PruneScanResult, Settings } from '@/types';
 import { filterPruneCandidates } from '@/engine/prune-whitelist';
-import type { ConfirmOptions } from '../hooks/useConfirm';
-import type { ToastKind } from '../hooks/useToasts';
-import { usePruneStatus } from '../hooks/usePruneStatus';
-import { commas } from '../lib/format';
-import { Card, CardBody } from '../ui/Card';
-import { Badge } from '../ui/Badge';
-import { PruneCensusCard } from '../cards/prune/PruneCensusCard';
-import { PruneScanCard } from '../cards/prune/PruneScanCard';
-import { PruneRunCard, stateChip } from '../cards/prune/PruneRunCard';
+import type { EpoStatus, PruneCandidate, PruneScanResult, Settings } from '@/types';
 import { PruneCandidatesCard } from '../cards/prune/PruneCandidatesCard';
-import { PruneWhitelistCard } from '../cards/prune/PruneWhitelistCard';
+import { PruneCensusCard } from '../cards/prune/PruneCensusCard';
+import { PruneRunCard, stateChip } from '../cards/prune/PruneRunCard';
+import { PruneScanCard } from '../cards/prune/PruneScanCard';
 import { PruneScheduleCard } from '../cards/prune/PruneScheduleCard';
+import { PruneWhitelistCard } from '../cards/prune/PruneWhitelistCard';
+import type { ConfirmOptions } from '../hooks/useConfirm';
+import { usePruneStatus } from '../hooks/usePruneStatus';
+import type { ToastKind } from '../hooks/useToasts';
+import { commas } from '../lib/format';
+import { Badge } from '../ui/Badge';
+import { Card, CardBody } from '../ui/Card';
 
 /** Readable message for a typed prune refusal (`ok: false` from scan/start). */
 function refusalMessage(reason: string | undefined): string {

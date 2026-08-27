@@ -1,6 +1,6 @@
 import type BetterSqlite3 from 'better-sqlite3';
-import { MIGRATIONS } from './schema';
 import * as logger from '../utils/logger';
+import { MIGRATIONS } from './schema';
 
 type Db = BetterSqlite3.Database;
 

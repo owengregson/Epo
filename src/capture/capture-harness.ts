@@ -16,13 +16,13 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { classify, isInterestingJson, type Classification } from '@/capture/classify';
 import { SURFACE } from '@/adapter/ig-surface';
-import * as logger from '@/utils/logger';
 import type { InstagramTab } from '@/adapter/tab';
-import type { TabResponse, Unsubscribe } from '@/types';
-import { sleep } from '@/timing/primitives';
+import { type Classification, classify, isInterestingJson } from '@/capture/classify';
 import { HARNESS } from '@/timing/config';
+import { sleep } from '@/timing/primitives';
+import type { TabResponse, Unsubscribe } from '@/types';
+import * as logger from '@/utils/logger';
 
 /** One recorded response in the capture manifest. */
 export interface ManifestEntry {

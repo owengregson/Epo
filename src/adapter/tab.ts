@@ -18,18 +18,18 @@
  * reliably available in the CDP resource cache when `getBody()` is called.
  */
 
-import { WebContentsView, session } from 'electron';
 import type {
   BaseWindow,
   Debugger,
   Event as ElectronEvent,
   WebContents,
 } from 'electron';
-import type { PointerInputEvent } from '@/interaction/input-driver';
-import { toCdpMouseParams } from '@/interaction/cdp-input';
-import * as logger from '@/utils/logger';
+import { session, WebContentsView } from 'electron';
 import { SURFACE } from '@/adapter/ig-surface';
+import { toCdpMouseParams } from '@/interaction/cdp-input';
+import type { PointerInputEvent } from '@/interaction/input-driver';
 import type { ResponseHandler, TabResponse, Unsubscribe } from '@/types';
+import * as logger from '@/utils/logger';
 
 /** Persistent session partition — login state is durable across restarts. */
 export const IG_PARTITION = 'persist:ig';

@@ -1,4 +1,4 @@
-import { ratioOf, type AccountState } from '../store/types';
+import { type AccountState, ratioOf } from '../store/types';
 
 /**
  * Tunable knobs for candidate scoring. Defaults mirror the v3 design §3.2/§3.3

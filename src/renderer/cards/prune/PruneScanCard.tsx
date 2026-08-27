@@ -1,14 +1,14 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
+import { Fragment, h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { PruneScanResult, PruneStatus } from '@/types';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import { useCountUp } from '@/renderer/hooks/useCountUp';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
+import { commas, relTime } from '@/renderer/lib/format';
 import { Button } from '@/renderer/ui/Button';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 import { KeyValue } from '@/renderer/ui/KeyValue';
 import { Meter } from '@/renderer/ui/Meter';
-import { commas, relTime } from '@/renderer/lib/format';
+import type { PruneScanResult, PruneStatus } from '@/types';
 
 export interface PruneScanCardProps {
   /** Live prune projection (carries the last persisted scan's counts). */

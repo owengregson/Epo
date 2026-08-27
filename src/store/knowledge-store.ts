@@ -1,5 +1,9 @@
-import Database from 'better-sqlite3';
 import type BetterSqlite3 from 'better-sqlite3';
+import Database from 'better-sqlite3';
+import { startOfLocalDay } from '../timing/units';
+import * as logger from '../utils/logger';
+import { runMigrations } from './migrations';
+import { projectAccount } from './projections';
 import {
   type AccountState,
   type Edge,
@@ -14,14 +18,10 @@ import {
   type GraphSourceRows,
   type Observation,
   type PruneScanSnapshot,
-  type Source,
   SOURCE_CONFIDENCE,
+  type Source,
   type Target,
 } from './types';
-import { projectAccount } from './projections';
-import { runMigrations } from './migrations';
-import * as logger from '../utils/logger';
-import { startOfLocalDay } from '../timing/units';
 
 interface AccountRow {
   pk: string;

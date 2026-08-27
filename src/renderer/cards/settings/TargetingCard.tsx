@@ -1,15 +1,15 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
+import { Fragment, h } from 'preact';
 import { useRef } from 'preact/hooks';
-import type { Settings } from '@/types';
+import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
+import { clamp, commas } from '@/renderer/lib/format';
 import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
-import { Field } from '@/renderer/ui/Field';
 import { DualRange } from '@/renderer/ui/DualRange';
-import { Stepper } from '@/renderer/ui/Stepper';
+import { Field } from '@/renderer/ui/Field';
 import { NumberInput } from '@/renderer/ui/NumberInput';
 import { Slider } from '@/renderer/ui/Slider';
-import { clamp, commas } from '@/renderer/lib/format';
-import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
+import { Stepper } from '@/renderer/ui/Stepper';
+import type { Settings } from '@/types';
 
 export interface TargetingCardProps {
   draft: Settings;

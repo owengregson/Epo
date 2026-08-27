@@ -1,11 +1,10 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { Settings } from '@/types';
+import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
 import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
 import { Field } from '@/renderer/ui/Field';
 import { Segmented } from '@/renderer/ui/Segmented';
 import { Toggle } from '@/renderer/ui/Toggle';
-import { intensityAt } from '@/timing/circadian';
 import {
   type PatternSettings,
   type PersonaId,
@@ -13,7 +12,8 @@ import {
   personaPattern,
   resolvePattern,
 } from '@/settings/pattern-map';
-import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
+import { intensityAt } from '@/timing/circadian';
+import type { Settings } from '@/types';
 
 export interface BehaviorCardProps {
   draft: Settings;

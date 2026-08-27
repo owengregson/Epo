@@ -12,9 +12,9 @@
  * only walks the tables. Any non-`ok` result should halt the engine and alert.
  */
 
-import * as logger from '@/utils/logger';
-import { SURFACE } from '@/adapter/ig-surface';
 import type { SentinelStatus } from '@/adapter/ig-surface';
+import { SURFACE } from '@/adapter/ig-surface';
+import * as logger from '@/utils/logger';
 
 // Re-export so existing consumers keep importing the status from here.
 export type { SentinelStatus } from '@/adapter/ig-surface';

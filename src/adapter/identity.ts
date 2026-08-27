@@ -13,10 +13,10 @@
  * routes) comes from the active `SURFACE` version module.
  */
 
-import * as logger from '@/utils/logger';
-import { SURFACE, asFetchEnvelope } from '@/adapter/ig-surface';
-import { sleep } from '@/timing/primitives';
+import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
 import { ADAPTER } from '@/timing/config';
+import { sleep } from '@/timing/primitives';
+import * as logger from '@/utils/logger';
 
 /** The narrow tab surface this resolver needs; `InstagramTab` satisfies it. */
 export interface IdentityTab {

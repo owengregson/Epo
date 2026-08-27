@@ -11,10 +11,10 @@
  * live Instagram traffic — so it stays deterministic and unit-testable.
  */
 
-import type { KnowledgeStore } from '@/store/knowledge-store';
-import type { EnrichmentLevel } from '@/store/types';
 import type { OwnFollowersTargetSource } from '@/engine/chain-controller';
 import type { ProfileEnricher } from '@/rim/profile-enricher';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { EnrichmentLevel } from '@/store/types';
 import * as logger from '@/utils/logger';
 
 /** Profile-completeness ordering for tie-breaks (higher is more complete). */

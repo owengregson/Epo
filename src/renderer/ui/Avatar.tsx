@@ -1,5 +1,5 @@
 /** @jsx h */
-import { h, type ComponentChildren } from 'preact';
+import { type ComponentChildren, h } from 'preact';
 
 export interface AvatarProps {
   /** Monogram letter (or glyph) shown inside. */

@@ -1,15 +1,15 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
+import { Fragment, h } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import type { NetGrowthPoint } from '@/types';
-import { smoothPath } from './catmull-rom';
 import { shortDate } from '../lib/format';
 import {
+  easeOutCubic,
   GROWTH_REVEAL_DELAY_MS,
   GROWTH_REVEAL_DUR_MS,
-  easeOutCubic,
   prefersReducedMotion,
 } from '../lib/motion';
+import { smoothPath } from './catmull-rom';
 
 const X0 = 8;
 const X1 = 362;

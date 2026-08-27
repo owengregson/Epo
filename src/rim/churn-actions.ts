@@ -19,11 +19,11 @@
  *        caught, logged (never silently), and reported as `'failed'`.
  */
 
-import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { ActionAbortedError, ActionBlockedError } from '@/adapter/errors';
+import type { InstagramAdapter } from '@/adapter/instagram-adapter';
+import type { ChurnActionOutcome, ChurnActions } from '@/engine/churn-scheduler';
+import { type Clock, SystemClock } from '@/governors/clock';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import { SystemClock, type Clock } from '@/governors/clock';
-import type { ChurnActions, ChurnActionOutcome } from '@/engine/churn-scheduler';
 import * as logger from '@/utils/logger';
 
 export interface ChurnActionsDeps {

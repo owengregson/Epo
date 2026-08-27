@@ -18,9 +18,9 @@
  * body (`SHAPE_MISMATCH`), so shape drift is loud rather than swallowed.
  */
 
-import * as logger from '@/utils/logger';
-import { SURFACE, isShapeMismatch } from '@/adapter/ig-surface';
+import { isShapeMismatch, SURFACE } from '@/adapter/ig-surface';
 import type { Observation } from '@/store/types';
+import * as logger from '@/utils/logger';
 
 // Re-export the stable result types so existing consumers keep one import site.
 export type {
@@ -30,6 +30,7 @@ export type {
   FriendshipShowResult,
   ShowManyEntry,
 } from '@/adapter/ig-surface';
+
 import type {
   EndpointKind,
   FollowEvent,

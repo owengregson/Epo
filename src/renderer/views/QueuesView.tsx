@@ -1,20 +1,20 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
+import { Fragment, h } from 'preact';
 import { useState } from 'preact/hooks';
-import type { EpoStatus } from '@/types';
-import { Card, CardHeader } from '@/renderer/ui/Card';
-import { useQueue } from '@/renderer/hooks/useQueue';
-import { commas } from '@/renderer/lib/format';
 import {
-  QueuePipeline,
   QUEUE_STAGE_BY_KEY,
   QUEUE_STAGE_PANEL_ID,
-  stageCount,
+  QueuePipeline,
   type QueueStageKey,
+  stageCount,
 } from '@/renderer/cards/queues/QueuePipeline';
 import { QueueRowItem, type QueueWindows } from '@/renderer/cards/queues/QueueRowItem';
+import { useQueue } from '@/renderer/hooks/useQueue';
 import { useSettings } from '@/renderer/hooks/useSettings';
+import { commas } from '@/renderer/lib/format';
+import { Card, CardHeader } from '@/renderer/ui/Card';
 import { MS_PER_DAY } from '@/timing/units';
+import type { EpoStatus } from '@/types';
 
 export interface QueuesViewProps {
   status: EpoStatus | null;

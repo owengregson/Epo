@@ -1,12 +1,12 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { EpoStatus, Settings } from '@/types';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
-import { Badge } from '@/renderer/ui/Badge';
-import { KeyValue } from '@/renderer/ui/KeyValue';
-import { Meter } from '@/renderer/ui/Meter';
 import { useNow } from '@/renderer/hooks/useNow';
 import { activeHoursText, dailyRateView, hoursOpen } from '@/renderer/lib/engine-view';
+import { Badge } from '@/renderer/ui/Badge';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
+import { KeyValue } from '@/renderer/ui/KeyValue';
+import { Meter } from '@/renderer/ui/Meter';
+import type { EpoStatus, Settings } from '@/types';
 
 export interface RateSafetyCardProps {
   status: EpoStatus | null;

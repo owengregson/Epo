@@ -1,8 +1,8 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
-import type { FollowState, EpoStatus } from '@/types';
-import { Icon } from '@/renderer/ui/Icon';
+import { Fragment, h } from 'preact';
 import { commas } from '@/renderer/lib/format';
+import { Icon } from '@/renderer/ui/Icon';
+import type { EpoStatus, FollowState } from '@/types';
 
 /** UI key for one lifecycle stage tab. */
 export type QueueStageKey = 'queued' | 'awaiting' | 'held' | 'due';

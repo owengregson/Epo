@@ -10,11 +10,11 @@
 
 import {
   type AccountState,
+  compareByScoreDesc,
   type FollowRecord,
   type FollowState,
   type GraphSourceRows,
   type Target,
-  compareByScoreDesc,
 } from '@/store/types';
 import {
   type ChainTargetView,

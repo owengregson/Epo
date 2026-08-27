@@ -1,17 +1,17 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
-import type { EpoStatus, Settings } from '@/types';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
-import { Icon } from '@/renderer/ui/Icon';
-import { Meter } from '@/renderer/ui/Meter';
-import { NumberTicker } from '@/renderer/ui/NumberTicker';
-import { RadialRing } from '@/renderer/ui/RadialRing';
-import { Stat } from '@/renderer/ui/Stat';
+import { Fragment, h } from 'preact';
 import { useCountdown } from '@/renderer/hooks/useCountdown';
 import { useNow } from '@/renderer/hooks/useNow';
 import { useQueue } from '@/renderer/hooks/useQueue';
 import { dailyRateView } from '@/renderer/lib/engine-view';
 import { durationHm, mmss, ratio, withAt } from '@/renderer/lib/format';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
+import { Icon } from '@/renderer/ui/Icon';
+import { Meter } from '@/renderer/ui/Meter';
+import { NumberTicker } from '@/renderer/ui/NumberTicker';
+import { RadialRing } from '@/renderer/ui/RadialRing';
+import { Stat } from '@/renderer/ui/Stat';
+import type { EpoStatus, Settings } from '@/types';
 
 type Step = NonNullable<EpoStatus['lastStep']>;
 type Sentinel = NonNullable<EpoStatus['lastSentinel']>;

@@ -1,5 +1,5 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
+import { Fragment, h } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import type { LogEntry, LogLevel } from '@/types';
 import { clockTime } from '../lib/format';

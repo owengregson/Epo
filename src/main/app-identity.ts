@@ -14,9 +14,10 @@
  * the Electron.app bundle itself and are branded by
  * scripts/fix-electron-macos.mjs at launch.)
  */
-import { app } from 'electron';
+
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { app } from 'electron';
 import * as logger from '@/utils/logger';
 
 /**

@@ -18,25 +18,24 @@
  *  - No silent `catch {}`: every caught error is logged and surfaces as a FAIL.
  */
 
-import { app, session } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-
-import { type InstagramTab, IG_PARTITION } from '@/adapter/tab';
+import { app, session } from 'electron';
+import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
+import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
-import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
 import type { Sentinel } from '@/adapter/sentinel';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import { IG_PARTITION, type InstagramTab } from '@/adapter/tab';
+import { Scanner } from '@/engine/scanner';
+import { type ScorerConfig, scoreCandidate } from '@/engine/scorer';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
-import { FollowersPageReader } from '@/rim/followers-page-reader';
+import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { ACQUISITION_DEFAULTS, AdapterBackedAcquisition } from '@/rim/follower-acquisition';
+import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
-import { AdapterBackedChurnActions } from '@/rim/churn-actions';
-import { Scanner } from '@/engine/scanner';
-import { scoreCandidate, type ScorerConfig } from '@/engine/scorer';
 import type { FollowerAcquisition } from '@/rim/types';
 import {
   DEFAULT_SETTINGS,
@@ -44,10 +43,10 @@ import {
   toScannerConfig,
   toScorerConfig,
 } from '@/settings/settings';
-import * as logger from '@/utils/logger';
-import { SURFACE, asFetchEnvelope } from '@/adapter/ig-surface';
-import { sample, sleep, uniform } from '@/timing/primitives';
+import { KnowledgeStore } from '@/store/knowledge-store';
 import { HARNESS, SCHEDULER } from '@/timing/config';
+import { sample, sleep, uniform } from '@/timing/primitives';
+import * as logger from '@/utils/logger';
 
 /** Temp DB file (SEPARATE from epo.db) — deleted + recreated each run. */
 const LIVETEST_DB_FILE = 'epo-livetest.db';

@@ -22,8 +22,8 @@
  * falls back to own followers — exactly the intended minimum-yield behavior.
  */
 
-import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DiscoveredTarget, TargetDiscovery } from '@/engine/chain-controller';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import * as logger from '@/utils/logger';
 
 /** At most this many hubs are proposed per advance (the gate then filters). */

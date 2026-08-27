@@ -25,21 +25,21 @@
  *   6. On window close: print a final saved-count line, dispose, quit.
  */
 
-import { app, BaseWindow, session } from 'electron';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import * as path from 'node:path';
-import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
+import { app, BaseWindow, session } from 'electron';
 import { resolveOwnUsername } from '@/adapter/identity';
-import * as logger from '@/utils/logger';
-import { sleep } from '@/timing/primitives';
-import { HARNESS } from '@/timing/config';
+import { IG_HOME_URL, IG_PARTITION, InstagramTab } from '@/adapter/tab';
 import {
-  INSPECT_BANNER_TEXT,
   buildInspectTickScript,
   buildPreLoginBannerScript,
+  INSPECT_BANNER_TEXT,
   type InspectRecord,
 } from '@/inspect/injection';
 import { claimAppIdentity } from '@/main/app-identity';
+import { HARNESS } from '@/timing/config';
+import { sleep } from '@/timing/primitives';
+import * as logger from '@/utils/logger';
 
 // Identity first (name + userData path) — same reasoning as in `main.ts`; the
 // inspect harness shares the production userData directory and login partition.

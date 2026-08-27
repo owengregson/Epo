@@ -26,13 +26,13 @@ import type {
   StaleComponent,
 } from '@/adapter/ig-surface';
 import {
-  SHAPE_MISMATCH,
-  type ShapeMismatch,
   asBool,
   asCount,
   asStringId,
   getPath,
   isRecord,
+  SHAPE_MISMATCH,
+  type ShapeMismatch,
 } from '@/adapter/parse-helpers';
 import type { Observation } from '@/store/types';
 

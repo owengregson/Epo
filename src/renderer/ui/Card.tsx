@@ -1,5 +1,5 @@
 /** @jsx h */
-import { h, Fragment, type ComponentChildren } from 'preact';
+import { type ComponentChildren, Fragment, h } from 'preact';
 import { Icon } from './Icon';
 
 export interface CardProps {

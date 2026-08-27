@@ -1,7 +1,7 @@
 /** @jsx h */
 import { h } from 'preact';
-import { Icon } from './Icon';
 import { clamp } from '../lib/format';
+import { Icon } from './Icon';
 
 const R = 25;
 const CIRC = 2 * Math.PI * R;

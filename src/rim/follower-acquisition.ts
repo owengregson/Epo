@@ -32,14 +32,14 @@
  * back-fill and the R4 cursor persistence.
  */
 
-import type { KnowledgeStore } from '@/store/knowledge-store';
+import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
 import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import { SURFACE, asFetchEnvelope } from '@/adapter/ig-surface';
-import { SystemClock, type Clock } from '@/governors/clock';
-import type { FollowerAcquisition, RimTab } from '@/rim/types';
+import { type Clock, SystemClock } from '@/governors/clock';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { ListPageWalker } from '@/rim/list-page-walker';
+import type { FollowerAcquisition, RimTab } from '@/rim/types';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
 import * as logger from '@/utils/logger';
 

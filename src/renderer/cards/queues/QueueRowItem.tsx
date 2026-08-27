@@ -1,10 +1,10 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { QueueRow } from '@/types';
-import { Icon } from '@/renderer/ui/Icon';
 import { clamp, monogram, pctInt, ratio, withAt } from '@/renderer/lib/format';
-import type { QueueStageKey } from './QueuePipeline';
+import { Icon } from '@/renderer/ui/Icon';
 import { MS_PER_DAY } from '@/timing/units';
+import type { QueueRow } from '@/types';
+import type { QueueStageKey } from './QueuePipeline';
 
 /** Fallback follow-back window while settings load (`maxWaitForFollowbackDays` = 4). */
 const FOLLOWBACK_WINDOW_MS = 4 * MS_PER_DAY;

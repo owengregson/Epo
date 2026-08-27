@@ -1,11 +1,11 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { EpoStatus } from '@/types';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
-import { Icon } from '@/renderer/ui/Icon';
-import { NumberTicker } from '@/renderer/ui/NumberTicker';
 import { GrowthChart } from '@/renderer/charts/GrowthChart';
 import { useGrowthSeries } from '@/renderer/hooks/useGrowthSeries';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
+import { Icon } from '@/renderer/ui/Icon';
+import { NumberTicker } from '@/renderer/ui/NumberTicker';
+import type { EpoStatus } from '@/types';
 
 /** How many days of cumulative net growth the card charts. */
 const DAYS = 14;

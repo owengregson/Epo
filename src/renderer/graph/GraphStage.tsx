@@ -26,26 +26,26 @@
  */
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { GRAPH_NODE_STATUSES, type GraphNodeStatus, type GraphSnapshot } from '@/types';
-import type { GraphBoard } from '@/renderer/hooks/useGraphBoard';
 import {
   GraphLayout,
   HUB_R,
+  type LayoutResult,
   NODE_SPACING,
   NodeGrid,
-  type LayoutResult,
 } from '@/renderer/graph/layout';
 import {
   BUCKET_COLORS,
-  LEGEND_LABELS,
-  STATUS_COLORS,
   bucketOf,
+  LEGEND_LABELS,
   legendColor,
   legendColorWashed,
+  STATUS_COLORS,
 } from '@/renderer/graph/palette';
+import type { GraphBoard } from '@/renderer/hooks/useGraphBoard';
 import { commas } from '@/renderer/lib/format';
-import { Icon } from '@/renderer/ui/Icon';
 import { Button } from '@/renderer/ui/Button';
+import { Icon } from '@/renderer/ui/Icon';
+import { GRAPH_NODE_STATUSES, type GraphNodeStatus, type GraphSnapshot } from '@/types';
 
 /** Below this screen-px slot spacing a cluster draws as one aggregate disc. */
 const AGGREGATE_BELOW_PX = 2.2;

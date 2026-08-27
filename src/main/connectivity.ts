@@ -14,11 +14,11 @@
  *    request.
  */
 
-import { net } from 'electron';
 import type { ClientRequest } from 'electron';
+import { net } from 'electron';
 import { SystemClock } from '@/governors/clock';
-import { ScheduleManager } from '@/timing/schedule-manager';
 import { CONNECTIVITY } from '@/timing/config';
+import { ScheduleManager } from '@/timing/schedule-manager';
 import * as log from '@/utils/logger';
 
 /** Returns 204 with an empty body — the canonical connectivity probe. */

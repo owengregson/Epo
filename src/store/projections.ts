@@ -2,8 +2,8 @@ import {
   type AccountState,
   type EnrichmentLevel,
   type Observation,
-  SOURCE_CONFIDENCE,
   ratioOf,
+  SOURCE_CONFIDENCE,
 } from './types';
 
 /**

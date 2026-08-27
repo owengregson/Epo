@@ -1,11 +1,11 @@
 /** @jsx h */
 import { h } from 'preact';
 import { useState } from 'preact/hooks';
-import type { Settings } from '@/types';
-import { Card, CardHeader } from '@/renderer/ui/Card';
 import { Button } from '@/renderer/ui/Button';
+import { Card, CardHeader } from '@/renderer/ui/Card';
 import { Field } from '@/renderer/ui/Field';
 import { Icon } from '@/renderer/ui/Icon';
+import type { Settings } from '@/types';
 
 export interface PruneWhitelistCardProps {
   /** The persisted whitelist (usernames, matched case-insensitively). */

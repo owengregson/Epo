@@ -1,15 +1,15 @@
 /** @jsx h */
 import { h } from 'preact';
-import type { PruneStatus, Settings } from '@/types';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
-import { Card, CardHeader, CardBody } from '@/renderer/ui/Card';
-import { Button } from '@/renderer/ui/Button';
+import { commas } from '@/renderer/lib/format';
 import { Badge, type BadgeTone } from '@/renderer/ui/Badge';
+import { Button } from '@/renderer/ui/Button';
+import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
+import { Field } from '@/renderer/ui/Field';
 import { KeyValue } from '@/renderer/ui/KeyValue';
 import { Meter } from '@/renderer/ui/Meter';
-import { Field } from '@/renderer/ui/Field';
 import { Stepper } from '@/renderer/ui/Stepper';
-import { commas } from '@/renderer/lib/format';
+import type { PruneStatus, Settings } from '@/types';
 
 type PruneSentinel = NonNullable<PruneStatus['lastSentinel']>;
 

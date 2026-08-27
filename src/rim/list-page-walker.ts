@@ -28,19 +28,19 @@
  *    mid-sleep, exactly like the page reader's scroll loop.
  */
 
-import type { Reader } from '@/adapter/reader';
-import type { Sentinel } from '@/adapter/sentinel';
-import { SystemClock, type Clock } from '@/governors/clock';
-import type { Observation } from '@/store/types';
-import type { RimTab } from '@/rim/types';
-import { SURFACE, asFetchEnvelope } from '@/adapter/ig-surface';
 import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import * as logger from '@/utils/logger';
-import { sample, sleep, uniform } from '@/timing/primitives';
+import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
+import type { Reader } from '@/adapter/reader';
+import type { Sentinel } from '@/adapter/sentinel';
+import { type Clock, SystemClock } from '@/governors/clock';
+import type { RimTab } from '@/rim/types';
+import type { Observation } from '@/store/types';
 import { RIM } from '@/timing/config';
+import { sample, sleep, uniform } from '@/timing/primitives';
+import * as logger from '@/utils/logger';
 
 export interface ListPageWalkerDeps {
   tab: RimTab;

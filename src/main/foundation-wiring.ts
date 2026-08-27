@@ -18,113 +18,111 @@
  * silent `catch {}`).
  */
 
-import { app, session } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-
-import { type InstagramTab, IG_HOME_URL, IG_PARTITION } from '@/adapter/tab';
-import { InstagramAdapter } from '@/adapter/instagram-adapter';
-import { Interactor } from '@/interaction/interactor';
-import {
-  ElectronInputDriver,
-  ObservedInputDriver,
-  type CursorObserver,
-} from '@/interaction/input-driver';
-import { Reader } from '@/adapter/reader';
-import type { Actor } from '@/adapter/actor';
-import type { Sentinel } from '@/adapter/sentinel';
-import {
-  resolveOwnUsername as resolveUsernameFromTab,
-  usernameFromProfileUrl,
-} from '@/adapter/identity';
-import { KnowledgeStore } from '@/store/knowledge-store';
-import { SystemClock } from '@/governors/clock';
-import { ScheduleManager } from '@/timing/schedule-manager';
-import { DelayManager } from '@/timing/delay-manager';
-import { TIMED_OUT, sleep, withTimeout } from '@/timing/primitives';
-import { ADAPTER, POLL, PRUNE, SCHEDULER } from '@/timing/config';
-import { RateGovernor } from '@/governors/rate-governor';
-import { shapeChainList, shapeGraphSnapshot, shapeQueueList } from '@/main/foundation-reads';
-import {
-  RelationshipReconciler,
-  installRelationshipReconciler,
-} from '@/rim/relationship-reconciler';
-import { FollowersPageReader } from '@/rim/followers-page-reader';
-import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
-import { AdapterBackedChurnActions } from '@/rim/churn-actions';
-import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
-import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
-import { ListPageWalker } from '@/rim/list-page-walker';
-import { TabActivity } from '@/main/tab-activity';
+import { app, session } from 'electron';
 import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
-import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
-import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
+import type { Actor } from '@/adapter/actor';
 import {
-  SURFACE,
+  resolveOwnUsername as resolveUsernameFromTab,
+  usernameFromProfileUrl,
+} from '@/adapter/identity';
+import {
   asFetchEnvelope,
   envelopeLooksLikeHtml,
   isShapeMismatch,
+  SURFACE,
 } from '@/adapter/ig-surface';
-import { ChurnScheduler, type ChurnActionOutcome } from '@/engine/churn-scheduler';
-import { Scanner } from '@/engine/scanner';
-import { FollowbackWatcher } from '@/engine/followback-watcher';
-import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
+import { InstagramAdapter } from '@/adapter/instagram-adapter';
+import { Reader } from '@/adapter/reader';
+import type { Sentinel } from '@/adapter/sentinel';
+import { IG_HOME_URL, IG_PARTITION, type InstagramTab } from '@/adapter/tab';
 import { ChainController, type TargetDiscovery } from '@/engine/chain-controller';
+import { type ChurnActionOutcome, ChurnScheduler } from '@/engine/churn-scheduler';
 import {
   createEngine,
   type Engine,
   type EngineStatus,
   type EngineUnfollowFeed,
 } from '@/engine/engine';
+import { FollowbackWatcher } from '@/engine/followback-watcher';
 import {
   createPruneEngine,
-  pruneDue,
   type PruneCandidate,
   type PruneEngine,
   type PruneOwnFollowers,
   type PruneOwnFollowing,
   type PruneScanFetch,
   type PruneStatus,
+  pruneDue,
 } from '@/engine/prune-engine';
+import { Scanner } from '@/engine/scanner';
+import { SystemClock } from '@/governors/clock';
+import { RateGovernor } from '@/governors/rate-governor';
+import {
+  type CursorObserver,
+  ElectronInputDriver,
+  ObservedInputDriver,
+} from '@/interaction/input-driver';
+import { Interactor } from '@/interaction/interactor';
+import { shapeChainList, shapeGraphSnapshot, shapeQueueList } from '@/main/foundation-reads';
+import { TabActivity } from '@/main/tab-activity';
+import { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
+import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
+import { FollowersPageReader } from '@/rim/followers-page-reader';
+import { ListPageWalker } from '@/rim/list-page-walker';
+import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
+import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
+import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
+import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
+import {
+  installRelationshipReconciler,
+  RelationshipReconciler,
+} from '@/rim/relationship-reconciler';
+import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
 import type { FollowerAcquisition } from '@/rim/types';
+import { patternCircadianProfile } from '@/settings/pattern-map';
 import {
   DEFAULT_SETTINGS,
   loadSettings,
+  type Settings,
   sanitizeSettings,
   saveSettings,
-  toRateGovernorConfig,
-  toChurnConfig,
-  toScorerConfig,
-  toScannerConfig,
-  toFollowbackConfig,
   toChainConfig,
-  toPruneConfig,
+  toChurnConfig,
+  toFollowbackConfig,
   toPacingConfig,
-  type Settings,
+  toPruneConfig,
+  toRateGovernorConfig,
+  toScannerConfig,
+  toScorerConfig,
 } from '@/settings/settings';
-import { SessionPlanner, type PlannerSnapshot } from '@/timing/session-planner';
+import { KnowledgeStore } from '@/store/knowledge-store';
 import { samplePhaseOffset } from '@/timing/circadian';
-import { patternCircadianProfile } from '@/settings/pattern-map';
-import { CIRCADIAN } from '@/timing/config';
+import { ADAPTER, CIRCADIAN, POLL, PRUNE, SCHEDULER } from '@/timing/config';
+import { DelayManager } from '@/timing/delay-manager';
+import { sleep, TIMED_OUT, withTimeout } from '@/timing/primitives';
+import { ScheduleManager } from '@/timing/schedule-manager';
+import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
 import { MS_PER_DAY } from '@/timing/units';
-import * as logger from '@/utils/logger';
 import type {
   ActionResult,
   ChainTargetView,
+  EpoStatus,
   FollowState,
   GraphSnapshot,
   NetGrowthPoint,
-  EpoStatus,
   PruneControlResult,
   PruneScanResult,
   QueueListResult,
   ReadFollowersResult,
   SeedCheck,
 } from '@/types';
+import * as logger from '@/utils/logger';
 
 const IG_DB_FILE = 'epo.db';
 const IG_SETTINGS_FILE = 'epo-settings.json';

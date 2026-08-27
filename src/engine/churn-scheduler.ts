@@ -1,7 +1,7 @@
-import type { KnowledgeStore } from '../store/knowledge-store';
 import type { Clock } from '../governors/clock';
 import type { RateGovernor } from '../governors/rate-governor';
-import { type FollowRecord, compareByScoreDesc } from '../store/types';
+import type { KnowledgeStore } from '../store/knowledge-store';
+import { compareByScoreDesc, type FollowRecord } from '../store/types';
 import { MS_PER_DAY } from '../timing/units';
 import * as log from '../utils/logger';
 

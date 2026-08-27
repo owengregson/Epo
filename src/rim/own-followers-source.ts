@@ -9,11 +9,11 @@
  */
 
 import type { Sentinel } from '@/adapter/sentinel';
-import type { KnowledgeStore } from '@/store/knowledge-store';
-import type { Observation } from '@/store/types';
 import type { PruneOwnFollowers, PruneScanFetch, PruneScanOpts } from '@/engine/prune-engine';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { ListPageWalker } from '@/rim/list-page-walker';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { Observation } from '@/store/types';
 import { RIM } from '@/timing/config';
 import * as logger from '@/utils/logger';
 

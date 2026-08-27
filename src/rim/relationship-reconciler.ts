@@ -16,10 +16,10 @@
  * `installRequestMetering`; ingest failures warn (never throw, never silently).
  */
 
-import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { Reader } from '@/adapter/reader';
 import type { Clock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
 

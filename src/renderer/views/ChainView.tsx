@@ -1,9 +1,9 @@
 /** @jsx h */
-import { h, Fragment } from 'preact';
-import type { EpoStatus } from '@/types';
-import { Icon } from '@/renderer/ui/Icon';
-import { useChainList } from '@/renderer/hooks/useChainList';
+import { Fragment, h } from 'preact';
 import { ChainNode } from '@/renderer/cards/chain/ChainNode';
+import { useChainList } from '@/renderer/hooks/useChainList';
+import { Icon } from '@/renderer/ui/Icon';
+import type { EpoStatus } from '@/types';
 
 export interface ChainViewProps {
   status: EpoStatus | null;

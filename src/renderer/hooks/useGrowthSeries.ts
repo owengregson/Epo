@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { NetGrowthPoint, EpoStatus } from '@/types';
+import type { EpoStatus, NetGrowthPoint } from '@/types';
 
 /**
  * The operator's cumulative net follower growth series (`growth:series`),

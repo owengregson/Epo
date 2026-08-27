@@ -1,15 +1,15 @@
 import type { InputDriver } from '@/interaction/input-driver';
 import {
+  type ElementRect,
+  type Point,
   pathBetween,
   pressDurationMs,
+  type Rng,
   stepDelays,
   targetPoint,
   travelDurationMs,
   uniform,
   wheelPlan,
-  type ElementRect,
-  type Point,
-  type Rng,
 } from '@/interaction/motion-profile';
 
 export type { ElementRect, Point } from '@/interaction/motion-profile';
