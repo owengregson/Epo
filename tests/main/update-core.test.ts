@@ -24,6 +24,7 @@ describe('update-core', () => {
       'getaddrinfo ENOTFOUND api.github.com',
       'net::ERR_INTERNET_DISCONNECTED',
       'connect ETIMEDOUT 140.82.112.6:443',
+      "ENOENT: no such file or directory, open '/Applications/Epo.app/Contents/Resources/app-update.yml'",
     ]) {
       expect(isBenignFeedError(msg)).toBe(true);
     }

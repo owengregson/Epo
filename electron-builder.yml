@@ -68,3 +68,9 @@ publish:
   provider: github
   owner: owengregson
   repo: Epo
+
+# Ad-hoc sign the macOS app after packing: without it the packaged app's
+# (Electron-shipped, now stale) signature is INVALID, and Apple Silicon
+# Gatekeeper shows the dead-end "Epo is damaged" dialog instead of the
+# bypassable unidentified-developer flow. See the hook's header.
+afterPack: scripts/mac-adhoc-sign.cjs

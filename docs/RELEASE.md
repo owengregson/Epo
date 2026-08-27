@@ -117,6 +117,14 @@ electron-builder.yml so packaged apps carry `app-update.yml`.
 | Windows NSIS | Full: download in background → install on quit (or "Restart now") | electron-updater's NSIS path works unsigned |
 | Windows portable | Notify-only → open the release page | A portable exe cannot replace itself |
 | macOS (unsigned) | Notify-only → open the release page | Squirrel.Mac refuses unsigned updates; full auto-update turns on when code signing lands (flip one flag) |
+
+macOS builds are additionally **ad-hoc signed** after packing
+(`scripts/mac-adhoc-sign.cjs`, electron-builder `afterPack`): with
+`identity: null` alone the packaged app's stale Electron signature is
+INVALID, and Apple Silicon Gatekeeper shows the dead-end "Epo is damaged"
+dialog (no Open Anyway; terminal-only rescue). Ad-hoc signing restores the
+normal unidentified-developer flow. This is not Developer-ID signing or
+notarization — those remain the later, paid step.
 | Dev run (`!app.isPackaged`) | Disabled | electron-updater requires a packaged app |
 
 **Hard rules (each one is load-bearing):**

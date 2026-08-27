@@ -35,12 +35,14 @@ export function resolveUpdateMode(env: UpdateEnvironment): UpdateMode {
 
 /**
  * Feed outcomes that mean "no update for you today", not "something broke":
- * the repo is private (404 until it goes public), no release exists yet, or
- * the network is down. These collapse to a quiet `idle`; only a genuine
- * download failure is worth the user's attention.
+ * the repo is private (404 until it goes public), no release exists yet, the
+ * network is down, or this build carries no update metadata at all (an
+ * app-update.yml-less dir/test build cannot self-update — that is a fact
+ * about the build, not a failure). These collapse to a quiet `idle`; only a
+ * genuine download failure is worth the user's attention.
  */
 export function isBenignFeedError(message: string): boolean {
-  return /404|No published versions|status code 4|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|net::ERR|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION/i.test(
+  return /404|No published versions|status code 4|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|net::ERR|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION|app-update\.yml/i.test(
     message,
   );
 }

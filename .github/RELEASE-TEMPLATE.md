@@ -45,8 +45,9 @@
 
 **macOS** — download `Epo-{{VERSION_NUMBER}}-arm64.dmg` (Apple silicon) or
 `Epo-{{VERSION_NUMBER}}-x64.dmg` (Intel), open it, and drag Epo to
-Applications. The builds are unsigned for now: right-click → **Open** the
-first time.
+Applications. The builds are not notarized yet, so macOS blocks the first
+launch: open Epo once, dismiss the dialog, then **System Settings →
+Privacy & Security** → **Open Anyway** (needed once).
 
 **Windows** — download `Epo-Setup-{{VERSION_NUMBER}}.exe` (recommended — it
 updates itself from here on) or `Epo-{{VERSION_NUMBER}}-portable.exe`.

@@ -1,10 +1,8 @@
-<!-- v3.0.1 -->
+<!-- v3.0.2 -->
 
-- Epo now updates itself: Windows installs download new versions in the
-  background and apply them on restart; macOS shows new versions in
-  Settings → Updates and brings you to the download page.
-- Intel Macs get native builds again — `Epo-3.0.1-x64.dmg` joins the
-  Apple-silicon build (v3.0.0 shipped arm64 only).
-- Release notes, packages, and the update feed are now produced by one
-  gated pipeline: nothing is published unless the full test, packaging,
-  and boot checks pass first.
+- macOS builds now open the normal way. v3.0.0 and v3.0.1 hit Gatekeeper's
+  "Epo is damaged" dead end on Apple silicon; the app is now properly
+  ad-hoc signed, so first launch is just System Settings → Privacy &
+  Security → Open Anyway.
+- Update checks stay quiet on builds that cannot self-update instead of
+  showing an error in Settings → Updates.
