@@ -303,13 +303,43 @@ export type IpcInvokeChannel =
   | 'tab:hide'
   | 'graph:snapshot'
   | 'stage:set'
-  | 'tour:hold';
+  | 'tour:hold'
+  | 'update:check'
+  | 'update:install'
+  | 'update:open-latest';
+
+// ---------------------------------------------------------------------------
+// Self-updater (docs/RELEASE.md §5)
+// ---------------------------------------------------------------------------
+
+/**
+ * What "update itself" means on this install: 'full' downloads and installs
+ * (Windows NSIS), 'notify' can only announce and open the release page
+ * (unsigned macOS, Windows portable), 'off' means no updater at all
+ * (unpackaged dev runs).
+ */
+export type UpdateMode = 'full' | 'notify' | 'off';
+
+/** The updater's live state, pushed to the renderer as it changes. */
+export interface UpdateStatus {
+  state: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
+  mode: UpdateMode;
+  /** The running app's version (always present — the Updates card shows it). */
+  current: string;
+  /** The offered version, once one is known (available/downloading/ready). */
+  version: string | null;
+  /** Download progress percent while 'downloading' (full mode only). */
+  percent: number | null;
+  /** Human-readable failure, only when state === 'error'. */
+  error: string | null;
+}
 
 /** Payload pushed on each renderer-facing event channel. */
 export interface EpoEventPayloads {
   log: LogEntry;
   status: EpoStatus;
   pruneStatus: PruneStatus;
+  updateStatus: UpdateStatus;
 }
 
 /** Channels pushed from the main process to the renderer. */
@@ -386,6 +416,12 @@ export interface EpoBridge {
    * engine is paused, then restored on release.
    */
   setTourHold(held: boolean): Promise<void>;
+  /** Ask the updater to check the release feed now; resolves with the status. */
+  checkForUpdate(): Promise<UpdateStatus>;
+  /** Full mode, state 'ready': install the downloaded update and restart. */
+  installUpdate(): Promise<UpdateStatus>;
+  /** Notify mode: open the latest-release page in the default browser. */
+  openLatestRelease(): Promise<void>;
   /** Subscribe to a push channel (the streaming log or pushed status). */
   on<C extends EpoEventChannel>(
     channel: C,

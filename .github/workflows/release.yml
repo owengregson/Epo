@@ -1,39 +1,147 @@
-# The release pipeline. Pushing a tag v* (e.g. v3.0.0) builds Epo's desktop
-# packages on real macOS and Windows runners, uploads them as workflow
-# artifacts, and attaches them to a GitHub Release for that tag.
+# The auto-releaser (docs/RELEASE.md §3, pattern shared with the Mental
+# repo). Every push to main answers one question in seconds: has package.json
+# been bumped past the last release (no tag v<version> yet)? If not, the run
+# ends at detect. If so, the full ladder must pass BEFORE any tag exists:
 #
-#   macos-latest   → .dmg + .zip
-#   windows-latest → NSIS installer + portable .exe
+#   verify      the four gates: tsc · biome ci · jest · esbuild
+#   package     macOS (dmg+zip, arm64+x64) and Windows (NSIS+portable),
+#               including the self-updater feed files (latest*.yml, blockmaps)
+#   boot-smoke  the built app boots and survives 25 s on Linux under xvfb
+#   release     compose notes from .github/RELEASE-TEMPLATE.md → tag + DRAFT
+#               release with every asset attached → flip live
 #
-# NOTE: these builds are UNSIGNED. Code signing and macOS notarization are a
-# later step — they need Apple Developer / Windows signing certificates wired
-# in as repository secrets (CSC_LINK / CSC_KEY_PASSWORD, APPLE_ID, …) before
-# `--publish never` can become a signed pipeline. Until then, macOS users
-# must right-click → Open (or clear the quarantine flag) on first launch;
-# see .github/RELEASE-TEMPLATE.md for the user-facing wording.
+# Draft-then-flip: assets attach while the release is a draft, so publishing
+# freezes it complete; drafts are invisible to electron-updater's feed and
+# flipping preserves download URLs. `--latest` only for stable versions —
+# a hyphenated version (3.1.0-beta.1) publishes as a pre-release, which the
+# GitHub provider also derives from the tag's semver, so updaters on the
+# stable channel never see it.
+#
+# If this workflow fails AFTER the tag step, do not re-tag: rerun via
+# workflow_dispatch will no-op at detect (tag exists) — repair the draft
+# release by hand with `gh release`. A bad release is fixed by shipping the
+# next patch, never by deleting (deletion strands updated users).
+#
+# NOTE: these builds are UNSIGNED (code signing/notarization are a later
+# step); macOS self-updating stays notify-only until signing lands.
 name: release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
 
-# Read-only by default; only the publish job (which creates the GitHub
-# Release) gets contents: write — least privilege.
 permissions:
   contents: read
 
-# One release pipeline per tag; never cancel a packaging run mid-flight.
+# One release pipeline at a time; a queued run re-evaluates the version after
+# the previous finishes, so the same version can never double-tag.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.facts.outputs.version }}
+      tag: ${{ steps.facts.outputs.tag }}
+      previous_tag: ${{ steps.facts.outputs.previous_tag }}
+      prerelease: ${{ steps.facts.outputs.prerelease }}
+      should_release: ${{ steps.facts.outputs.should_release }}
+    steps:
+      - name: Checkout (full history + tags — the release ledger)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Read version, last release, and the banner stamp
+        id: facts
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+
+          # The changelog baseline: the nearest release tag in THIS commit's
+          # ancestry (never version sort — unrelated legacy tags could win).
+          previous_tag=$(git describe --tags --abbrev=0 --exclude="$tag" HEAD 2>/dev/null || true)
+          # First release ever: compare from the root commit instead.
+          [ -n "$previous_tag" ] || previous_tag=$(git rev-list --max-parents=0 HEAD | tail -1)
+
+          case "$version" in
+            *-*) prerelease=true ;;
+            *)   prerelease=false ;;
+          esac
+
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            should_release=false
+            echo "Version $version is already released as $tag — nothing to do."
+          else
+            should_release=true
+            echo "Version $version is unreleased (baseline: $previous_tag) — releasing."
+            # The banner is part of the release: fail in seconds, not after
+            # twenty minutes of gates, if the bump forgot the regen
+            # (scripts/cut-release.mjs does both together).
+            if ! grep -q "v$version ·" project/assets/release/banner.svg; then
+              echo "::error::project/assets/release/banner.svg is not stamped v$version — run scripts/cut-release.mjs (it bumps AND regenerates)."
+              exit 1
+            fi
+          fi
+
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "previous_tag=$previous_tag"
+            echo "prerelease=$prerelease"
+            echo "should_release=$should_release"
+          } >> "$GITHUB_OUTPUT"
+
+  # The same four gates a local dev runs; nothing is tagged on a red gate.
+  verify:
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '25.x'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild native modules for Node (jest)
+        run: npm run rebuild:node
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npx jest
+
+      - name: Build
+        run: npm run build
+
+  # Mirrors package-rehearsal.yml (keep the two in sync) — plus the updater
+  # feed files, which ARE the release: latest*.yml + blockmaps drive
+  # electron-updater's download-and-install on user machines.
   package:
-    name: package (${{ matrix.os }})
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - os: macos-latest
@@ -47,7 +155,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node 25
+      - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '25.x'
@@ -58,16 +166,11 @@ jobs:
       - name: Build (esbuild bundle)
         run: npm run build
 
-      # electron-builder rebuilds native modules (better-sqlite3) against the
-      # bundled Electron ABI itself, then packages dist/ for this runner's OS.
-      # Output is forced to release/ so the upload/publish globs below have a
-      # single stable home. --publish never: this job only produces files;
-      # the publish job below owns the GitHub Release.
       - name: Package with electron-builder (unsigned)
         shell: bash # pwsh mangles the dotted -c.directories flag on Windows
         run: npx electron-builder ${{ matrix.targets }} --publish never -c.directories.output=release
 
-      - name: Upload packages
+      - name: Upload packages and updater feed
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: epo-${{ matrix.os }}
@@ -79,15 +182,61 @@ jobs:
             release/latest*.yml
           if-no-files-found: error
 
-  publish:
-    name: publish GitHub Release
-    needs: package
-    if: startsWith(github.ref, 'refs/tags/v')
+  boot-smoke:
+    name: boot smoke (linux)
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # creates the GitHub Release and attaches assets
-
+    timeout-minutes: 20
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '25.x'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild:electron
+
+      - name: Build
+        run: npm run build
+
+      - name: Boot the app and verify it stays up
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq xvfb
+          xvfb-run --auto-servernum npx electron dist/main/main.js --no-sandbox \
+            > boot.log 2>&1 &
+          APP_PID=$!
+          sleep 25
+          if ! kill -0 "$APP_PID" 2>/dev/null; then
+            echo '::error::Electron main process exited during the 25s boot window'
+            cat boot.log
+            exit 1
+          fi
+          echo 'App is alive after 25s — boot smoke passed.'
+          kill "$APP_PID" || true
+
+  release:
+    needs: [detect, verify, package, boot-smoke]
+    if: needs.detect.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # tags v<version> and publishes the GitHub Release
+    steps:
+      - name: Checkout (full history for the changelog)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
       - name: Download all packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -97,17 +246,62 @@ jobs:
       - name: List assets
         run: ls -la release/
 
-      # Release notes: start from the auto-generated changelog; the maintainer
-      # edits the draft into shape using .github/RELEASE-TEMPLATE.md before
-      # publishing (draft: true keeps the release invisible until then).
-      - name: Create GitHub Release
+      # The notes STYLING lives entirely in .github/RELEASE-TEMPLATE.md; this
+      # step only fills the tokens. python does literal (regex-free)
+      # substitution, so backticks, braces, or $ in a commit message are never
+      # mangled. Highlights inject only when release-highlights.md's
+      # first-line marker names THIS tag — stale copy degrades to a generic
+      # line, never the wrong one.
+      - name: Compose release notes
+        env:
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          PREVIOUS_TAG: ${{ needs.detect.outputs.previous_tag }}
+        run: |
+          changelog=$(git log "$PREVIOUS_TAG..HEAD" --no-merges --pretty='- %s (`%h`)')
+          highlights=""
+          if [ -f .github/release-highlights.md ] \
+            && head -1 .github/release-highlights.md | grep -q "<!-- $TAG -->"; then
+            highlights=$(tail -n +2 .github/release-highlights.md)
+          fi
+          [ -n "$highlights" ] || highlights="This release rolls up the changes listed below."
+          export CHANGELOG="$changelog" HIGHLIGHTS="$highlights"
+          python3 - > release-notes.md <<'PY'
+          import os, re
+          t = open('.github/RELEASE-TEMPLATE.md', encoding='utf-8').read()
+          t = re.sub(r'^<!--.*?-->\s*', '', t, flags=re.DOTALL)
+          for token, value in (
+              ('{{VERSION_NUMBER}}', os.environ['VERSION']),
+              ('{{VERSION}}', os.environ['TAG']),
+              ('{{PREVIOUS_TAG}}', os.environ['PREVIOUS_TAG']),
+              ('{{HIGHLIGHTS}}', os.environ['HIGHLIGHTS']),
+              ('{{CHANGELOG}}', os.environ['CHANGELOG']),
+          ):
+              t = t.replace(token, value)
+          print(t.strip())
+          PY
+          echo '── release-notes.md ──'
+          cat release-notes.md
+
+      - name: Tag and create the draft release with all assets
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
-          name: Epo ${{ github.ref_name }}
-          draft: true
-          generate_release_notes: true
+          tag_name: ${{ needs.detect.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Epo ${{ needs.detect.outputs.tag }}
+          body_path: release-notes.md
+          files: release/*
           fail_on_unmatched_files: true
-          files: |
-            release/*.dmg
-            release/*.zip
-            release/*.exe
+          draft: true
+          prerelease: ${{ needs.detect.outputs.prerelease == 'true' }}
+
+      - name: Publish the draft (assets locked in)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          if [ "${{ needs.detect.outputs.prerelease }}" = "true" ]; then
+            gh release edit "$TAG" --draft=false
+          else
+            gh release edit "$TAG" --draft=false --latest
+          fi

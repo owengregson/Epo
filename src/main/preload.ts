@@ -29,6 +29,7 @@ import type {
   ReadFollowersResult,
   SeedCheck,
   StageMode,
+  UpdateStatus,
 } from '@/types';
 
 /** Renderer-facing channel -> underlying IPC channel. */
@@ -36,6 +37,7 @@ const EVENT_CHANNELS: Record<EpoEventChannel, string> = {
   log: 'epo:log',
   status: 'epo:status',
   pruneStatus: 'epo:prune-status',
+  updateStatus: 'epo:update-status',
 };
 
 type AnyListener = (payload: unknown) => void;
@@ -118,6 +120,9 @@ const bridge: EpoBridge = {
   graphSnapshot: (): Promise<GraphSnapshot | null> => ipcRenderer.invoke('graph:snapshot'),
   setStage: (mode: StageMode): Promise<void> => ipcRenderer.invoke('stage:set', mode),
   setTourHold: (held: boolean): Promise<void> => ipcRenderer.invoke('tour:hold', held),
+  checkForUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:check'),
+  installUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:install'),
+  openLatestRelease: (): Promise<void> => ipcRenderer.invoke('update:open-latest'),
   on,
   off,
 };

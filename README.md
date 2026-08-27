@@ -228,7 +228,7 @@ Nothing. Open source, MIT license.
 |---|---|
 | **Runs on** | macOS (Apple silicon and Intel) · Windows 10 and 11 |
 | **Needs** | An Instagram account you own. No other software, no browser plug-ins. |
-| **Talks to** | Instagram only. There is no Epo server. |
+| **Talks to** | Instagram, and GitHub to check for updates. There is no Epo server. |
 | **Your data** | One local SQLite file. *Settings → Clear all data* erases it and signs you out. |
 
 <br>

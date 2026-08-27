@@ -9,6 +9,7 @@ import { useGraphBoard } from '../hooks/useGraphBoard';
 import { useLogFeed } from '../hooks/useLogFeed';
 import { useScrollReset } from '../hooks/useScrollReset';
 import { useToasts } from '../hooks/useToasts';
+import { useUpdateStatus } from '../hooks/useUpdateStatus';
 import { useView, type ViewKey } from '../hooks/useView';
 import { commas } from '../lib/format';
 import { CARD_STAGGER } from '../lib/motion';
@@ -111,6 +112,27 @@ export function App(): h.JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, [goTo, tourOpen]);
 
+  // Self-updater status (pushed from main). One toast per state transition —
+  // suppressed while the tour is open (the tour runs over a quiet app; when it
+  // closes, the effect re-runs and the toast lands then).
+  const updateStatus = useUpdateStatus();
+  const updateToastKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (updateStatus === null || tourOpen) return;
+    const key = `${updateStatus.state}:${updateStatus.version ?? ''}`;
+    if (updateToastKey.current === key) return;
+    if (updateStatus.state === 'ready') {
+      updateToastKey.current = key;
+      toasts.push(
+        'info',
+        `Epo v${updateStatus.version} is downloaded — restart from Settings → Updates, or it installs when you quit.`,
+      );
+    } else if (updateStatus.state === 'available' && updateStatus.mode === 'notify') {
+      updateToastKey.current = key;
+      toasts.push('info', `Epo v${updateStatus.version} is available — see Settings → Updates.`);
+    }
+  }, [updateStatus, tourOpen, toasts]);
+
   // Canonical settings, loaded once (rate meters + dry-run indicator read it; the
   // Settings view edits a draft and reports saves back through onSaved).
   useEffect(() => {
@@ -212,6 +234,7 @@ export function App(): h.JSX.Element {
         goTo={goTo}
         seedPrompt={seedPrompt}
         onReplayTour={openTour}
+        updateStatus={updateStatus}
       />
     ),
   };

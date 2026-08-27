@@ -12,13 +12,14 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, BaseWindow, nativeImage, powerSaveBlocker, screen, WebContentsView } from 'electron';
+import { app, BaseWindow, ipcMain, nativeImage, powerSaveBlocker, screen, WebContentsView } from 'electron';
 import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
 import { claimAppIdentity } from '@/main/app-identity';
 import { ConnectivityMonitor } from '@/main/connectivity';
 import { Foundation } from '@/main/foundation-wiring';
 import { registerIpc } from '@/main/ipc';
 import { OverlayVeil } from '@/main/overlay/veil-view';
+import { EpoUpdater } from '@/main/updater';
 import {
   loadWindowState,
   MIN_WINDOW,
@@ -65,6 +66,7 @@ let overlayVeil: OverlayVeil | null = null;
 let foundation: Foundation | null = null;
 let _disposeIpc: (() => void) | null = null;
 let connectivityMonitor: ConnectivityMonitor | null = null;
+let updater: EpoUpdater | null = null;
 
 /** Where the main window's persisted geometry lives (a settings-file sibling). */
 function windowStateFile(): string {
@@ -261,6 +263,30 @@ function createWindow(): void {
   // No-op unless the user enabled a schedule; cleared in the foundation's dispose.
   found.startScheduledPruneWatcher();
 
+  // --- Self-updater (docs/RELEASE.md §5) -----------------------------------
+  // Wired here and ONLY here — never through the Foundation: jest constructs
+  // Foundation with no electron mock, and electron-updater requires electron
+  // at module load. Dev runs resolve to mode 'off' and never check anything.
+  const upd = new EpoUpdater({
+    onStatus: (status) => {
+      if (!dash.webContents.isDestroyed()) {
+        dash.webContents.send('epo:update-status', status);
+      }
+    },
+  });
+  updater = upd;
+  ipcMain.handle('update:check', async () => upd.check());
+  ipcMain.handle('update:install', async () => upd.install());
+  ipcMain.handle('update:open-latest', async () => upd.openLatest());
+  // The renderer may finish loading after the launch check settled — replay
+  // the current status so the Updates card never starts blank.
+  dash.webContents.on('did-finish-load', () => {
+    if (!dash.webContents.isDestroyed()) {
+      dash.webContents.send('epo:update-status', upd.current());
+    }
+  });
+  upd.start();
+
   // Teardown runs on `before-quit` (below) so it can be awaited; closing the
   // window just drops the UI refs — `window-all-closed` then quits the app.
   win.on('closed', () => {
@@ -324,6 +350,8 @@ app.on('before-quit', (event) => {
   // "No handler registered". Everything is freed when the process exits below.
   const finish = (): void => {
     _disposeIpc = null;
+    updater?.dispose();
+    updater = null;
     connectivityMonitor?.stop();
     connectivityMonitor = null;
     instagramTab?.dispose();

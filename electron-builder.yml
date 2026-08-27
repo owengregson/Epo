@@ -40,7 +40,13 @@ mac:
       arch: [arm64, x64]
   hardenedRuntime: false
   # Unsigned build for now — code signing + notarization are a later step.
+  # NOTE for the self-updater: while unsigned, macOS runs in notify-only
+  # mode (docs/RELEASE.md §5) — Squirrel.Mac refuses unsigned updates.
   identity: null
+  # Kebab-case, arch-suffixed: the defaults contain spaces, which GitHub
+  # release-download URLs mangle. Pinned BEFORE the first release so asset
+  # names (and the notes template that lists them) stay stable forever.
+  artifactName: 'Epo-${version}-${arch}.${ext}'
 
 win:
   # Full-bleed source (no Apple margin); electron-builder derives the .ico.
@@ -48,3 +54,17 @@ win:
   target:
     - nsis
     - portable
+
+nsis:
+  artifactName: 'Epo-Setup-${version}.${ext}'
+
+portable:
+  artifactName: 'Epo-${version}-portable.${ext}'
+
+# The updater feed. This packs app-update.yml (provider + repo) into every
+# build so electron-updater knows where to look; it does NOT auto-publish —
+# the release workflow passes --publish never and owns the GitHub Release.
+publish:
+  provider: github
+  owner: owengregson
+  repo: Epo

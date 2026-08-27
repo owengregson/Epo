@@ -230,7 +230,71 @@ function dividerSvg() {
   );
 }
 
+// --- Release cards (docs/RELEASE.md §4: Epo plate language, Mental's structure;
+// --- pure vector — GitHub strips raster hrefs inside SVGs, so no icon bitmap).
+
+/** 860×120 release banner, stamped with the version from package.json. */
+function releaseBannerSvg(version) {
+  const W = 860;
+  const H = 120;
+  const midY = H / 2;
+  const sub = `v${version} · INSTAGRAM GROWTH ON AUTOPILOT`;
+  const subLength = Math.round(sub.length * 7.4);
+  let ticks = '';
+  for (let i = 1; i < 12; i++) {
+    const x = (W / 12) * i;
+    ticks +=
+      `<line x1="${x}" y1="1.5" x2="${x}" y2="7.5" stroke="${PLATE.stroke}"/>` +
+      `<line x1="${x}" y1="${H - 1.5}" x2="${x}" y2="${H - 7.5}" stroke="${PLATE.stroke}"/>`;
+  }
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Epo v${version}">` +
+    `<defs>${plateDefs('p', PLATE.top, PLATE.bot)}` +
+    `<linearGradient id="rl" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${PLATE.stroke}" stop-opacity="0"/><stop offset="1" stop-color="#3a3a41"/></linearGradient>` +
+    `<linearGradient id="rr" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3a3a41"/><stop offset="1" stop-color="${PLATE.stroke}" stop-opacity="0"/></linearGradient>` +
+    `</defs>` +
+    plateRect(0, 0, W, H, 12, 'p', PLATE.stroke) +
+    ticks +
+    `<rect x="40" y="${midY - 0.5}" width="130" height="1" fill="url(#rl)"/>` +
+    `<rect x="${W - 170}" y="${midY - 0.5}" width="130" height="1" fill="url(#rr)"/>` +
+    `<text x="${W / 2}" y="57" text-anchor="middle" font-family="${UI_FONT}" font-size="30" font-weight="800" letter-spacing="8" fill="#eef1f4" textLength="76" lengthAdjust="spacing">EPO</text>` +
+    `<text x="${W / 2}" y="84" text-anchor="middle" font-family="${MONO_FONT}" font-size="11" letter-spacing="2.5" fill="#9a9aa2" textLength="${subLength}" lengthAdjust="spacing">${sub}</text>` +
+    `</svg>\n`
+  );
+}
+
+// 42h section plates for release bodies — the README's 54h plate formula, scaled.
+const RELEASE_HEADERS = {
+  highlights: 'HIGHLIGHTS',
+  changes: 'CHANGES',
+  install: 'INSTALL',
+  notes: 'NOTES',
+};
+
+function releaseHeaderSvg(title) {
+  const textLength = Math.round(title.length * 8.9);
+  const plateW = 18 + textLength + 18;
+  const totalW = plateW + 2 * (34 + 10);
+  const plateX = 34 + 10;
+  const H = 42;
+  const midY = H / 2;
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" role="img" aria-label="${title}">` +
+    `<defs>${plateDefs('p', PLATE.top, PLATE.bot)}` +
+    `<linearGradient id="rl" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${PLATE.stroke}" stop-opacity="0"/><stop offset="1" stop-color="#3a3a41"/></linearGradient>` +
+    `<linearGradient id="rr" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3a3a41"/><stop offset="1" stop-color="${PLATE.stroke}" stop-opacity="0"/></linearGradient>` +
+    `</defs>` +
+    `<rect x="0" y="${midY - 0.5}" width="34" height="1" fill="url(#rl)"/>` +
+    `<rect x="${totalW - 34}" y="${midY - 0.5}" width="34" height="1" fill="url(#rr)"/>` +
+    plateRect(plateX, 7, plateW, 28, 7, 'p', PLATE.stroke) +
+    `<text x="${totalW / 2}" y="${midY + 3.8}" text-anchor="middle" font-family="${UI_FONT}" font-size="10.5" font-weight="700" letter-spacing="2.5" fill="${PLATE.text}" textLength="${textLength}" lengthAdjust="spacing">${title}</text>` +
+    `</svg>\n`
+  );
+}
+
 // --- Emit everything ---
+
+const VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
 for (const [name, title] of Object.entries(HEADERS)) write(`headers/${name}.svg`, headerSvg(title));
 write('buttons/download.svg', downloadButton());
@@ -239,3 +303,6 @@ for (const [name, fa] of Object.entries(ICONS)) write(`icons/${name}.svg`, iconS
 write('diagrams/loop-dark.svg', loopSvg(true));
 write('diagrams/loop.svg', loopSvg(false));
 write('divider.svg', dividerSvg());
+write('release/banner.svg', releaseBannerSvg(VERSION));
+for (const [name, title] of Object.entries(RELEASE_HEADERS))
+  write(`release/headers/${name}.svg`, releaseHeaderSvg(title));

@@ -245,3 +245,8 @@ export const PATTERN = {
    *  aggregate follow:unfollow ratio; the churn lifecycle legitimately runs ~1:1). */
   MAX_UNFOLLOW_FRACTION_PER_SESSION: 0.5,
 } as const;
+
+export const UPDATER = {
+  /** Update-feed check cadence; the launch check covers work due while closed. */
+  CHECK_INTERVAL_MS: 6 * 3600_000,
+} as const;

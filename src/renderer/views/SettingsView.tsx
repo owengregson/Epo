@@ -1,12 +1,13 @@
 /** @jsx h */
 import { Fragment, h } from 'preact';
-import type { Settings } from '@/types';
+import type { Settings, UpdateStatus } from '@/types';
 import { AdvancedCard } from '../cards/settings/AdvancedCard';
 import { BehaviorCard } from '../cards/settings/BehaviorCard';
 import { DataCard } from '../cards/settings/DataCard';
 import { ProjectionCard } from '../cards/settings/ProjectionCard';
 import { SeedSessionCard } from '../cards/settings/SeedSessionCard';
 import { TargetingCard } from '../cards/settings/TargetingCard';
+import { UpdatesCard } from '../cards/settings/UpdatesCard';
 import type { ConfirmOptions } from '../hooks/useConfirm';
 import { useSettingsDraft } from '../hooks/useSettingsDraft';
 import type { ViewKey } from '../hooks/useView';
@@ -21,6 +22,8 @@ export interface SettingsViewProps {
   seedPrompt: number;
   /** Re-open the intro tour (the Data & session card offers a replay). */
   onReplayTour(): void;
+  /** Live self-updater status (the Updates card mirrors it). */
+  updateStatus: UpdateStatus | null;
 }
 
 /**
@@ -37,6 +40,7 @@ export function SettingsView({
   goTo,
   seedPrompt,
   onReplayTour,
+  updateStatus,
 }: SettingsViewProps): h.JSX.Element {
   const s = useSettingsDraft(settings, onSaved);
 
@@ -71,12 +75,13 @@ export function SettingsView({
       <TargetingCard draft={s.draft} patch={s.patch} set={s.set} index={2} />
       <AdvancedCard draft={s.draft} set={s.set} index={3} />
       <ProjectionCard draft={s.draft} index={4} />
+      <UpdatesCard status={updateStatus} confirm={confirm} index={5} />
       <DataCard
         confirm={confirm}
         onResetSettings={onResetSettings}
         onClearData={onClearData}
         onReplayTour={onReplayTour}
-        index={5}
+        index={6}
       />
     </Fragment>
   );

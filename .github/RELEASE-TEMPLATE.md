@@ -1,54 +1,70 @@
 <!--
-  Epo release-notes template. release.yml creates each release as a DRAFT
-  with an auto-generated changelog; the maintainer shapes the draft with the
-  structure below before publishing. Replace the {{...}} tokens by hand:
-    {{VERSION}}       the release tag (e.g. v3.1.0)
-    {{PREVIOUS_TAG}}  the previous release tag (for the compare link)
-  Voice: benefit first, one idea per bullet, no hype words.
+  Epo release-notes template. The release workflow substitutes the tokens
+  LITERALLY (no regex) and strips this comment:
+    {{VERSION}}         the release tag (e.g. v3.1.0)
+    {{VERSION_NUMBER}}  the bare version (e.g. 3.1.0) — asset filenames
+    {{HIGHLIGHTS}}      .github/release-highlights.md (marker-guarded)
+    {{CHANGELOG}}       git log <previous>..HEAD, one line per commit
+    {{PREVIOUS_TAG}}    the previous release tag (compare link)
+  The banner and plates resolve at the TAG ref, so each release page keeps
+  its own version-stamped art forever. Voice: benefit first, one idea per
+  bullet, no hype words.
 -->
 
-# Epo {{VERSION}}
+<p align="center">
+  <img src="https://raw.githubusercontent.com/owengregson/Epo/{{VERSION}}/project/assets/release/banner.svg" width="860" alt="Epo {{VERSION}}">
+</p>
 
-## Highlights
+<p align="center">
+  <code>macOS (Apple silicon · Intel)</code>
+  <code>Windows 10 / 11</code>
+  <code>open source (MIT)</code>
+  <code>local-first</code>
+</p>
 
-<!-- 2–5 user-facing bullets. What can someone DO now that they couldn't before? -->
+<p align="center">
+  <img src="https://raw.githubusercontent.com/owengregson/Epo/{{VERSION}}/project/assets/release/headers/highlights.svg" height="42" alt="Highlights">
+</p>
 
--
--
+{{HIGHLIGHTS}}
 
-## Changes
+<p align="center">
+  <img src="https://raw.githubusercontent.com/owengregson/Epo/{{VERSION}}/project/assets/release/headers/changes.svg" height="42" alt="Changes">
+</p>
 
-<!-- Keep the auto-generated "What's Changed" commit list here, pruned of
-     noise (chore/ci bumps can be collapsed into one line). -->
+<details>
+<summary>Every commit since {{PREVIOUS_TAG}}</summary>
 
-## Install
+{{CHANGELOG}}
 
-Download the package for your OS from the assets below.
+</details>
 
-**macOS**
+<p align="center">
+  <img src="https://raw.githubusercontent.com/owengregson/Epo/{{VERSION}}/project/assets/release/headers/install.svg" height="42" alt="Install">
+</p>
 
-- `Epo-{{VERSION}}.dmg` — open and drag Epo to Applications (recommended)
-- `Epo-{{VERSION}}-mac.zip` — unzip and move `Epo.app` wherever you like
+**macOS** — download `Epo-{{VERSION_NUMBER}}-arm64.dmg` (Apple silicon) or
+`Epo-{{VERSION_NUMBER}}-x64.dmg` (Intel), open it, and drag Epo to
+Applications. The builds are unsigned for now: right-click → **Open** the
+first time.
 
-**Windows**
+**Windows** — download `Epo-Setup-{{VERSION_NUMBER}}.exe` (recommended — it
+updates itself from here on) or `Epo-{{VERSION_NUMBER}}-portable.exe`.
+SmartScreen may warn on first run: **More info** → **Run anyway**.
 
-- `Epo-Setup-{{VERSION}}.exe` — NSIS installer (recommended)
-- `Epo-{{VERSION}}-portable.exe` — no install; runs from any folder
+**Already running Epo?** Windows installs update themselves in the
+background; macOS shows the new version in Settings → Updates and brings
+you here.
 
-> **These builds are unsigned.** Code signing and notarization are planned
-> for a later release.
->
-> - **macOS** will report the app "cannot be opened because the developer
->   cannot be verified". Right-click `Epo.app` → **Open** → **Open** (needed
->   once), or clear the quarantine flag from a terminal:
->   `xattr -d com.apple.quarantine /Applications/Epo.app`
-> - **Windows** SmartScreen may warn on first run: click **More info** →
->   **Run anyway**.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/owengregson/Epo/{{VERSION}}/project/assets/release/headers/notes.svg" height="42" alt="Notes">
+</p>
 
-## Notes
+- Your database, settings, and Instagram session carry over — updating is a
+  drop-in replacement.
+- The `.zip`, `.blockmap`, and `latest*.yml` assets below are the
+  self-updater's feed; every file stays attached.
+- Epo acts on your Instagram account; use it at your own risk (see the
+  README).
 
-- Your local database and session data carry over — updating is a drop-in
-  replacement.
-- Epo acts on your Instagram account; use it at your own risk (see the README).
-
-**Full Changelog**: https://github.com/owengregson/Epo/compare/{{PREVIOUS_TAG}}...{{VERSION}}
+**Full changelog**: https://github.com/owengregson/Epo/compare/{{PREVIOUS_TAG}}...{{VERSION}}
