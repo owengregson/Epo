@@ -1,0 +1,118 @@
+# Weekly packaging rehearsal — the release pipeline, run on a clock instead of
+# a tag, plus a real boot of the built app. Releases are rare; toolchain and
+# runner images move weekly. Without this, packaging rot (an electron-builder
+# breakage, a native-module ABI surprise, a runner image change) is discovered
+# on tag day. With it, the same steps release.yml runs are proven green every
+# Saturday, and the boot smoke catches the "it bundles but won't start" class
+# (bad native rebuild, a main-process crash on startup) that no unit gate can.
+name: package-rehearsal
+
+on:
+  schedule:
+    - cron: '15 6 * * 6' # Saturdays 06:15 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-rehearsal
+  cancel-in-progress: true
+
+jobs:
+  # Mirrors release.yml's package job exactly (keep the two in sync) — same
+  # runners, same electron-builder targets, same output layout.
+  package:
+    name: package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            targets: --mac dmg zip
+          - os: windows-latest
+            targets: --win nsis portable
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '25.x'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (esbuild bundle)
+        run: npm run build
+
+      - name: Package with electron-builder (unsigned)
+        run: npx electron-builder ${{ matrix.targets }} --publish never -c.directories.output=release
+
+      - name: Keep the artifacts briefly for inspection
+        uses: actions/upload-artifact@v7
+        with:
+          name: rehearsal-${{ matrix.os }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+          if-no-files-found: error
+          retention-days: 3
+
+  boot-smoke:
+    name: boot smoke (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '25.x'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild:electron
+
+      - name: Build
+        run: npm run build
+
+      # Launch the real app under a virtual display and require the main
+      # process to still be alive 25 s later. First run in a fresh userData:
+      # settings default, the intro tour is pending, and the offline hold
+      # covers any network wobble — a healthy build idles; a broken native
+      # module or startup crash exits early and fails the check.
+      - name: Boot the app and verify it stays up
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq xvfb
+          xvfb-run --auto-servernum npx electron dist/main/main.js --no-sandbox \
+            > boot.log 2>&1 &
+          APP_PID=$!
+          sleep 25
+          if ! kill -0 "$APP_PID" 2>/dev/null; then
+            echo '::error::Electron main process exited during the 25s boot window'
+            cat boot.log
+            exit 1
+          fi
+          echo 'App is alive after 25s — boot smoke passed.'
+          kill "$APP_PID" || true
+
+      - name: Attach the boot log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: boot-log
+          path: boot.log
+          if-no-files-found: ignore
+          retention-days: 3

@@ -64,11 +64,36 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # `npm run lint` is `biome ci src`: lint rules + formatter drift +
+      # assists (import organizing) in one gate.
       - name: Lint
         run: npm run lint
 
-      - name: Test
-        run: npm test
+      - name: Test (with coverage)
+        run: npm test -- --coverage --coverageReporters=text --coverageReporters=json-summary --coverageReporters=lcov
+
+      - name: Publish coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            {
+              echo '## Coverage'
+              echo '| Metric | % |'
+              echo '|---|---|'
+              for m in lines statements branches functions; do
+                echo "| $m | $(jq -r ".total.$m.pct" coverage/coverage-summary.json) |"
+              done
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Build
         run: npm run build

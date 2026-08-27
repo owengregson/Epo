@@ -1,0 +1,54 @@
+# Workflow hygiene — lints and security-audits the workflows themselves, so a
+# bad expression, an unpinned dangerous pattern, or a template-injection hole
+# in .github/workflows/** is caught at PR time, before it runs with a token.
+#
+#   actionlint — correctness: expression types, runner labels, shell bugs
+#                (shellcheck), action input names, matrix references.
+#   zizmor     — security: template injection, cache poisoning, dangerous
+#                triggers, excessive permissions, unpinned mutable refs.
+#
+# Path-filtered to workflow changes (plus a weekly sweep for newly-published
+# audits), so it never gates unrelated PRs.
+name: actions-hygiene
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/**', '.github/dependabot.yml']
+  pull_request:
+    paths: ['.github/workflows/**', '.github/dependabot.yml']
+  schedule:
+    - cron: '47 6 * * 1' # Mondays 06:47 UTC — new audit rules vs unchanged workflows
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actions-hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color
+
+  zizmor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Offline persona: audits the workflow files as written. Medium+ findings
+      # fail the job — pendantic/low noise stays out of the gate.
+      - name: Run zizmor
+        run: pipx run zizmor --min-severity medium .github/workflows/

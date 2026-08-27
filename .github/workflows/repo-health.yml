@@ -1,0 +1,113 @@
+# Weekly repo health — live-state checks that drift silently between pushes:
+# do the README/docs links still resolve, how far behind are the deps, and
+# how big are the bundles we actually ship? Results land in the run summary
+# so the trend is one click away; dead links fail the run.
+name: repo-health
+
+on:
+  schedule:
+    - cron: '33 4 * * 3' # Wednesdays 04:33 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repo-health
+  cancel-in-progress: true
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Excluded: our own readme-live raw URLs (they 404 anonymously while the
+      # repo is private — DROP this exclude when the repo goes public),
+      # instagram.com (bot-blocks datacenter IPs), and the release links
+      # (relative ../../releases climb outside the checkout).
+      - name: Check README and docs links
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: >-
+            --no-progress
+            --accept 200..=206,429
+            --exclude 'raw\.githubusercontent\.com/owengregson/Epo'
+            --exclude 'instagram\.com'
+            --exclude 'releases'
+            README.md docs/PRINCIPLES.md docs/HANDOFF.md
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deps-and-size:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '25.x'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      # npm outdated exits 1 whenever anything is behind — that is the point
+      # of the report, not a failure (Dependabot owns the actual bumping).
+      - name: Report outdated dependencies
+        run: |
+          {
+            echo '## Outdated dependencies'
+            echo '```'
+            npm outdated --long || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build production bundles
+        run: npm run build
+
+      - name: Report bundle sizes
+        run: |
+          {
+            echo '## Bundle sizes (minified production build)'
+            echo '| Bundle | Size |'
+            echo '|---|---|'
+            for f in dist/main/main.js dist/main/preload.js dist/renderer/index.js dist/renderer/index.css; do
+              [ -f "$f" ] && echo "| $f | $(du -h "$f" | cut -f1) |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      # Housekeeping: nudge silent issues/PRs after 45 quiet days, close after
+      # 14 more. pinned/security/roadmap are never touched.
+      - name: Mark and close stale issues and PRs
+        uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
+        with:
+          days-before-stale: 45
+          days-before-close: 14
+          exempt-issue-labels: pinned,security,roadmap
+          exempt-pr-labels: pinned,security
+          stale-issue-label: stale
+          stale-pr-label: stale
+          stale-issue-message: >-
+            This issue has been quiet for 45 days, so it is marked stale. It
+            closes in 14 days unless there is new activity or a maintainer
+            removes the label.
+          stale-pr-message: >-
+            This pull request has been quiet for 45 days, so it is marked
+            stale. It closes in 14 days unless there is new activity or a
+            maintainer removes the label.

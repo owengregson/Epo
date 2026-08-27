@@ -38,7 +38,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript-typescript]
+        # `actions` scans the workflow YAML itself (untrusted-input flow,
+        # dangerous triggers) — complementary to actions-hygiene's linters.
+        language: [javascript-typescript, actions]
 
     steps:
       - name: Checkout

@@ -1,0 +1,72 @@
+# Scheduled security audit — the checks that test LIVE state rather than the
+# code in the diff: the npm advisory database moves daily and a leaked secret
+# is dangerous whenever it was committed, so both run on a weekly clock (and
+# on demand), independent of pushes.
+#
+#   npm audit            — runtime deps gate at high+; the full tree
+#                          (dev included) gates at critical, so toolchain
+#                          noise can't drown a real runtime advisory.
+#   npm audit signatures — verifies registry signatures + provenance
+#                          attestations for everything installed (supply chain).
+#   gitleaks             — full-history secret scan of every commit.
+#
+# Complements the PR-time gates: dependency-review vets what a PR adds and
+# CodeQL scans the sources (both activate when the repo goes public); this
+# workflow re-checks what is ALREADY merged as the outside world changes.
+name: security-audit
+
+on:
+  schedule:
+    - cron: '17 3 * * 2' # Tuesdays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit
+  cancel-in-progress: true
+
+jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '25.x'
+          cache: npm
+
+      # audit + signatures need the tree installed; lifecycle scripts, the
+      # Electron binary, and native builds add nothing to either check.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - name: Audit runtime dependencies (high+)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Audit full tree (critical)
+        run: npm audit --audit-level=critical
+
+      - name: Verify registry signatures and provenance
+        run: npm audit signatures
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # gitleaks scans every commit, not just HEAD
+
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
