@@ -38,11 +38,18 @@ mac:
       arch: [arm64, x64]
     - target: zip
       arch: [arm64, x64]
-  hardenedRuntime: false
-  # Unsigned build for now — code signing + notarization are a later step.
-  # NOTE for the self-updater: while unsigned, macOS runs in notify-only
-  # mode (docs/RELEASE.md §5) — Squirrel.Mac refuses unsigned updates.
-  identity: null
+  # Signing is ENV-DRIVEN (docs/RELEASE.md §7): with no certificate the
+  # workflows export CSC_IDENTITY_AUTO_DISCOVERY=false (unsigned build, then
+  # ad-hoc signed by the afterPack hook so Gatekeeper's dialog stays
+  # bypassable); once the MAC_CSC_* / APPLE_* secrets exist, electron-builder
+  # signs with the Developer ID cert and notarizes, and first launch loses
+  # every dialog. hardenedRuntime + entitlements are notarization
+  # requirements, inert while unsigned. NOTE for the self-updater: while
+  # unsigned, macOS runs in notify-only mode — Squirrel.Mac refuses unsigned
+  # updates; flip resolveUpdateMode when signing lands.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   # Kebab-case, arch-suffixed: the defaults contain spaces, which GitHub
   # release-download URLs mangle. Pinned BEFORE the first release so asset
   # names (and the notes template that lists them) stay stable forever.

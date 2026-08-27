@@ -117,15 +117,15 @@ electron-builder.yml so packaged apps carry `app-update.yml`.
 | Windows NSIS | Full: download in background → install on quit (or "Restart now") | electron-updater's NSIS path works unsigned |
 | Windows portable | Notify-only → open the release page | A portable exe cannot replace itself |
 | macOS (unsigned) | Notify-only → open the release page | Squirrel.Mac refuses unsigned updates; full auto-update turns on when code signing lands (flip one flag) |
+| Dev run (`!app.isPackaged`) | Disabled | electron-updater requires a packaged app |
 
 macOS builds are additionally **ad-hoc signed** after packing
-(`scripts/mac-adhoc-sign.cjs`, electron-builder `afterPack`): with
-`identity: null` alone the packaged app's stale Electron signature is
-INVALID, and Apple Silicon Gatekeeper shows the dead-end "Epo is damaged"
-dialog (no Open Anyway; terminal-only rescue). Ad-hoc signing restores the
-normal unidentified-developer flow. This is not Developer-ID signing or
-notarization — those remain the later, paid step.
-| Dev run (`!app.isPackaged`) | Disabled | electron-updater requires a packaged app |
+(`scripts/mac-adhoc-sign.cjs`, electron-builder `afterPack`; skipped when a
+real certificate is configured): unsigned-and-repacked apps carry an
+INVALID signature, and Apple Silicon Gatekeeper shows the dead-end "Epo is
+damaged" dialog (no Open Anyway; terminal-only rescue). Ad-hoc signing
+restores the normal unidentified-developer flow. This is not Developer-ID
+signing or notarization — see §7 for turning those on.
 
 **Hard rules (each one is load-bearing):**
 
@@ -190,3 +190,34 @@ and no analytics" line stays — both remain true.
 - Updater feed unreachable / rate-limited → `idle`, retry at the next tick.
 - User on portable/mac clicks Download → browser opens the release page;
   the app never half-installs.
+
+## 7. Turning on real macOS signing + notarization
+
+The pipeline is already wired: signing is secrets-driven, so this is an
+account-and-secrets task, not an engineering one. Until then, unsigned mac
+builds are ad-hoc signed (first launch: System Settings → Privacy &
+Security → Open Anyway — once per install). Notarization removes every
+dialog.
+
+1. Join the Apple Developer Program ($99/yr) with the Apple ID that owns
+   the app.
+2. In the developer portal, create a **Developer ID Application**
+   certificate; export it (with its private key) from Keychain as a `.p12`.
+3. Repository secrets (Settings → Secrets and variables → Actions):
+   - `MAC_CSC_LINK` — the `.p12`, base64-encoded (`base64 -i cert.p12`)
+   - `MAC_CSC_KEY_PASSWORD` — the `.p12` password
+   - `APPLE_ID` — the Apple ID email
+   - `APPLE_APP_SPECIFIC_PASSWORD` — from appleid.apple.com → App-Specific
+     Passwords
+   - `APPLE_TEAM_ID` — the 10-character team id from the developer portal
+4. Flip macOS from notify to full auto-update in `resolveUpdateMode`
+   (src/main/update-core.ts) and drop the unsigned-copy notes from
+   RELEASE-TEMPLATE.md and the release.yml header.
+5. Cut the next release. The packaging step detects the secrets, signs with
+   the Developer ID certificate, notarizes, and macOS self-updating goes
+   fully automatic (Squirrel.Mac accepts signed updates).
+
+Interim alternative once the repo is public: a Homebrew cask
+(`brew install --cask --no-quarantine epo`) skips the quarantine flag for
+terminal-comfortable users — worth adding, but it is a workaround, not a
+substitute for notarization.

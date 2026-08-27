@@ -18,6 +18,9 @@ const path = require('node:path');
 
 module.exports = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
+  // Real Developer ID signing configured (CSC_LINK) — electron-builder signs
+  // after this hook and would overwrite an ad-hoc signature anyway; skip.
+  if (process.env.CSC_LINK) return;
   const appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], { stdio: 'inherit' });
   execFileSync('codesign', ['--verify', '--deep', '--strict', appPath], { stdio: 'inherit' });

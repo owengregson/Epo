@@ -68,7 +68,7 @@ export function SettingsView({
   return (
     <Fragment>
       {/* The wrapper is the intro tour's spotlight anchor for the seed step. */}
-      <div data-tour="seed">
+      <div class="tour-wrap" data-tour="seed">
         <SeedSessionCard draft={s.draft} patch={s.patch} confirm={confirm} goTo={goTo} requiredPrompt={seedPrompt} />
       </div>
       <BehaviorCard draft={s.draft} patch={s.patch} set={s.set} index={1} />

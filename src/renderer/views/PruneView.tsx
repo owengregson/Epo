@@ -199,7 +199,7 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
         <Badge tone={chip.tone}>{chip.label}</Badge>
       </header>
       {/* The wrapper is the intro tour's spotlight anchor for the prune step. */}
-      <div data-tour="prune-census">
+      <div class="tour-wrap" data-tour="prune-census">
         <PruneCensusCard
           prune={prune}
           scan={scan}
