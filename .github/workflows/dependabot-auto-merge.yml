@@ -1,14 +1,25 @@
-# Dependabot auto-merge — land Dependabot PRs automatically once green.
+# Dependabot auto-merge — lets safe dependency PRs merge themselves once every
+# required gate is green, so the maintainer only reviews the risky ones.
+# (Pattern shared with FableFactions' dependabot-auto-merge workflow.)
 #
-# This workflow only turns ON GitHub's native auto-merge for a Dependabot PR;
-# it never merges anything itself. The main-branch ruleset's required check
-# (`node 25.x` — typecheck + lint + test + build) is what actually gates the
-# merge, so a PR lands the moment CI passes and is held (or discarded) if it
-# does not. Scoped to PRs authored by dependabot[bot], with the minimal write
-# permissions Dependabot-triggered runs are granted.
+# Flow: Dependabot opens a PR → ci.yml runs the four gates (typecheck + lint +
+# jest + build, the required `node 25.x` check on main's ruleset) → this
+# workflow approves patch/minor bumps and turns on GitHub auto-merge → GitHub
+# squash-merges ONLY after the required check passes, and holds (or discards)
+# the PR if it does not. Major bumps are never auto-merged — they wait for a
+# human, because green CI is not sufficient for them here: an Electron major
+# changes the bundled Node ABI and better-sqlite3 majors can change the native
+# build requirements (see .github/dependabot.yml), both runtime risks the unit
+# gate cannot fully prove out.
+#
+# pull_request_target is required so the token has write access to approve and
+# enable auto-merge; it is hard-scoped to actor == dependabot[bot], no PR code
+# is checked out or executed, and only Dependabot's own metadata drives the
+# decision, so there is no untrusted-code execution path.
+
 name: dependabot-auto-merge
 
-on: pull_request
+on: pull_request_target
 
 permissions:
   contents: write
@@ -18,19 +29,33 @@ jobs:
   auto-merge:
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      # Exposes update metadata (type, package, ecosystem) for optional gating,
-      # and confirms the PR genuinely originates from Dependabot.
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@v3
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Enable auto-merge (squash). GitHub holds the merge until every required
-      # status check on main is green, then merges without further intervention.
-      - name: Enable auto-merge
-        run: gh pr merge --auto --squash "$PR_URL"
+      # Patch + minor bumps (including the grouped npm-minor-patch / actions
+      # updates) are low-risk and fully gated by CI; approve them and enable
+      # auto-merge. Anything major stops here for a human.
+      - name: Approve and enable auto-merge
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review --approve "$PR_URL" \
+            --body "Auto-approved: ${{ steps.meta.outputs.dependency-names }} ${{ steps.meta.outputs.update-type }} — merges once the required checks pass."
+          gh pr merge --auto --squash "$PR_URL"
+
+      - name: Comment on major updates (manual review)
+        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "$PR_URL" --body "Major update for ${{ steps.meta.outputs.dependency-names }} — NOT auto-merged. A maintainer must review it: Electron majors change the bundled Node ABI and better-sqlite3 majors can change the native build (.github/dependabot.yml), so green unit CI alone is not proof it runs."
