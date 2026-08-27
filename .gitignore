@@ -84,7 +84,7 @@ out
 dist
 
 # electron-builder output
-release/
+/release/
 
 # Gatsby files
 .cache/
