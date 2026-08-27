@@ -1,7 +1,11 @@
 # electron-builder configuration for `npm run dist` (standalone packaging).
-# The app icon lives in build/: icon.icns (pre-built via iconutil from the
-# 1024x1024 icon.png — regenerate both when icon.svg changes) is used for mac;
-# .ico for win is derived from icon.png via directories.buildResources.
+# App icons live in build/, all GENERATED from the canonical art in
+# project/assets/epo_appicon.png by `node scripts/make-icons.mjs` (rerun it
+# after replacing that png): icon.icns + icon.png are the macOS presentation
+# (artwork padded to Apple's 824-in-1024 icon grid — full-bleed renders
+# oversized in the Dock); icon-win.png is the full-bleed Windows source the
+# .ico is derived from (win.icon below).
+# (build/icon.svg is the superseded pre-2026-08-23 mark; not a source anymore.)
 appId: com.owengregson.epo
 productName: Epo
 
@@ -39,6 +43,8 @@ mac:
   identity: null
 
 win:
+  # Full-bleed source (no Apple margin); electron-builder derives the .ico.
+  icon: build/icon-win.png
   target:
     - nsis
     - portable

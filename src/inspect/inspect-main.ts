@@ -39,6 +39,11 @@ import {
   buildPreLoginBannerScript,
   type InspectRecord,
 } from '@/inspect/injection';
+import { claimAppIdentity } from '@/main/app-identity';
+
+// Identity first (name + userData path) — same reasoning as in `main.ts`; the
+// inspect harness shares the production userData directory and login partition.
+claimAppIdentity();
 
 /** Poll interval while waiting for login. */
 const LOGIN_POLL_MS = HARNESS.LOGIN_POLL_MS;

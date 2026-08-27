@@ -12,7 +12,7 @@
  * except when the binary is missing AND cannot be reinstalled.
  */
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 if (process.platform !== 'darwin') {
   process.exit(0);
@@ -54,19 +54,42 @@ try {
 }
 
 // 3. Brand the dev bundle: unpackaged runs surface the bundle's Info.plist name
-//    and icns in the Dock, so patch them to Epo's. Must happen BEFORE the
-//    codesign step below — editing the bundle afterward would invalidate the
-//    fresh signature. Idempotent: plutil rewrites the same values every run.
+//    and icns in the Dock, so patch them to Epo's. The menu-bar/App-Switcher
+//    title, however, tracks the PROCESS name — i.e. the executable's file name
+//    — which the plist patch alone cannot fix (observed 2026-08-23: plist said
+//    Epo, title still said Electron). So the executable itself is renamed
+//    Electron → Epo, CFBundleExecutable is updated to match, and electron's
+//    path.txt (what `node_modules/.bin/electron` spawns) is pointed at the
+//    renamed binary. electron's installer restores the stock layout whenever
+//    the runtime is re-downloaded; this script runs on every launch and
+//    re-applies. All of it must happen BEFORE the codesign step below —
+//    editing the bundle afterward would invalidate the fresh signature.
 const PLIST = `${APP}/Contents/Info.plist`;
 const ICNS = 'build/icon.icns';
+const EXE_DIR = `${APP}/Contents/MacOS`;
+const PATH_TXT = 'node_modules/electron/path.txt';
 try {
+  if (!existsSync(`${EXE_DIR}/Epo`) && existsSync(`${EXE_DIR}/Electron`)) {
+    renameSync(`${EXE_DIR}/Electron`, `${EXE_DIR}/Epo`);
+  }
+  run('plutil', ['-replace', 'CFBundleExecutable', '-string', 'Epo', PLIST]);
+  const wantPath = 'Electron.app/Contents/MacOS/Epo';
+  if (readFileSync(PATH_TXT, 'utf8') !== wantPath) {
+    writeFileSync(PATH_TXT, wantPath);
+  }
   run('plutil', ['-replace', 'CFBundleName', '-string', 'Epo', PLIST]);
   run('plutil', ['-replace', 'CFBundleDisplayName', '-string', 'Epo', PLIST]);
   if (existsSync(ICNS)) {
     copyFileSync(ICNS, `${APP}/Contents/Resources/electron.icns`);
   }
-  // Bump the bundle's mtime so LaunchServices/Dock drop their cached icon.
+  // Bump the bundle's mtime and force LaunchServices to re-read it — the Dock
+  // and App Switcher cache the old "Electron" name/icon aggressively, and the
+  // mtime bump alone is not always enough to evict them.
   run('touch', [APP]);
+  run(
+    '/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister',
+    ['-f', APP],
+  );
   console.log('[fix-electron-macos] dev bundle branded as Epo (name + icon).');
 } catch (e) {
   console.warn('[fix-electron-macos] dev branding failed (continuing):', e.message);

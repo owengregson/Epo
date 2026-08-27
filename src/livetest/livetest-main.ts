@@ -20,6 +20,11 @@
 
 import { app, BaseWindow, session } from 'electron';
 import { InstagramTab, IG_PARTITION, IG_HOME_URL } from '@/adapter/tab';
+import { claimAppIdentity } from '@/main/app-identity';
+
+// Identity first (name + userData path) — same reasoning as in `main.ts`; the
+// livetest shares the production userData directory and login partition.
+claimAppIdentity();
 
 // Same background-run switches as production `main.ts` (measured 2026-08-14):
 // the livetest must exercise the identical renderer environment, including

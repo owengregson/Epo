@@ -26,6 +26,11 @@ import { CaptureHarness } from '@/capture/capture-harness';
 import * as logger from '@/utils/logger';
 import { sleep } from '@/timing/primitives';
 import { HARNESS } from '@/timing/config';
+import { claimAppIdentity } from '@/main/app-identity';
+
+// Identity first (name + userData path) — same reasoning as in `main.ts`; the
+// capture harness shares the production userData directory and login partition.
+claimAppIdentity();
 
 /** Poll interval while waiting for login. */
 const LOGIN_POLL_MS = HARNESS.LOGIN_POLL_MS;
