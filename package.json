@@ -1,6 +1,6 @@
 {
   "name": "epo",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "Epo — a reliable, safe, observable Instagram growth engine built on a local event-sourced knowledge graph.",
   "main": "dist/main/main.js",
   "type": "commonjs",
