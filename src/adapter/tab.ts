@@ -29,7 +29,7 @@ import { TabUnresponsiveError } from '@/adapter/errors';
 import { SURFACE } from '@/adapter/ig-surface';
 import { toCdpMouseParams } from '@/interaction/cdp-input';
 import type { PointerInputEvent } from '@/interaction/input-driver';
-import { TAB } from '@/timing/config';
+import { RECOVERY, TAB } from '@/timing/config';
 import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 import type { ResponseHandler, TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
@@ -304,6 +304,44 @@ export class InstagramTab {
     } catch (e) {
       logger.warn('tab.probeInput failed', { error: String(e) });
       return false;
+    }
+  }
+
+  /**
+   * Diagnostic: the tab-health canary. Runs a trivial evaluate round-trip, then
+   * counts requestAnimationFrame ticks over a short observation window — a live,
+   * unthrottled renderer (backgroundThrottling is off) ticks many frames; a dead
+   * or wedged one ticks zero. No Instagram literals involved: this probes the
+   * RENDERER, not the page's DOM. Never throws — every failure mode resolves
+   * `healthy: false` so callers route to tab recovery instead of crashing.
+   */
+  async checkHealth(
+    windowMs = RECOVERY.CANARY_WINDOW_MS,
+  ): Promise<{ healthy: boolean; evaluateOk: boolean; rafTicks: number }> {
+    try {
+      const echo = await this.evaluate<number>('1 + 1');
+      if (echo !== 2) return { healthy: false, evaluateOk: false, rafTicks: 0 };
+      // The rAF canary self-resolves: after `windowMs` of frames it reports the
+      // tick count; a backstop timeout resolves with whatever ticked (possibly
+      // zero) so a fully-stalled rAF never rides out the evaluate deadline.
+      const ticks = await this.evaluate<number>(
+        `(() => new Promise((resolve) => {
+          let ticks = 0;
+          const start = Date.now();
+          const step = () => {
+            ticks += 1;
+            if (Date.now() - start >= ${windowMs}) resolve(ticks);
+            else requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
+          setTimeout(() => resolve(ticks), ${windowMs * 4});
+        }))()`,
+      );
+      const rafTicks = typeof ticks === 'number' ? ticks : 0;
+      return { healthy: rafTicks > 0, evaluateOk: true, rafTicks };
+    } catch (e) {
+      logger.warn('tab.checkHealth failed', { error: String(e) });
+      return { healthy: false, evaluateOk: false, rafTicks: 0 };
     }
   }
 

@@ -1,6 +1,6 @@
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
-import { ActionBlockedError } from '@/adapter/errors';
+import { ActionBlockedError, AdapterStaleError, TabUnresponsiveError } from '@/adapter/errors';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
 import { ok, err, type Result } from '@/utils/result';
@@ -119,4 +119,54 @@ test('an ActionBlockedError from the actor maps to BLOCKED (record/candidate unt
   // Blocked, never 'failed': the schedulers leave the record untouched and
   // back off instead of burning a retry/candidate on Instagram throttling.
   expect(outcome.status).toBe('blocked');
+});
+
+// --- Recovery-ladder error classification ------------------------------------------
+
+/** Build with an actor whose follow throws the given error. */
+const buildThrowing = (e: unknown): Built => {
+  const built = build({});
+  built.actor.follow = async () => {
+    throw e;
+  };
+  return built;
+};
+
+test('a PRE-CLICK tab stall maps to blocked/tab-unhealthy (record-neutral, no unverified flag)', async () => {
+  const { actions } = buildThrowing(new TabUnresponsiveError('goto', 30_000));
+  const r = await actions.follow('bob');
+  expect(r.status).toBe('blocked');
+  expect(r.cause).toBe('tab-unhealthy');
+  expect(r.unverifiedClick).toBeUndefined();
+});
+
+test('a POST-CLICK tab stall additionally flags the unverified click (amendment C)', async () => {
+  const { actions } = buildThrowing(new TabUnresponsiveError('evaluate', 15_000, 'post-click'));
+  const r = await actions.follow('bob');
+  expect(r.status).toBe('blocked');
+  expect(r.cause).toBe('tab-unhealthy');
+  expect(r.unverifiedClick).toBe(true);
+});
+
+test('a destroyed webContents maps to blocked/tab-unhealthy', async () => {
+  const { actions } = buildThrowing(
+    new Error('instagram-tab: webContents unavailable (destroyed or not initialized)'),
+  );
+  const r = await actions.follow('bob');
+  expect(r.status).toBe('blocked');
+  expect(r.cause).toBe('tab-unhealthy');
+});
+
+test('an AdapterStaleError maps to failed/drift (retry burned; drift evidence tallied)', async () => {
+  const { actions } = buildThrowing(new AdapterStaleError('actor.follow', 'header button'));
+  const r = await actions.follow('bob');
+  expect(r.status).toBe('failed');
+  expect(r.cause).toBe('drift');
+});
+
+test('an unclassified throw stays a plain failed (no cause)', async () => {
+  const { actions } = buildThrowing(new Error('boom'));
+  const r = await actions.follow('bob');
+  expect(r.status).toBe('failed');
+  expect(r.cause).toBeUndefined();
 });

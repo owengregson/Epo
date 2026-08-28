@@ -17,7 +17,12 @@ import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { ActionAbortedError, ActionBlockedError, AdapterStaleError } from '@/adapter/errors';
+import {
+  ActionAbortedError,
+  ActionBlockedError,
+  AdapterStaleError,
+  TabUnresponsiveError,
+} from '@/adapter/errors';
 import type {
   LocateActionResult,
   LocateConfirmRequestResult,
@@ -169,14 +174,20 @@ export class Actor {
     // the expected post-state before returning. An already-in-target-state
     // button (no click) is an idempotent no-op and resolves ok immediately.
     if (res.clicked) {
-      const verified = await this.verifyPostState(
-        (s) => s === 'following' || s === 'requested',
-      );
-      if (!verified) {
+      // The click was dispatched: a tab stall from here on is POST-CLICK — the
+      // follow may have LANDED unverified. Annotate the error so callers mark
+      // the record for re-observation instead of blindly re-driving it.
+      let verified = false;
+      try {
+        verified = await this.verifyPostState((s) => s === 'following' || s === 'requested');
         // A block interstitial (not drift, not a lost click) is why a verified
         // click can fail to change state — surface it as a BLOCK so the record
         // is left untouched instead of burning retries.
-        await this.throwIfBlocked('actor.follow');
+        if (!verified) await this.throwIfBlocked('actor.follow');
+      } catch (e) {
+        Actor.rethrowMarkedPostClick(e);
+      }
+      if (!verified) {
         return err(
           `actor.follow: post-click state not confirmed (expected Following/Requested) for ${username}`,
         );
@@ -252,11 +263,17 @@ export class Actor {
     // Follow / Follow Back before returning ok. An already-Follow button (no
     // click) is an idempotent no-op and resolves ok immediately.
     if (res.clicked) {
-      const verified = await this.verifyPostState(
-        (s) => s === 'follow' || s === 'follow-back',
-      );
+      // Post-click region (the confirm — where one was needed — has been
+      // clicked by now): a tab stall here means the unfollow may have LANDED
+      // unverified, so annotate the error for the caller's re-observation.
+      let verified = false;
+      try {
+        verified = await this.verifyPostState((s) => s === 'follow' || s === 'follow-back');
+        if (!verified) await this.throwIfBlocked('actor.unfollow');
+      } catch (e) {
+        Actor.rethrowMarkedPostClick(e);
+      }
       if (!verified) {
-        await this.throwIfBlocked('actor.unfollow');
         return err(
           `actor.unfollow: post-click state not confirmed (expected Follow/Follow Back) for ${username}`,
         );
@@ -726,5 +743,18 @@ export class Actor {
       (r) => Boolean(r?.found && accept(r.state)),
     );
     return Boolean(probe?.found && accept(probe.state));
+  }
+
+  /**
+   * Re-throw an error escaping the POST-CLICK region: a `TabUnresponsiveError`
+   * is re-thrown annotated with `phase: 'post-click'` (the click was dispatched,
+   * so the action may have landed on Instagram unverified); everything else
+   * passes through untouched. Declared `never` so callers keep flow analysis.
+   */
+  private static rethrowMarkedPostClick(e: unknown): never {
+    if (e instanceof TabUnresponsiveError && e.phase === undefined) {
+      throw new TabUnresponsiveError(e.component, e.timeoutMs, 'post-click');
+    }
+    throw e;
   }
 }

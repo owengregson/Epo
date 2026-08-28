@@ -32,7 +32,7 @@ import {
 } from '@/adapter/identity';
 import {
   asFetchEnvelope,
-  envelopeLooksLikeHtml,
+  classifyEnvelope,
   isShapeMismatch,
   SURFACE,
 } from '@/adapter/ig-surface';
@@ -1335,10 +1335,46 @@ export class Foundation {
       }
     }
     if (this.disposing || this.graph === null) return;
+    // The recovery ladder keeps the full history: a watchdog-driven tab
+    // recovery is a 'tab-unhealthy' note in its tally (a note, never a hold).
+    this.graph.engine.noteExternalTabRecovery();
     const status = await this.startEngine();
     logger.warn('foundation.stepWatchdog: engine restarted after recovery', {
       state: status.state,
     });
+  }
+
+  /**
+   * The halt-time diagnostic bundle (recovery-terminal halts): input probe,
+   * tab canary, and the recovery ladder's failure-kind tally — logged at error
+   * level so the halt log states decisively which layer failed. Best-effort;
+   * never throws.
+   */
+  private async runHaltDiagnostics(reason: string): Promise<void> {
+    try {
+      const recovery = this.graph?.engine.recoverySnapshot() ?? null;
+      const inputOk =
+        typeof this.tab.probeInput === 'function' ? await this.tab.probeInput() : null;
+      const canary =
+        typeof this.tab.checkHealth === 'function' ? await this.tab.checkHealth() : null;
+      logger.error('foundation: halt diagnostics', {
+        reason,
+        inputProbe: inputOk,
+        canary,
+        recovery,
+      });
+      if (inputOk === false) {
+        logger.error(
+          'foundation: input probe FAILED — dispatched events are NOT reaching the page',
+        );
+      } else if (inputOk === true) {
+        logger.warn(
+          'foundation: input probe OK — events reach the page; the failure is at the page/service layer',
+        );
+      }
+    } catch (e) {
+      logger.warn('foundation: halt diagnostics errored', { error: String(e) });
+    }
   }
 
   /**
@@ -1351,6 +1387,23 @@ export class Foundation {
     if (this.disposing || this.tourHold || this.activeDriver !== null) return;
     const graph = await this.builtGraph();
     if (graph === null) return;
+    // Amendment A — rate-limit-halt cool-down: a growth halt caused by a rate
+    // wall frees the tab, but launching a census walk into the same wall would
+    // deepen the block. Any rate-limit-classified halt keeps the scheduled
+    // prune (scan AND run paths) off the tab for the cool-down window.
+    const halt = graph.engine.lastHaltInfo();
+    if (
+      halt !== null &&
+      (halt.reason === 'recovery-exhausted' || halt.reason === 'sentinel:action-blocked') &&
+      graph.clock.now() - halt.at < RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS
+    ) {
+      logger.info('foundation: scheduled prune skipped — rate-limit halt cool-down', {
+        haltReason: halt.reason,
+        haltAt: halt.at,
+        cooldownMs: RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS,
+      });
+      return;
+    }
     const settings = this.resolveSettings();
     if (!pruneDue(settings.pruneScheduleDays, settings.pruneLastRunAt, graph.clock.now())) {
       return;
@@ -1764,28 +1817,31 @@ export class Foundation {
       pacing,
       unfollowFeed,
       sweepCadence,
+      // The recovery ladder's tab-diagnostics port: input probe + renderer
+      // canary decide tab-vs-rate-wall at entry; recoverTab is the repair.
+      // Guarded so partially-shaped test tabs degrade to "healthy" no-ops.
+      tabDiag: {
+        probeInput: (): Promise<boolean> =>
+          typeof this.tab.probeInput === 'function' ? this.tab.probeInput() : Promise.resolve(true),
+        checkHealth: (): Promise<{ healthy: boolean }> =>
+          typeof this.tab.checkHealth === 'function'
+            ? this.tab.checkHealth()
+            : Promise.resolve({ healthy: true }),
+        recoverTab: (): Promise<void> =>
+          typeof this.tab.recoverTab === 'function' ? this.tab.recoverTab() : Promise.resolve(),
+      },
       onStatus: (s) => this.emit(s),
       onHalt: (reason) => {
         logger.warn('foundation: engine halted', { reason });
-        // Systemic-failure triage: state decisively whether input events are
-        // reaching the page (adapter/selector problem) or not (pipeline dead).
-        if (reason === 'actions-failing' && typeof this.tab.probeInput === 'function') {
-          void this.tab
-            .probeInput()
-            .then((received) => {
-              if (received) {
-                logger.warn(
-                  'foundation: input probe OK — events reach the page; actions-failing is a page/selector issue',
-                );
-              } else {
-                logger.error(
-                  'foundation: input probe FAILED — dispatched events are NOT reaching the page',
-                );
-              }
-            })
-            .catch((e: unknown) =>
-              logger.warn('foundation: input probe errored', { error: String(e) }),
-            );
+        // Recovery-terminal triage, run ONCE per halt: input probe + tab
+        // canary + the ladder's classification tally, at error level — the
+        // halt log states decisively which layer failed.
+        if (
+          reason === 'actions-failing' ||
+          reason === 'recovery-exhausted' ||
+          reason === 'adapter-drift'
+        ) {
+          void this.runHaltDiagnostics(reason);
         }
       },
     });
@@ -1970,24 +2026,24 @@ export class Foundation {
         return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'error' };
       }
       if (!env.ok) {
-        // Classify the refusal: a login/challenge redirect means our session,
-        // not the seed; an HTML page on an API URL is an IG wall; a 404 is a
-        // genuinely missing user. All are WARN-level typed outcomes.
-        const wall = env.finalUrl
-          ? SURFACE.blockSignatures.find((sig) => sig.pattern.test(env.finalUrl as string))
-          : undefined;
+        // Classify the refusal through the shared envelope classifier: an auth
+        // wall means our session, not the seed; a rate wall / HTML page on an
+        // API URL is IG blocking; a JSON 404 is a genuinely missing user. All
+        // are WARN-level typed outcomes.
+        const cls = classifyEnvelope(env);
         const reason =
-          wall?.status === 'logged-out'
+          cls.wall === 'logged-out'
             ? 'logged-out'
-            : wall !== undefined || envelopeLooksLikeHtml(env)
+            : cls.kind === 'rate-limited' || cls.kind === 'auth'
               ? 'blocked'
-              : env.status === 404
+              : cls.kind === 'gone'
                 ? 'not-found'
                 : 'error';
         logger.warn('foundation.checkSeed: non-ok profile response', {
           username: clean,
           status: env.status,
           contentType: env.contentType,
+          classification: cls.kind,
           reason,
         });
         return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason };
@@ -2329,6 +2385,7 @@ export class Foundation {
       netToday: 0,
       online: this.lastOnline,
       haltReason: null,
+      recovery: null,
       pacing: null,
       loggedIn,
     };

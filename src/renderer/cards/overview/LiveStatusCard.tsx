@@ -34,6 +34,8 @@ export function stepLabel(step: Step): string {
       return 'waited · session';
     case 'waited-ceiling':
       return 'waited · ceiling';
+    case 'recovering':
+      return 'backing off';
     case 'halted':
       return 'halted';
     case 'aborted':
@@ -68,6 +70,7 @@ export function parkHeadline(reason: ParkReason): string {
     case 'velocity':
       return 'Pacing';
     case 'enrich-backoff':
+    case 'recovery':
       return 'Backing off';
     default:
       return 'Resting'; // active-hours and between-sessions are both a rest
@@ -82,6 +85,7 @@ function parkGlyph(reason: ParkReason): string {
     case 'velocity':
       return 'gauge-high';
     case 'enrich-backoff':
+    case 'recovery':
       return 'arrows-rotate';
     case 'session':
       return 'hourglass-half';
@@ -108,9 +112,25 @@ export function parkCaption(
       return `between sessions · next session ${at}`;
     case 'velocity':
       return `easing off this hour · resumes ${at}`;
+    case 'recovery':
+      // Fallback when the status carries no recovery detail (attempt numbers
+      // live in `recoveryHoldCaption`, preferred by the card).
+      return `recent actions aren't landing · retrying ~${at}`;
     default:
       return `after fetch trouble · retrying ${at}`;
   }
+}
+
+/** Recovery-hold caption with the ladder's rung — the card's preferred copy. */
+export function recoveryHoldCaption(
+  rec: { attempt: number; maxAttempts: number; resumeAt: number | null },
+  now: number,
+): string {
+  const at =
+    rec.resumeAt != null
+      ? ` ~${sameLocalDay(rec.resumeAt, now) ? '' : 'tomorrow '}${wallTime(rec.resumeAt)}`
+      : ' soon';
+  return `recent actions aren't landing · retrying${at} (attempt ${rec.attempt} of ${rec.maxAttempts})`;
 }
 
 /** Short sentinel readout ("sentinel ok" in the mockup). */
@@ -135,6 +155,10 @@ function haltText(reason: string): string {
   switch (reason) {
     case 'actions-failing':
       return 'Halted — every recent action failed to register. Something systemic (Instagram change, input pipeline) needs a look before restarting.';
+    case 'recovery-exhausted':
+      return 'Halted — actions kept failing after 3 long backoffs (~4h). This is not a normal rate limit; check the session in the Instagram tab, then press Start to try again.';
+    case 'adapter-drift':
+      return "Halted — Instagram's interface appears to have changed. Check for an Epo update.";
     case 'chain-exhausted':
       return 'Halted — the target chain is exhausted. Restart from a new seed.';
     case 'seed-missing':
@@ -182,6 +206,9 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
     running && !offlineHold && parkReason != null && parkedUntil != null
       ? { reason: parkReason, until: parkedUntil }
       : null;
+  // Recovery ladder posture: a holding ladder rides the park-hold layout with
+  // its own rung-aware caption; a probing ladder gets a hint line below.
+  const recovery = status?.recovery ?? null;
   const hold = useHoldCountdown(parkHold?.until ?? null, now);
   const holdRemainText =
     parkHold != null
@@ -245,7 +272,11 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
             ) : parkHold ? (
               <Fragment>
                 <div class="hn-count">{parkHeadline(parkHold.reason)}</div>
-                <div class="hn-cap">{parkCaption(parkHold.reason, parkHold.until, now, done, rate)}</div>
+                <div class="hn-cap">
+                  {parkHold.reason === 'recovery' && recovery != null
+                    ? recoveryHoldCaption(recovery, now)
+                    : parkCaption(parkHold.reason, parkHold.until, now, done, rate)}
+                </div>
               </Fragment>
             ) : (
               <Fragment>
@@ -261,6 +292,11 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
           ) : null}
         </div>
         {offline && !offlineHold ? <div class="hint">Offline — no internet connection detected.</div> : null}
+        {recovery?.phase === 'probing' && running ? (
+          <div class="hint">
+            Testing the waters — attempt {recovery.attempt} of {recovery.maxAttempts}.
+          </div>
+        ) : null}
         {status?.state === 'halted' && status.haltReason != null ? (
           <div class="hint alarm" role="alert">
             {haltText(status.haltReason)}

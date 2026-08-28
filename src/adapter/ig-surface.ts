@@ -66,6 +66,54 @@ export function envelopeLooksLikeHtml(env: FetchEnvelope): boolean {
   return head.trimStart().startsWith('<');
 }
 
+/**
+ * The failure family a read-side {@link FetchEnvelope} belongs to — the
+ * classification the recovery ladder keys off. Version-agnostic: it reads the
+ * envelope's NUMBERS here and delegates every pattern to the active `SURFACE`
+ * (block signatures live only in `src/adapter/versions/*`).
+ */
+export type EnvelopeKind = 'ok' | 'rate-limited' | 'auth' | 'gone' | 'network' | 'drift-suspect';
+
+/** A classified envelope: the failure family plus the matched wall's status. */
+export interface EnvelopeClassification {
+  kind: EnvelopeKind;
+  /** The sentinel status of the wall signature `finalUrl` matched, when one did. */
+  wall?: SentinelStatus;
+}
+
+/**
+ * Classify a fetch envelope into its failure family:
+ *
+ *  - `ok`            — a 2xx JSON body; nothing to recover from.
+ *  - `auth`          — `finalUrl` matched a logged-out/challenge wall: the SESSION
+ *                      is the problem (terminal, exactly like the sentinel path).
+ *  - `rate-limited`  — HTTP 429/5xx, an `action-blocked` wall signature, or an
+ *                      HTML page where an API body belongs (the classic soft wall).
+ *  - `network`       — status 0: the fetch never reached Instagram.
+ *  - `gone`          — a JSON 404: the resource genuinely does not exist.
+ *  - `drift-suspect` — none of the above: an unrecognized refusal shape.
+ *
+ * Ambiguity deliberately defaults TOWARD `rate-limited`: waiting out a wall is
+ * cheap and reversible; declaring drift (or fabricating an empty fact) is not.
+ */
+export function classifyEnvelope(env: FetchEnvelope): EnvelopeClassification {
+  if (env.ok) return { kind: 'ok' };
+  const wall = env.finalUrl
+    ? SURFACE.blockSignatures.find((sig) => sig.pattern.test(env.finalUrl as string))
+    : undefined;
+  if (wall !== undefined) {
+    return {
+      kind: wall.status === 'logged-out' || wall.status === 'challenge' ? 'auth' : 'rate-limited',
+      wall: wall.status,
+    };
+  }
+  if (env.status === 429 || env.status >= 500) return { kind: 'rate-limited' };
+  if (env.status === 0) return { kind: 'network' };
+  if (envelopeLooksLikeHtml(env)) return { kind: 'rate-limited' };
+  if (env.status === 404) return { kind: 'gone' };
+  return { kind: 'drift-suspect' };
+}
+
 /** Sentinel classification of the tab / a response URL. */
 export type SentinelStatus = 'ok' | 'action-blocked' | 'challenge' | 'logged-out';
 

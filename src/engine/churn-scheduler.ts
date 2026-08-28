@@ -22,6 +22,23 @@ export type ChurnActionOutcome = {
   /** True when `ok` but no click happened — the button was already in the target
    *  state, so an external actor is responsible for the relationship (Phase A). */
   alreadyInState?: boolean;
+  /**
+   * Why a non-ok outcome happened, when the cause is classifiable:
+   *  - `'tab-unhealthy'` — the TAB stalled or its webContents was unavailable
+   *    (status `'blocked'`: record-neutral — never a retry, never a fail row;
+   *    the recovery ladder routes it to tab recovery, not the wait ladder).
+   *  - `'drift'` — an `AdapterStaleError`: the expected control is gone
+   *    (status `'failed'`; feeds the ladder's drift-evidence tally).
+   * Absent when the cause is unknown or ordinary.
+   */
+  cause?: 'tab-unhealthy' | 'drift';
+  /**
+   * True when a tab failure landed AFTER the click was dispatched but BEFORE
+   * post-state verification — the action may have LANDED on Instagram. The
+   * scheduler marks the record so the next attempt's already-in-state pre-check
+   * resolves ownership (a landed click is recorded as OURS, never re-clicked).
+   */
+  unverifiedClick?: boolean;
 };
 
 /**
@@ -116,6 +133,33 @@ export class ChurnScheduler {
    * no-username paths are neutral — nothing was clicked.
    */
   private consecutiveFailures = 0;
+  /**
+   * How many of the current consecutive failures were DRIFT-caused
+   * (`AdapterStaleError` — the expected control is gone). The recovery ladder
+   * compares this to the failure window: a window that is ALL drift, with clean
+   * tab diagnostics, is drift evidence; anything mixed stays presumed
+   * rate-limited. Reset together with {@link consecutiveFailures}.
+   */
+  private consecutiveDriftFailures = 0;
+  /**
+   * Consecutive `'blocked'` outcomes ACROSS records — the rate-wall streak the
+   * recovery ladder enters on (mirrors the prune engine's consecutive-block
+   * breaker). Blocks are record-NEUTRAL (nothing was clicked, no retry burned);
+   * this window exists so a persistent wall is escalated instead of the same
+   * record being re-driven at full pace forever. Reset by any verified
+   * ok/simulated outcome.
+   */
+  private consecutiveBlocked = 0;
+  /**
+   * Amendment C — records whose last attempt ended in a POST-CLICK tab failure:
+   * the click was dispatched but never verified, so the action may have LANDED.
+   * On the next attempt, an already-in-state result for a marked record is OUR
+   * landed click (recorded as ours: ledger + transition), not an external
+   * actor's. In-memory by design (the cheapest correct form): across a relaunch
+   * the marker is lost and the next attempt degrades to the existing safe
+   * leave-alone reconcile — never a re-click, never a phantom ledger row.
+   */
+  private readonly unverifiedClicks = new Map<string, 'follow' | 'unfollow'>();
 
   /** Swap the live config in place (used when Settings are updated at runtime). */
   applyConfig(cfg: ChurnConfig): void {
@@ -127,9 +171,25 @@ export class ChurnScheduler {
     return this.consecutiveFailures;
   }
 
+  /** How many of the current failure window's fails were drift-caused. */
+  consecutiveDriftFailureCount(): number {
+    return this.consecutiveDriftFailures;
+  }
+
   /** Give a restarted engine a fresh failure window (called when it halts). */
   resetConsecutiveFailures(): void {
     this.consecutiveFailures = 0;
+    this.consecutiveDriftFailures = 0;
+  }
+
+  /** How many actions in a row came back blocked (see {@link consecutiveBlocked}). */
+  consecutiveBlockedCount(): number {
+    return this.consecutiveBlocked;
+  }
+
+  /** Clear the blocked window (the engine calls this when the ladder enters). */
+  resetConsecutiveBlocked(): void {
+    this.consecutiveBlocked = 0;
   }
 
   constructor(deps: ChurnDeps) {
@@ -213,18 +273,28 @@ export class ChurnScheduler {
    * On success: record the action in the ledger, transition the record, and (when
    * `ownPk` is known) observe the directed edge. On failure: record the failed
    * action and bump `retryCount`, abandoning once `maxRetries` is exceeded.
+   *
+   * Returns the attempt's outcome status so the Engine can route it: `'blocked'`
+   * gets a short park (never a full-pace re-drive of the same record) and feeds
+   * the recovery ladder's blocked streak; `'noop'` means nothing touched
+   * Instagram (non-actionable record, or a due record with no username whose
+   * retry was burned store-side).
    */
-  async execute(rec: FollowRecord, now: number = this.clock.now()): Promise<void> {
+  async execute(
+    rec: FollowRecord,
+    now: number = this.clock.now(),
+  ): Promise<ChurnActionOutcome['status'] | 'noop'> {
     if (rec.state === 'queued') {
-      await this.executeFollow(rec, now);
-    } else if (rec.state === 'unfollow_queued') {
-      await this.executeUnfollow(rec, now);
-    } else {
-      log.warn('churn: execute called on a non-actionable record', {
-        pk: rec.accountPk,
-        state: rec.state,
-      });
+      return this.executeFollow(rec, now);
     }
+    if (rec.state === 'unfollow_queued') {
+      return this.executeUnfollow(rec, now);
+    }
+    log.warn('churn: execute called on a non-actionable record', {
+      pk: rec.accountPk,
+      state: rec.state,
+    });
+    return 'noop';
   }
 
   /**
@@ -248,7 +318,10 @@ export class ChurnScheduler {
    *  - `'simulated'` → advance to `pending_followback` only; no edge, no ledger row.
    *  - `'failed'`    → ledger `fail` + retry/abandon.
    */
-  private async executeFollow(rec: FollowRecord, now: number): Promise<void> {
+  private async executeFollow(
+    rec: FollowRecord,
+    now: number,
+  ): Promise<ChurnActionOutcome['status'] | 'noop'> {
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
       // MUST make progress: `nextDue` is a pure ranking with no memory, so a
@@ -257,7 +330,7 @@ export class ChurnScheduler {
       // retry (no ledger row — nothing touched Instagram) until it abandons.
       log.warn('churn: no username for due follow, burning a retry', { pk: rec.accountPk });
       this.retryOrAbandon(rec, 'follow');
-      return;
+      return 'noop';
     }
 
     let outcome: ChurnActionOutcome = { status: 'failed' };
@@ -274,15 +347,45 @@ export class ChurnScheduler {
 
     switch (outcome.status) {
       case 'blocked':
-        // Budget/sentinel closed BEFORE any click — retry when the window clears.
+        // Budget/sentinel/tab closed BEFORE any confirmed click — retry when
+        // the window clears. Record-neutral, but the streak feeds the ladder.
+        this.consecutiveBlocked += 1;
+        if (outcome.unverifiedClick === true) {
+          // Amendment C: the click was dispatched, then the tab stalled — the
+          // follow may have landed. The NEXT attempt's pre-check arbitrates.
+          this.unverifiedClicks.set(rec.accountPk, 'follow');
+          log.warn('churn: follow click dispatched but unverified (tab stall), will re-observe', {
+            pk: rec.accountPk,
+            username,
+          });
+        }
         log.info('churn: follow blocked, leaving record untouched', {
           pk: rec.accountPk,
           username,
+          cause: outcome.cause ?? null,
         });
-        return;
+        return 'blocked';
       case 'ok':
         this.consecutiveFailures = 0;
+        this.consecutiveDriftFailures = 0;
+        this.consecutiveBlocked = 0;
         if (outcome.alreadyInState === true) {
+          if (this.unverifiedClicks.get(rec.accountPk) === 'follow') {
+            // Amendment C: OUR previous click landed (the tab stalled before it
+            // could verify) — this is our action, not an external actor's.
+            // Record it as ours: ledger row, lifecycle transition, edge.
+            this.unverifiedClicks.delete(rec.accountPk);
+            this.store.recordAction(rec.accountPk, 'follow', 'ok', now);
+            this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
+            if (this.ownPk !== undefined) {
+              this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', true, now);
+            }
+            log.info('churn: unverified follow confirmed landed, recorded as ours', {
+              pk: rec.accountPk,
+              username,
+            });
+            return 'ok';
+          }
           // Phase A: nothing was clicked — an external actor already follows this
           // account. Reconcile (drops the record to `external` + writes the edge);
           // NO ledger row and NO pending_followback — the follow was never ours.
@@ -291,29 +394,37 @@ export class ChurnScheduler {
             pk: rec.accountPk,
             username,
           });
-          return;
+          return 'ok';
         }
+        this.unverifiedClicks.delete(rec.accountPk);
         this.store.recordAction(rec.accountPk, 'follow', 'ok', now);
         this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
         if (this.ownPk !== undefined) {
           this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', true, now);
         }
         log.info('churn: followed', { pk: rec.accountPk, username });
-        return;
+        return 'ok';
       case 'simulated':
         // f12: advance the lifecycle under dry-run WITHOUT a real edge or ledger row.
         this.consecutiveFailures = 0;
+        this.consecutiveDriftFailures = 0;
+        this.consecutiveBlocked = 0;
+        this.unverifiedClicks.delete(rec.accountPk);
         this.store.upsertFollowRecord({ ...rec, state: 'pending_followback', followedAt: now });
         log.info('churn: dry-run follow simulated, state advanced (no edge/ledger)', {
           pk: rec.accountPk,
           username,
         });
-        return;
+        return 'simulated';
       case 'failed':
+        // A definitive failed click also settles an earlier unverified one: had
+        // it landed, this attempt would have read already-in-state instead.
+        this.unverifiedClicks.delete(rec.accountPk);
         this.consecutiveFailures += 1;
+        if (outcome.cause === 'drift') this.consecutiveDriftFailures += 1;
         this.store.recordAction(rec.accountPk, 'follow', 'fail', now);
         this.retryOrAbandon(rec, 'follow');
-        return;
+        return 'failed';
     }
   }
 
@@ -325,13 +436,16 @@ export class ChurnScheduler {
    * `unfollowed` + removes the edge; `'simulated'` advances to `unfollowed` only
    * (no edge/ledger); `'failed'` retries/abandons.
    */
-  private async executeUnfollow(rec: FollowRecord, now: number): Promise<void> {
+  private async executeUnfollow(
+    rec: FollowRecord,
+    now: number,
+  ): Promise<ChurnActionOutcome['status'] | 'noop'> {
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
       // Same starvation guard as the follow path: progress or abandon.
       log.warn('churn: no username for due unfollow, burning a retry', { pk: rec.accountPk });
       this.retryOrAbandon(rec, 'unfollow');
-      return;
+      return 'noop';
     }
 
     let outcome: ChurnActionOutcome = { status: 'failed' };
@@ -348,14 +462,41 @@ export class ChurnScheduler {
 
     switch (outcome.status) {
       case 'blocked':
+        this.consecutiveBlocked += 1;
+        if (outcome.unverifiedClick === true) {
+          // Amendment C: post-click tab stall — the unfollow may have landed.
+          this.unverifiedClicks.set(rec.accountPk, 'unfollow');
+          log.warn('churn: unfollow click dispatched but unverified (tab stall), will re-observe', {
+            pk: rec.accountPk,
+            username,
+          });
+        }
         log.info('churn: unfollow blocked, leaving record untouched', {
           pk: rec.accountPk,
           username,
+          cause: outcome.cause ?? null,
         });
-        return;
+        return 'blocked';
       case 'ok':
         this.consecutiveFailures = 0;
+        this.consecutiveDriftFailures = 0;
+        this.consecutiveBlocked = 0;
         if (outcome.alreadyInState === true) {
+          if (this.unverifiedClicks.get(rec.accountPk) === 'unfollow') {
+            // Amendment C: OUR previous unfollow landed unverified — record it
+            // as ours (ledger + close + edge removal), not as external.
+            this.unverifiedClicks.delete(rec.accountPk);
+            this.store.recordAction(rec.accountPk, 'unfollow', 'ok', now);
+            this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
+            if (this.ownPk !== undefined) {
+              this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', false, now);
+            }
+            log.info('churn: unverified unfollow confirmed landed, recorded as ours', {
+              pk: rec.accountPk,
+              username,
+            });
+            return 'ok';
+          }
           // Phase A: nothing was clicked — already not following (an external
           // actor unfollowed for us). Reconcile the edge, close the record, and
           // write NO ledger row — the unfollow was not our action.
@@ -365,29 +506,35 @@ export class ChurnScheduler {
             pk: rec.accountPk,
             username,
           });
-          return;
+          return 'ok';
         }
+        this.unverifiedClicks.delete(rec.accountPk);
         this.store.recordAction(rec.accountPk, 'unfollow', 'ok', now);
         this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
         if (this.ownPk !== undefined) {
           this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', false, now);
         }
         log.info('churn: unfollowed', { pk: rec.accountPk, username });
-        return;
+        return 'ok';
       case 'simulated':
         // f12: advance the lifecycle under dry-run WITHOUT removing a real edge.
         this.consecutiveFailures = 0;
+        this.consecutiveDriftFailures = 0;
+        this.consecutiveBlocked = 0;
+        this.unverifiedClicks.delete(rec.accountPk);
         this.store.upsertFollowRecord({ ...rec, state: 'unfollowed' });
         log.info('churn: dry-run unfollow simulated, state advanced (no edge/ledger)', {
           pk: rec.accountPk,
           username,
         });
-        return;
+        return 'simulated';
       case 'failed':
+        this.unverifiedClicks.delete(rec.accountPk);
         this.consecutiveFailures += 1;
+        if (outcome.cause === 'drift') this.consecutiveDriftFailures += 1;
         this.store.recordAction(rec.accountPk, 'unfollow', 'fail', now);
         this.retryOrAbandon(rec, 'unfollow');
-        return;
+        return 'failed';
     }
   }
 

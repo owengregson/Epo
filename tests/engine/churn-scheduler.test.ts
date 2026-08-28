@@ -33,11 +33,19 @@ class FakeActions implements ChurnActions {
   /** Phase A: report an `ok` that clicked nothing (already in the target state). */
   followAlreadyInState?: boolean;
   unfollowAlreadyInState?: boolean;
+  /** Recovery-ladder classification of a non-ok outcome (tab stall / drift). */
+  followCause?: ChurnActionOutcome['cause'];
+  unfollowCause?: ChurnActionOutcome['cause'];
+  /** Amendment C: the click was dispatched but its verification stalled. */
+  followUnverifiedClick?: boolean;
+  unfollowUnverifiedClick?: boolean;
   async follow(username: string): Promise<ChurnActionOutcome> {
     this.followCalls.push(username);
     return {
       status: this.followStatus ?? (this.followOk ? 'ok' : 'failed'),
       alreadyInState: this.followAlreadyInState,
+      cause: this.followCause,
+      unverifiedClick: this.followUnverifiedClick,
     };
   }
   async unfollow(username: string): Promise<ChurnActionOutcome> {
@@ -45,6 +53,8 @@ class FakeActions implements ChurnActions {
     return {
       status: this.unfollowStatus ?? (this.unfollowOk ? 'ok' : 'failed'),
       alreadyInState: this.unfollowAlreadyInState,
+      cause: this.unfollowCause,
+      unverifiedClick: this.unfollowUnverifiedClick,
     };
   }
 }
@@ -476,4 +486,190 @@ test('blocked outcomes are NEUTRAL for the failure window (nothing was clicked)'
 
   sched.resetConsecutiveFailures();
   expect(sched.consecutiveFailureCount()).toBe(0);
+});
+
+// --- Recovery-ladder plumbing: outcome returns + blocked/drift windows -------------
+
+test('execute RETURNS the attempt outcome status (ok / failed / blocked / simulated)', async () => {
+  const { store, clock, actions, sched } = makeHarness();
+  for (const pk of ['r1', 'r2', 'r3', 'r4']) {
+    seedUsername(store, pk, `user${pk}`);
+  }
+  store.upsertFollowRecord(rec({ accountPk: 'r1' }));
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('ok');
+
+  store.upsertFollowRecord(rec({ accountPk: 'r2' }));
+  actions.followStatus = 'failed';
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('failed');
+
+  store.upsertFollowRecord(rec({ accountPk: 'r3' }));
+  actions.followStatus = 'blocked';
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('blocked');
+
+  actions.followStatus = 'simulated';
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('simulated');
+});
+
+test("execute returns 'noop' when nothing touched Instagram (no username / non-actionable)", async () => {
+  const { store, clock, actions, sched } = makeHarness();
+  // A due record whose account has no username: the retry burns store-side.
+  store.upsertFollowRecord(rec({ accountPk: 'nn' }));
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('noop');
+  expect(actions.followCalls).toEqual([]);
+
+  // A non-actionable state is a warned no-op.
+  const held = rec({ accountPk: 'h', state: 'followed_back', followedBackAt: T0, holdUntil: T0 + 999 });
+  store.upsertFollowRecord(held);
+  await expect(sched.execute(held, clock.now())).resolves.toBe('noop');
+});
+
+test('consecutiveBlockedCount counts blocked outcomes across records and resets on a verified success', async () => {
+  const { store, clock, actions, sched } = makeHarness();
+  for (const pk of ['b1', 'b2', 'b3']) {
+    seedUsername(store, pk, `user${pk}`);
+    store.upsertFollowRecord(rec({ accountPk: pk }));
+  }
+
+  actions.followStatus = 'blocked';
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  expect(sched.consecutiveBlockedCount()).toBe(2);
+
+  // A verified success clears the blocked window.
+  actions.followStatus = undefined;
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  expect(sched.consecutiveBlockedCount()).toBe(0);
+
+  // The explicit reset (used at ladder entry) also clears it.
+  actions.followStatus = 'blocked';
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  expect(sched.consecutiveBlockedCount()).toBe(1);
+  sched.resetConsecutiveBlocked();
+  expect(sched.consecutiveBlockedCount()).toBe(0);
+});
+
+test('drift-caused fails are tallied inside the failure window and reset with it', async () => {
+  const { store, clock, actions, sched } = makeHarness();
+  for (const pk of ['d1', 'd2', 'd3']) {
+    seedUsername(store, pk, `user${pk}`);
+    store.upsertFollowRecord(rec({ accountPk: pk }));
+  }
+
+  actions.followStatus = 'failed';
+  actions.followCause = 'drift';
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  expect(sched.consecutiveFailureCount()).toBe(2);
+  expect(sched.consecutiveDriftFailureCount()).toBe(2);
+
+  sched.resetConsecutiveFailures();
+  expect(sched.consecutiveDriftFailureCount()).toBe(0);
+});
+
+test('a tab-unhealthy blocked outcome is record-NEUTRAL: no retry burned, no fail row', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  seedUsername(store, 't1', 'usert1');
+  store.upsertFollowRecord(rec({ accountPk: 't1', retryCount: 1 }));
+
+  actions.followStatus = 'blocked';
+  actions.followCause = 'tab-unhealthy';
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('blocked');
+
+  const got = store.getFollowRecord('t1')!;
+  expect(got.state).toBe('queued'); // untouched
+  expect(got.retryCount).toBe(1); // NOT bumped
+  expect(store.actionCountSince(0)).toBe(0); // no ledger row
+  expect(sched.consecutiveFailureCount()).toBe(0); // never a record failure
+});
+
+// --- Amendment C: post-click tab failure → re-observe before re-claiming -----------
+
+test('amendment C: an unverified post-click follow is claimed as OURS on the next already-in-state attempt', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  store.setOwnPk(OWN);
+  seedUsername(store, 'uv', 'useruv');
+  store.upsertFollowRecord(rec({ accountPk: 'uv', state: 'queued' }));
+
+  // Attempt 1: the click was dispatched, then the tab stalled before verification.
+  actions.followStatus = 'blocked';
+  actions.followCause = 'tab-unhealthy';
+  actions.followUnverifiedClick = true;
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('blocked');
+  expect(store.getFollowRecord('uv')!.state).toBe('queued'); // untouched
+  expect(store.actionCountSince(0)).toBe(0);
+
+  // Attempt 2: the pre-check reads already-following — that is OUR landed click.
+  actions.followStatus = undefined;
+  actions.followCause = undefined;
+  actions.followUnverifiedClick = undefined;
+  actions.followAlreadyInState = true;
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('ok');
+
+  const got = store.getFollowRecord('uv')!;
+  expect(got.state).toBe('pending_followback'); // recorded as ours, NOT external
+  expect(got.followedAt).toBe(T0);
+  expect(store.actionCountSince(0)).toBe(1); // the ledger row was written
+  expect(store.getEdge(OWN, 'uv', 'follows')?.status).toBe('active');
+});
+
+test('amendment C: an unverified post-click unfollow is claimed as OURS when already-not-following', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  store.setOwnPk(OWN);
+  seedUsername(store, 'uw', 'useruw');
+  store.observeEdge(OWN, 'uw', 'follows', true, T0);
+  store.upsertFollowRecord(rec({ accountPk: 'uw', state: 'unfollow_queued', unfollowDueAt: T0 }));
+
+  actions.unfollowStatus = 'blocked';
+  actions.unfollowCause = 'tab-unhealthy';
+  actions.unfollowUnverifiedClick = true;
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('blocked');
+  expect(store.getFollowRecord('uw')!.state).toBe('unfollow_queued'); // untouched
+
+  actions.unfollowStatus = undefined;
+  actions.unfollowCause = undefined;
+  actions.unfollowUnverifiedClick = undefined;
+  actions.unfollowAlreadyInState = true;
+  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('ok');
+
+  expect(store.getFollowRecord('uw')!.state).toBe('unfollowed');
+  expect(store.actionCountSince(0)).toBe(1); // ours: ledger row written
+  expect(store.getEdge(OWN, 'uw', 'follows')?.status).toBe('removed');
+});
+
+test('amendment C: WITHOUT the marker, already-in-state stays the external leave-alone (no ledger)', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  store.setOwnPk(OWN);
+  seedUsername(store, 'ex', 'userex');
+  store.upsertFollowRecord(rec({ accountPk: 'ex', state: 'queued' }));
+
+  actions.followAlreadyInState = true;
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+
+  expect(store.getFollowRecord('ex')!.state).toBe('external'); // Phase A unchanged
+  expect(store.actionCountSince(0)).toBe(0);
+});
+
+test('amendment C: a definitive FAILED attempt clears the marker (the click did not land)', async () => {
+  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
+  store.setOwnPk(OWN);
+  seedUsername(store, 'fm', 'userfm');
+  store.upsertFollowRecord(rec({ accountPk: 'fm', state: 'queued' }));
+
+  actions.followStatus = 'blocked';
+  actions.followCause = 'tab-unhealthy';
+  actions.followUnverifiedClick = true;
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+
+  // A later verified FAILURE proves the earlier click never landed.
+  actions.followStatus = 'failed';
+  actions.followCause = undefined;
+  actions.followUnverifiedClick = undefined;
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+
+  // A subsequent already-in-state is external again (the marker is gone).
+  actions.followStatus = undefined;
+  actions.followAlreadyInState = true;
+  await sched.execute(sched.nextDue(clock.now())!, clock.now());
+  expect(store.getFollowRecord('fm')!.state).toBe('external');
+  expect(store.actionCountSince(0)).toBe(1); // only the failed attempt's row
 });

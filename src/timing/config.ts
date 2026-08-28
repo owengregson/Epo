@@ -112,6 +112,33 @@ export const RECOVERY = {
   STEP_WATCHDOG_MS: 8 * 60_000,
   /** How often the step watchdog evaluates its fire predicate (cheap in-memory checks). */
   STEP_WATCHDOG_CHECK_MS: 60_000,
+  /** Ladder hold medians (rungs 1..3): escalating long backoffs sized to outlast
+   *  the observed soft rate-limit windows rather than hammer through them. */
+  HOLD_MEDIANS_MS: [60 * 60_000, 90 * 60_000, 120 * 60_000],
+  /** Log-space spread of each hold draw — enough jitter that retries never tick
+   *  at a fixed period, small enough that a rung stays near its median. */
+  HOLD_SIGMA: 0.25,
+  /** Hold-draw floor as a factor of the rung's median (bounded re-draw clamp). */
+  HOLD_MIN_FACTOR: 0.6,
+  /** Hold-draw ceiling as a factor of the rung's median. */
+  HOLD_MAX_FACTOR: 1.6,
+  /** Failed holds tolerated before the terminal `recovery-exhausted` halt. */
+  MAX_HOLDS: 3,
+  /** Consecutive failed outcomes that re-enter recovery AFTER a hold — each
+   *  failed rung burns ~2 ledger rows, not another full cold window of 8. */
+  REENTRY_FAILS: 2,
+  /** Consecutive blocked outcomes that enter recovery (mirrors the prune
+   *  engine's PRUNE_CONSECUTIVE_BLOCK_HALT — three blocks is a wall, not luck). */
+  BLOCKED_STREAK_ENTRY: 3,
+  /** Consecutive walled enrichment cycles that enter recovery instead of
+   *  looping the flat enrich-backoff park forever. */
+  WALLED_CYCLES_ENTRY: 3,
+  /** rAF-canary observation window for the tab-health check — a live renderer
+   *  ticks many frames in this span; a throttled/dead one ticks none. */
+  CANARY_WINDOW_MS: 500,
+  /** Scheduled prune stays off the tab this long after a rate-limit-classified
+   *  halt — a census walk into the same wall would deepen the block. */
+  PRUNE_COOLDOWN_AFTER_RATE_HALT_MS: 2 * 3600_000,
 } as const;
 
 export const RIM = {

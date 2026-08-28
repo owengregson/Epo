@@ -22,11 +22,13 @@ import {
   type EngineEnricher,
   type EngineFollowback,
   type EnginePacing,
+  type EngineTabDiagnostics,
   type EngineUnfollowFeed,
   type EngineScanner,
   type EngineStatus,
   type SleepFn,
 } from '@/engine/engine';
+import { RECOVERY } from '@/timing/config';
 import type { AdvanceResult } from '@/engine/chain-controller';
 import { Scanner, type ScanPlan } from '@/engine/scanner';
 import type { FollowerAcquisition } from '@/rim/types';
@@ -103,9 +105,16 @@ class FakeChurn implements EngineChurn {
   due: FollowRecord[] = [];
   advanceCalls = 0;
   executed: FollowRecord[] = [];
+  /** Scripted outcome execute reports (default 'ok'). */
+  outcome: 'ok' | 'failed' | 'blocked' | 'simulated' | 'noop' = 'ok';
   /** Scripted consecutive-failure readout (the systemic-breakage breaker). */
   failStreak = 0;
+  /** Scripted consecutive-blocked readout (the rate-wall streak). */
+  blockedStreak = 0;
+  /** Scripted drift-caused share of the failure window. */
+  driftStreak = 0;
   resetCalls = 0;
+  resetBlockedCalls = 0;
   constructor(private readonly events: string[]) {}
   advanceTimers(): void {
     this.advanceCalls += 1;
@@ -113,10 +122,15 @@ class FakeChurn implements EngineChurn {
   nextDue(): FollowRecord | null {
     return this.due[0] ?? null;
   }
-  async execute(r: FollowRecord): Promise<void> {
-    this.due = this.due.filter((d) => d.accountPk !== r.accountPk);
+  async execute(r: FollowRecord): Promise<'ok' | 'failed' | 'blocked' | 'simulated' | 'noop'> {
+    // A blocked outcome leaves the record completely untouched (still due),
+    // exactly like the real scheduler.
+    if (this.outcome !== 'blocked') {
+      this.due = this.due.filter((d) => d.accountPk !== r.accountPk);
+    }
     this.executed.push(r);
     this.events.push(`execute:${r.accountPk}`);
+    return this.outcome;
   }
   consecutiveFailureCount(): number {
     return this.failStreak;
@@ -124,6 +138,16 @@ class FakeChurn implements EngineChurn {
   resetConsecutiveFailures(): void {
     this.resetCalls += 1;
     this.failStreak = 0;
+  }
+  consecutiveBlockedCount(): number {
+    return this.blockedStreak;
+  }
+  resetConsecutiveBlocked(): void {
+    this.resetBlockedCalls += 1;
+    this.blockedStreak = 0;
+  }
+  consecutiveDriftFailureCount(): number {
+    return this.driftStreak;
   }
 }
 
@@ -224,6 +248,8 @@ interface HarnessOpts {
   pacing?: EnginePacing; // organic pacing model (absent → legacy metronome)
   unfollowFeed?: EngineUnfollowFeed; // woven prune feed
   sweepCadence?: { isDue(now: number, everyMs: number): boolean; markRun(now: number): void };
+  /** The recovery ladder's tab-diagnostics port (absent → presumed healthy). */
+  tabDiag?: EngineTabDiagnostics;
   /** Seed the store BEFORE engine construction (e.g. a persisted action-delay deadline). */
   preseedStore?: (store: KnowledgeStore) => void;
 }
@@ -310,6 +336,7 @@ const makeHarness = (opts: HarnessOpts = {}): Harness => {
     pacing: opts.pacing,
     unfollowFeed: opts.unfollowFeed,
     sweepCadence: opts.sweepCadence,
+    tabDiag: opts.tabDiag,
     onStatus: (s) => statuses.push(s),
     onHalt: (reason) => halts.push(reason),
   });
@@ -355,19 +382,33 @@ describe('Engine.stepOnce — one major thing per iteration', () => {
     ]);
   });
 
-  test('halts with actions-failing when every action fails in a row (systemic breaker)', async () => {
+  test('a failing streak of 8 routes to a recovery HOLD, not a terminal halt', async () => {
     const h = makeHarness();
     h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.outcome = 'failed';
     h.churn.failStreak = 7; // one below the breaker → keeps going
     expect(await h.engine.stepOnce()).toBe('acted');
 
     h.churn.due = [rec({ accountPk: 'b' })];
-    h.churn.failStreak = 8; // ACTIONS_FAILING_HALT → the machinery is broken
-    expect(await h.engine.stepOnce()).toBe('halted');
-    expect(h.halts).toEqual(['actions-failing']);
-    expect(h.engine.status().haltReason).toBe('actions-failing');
-    // The window is cleared so a deliberate restart gets a fresh chance.
+    h.churn.failStreak = 8; // ACTIONS_FAILING_HALT → enter the recovery ladder
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(h.halts).toEqual([]); // no terminal halt
+    expect(h.engine.status().state).not.toBe('halted');
+    // Both streak windows were cleared so each rung burns a fresh window.
     expect(h.churn.resetCalls).toBe(1);
+    expect(h.churn.resetBlockedCalls).toBe(1);
+    // The hold was drawn within rung 1's clamp band and served (fake sleep).
+    const hold = h.sleep.calls[h.sleep.calls.length - 1];
+    expect(hold).toBeGreaterThanOrEqual(RECOVERY.HOLD_MIN_FACTOR * RECOVERY.HOLD_MEDIANS_MS[0]);
+    expect(hold).toBeLessThanOrEqual(RECOVERY.HOLD_MAX_FACTOR * RECOVERY.HOLD_MEDIANS_MS[0]);
+    // Mid-hold the status carried the recovery park; served → probing.
+    expect(h.statuses.some((s) => s.parkReason === 'recovery')).toBe(true);
+    expect(h.engine.status().recovery).toEqual({
+      phase: 'probing',
+      attempt: 1,
+      maxAttempts: RECOVERY.MAX_HOLDS,
+      resumeAt: null,
+    });
   });
 
   test('emits onStatus after every step, carrying lastStep', async () => {
@@ -387,19 +428,38 @@ describe('Engine.stepOnce — one major thing per iteration', () => {
   });
 });
 
-describe('Engine — sentinel halt (precedence 2)', () => {
-  test('a non-ok sentinel halts with a reason and performs NO action', async () => {
+describe('Engine — sentinel gate (precedence 2)', () => {
+  test('an action-blocked sentinel enters RECOVERY (hold), not a terminal halt', async () => {
     const h = makeHarness({ sentinel: ['action-blocked'] });
     h.churn.due = [rec({ accountPk: 'a' })];
 
     const result = await h.engine.stepOnce();
 
-    expect(result).toBe('halted');
-    expect(h.halts).toEqual(['sentinel:action-blocked']);
+    expect(result).toBe('recovering');
+    expect(h.halts).toEqual([]); // no longer terminal
     expect(h.churn.executed).toEqual([]); // no action past the block
+    expect(h.engine.status().state).not.toBe('halted');
+    expect(h.engine.status().lastSentinel).toBe('action-blocked');
+    // Exactly one wait was served: rung 1's hold, within its clamp band.
+    expect(h.sleep.calls.length).toBe(1);
+    expect(h.sleep.calls[0]).toBeGreaterThanOrEqual(
+      RECOVERY.HOLD_MIN_FACTOR * RECOVERY.HOLD_MEDIANS_MS[0],
+    );
+    expect(h.sleep.calls[0]).toBeLessThanOrEqual(
+      RECOVERY.HOLD_MAX_FACTOR * RECOVERY.HOLD_MEDIANS_MS[0],
+    );
+    expect(h.engine.status().recovery?.phase).toBe('probing');
+  });
+
+  test('an AUTH sentinel state (challenge) stays terminal and refuses further steps', async () => {
+    const h = makeHarness({ sentinel: ['challenge'] });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    expect(await h.engine.stepOnce()).toBe('halted');
+    expect(h.halts).toEqual(['sentinel:challenge']);
+    expect(h.churn.executed).toEqual([]);
     expect(h.sleep.calls).toEqual([]);
     expect(h.engine.status().state).toBe('halted');
-    expect(h.engine.status().lastSentinel).toBe('action-blocked');
 
     // A halted engine refuses further steps.
     expect(await h.engine.stepOnce()).toBe('aborted');
@@ -1507,5 +1567,250 @@ describe('Engine — woven prune feed', () => {
 
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['u1']); // lifecycle wins
     expect(feed.executed).toEqual([]);
+  });
+});
+
+// --- Recovery ladder (item #5) ------------------------------------------------------
+
+describe('Engine — recovery ladder', () => {
+  test('a blocked outcome takes a SHORT park (record untouched), never full-pace re-drive', async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.outcome = 'blocked';
+    h.churn.blockedStreak = 1;
+
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(h.sleep.calls).toEqual([30_000]); // PRUNE.PARK_MS — not the paced delay
+    expect(h.churn.due.map((r) => r.accountPk)).toEqual(['a']); // record untouched
+    expect(h.engine.status().recovery).toBeNull(); // below the streak: no ladder
+  });
+
+  test('a blocked streak of BLOCKED_STREAK_ENTRY enters recovery without touching records', async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.outcome = 'blocked';
+    h.churn.blockedStreak = RECOVERY.BLOCKED_STREAK_ENTRY;
+
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(h.churn.due.map((r) => r.accountPk)).toEqual(['a']); // still untouched
+    expect(h.churn.resetBlockedCalls).toBe(1);
+    expect(h.halts).toEqual([]);
+    expect(h.engine.status().recovery?.phase).toBe('probing'); // hold served by fake sleep
+  });
+
+  test('the THIRD consecutive walled enrichment cycle enters recovery', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
+    // A follower whose counts never arrive: every enrichment pass delivers 0.
+    h.store.observe({
+      accountPk: 'f1',
+      observedAt: T0,
+      source: 'followers-list',
+      fields: { username: 'fone' },
+    });
+    h.store.observeEdge('f1', 't1', 'follows', true, T0);
+
+    // Cycles 1 and 2: capped enrichment passes, then the flat walled backoff.
+    for (let cycle = 1; cycle <= 2; cycle += 1) {
+      for (let pass = 1; pass <= MAX_ENRICH_PASSES_PER_CYCLE; pass += 1) {
+        expect(await h.engine.stepOnce()).toBe('acquired');
+      }
+      expect(await h.engine.stepOnce()).toBe('idle'); // enrich-backoff park
+      expect(h.engine.status().recovery).toBeNull();
+    }
+    // Cycle 3: walls again → the recovery ladder, not another flat backoff.
+    for (let pass = 1; pass <= MAX_ENRICH_PASSES_PER_CYCLE; pass += 1) {
+      expect(await h.engine.stepOnce()).toBe('acquired');
+    }
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(h.engine.status().recovery?.phase).toBe('probing');
+    expect(h.halts).toEqual([]); // the target/chain was NOT burned
+  });
+
+  test('status carries the recovery hold (phase/attempt/resumeAt) while holding; a stop keeps it armed', async () => {
+    const h = makeHarness({ sentinel: ['action-blocked'] });
+    h.sleep.hang = true; // park in the hold
+
+    const stepping = h.engine.stepOnce();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const st = h.engine.status();
+    expect(st.recovery?.phase).toBe('holding');
+    expect(st.recovery?.attempt).toBe(1);
+    expect(st.recovery?.maxAttempts).toBe(RECOVERY.MAX_HOLDS);
+    expect(st.recovery?.resumeAt).toBe(st.parkedUntil); // the park IS the hold
+    expect(st.parkReason).toBe('recovery');
+    // The projection was PUSHED at registration, before the hold elapsed.
+    const pushed = h.statuses[h.statuses.length - 1];
+    expect(pushed.recovery?.phase).toBe('holding');
+
+    h.engine.stop();
+    expect(await stepping).toBe('recovering');
+    // The interrupted hold's absolute deadline stays armed (durable).
+    expect(h.engine.status().recovery?.phase).toBe('holding');
+    expect(h.store.getRecoveryState()).not.toBeNull();
+  });
+
+  test('a relaunched engine serves the REMAINDER of a persisted hold before anything else', async () => {
+    const h = makeHarness({
+      preseedStore: (store) =>
+        store.setRecoveryState(
+          JSON.stringify({
+            phase: 'holding',
+            attempt: 2,
+            holdUntil: T0 + 10 * 60_000,
+            enteredAt: T0 - 60_000,
+            kindTally: { 'rate-limited': 2 },
+          }),
+        ),
+    });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(h.sleep.calls).toEqual([10 * 60_000]); // the remainder, not a fresh draw
+    expect(h.engine.status().recovery).toEqual({
+      phase: 'probing',
+      attempt: 2,
+      maxAttempts: RECOVERY.MAX_HOLDS,
+      resumeAt: null,
+    });
+    // The next step acts normally — the probe.
+    expect(await h.engine.stepOnce()).toBe('acted');
+  });
+
+  test('a persisted hold whose deadline already passed probes immediately', async () => {
+    const h = makeHarness({
+      preseedStore: (store) =>
+        store.setRecoveryState(
+          JSON.stringify({
+            phase: 'holding',
+            attempt: 1,
+            holdUntil: T0 - 1_000,
+            enteredAt: T0 - 3_600_000,
+            kindTally: {},
+          }),
+        ),
+    });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    expect(await h.engine.stepOnce()).toBe('recovering'); // zero-remainder serve
+    expect(h.sleep.calls).toEqual([]); // no wait at all
+    expect(await h.engine.stepOnce()).toBe('acted');
+  });
+
+  test('a verified success while probing clears the ladder and its persisted state', async () => {
+    const h = makeHarness({ sentinel: ['action-blocked'] });
+    expect(await h.engine.stepOnce()).toBe('recovering'); // rung 1 served → probing
+    expect(h.store.getRecoveryState()).not.toBeNull();
+
+    h.churn.due = [rec({ accountPk: 'a' })];
+    expect(await h.engine.stepOnce()).toBe('acted'); // the probe lands ok
+
+    expect(h.engine.status().recovery).toBeNull();
+    expect(h.store.getRecoveryState()).toBeNull();
+  });
+
+  test('while probing, REENTRY_FAILS consecutive fails re-enter the ladder (rung 2)', async () => {
+    const h = makeHarness({ sentinel: ['action-blocked'] });
+    expect(await h.engine.stepOnce()).toBe('recovering'); // rung 1 served → probing
+
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.outcome = 'failed';
+    h.churn.failStreak = RECOVERY.REENTRY_FAILS; // far below the cold threshold of 8
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(h.engine.status().recovery?.attempt).toBe(2);
+  });
+
+  test('exhaustion after MAX_HOLDS failed rungs halts recovery-exhausted; a manual Start clears it', async () => {
+    const h = makeHarness({
+      sentinel: ['action-blocked', 'action-blocked', 'action-blocked', 'action-blocked'],
+    });
+    expect(await h.engine.stepOnce()).toBe('recovering'); // rung 1
+    expect(await h.engine.stepOnce()).toBe('recovering'); // rung 2
+    expect(await h.engine.stepOnce()).toBe('recovering'); // rung 3
+    expect(await h.engine.stepOnce()).toBe('halted'); // rungs spent → honest halt
+    expect(h.halts).toEqual(['recovery-exhausted']);
+    expect(h.engine.status().haltReason).toBe('recovery-exhausted');
+    expect(h.store.getRecoveryState()).not.toBeNull(); // exhausted state persisted
+
+    // User ack: a manual Start from the recovery halt clears the ladder.
+    h.sleep.hang = true;
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.store.getRecoveryState()).toBeNull();
+    expect(h.engine.status().recovery).toBeNull();
+    h.engine.stop();
+    await started;
+  });
+
+  test('confirmed drift (two drift windows after a hold) halts adapter-drift', async () => {
+    const h = makeHarness();
+    // Window 1 — all-drift failing streak from a standing start: presumed
+    // rate-limited is NOT applied to the kind note (the evidence is tallied),
+    // but the FIRST response is still a hold, never the drift terminal.
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.outcome = 'failed';
+    h.churn.failStreak = 8;
+    h.churn.driftStreak = 8;
+    expect(await h.engine.stepOnce()).toBe('recovering'); // hold 1 — no drift halt yet
+    expect(h.halts).toEqual([]);
+
+    // Window 2 — the streak recurs while probing, again all drift-caused.
+    h.churn.due = [rec({ accountPk: 'b' })];
+    h.churn.failStreak = RECOVERY.REENTRY_FAILS;
+    h.churn.driftStreak = RECOVERY.REENTRY_FAILS;
+    expect(await h.engine.stepOnce()).toBe('halted');
+    expect(h.halts).toEqual(['adapter-drift']);
+    expect(h.engine.status().haltReason).toBe('adapter-drift');
+  });
+
+  test('a failed canary routes to TAB RECOVERY, consuming no rung and touching no records', async () => {
+    const calls: string[] = [];
+    const h = makeHarness({
+      sentinel: ['action-blocked'],
+      tabDiag: {
+        probeInput: async () => {
+          calls.push('probe');
+          return true;
+        },
+        checkHealth: async () => {
+          calls.push('canary');
+          return { healthy: false };
+        },
+        recoverTab: async () => {
+          calls.push('recover');
+        },
+      },
+    });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(calls).toEqual(['probe', 'canary', 'recover']);
+    expect(h.engine.status().recovery).toBeNull(); // no hold armed, no rung consumed
+    expect(h.sleep.calls).toEqual([]); // no ladder wait either
+    expect(h.churn.executed).toEqual([]); // records untouched
+  });
+
+  test('a healthy diagnosis (probe + canary pass) presumes a rate wall and holds', async () => {
+    const calls: string[] = [];
+    const h = makeHarness({
+      sentinel: ['action-blocked'],
+      tabDiag: {
+        probeInput: async () => {
+          calls.push('probe');
+          return true;
+        },
+        checkHealth: async () => {
+          calls.push('canary');
+          return { healthy: true };
+        },
+        recoverTab: async () => {
+          calls.push('recover');
+        },
+      },
+    });
+
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(calls).toEqual(['probe', 'canary']); // diagnosed, no tab recovery
+    expect(h.engine.status().recovery?.phase).toBe('probing'); // hold served
   });
 });

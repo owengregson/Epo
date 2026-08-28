@@ -65,12 +65,21 @@ export class TabUnresponsiveError extends Error {
   readonly component: string;
   /** The deadline that elapsed without a settlement, in ms. */
   readonly timeoutMs: number;
+  /**
+   * `'post-click'` when the stall happened AFTER an action click was dispatched
+   * but BEFORE its post-state verification — the click may have LANDED on
+   * Instagram even though it was never confirmed. Callers use this to mark the
+   * record's next attempt as the arbiter (re-observe, never blindly re-claim).
+   * Absent for stalls before any click was dispatched.
+   */
+  readonly phase?: 'post-click';
 
-  constructor(component: string, timeoutMs: number) {
+  constructor(component: string, timeoutMs: number, phase?: 'post-click') {
     super(`Tab unresponsive [${component}]: no settlement within ${timeoutMs}ms`);
     this.name = 'TabUnresponsiveError';
     this.component = component;
     this.timeoutMs = timeoutMs;
+    this.phase = phase;
     Object.setPrototypeOf(this, TabUnresponsiveError.prototype);
   }
 }

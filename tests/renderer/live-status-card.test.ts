@@ -3,7 +3,12 @@
  * A running-but-parked engine renders a first-class hold (headline + why +
  * resume time) instead of the "running with dashes" that read as broken.
  */
-import { parkCaption, parkHeadline, stepLabel } from '@/renderer/cards/overview/LiveStatusCard';
+import {
+  parkCaption,
+  parkHeadline,
+  recoveryHoldCaption,
+  stepLabel,
+} from '@/renderer/cards/overview/LiveStatusCard';
 import type { EpoStatus } from '@/types';
 
 type Step = NonNullable<EpoStatus['lastStep']>;
@@ -56,5 +61,23 @@ describe('park hold copy — plain reason + real resume time', () => {
     expect(
       parkCaption('enrich-backoff', t('2026-08-12T14:32:00'), t('2026-08-12T14:22:00'), 12, 40),
     ).toBe('after fetch trouble · retrying 14:32');
+  });
+});
+
+describe('recovery ladder copy', () => {
+  it('recovery park: headline Backing off, rung-aware caption with the resume time', () => {
+    expect(parkHeadline('recovery')).toBe('Backing off');
+    expect(
+      recoveryHoldCaption(
+        { attempt: 2, maxAttempts: 3, resumeAt: t('2026-08-12T14:32:00') },
+        t('2026-08-12T13:05:00'),
+      ),
+    ).toBe("recent actions aren't landing · retrying ~14:32 (attempt 2 of 3)");
+  });
+
+  it('probing has no resume time and says soon', () => {
+    expect(
+      recoveryHoldCaption({ attempt: 1, maxAttempts: 3, resumeAt: null }, t('2026-08-12T13:05:00')),
+    ).toBe("recent actions aren't landing · retrying soon (attempt 1 of 3)");
   });
 });

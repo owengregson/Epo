@@ -19,7 +19,12 @@
  *        caught, logged (never silently), and reported as `'failed'`.
  */
 
-import { ActionAbortedError, ActionBlockedError } from '@/adapter/errors';
+import {
+  ActionAbortedError,
+  ActionBlockedError,
+  AdapterStaleError,
+  TabUnresponsiveError,
+} from '@/adapter/errors';
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import type { ChurnActionOutcome, ChurnActions } from '@/engine/churn-scheduler';
 import { type Clock, SystemClock } from '@/governors/clock';
@@ -125,6 +130,45 @@ export class AdapterBackedChurnActions implements ChurnActions {
           matched: e.matchedText,
         });
         return { status: 'blocked' };
+      }
+      if (e instanceof TabUnresponsiveError) {
+        // The TAB stalled — a renderer/CDP condition, never the record's fault
+        // and never selector drift. Record-neutral like the other blocks (no
+        // retry burned, no fail ledger row); `cause` routes the recovery
+        // ladder to tab recovery, and a post-click stall flags the record for
+        // re-observation (the click may have landed — amendment C).
+        logger.warn('rim.churn-actions: tab unresponsive mid-action, leaving record untouched', {
+          username,
+          action,
+          component: e.component,
+          phase: e.phase ?? 'pre-click',
+        });
+        return {
+          status: 'blocked',
+          cause: 'tab-unhealthy',
+          unverifiedClick: e.phase === 'post-click' ? true : undefined,
+        };
+      }
+      if (e instanceof Error && e.message.includes('webContents unavailable')) {
+        // The tab's webContents is destroyed/uninitialized (teardown race,
+        // hard navigation failure) — the same tab-machinery family as a stall.
+        logger.warn('rim.churn-actions: webContents unavailable, leaving record untouched', {
+          username,
+          action,
+        });
+        return { status: 'blocked', cause: 'tab-unhealthy' };
+      }
+      if (e instanceof AdapterStaleError) {
+        // The expected control is gone: possible interface drift. Still a
+        // 'failed' (retry/abandon as before) — the `cause` feeds the recovery
+        // ladder's drift-evidence tally, which only confirms drift over
+        // repeated windows with clean tab diagnostics.
+        logger.error('rim.churn-actions: adapter stale (possible drift)', {
+          username,
+          action,
+          selector: e.selector,
+        });
+        return { status: 'failed', cause: 'drift' };
       }
       logger.error('rim.churn-actions: actor threw', {
         username,

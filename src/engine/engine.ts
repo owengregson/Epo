@@ -21,7 +21,12 @@ import type { FollowerAcquisition } from '../rim/types';
 import type { Settings } from '../settings/settings';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { FollowRecord } from '../store/types';
-import { ENGINE as ENGINE_TIMING, PATTERN, PRUNE as PRUNE_TIMING } from '../timing/config';
+import {
+  ENGINE as ENGINE_TIMING,
+  PATTERN,
+  PRUNE as PRUNE_TIMING,
+  RECOVERY as RECOVERY_TIMING,
+} from '../timing/config';
 import { DelayManager, type WaitResult } from '../timing/delay-manager';
 import { clamp, logNormal } from '../timing/distributions';
 import {
@@ -35,6 +40,8 @@ import {
 import { startOfLocalDay } from '../timing/units';
 import * as log from '../utils/logger';
 import type { AdvanceResult } from './chain-controller';
+import type { ChurnActionOutcome } from './churn-scheduler';
+import { type FailureKind, RecoverySupervisor } from './recovery';
 import type { ScanPlan } from './scanner';
 
 // ---------------------------------------------------------------------------------
@@ -48,16 +55,44 @@ import type { ScanPlan } from './scanner';
 export interface EngineChurn {
   advanceTimers(now: number): void;
   nextDue(now: number): FollowRecord | null;
-  execute(rec: FollowRecord, now: number): Promise<void>;
+  /**
+   * Perform the one record's action and report its outcome: the Engine routes
+   * `'blocked'` to a short park (never a full-pace re-drive of the same
+   * record), feeds the streak counters into the recovery ladder, and treats
+   * `'noop'` (nothing touched Instagram) as an ordinary acted step.
+   */
+  execute(rec: FollowRecord, now: number): Promise<ChurnActionOutcome['status'] | 'noop'>;
   /**
    * Consecutive `'failed'` outcomes across records — the systemic-breakage
    * signal (broken input pipeline, drifted selector). Optional so plain test
-   * fakes keep working; when present the engine halts (`actions-failing`)
+   * fakes keep working; when present the engine enters the recovery ladder
    * once it crosses {@link ACTIONS_FAILING_HALT} instead of burning the queue.
    */
   consecutiveFailureCount?(): number;
-  /** Clear the failure window (the engine calls this when it halts on it). */
+  /** Clear the failure window (the engine calls this when the ladder enters). */
   resetConsecutiveFailures?(): void;
+  /** Consecutive `'blocked'` outcomes across records — the rate-wall streak. */
+  consecutiveBlockedCount?(): number;
+  /** Clear the blocked window (the engine calls this when the ladder enters). */
+  resetConsecutiveBlocked?(): void;
+  /** How many of the current failure window's fails were drift-caused. */
+  consecutiveDriftFailureCount?(): number;
+}
+
+/**
+ * The tab-diagnostics port the recovery ladder consults on entry (diagnose
+ * FIRST, wait second): the input probe + rAF canary decide tab-vs-rate-wall,
+ * and `recoverTab` is the repair for a sick tab. The composition root wires
+ * the real `InstagramTab`; absent (plain test fakes), the tab is presumed
+ * healthy and every entry takes the rate-limit hold path.
+ */
+export interface EngineTabDiagnostics {
+  /** Input-pipeline probe: whether dispatched events reach the page. */
+  probeInput(): Promise<boolean>;
+  /** Renderer-health canary (rAF ticks + evaluate round-trip). */
+  checkHealth(): Promise<{ healthy: boolean }>;
+  /** Recover a wedged tab (reload + debugger re-attach), deadline-bounded. */
+  recoverTab(): Promise<void>;
 }
 
 /** The Scanner's planning surface: rank + enqueue one target's candidates. */
@@ -190,13 +225,15 @@ export const MAX_ENRICH_PASSES_PER_CYCLE = 4;
 export const ACQUIRE_SKIP_POOL_FACTOR = 4;
 
 /**
- * Consecutive failed actions (ACROSS records) that halt the engine with
- * `actions-failing`. One dead account produces at most `maxRetries + 1` (= 4)
- * fails before abandoning; a systemic breakage — input events not landing,
- * selector drift the health checks missed — fails everything identically. Two
- * full records' worth means the second candidate in a row burned out, at which
- * point continuing spends the daily ledger budget clicking into the void (the
- * 2026-08-13 overnight run abandoned ~20 candidates that way).
+ * Consecutive failed actions (ACROSS records) that ENTER the recovery ladder
+ * from a standing start. One dead account produces at most `maxRetries + 1`
+ * (= 4) fails before abandoning; a systemic breakage — input events not
+ * landing, a rate wall, selector drift the health checks missed — fails
+ * everything identically. Two full records' worth means the second candidate
+ * in a row burned out, at which point continuing spends the daily ledger
+ * budget clicking into the void (the 2026-08-13 overnight run abandoned ~20
+ * candidates that way). While the ladder is PROBING after a served hold, the
+ * re-entry threshold drops to `RECOVERY.REENTRY_FAILS`.
  */
 export const ACTIONS_FAILING_HALT = 8;
 
@@ -217,6 +254,7 @@ export type StepResult =
   | 'acquired'
   | 'acted'
   | 'advanced-chain'
+  | 'recovering'
   | 'idle';
 
 /**
@@ -230,7 +268,8 @@ export type EngineParkReason =
   | 'daily-ceiling'
   | 'session'
   | 'velocity'
-  | 'enrich-backoff';
+  | 'enrich-backoff'
+  | 'recovery';
 
 /**
  * DelayManager keys whose waits are LONG parks the status must surface. The
@@ -244,6 +283,7 @@ const PARK_REASON_BY_KEY = new Map<string, EngineParkReason>([
   ['engine:session-park', 'session'],
   ['engine:velocity-park', 'velocity'],
   ['engine:enrich-backoff', 'enrich-backoff'],
+  ['engine:recovery-hold', 'recovery'],
 ]);
 
 /** Status projection over the store + governors + Engine state (§5). */
@@ -280,9 +320,20 @@ export interface EngineStatus {
   netToday: number;
   /** Whether the connectivity monitor last reported the internet reachable. */
   online: boolean;
-  /** Why the engine halted (`sentinel:*`, `chain-exhausted`, `actions-failing`,
+  /** Why the engine halted (`sentinel:*`, `chain-exhausted`, `recovery-exhausted`,
    *  …) while `state` is `'halted'`; null otherwise. */
   haltReason: string | null;
+  /**
+   * The recovery ladder's live posture (§2): `holding` while a long backoff is
+   * armed (`resumeAt` is its absolute deadline), `probing` while the next real
+   * actions decide whether the wall lifted. Null when the ladder is inactive.
+   */
+  recovery: {
+    phase: 'holding' | 'probing';
+    attempt: number;
+    maxAttempts: number;
+    resumeAt: number | null;
+  } | null;
   /** Organic-pacing session status (null in legacy mode). */
   pacing: {
     sessionOpen: boolean;
@@ -346,6 +397,12 @@ export interface EngineDeps {
    * catch-up sweep, then the configured cadence applies).
    */
   sweepCadence?: SweepCadence;
+  /**
+   * The tab-diagnostics port the recovery ladder consults on entry (see
+   * {@link EngineTabDiagnostics}). Absent → the tab is presumed healthy and
+   * every ladder entry takes the rate-limit hold path.
+   */
+  tabDiag?: EngineTabDiagnostics;
   /** Called with a fresh status projection after every step and lifecycle change. */
   onStatus?: (s: EngineStatus) => void;
   /** Called exactly once per halt with the reason (e.g. `sentinel:challenge`). */
@@ -446,6 +503,28 @@ export class Engine {
   private lastActionAt: number | null = null;
   /** Why the engine last halted; cleared on the next `start()`. */
   private haltReason: string | null = null;
+  /**
+   * The most recent halt, kept STICKY across restarts (unlike {@link haltReason},
+   * which a fresh start clears): the scheduled-prune cool-down (amendment A)
+   * must still see a rate-limit halt after the user restarts growth.
+   */
+  private lastHalt: { reason: string; at: number } | null = null;
+
+  /**
+   * The classified, durable recovery ladder (see {@link RecoverySupervisor}):
+   * entered instead of the old terminal `actions-failing` halt, hydrated from
+   * store meta at construction so a relaunch mid-hold serves the remainder.
+   */
+  private readonly recovery: RecoverySupervisor;
+
+  /**
+   * Consecutive WALLED enrichment cycles (a refill whose enrichment delivered
+   * nothing while un-enriched candidates remain). The first two take the flat
+   * enrich-backoff park; the third enters the recovery ladder — a read-side
+   * wall that survives two long backoffs is the same rate wall the action side
+   * ladders on. Reset by any cycle that makes real progress or a target change.
+   */
+  private walledCycles = 0;
 
   /**
    * Deadline (epoch ms) of the inter-action paced delay that is still OWED.
@@ -497,6 +576,13 @@ export class Engine {
     // Hydrate the owed inter-action delay from the store so an app relaunch
     // resumes the remaining wait rather than acting on the first step.
     this.actionDelayDeadline = deps.store.getActionDelayDeadline();
+    // The recovery ladder hydrates its own durable state (store meta
+    // `recovery_state`) — a relaunch mid-hold serves the REMAINDER (§3).
+    this.recovery = new RecoverySupervisor({
+      clock: deps.clock,
+      store: deps.store,
+      rng: deps.rng,
+    });
     this.enricher = deps.enricher ?? {
       enrich: (usernames: string[]): Promise<number> => {
         log.warn('engine: no enricher injected — candidates keep lacking counts', {
@@ -543,6 +629,19 @@ export class Engine {
     this.runAbort = new AbortController();
     const token = this.runAbort; // this run's generation token (R2)
     this.engineState = 'running';
+    // User ack: a manual Start from a RECOVERY halt clears the persisted ladder
+    // and the streak counters — the user has looked at the session and chosen
+    // to try again. A ladder that is merely mid-hold/probing (a stop, or an app
+    // relaunch during a hold) is deliberately KEPT: stop/start is not a way
+    // around a rate-wall backoff, exactly like the inter-action deadline.
+    const recoveryHalt =
+      this.haltReason === 'recovery-exhausted' || this.haltReason === 'adapter-drift';
+    if (recoveryHalt || this.recovery.phase() === 'exhausted') {
+      this.recovery.reset();
+      this.deps.churn.resetConsecutiveFailures?.();
+      this.deps.churn.resetConsecutiveBlocked?.();
+      log.info('engine: recovery ladder cleared by manual start (user ack)');
+    }
     this.haltReason = null; // a fresh start clears the previous halt's cause
     this.sessionStartedAt = this.deps.clock.now();
     // Legacy-queue hygiene: score any queued records that predate score
@@ -698,8 +797,31 @@ export class Engine {
       netToday: store.netFollowersSince(startOfToday),
       online: this.online,
       haltReason: this.engineState === 'halted' ? this.haltReason : null,
+      recovery: this.recoveryProjection(),
       pacing,
     };
+  }
+
+  /** The ladder's status slice (see {@link EngineStatus.recovery}). */
+  private recoveryProjection(): EngineStatus['recovery'] {
+    const phase = this.recovery.phase();
+    if (phase === 'holding') {
+      return {
+        phase: 'holding',
+        attempt: this.recovery.attemptNow(),
+        maxAttempts: this.recovery.maxAttempts(),
+        resumeAt: this.recovery.holdDeadline(),
+      };
+    }
+    if (phase === 'probing') {
+      return {
+        phase: 'probing',
+        attempt: this.recovery.attemptNow(),
+        maxAttempts: this.recovery.maxAttempts(),
+        resumeAt: null,
+      };
+    }
+    return null;
   }
 
   // --- The loop body ---------------------------------------------------------------
@@ -770,9 +892,26 @@ export class Engine {
     if (this.superseded(token) || this.engineState === 'halted') return 'aborted';
 
     // 2. Sentinel gate — the hard safety stop, checked before anything else.
+    //    AUTH states (challenge / logged-out) stay terminal exactly as before:
+    //    only the user can repair the session. 'action-blocked' is a definitive
+    //    RATE-LIMIT signal and enters the recovery ladder instead of halting.
     const sentinelStatus = await this.deps.sentinel.check();
     this.lastSentinel = sentinelStatus;
-    if (sentinelStatus !== 'ok') return this.halt(`sentinel:${sentinelStatus}`);
+    if (sentinelStatus === 'challenge' || sentinelStatus === 'logged-out') {
+      return this.halt(`sentinel:${sentinelStatus}`);
+    }
+
+    // 2b. An armed recovery hold — from this run, an interrupted (paused/
+    //     offline/stopped) wait, or a PREVIOUS app launch (the deadline is
+    //     absolute and durable, §3) — is served before any other work: the
+    //     whole point of the hold is to stay off Instagram.
+    if (this.recovery.phase() === 'holding') {
+      return this.serveRecoveryHold();
+    }
+
+    if (sentinelStatus === 'action-blocked') {
+      return this.enterRecovery(token, 'rate-limited');
+    }
 
     const now = this.deps.clock.now();
 
@@ -856,7 +995,7 @@ export class Engine {
     //    never fire unboundedly on a dry/rejected target (R1.5).
     const queuedForTarget = this.queuedCountFor(current.pk);
     if (queuedForTarget < this.settings.lowWaterCandidates && !this.targetExhausted) {
-      return this.refillPool(current);
+      return this.refillPool(current, token);
     }
 
     // 8. Exactly ONE Instagram action — a growth/lifecycle churn action or, in the
@@ -907,18 +1046,41 @@ export class Engine {
         }
         kind = 'unfollow';
       } else {
-        await this.deps.churn.execute(due as FollowRecord, actAt);
+        const outcome = await this.deps.churn.execute(due as FollowRecord, actAt);
         // A stop()+start() landed during the await: the new generation owns
         // pacing now — the superseded step's owed gap is deliberately dropped
         // rather than allowed to overwrite the new run's deadline.
         if (this.superseded(token)) return 'aborted';
-        // Systemic-breakage breaker: when every action fails identically across records,
-        // the problem is the machinery (input pipeline, selector drift), not the
-        // candidates — halt loudly instead of abandoning the whole queue.
+        if (outcome === 'blocked') {
+          // Nothing was clicked and the record is untouched. Re-driving the
+          // SAME record at full pace hammered the wall invisibly — park
+          // briefly instead, and ladder up once the streak proves a wall.
+          this.recovery.noteOutcome('rate-limited');
+          const blockedStreak = this.deps.churn.consecutiveBlockedCount?.() ?? 0;
+          if (blockedStreak >= RECOVERY_TIMING.BLOCKED_STREAK_ENTRY) {
+            return this.enterRecovery(token, 'rate-limited');
+          }
+          log.info('engine: action blocked — short park before the next attempt', {
+            blockedStreak,
+          });
+          await this.engineWait('engine:blocked-park', PRUNE_TIMING.PARK_MS);
+          return 'idle';
+        }
+        // Systemic-breakage breaker: when every action fails identically across
+        // records, the problem is the machinery (a rate wall, the input
+        // pipeline, drift) — enter the recovery ladder instead of burning the
+        // queue on clicks that do nothing. A failure window that is ALL
+        // drift-caused carries drift evidence; anything ambiguous is presumed
+        // rate-limited (owner directive: waiting is cheap and reversible).
         const failing = this.deps.churn.consecutiveFailureCount?.() ?? 0;
-        if (failing >= ACTIONS_FAILING_HALT) {
-          this.deps.churn.resetConsecutiveFailures?.();
-          return this.halt('actions-failing');
+        if (failing >= this.recovery.failingEntryThreshold(ACTIONS_FAILING_HALT)) {
+          const driftFails = this.deps.churn.consecutiveDriftFailureCount?.() ?? 0;
+          const failKind: FailureKind = driftFails >= failing ? 'drift' : 'rate-limited';
+          return this.enterRecovery(token, failKind);
+        }
+        if (outcome === 'ok' || outcome === 'simulated') {
+          // A verified success IS the probe's verdict: the ladder clears.
+          this.recovery.noteRecovered();
         }
         kind = (due as FollowRecord).state === 'unfollow_queued' ? 'unfollow' : 'follow';
       }
@@ -1040,6 +1202,7 @@ export class Engine {
     this.acquiredThisCycle = false;
     this.enrichPassesThisCycle = 0;
     this.enrichedThisCycle = 0;
+    this.walledCycles = 0;
     this.targetExhausted = false;
   }
 
@@ -1064,7 +1227,7 @@ export class Engine {
    * can open another cycle. f10: every path that issued IG traffic ends with the
    * short jittered pacing sleep, so no branch hammers back-to-back.
    */
-  private async refillPool(current: CurrentTarget): Promise<StepResult> {
+  private async refillPool(current: CurrentTarget, token: AbortController): Promise<StepResult> {
     let issuedTraffic = false;
 
     // (1) At most one acquisition per cycle — and NONE when the store already
@@ -1118,6 +1281,7 @@ export class Engine {
       // and skip the long backoff exactly when it is needed (walls typically
       // land right after a burst of successful requests).
       this.enrichedThisCycle = 0;
+      this.walledCycles = 0; // real progress — the read side is not walled
     } else if (this.unenrichedUsernames(current.pk, 1).length > 0) {
       // NOT exhaustion: candidates remain that were never successfully
       // enriched. Two very different situations land here:
@@ -1126,17 +1290,30 @@ export class Engine {
       //  - enrichment delivered NOTHING (rate wall / sentinel window) →
       //    latching `targetExhausted` here used to burn the whole chain
       //    (`chain.advance` marks targets exhausted IRREVERSIBLY) during a
-      //    transient outage — instead park LONG and retry the cycle.
+      //    transient outage — instead park LONG and retry the cycle; the
+      //    THIRD walled cycle in a row escalates to the recovery ladder (a
+      //    read wall that outlives two long backoffs is the same rate wall
+      //    the action side ladders on — the flat 10-minute loop ran forever).
       const walled = this.enrichedThisCycle === 0;
       this.enrichPassesThisCycle = 0;
       this.enrichedThisCycle = 0;
       if (walled) {
+        this.walledCycles += 1;
+        if (this.walledCycles >= RECOVERY_TIMING.WALLED_CYCLES_ENTRY) {
+          this.walledCycles = 0;
+          log.warn('engine: enrichment walled repeatedly — entering recovery', {
+            target: current.pk,
+          });
+          return this.enterRecovery(token, 'rate-limited');
+        }
         log.warn('engine: refill starved by failed enrichment, backing off (target NOT exhausted)', {
           target: current.pk,
+          walledCycles: this.walledCycles,
         });
         await this.engineWait('engine:enrich-backoff', ENGINE_TIMING.ENRICH_BACKOFF_MS);
         return 'idle';
       }
+      this.walledCycles = 0;
       this.acquiredThisCycle = false;
       log.info('engine: pool not exhausted, opening next enrichment cycle', {
         target: current.pk,
@@ -1227,14 +1404,172 @@ export class Engine {
       .filter((r) => r.targetPk === targetPk).length;
   }
 
+  // --- Recovery ladder (see {@link RecoverySupervisor}) -------------------------------
+
+  /**
+   * Enter the recovery ladder with a classified failure `kind`: diagnose the
+   * tab FIRST (a sick tab is a machinery problem — recover it, consuming no
+   * rung and touching no records), then presume a rate wall and serve the next
+   * rung's long jittered hold. Terminal outcomes: `recovery-exhausted` after
+   * {@link RecoverySupervisor.maxAttempts} failed rungs; `adapter-drift` once
+   * drift is CONFIRMED (two drift-classified windows with clean diagnostics,
+   * after the first hold — ambiguity always defaults to rate-limited).
+   */
+  private async enterRecovery(token: AbortController, kind: FailureKind): Promise<StepResult> {
+    // Defensive: an already-armed hold is served, never double-entered.
+    if (this.recovery.phase() === 'holding') return this.serveRecoveryHold(token);
+
+    this.recovery.noteOutcome(kind);
+    // Each rung burns a fresh window of ledger rows — clear both streaks.
+    this.deps.churn.resetConsecutiveFailures?.();
+    this.deps.churn.resetConsecutiveBlocked?.();
+    log.warn('engine: recovery ladder entered', {
+      kind,
+      attempt: this.recovery.attemptNow(),
+      tally: this.recovery.tally(),
+    });
+
+    // Diagnose first, wait second.
+    this.recovery.beginDiagnosis();
+    const diag = await this.diagnoseTab();
+    log.info('engine: recovery diagnosis', diag);
+    if (this.superseded(token)) {
+      this.recovery.abortDiagnosis();
+      return 'aborted';
+    }
+    if (!diag.healthy) {
+      // The TAB is the problem: recover it — no rung consumed, no records touched.
+      this.recovery.abortDiagnosis();
+      this.recovery.noteOutcome('tab-unhealthy');
+      await this.recoverTabOnce();
+      return 'recovering';
+    }
+
+    if (this.recovery.driftConfirmed()) {
+      // Waiting cannot fix a reshaped interface.
+      this.recovery.abortDiagnosis();
+      return this.halt('adapter-drift');
+    }
+
+    const hold = this.recovery.beginHold(this.deps.clock.now());
+    if (hold === null) {
+      return this.halt('recovery-exhausted');
+    }
+    log.warn('engine: recovery hold begins', {
+      attempt: hold.attempt,
+      maxAttempts: this.recovery.maxAttempts(),
+      holdMs: hold.holdMs,
+      resumesAt: new Date(this.deps.clock.now() + hold.holdMs).toISOString(),
+    });
+    return this.serveRecoveryHold(token);
+  }
+
+  /**
+   * Serve the armed hold's REMAINDER (an absolute deadline — durable across
+   * pause/offline/stop and app relaunches, §3). A wait interrupted by a
+   * control command leaves the deadline armed for the next opportunity; a wait
+   * served to completion moves the ladder to probing — the next real actions
+   * ARE the probe. Registered as `engine:recovery-hold`, so it surfaces as a
+   * long park (status emitted at registration) and shields the step watchdog.
+   */
+  private async serveRecoveryHold(token: AbortController = this.runAbort): Promise<StepResult> {
+    const remaining = this.recovery.holdRemainingMs(this.deps.clock.now());
+    if (remaining > 0) {
+      const res = await this.engineWait('engine:recovery-hold', remaining);
+      if (!res.completed || this.superseded(token)) return 'recovering';
+    }
+    this.recovery.completeHold();
+    log.warn('engine: recovery hold served — probing with the next real actions', {
+      attempt: this.recovery.attemptNow(),
+      maxAttempts: this.recovery.maxAttempts(),
+    });
+    this.emitStatus(); // probing is visible immediately, not at step end
+    return 'recovering';
+  }
+
+  /**
+   * The entry diagnosis: input probe + renderer canary. Either failing means
+   * the MACHINERY is sick (route to tab recovery, never the wait ladder);
+   * both passing means the tab is fine and the failures are Instagram-side —
+   * presume a rate wall. No diagnostics port injected → presumed healthy.
+   */
+  private async diagnoseTab(): Promise<{
+    healthy: boolean;
+    inputOk: boolean | null;
+    canaryOk: boolean | null;
+  }> {
+    const diag = this.deps.tabDiag;
+    if (diag === undefined) return { healthy: true, inputOk: null, canaryOk: null };
+    try {
+      const inputOk = await diag.probeInput();
+      const health = await diag.checkHealth();
+      return { healthy: health.healthy && inputOk, inputOk, canaryOk: health.healthy };
+    } catch (e) {
+      log.warn('engine: tab diagnosis failed — treating the tab as unhealthy', {
+        error: String(e),
+      });
+      return { healthy: false, inputOk: null, canaryOk: null };
+    }
+  }
+
+  /** Recover the tab (reload + debugger re-attach) and re-check the sentinel. */
+  private async recoverTabOnce(): Promise<void> {
+    const diag = this.deps.tabDiag;
+    if (diag === undefined) return;
+    log.warn('engine: recovering tab (diagnosis failed the canary)');
+    try {
+      await diag.recoverTab();
+    } catch (e) {
+      log.error('engine: tab recovery failed', { error: String(e) });
+    }
+    try {
+      this.lastSentinel = await this.deps.sentinel.check();
+      log.info('engine: post-recovery sentinel', { status: this.lastSentinel });
+    } catch (e) {
+      log.warn('engine: post-recovery sentinel check failed', { error: String(e) });
+    }
+  }
+
   // --- Halt / status ----------------------------------------------------------------
 
   private halt(reason: string): 'halted' {
     this.engineState = 'halted';
     this.haltReason = reason;
+    this.lastHalt = { reason, at: this.deps.clock.now() };
     log.warn('engine: halted', { reason });
     this.deps.onHalt?.(reason);
     return 'halted';
+  }
+
+  /**
+   * The most recent halt (reason + when), STICKY across restarts — the
+   * scheduled-prune rate-limit cool-down (amendment A) reads this even after
+   * the user has started growth again. Null when no halt has happened yet.
+   */
+  lastHaltInfo(): { reason: string; at: number } | null {
+    return this.lastHalt === null ? null : { ...this.lastHalt };
+  }
+
+  /**
+   * The recovery ladder's diagnostic snapshot (phase, rung, failure-kind
+   * tally) — logged once by the composition root's halt diagnostics.
+   */
+  recoverySnapshot(): { phase: string; attempt: number; kindTally: Record<string, number> } {
+    return {
+      phase: this.recovery.phase(),
+      attempt: this.recovery.attemptNow(),
+      kindTally: this.recovery.tally() as Record<string, number>,
+    };
+  }
+
+  /**
+   * An EXTERNAL tab recovery happened (the main-process step watchdog reloaded
+   * a wedged tab): note it in the ladder's tally so the halt-time diagnostics
+   * carry the full history. A note, never an entry — no hold is armed.
+   */
+  noteExternalTabRecovery(): void {
+    this.recovery.noteOutcome('tab-unhealthy');
+    log.warn('engine: external tab recovery noted in the recovery tally');
   }
 
   private emitStatus(): void {

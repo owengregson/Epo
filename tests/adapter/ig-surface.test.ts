@@ -5,6 +5,7 @@
 import {
   SURFACE,
   asFetchEnvelope,
+  classifyEnvelope,
   envelopeLooksLikeHtml,
   type FetchEnvelope,
 } from '@/adapter/ig-surface';
@@ -103,5 +104,51 @@ describe('SURFACE envelope fetch scripts are abort-bounded', () => {
     for (const script of scripts) {
       expect(script).toContain(`AbortSignal.timeout(${TAB.FETCH_ABORT_MS})`);
     }
+  });
+});
+
+describe('classifyEnvelope — the recovery ladder’s read-side failure families', () => {
+  const env = (over: Partial<FetchEnvelope>): FetchEnvelope => ({
+    ok: false,
+    status: 200,
+    contentType: 'application/json',
+    ...over,
+  });
+
+  test('a 2xx JSON envelope is ok', () => {
+    expect(classifyEnvelope(env({ ok: true }))).toEqual({ kind: 'ok' });
+  });
+
+  test('HTTP 429 and 5xx are rate-limited', () => {
+    expect(classifyEnvelope(env({ status: 429 })).kind).toBe('rate-limited');
+    expect(classifyEnvelope(env({ status: 500 })).kind).toBe('rate-limited');
+    expect(classifyEnvelope(env({ status: 503 })).kind).toBe('rate-limited');
+  });
+
+  test('a finalUrl matching a logged-out/challenge wall is auth (with the wall status)', () => {
+    expect(
+      classifyEnvelope(env({ status: 200, finalUrl: 'https://www.instagram.com/accounts/login/?next=/' })),
+    ).toEqual({ kind: 'auth', wall: 'logged-out' });
+    expect(
+      classifyEnvelope(env({ status: 200, finalUrl: 'https://www.instagram.com/challenge/?next=/' })),
+    ).toEqual({ kind: 'auth', wall: 'challenge' });
+  });
+
+  test('an HTML wall where an API body belongs is rate-limited', () => {
+    expect(
+      classifyEnvelope(env({ status: 200, contentType: 'text/html', textHead: '<!DOCTYPE html>' })).kind,
+    ).toBe('rate-limited');
+    // Even a 404 wrapped in an HTML page is the wall, not a missing resource.
+    expect(
+      classifyEnvelope(env({ status: 404, contentType: 'text/html', textHead: '<html>' })).kind,
+    ).toBe('rate-limited');
+  });
+
+  test('a JSON 404 is gone; status 0 is network; an unknown refusal is drift-suspect', () => {
+    expect(classifyEnvelope(env({ status: 404 })).kind).toBe('gone');
+    expect(classifyEnvelope(env({ status: 0, contentType: '', textHead: 'TypeError: failed' })).kind).toBe(
+      'network',
+    );
+    expect(classifyEnvelope(env({ status: 403 })).kind).toBe('drift-suspect');
   });
 });

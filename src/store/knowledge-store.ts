@@ -783,6 +783,22 @@ export class KnowledgeStore {
   }
 
   /**
+   * Persist the recovery ladder's durable state (raw JSON: attempt, holdUntil,
+   * enteredAt, kindTally) so a relaunch mid-hold serves the REMAINDER of the
+   * absolute deadline instead of forgetting the wall it was backing off from
+   * (§3 — schedules are durable). `null` clears it (ladder inactive). Opaque to
+   * the store — the RecoverySupervisor owns the shape.
+   */
+  setRecoveryState(raw: string | null): void {
+    this.setMeta('recovery_state', raw);
+  }
+
+  /** The persisted recovery-ladder state JSON, or `null` when none exists. */
+  getRecoveryState(): string | null {
+    return this.getMeta('recovery_state');
+  }
+
+  /**
    * The moment follower measurement began — the first follow-back sweep or the
    * first complete census, whichever ran first — or `null` before either.
    * Everything first seen AT or BEFORE this moment is pre-existing STOCK — the

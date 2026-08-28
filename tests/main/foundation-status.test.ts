@@ -45,6 +45,7 @@ describe('Foundation status (not built)', () => {
       netToday: 0,
       online: true,
       haltReason: null,
+      recovery: null,
       pacing: null,
       loggedIn: false,
     });
