@@ -196,8 +196,8 @@ export function App(): h.JSX.Element {
   const onCancel = useCallback(async () => {
     const ok = await confirmCtl.confirm({
       title: 'Cancel the session?',
-      body: 'This ends the current session and resets today’s progress.',
-      confirm: 'Cancel & reset',
+      body: 'Stops the engine between actions. Today’s action count is kept; pacing resumes where it left off.',
+      confirm: 'Stop engine',
       dismiss: 'Keep running',
       danger: true,
     });
@@ -232,6 +232,7 @@ export function App(): h.JSX.Element {
         onSaved={setSettings}
         confirm={confirmCtl.confirm}
         goTo={goTo}
+        toast={toasts.push}
         seedPrompt={seedPrompt}
         onReplayTour={openTour}
         updateStatus={updateStatus}

@@ -296,6 +296,15 @@
   border-top:1px solid var(--divider);
 }
 
+/* Settings surface header: the autosave state chip. A zero-height sticky row
+   pins the chip to the surface's top-right, so persistence feedback stays
+   visible while any card — including the safety caps — is being edited. */
+.save-h{position:sticky; top:0; z-index:3; height:0; display:flex; justify-content:flex-end}
+.save-chip{opacity:0; transition:opacity .2s var(--ease); pointer-events:none}
+.save-chip.show{opacity:1}
+.save-chip.saved{color:var(--ok)}
+.save-chip.error{color:var(--danger); border-color:var(--danger-border)}
+
 /* ============================================================
    RESPONSIVE — container queries for card internals
    (primitive selectors live in primitives.css; the @container

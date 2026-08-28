@@ -1,5 +1,6 @@
 /** @jsx h */
 import { Fragment, h } from 'preact';
+import { useCallback, useRef } from 'preact/hooks';
 import type { Settings, UpdateStatus } from '@/types';
 import { AdvancedCard } from '../cards/settings/AdvancedCard';
 import { BehaviorCard } from '../cards/settings/BehaviorCard';
@@ -9,15 +10,25 @@ import { SeedSessionCard } from '../cards/settings/SeedSessionCard';
 import { TargetingCard } from '../cards/settings/TargetingCard';
 import { UpdatesCard } from '../cards/settings/UpdatesCard';
 import type { ConfirmOptions } from '../hooks/useConfirm';
-import { useSettingsDraft } from '../hooks/useSettingsDraft';
+import { type SaveState, useSettingsDraft } from '../hooks/useSettingsDraft';
+import type { ToastKind } from '../hooks/useToasts';
 import type { ViewKey } from '../hooks/useView';
 import { Card, CardBody } from '../ui/Card';
+
+/** Chip copy per autosave state (the badge uppercases it). */
+const SAVE_CHIP: Record<Exclude<SaveState, 'idle'>, string> = {
+  saving: 'Saving…',
+  saved: 'Saved',
+  error: 'Not saved',
+};
 
 export interface SettingsViewProps {
   settings: Settings | null;
   onSaved(next: Settings): void;
   confirm(options: ConfirmOptions): Promise<boolean>;
   goTo(view: ViewKey): void;
+  /** Shell toast — autosave failures surface here (never silently). */
+  toast(kind: ToastKind, message: string): void;
   /** Bumped by the shell when Start was pressed without a seed. */
   seedPrompt: number;
   /** Re-open the intro tour (the Data & session card offers a replay). */
@@ -31,18 +42,33 @@ export interface SettingsViewProps {
  * Advanced, Projected growth, and Data·session sections (all minimized by default). Every
  * knob binds to the real Settings object through the draft hook, which autosaves
  * (debounced) via `settings:update`; the qualitative Behavior knobs derive the numeric
- * pacing config in one edit.
+ * pacing config in one edit. The surface header chip mirrors the autosave lifecycle
+ * (Saving… / Saved / Not saved) and a failed save additionally raises a toast.
  */
 export function SettingsView({
   settings,
   onSaved,
   confirm,
   goTo,
+  toast,
   seedPrompt,
   onReplayTour,
   updateStatus,
 }: SettingsViewProps): h.JSX.Element {
-  const s = useSettingsDraft(settings, onSaved);
+  const onSaveError = useCallback(
+    (error: unknown) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      toast('error', `Couldn't save settings: ${msg} — your edits are kept and retry on the next change.`);
+    },
+    [toast],
+  );
+  const s = useSettingsDraft(settings, onSaved, onSaveError);
+
+  // The chip fades out on 'idle' — keep the last shown state so the label and
+  // tone survive the fade instead of blanking mid-transition.
+  const lastShown = useRef<Exclude<SaveState, 'idle'> | null>(null);
+  if (s.saveState !== 'idle') lastShown.current = s.saveState;
+  const chipState = s.saveState !== 'idle' ? s.saveState : lastShown.current;
 
   /** Restore defaults on the backend, then adopt them without re-saving. */
   const onResetSettings = async (): Promise<void> => {
@@ -67,6 +93,16 @@ export function SettingsView({
 
   return (
     <Fragment>
+      {/* Surface header: the autosave state chip, pinned top-right so persistence
+          feedback stays visible while ANY card — including the safety caps — is
+          being edited. Zero-height, so the card stack never shifts. */}
+      <div class="save-h" role="status" aria-live="polite">
+        {chipState !== null ? (
+          <span class={`badge save-chip ${chipState}${s.saveState !== 'idle' ? ' show' : ''}`}>
+            {SAVE_CHIP[chipState]}
+          </span>
+        ) : null}
+      </div>
       {/* The wrapper is the intro tour's spotlight anchor for the seed step. */}
       <div class="tour-wrap" data-tour="seed">
         <SeedSessionCard draft={s.draft} patch={s.patch} confirm={confirm} goTo={goTo} requiredPrompt={seedPrompt} />
