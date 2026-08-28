@@ -17,11 +17,15 @@ const T0 = Date.parse('2026-08-12T12:00:00');
 /** Minimal in-memory recovery-state store (the KnowledgeStore meta slice). */
 class MemStore implements RecoveryStateStore {
   raw: string | null = null;
+  lastIncident: string | null = null;
   getRecoveryState(): string | null {
     return this.raw;
   }
   setRecoveryState(raw: string | null): void {
     this.raw = raw;
+  }
+  setRecoveryLastIncident(raw: string | null): void {
+    this.lastIncident = raw;
   }
 }
 
@@ -168,6 +172,66 @@ describe('exhaustion and reset', () => {
     sup.reset();
     expect(sup.phase()).toBe('inactive');
     expect(store.raw).toBeNull();
+  });
+});
+
+describe('incident window (the requeue-healer contract)', () => {
+  test('noteRecovered returns the closed window [enteredAt, resolvedAt=now] and persists it', () => {
+    const store = new MemStore();
+    const { sup, clock } = make({ store });
+    sup.noteOutcome('rate-limited');
+    sup.beginHold(clock.now()); // enteredAt stamped at T0
+    clock.advance(45 * 60_000);
+    sup.completeHold();
+
+    const incident = sup.noteRecovered();
+    expect(incident).toEqual({
+      enteredAt: T0,
+      resolvedAt: T0 + 45 * 60_000,
+      attempts: 1,
+      kindTally: { 'rate-limited': 1 },
+      healed: null,
+    });
+    // Persisted at the reset moment, exactly as returned.
+    expect(JSON.parse(store.lastIncident!)).toEqual(incident);
+  });
+
+  test('a post-halt reset (user ack from exhausted) also closes the window', () => {
+    const store = new MemStore();
+    const { sup, clock } = make({ store });
+    for (let rung = 1; rung <= RECOVERY.MAX_HOLDS; rung += 1) {
+      sup.beginHold(clock.now());
+      clock.advance(60_000);
+      sup.completeHold();
+    }
+    sup.beginHold(clock.now()); // → exhausted
+    clock.advance(60_000);
+
+    const incident = sup.reset();
+    expect(incident).toMatchObject({
+      enteredAt: T0,
+      resolvedAt: T0 + 4 * 60_000,
+      attempts: RECOVERY.MAX_HOLDS,
+    });
+    expect(store.lastIncident).not.toBeNull();
+  });
+
+  test('a reset with NO live episode returns null and persists nothing', () => {
+    const store = new MemStore();
+    const { sup } = make({ store });
+    expect(sup.noteRecovered()).toBeNull(); // inactive: no-op
+    expect(sup.reset()).toBeNull(); // nothing entered → no honest window
+    expect(store.lastIncident).toBeNull();
+  });
+
+  test('a hydrated snapshot that lost enteredAt closes NO window (never a fabricated one)', () => {
+    const store = new MemStore();
+    store.raw = JSON.stringify({ phase: 'probing', attempt: 1, holdUntil: null, kindTally: {} });
+    const { sup } = make({ store });
+    expect(sup.phase()).toBe('probing');
+    expect(sup.noteRecovered()).toBeNull();
+    expect(store.lastIncident).toBeNull();
+    expect(store.raw).toBeNull(); // the ladder itself still cleared
   });
 });
 

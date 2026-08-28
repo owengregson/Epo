@@ -96,9 +96,9 @@ test('an existing pre-exhausted_at database migrates cleanly, preserving target 
   try {
     const dbPath = path.join(dir, 'pre.db');
     // Build a database at the schema version just BEFORE the exhausted_at
-    // migration (the final entry), exactly as a live install would have it.
+    // migration, exactly as a live install would have it.
     const raw = new Database(dbPath);
-    const prior = MIGRATIONS.length - 1;
+    const prior = 10; // schema version just BEFORE the exhausted_at migration (index 10)
     for (let i = 0; i < prior; i += 1) raw.exec(MIGRATIONS[i]);
     raw.pragma(`user_version = ${prior}`);
     raw

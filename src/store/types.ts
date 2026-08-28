@@ -101,6 +101,21 @@ export interface FollowRecord {
    * Scanner (e.g. an externally-observed follow being reconciled).
    */
   score?: number;
+  /**
+   * When the record last transitioned INTO 'abandoned' (churn scheduler stamps
+   * it at the abandoning retry). Meaningful alongside `state === 'abandoned'`;
+   * a later heal/requeue keeps it as history. Undefined on rows abandoned
+   * before the stamp shipped (migration 11) — the recovery healer then falls
+   * back to the record's last failed action-ledger row, the honest nearest
+   * signal (the abandoning transition writes its fail row at the same moment).
+   */
+  abandonedAt?: number;
+  /**
+   * When the recovery healer requeued this record after a closed systemic
+   * incident window. Set means the record has spent its ONE heal — it is never
+   * healed again, even if it is later re-abandoned inside another window.
+   */
+  healedAt?: number;
 }
 
 // --- Graph-view source rows -------------------------------------------------

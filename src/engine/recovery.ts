@@ -38,6 +38,30 @@ export type RecoveryPhase = 'inactive' | 'diagnosing' | 'holding' | 'probing' | 
 export interface RecoveryStateStore {
   getRecoveryState(): string | null;
   setRecoveryState(raw: string | null): void;
+  setRecoveryLastIncident(raw: string | null): void;
+}
+
+/**
+ * A CLOSED systemic-incident window: the ladder ran (so actions were failing
+ * systemically) and then reset (a probe succeeded, or the user acked a
+ * terminal halt with a fresh Start) — the proof that the window
+ * [enteredAt, resolvedAt] was systemic-and-over. Persisted as store meta
+ * `recovery_last_incident` at the reset moment and handed to the Engine, whose
+ * requeue-healer uses it to give the records the window burned their one
+ * second chance. `healed` is null until the healer has run; the Engine amends
+ * the persisted record with the outcome.
+ */
+export interface RecoveryIncident {
+  /** When the ladder was first entered (its first hold began). */
+  enteredAt: number;
+  /** When the ladder reset — the window's proven end. */
+  resolvedAt: number;
+  /** Rungs the episode consumed. */
+  attempts: number;
+  /** The episode's failure-kind tally (diagnostics). */
+  kindTally: Partial<Record<FailureKind, number>>;
+  /** The requeue-healer's outcome, amended in by the Engine after healing. */
+  healed: { count: number; at: number } | null;
 }
 
 /** The durable snapshot shape (meta key `recovery_state`). */
@@ -209,25 +233,54 @@ export class RecoverySupervisor {
 
   /**
    * A verified ok/simulated outcome landed: the machinery works again. Clears
-   * the whole ladder (attempt, tally, persisted state). No-op when inactive.
+   * the whole ladder (attempt, tally, persisted state). No-op (null) when
+   * inactive; otherwise returns the closed incident window (see {@link reset}).
    */
-  noteRecovered(): void {
-    if (this.phaseNow === 'inactive') return;
+  noteRecovered(): RecoveryIncident | null {
+    if (this.phaseNow === 'inactive') return null;
     log.info('recovery: probe succeeded — ladder cleared', {
       attempt: this.attempt,
       tally: this.kindTally,
     });
-    this.reset();
+    return this.reset();
   }
 
-  /** Clear everything — user ack (a manual Start from a recovery halt) or success. */
-  reset(): void {
+  /**
+   * Clear everything — user ack (a manual Start from a recovery halt) or
+   * success. The reset moment is the PROOF that the episode's failure window
+   * was systemic-and-over, so when an episode was actually live (a hold began
+   * — `enteredAt` is stamped) the closed window [enteredAt, resolvedAt=now] is
+   * persisted as the last incident (store meta `recovery_last_incident`) and
+   * returned for the Engine's requeue-healer. A reset with no live episode
+   * (nothing entered, or a hydrated snapshot that lost its enteredAt) returns
+   * null — no honest window exists, so nothing may be healed off it.
+   */
+  reset(): RecoveryIncident | null {
+    const incident: RecoveryIncident | null =
+      this.enteredAt === null
+        ? null
+        : {
+            enteredAt: this.enteredAt,
+            resolvedAt: this.clock.now(),
+            attempts: this.attempt,
+            kindTally: { ...this.kindTally },
+            healed: null,
+          };
     this.phaseNow = 'inactive';
     this.attempt = 0;
     this.holdUntil = null;
     this.enteredAt = null;
     this.kindTally = {};
     this.store.setRecoveryState(null);
+    if (incident !== null) {
+      this.store.setRecoveryLastIncident(JSON.stringify(incident));
+      log.info('recovery: incident window closed', {
+        enteredAt: incident.enteredAt,
+        resolvedAt: incident.resolvedAt,
+        attempts: incident.attempts,
+      });
+    }
+    return incident;
   }
 
   // --- Durability (§3) ----------------------------------------------------------

@@ -50,7 +50,7 @@ import { startOfLocalDay } from '../timing/units';
 import * as log from '../utils/logger';
 import type { AdvanceResult } from './chain-controller';
 import type { ChurnActionOutcome } from './churn-scheduler';
-import { type FailureKind, RecoverySupervisor } from './recovery';
+import { type FailureKind, type RecoveryIncident, RecoverySupervisor } from './recovery';
 import type { ScanPlan } from './scanner';
 
 // ---------------------------------------------------------------------------------
@@ -777,10 +777,13 @@ export class Engine {
     const recoveryHalt =
       this.haltReason === 'recovery-exhausted' || this.haltReason === 'adapter-drift';
     if (recoveryHalt || this.recovery.phase() === 'exhausted') {
-      this.recovery.reset();
+      const incident = this.recovery.reset();
       this.deps.churn.resetConsecutiveFailures?.();
       this.deps.churn.resetConsecutiveBlocked?.();
       log.info('engine: recovery ladder cleared by manual start (user ack)');
+      // The user's Start closes the incident window a terminal halt left open:
+      // requeue what the window systemically burned (store-only, no IG traffic).
+      if (incident !== null) this.healIncidentWindow(incident);
     }
     this.haltReason = null; // a fresh start clears the previous halt's cause
     // A manual start is likewise a user ack for the chain self-heal: each
@@ -1224,8 +1227,10 @@ export class Engine {
           return this.enterRecovery(token, failKind);
         }
         if (outcome === 'ok' || outcome === 'simulated') {
-          // A verified success IS the probe's verdict: the ladder clears.
-          this.recovery.noteRecovered();
+          // A verified success IS the probe's verdict: the ladder clears —
+          // and the closed incident window heals what it systemically burned.
+          const incident = this.recovery.noteRecovered();
+          if (incident !== null) this.healIncidentWindow(incident);
         }
         kind = (due as FollowRecord).state === 'unfollow_queued' ? 'unfollow' : 'follow';
       }
@@ -1745,6 +1750,40 @@ export class Engine {
       resumesAt: new Date(this.deps.clock.now() + hold.holdMs).toISOString(),
     });
     return this.serveRecoveryHold(token);
+  }
+
+  /**
+   * The requeue-healer: a ladder reset just CLOSED a systemic-incident window
+   * (the probe succeeded, or the user acked a terminal halt with Start), so
+   * the `abandoned` verdicts that window minted were spurious — the machinery
+   * was broken, not the records. Requeue them ONCE (see
+   * {@link KnowledgeStore.healAbandonedInWindow} for the honesty rules:
+   * abandonment-time signal, the one-heal `healed_at` marker, the unworkable-
+   * target skip), bounded by {@link RECOVERY_TIMING.HEAL_MAX_RECORDS} and
+   * widened by {@link RECOVERY_TIMING.HEAL_GRACE_MS} to cover the entry
+   * streak's pre-ladder burn. Runs at most once per reset, synchronously,
+   * store-only — no IG traffic, no timers. The persisted incident record is
+   * amended with the outcome so the heal itself is on the record.
+   */
+  private healIncidentWindow(incident: RecoveryIncident): void {
+    const now = this.deps.clock.now();
+    const windowStartMs = incident.enteredAt - RECOVERY_TIMING.HEAL_GRACE_MS;
+    const result = this.deps.store.healAbandonedInWindow({
+      windowStartMs,
+      windowEndMs: incident.resolvedAt,
+      cap: RECOVERY_TIMING.HEAL_MAX_RECORDS,
+      now,
+    });
+    this.deps.store.setRecoveryLastIncident(
+      JSON.stringify({ ...incident, healed: { count: result.healed, at: now } }),
+    );
+    log.info('engine: recovery healer requeued the closed incident window burn', {
+      healed: result.healed,
+      toQueued: result.toQueued,
+      toUnfollowQueued: result.toUnfollowQueued,
+      skippedUnworkable: result.skippedUnworkable,
+      window: { from: windowStartMs, to: incident.resolvedAt },
+    });
   }
 
   /**

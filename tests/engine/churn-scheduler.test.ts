@@ -177,12 +177,19 @@ test('failing follow increments retryCount and abandons once maxRetries exceeded
 
   await sched.tick(); // fail → retryCount 1, still queued
   expect(store.getFollowRecord('5')).toMatchObject({ state: 'queued', retryCount: 1 });
+  expect(store.getFollowRecord('5')!.abandonedAt).toBeUndefined(); // retries left: no stamp
 
   await sched.tick(); // fail → retryCount 2, still queued (2 > 2 is false)
   expect(store.getFollowRecord('5')).toMatchObject({ state: 'queued', retryCount: 2 });
 
   await sched.tick(); // fail → retryCount 3 > maxRetries → abandoned
-  expect(store.getFollowRecord('5')).toMatchObject({ state: 'abandoned', retryCount: 3 });
+  // The abandoning transition stamps WHEN it happened (the requeue-healer's
+  // window signal) — at the same moment as its fail ledger row.
+  expect(store.getFollowRecord('5')).toMatchObject({
+    state: 'abandoned',
+    retryCount: 3,
+    abandonedAt: T0,
+  });
   expect(actions.followCalls).toHaveLength(3);
 });
 

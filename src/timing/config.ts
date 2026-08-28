@@ -161,6 +161,27 @@ export const RECOVERY = {
    * older than that predate any current outage and stay final.
    */
   EXHAUSTED_REVERIFY_WINDOW_MS: 48 * 3600_000,
+  /**
+   * Requeue-healer batch cap: the most `abandoned` records one closed incident
+   * window may requeue. A healed incident window is bounded by construction
+   * (ladder entry costs ~8 fails cold / ~2 per rung, and abandoning one record
+   * costs 4 of them), so a genuine window abandons at most a handful of
+   * records; a window that claims hundreds means the timestamps are wrong
+   * (clock skew, a corrupted snapshot) and mass-mutating history on it would
+   * repeat the very damage class the healer exists to repair. 200 is far
+   * above any honest window, far below "the whole table".
+   */
+  HEAL_MAX_RECORDS: 200,
+  /**
+   * Requeue-healer pre-entry grace: the incident window opens this much BEFORE
+   * the ladder's `enteredAt`, because entering the ladder costs a streak of
+   * failed actions (ACTIONS_FAILING_HALT cold) and the records those fails
+   * abandoned are the systemic burn's FIRST victims — stamped minutes before
+   * the ladder woke up. One hour covers a full entry streak at within-session
+   * pacing; wider would start claiming records abandoned by unrelated,
+   * earlier causes.
+   */
+  HEAL_GRACE_MS: 3600_000,
 } as const;
 
 export const RIM = {

@@ -2023,3 +2023,87 @@ describe('Engine — recovery ladder', () => {
     expect(h.engine.status().recovery?.phase).toBe('probing'); // hold served
   });
 });
+
+describe('Engine — requeue-healer (closed incident windows)', () => {
+  const abandoned = (
+    accountPk: string,
+    over: Partial<FollowRecord> = {},
+  ): FollowRecord => rec({ accountPk, targetPk: 't1', state: 'abandoned', retryCount: 4, ...over });
+
+  test('a probe success closes the window and requeues ONLY its in-window burn, once', async () => {
+    const h = makeHarness({ sentinel: ['action-blocked'] });
+    // Burned just before the ladder woke up (the entry streak's victims): in-window.
+    h.store.upsertFollowRecord(abandoned('burned', { abandonedAt: T0 - 60_000 }));
+    // Abandoned long before any systemic trouble: outside even the grace.
+    h.store.upsertFollowRecord(
+      abandoned('ancient', { abandonedAt: T0 - RECOVERY.HEAL_GRACE_MS - 60_000 }),
+    );
+    // In-window but aimed at a retired target: unworkable, stays abandoned.
+    h.store.addTarget({ accountPk: 't9', source: 'discovered', status: 'exhausted', chainIndex: 9 });
+    h.store.upsertFollowRecord(abandoned('retired', { targetPk: 't9', abandonedAt: T0 - 60_000 }));
+    expect(h.store.targetFunnel('t1').states).toMatchObject({ abandoned: 2, queued: 0 });
+
+    expect(await h.engine.stepOnce()).toBe('recovering'); // rung 1 (enteredAt = T0) → probing
+    h.churn.due = [rec({ accountPk: 'a' })];
+    expect(await h.engine.stepOnce()).toBe('acted'); // the probe lands ok → ladder reset → heal
+
+    expect(h.store.getFollowRecord('burned')).toMatchObject({ state: 'queued', retryCount: 0 });
+    expect(h.store.getFollowRecord('burned')!.healedAt).toBeDefined();
+    expect(h.store.getFollowRecord('ancient')!.state).toBe('abandoned');
+    expect(h.store.getFollowRecord('retired')!.state).toBe('abandoned');
+    // §4 funnel honesty: the red segment shrank because the GRAPH moved.
+    expect(h.store.targetFunnel('t1').states).toMatchObject({ abandoned: 1, queued: 1 });
+    // The persisted incident carries the window and the heal outcome.
+    const incident = JSON.parse(h.store.getRecoveryLastIncident()!);
+    expect(incident.enteredAt).toBe(T0);
+    expect(incident.healed.count).toBe(1);
+
+    // At most one window per reset: a later success with the ladder inactive
+    // closes nothing — records abandoned afterwards are NOT swept up.
+    h.store.upsertFollowRecord(abandoned('later', { abandonedAt: T0 - 60_000 }));
+    h.churn.due = [rec({ accountPk: 'b' })];
+    expect(await h.engine.stepOnce()).toBe('acted');
+    expect(h.store.getFollowRecord('later')!.state).toBe('abandoned');
+  });
+
+  test('the heal batch is capped at HEAL_MAX_RECORDS — a pathological window cannot mass-mutate', async () => {
+    const h = makeHarness({ sentinel: ['action-blocked'] });
+    for (let i = 0; i < RECOVERY.HEAL_MAX_RECORDS + 1; i += 1) {
+      h.store.upsertFollowRecord(
+        abandoned(`p${String(i).padStart(3, '0')}`, { abandonedAt: T0 - 1_000 }),
+      );
+    }
+
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    h.churn.due = [rec({ accountPk: 'a' })];
+    expect(await h.engine.stepOnce()).toBe('acted');
+
+    expect(h.store.followRecordsByState('queued')).toHaveLength(RECOVERY.HEAL_MAX_RECORDS);
+    expect(h.store.followRecordsByState('abandoned')).toHaveLength(1); // capped out, untouched
+  });
+
+  test('a manual Start from recovery-exhausted closes the window and heals (user ack)', async () => {
+    const h = makeHarness({
+      sentinel: ['action-blocked', 'action-blocked', 'action-blocked', 'action-blocked'],
+    });
+    // Abandoned DURING the episode (between entry and the terminal halt).
+    h.store.upsertFollowRecord(abandoned('burned', { abandonedAt: T0 + 1_000 }));
+
+    expect(await h.engine.stepOnce()).toBe('recovering'); // rung 1
+    expect(await h.engine.stepOnce()).toBe('recovering'); // rung 2
+    expect(await h.engine.stepOnce()).toBe('recovering'); // rung 3
+    expect(await h.engine.stepOnce()).toBe('halted'); // recovery-exhausted
+    expect(h.store.getFollowRecord('burned')!.state).toBe('abandoned'); // halt alone heals nothing
+
+    // The user's Start IS the window close for a terminal episode.
+    h.sleep.hang = true;
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.store.getFollowRecord('burned')).toMatchObject({ state: 'queued', retryCount: 0 });
+    const incident = JSON.parse(h.store.getRecoveryLastIncident()!);
+    expect(incident.attempts).toBe(RECOVERY.MAX_HOLDS);
+    expect(incident.healed.count).toBe(1);
+    h.engine.stop();
+    await started;
+  });
+});

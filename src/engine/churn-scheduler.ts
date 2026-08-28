@@ -329,7 +329,7 @@ export class ChurnScheduler {
       // engine "acts" on it eternally and every other record starves. Burn a
       // retry (no ledger row — nothing touched Instagram) until it abandons.
       log.warn('churn: no username for due follow, burning a retry', { pk: rec.accountPk });
-      this.retryOrAbandon(rec, 'follow');
+      this.retryOrAbandon(rec, 'follow', now);
       return 'noop';
     }
 
@@ -423,7 +423,7 @@ export class ChurnScheduler {
         this.consecutiveFailures += 1;
         if (outcome.cause === 'drift') this.consecutiveDriftFailures += 1;
         this.store.recordAction(rec.accountPk, 'follow', 'fail', now);
-        this.retryOrAbandon(rec, 'follow');
+        this.retryOrAbandon(rec, 'follow', now);
         return 'failed';
     }
   }
@@ -444,7 +444,7 @@ export class ChurnScheduler {
     if (username === undefined) {
       // Same starvation guard as the follow path: progress or abandon.
       log.warn('churn: no username for due unfollow, burning a retry', { pk: rec.accountPk });
-      this.retryOrAbandon(rec, 'unfollow');
+      this.retryOrAbandon(rec, 'unfollow', now);
       return 'noop';
     }
 
@@ -533,19 +533,21 @@ export class ChurnScheduler {
         this.consecutiveFailures += 1;
         if (outcome.cause === 'drift') this.consecutiveDriftFailures += 1;
         this.store.recordAction(rec.accountPk, 'unfollow', 'fail', now);
-        this.retryOrAbandon(rec, 'unfollow');
+        this.retryOrAbandon(rec, 'unfollow', now);
         return 'failed';
     }
   }
 
   /**
-   * Bump `retryCount`; once it exceeds `maxRetries` the record is abandoned,
-   * otherwise it stays in its current queued/due state for the next tick.
+   * Bump `retryCount`; once it exceeds `maxRetries` the record is abandoned —
+   * stamped with `abandonedAt = now` so the recovery requeue-healer can later
+   * place the abandonment inside a closed systemic-incident window — otherwise
+   * it stays in its current queued/due state for the next tick.
    */
-  private retryOrAbandon(rec: FollowRecord, action: 'follow' | 'unfollow'): void {
+  private retryOrAbandon(rec: FollowRecord, action: 'follow' | 'unfollow', now: number): void {
     const retryCount = rec.retryCount + 1;
     if (retryCount > this.cfg.maxRetries) {
-      this.store.upsertFollowRecord({ ...rec, state: 'abandoned', retryCount });
+      this.store.upsertFollowRecord({ ...rec, state: 'abandoned', retryCount, abandonedAt: now });
       log.warn('churn: retries exhausted, abandoning record', {
         pk: rec.accountPk,
         action,

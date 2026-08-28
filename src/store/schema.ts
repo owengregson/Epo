@@ -216,4 +216,20 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE targets ADD COLUMN exhausted_at INTEGER;
   `,
+
+  // --- Migration 11: requeue-healer stamps on follow_records -------------------------
+  // `abandoned_at`: WHEN the record last transitioned INTO 'abandoned' (stamped
+  // by the churn scheduler going forward; NULL on rows abandoned before this
+  // shipped) — the fact that lets the recovery healer place an abandonment
+  // inside a closed systemic-incident window instead of guessing.
+  // `healed_at`: WHEN the healer requeued this record after such a window
+  // closed. Non-NULL means the record has spent its ONE heal — it can never be
+  // healed twice, however many later windows overlap it. Both are stamps on the
+  // existing row, never rewrites of the ledger: the spurious fail rows the
+  // incident wrote remain exactly as recorded. Append-only: never edit the
+  // migrations above.
+  `
+  ALTER TABLE follow_records ADD COLUMN abandoned_at INTEGER;
+  ALTER TABLE follow_records ADD COLUMN healed_at INTEGER;
+  `,
 ];
