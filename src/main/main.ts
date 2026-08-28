@@ -220,6 +220,11 @@ function createWindow(): void {
         dash.webContents.send('epo:prune-status', status);
       }
     },
+    onChainList: (list) => {
+      if (!dash.webContents.isDestroyed()) {
+        dash.webContents.send('epo:chain-list', list);
+      }
+    },
   });
   foundation = found;
 

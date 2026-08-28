@@ -5,7 +5,8 @@
  * never touches `ipcRenderer` directly. Push subscriptions (`on`/`off`) keep a
  * per-channel map from the caller's callback to the wrapped `ipcRenderer`
  * listener so `off` removes the *exact* listener that `on` added — no leaks.
- * Both push channels (`log` and pushed `status`) flow through the same map.
+ * Every push channel (the streaming log and the pushed projections) flows
+ * through the same map.
  */
 
 import type { IpcRendererEvent } from 'electron';
@@ -38,6 +39,7 @@ const EVENT_CHANNELS: Record<EpoEventChannel, string> = {
   status: 'epo:status',
   pruneStatus: 'epo:prune-status',
   updateStatus: 'epo:update-status',
+  chainList: 'epo:chain-list',
 };
 
 type AnyListener = (payload: unknown) => void;

@@ -340,6 +340,12 @@ export interface EpoEventPayloads {
   status: EpoStatus;
   pruneStatus: PruneStatus;
   updateStatus: UpdateStatus;
+  /**
+   * The chain projection, re-shaped and pushed on every store mutation (same
+   * throttled push as `status` — §2), so target yields tick DURING walks when
+   * observations move no status counter.
+   */
+  chainList: ChainTargetView[];
 }
 
 /** Channels pushed from the main process to the renderer. */

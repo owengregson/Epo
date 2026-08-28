@@ -138,6 +138,13 @@ export interface FoundationDeps {
   /** Push each fresh prune status projection to the renderer. */
   onPruneStatus?: (status: PruneStatus) => void;
   /**
+   * Push each fresh chain-list projection to the renderer. Rides the same
+   * mutation-driven throttled push as the two status projections (§2), so
+   * per-target yields tick DURING acquisition walks — where observations write
+   * accounts/edges only and no status counter moves.
+   */
+  onChainList?: (list: ChainTargetView[]) => void;
+  /**
    * Optional tap on the Interactor's synthetic cursor (position + button state).
    * Main wires this to the overlay veil's digital-cursor display; it observes
    * driver output only and never influences the input pipeline.
@@ -235,6 +242,7 @@ export class Foundation {
   private readonly tab: InstagramTab;
   private readonly onStatusCb?: (status: EpoStatus) => void;
   private readonly onPruneStatusCb?: (status: PruneStatus) => void;
+  private readonly onChainListCb?: (list: ChainTargetView[]) => void;
   private readonly cursorObserver?: CursorObserver;
   /** Live phase readout tap (veil); a no-op when main wires none. */
   private readonly reporter: ActivityReporter;
@@ -357,6 +365,7 @@ export class Foundation {
     this.tab = deps.tab;
     this.onStatusCb = deps.onStatus;
     this.onPruneStatusCb = deps.onPruneStatus;
+    this.onChainListCb = deps.onChainList;
     this.cursorObserver = deps.cursorObserver;
     this.reporter = deps.activityReporter ?? NOOP_ACTIVITY_REPORTER;
     this.activity = new TabActivity((active, holds) => {
@@ -483,8 +492,8 @@ export class Foundation {
       ownUsername: ownUsername ?? '(unknown)',
     });
     // §2 live mirror: every store write (facts stream in per row) schedules a
-    // throttled push of BOTH status projections, so the renderer's counts move
-    // during scans/sweeps rather than at their end.
+    // throttled push of the status projections AND the chain-list projection,
+    // so the renderer's counts move during scans/sweeps rather than at their end.
     this.mutationUnsub = this.graph.store.onMutation(() => this.scheduleGraphPush());
     // Push fresh projections the moment the graph exists. The renderer's first
     // status pull races this lazy build and gets the all-zero not-built shape;
@@ -493,6 +502,7 @@ export class Foundation {
     // the build (the "numbers don't match the queues after reload" bug).
     this.onStatusCb?.(this.builtStatus());
     this.onPruneStatusCb?.(this.graph.pruneEngine.status());
+    this.onChainListCb?.(this.shapedChainList(this.graph));
     return true;
   }
 
@@ -1371,7 +1381,14 @@ export class Foundation {
    * (f14). Shared by
    * {@link dispose} and the R5 rebuild path. A no-op when nothing is built.
    */
-  /** Trailing-throttled dual-status push driven by store mutations (§2). */
+  /**
+   * Trailing-throttled projection push driven by store mutations (§2): both
+   * status projections plus the chain-list projection. The chain list must ride
+   * THIS push (not just status-keyed refetches in the renderer): a pure
+   * acquisition walk writes accounts/edges only — no status counter moves — so
+   * a counter-keyed pull would stay frozen exactly during the operation whose
+   * liveness §2 mandates.
+   */
   private scheduleGraphPush(): void {
     if (this.graphPushTimer !== null || this.disposing) return;
     this.graphPushTimer = setTimeout(() => {
@@ -1380,6 +1397,7 @@ export class Foundation {
       if (graph === null || this.disposing) return;
       this.onStatusCb?.(this.builtStatus());
       this.onPruneStatusCb?.(graph.pruneEngine.status());
+      this.onChainListCb?.(this.shapedChainList(graph));
     }, POLL.GRAPH_PUSH_THROTTLE_MS);
   }
 
@@ -1878,6 +1896,15 @@ export class Foundation {
   async chainList(): Promise<ChainTargetView[]> {
     const graph = await this.builtGraph();
     if (graph === null) return [];
+    return this.shapedChainList(graph);
+  }
+
+  /**
+   * The chain projection shaped for both delivery paths (the `chain:list` pull
+   * and the mutation-driven push). Never throws — a failed read logs loudly
+   * (no silent catch) and returns `[]` so neither path takes down its caller.
+   */
+  private shapedChainList(graph: BuiltGraph): ChainTargetView[] {
     try {
       return shapeChainList(graph.store, graph.ownPk);
     } catch (e) {
