@@ -26,17 +26,16 @@ jobs:
         with:
           persist-credentials: false
 
-      # Excluded: our own readme-live raw URLs (they 404 anonymously while the
-      # repo is private — DROP this exclude when the repo goes public),
-      # instagram.com (bot-blocks datacenter IPs), and the release links
-      # (relative ../../releases climb outside the checkout).
+      # Excluded: instagram.com (bot-blocks datacenter IPs) and the release
+      # links (relative ../../releases climb outside the checkout). The repo
+      # is public, so our own raw.githubusercontent URLs (the README's live
+      # panels) are checked like everything else.
       - name: Check README and docs links
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
           args: >-
             --no-progress
             --accept 200..=206,429
-            --exclude 'raw\.githubusercontent\.com/owengregson/Epo'
             --exclude 'instagram\.com'
             --exclude 'releases'
             README.md docs/PRINCIPLES.md docs/HANDOFF.md
