@@ -53,7 +53,7 @@ describe('organic pacing settings', () => {
     expect(c.maxActionsPerRollingHour).toBe(18);
   });
 
-  test('sanitize clamps and orders the new knobs, and rejects a bad pacingModel', () => {
+  test('sanitize clamps and orders the new knobs, and degrades a bad pacingModel to the default', () => {
     const file = path.join(dir, 's.json');
     saveSettings(file, {
       ...DEFAULT_SETTINGS,
@@ -74,7 +74,26 @@ describe('organic pacing settings', () => {
     expect(s.sessionsPerDayMax).toBeGreaterThanOrEqual(s.sessionsPerDayMin);
     expect(s.gapFloorSeconds).toBeLessThanOrEqual(s.gapMedianSeconds);
     expect(s.hourlyVelocityCap).toBeLessThanOrEqual(40);
-    expect(s.pacingModel).toBe('legacy');
+    expect(s.pacingModel).toBe('organic'); // junk degrades to the default, never to legacy
+  });
+
+  test('the pacing model defaults to organic and BOTH stored values round-trip', () => {
+    expect(DEFAULT_SETTINGS.pacingModel).toBe('organic');
+
+    // An existing install that explicitly chose legacy keeps it across load.
+    const legacyFile = path.join(dir, 'legacy-model.json');
+    saveSettings(legacyFile, { ...DEFAULT_SETTINGS, pacingModel: 'legacy' });
+    expect(loadSettings(legacyFile).pacingModel).toBe('legacy');
+
+    const organicFile = path.join(dir, 'organic-model.json');
+    saveSettings(organicFile, { ...DEFAULT_SETTINGS, pacingModel: 'organic' });
+    expect(loadSettings(organicFile).pacingModel).toBe('organic');
+  });
+
+  test('a settings file with no stored pacingModel gets organic (default rollout)', () => {
+    const file = path.join(dir, 'no-model.json');
+    fs.writeFileSync(file, JSON.stringify({ seed: 'x', dailyOperatingRate: 37 }), 'utf8');
+    expect(loadSettings(file).pacingModel).toBe('organic');
   });
 
   test('a named persona derives the numeric knobs from its bundle', () => {

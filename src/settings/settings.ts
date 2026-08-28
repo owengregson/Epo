@@ -104,10 +104,13 @@ export interface Settings {
 
   // --- Organic macro-timing model (docs/superpowers/plans/2026-08-15-*). ---
   /**
-   * Which pacing model drives the growth loop. `'legacy'` keeps the flat
-   * active-hours + operating-rate metronome; `'organic'` activates the
-   * SessionPlanner (circadian sessions, log-normal gaps, daily-volume
-   * distribution). Rolled out behind this flag; flips live via applySettings.
+   * Which pacing model drives the growth loop. `'organic'` (the default)
+   * activates the SessionPlanner (circadian sessions, log-normal gaps,
+   * daily-volume distribution); `'legacy'` keeps the flat active-hours +
+   * operating-rate metronome. Both values persist as-is: an install whose
+   * settings file explicitly says `'legacy'` stays legacy; a file with no
+   * stored value gets the organic default. A model switch takes effect at the
+   * next graph build (the planner is a construction-time engine dep).
    */
   pacingModel: 'legacy' | 'organic';
   /** Day-to-day volume spread (log-normal σ, as a percent). */
@@ -190,7 +193,7 @@ export const DEFAULT_SETTINGS: Settings = {
   pruneScanMinSeconds: 1,
   pruneScanMaxSeconds: 3,
 
-  pacingModel: 'legacy',
+  pacingModel: 'organic',
 
   // The qualitative pattern is the source of truth for the pacing numbers: every
   // derived knob (daily volume, sessions, gaps, velocity, weave, prune cap, follow-back
@@ -328,7 +331,10 @@ export function sanitizeSettings(s: Settings): Settings {
     out.pruneScanMinSeconds,
   );
 
-  out.pacingModel = s.pacingModel === 'organic' ? 'organic' : 'legacy';
+  // Both models are valid stored values (an explicit 'legacy' from an existing
+  // install is respected); anything else degrades to the default ('organic').
+  out.pacingModel =
+    s.pacingModel === 'organic' || s.pacingModel === 'legacy' ? s.pacingModel : d.pacingModel;
   out.dailyVolumeVariancePct = num(s.dailyVolumeVariancePct, d.dailyVolumeVariancePct, 0, 60);
   out.restDayChancePct = num(s.restDayChancePct, d.restDayChancePct, 0, 30);
   out.sessionsPerDayMin = intNum(s.sessionsPerDayMin, d.sessionsPerDayMin, 1, 12);

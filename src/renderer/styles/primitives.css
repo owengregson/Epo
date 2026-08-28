@@ -183,6 +183,12 @@
   border-color:var(--border-hover); color:var(--chrome);
   box-shadow:var(--elev-1);
 }
+/* A gated group (e.g. a knob the selected pacing model doesn't consult): the
+   stored value stays visible, but the whole control reads inert. */
+.seg.disabled{opacity:.45}
+.seg.disabled button{cursor:default}
+.seg.disabled button:hover{color:var(--muted)}
+.seg.disabled button.active:hover{color:var(--chrome)}
 
 /* chip / pill preset selector */
 .chips{display:flex; gap:var(--sp-2); margin-top:var(--sp-2); flex-wrap:wrap}

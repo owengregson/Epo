@@ -1,6 +1,7 @@
 /** @jsx h */
 import { h } from 'preact';
 import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
+import { activeHoursText } from '@/renderer/lib/engine-view';
 import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
 import { Field } from '@/renderer/ui/Field';
 import { Segmented } from '@/renderer/ui/Segmented';
@@ -30,6 +31,45 @@ const PERSONA_OPTIONS: ReadonlyArray<{ value: PersonaId; label: string }> = [
   { value: 'nightOwl', label: 'Night owl' },
   { value: 'custom', label: 'Custom' },
 ];
+
+// --- Pacing model (which timing engine actually runs) -------------------------------
+
+/** User-facing labels for the two pacing models (internal values stay 'organic'/'legacy'). */
+export const PACING_OPTIONS: ReadonlyArray<{ value: Settings['pacingModel']; label: string }> = [
+  { value: 'organic', label: 'Adaptive sessions' },
+  { value: 'legacy', label: 'Steady intervals' },
+];
+
+/** One-line description of what the selected model actually does. */
+export function pacingModelHint(model: Settings['pacingModel']): string {
+  return model === 'organic'
+    ? 'Session-based pacing that varies day to day (recommended).'
+    : 'Evenly paced actions inside active hours — the session knobs below are inactive.';
+}
+
+/**
+ * The knobs ONLY the adaptive-sessions model consults. Traced to their consumers:
+ * caution → hourlyVelocityCap + gapFloorSeconds (engine organic branch / SessionPlanner);
+ * cleanup → weaveEnabled + maxUnfollowFractionPerSession (woven-prune path, organic-gated
+ * in engine.selectPruneCandidate and the foundation's scheduled-prune launcher);
+ * dayShape/weeklyShape → the circadian profile (SessionPlanner construction);
+ * rhythm → sessionsPerDay + gapMedianSeconds (SessionPlanner);
+ * consistency → dailyVolumeVariancePct + restDayChancePct (SessionPlanner day draw).
+ * Live under BOTH models (never gated): activityLevel → dailyOperatingRate/-HardCeiling/
+ * dailyPlanSize (rate governor + scanner); patience → follow-back wait/hold windows
+ * (churn scheduler + follow-back watcher).
+ */
+export const ADAPTIVE_ONLY_KNOBS: ReadonlySet<keyof PatternSettings> = new Set([
+  'caution',
+  'cleanup',
+  'dayShape',
+  'weeklyShape',
+  'rhythm',
+  'consistency',
+]);
+
+/** The plain note shown on a gated knob while steady intervals are selected. */
+export const ADAPTIVE_ONLY_NOTE = 'Requires adaptive sessions';
 
 const opt = (...vs: Array<[string, string]>): ReadonlyArray<{ value: string; label: string }> =>
   vs.map(([value, label]) => ({ value, label }));
@@ -123,15 +163,19 @@ function dayIntensities(pattern: PatternSettings): number[] {
 }
 
 /**
- * Behavior — the PRIMARY, qualitative settings surface (§5.6). A persona sets the whole
- * character in one tap; the three headline knobs (activity, caution, cleanup) cover what
- * most people tune; the finer schedule character lives under "Advanced". Everything maps
- * to concrete pacing numbers, previewed live as a day-shape bar — nothing is entered by
- * hand. Two operational toggles (auto-accept requests, dry run) sit at the bottom.
+ * Behavior — the PRIMARY, qualitative settings surface (§5.6). The pacing model comes
+ * first (it decides which knobs below actually run): adaptive sessions is the default;
+ * steady intervals stays selectable, and every knob only the adaptive model consults is
+ * then disabled with a plain note rather than silently ignored. A persona sets the whole
+ * character in one tap; the headline knobs cover what most people tune; the finer schedule
+ * character lives under "Advanced". The preview shows the day shape the adaptive model
+ * will follow — or the flat pace when steady intervals are selected. Two operational
+ * toggles (auto-accept requests, dry run) sit at the bottom.
  */
 export function BehaviorCard({ draft, patch, set, index }: BehaviorCardProps): h.JSX.Element {
   const pattern = draft.pattern;
   const r = resolvePattern(pattern);
+  const adaptive = draft.pacingModel === 'organic';
 
   const applyPattern = (next: PatternSettings, persona: PersonaId): void => {
     patch({ persona, pattern: next, ...resolvePattern(next) });
@@ -144,22 +188,39 @@ export function BehaviorCard({ draft, patch, set, index }: BehaviorCardProps): h
     applyPattern({ ...pattern, [key]: value } as PatternSettings, 'custom');
   };
 
-  const renderKnob = (k: Knob): h.JSX.Element => (
-    <Field key={k.key} label={k.label} tip={k.tip}>
-      <Segmented
-        options={k.options}
-        value={pattern[k.key]}
-        onChange={(v: string) => onKnob(k.key, v)}
-        ariaLabel={k.label}
-      />
-    </Field>
-  );
+  const renderKnob = (k: Knob): h.JSX.Element => {
+    const gated = !adaptive && ADAPTIVE_ONLY_KNOBS.has(k.key);
+    return (
+      <Field key={k.key} label={k.label} tip={k.tip} hint={gated ? ADAPTIVE_ONLY_NOTE : undefined}>
+        <Segmented
+          options={k.options}
+          value={pattern[k.key]}
+          onChange={(v: string) => onKnob(k.key, v)}
+          ariaLabel={k.label}
+          disabled={gated}
+        />
+      </Field>
+    );
+  };
 
   const intensities = dayIntensities(pattern);
   const restNote = r.restDayChancePct > 0 ? ` · ~${r.restDayChancePct}% rest days` : '';
 
   return (
     <CollapsibleCard icon="wand-magic-sparkles" title="Behavior" index={index} defaultCollapsed>
+      <Field
+        label="Pacing"
+        tip="How the engine times its actions. Adaptive sessions spreads a varying daily plan across natural sessions shaped by the knobs below; Steady intervals spaces actions evenly inside active hours. A model change takes effect the next time Epo starts."
+        hint={pacingModelHint(draft.pacingModel)}
+      >
+        <Segmented
+          options={PACING_OPTIONS}
+          value={draft.pacingModel}
+          onChange={(v) => set('pacingModel', v)}
+          ariaLabel="Pacing model"
+        />
+      </Field>
+
       <Field
         label="Persona"
         tip="A one-tap behavior profile. Pick one, or tune the knobs below (which switches to Custom)."
@@ -182,23 +243,31 @@ export function BehaviorCard({ draft, patch, set, index }: BehaviorCardProps): h
       {renderKnob(PRIMARY[1])}
       {renderKnob(PRIMARY[2])}
 
-      <Field label="Preview" tip="The daily activity shape and the pace these choices produce.">
-        <div class="pattern-preview" aria-hidden="true">
-          {intensities.map((v, hour) => (
-            <span
-              key={hour}
-              class="pattern-preview__bar"
-              style={{ height: `${Math.max(4, Math.round(v * 100))}%` }}
-              title={`${hour}:00`}
-            />
-          ))}
-        </div>
-        <div class="hint num">
-          {`~${r.dailyOperatingRate} follows/day · ${r.sessionsPerDayMin}–${r.sessionsPerDayMax} sessions · ~${Math.round(
-            r.gapMedianSeconds / 60,
-          )} min between actions${restNote} · cleanup ${r.weaveEnabled ? pattern.cleanup : 'off'}`}
-        </div>
-      </Field>
+      {adaptive ? (
+        <Field label="Preview" tip="The daily activity shape and the pace these choices produce.">
+          <div class="pattern-preview" aria-hidden="true">
+            {intensities.map((v, hour) => (
+              <span
+                key={hour}
+                class="pattern-preview__bar"
+                style={{ height: `${Math.max(4, Math.round(v * 100))}%` }}
+                title={`${hour}:00`}
+              />
+            ))}
+          </div>
+          <div class="hint num">
+            {`~${r.dailyOperatingRate} follows/day · ${r.sessionsPerDayMin}–${r.sessionsPerDayMax} sessions · ~${Math.round(
+              r.gapMedianSeconds / 60,
+            )} min between actions${restNote} · cleanup ${r.weaveEnabled ? pattern.cleanup : 'off'}`}
+          </div>
+        </Field>
+      ) : (
+        <Field label="Preview" tip="The flat pace steady intervals will run.">
+          <div class="hint num">
+            {`~${r.dailyOperatingRate} follows/day · steady ${draft.minDelayMinutes}–${draft.maxDelayMinutes} min intervals · active ${activeHoursText(draft)}`}
+          </div>
+        </Field>
+      )}
 
       <details class="pattern-advanced">
         <summary>Advanced — schedule character</summary>
