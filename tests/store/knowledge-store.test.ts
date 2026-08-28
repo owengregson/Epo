@@ -130,6 +130,94 @@ test('the baseline is set-once and retroactively absorbs earlier partial sweeps'
   expect(s.netGrowthSeries(3, 'ME')[2].cumulativeNet).toBe(1); // just NEW
 });
 
+test('REGRESSION: event gains observed weeks before the first census survive it', () => {
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
+  const noonToday = today0.getTime() + 12 * 3_600_000;
+  const day = 86_400_000;
+
+  s.setOwnPk('ME');
+  // Measurement began weeks ago: the first sweep anchored the baseline, then
+  // the watcher recorded genuine follow events at their own times.
+  s.ensureFollowersBaseline(noonToday - 21 * day);
+  s.observeOwnFollowerEvent('e1', 'ME', noonToday - 20 * day);
+  s.observeOwnFollowerEvent('e2', 'ME', noonToday - 10 * day);
+  expect(s.netFollowersSince(0)).toBe(2);
+
+  // The user's FIRST prune scan lands weeks later. Its census re-confirms the
+  // event-observed followers and discovers never-seen stock in bulk.
+  s.ingestScanCensus([], ['e1', 'e2', 'st1', 'st2', 'st3'], noonToday);
+
+  // The pre-census gains still chart — the census did not move the baseline —
+  // and the discovered stock never charts as a census-day cliff.
+  expect(s.followersBaselineAt()).toBe(noonToday - 21 * day);
+  expect(s.netFollowersSince(0)).toBe(2);
+  const series = s.netGrowthSeries(30, 'ME');
+  expect(series[series.length - 1].cumulativeNet).toBe(2);
+});
+
+test('DEFENSE: pre-census event gains survive even when no path anchored a baseline', () => {
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
+  const noonToday = today0.getTime() + 12 * 3_600_000;
+  const day = 86_400_000;
+
+  s.setOwnPk('ME');
+  // A collection path recorded raw event edges and forgot ensureFollowersBaseline.
+  s.observeEdge('e1', 'ME', 'follows', true, noonToday - 20 * day);
+  s.observeEdge('e2', 'ME', 'follows', true, noonToday - 10 * day);
+  s.ingestScanCensus([], ['e1', 'e2', 'st1'], noonToday);
+
+  // The first census stamps the baseline just BELOW the earliest observed
+  // gain, so both pre-census gains count; its own discovery (st1) is stock.
+  expect(s.followersBaselineAt()).toBe(noonToday - 20 * day - 1);
+  expect(s.netFollowersSince(0)).toBe(2);
+});
+
+test('the first census absorbs its walk-streamed discoveries as stock (no one-day cliff)', () => {
+  const today0 = new Date();
+  today0.setHours(0, 0, 0, 0);
+  const noonToday = today0.getTime() + 12 * 3_600_000;
+  const day = 86_400_000;
+
+  s.setOwnPk('ME');
+  s.ensureFollowersBaseline(noonToday - 15 * day);
+  s.observeOwnFollowerEvent('gain', 'ME', noonToday - 10 * day);
+  // The scan's followers walk streams its rows per-item (§1), minutes before
+  // the census verdict — never-seen accounts land with fresh first_seen_at.
+  s.observeEdge('w1', 'ME', 'follows', true, noonToday - 30 * 60_000);
+  s.observeEdge('w2', 'ME', 'follows', true, noonToday - 20 * 60_000);
+  s.ingestScanCensus([], ['gain', 'w1', 'w2'], noonToday);
+
+  // Only the event gain charts; the walk's stock discoveries were re-dated
+  // onto the baseline instead of charting as a census-day cliff.
+  expect(s.netFollowersSince(0)).toBe(1);
+
+  // A SECOND census discovering a new follower still charts it (a genuine
+  // gain the notifications missed) — the stock absorption is first-census-only.
+  s.ingestScanCensus([], ['gain', 'w1', 'w2', 'NEW'], noonToday + 3_600_000);
+  expect(s.netFollowersSince(0)).toBe(2);
+});
+
+test('ensureFollowersBaseline is set-once and a later census never moves it', () => {
+  s.setOwnPk('ME');
+  s.ensureFollowersBaseline(1000);
+  s.ensureFollowersBaseline(2000);
+  expect(s.followersBaselineAt()).toBe(1000);
+  s.ingestScanCensus([], ['a'], 5000);
+  expect(s.followersBaselineAt()).toBe(1000);
+  expect(s.netFollowersSince(0)).toBe(0); // the census discovery is stock
+});
+
+test('observeOwnFollowerEvent anchors the baseline: the first-ever event is the boundary', () => {
+  s.setOwnPk('ME');
+  s.observeOwnFollowerEvent('a', 'ME', 1000);
+  expect(s.followersBaselineAt()).toBe(1000);
+  expect(s.netFollowersSince(0)).toBe(0); // the boundary event itself is stock
+  s.observeOwnFollowerEvent('b', 'ME', 2000);
+  expect(s.netFollowersSince(0)).toBe(1); // everything after it charts
+});
+
 test('netGrowthSeries guards non-positive days and empty ownPk', () => {
   s.observeEdge('f1', 'ME', 'follows', true, Date.now());
   expect(s.netGrowthSeries(0, 'ME')).toEqual([]);

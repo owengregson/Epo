@@ -173,6 +173,36 @@ test('an ACCEPTED follow request counts as a follow-back (private-account path)'
   expect(store.getAccount('R')?.username).toBe('req_r');
 });
 
+test('the FIRST check anchors the followers baseline: backlog is stock, later events chart', async () => {
+  store.setOwnPk(OWN);
+  store.upsertFollowRecord(rec({ accountPk: 'A' }));
+
+  // First sweep: the feed's backlog carries events from before measurement.
+  const first = new FakeNotifications({
+    ok: true,
+    events: [follow('A', NOW - 5000), follow('X', NOW - 9000)],
+  });
+  await watcher(first).check();
+  expect(store.followersBaselineAt()).toBe(NOW);
+  expect(store.netFollowersSince(0)).toBe(0); // backlog = pre-existing stock
+
+  // A later sweep observes a genuinely new event → it charts as growth.
+  store.upsertFollowRecord(rec({ accountPk: 'B' }));
+  clock.advance(3_600_000);
+  const second = new FakeNotifications({ ok: true, events: [follow('B', NOW + 1_800_000)] });
+  await watcher(second).check();
+  expect(store.followersBaselineAt()).toBe(NOW); // set-once: never moved
+  expect(store.netFollowersSince(0)).toBe(1);
+});
+
+test('a check with nothing pending still anchors the baseline (collection has begun)', async () => {
+  store.setOwnPk(OWN);
+  const src = new FakeNotifications({ ok: true, events: [follow('A')] });
+  await watcher(src).check();
+  expect(src.calls).toBe(0); // request-minimal path unchanged
+  expect(store.followersBaselineAt()).toBe(NOW);
+});
+
 test('an accepted request with an unresolved pk is warned and skipped (no phantom record)', async () => {
   store.upsertFollowRecord(rec({ accountPk: 'S' }));
 

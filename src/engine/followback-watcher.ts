@@ -128,6 +128,15 @@ export class FollowbackWatcher {
   async check(): Promise<{ detected: string[] }> {
     const detected: string[] = [];
 
+    // Growth measurement anchors HERE: the first check of a freshly started
+    // engine stamps the followers baseline (set-once — an overdue sweep is the
+    // first thing a started engine runs, docs/PRINCIPLES.md §3), so every
+    // follow event observed from now on charts as growth, and a later first
+    // prune census can no longer re-classify those gains as pre-existing
+    // stock. Organic follows already sitting in the feed's backlog predate
+    // measurement and stay stock.
+    this.store.ensureFollowersBaseline(this.clock.now());
+
     // 1. Nothing pending → don't fetch anything (request-minimal).
     const pending = new Set(
       this.store.followRecordsByState('pending_followback').map((r) => r.accountPk),
@@ -175,7 +184,7 @@ export class FollowbackWatcher {
           fields: { username: event.username },
         });
       }
-      this.store.observeEdge(event.pk, this.ownPk, 'follows', true, at);
+      this.store.observeOwnFollowerEvent(event.pk, this.ownPk, at);
       if (pending.has(event.pk)) {
         this.markFollowedBack(event.pk, at, detected);
         pending.delete(event.pk);
@@ -197,7 +206,7 @@ export class FollowbackWatcher {
         source: 'friend-requests',
         fields: { username: acc.username },
       });
-      this.store.observeEdge(acc.pk, this.ownPk, 'follows', true, now);
+      this.store.observeOwnFollowerEvent(acc.pk, this.ownPk, now);
       if (pending.has(acc.pk)) {
         this.markFollowedBack(acc.pk, now, detected);
         pending.delete(acc.pk);

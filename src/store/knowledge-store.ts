@@ -1,6 +1,6 @@
 import type BetterSqlite3 from 'better-sqlite3';
 import Database from 'better-sqlite3';
-import { startOfLocalDay } from '../timing/units';
+import { MS_PER_DAY, startOfLocalDay } from '../timing/units';
 import * as logger from '../utils/logger';
 import { runMigrations } from './migrations';
 import { projectAccount } from './projections';
@@ -78,6 +78,18 @@ const strOrUndef = (v: string | null): string | undefined => (v === null ? undef
 const boolToInt = (v: boolean | undefined): number | null =>
   v === undefined ? null : v ? 1 : 0;
 const orNull = <T>(v: T | undefined): T | null => (v === undefined ? null : v);
+
+/**
+ * Own-follower edges first seen within this window before a census verdict are
+ * treated as discoveries of that census's OWN walk: the followers walk streams
+ * each row into the graph as it parses (docs/PRINCIPLES.md §1), minutes to
+ * hours before `ingestScanCensus` runs, so by census time the walk's rows are
+ * indistinguishable from event-observed edges by anything but age. On the
+ * FIRST census those discoveries are pre-existing stock, never growth.
+ * Generous: no complete walk spans a day; the cost of over-covering is one
+ * day of pre-census event gains absorbed as stock, exactly once.
+ */
+const FIRST_CENSUS_STOCK_WINDOW_MS = MS_PER_DAY;
 
 const rowToState = (row: AccountRow): AccountState => ({
   pk: row.pk,
@@ -709,9 +721,10 @@ export class KnowledgeStore {
   }
 
   /**
-   * The moment of the FIRST complete followers census, or `null` before one
-   * exists. Everything first seen AT or BEFORE this moment is pre-existing
-   * STOCK — the net-growth series only counts edge events strictly after it.
+   * The moment follower measurement began — the first follow-back sweep or the
+   * first complete census, whichever ran first — or `null` before either.
+   * Everything first seen AT or BEFORE this moment is pre-existing STOCK — the
+   * net-growth series only counts edge events strictly after it.
    */
   followersBaselineAt(): number | null {
     const raw = this.getMeta('followers_baseline_at');
@@ -721,18 +734,41 @@ export class KnowledgeStore {
   }
 
   /**
-   * Establish the followers baseline NOW if none exists yet (set-once; a later
-   * call never moves it). Called by the FIRST follow-back sweep as well as the
-   * first census, so whichever runs first stamps the stock/growth boundary —
-   * without this, weeks of sweep-observed followers would either chart as a
-   * one-day cliff (no baseline) or be erased retroactively by a late first
-   * prune scan (baseline stamped after the fact).
+   * Establish the followers baseline at `at` if none exists yet (set-once; a
+   * later call never moves it). Called at the top of every follow-back sweep
+   * (`FollowbackWatcher.check`) and by every {@link observeOwnFollowerEvent},
+   * so the FIRST moment follower collection begins stamps the stock/growth
+   * boundary — without this, weeks of event-observed followers would be
+   * erased retroactively by a late first prune scan (whose census would stamp
+   * the baseline after the fact and re-classify every prior gain as stock).
+   * When a census genuinely IS the first collection, {@link ingestScanCensus}
+   * stamps the baseline itself.
    */
   ensureFollowersBaseline(at: number): void {
     if (this.followersBaselineAt() !== null) return;
     this.setMetaOnce('followers_baseline_at', String(at));
     logger.info('store: followers baseline established', { at });
     this.changed();
+  }
+
+  /**
+   * Record a dated "they follow us" EVENT — a notifications follow entry or an
+   * accepted follow request. Ensures the growth baseline exists FIRST: an
+   * event stream is measurement, and measurement must be anchored before its
+   * facts land, or a late first census would re-classify them as pre-existing
+   * stock. The sweep loop also stamps the baseline up front
+   * (`FollowbackWatcher.check`), so under normal wiring the ensure here is an
+   * idempotent no-op — it exists so any event-recording path is safe by
+   * construction. When an event IS the first-ever observation, it becomes the
+   * boundary itself: it lands exactly at the baseline and counts as stock.
+   *
+   * List-walk observations (a followers-list row proves present membership,
+   * not when the follow happened) must NOT come through here — they use plain
+   * {@link observeEdge} and the census's stock accounting.
+   */
+  observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number): void {
+    this.ensureFollowersBaseline(at);
+    this.observeEdge(srcPk, ownPk, 'follows', true, at);
   }
 
   /**
@@ -824,16 +860,52 @@ export class KnowledgeStore {
           this.reconcileOwnFollow(dst_pk, false, at);
         }
       }
-      // The FIRST complete census is the growth BASELINE (set-once, same tx):
-      // its own bulk edges carry first_seen_at === at and the series counts
-      // strictly AFTER the baseline, so the initial stock — and any partial
-      // sweep recorded even earlier — can never render as one-day growth.
-      if (this.followersBaselineAt() === null) {
-        this.setMetaOnce('followers_baseline_at', String(at));
-        logger.info('store: followers baseline established (census is stock, not growth)', {
-          at,
-          followers: followerPks.length,
-        });
+      // The FIRST complete census draws the stock/growth boundary WITHOUT
+      // erasing growth observed before it (follow events stream in from the
+      // notifications feed long before a user's first scan — see
+      // {@link ensureFollowersBaseline}), same tx, set-once marker:
+      //
+      //  - The BASELINE, when none exists yet, lands at the census time — but
+      //    never above growth already observed: any own-follower edge first
+      //    seen BEFORE this census's own walk window pushes the baseline to
+      //    just below that edge (defense in depth for a collection path that
+      //    forgot ensureFollowersBaseline — pre-census event-time gains
+      //    survive instead of being re-classified as stock).
+      //  - The census's own discoveries — edges first seen inside the walk
+      //    window, whether streamed by the walk or bulk-written above — are
+      //    pre-existing STOCK wherever the baseline sits: they are re-dated
+      //    onto the baseline so the strictly-after growth filter can never
+      //    chart the initial stock as a one-day cliff.
+      //
+      // Later censuses skip all of this: the baseline is set-once, and a new
+      // follower a later census discovers is a genuine (event-less) gain,
+      // charted on its census day.
+      if (this.getMeta('followers_census_at') === null) {
+        const stockWindowStart = at - FIRST_CENSUS_STOCK_WINDOW_MS;
+        let baselineAt = this.followersBaselineAt();
+        if (baselineAt === null) {
+          const earliest = this.db
+            .prepare(
+              `SELECT MIN(first_seen_at) AS m FROM edges
+               WHERE dst_pk = ? AND type = 'follows' AND first_seen_at < ?`,
+            )
+            .get(own, stockWindowStart) as { m: number | null };
+          baselineAt = earliest.m === null ? at : Math.min(at, earliest.m - 1);
+          this.setMetaOnce('followers_baseline_at', String(baselineAt));
+          logger.info('store: followers baseline established by first census', {
+            baselineAt,
+            censusAt: at,
+            followers: followerPks.length,
+          });
+        }
+        this.db
+          .prepare(
+            `UPDATE edges SET first_seen_at = ?
+             WHERE dst_pk = ? AND type = 'follows' AND status = 'active'
+               AND first_seen_at >= ? AND first_seen_at <= ? AND first_seen_at > ?`,
+          )
+          .run(baselineAt, own, stockWindowStart, at, baselineAt);
+        this.setMetaOnce('followers_census_at', String(at));
       }
     });
     tx();
@@ -945,12 +1017,12 @@ export class KnowledgeStore {
    * oldest→newest, cumulativeNet running from 0. Epo-visible (from sweeps),
    * not Instagram's ground-truth total.
    *
-   * Baseline-aware: once a followers baseline exists (the first complete
-   * census — see {@link followersBaselineAt}), only events STRICTLY AFTER it
-   * count. The census's own bulk edges and anything recorded before it are the
-   * pre-existing stock, so initializing the app never charts a one-day cliff —
-   * and because `first_seen_at` is preserved on re-observation, the exclusion
-   * heals retroactively when the baseline lands after early partial sweeps.
+   * Baseline-aware: once a followers baseline exists (measurement start — the
+   * first sweep or first census, see {@link followersBaselineAt}), only events
+   * STRICTLY AFTER it count. The first census's own discoveries sit AT the
+   * baseline (re-dated stock — see {@link ingestScanCensus}), so initializing
+   * the app never charts a one-day cliff, while event-time gains observed
+   * before that census keep charting on the days they actually happened.
    */
   netGrowthSeries(days: number, ownPk: string): { dayStartMs: number; cumulativeNet: number }[] {
     if (days <= 0) return [];
