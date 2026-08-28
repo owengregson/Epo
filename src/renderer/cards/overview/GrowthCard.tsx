@@ -1,14 +1,24 @@
 /** @jsx h */
 import { h } from 'preact';
+import { useState } from 'preact/hooks';
 import { GrowthChart } from '@/renderer/charts/GrowthChart';
+import { computeGrowthOverlay, type GrowthOverlay } from '@/renderer/charts/growth-overlay';
+import {
+  computeMomentum,
+  DEFAULT_GROWTH_WINDOW,
+  GROWTH_WINDOWS,
+  type GrowthWindowKey,
+  hasMeasuredSignal,
+  overlayHorizonDays,
+} from '@/renderer/charts/growth-window';
+import { useChainList } from '@/renderer/hooks/useChainList';
 import { useGrowthSeries } from '@/renderer/hooks/useGrowthSeries';
+import { pctInt } from '@/renderer/lib/format';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 import { Icon } from '@/renderer/ui/Icon';
 import { NumberTicker } from '@/renderer/ui/NumberTicker';
-import type { EpoStatus } from '@/types';
-
-/** How many days of cumulative net growth the card charts. */
-const DAYS = 14;
+import { Segmented } from '@/renderer/ui/Segmented';
+import { CONVERSION_VERDICT_MIN, type EpoStatus, type Settings } from '@/types';
 
 /** "+128" style signed counter. */
 function signed(n: number): string {
@@ -17,31 +27,63 @@ function signed(n: number): string {
 
 export interface GrowthCardProps {
   status: EpoStatus | null;
+  /** Persisted settings — the projection overlay's model inputs. */
+  settings: Settings | null;
   /** Entrance-stagger index (`--i`); shifts down when the sign-in gate leads. */
   index?: number;
 }
 
 /**
- * Net Follower Growth — the last {@link DAYS} days of cumulative net growth
- * (gained & retained, minus lost) with a momentum delta: growth in the recent
- * half of the window versus the prior half.
+ * Net Follower Growth — realized cumulative net growth (gained & retained,
+ * minus lost) over a selectable window (14d / 30d / 90d / All-since-
+ * measurement), continued past today by the projection band re-anchored at the
+ * realized endpoint. The momentum delta (recent half vs prior half) only reads
+ * once measurement genuinely covers the compared windows — before that it
+ * shows a quiet collecting state, never a fabricated "+0".
  */
-export function GrowthCard({ status, index = 1 }: GrowthCardProps): h.JSX.Element {
-  const points = useGrowthSeries(DAYS, status);
+export function GrowthCard({ status, settings, index = 1 }: GrowthCardProps): h.JSX.Element {
+  const [win, setWin] = useState<GrowthWindowKey>(DEFAULT_GROWTH_WINDOW);
+  const { points, baselineAt } = useGrowthSeries(win, status);
+  const chain = useChainList(status);
 
   const total = points.length > 0 ? points[points.length - 1].cumulativeNet : 0;
+  const momentum = computeMomentum(points, baselineAt);
+  const hasData = points.length >= 2 && hasMeasuredSignal(points);
 
-  // Momentum: net gained during the recent half minus net gained during the
-  // prior half. Meaningless below two points, so it hides itself.
-  const hasDelta = points.length >= 2;
-  const mid = Math.floor(points.length / 2);
-  const prior = hasDelta ? points[mid].cumulativeNet - points[0].cumulativeNet : 0;
-  const recent = hasDelta ? points[points.length - 1].cumulativeNet - points[mid].cumulativeNet : 0;
-  const delta = recent - prior;
+  // Aggregate realized follow-back sample across every chain target — the
+  // overlay centers its expected path on this measured rate once the sample
+  // clears the shared conversion-verdict gate (§1: the verdict waits).
+  const sampleTotal = chain.reduce((a, t) => a + t.yield.total, 0);
+  const sampleBack = chain.reduce((a, t) => a + t.yield.followedBack, 0);
+  const sample = sampleTotal > 0 ? { followedBack: sampleBack, total: sampleTotal } : null;
+
+  const overlay: GrowthOverlay | null =
+    settings !== null && hasData
+      ? computeGrowthOverlay({
+          rate: settings.dailyOperatingRate,
+          privateBoost: settings.privateBoost,
+          bandWidth: settings.bandHigh - settings.bandLow,
+          waitDays: settings.maxWaitForFollowbackDays,
+          holdDays: settings.holdAfterFollowbackDays,
+          horizonDays: overlayHorizonDays(points.length),
+          realizedEnd: total,
+          sample,
+        })
+      : null;
 
   return (
     <Card index={index}>
-      <CardHeader icon="arrow-trend-up" aux="last 14 days">
+      <CardHeader
+        icon="arrow-trend-up"
+        controls={
+          <Segmented
+            options={GROWTH_WINDOWS}
+            value={win}
+            onChange={(v) => setWin(v)}
+            ariaLabel="Growth history window"
+          />
+        }
+      >
         Net Follower Growth
       </CardHeader>
       <CardBody>
@@ -52,14 +94,32 @@ export function GrowthCard({ status, index = 1 }: GrowthCardProps): h.JSX.Elemen
             </div>
             <div class="g-cap">net · gained &amp; retained, minus lost</div>
           </div>
-          {hasDelta ? (
-            <div class="g-delta num" title="Compared with the previous 7-day period">
-              <Icon name={delta >= 0 ? 'arrow-up' : 'arrow-down'} />
-              {signed(delta)} <span class="dim">vs prior 7d</span>
+          {momentum.ready ? (
+            <div
+              class="g-delta num"
+              title={`Compared with the previous ${momentum.halfDays}-day period`}
+            >
+              <Icon name={momentum.delta >= 0 ? 'arrow-up' : 'arrow-down'} />
+              {signed(momentum.delta)} <span class="dim">vs prior {momentum.halfDays}d</span>
             </div>
-          ) : null}
+          ) : (
+            <div
+              class="g-delta quiet num"
+              title="Momentum reads once measurement covers the full window and recorded activity exists"
+            >
+              <Icon name="hourglass-half" />
+              collecting data
+            </div>
+          )}
         </div>
-        <GrowthChart points={points} />
+        <GrowthChart points={points} overlay={overlay} />
+        {overlay !== null ? (
+          <div class="growth-proj-note">
+            {overlay.measuredYield
+              ? `Band projects the next ${overlay.horizonDays} days at your measured ${pctInt(overlay.expectedP)}% follow-back.`
+              : `Band projects the next ${overlay.horizonDays} days at settings-expected yield — the measured rate takes over after ${CONVERSION_VERDICT_MIN} follow outcomes.`}
+          </div>
+        ) : null}
       </CardBody>
     </Card>
   );

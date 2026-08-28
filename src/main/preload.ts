@@ -22,7 +22,7 @@ import type {
   EpoStatus,
   FollowState,
   GraphSnapshot,
-  NetGrowthPoint,
+  GrowthSeriesRead,
   PruneCandidate,
   PruneControlResult,
   PruneScanResult,
@@ -110,7 +110,7 @@ const bridge: EpoBridge = {
   chainList: (): Promise<ChainTargetView[]> => ipcRenderer.invoke('chain:list'),
   chainDetail: (targetPk: string): Promise<ChainTargetDetail | null> =>
     ipcRenderer.invoke('chain:detail', targetPk),
-  growthSeries: (days: number): Promise<NetGrowthPoint[]> =>
+  growthSeries: (days?: number): Promise<GrowthSeriesRead> =>
     ipcRenderer.invoke('growth:series', days),
   checkSeed: (username: string): Promise<SeedCheck> => ipcRenderer.invoke('seed:check', username),
   queueList: (state: FollowState): Promise<QueueListResult> =>

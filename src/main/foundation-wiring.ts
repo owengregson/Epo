@@ -121,7 +121,7 @@ import type {
   EpoStatus,
   FollowState,
   GraphSnapshot,
-  NetGrowthPoint,
+  GrowthSeriesRead,
   PruneControlResult,
   PruneScanResult,
   QueueListResult,
@@ -2280,17 +2280,24 @@ export class Foundation {
   }
 
   /**
-   * Cumulative net own-follower growth per day for the last `days` days.
-   * Builds the graph if needed; returns `[]` when not logged in. Never throws.
+   * Cumulative net own-follower growth per day for the last `days` days
+   * (default 14 when omitted or invalid — the IPC boundary is untyped), plus
+   * the followers-measurement baseline the renderer's window/momentum honesty
+   * gates read. Builds the graph if needed; empty read when not logged in.
+   * Never throws.
    */
-  async growthSeries(days: number): Promise<NetGrowthPoint[]> {
+  async growthSeries(days?: number): Promise<GrowthSeriesRead> {
     const graph = await this.builtGraph();
-    if (graph === null) return [];
+    if (graph === null) return { points: [], baselineAt: null };
+    const d = typeof days === 'number' && Number.isFinite(days) && days >= 1 ? Math.floor(days) : 14;
     try {
-      return graph.store.netGrowthSeries(days, graph.ownPk);
+      return {
+        points: graph.store.netGrowthSeries(d, graph.ownPk),
+        baselineAt: graph.store.followersBaselineAt(),
+      };
     } catch (e) {
       logger.error('foundation.growthSeries: failed', { error: String(e) });
-      return [];
+      return { points: [], baselineAt: null };
     }
   }
 

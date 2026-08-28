@@ -55,6 +55,14 @@
 .card-h .fa-solid{flex:0 0 auto; font-size:var(--fs-md)}
 .card-h .spacer{flex:1}
 .card-h .aux{font-size:var(--fs-sm); letter-spacing:.06em; text-transform:none; color:var(--faint); font-weight:600}
+/* In-header controls cell: hosts a compact scope toggle (e.g. the growth
+   window Segmented) without the form-row spacing the body variant carries. */
+.card-h .hctl{display:flex; align-items:center}
+.card-h .hctl .seg{margin-top:0; padding:var(--sp-0)}
+.card-h .hctl .seg button{
+  flex:0 0 auto; height:18px; padding:0 var(--sp-2);
+  font-size:var(--fs-xs); letter-spacing:.02em; text-transform:none;
+}
 .card-b{padding:var(--sp-3) var(--sp-4) var(--sp-4)}
 
 /* ----- readout primitives (badge · chip · stat · avatar · bar · kv) ----- */

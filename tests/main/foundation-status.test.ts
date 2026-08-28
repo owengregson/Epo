@@ -58,4 +58,10 @@ describe('Foundation status (not built)', () => {
     await expect(f.isLoggedIn()).resolves.toBe(false);
     await expect(f.ensureBuilt()).resolves.toBe(false);
   });
+
+  test('growthSeries before build returns the empty read envelope, any days', async () => {
+    const f = new Foundation({ tab: fakeTab });
+    await expect(f.growthSeries()).resolves.toEqual({ points: [], baselineAt: null });
+    await expect(f.growthSeries(90)).resolves.toEqual({ points: [], baselineAt: null });
+  });
 });

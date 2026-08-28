@@ -69,6 +69,7 @@ export function ProjectionCard({ draft, index }: ProjectionCardProps): h.JSX.Ele
           Estimate assumes you sustain this pace and keep chaining fresh targets; real yield varies
           with audience quality.
         </div>
+        <div class="hint">Simulates these settings — see Overview for actuals vs plan.</div>
         <div class="proj-yield">
           <div class="ftop">
             <label

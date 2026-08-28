@@ -213,6 +213,19 @@ export interface NetGrowthPoint {
   cumulativeNet: number;
 }
 
+/**
+ * The `growth:series` read: the per-day series PLUS the moment follower
+ * measurement began (`followersBaselineAt`). The baseline is what lets the
+ * renderer be honest about coverage — the "All" window spans from it, and the
+ * momentum delta only reads once measurement covers the compared windows
+ * (before that the badge would imply measurement where none exists).
+ */
+export interface GrowthSeriesRead {
+  points: NetGrowthPoint[];
+  /** Epoch ms measurement began, or null before any sweep/census ran. */
+  baselineAt: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // Network-graph projection (renderer -> main, via invoke) — the Graph view
 // ---------------------------------------------------------------------------
@@ -458,8 +471,9 @@ export interface EpoBridge {
    * `chainList` push — the push is the store-mutation tick (§2).
    */
   chainDetail(targetPk: string): Promise<ChainTargetDetail | null>;
-  /** Cumulative net own-follower growth per day for the last `days` days. */
-  growthSeries(days: number): Promise<NetGrowthPoint[]>;
+  /** Cumulative net own-follower growth per day for the last `days` days
+   *  (default 14), plus the measurement baseline. */
+  growthSeries(days?: number): Promise<GrowthSeriesRead>;
   /** Read-only precheck of a seed username (existence + followers visibility). */
   checkSeed(username: string): Promise<SeedCheck>;
   /** A capped page of follow_records in one lifecycle state, joined to accounts. */

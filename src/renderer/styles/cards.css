@@ -70,6 +70,9 @@
 }
 .g-delta .fa-solid{flex:0 0 auto; font-size:var(--fs-xs)}
 .g-delta .dim{color:var(--faint); font-weight:500}
+/* Pre-measurement momentum: quiet, no signed number — a "+0" before any
+   measured window exists would imply a measurement that never happened. */
+.g-delta.quiet{color:var(--faint); font-weight:500}
 .growth-svg{display:block; width:100%; height:auto}
 .growth-grid{stroke:rgba(255,255,255,.05); stroke-width:1}
 .growth-grid.dash{stroke-dasharray:2 4}
@@ -86,6 +89,18 @@
   display:flex; justify-content:space-between;
   margin-top:var(--sp-2);
   font-size:var(--fs-sm); color:var(--faint); letter-spacing:.03em;
+}
+/* Projection continuation past today: cautious→optimistic band + dashed
+   expected line (the README band's construction, in-card). Deliberately
+   quieter than the realized line — a plan, not a measurement. */
+.growth-proj-band{fill:rgba(216,221,227,.06)}
+.growth-proj-line{
+  stroke:var(--silver); stroke-width:1.2; fill:none;
+  stroke-dasharray:3 4; stroke-linecap:round; opacity:.55;
+}
+.growth-proj-note{
+  margin-top:var(--sp-2);
+  font-size:var(--fs-sm); color:var(--faint); letter-spacing:.02em;
 }
 
 /* ============ NOW TARGETING ============ */

@@ -17,8 +17,10 @@
 
 import { clamp } from '../lib/format';
 
-/** Scenario bases: [cautious, expected, optimistic]. */
-const PROJ_SCEN: ReadonlyArray<{ P0: number; RR: number }> = [
+/** Scenario bases: [cautious, expected, optimistic]. Exported for the
+ *  Overview's realized-plus-projection overlay (growth-overlay.ts), which
+ *  re-anchors these same scenarios at the realized endpoint. */
+export const PROJ_SCEN: ReadonlyArray<{ P0: number; RR: number }> = [
   { P0: 0.08, RR: 0.55 },
   { P0: 0.15, RR: 0.66 },
   { P0: 0.25, RR: 0.76 },

@@ -23,7 +23,7 @@ import type {
   EpoStatus,
   FollowState,
   GraphSnapshot,
-  NetGrowthPoint,
+  GrowthSeriesRead,
   PruneCandidate,
   PruneControlResult,
   PruneScanResult,
@@ -206,12 +206,12 @@ export function registerIpc(ctx: IpcContext): () => void {
     },
   );
 
-  ipcMain.handle('growth:series', async (_e, days: number): Promise<NetGrowthPoint[]> => {
+  ipcMain.handle('growth:series', async (_e, days?: number): Promise<GrowthSeriesRead> => {
     try {
       return await foundation.growthSeries(days);
     } catch (e) {
       logger.error('growth:series failed', { error: String(e) });
-      return [];
+      return { points: [], baselineAt: null };
     }
   });
 

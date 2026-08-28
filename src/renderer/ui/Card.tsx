@@ -1,5 +1,5 @@
 /** @jsx h */
-import { type ComponentChildren, Fragment, h } from 'preact';
+import { type ComponentChildren, h } from 'preact';
 import { Icon } from './Icon';
 
 export interface CardProps {
@@ -27,21 +27,21 @@ export interface CardHeaderProps {
   brand?: boolean;
   /** Right-aligned auxiliary text (rendered muted, tabular). */
   aux?: ComponentChildren;
+  /** Right-aligned interactive controls (e.g. a compact Segmented scope
+   *  toggle). Rendered after `aux` in their own flex cell. */
+  controls?: ComponentChildren;
   children: ComponentChildren;
 }
 
 /** A card's eyebrow header: icon + label, with optional right-aligned aux text. */
-export function CardHeader({ icon, brand, aux, children }: CardHeaderProps): h.JSX.Element {
+export function CardHeader({ icon, brand, aux, controls, children }: CardHeaderProps): h.JSX.Element {
   return (
     <div class="card-h">
       {icon ? <Icon name={icon} brand={brand} /> : null}
       {children}
-      {aux != null ? (
-        <Fragment>
-          <span class="spacer" />
-          <span class="aux num">{aux}</span>
-        </Fragment>
-      ) : null}
+      {aux != null || controls != null ? <span class="spacer" /> : null}
+      {aux != null ? <span class="aux num">{aux}</span> : null}
+      {controls != null ? <div class="hctl">{controls}</div> : null}
     </div>
   );
 }

@@ -37,7 +37,7 @@ export function OverviewView(props: OverviewViewProps): h.JSX.Element {
     <Fragment>
       {props.loggedOut ? <SignInCard pending={props.pending} onLogin={props.onLogin} /> : null}
       <LiveStatusCard status={props.status} settings={props.settings} index={base} />
-      <GrowthCard status={props.status} index={base + 1} />
+      <GrowthCard status={props.status} settings={props.settings} index={base + 1} />
       <NowTargetingCard status={props.status} index={base + 2} />
       <RateSafetyCard status={props.status} settings={props.settings} index={base + 3} />
       <ActivityCard logLines={props.logLines} index={base + 4} />
