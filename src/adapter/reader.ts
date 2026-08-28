@@ -79,27 +79,43 @@ export class Reader {
   }
 
   /**
-   * Parse one paginated followers page into observations plus the resume
-   * cursor. Returns a typed empty result on no-match.
+   * STRICT parse of one paginated followers page: the typed result on a
+   * well-formed page, `null` on SHAPE_MISMATCH — so the list walks can tell IG
+   * shape drift apart from a genuinely empty page. The typed empty result
+   * (`{observations: [], cursor: null, hasMore: false}`) is the END-OF-LIST
+   * shape: a drifted page collapsing to it would fabricate an end-of-list
+   * claim, and downstream completeness verdicts (the prune census's
+   * lost-follower marking, growth's exhaustion advance) would act on it.
    */
-  parseFollowersList(body: unknown, at: number): FollowersListResult {
-    const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false };
+  parseFollowersListStrict(body: unknown, at: number): FollowersListResult | null {
     const result = SURFACE.extractFollowersList(this.coerce(body, 'followers-list'), at);
     if (isShapeMismatch(result)) {
       this.warnUnexpected('followers-list', body);
-      return empty;
+      return null;
     }
     return result;
   }
 
   /**
-   * Parse one paginated FOLLOWING page. The following-list body carries the
+   * Parse one paginated followers page into observations plus the resume
+   * cursor. Lenient variant for callers that only merge facts: drift collapses
+   * to the typed empty result. Anything deriving an end-of-list or
+   * completeness claim MUST use {@link parseFollowersListStrict} instead.
+   */
+  parseFollowersList(body: unknown, at: number): FollowersListResult {
+    return (
+      this.parseFollowersListStrict(body, at) ?? { observations: [], cursor: null, hasMore: false }
+    );
+  }
+
+  /**
+   * STRICT parse of one paginated FOLLOWING page (`null` on SHAPE_MISMATCH —
+   * see {@link parseFollowersListStrict}). The following-list body carries the
    * exact followers-list shape (a `users` array + `next_max_id`), so this is a
    * thin alias over the same extractor — kept separate so shape-drift warnings
    * name the endpoint that actually broke.
    */
-  parseFollowingList(body: unknown, at: number): FollowersListResult {
-    const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false };
+  parseFollowingListStrict(body: unknown, at: number): FollowersListResult | null {
     const result = SURFACE.extractFollowersList(
       this.coerce(body, 'following-list'),
       at,
@@ -107,9 +123,19 @@ export class Reader {
     );
     if (isShapeMismatch(result)) {
       this.warnUnexpected('following-list', body);
-      return empty;
+      return null;
     }
     return result;
+  }
+
+  /**
+   * Lenient FOLLOWING-page variant: drift collapses to the typed empty result.
+   * Completeness-deriving callers use {@link parseFollowingListStrict}.
+   */
+  parseFollowingList(body: unknown, at: number): FollowersListResult {
+    return (
+      this.parseFollowingListStrict(body, at) ?? { observations: [], cursor: null, hasMore: false }
+    );
   }
 
   /**

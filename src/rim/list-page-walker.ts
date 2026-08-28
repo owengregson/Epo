@@ -14,9 +14,16 @@
  *  - Sentinel re-checked at the TOP of every page.
  *  - An end-of-list claim is VERIFIED, never trusted: one more page is
  *    requested past the claimed end (via the leftover cursor, or the surface's
- *    synthesized offset probe when none was handed back). Nothing new — an
- *    empty page OR an outright rejection of the past-the-limit offset — is
- *    `endConfirmed`; new rows = the claim was false and the walk CONTINUES.
+ *    synthesized offset probe when none was handed back). Only two answers
+ *    confirm the end: a well-formed page with nothing new, or the SPECIFIC
+ *    past-the-limit rejection (HTTP 400 that is not a recognized throttle/
+ *    auth wall). Any other rejection — 429, 5xx, network, a wall — is a fetch
+ *    failure: "we got throttled" must never read as "the list is complete".
+ *    New rows = the claim was false and the walk CONTINUES.
+ *  - A page that fetches but no longer PARSES (SHAPE_MISMATCH from the
+ *    versioned extractor) ends the walk `reason: 'shape-mismatch'`,
+ *    `complete: false` — a drifted page must never originate or confirm an
+ *    end-of-list claim (an "empty" read here would fabricate a census).
  *  - A non-ok envelope / evaluate throw gets ONE retried attempt (same cursor,
  *    long-rest backoff) before the walk ends `reason: 'fetch-failed'` — then
  *    callers fall back to the dialog-scroll scrape.
@@ -32,7 +39,7 @@ import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
+import { asFetchEnvelope, classifyEnvelope, SURFACE } from '@/adapter/ig-surface';
 import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { type Clock, SystemClock } from '@/governors/clock';
@@ -112,6 +119,12 @@ export interface WalkResult {
   complete: boolean;
   /** True when the past-the-end probe came back empty of new rows (complete walks only). */
   endConfirmed: boolean;
+  /**
+   * Why the walk ended. Genuine completion: 'no-more-pages'. Demand stops:
+   * 'target-reached' | 'no-new-for-caller'. Bounds: 'max-pages' | 'stagnant'.
+   * Failures (`complete` always false): 'shape-mismatch' (the page no longer
+   * parses — IG shape drift), 'fetch-failed', 'stop-requested', 'sentinel:*'.
+   */
   reason: string;
   /**
    * Where a LATER walk should resume: the last parsed page's real `next_max_id`
@@ -224,11 +237,24 @@ export class ListPageWalker {
         failureDetail = { error: String(e) };
       }
       if (failureDetail !== null || env === null || !env.ok) {
-        // A REJECTED past-the-end probe is a CONFIRMATION, not a failure: the
-        // walk already consumed every page the API offered, and IG answers a
-        // past-the-limit offset with an error (e.g. 400 "unable to fetch
-        // followers"). Nothing exists beyond the end — never a fallback.
-        if (pendingEndClaim) {
+        // A rejected past-the-end probe confirms the end ONLY when the
+        // rejection is the SPECIFIC past-the-limit refusal: IG answers a
+        // past-the-limit offset with a 400 (e.g. "unable to fetch followers").
+        // `classifyEnvelope` screens out the failure families that mean the
+        // FETCH broke, not the list ended — a 429/5xx or wall (`rate-limited`),
+        // a login/challenge redirect (`auth`), a network error (`network`), or
+        // an evaluate throw. Treating those as confirmation would launder a
+        // throttle into a verified-complete walk and feed absence-based
+        // verdicts (lost followers, exhaustion) a fabricated end.
+        const cls = env === null ? null : classifyEnvelope(env);
+        const pastTheLimitRejection =
+          cls !== null &&
+          env !== null &&
+          env.status === 400 &&
+          cls.kind !== 'rate-limited' &&
+          cls.kind !== 'auth' &&
+          cls.kind !== 'network';
+        if (pendingEndClaim && pastTheLimitRejection) {
           complete = true;
           endConfirmed = true;
           reason = 'no-more-pages';
@@ -269,8 +295,25 @@ export class ListPageWalker {
       const now = this.clock.now();
       const parsed =
         which === 'following'
-          ? this.reader.parseFollowingList(env.json, now)
-          : this.reader.parseFollowersList(env.json, now);
+          ? this.reader.parseFollowingListStrict(env.json, now)
+          : this.reader.parseFollowersListStrict(env.json, now);
+      if (parsed === null) {
+        // SHAPE DRIFT: the page fetched fine but the versioned extractor no
+        // longer recognizes it. The typed empty page is the END-OF-LIST shape,
+        // so parsing leniently here would let a drifted page originate or
+        // confirm an end-of-list claim — instead the walk ends INCOMPLETE
+        // with an honest reason (`complete`/`endConfirmed` stay false, and a
+        // pending end claim dies unverified with it). Callers surface this as
+        // a failed walk, never a finished empty list.
+        reason = 'shape-mismatch';
+        logger.warn('rim.list-page-walker: page shape unrecognized, stopping walk', {
+          pk,
+          which,
+          pages,
+          observed: observed.size,
+        });
+        break;
+      }
       const sizeBefore = observed.size;
       const callerNewBefore = callerNewPks;
       for (const obs of parsed.observations) {

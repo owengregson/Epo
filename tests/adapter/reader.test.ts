@@ -188,6 +188,35 @@ describe('Reader.parseFollowersList', () => {
   });
 });
 
+describe('Reader.parseFollowersListStrict / parseFollowingListStrict', () => {
+  test('a well-formed page parses identically to the lenient variant', () => {
+    const out = r.parseFollowersListStrict(followersPage1, AT);
+    expect(out).not.toBeNull();
+    expect(out!.observations).toHaveLength(12);
+    expect(out!.cursor).toBe('12');
+    expect(out!.hasMore).toBe(true);
+  });
+
+  test('a drifted body is null — never the typed EMPTY (end-of-list) shape', () => {
+    // {observations: [], cursor: null, hasMore: false} is exactly what a
+    // finished list looks like; a SHAPE_MISMATCH collapsing to it would let
+    // shape drift originate an end-of-list claim (the fabricated-census bug).
+    expect(r.parseFollowersListStrict({ nope: true }, AT)).toBeNull();
+    expect(r.parseFollowingListStrict({ nope: true }, AT)).toBeNull();
+  });
+
+  test('a genuinely EMPTY page is a typed result, not null (drift stays distinguishable)', () => {
+    const out = r.parseFollowersListStrict({ users: [] }, AT);
+    expect(out).toEqual({ observations: [], cursor: null, hasMore: false });
+  });
+
+  test('the following-list strict variant parses the shared shape', () => {
+    const out = r.parseFollowingListStrict(followersPage1, AT);
+    expect(out).not.toBeNull();
+    expect(out!.observations[0].source).toBe('following-list');
+  });
+});
+
 describe('Reader.parseProfileInfo', () => {
   test('extracts pk, username, follower/following counts', () => {
     const obs = r.parseProfileInfo(profileInfo1, AT);

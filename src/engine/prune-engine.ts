@@ -1265,6 +1265,17 @@ export class PruneEngine {
    */
   private assertFetchComplete(phase: 'following' | 'followers', fetch: PruneScanFetch): void {
     if (fetch.complete) return;
+    // Shape drift gets its own honest, user-facing wording: the walk fetched
+    // pages Instagram no longer serves in a shape this build can read, so the
+    // scan FAILS (the previous complete census is restored by the caller) —
+    // never a completed empty census that would mark every follower "lost".
+    if (fetch.reason === 'shape-mismatch') {
+      throw new Error(
+        `prune: ${phase} walk incomplete (shape-mismatch) — ` +
+          "Instagram's interface appears to have changed; check for an Epo update. " +
+          'The scan failed and the previous census is retained.',
+      );
+    }
     throw new Error(
       `prune: ${phase} walk incomplete (${fetch.reason}, ${fetch.pks.length} pks) — ` +
         'aborting so a partial census never drives unfollows',

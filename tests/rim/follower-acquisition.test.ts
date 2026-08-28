@@ -65,6 +65,8 @@ describe('direct API walk (the request-efficient path)', () => {
 
     expect(result.targetPk).toBe('999');
     expect(result.observed).toBe(4);
+    // The list's end was VERIFIED — a genuine completion reason.
+    expect(result.endReason).toBe('no-more-pages');
     for (const pk of ['a', 'b', 'c', 'd']) {
       const edge = store.getEdge(pk, '999', 'follows');
       expect(edge).not.toBeNull();
@@ -140,6 +142,7 @@ describe('direct API walk (the request-efficient path)', () => {
 
     // Stops at the first page that pushes the observed set to >= 5 (3 pages = 6).
     expect(result.observed).toBe(6);
+    expect(result.endReason).toBe('target-reached');
     expect(page).toBe(3);
     // A partial walk persists a real resume cursor for the next refill.
     expect(store.getScrapeCursor('999')).toBe('C3');
@@ -181,10 +184,106 @@ describe('direct API walk (the request-efficient path)', () => {
     expect(page).toBe(1);
 
     // Now at 10 observed = the cap. A second acquire scrapes NOTHING more and
-    // yields the target so the engine's exhaustion path advances the chain.
+    // yields the target so the engine's exhaustion path advances the chain —
+    // a GENUINE completion reason, distinguishable from a failed read.
     const second = await acquisition.acquire('target');
-    expect(second).toEqual({ observed: 0, targetPk: '999' });
+    expect(second).toEqual({ observed: 0, targetPk: '999', endReason: 'coverage-cap' });
     expect(page).toBe(1); // no further API pages fetched
+  });
+
+  test('a SHAPE-MISMATCH walk is a FAILURE — no dialog fallback, no fabricated exhaustion', async () => {
+    store.observe({ accountPk: '999', observedAt: 1_000, source: 'profile', fields: { username: 'target' } });
+
+    const tab = new FakeTab();
+    let calls = 0;
+    tab.onEvaluate = () => {
+      calls += 1;
+      // First page parses; the second no longer matches the extractor (drift).
+      if (calls === 1) return okEnv(followersBody(['a', 'b'], 'C1', true));
+      return okEnv({ unexpected_new_shape: true });
+    };
+    const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
+    const actor = new FakeActor();
+    const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      walker,
+      tab,
+      reader,
+      clock,
+    });
+
+    const result = await acquisition.acquire('target');
+
+    // Rows before the drift are kept; the end reason is the failure it is.
+    expect(result).toEqual({ observed: 2, targetPk: '999', endReason: 'shape-mismatch' });
+    // The dialog fallback was NOT attempted — it parses through the same
+    // drifted extractor and would only fabricate a second empty read.
+    expect(actor.openCalls).toBe(0);
+    // The resume cursor points at the last well-formed page for a fixed adapter.
+    expect(store.getScrapeCursor('999')).toBe('C1');
+  });
+
+  test('a mid-walk sentinel trip surfaces as sentinel-blocked, not a completion', async () => {
+    store.observe({ accountPk: '999', observedAt: 1_000, source: 'profile', fields: { username: 'target' } });
+
+    const tab = new FakeTab();
+    tab.onEvaluate = () => okEnv(followersBody(['a', 'b'], 'C1', true));
+    const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
+    const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      // Pre-check ok, page 1 ok, page 2's top-of-page check trips.
+      sentinel: new FakeSentinel(['ok', 'ok', 'challenge']) as unknown as Sentinel,
+      walker,
+      tab,
+      reader,
+      clock,
+    });
+
+    const result = await acquisition.acquire('target');
+
+    expect(result.observed).toBe(2); // the page already fetched is kept
+    expect(result.endReason).toBe('sentinel-blocked');
+  });
+
+  test('fetch-failed walk + failing dialog fallback = dialog-failed, never observed:0-as-done', async () => {
+    store.observe({ accountPk: '999', observedAt: 1_000, source: 'profile', fields: { username: 'target' } });
+
+    const tab = new FakeTab();
+    tab.onEvaluate = () => ({ ok: false, status: 429, contentType: 'text/html', textHead: 'wall' });
+    const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
+    const actor = new FakeActor();
+    actor.onOpen = () => {
+      throw new Error('followers stat control not found');
+    };
+    const pageReader = new FollowersPageReader({
+      tab,
+      reader,
+      actor,
+      clock,
+      scrollWaitMs: 1,
+      sleep: async () => {},
+    });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      walker,
+      tab,
+      reader,
+      clock,
+    });
+
+    const result = await acquisition.acquire('target');
+
+    // The old behavior returned {observed: 0} shaped exactly like genuine
+    // exhaustion; the failure must now be visible to the caller.
+    expect(result.observed).toBe(0);
+    expect(result.endReason).toBe('dialog-failed');
   });
 });
 
@@ -215,6 +314,9 @@ describe('dialog-scroll fallback', () => {
 
     expect(result.observed).toBe(4);
     expect(result.targetPk).toBe('999');
+    // The dialog stopped yielding new rows — its natural drain, a genuine
+    // outcome (the last page still carried a cursor, so never 'no-more-pages').
+    expect(result.endReason).toBe('stagnant');
     for (const pk of ['a', 'b', 'c', 'd']) {
       const edge = store.getEdge(pk, '999', 'follows');
       expect(edge).not.toBeNull();
@@ -236,6 +338,8 @@ test('bails without scraping when the sentinel is blocked', async () => {
   });
 
   const result = await acquisition.acquire('target');
-  expect(result).toEqual({ observed: 0, targetPk: null });
+  // A blocked pre-check is a FAILURE reason — an acquire that never ran must
+  // not read as "this audience yielded nothing".
+  expect(result).toEqual({ observed: 0, targetPk: null, endReason: 'sentinel-blocked' });
   expect(actor.openCalls).toBe(0);
 });

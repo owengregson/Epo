@@ -24,7 +24,10 @@
  *  5. FALLBACK, not replacement: when the direct walk cannot fetch at all
  *     (`fetch-failed`), the old dialog-scroll scrape
  *     ({@link FollowersPageReader}) runs instead — same degradation contract
- *     as the prune scan's census path.
+ *     as the prune scan's census path. A `shape-mismatch` walk does NOT fall
+ *     back (the dialog parses through the same drifted extractor); it — like
+ *     every end — surfaces on the result as a typed {@link AcquireEndReason},
+ *     so callers can tell a failed read from genuine audience exhaustion.
  *
  * Edges (`follower → target (follows)`) are written as each observation
  * arrives — the pk is known before the first page, so no back-fill pass is
@@ -78,6 +81,118 @@ export const ACQUISITION_DEFAULTS: AcquisitionConfig = {
   noNewStop: RIM.ACQUIRE_NO_NEW_STOP,
 };
 
+/**
+ * Why an acquire ended — split by TRUTH VALUE, not by scrape path.
+ *
+ * Genuine outcomes (the scrape ran and its result is trustworthy evidence
+ * about the target's audience):
+ *  - 'no-more-pages':     the walk VERIFIED the end of the target's list.
+ *  - 'target-reached':    this refill's new-pk demand was met.
+ *  - 'coverage-cap':      the audience coverage cap is already spent (no fetch).
+ *  - 'no-new-for-caller': consecutive pages held only rows the store already has.
+ *  - 'page-budget':       the per-acquire page/round budget was spent (the
+ *                         resume cursor is persisted; the next refill continues).
+ *  - 'stagnant':          the list stopped yielding new rows before a verified
+ *                         end (the dialog's natural drain; duplicate windows on
+ *                         the direct walk).
+ *
+ * Failures (the scrape could NOT trustworthily read the list — `observed: 0`
+ * with one of these is NOT audience-exhaustion evidence and must never feed
+ * the irreversible exhaustion cascade):
+ *  - 'shape-mismatch':    the list page no longer parses (IG shape drift).
+ *  - 'fetch-failed':      repeated fetch failures (throttle/network/walls).
+ *  - 'sentinel-blocked':  the account was blocked before or during the scrape.
+ *  - 'stopped':           a cooperative stop ended the walk mid-list.
+ *  - 'dialog-failed':     the dialog fallback could not open/read the list.
+ */
+export type AcquireEndReason =
+  | 'no-more-pages'
+  | 'target-reached'
+  | 'coverage-cap'
+  | 'no-new-for-caller'
+  | 'page-budget'
+  | 'stagnant'
+  | 'shape-mismatch'
+  | 'fetch-failed'
+  | 'sentinel-blocked'
+  | 'stopped'
+  | 'dialog-failed';
+
+/** The failure half of {@link AcquireEndReason} (see the taxonomy above). */
+export const ACQUIRE_FAILURE_REASONS: ReadonlySet<AcquireEndReason> = new Set([
+  'shape-mismatch',
+  'fetch-failed',
+  'sentinel-blocked',
+  'stopped',
+  'dialog-failed',
+]);
+
+/** Whether an acquire's end reason means the read FAILED (vs a genuine outcome). */
+export function isAcquireFailure(reason: AcquireEndReason): boolean {
+  return ACQUIRE_FAILURE_REASONS.has(reason);
+}
+
+/**
+ * What one acquire yields. Additive over the `FollowerAcquisition` port's
+ * `{observed, targetPk}` shape (which this satisfies structurally): the
+ * `endReason` says WHY the acquire ended, so callers can tell a genuine
+ * completion from a failed read instead of treating every `observed: 0` as
+ * exhaustion. Existing port-typed callers are unaffected.
+ */
+export interface AcquireResult {
+  observed: number;
+  targetPk: string | null;
+  endReason: AcquireEndReason;
+}
+
+/** Map a {@link ListPageWalker} end reason into the acquire taxonomy. */
+function reasonFromWalk(reason: string): AcquireEndReason {
+  switch (reason) {
+    case 'no-more-pages':
+      return 'no-more-pages';
+    case 'target-reached':
+      return 'target-reached';
+    case 'no-new-for-caller':
+      return 'no-new-for-caller';
+    case 'max-pages':
+      return 'page-budget';
+    case 'stagnant':
+      return 'stagnant';
+    case 'shape-mismatch':
+      return 'shape-mismatch';
+    case 'stop-requested':
+      return 'stopped';
+    case 'fetch-failed':
+      return 'fetch-failed';
+    default:
+      // 'sentinel:*' and anything a future walker adds: never let an unmapped
+      // reason read as a genuine outcome — default to the failure family.
+      return reason.startsWith('sentinel:') ? 'sentinel-blocked' : 'fetch-failed';
+  }
+}
+
+/** Map a dialog-scrape (`FollowersPageReader.collect`) end reason likewise. */
+function reasonFromDialog(endReason: string): AcquireEndReason {
+  switch (endReason) {
+    case 'no-more-pages':
+      return 'no-more-pages';
+    case 'stagnant':
+      return 'stagnant';
+    case 'max-rounds':
+      return 'page-budget';
+    case 'stop-requested':
+      return 'stopped';
+    case 'shape-mismatch':
+      return 'shape-mismatch';
+    case 'blocked-response':
+      return 'fetch-failed';
+    case 'open-failed':
+      return 'dialog-failed';
+    default:
+      return endReason.startsWith('sentinel:') ? 'sentinel-blocked' : 'dialog-failed';
+  }
+}
+
 export interface AcquisitionDeps {
   pageReader: FollowersPageReader;
   store: KnowledgeStore;
@@ -117,12 +232,14 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     this.cfg = deps.cfg ?? ACQUISITION_DEFAULTS;
   }
 
-  async acquire(targetUsername: string): Promise<{ observed: number; targetPk: string | null }> {
-    // Pre-check: bail before issuing anything if the account is already blocked.
+  async acquire(targetUsername: string): Promise<AcquireResult> {
+    // Pre-check: bail before issuing anything if the account is already
+    // blocked. A FAILURE reason, not a completion — an acquire that never ran
+    // must not read as "this audience yielded nothing".
     const status = await this.sentinel.check();
     if (status !== 'ok') {
       logger.warn('rim.acquisition: sentinel blocked, skipping', { targetUsername, status });
-      return { observed: 0, targetPk: null };
+      return { observed: 0, targetPk: null, endReason: 'sentinel-blocked' };
     }
 
     // (1) Resolve the pk without a request when possible; one profile-info
@@ -146,7 +263,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
           targetPk: pk,
           observed: this.store.observedFollowerCount(pk),
         });
-        return { observed: 0, targetPk: pk };
+        return { observed: 0, targetPk: pk, endReason: 'coverage-cap' };
       }
       // This run's new-pk demand is the smaller of the batch target and whatever
       // remains under the coverage cap.
@@ -174,17 +291,27 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
         sentinel: this.sentinel,
       });
       if (walk.reason !== 'fetch-failed') {
+        // Everything except a fetch failure keeps its resume cursor: the rows
+        // observed up to the stop point are real, and the next walk resumes
+        // exactly there (after a shape-mismatch, once the adapter is updated).
         this.store.setScrapeCursor(pk, walk.cursor, this.clock.now());
+        const endReason = reasonFromWalk(walk.reason);
         logger.info('rim.acquisition: direct walk done', {
           targetUsername,
           targetPk: pk,
           observed: walk.pks.length,
           pages: walk.pages,
           reason: walk.reason,
+          endReason,
           resumedFrom: startCursor,
           maxNewPks,
         });
-        return { observed: walk.pks.length, targetPk: pk };
+        // Only a FETCH failure falls back to the dialog scrape below. A
+        // shape-mismatch must not: the dialog path parses through the same
+        // drifted extractor, so the fallback would burn a whole dialog scrape
+        // to fabricate a second empty read. Sentinel/stop ends return as the
+        // failures they are; genuine outcomes return as completions.
+        return { observed: walk.pks.length, targetPk: pk, endReason };
       }
       logger.warn('rim.acquisition: direct walk failed, falling back to dialog scrape', {
         targetUsername,
@@ -253,10 +380,13 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
    *  - R1: follower→target edges use the pk `FollowersPageReader` derived from
    *        the followers-list URL, back-filled uniformly after the scrape.
    *  - R4: the final resume cursor is persisted per target via `setScrapeCursor`.
+   *
+   * The scrape's own end reason is mapped into the acquire taxonomy and
+   * returned — a dialog that failed to open ('open-failed'), hit a wall, or
+   * drifted must surface as a FAILURE, never as an `observed: 0` that reads
+   * like genuine audience exhaustion.
    */
-  private async acquireViaDialog(
-    targetUsername: string,
-  ): Promise<{ observed: number; targetPk: string | null }> {
+  private async acquireViaDialog(targetUsername: string): Promise<AcquireResult> {
     const result = await this.pageReader.collect({
       targetUsername,
       // Each observed account is written to the store as it arrives.
@@ -287,11 +417,14 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
       });
     }
 
+    const endReason = reasonFromDialog(result.endReason);
     logger.info('rim.acquisition: dialog scrape done', {
       targetUsername,
       observed: result.observedPks.length,
       targetPk: result.targetPk,
+      reason: result.endReason,
+      endReason,
     });
-    return { observed: result.observedPks.length, targetPk: result.targetPk };
+    return { observed: result.observedPks.length, targetPk: result.targetPk, endReason };
   }
 }

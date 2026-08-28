@@ -1186,6 +1186,40 @@ describe('PruneEngine — last complete census', () => {
     h.store.close();
   });
 
+  test('a SHAPE-MISMATCH walk is a failed scan: census restored, NO loss events, NO census record', async () => {
+    const h = build({ following: [OWN_PK, '1', '2'], followers: ['2'] });
+    await h.engine.scan();
+    const first = h.engine.status().census;
+    expect(first).not.toBeNull();
+    // '2' follows us — the fact the fabricated-census bug used to destroy.
+    expect(h.store.getEdge('2', OWN_PK, 'follows')?.status).toBe('active');
+    h.clock.advance(60_000);
+
+    // IG ships a list-shape change: the followers walk fetches pages it can
+    // no longer parse and ends complete:false, reason 'shape-mismatch' —
+    // NEVER the old laundering into a verified-complete empty walk.
+    h.ownFollowers.fetchAllPks = async (): Promise<PruneScanFetch> => ({
+      pks: [],
+      complete: false,
+      reason: 'shape-mismatch',
+    });
+    await expect(h.engine.scan()).rejects.toThrow(/check for an Epo update/);
+
+    const s = h.engine.status();
+    // The failed scan produced NO census record — the previous one stands…
+    expect(h.store.getPruneCensus()).toEqual(first);
+    expect(s.census).toEqual(first);
+    expect(s.scanAt).toBe(first?.at);
+    // …no follower was marked lost (the authoritative ingest never ran)…
+    expect(h.store.getEdge('2', OWN_PK, 'follows')?.status).toBe('active');
+    // …and the previously reviewed set is runnable again, like a relaunch.
+    expect(s.scanReady).toBe(true);
+    expect(s.following).toBe(first?.following);
+    expect(s.followers).toBe(first?.followers);
+    expect(s.state).toBe('idle');
+    h.store.close();
+  });
+
   test('a consumed run keeps the census and its timestamp; only runnability clears', async () => {
     const h = build({ following: [OWN_PK, '1', '2'], followers: [] });
     await h.engine.scan();

@@ -33,6 +33,13 @@ const failEnv = (status: number): unknown => ({
   contentType: 'text/html',
   textHead: '<html>wall</html>',
 });
+/** The SPECIFIC past-the-limit rejection: a 400 with a JSON error body. */
+const rejectEnv = (status: number): unknown => ({
+  ok: false,
+  status,
+  contentType: 'application/json; charset=utf-8',
+  textHead: '{"message":"Unable to fetch followers"}',
+});
 
 interface Harness {
   walker: ListPageWalker;
@@ -128,11 +135,11 @@ test('has_more:false with a leftover cursor is NOT an end — the walk follows t
   expect(scripts[1]).toContain('"C9"');
 });
 
-test('a REJECTED past-the-end probe (400 past the limit) CONFIRMS the end — never a fallback', async () => {
+test('a REJECTED past-the-end probe (JSON 400 past the limit) CONFIRMS the end — never a fallback', async () => {
   const { walker, sleeps } = harness([
     okEnv(followersBody(['a', 'b'], 'C1', true)),
     okEnv(followersBody(['c'], null, false)), // end claim
-    failEnv(400), // IG rejects the past-the-limit offset — that IS the end
+    rejectEnv(400), // IG rejects the past-the-limit offset — that IS the end
   ]);
 
   const result = await walker.walkAll(baseArgs);
@@ -143,6 +150,55 @@ test('a REJECTED past-the-end probe (400 past the limit) CONFIRMS the end — ne
   expect(result.reason).toBe('no-more-pages');
   // The rejection was NOT retried (no long-rest backoff draw was slept).
   expect(sleeps.every((ms) => ms !== 10_000)).toBe(true);
+});
+
+test('a 429 on the past-the-end probe is a FETCH FAILURE, never an end confirmation', async () => {
+  // Getting throttled while verifying the end must not read as "the list is
+  // complete" — that would fabricate a verified-complete census downstream.
+  const { walker } = harness([
+    okEnv(followersBody(['a', 'b'], 'C1', true)),
+    okEnv(followersBody(['c'], null, false)), // end claim
+    failEnv(429), // throttled probe — retried once…
+    failEnv(429), // …still throttled
+  ]);
+
+  const result = await walker.walkAll(baseArgs);
+
+  expect([...result.pks].sort()).toEqual(['a', 'b', 'c']);
+  expect(result.complete).toBe(false);
+  expect(result.endConfirmed).toBe(false);
+  expect(result.reason).toBe('fetch-failed');
+});
+
+test('a transiently throttled probe recovers on retry and still verifies honestly', async () => {
+  const { walker } = harness([
+    okEnv(followersBody(['a'], null, false)), // end claim
+    failEnv(429), // probe throttled once…
+    okEnv(followersBody([], null, false)), // …the retried probe confirms
+  ]);
+
+  const result = await walker.walkAll(baseArgs);
+
+  expect(result.pks).toEqual(['a']);
+  expect(result.complete).toBe(true);
+  expect(result.endConfirmed).toBe(true);
+  expect(result.reason).toBe('no-more-pages');
+});
+
+test('an HTML-wall 400 on the probe is a wall, not a past-the-limit rejection', async () => {
+  // `classifyEnvelope` reads an HTML body on an API URL as a soft wall
+  // (rate-limited) — only the JSON past-the-limit 400 confirms an end.
+  const { walker } = harness([
+    okEnv(followersBody(['a'], null, false)), // end claim
+    failEnv(400), // 400 but text/html — a wall, retried…
+    failEnv(400), // …persistently walled
+  ]);
+
+  const result = await walker.walkAll(baseArgs);
+
+  expect(result.complete).toBe(false);
+  expect(result.endConfirmed).toBe(false);
+  expect(result.reason).toBe('fetch-failed');
 });
 
 test('a FALSE end claim is caught by the probe and the walk continues', async () => {
@@ -222,6 +278,60 @@ test('a mid-walk double failure keeps the pages already parsed but is NOT comple
   expect(result.pages).toBe(1);
   expect(result.complete).toBe(false);
   expect(result.reason).toBe('fetch-failed');
+});
+
+test('a SHAPE_MISMATCH page ends the walk shape-mismatch, incomplete — never a typed-empty end', async () => {
+  const { walker } = harness([
+    okEnv(followersBody(['a', 'b'], 'C1', true)),
+    okEnv({ unexpected_new_shape: true }), // IG shipped a list-shape change
+  ]);
+
+  const result = await walker.walkAll(baseArgs);
+
+  // The rows already parsed are kept; the drifted page adds NOTHING and the
+  // walk ends as the failure it is — a drifted extractor must never turn into
+  // a verified-complete empty walk (the fabricated-census laundering).
+  expect([...result.pks].sort()).toEqual(['a', 'b']);
+  expect(result.complete).toBe(false);
+  expect(result.endConfirmed).toBe(false);
+  expect(result.reason).toBe('shape-mismatch');
+  // The resume point stays at the last well-formed page, so a fixed adapter
+  // picks up exactly where the drift stopped this walk.
+  expect(result.cursor).toBe('C1');
+});
+
+test('a drifted FIRST page ends the walk immediately — no fabricated empty census', async () => {
+  const { walker } = harness([okEnv({ unexpected_new_shape: true })]);
+
+  const result = await walker.walkAll(baseArgs);
+
+  expect(result.pks).toEqual([]);
+  expect(result.complete).toBe(false);
+  expect(result.endConfirmed).toBe(false);
+  expect(result.reason).toBe('shape-mismatch');
+});
+
+test('a drifted past-the-end PROBE page never confirms the end claim', async () => {
+  const { walker } = harness([
+    okEnv(followersBody(['a'], null, false)), // end claim…
+    okEnv({ unexpected_new_shape: true }), // …but the probe no longer parses
+  ]);
+
+  const result = await walker.walkAll(baseArgs);
+
+  expect(result.pks).toEqual(['a']);
+  expect(result.complete).toBe(false);
+  expect(result.endConfirmed).toBe(false);
+  expect(result.reason).toBe('shape-mismatch');
+});
+
+test('a drifted FOLLOWING page fails the same way (shared strict parse)', async () => {
+  const { walker } = harness([okEnv({ unexpected_new_shape: true })]);
+
+  const result = await walker.walkAll({ ...baseArgs, which: 'following' });
+
+  expect(result.complete).toBe(false);
+  expect(result.reason).toBe('shape-mismatch');
 });
 
 test('persistent evaluate throws are fetch-failed, never an unhandled rejection', async () => {

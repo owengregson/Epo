@@ -51,6 +51,38 @@ test('collects observed pks, the URL-derived target pk, and the final cursor', a
   expect(seen.map((o) => o.accountPk).sort()).toEqual(['a', 'b', 'c', 'd']);
 });
 
+test('a page that no longer parses ends the scrape shape-mismatch — never a drained list', async () => {
+  const tab = new FakeTab();
+  const actor = new FakeActor();
+
+  const pages: TabResponse[] = [
+    mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)), // on open
+    mkResp(followersUrl('999', 'C1'), { unexpected_new_shape: true }), // drift
+  ];
+  let i = 0;
+  actor.onOpen = () => tab.emit(pages[i++]);
+  actor.onScroll = () => {
+    if (i < pages.length) tab.emit(pages[i++]);
+  };
+
+  const seen: Observation[] = [];
+  const result = await makeReader(tab, actor).collect({
+    targetUsername: 'target',
+    onObservation: (obs) => seen.push(obs),
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    maxRounds: 5,
+    noNewStop: 2,
+  });
+
+  // Rows parsed before the drift are kept (facts stream)…
+  expect([...result.observedPks].sort()).toEqual(['a', 'b']);
+  expect(seen.map((o) => o.accountPk).sort()).toEqual(['a', 'b']);
+  // …but the scrape ends as the FAILURE it is: the drifted page must never
+  // read as the typed empty end-of-list page, so census consumers (which key
+  // completeness on 'no-more-pages') refuse it.
+  expect(result.endReason).toBe('shape-mismatch');
+});
+
 test('an open-dialog failure resolves empty by default (growth path unchanged)', async () => {
   const tab = new FakeTab();
   const actor = new FakeActor();

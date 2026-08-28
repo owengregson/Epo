@@ -127,9 +127,12 @@ export interface CollectResult {
   cursor: string | null;
   /**
    * Why the scroll loop ended ('no-more-pages', 'stagnant', 'max-rounds',
-   * 'stop-requested', 'sentinel:*', 'blocked-response', 'open-failed').
-   * Callers that need a FULL census (prune) must treat anything but a natural
-   * drain as an incomplete list, never as "this is everything".
+   * 'stop-requested', 'sentinel:*', 'blocked-response', 'shape-mismatch',
+   * 'open-failed'). 'shape-mismatch' means a captured list page no longer
+   * parses (IG shape drift) — it overrides the natural end reasons so a
+   * drifted page can never read as a drained list. Callers that need a FULL
+   * census (prune) must treat anything but a natural drain as an incomplete
+   * list, never as "this is everything".
    */
   endReason: string;
 }
@@ -205,6 +208,11 @@ export class FollowersPageReader {
     // A blocked/rate-limited page (429, or an HTML wall on an API URL) means the
     // scrape should stop rather than parse blind; the scroll loop checks this.
     const halted = { hit: false };
+    // A list page that fetched but no longer PARSES (SHAPE_MISMATCH from the
+    // versioned extractor). Poisons completeness: a drifted page must never
+    // read as the typed empty end-of-list page, so the scrape ends
+    // `endReason: 'shape-mismatch'` — a failure — never 'no-more-pages'.
+    const drifted = { hit: false };
 
     // Register BEFORE navigation so the first profile-info + followers page that
     // fire on `openFollowersDialog` are not missed.
@@ -245,8 +253,14 @@ export class FollowersPageReader {
             }
             const parsed =
               listKind === 'following-list'
-                ? this.reader.parseFollowingList(body, now)
-                : this.reader.parseFollowersList(body, now);
+                ? this.reader.parseFollowingListStrict(body, now)
+                : this.reader.parseFollowersListStrict(body, now);
+            if (parsed === null) {
+              // IG shape drift: stop the scrape (checked at the top of each
+              // round) instead of fabricating an empty, "finished" page.
+              drifted.hit = true;
+              return;
+            }
             cursor = parsed.cursor;
             page.hasMore = parsed.hasMore;
             const sizeBefore = observed.size;
@@ -313,6 +327,12 @@ export class FollowersPageReader {
           endReason = 'blocked-response';
           break;
         }
+        // A captured page no longer parses (IG shape drift) — stop scrolling;
+        // continuing would only fetch more pages the extractor cannot read.
+        if (drifted.hit) {
+          endReason = 'shape-mismatch';
+          break;
+        }
         // R3: re-check the Sentinel at the TOP of each round; halt on any block.
         const status = await sentinel.check();
         if (status !== 'ok') {
@@ -357,6 +377,19 @@ export class FollowersPageReader {
         await Promise.allSettled(pending);
       }
       this.reporter.clear();
+    }
+
+    // A drifted page can land during the final wait or the teardown drain,
+    // after the loop already settled on a natural end. Census consumers key
+    // completeness on `endReason === 'no-more-pages'`, so a drift observed
+    // ANYWHERE in the scrape overrides the natural end reasons — explicit
+    // stop/sentinel/open failures keep their own (equally incomplete but more
+    // actionable) reasons.
+    if (
+      drifted.hit &&
+      (endReason === 'no-more-pages' || endReason === 'stagnant' || endReason === 'max-rounds')
+    ) {
+      endReason = 'shape-mismatch';
     }
 
     logger.info('rim.followers-page-reader: scrape ended', {
