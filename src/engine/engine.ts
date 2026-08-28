@@ -219,6 +219,33 @@ export type StepResult =
   | 'advanced-chain'
   | 'idle';
 
+/**
+ * Why a LONG park is holding the loop — the closed set of reasons a running
+ * engine deliberately waits minutes-to-hours between steps. Surfaced as
+ * {@link EngineStatus.parkReason} so a parked engine is distinguishable from
+ * an idle one for the whole hold (§2 — the UI mirrors the state, live).
+ */
+export type EngineParkReason =
+  | 'active-hours'
+  | 'daily-ceiling'
+  | 'session'
+  | 'velocity'
+  | 'enrich-backoff';
+
+/**
+ * DelayManager keys whose waits are LONG parks the status must surface. The
+ * short operational waits (idle beat, refill pacing, transient backoff, the
+ * brief prune-park retry) stay unlisted — they are step-scale, not hold-scale;
+ * the paced action delay surfaces separately through `nextActionAt`.
+ */
+const PARK_REASON_BY_KEY = new Map<string, EngineParkReason>([
+  ['engine:active-hours-park', 'active-hours'],
+  ['engine:daily-ceiling-park', 'daily-ceiling'],
+  ['engine:session-park', 'session'],
+  ['engine:velocity-park', 'velocity'],
+  ['engine:enrich-backoff', 'enrich-backoff'],
+]);
+
 /** Status projection over the store + governors + Engine state (§5). */
 export interface EngineStatus {
   state: EngineState;
@@ -240,6 +267,16 @@ export interface EngineStatus {
   sessionStartedAt: number | null;
   /** Deadline (epoch ms) of the in-flight paced action delay, else null. */
   nextActionAt: number | null;
+  /**
+   * Deadline (epoch ms) of the in-flight LONG park (outside active hours,
+   * today's plan done, between sessions, velocity hold, enrich backoff).
+   * Registered — and pushed — the moment the park starts, BEFORE it is
+   * awaited, and null once the wait resolves. Optional only because the
+   * pre-build status literal predates it; the Engine always sets it.
+   */
+  parkedUntil?: number | null;
+  /** Why the engine is parked while `parkedUntil` is set; null otherwise. */
+  parkReason?: EngineParkReason | null;
   netToday: number;
   /** Whether the connectivity monitor last reported the internet reachable. */
   online: boolean;
@@ -393,6 +430,16 @@ export class Engine {
    * Engine's first eligible step performs a cheap catch-up sweep.
    */
   private readonly sweepCadence: SweepCadence;
+
+  /**
+   * The in-flight LONG park ({@link PARK_REASON_BY_KEY}): why the loop is
+   * deliberately holding and until when. Set synchronously as the park's wait
+   * registers — with a status emit BEFORE the await, so the renderer shows the
+   * hold the moment it starts (a fresh start at 23:00 must not read as idle
+   * for nine hours) — and cleared when the wait resolves, completed or
+   * interrupted.
+   */
+  private park: { reason: EngineParkReason; until: number } | null = null;
 
   private lastStep: StepResult | null = null;
   private lastSentinel: SentinelStatus | null = null;
@@ -646,6 +693,8 @@ export class Engine {
       // hold and reflects the remainder that will be served on resume).
       nextActionAt:
         this.delays.nextDeadline('engine:action-delay') ?? this.actionDelayDeadline,
+      parkedUntil: this.park?.until ?? null,
+      parkReason: this.park?.reason ?? null,
       netToday: store.netFollowersSince(startOfToday),
       online: this.online,
       haltReason: this.engineState === 'halted' ? this.haltReason : null,
@@ -1201,13 +1250,33 @@ export class Engine {
    * check — a stale generation's wait can never shadow the new run's). The
    * `engine:action-delay` wait additionally emits a status right after
    * registration, so the renderer sees the REAL next-action deadline
-   * (`nextActionAt`) while the wait is pending; other keys stay quiet to avoid
-   * doubling every step's status push.
+   * (`nextActionAt`) while the wait is pending — and every LONG park
+   * ({@link PARK_REASON_BY_KEY}) does the same for `parkedUntil`/`parkReason`,
+   * so a multi-hour hold is visible the moment it starts, not after it ends.
+   * The remaining short keys stay quiet to avoid doubling every step's push.
    */
   private async engineWait(key: string, policyOrMs: DelayPolicy | number): Promise<WaitResult> {
     const wait = this.delays.wait(key, policyOrMs, { signal: this.runAbort.signal });
-    if (key === 'engine:action-delay') this.emitStatus();
-    return wait;
+    // Registration is synchronous (before the wait's first internal await), so
+    // the real deadline is readable — and emittable — before awaiting.
+    const parkReason = PARK_REASON_BY_KEY.get(key);
+    if (parkReason !== undefined) {
+      const until = this.delays.nextDeadline(key) ?? this.deps.clock.now();
+      this.park = { reason: parkReason, until };
+      // Log + emit at REGISTRATION: a fresh start that parks immediately must
+      // say so now — the step result only lands after the hold completes.
+      log.info('engine: holding', { reason: parkReason, resumesAt: new Date(until).toISOString() });
+      this.emitStatus();
+    } else if (key === 'engine:action-delay') {
+      this.emitStatus();
+    }
+    try {
+      return await wait;
+    } finally {
+      // The hold is over however the wait ended (elapsed, pause, offline,
+      // stop); the step's own status emit publishes the cleared state.
+      if (parkReason !== undefined) this.park = null;
+    }
   }
 
   /** The CURRENT run-generation abort signal (adapter waits link to this). */

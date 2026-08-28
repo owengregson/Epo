@@ -51,3 +51,28 @@ export function useCountdown(status: EpoStatus | null, now: number): Countdown {
     frac: Math.min(1, Math.max(0, remaining / intervalMs)),
   };
 }
+
+/**
+ * Countdown to an arbitrary hold deadline — a long engine park (outside active
+ * hours, today's plan done, between sessions, …) whose status carries only the
+ * deadline. Uses the same first-sighting anchor as the restored branch above:
+ * the ring's denominator is fixed when the hold is first seen, so the fill
+ * genuinely depletes across ticks instead of re-deriving from `now`.
+ */
+export function useHoldCountdown(until: number | null, now: number): Countdown {
+  const anchor = useRef<{ deadline: number; seenAt: number } | null>(null);
+  if (until == null) {
+    anchor.current = null;
+    return IDLE;
+  }
+  if (anchor.current?.deadline !== until) {
+    anchor.current = { deadline: until, seenAt: now };
+  }
+  const intervalMs = Math.max(1, until - anchor.current.seenAt);
+  const remaining = Math.max(0, until - now);
+  return {
+    active: true,
+    remainingSec: Math.round(remaining / 1000),
+    frac: Math.min(1, Math.max(0, remaining / intervalMs)),
+  };
+}

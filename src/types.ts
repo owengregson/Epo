@@ -42,7 +42,7 @@ export type ResponseHandler = (response: TabResponse) => void;
 /** Disposer returned by subscription helpers; idempotent. */
 export type Unsubscribe = () => void;
 
-import type { EngineStatus } from '@/engine/engine';
+import type { EngineParkReason, EngineStatus } from '@/engine/engine';
 import type { PruneCandidate, PruneState, PruneStatus } from '@/engine/prune-engine';
 import type { Settings } from '@/settings/settings';
 import type { FollowState, Target } from '@/store/types';
@@ -50,7 +50,16 @@ import type { FollowState, Target } from '@/store/types';
 // Re-export so the renderer can name the Engine's status shape from one place.
 // These are all TYPE-ONLY re-exports — no runtime code crosses into the renderer,
 // so the dependency-free contract above still holds.
-export type { EngineStatus, FollowState, PruneCandidate, PruneState, PruneStatus, Settings, Target };
+export type {
+  EngineParkReason,
+  EngineStatus,
+  FollowState,
+  PruneCandidate,
+  PruneState,
+  PruneStatus,
+  Settings,
+  Target,
+};
 
 // ---------------------------------------------------------------------------
 // Structured log stream (main -> renderer)

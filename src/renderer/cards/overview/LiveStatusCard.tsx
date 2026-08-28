@@ -1,6 +1,6 @@
 /** @jsx h */
 import { Fragment, h } from 'preact';
-import { useCountdown } from '@/renderer/hooks/useCountdown';
+import { useCountdown, useHoldCountdown } from '@/renderer/hooks/useCountdown';
 import { useNow } from '@/renderer/hooks/useNow';
 import { useQueue } from '@/renderer/hooks/useQueue';
 import { dailyRateView } from '@/renderer/lib/engine-view';
@@ -15,9 +15,10 @@ import type { EpoStatus, Settings } from '@/types';
 
 type Step = NonNullable<EpoStatus['lastStep']>;
 type Sentinel = NonNullable<EpoStatus['lastSentinel']>;
+type ParkReason = NonNullable<EpoStatus['parkReason']>;
 
 /** Readable phrase for what the engine's last step did. */
-function stepLabel(step: Step): string {
+export function stepLabel(step: Step): string {
   switch (step) {
     case 'acted':
       return 'acted';
@@ -29,6 +30,8 @@ function stepLabel(step: Step): string {
       return 'acquired pool';
     case 'waited-active-hours':
       return 'waited · hours';
+    case 'waited-session':
+      return 'waited · session';
     case 'waited-ceiling':
       return 'waited · ceiling';
     case 'halted':
@@ -37,6 +40,76 @@ function stepLabel(step: Step): string {
       return 'aborted';
     default:
       return 'idle';
+  }
+}
+
+/** Epoch ms → local wall clock "8:00" / "14:10" (resume times in hold copy). */
+function wallTime(atMs: number): string {
+  const d = new Date(atMs);
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** Whether two epochs fall on the same local calendar day. */
+function sameLocalDay(a: number, b: number): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() &&
+    da.getDate() === db.getDate()
+  );
+}
+
+/** Big headline word for a hold state (the offline hold's "Offline" slot). */
+export function parkHeadline(reason: ParkReason): string {
+  switch (reason) {
+    case 'daily-ceiling':
+      return 'Plan done';
+    case 'velocity':
+      return 'Pacing';
+    case 'enrich-backoff':
+      return 'Backing off';
+    default:
+      return 'Resting'; // active-hours and between-sessions are both a rest
+  }
+}
+
+/** Centered ring glyph for a hold state (the offline hold's "wifi" slot). */
+function parkGlyph(reason: ParkReason): string {
+  switch (reason) {
+    case 'daily-ceiling':
+      return 'calendar-check';
+    case 'velocity':
+      return 'gauge-high';
+    case 'enrich-backoff':
+      return 'arrows-rotate';
+    case 'session':
+      return 'hourglass-half';
+    default:
+      return 'moon';
+  }
+}
+
+/** One-line caption under the headline: why, and when work resumes. */
+export function parkCaption(
+  reason: ParkReason,
+  until: number,
+  now: number,
+  done: number,
+  planned: number | null,
+): string {
+  const at = `${sameLocalDay(until, now) ? '' : 'tomorrow '}${wallTime(until)}`;
+  switch (reason) {
+    case 'active-hours':
+      return `outside active hours · resumes ${at}`;
+    case 'daily-ceiling':
+      return `today's plan is done (${done}/${planned ?? done}) · resumes ${at}`;
+    case 'session':
+      return `between sessions · next session ${at}`;
+    case 'velocity':
+      return `easing off this hour · resumes ${at}`;
+    default:
+      return `after fetch trouble · retrying ${at}`;
   }
 }
 
@@ -99,6 +172,24 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
   /** Engine is running but the connectivity monitor sees the internet down → auto-hold. */
   const offlineHold = running && offline;
 
+  // Running but deliberately holding — a long park (outside active hours,
+  // plan done, between sessions, …). First-class like the offline hold, so a
+  // parked engine never reads as "running with dashes". Offline wins: with no
+  // connectivity the park wait is cancelled anyway.
+  const parkReason = status?.parkReason ?? null;
+  const parkedUntil = status?.parkedUntil ?? null;
+  const parkHold =
+    running && !offlineHold && parkReason != null && parkedUntil != null
+      ? { reason: parkReason, until: parkedUntil }
+      : null;
+  const hold = useHoldCountdown(parkHold?.until ?? null, now);
+  const holdRemainText =
+    parkHold != null
+      ? hold.remainingSec >= 3600
+        ? durationHm(parkHold.until - now)
+        : mmss(hold.remainingSec)
+      : null;
+
   // What the engine will REALLY do next mirrors nextDue's precedence: reclaim
   // slots first — any due unfollow fires before a new follow. The card used to
   // read only the queued list and claim "follow @x" while an unfollow was due.
@@ -136,14 +227,25 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
       <CardBody>
         {/* next action: small depleting ring + prominent countdown.
             While the engine is running but the internet is down, the hold
-            replaces the countdown — no fabricated numbers while offline. */}
+            replaces the countdown — no fabricated numbers while offline.
+            A long park (outside active hours, plan done, between sessions)
+            renders the same hold layout: calm headline, why, when it resumes,
+            and a live countdown chip fed by the engine's real park deadline. */}
         <div class="hero-next">
-          <RadialRing frac={offlineHold ? 0 : cd.frac} glyph={offlineHold ? 'wifi' : 'bolt'} />
+          <RadialRing
+            frac={offlineHold ? 0 : parkHold ? hold.frac : cd.frac}
+            glyph={offlineHold ? 'wifi' : parkHold ? parkGlyph(parkHold.reason) : 'bolt'}
+          />
           <div class="hn-main">
             {offlineHold ? (
               <Fragment>
                 <div class="hn-count">Offline</div>
                 <div class="hn-cap">waiting for connection</div>
+              </Fragment>
+            ) : parkHold ? (
+              <Fragment>
+                <div class="hn-count">{parkHeadline(parkHold.reason)}</div>
+                <div class="hn-cap">{parkCaption(parkHold.reason, parkHold.until, now, done, rate)}</div>
               </Fragment>
             ) : (
               <Fragment>
@@ -152,7 +254,11 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
               </Fragment>
             )}
           </div>
-          {offlineHold ? <span class="rchip">Reconnecting…</span> : null}
+          {offlineHold ? (
+            <span class="rchip">Reconnecting…</span>
+          ) : parkHold ? (
+            <span class="rchip num">in {holdRemainText}</span>
+          ) : null}
         </div>
         {offline && !offlineHold ? <div class="hint">Offline — no internet connection detected.</div> : null}
         {status?.state === 'halted' && status.haltReason != null ? (

@@ -1,7 +1,7 @@
 /** @jsx h */
 import { h } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import type { Settings, StageMode } from '@/types';
+import type { EpoStatus, Settings, StageMode } from '@/types';
 import { GraphStage } from '../graph/GraphStage';
 import { useConfirm } from '../hooks/useConfirm';
 import { useEngineStatus } from '../hooks/useEngineStatus';
@@ -176,12 +176,58 @@ export function App(): h.JSX.Element {
     [toasts],
   );
 
+  // One-shot Start watch: pressing Start outside the activity window otherwise
+  // yields hours of silence. Armed on a user-initiated Start with the engine's
+  // step markers at press time; the next pushed statuses are inspected — the
+  // first one carrying a window park gets the toast, and any other sign of the
+  // engine at work (a different park, a step marker moving) disarms silently.
+  // Time-boxed: a first-thing park registers within seconds of Start, so an
+  // expired watch can never toast "Started" long after the button press.
+  const startWatch = useRef<{
+    lastStep: EpoStatus['lastStep'];
+    lastActionAt: number | null;
+    armedAt: number;
+  } | null>(null);
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  useEffect(() => {
+    const armed = startWatch.current;
+    if (armed === null || status === null) return;
+    if (Date.now() - armed.armedAt > 90_000) {
+      startWatch.current = null; // stale — whatever happens now is not "at Start"
+      return;
+    }
+    if (status.state === 'idle' || status.state === 'halted') {
+      startWatch.current = null; // start refused, failed, or already over
+      return;
+    }
+    const reason = status.parkReason ?? null;
+    const until = status.parkedUntil ?? null;
+    if ((reason === 'active-hours' || reason === 'session') && until != null) {
+      startWatch.current = null;
+      const d = new Date(until);
+      toasts.push(
+        'info',
+        `Started — first actions at ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}.`,
+      );
+      return;
+    }
+    if (reason != null || status.lastStep !== armed.lastStep || status.lastActionAt !== armed.lastActionAt) {
+      startWatch.current = null; // the engine went to work — no hold toast owed
+    }
+  }, [status, toasts]);
+
   const onStart = useCallback(() => {
     if (!settings?.seed?.trim()) {
       setSeedPrompt((n) => n + 1);
       goTo('settings');
       return;
     }
+    startWatch.current = {
+      lastStep: statusRef.current?.lastStep ?? null,
+      lastActionAt: statusRef.current?.lastActionAt ?? null,
+      armedAt: Date.now(),
+    };
     void runControl('start', 'Start', () => window.epo.startEngine());
     goTo('overview');
   }, [runControl, goTo, settings]);

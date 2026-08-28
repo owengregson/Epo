@@ -441,6 +441,98 @@ describe('Engine — active-hours and ceiling gates (precedence 3–4)', () => {
   });
 });
 
+describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)', () => {
+  test('a fresh start outside active hours pushes the park BEFORE it elapses', async () => {
+    const h = makeHarness({
+      startAt: Date.parse('2026-08-12T23:00:00'),
+      activeHours: { start: 8, end: 22 },
+    });
+    h.sleep.hang = true; // the active-hours park blocks until aborted
+
+    const started = h.engine.start();
+    await new Promise((r) => setTimeout(r, 0)); // let the loop reach the park
+
+    // The projection pushed AT REGISTRATION carries the hold: reason + real
+    // deadline, while lastStep is still null (the park has NOT completed) —
+    // without these fields this state was indistinguishable from a dead run.
+    const pushed = h.statuses[h.statuses.length - 1];
+    expect(pushed.state).toBe('running');
+    expect(pushed.parkReason).toBe('active-hours');
+    expect(pushed.parkedUntil).toBe(Date.parse('2026-08-13T08:00:00'));
+    expect(pushed.lastStep).toBeNull();
+    expect(h.engine.status().parkReason).toBe('active-hours');
+
+    h.engine.stop();
+    await started;
+    // The hold dies with the run: nothing advertises a stale park.
+    expect(h.engine.status().parkReason).toBeNull();
+    expect(h.engine.status().parkedUntil).toBeNull();
+  });
+
+  test('the park clears once the wait elapses (resume shows unparked)', async () => {
+    const h = makeHarness({
+      startAt: Date.parse('2026-08-12T02:00:00'),
+      activeHours: { start: 8, end: 22 },
+    });
+
+    const result = await h.engine.stepOnce(); // the fake sleep advances through the park
+
+    expect(result).toBe('waited-active-hours');
+    // A mid-park push carried the hold with its deadline...
+    const mid = h.statuses.find((s) => s.parkReason === 'active-hours');
+    expect(mid?.parkedUntil).toBe(Date.parse('2026-08-12T08:00:00'));
+    // ...and the post-step push (and the live read) show it cleared.
+    const last = h.statuses[h.statuses.length - 1];
+    expect(last.parkReason).toBeNull();
+    expect(last.parkedUntil).toBeNull();
+    expect(last.lastStep).toBe('waited-active-hours');
+    expect(h.engine.status().parkReason).toBeNull();
+  });
+
+  test('an organic session park surfaces reason "session" with the next session start', async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    pacing.open = false;
+    const h = makeHarness({ pacing });
+    h.sleep.hang = true;
+
+    const stepping = h.engine.stepOnce();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const st = h.engine.status();
+    expect(st.parkReason).toBe('session');
+    expect(st.parkedUntil).toBe(T0 + HOUR);
+
+    h.engine.stop();
+    expect(await stepping).toBe('waited-session');
+    expect(h.engine.status().parkReason).toBeNull();
+  });
+
+  test('a daily-ceiling park surfaces reason "daily-ceiling" until the cycle reset', async () => {
+    const h = makeHarness({ ceiling: 2 });
+    h.store.recordAction('x', 'follow', 'ok', T0 - HOUR);
+    h.store.recordAction('y', 'follow', 'ok', T0 - HOUR / 2);
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.sleep.hang = true;
+
+    const stepping = h.engine.stepOnce();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.engine.status().parkReason).toBe('daily-ceiling');
+    expect(h.engine.status().parkedUntil).toBe(T0 + 12 * HOUR); // noon → midnight
+
+    h.engine.stop();
+    expect(await stepping).toBe('waited-ceiling');
+  });
+
+  test('short operational waits (idle beat) do NOT read as parks', async () => {
+    const h = makeHarness(); // nothing due → the step ends in the idle sleep
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(h.statuses.every((s) => s.parkReason == null)).toBe(true);
+    expect(h.engine.status().parkReason).toBeNull();
+    expect(h.engine.status().parkedUntil).toBeNull();
+  });
+});
+
 describe('Engine — follow-back sweep cadence (precedence 6)', () => {
   test('sweeps when due, then not again until the cadence elapses', async () => {
     const h = makeHarness({ settings: { followbackSweepHours: 4 } });
@@ -984,6 +1076,10 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     expect(await h.engine.stepOnce()).toBe('idle'); // enrich-backoff park
     expect(h.chain.advanceCalls).toEqual([]); // the chain was NOT advanced
     expect(h.acquisition.calls.length).toBe(1);
+    // The backoff is a LONG park: mid-park the pushed status carried the hold,
+    // and it cleared once the wait elapsed.
+    expect(h.statuses.some((s) => s.parkReason === 'enrich-backoff')).toBe(true);
+    expect(h.engine.status().parkReason).toBeNull();
 
     // After the backoff a fresh cycle retries enrichment (bounded again).
     expect(await h.engine.stepOnce()).toBe('acquired');
