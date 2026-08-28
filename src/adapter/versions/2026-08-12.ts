@@ -345,9 +345,14 @@ const regexLiteral = (r: RegExp): { source: string; flags: string } => ({
  * 2xx, an HTML/error body yields `{ ok: false, ..., textHead }`, and a network
  * error yields `{ ok: false, status: 0, contentType: '', textHead }`. The
  * private API requires the `x-ig-app-id` header + session credentials.
+ *
+ * The fetch is abort-bounded so a never-responding endpoint settles as an
+ * envelope failure instead of leaving the caller's evaluate pending. The
+ * 20000 literal is inlined because page scripts cannot import — it mirrors
+ * `TAB.FETCH_ABORT_MS` in `@/timing/config`; keep the two in sync.
  */
 const envelopeFetchScript = (urlExpr: string): string =>
-  `fetch(${urlExpr}, { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })
+  `fetch(${urlExpr}, { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include', signal: AbortSignal.timeout(20000) })
   .then(function (r) {
     var ct = '';
     try { ct = (r.headers && r.headers.get('content-type')) || ''; } catch (e) { ct = ''; }

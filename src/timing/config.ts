@@ -92,6 +92,28 @@ export const ADAPTER = {
   PROFILE_LAND_RETRY_MS: 1_500,
 } as const;
 
+export const TAB = {
+  /** goto: deadline on `webContents.loadURL` — a wedged renderer must never park the caller forever. */
+  GOTO_TIMEOUT_MS: 30_000,
+  /** evaluate: deadline on `executeJavaScript` — in-page scripts settle sub-second when the page is alive. */
+  EVALUATE_TIMEOUT_MS: 15_000,
+  /** getBody: deadline on CDP `Network.getResponseBody` — a resource-cache read, normally instant. */
+  GET_BODY_TIMEOUT_MS: 10_000,
+  /** In-page envelope fetch abort budget. Inlined as a literal in the versions
+   *  file (page scripts can't import) — keep `envelopeFetchScript` in sync. */
+  FETCH_ABORT_MS: 20_000,
+  /** Teardown/restart: bounded wait for the engine loop's exit — quit must never hang behind a wedged loop. */
+  TEARDOWN_ENGINE_WAIT_MS: 15_000,
+} as const;
+
+export const RECOVERY = {
+  /** engine:step-watchdog — a 'running' engine that has emitted no status AND holds
+   *  no pending `engine:` wait for this long is wedged, not parked. */
+  STEP_WATCHDOG_MS: 8 * 60_000,
+  /** How often the step watchdog evaluates its fire predicate (cheap in-memory checks). */
+  STEP_WATCHDOG_CHECK_MS: 60_000,
+} as const;
+
 export const RIM = {
   /** Fixed pause after each scroll so the paginated response can land (growth path). */
   SCROLL_WAIT_MS: 2_000,

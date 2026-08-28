@@ -8,6 +8,7 @@ import {
   envelopeLooksLikeHtml,
   type FetchEnvelope,
 } from '@/adapter/ig-surface';
+import { TAB } from '@/timing/config';
 
 describe('asFetchEnvelope', () => {
   test('accepts a well-formed envelope', () => {
@@ -85,6 +86,22 @@ describe('SURFACE labelled block signatures (replaces the positional contract)',
     expect(SURFACE.textSignatures.length).toBeGreaterThan(0);
     for (const sig of SURFACE.textSignatures) {
       expect(sig.status).toBe('action-blocked');
+    }
+  });
+});
+
+describe('SURFACE envelope fetch scripts are abort-bounded', () => {
+  test('every in-page fetch carries AbortSignal.timeout matching TAB.FETCH_ABORT_MS', () => {
+    // The literal is inlined in the versions file (page scripts cannot
+    // import); this pins it to the registry value so the two never drift.
+    const scripts = [
+      SURFACE.profileInfoScript('someone'),
+      SURFACE.currentUserScript(),
+      SURFACE.friendshipShowScript('17841400000'),
+      SURFACE.listPageScript('17841400000', 'followers', null),
+    ];
+    for (const script of scripts) {
+      expect(script).toContain(`AbortSignal.timeout(${TAB.FETCH_ABORT_MS})`);
     }
   });
 });

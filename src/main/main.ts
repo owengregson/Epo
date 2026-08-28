@@ -263,6 +263,12 @@ function createWindow(): void {
   // No-op unless the user enabled a schedule; cleared in the foundation's dispose.
   found.startScheduledPruneWatcher();
 
+  // Engine step watchdog: recovers a growth loop wedged on a never-settling
+  // tab/CDP await (stop → tab reload + debugger re-attach → restart). Fires
+  // only when the engine is silent past the stale window AND the DelayManager
+  // holds no pending engine wait — a legitimate long park never trips it.
+  found.startEngineStepWatchdog();
+
   // --- Self-updater (docs/RELEASE.md §5) -----------------------------------
   // Wired here and ONLY here — never through the Foundation: jest constructs
   // Foundation with no electron mock, and electron-updater requires electron

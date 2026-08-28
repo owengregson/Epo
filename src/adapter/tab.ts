@@ -25,9 +25,12 @@ import type {
   WebContents,
 } from 'electron';
 import { session, WebContentsView } from 'electron';
+import { TabUnresponsiveError } from '@/adapter/errors';
 import { SURFACE } from '@/adapter/ig-surface';
 import { toCdpMouseParams } from '@/interaction/cdp-input';
 import type { PointerInputEvent } from '@/interaction/input-driver';
+import { TAB } from '@/timing/config';
+import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 import type { ResponseHandler, TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
 
@@ -61,15 +64,39 @@ interface PendingResponse {
   mimeType: string;
 }
 
+/**
+ * Deadlines on the tab-facing awaits (`goto` / `evaluate` / `getBody`). A
+ * wedged webContents can leave any of these promises pending FOREVER —
+ * every one is raced against its deadline and surfaces as a typed
+ * `TabUnresponsiveError` instead of parking the caller. Injectable so tests
+ * exercise the timeout paths without waiting out the production values.
+ */
+export interface TabTimeouts {
+  gotoMs: number;
+  evaluateMs: number;
+  getBodyMs: number;
+}
+
+export interface InstagramTabOptions {
+  /** Overrides for the tab-facing await deadlines; defaults come from `TAB.*`. */
+  timeouts?: Partial<TabTimeouts>;
+}
+
 export class InstagramTab {
   private readonly view: WebContentsView;
   private readonly responseHandlers = new Set<ResponseHandler>();
   private readonly pending = new Map<string, PendingResponse>();
+  private readonly timeouts: TabTimeouts;
   private debuggerReady = false;
   /** Serializes CDP input dispatches so move/down/up order is guaranteed. */
   private inputChain: Promise<void> = Promise.resolve();
 
-  constructor() {
+  constructor(opts: InstagramTabOptions = {}) {
+    this.timeouts = {
+      gotoMs: opts.timeouts?.gotoMs ?? TAB.GOTO_TIMEOUT_MS,
+      evaluateMs: opts.timeouts?.evaluateMs ?? TAB.EVALUATE_TIMEOUT_MS,
+      getBodyMs: opts.timeouts?.getBodyMs ?? TAB.GET_BODY_TIMEOUT_MS,
+    };
     const igSession = session.fromPartition(IG_PARTITION);
     // Present as real desktop Chrome so IG's private JSON API doesn't reject
     // requests with "useragent mismatch". Set on the session (covers all
@@ -130,16 +157,24 @@ export class InstagramTab {
     return wc;
   }
 
-  /** Navigate the tab to a URL (e.g. Instagram home for login). */
+  /**
+   * Navigate the tab to a URL (e.g. Instagram home for login). Deadline-bounded:
+   * a navigation that never settles (wedged renderer) throws
+   * `TabUnresponsiveError` instead of parking the caller forever.
+   */
   async goto(url: string): Promise<void> {
     logger.info('tab.goto', { url });
     try {
-      await this.liveContents().loadURL(url);
+      const settled = await withTimeout(this.liveContents().loadURL(url), this.timeouts.gotoMs);
+      if (settled === TIMED_OUT) {
+        throw new TabUnresponsiveError('goto', this.timeouts.gotoMs);
+      }
     } catch (e) {
       // ERR_ABORTED (-3) means the navigation was superseded — a concurrent
       // loadURL (e.g. the startup nav racing the build-flow's username resolve)
       // or an Instagram client-side redirect. The winning navigation is the one
-      // that matters, so this is benign; rethrow anything else.
+      // that matters, so this is benign; rethrow anything else (a timeout falls
+      // through here unmatched and stays a loud TabUnresponsiveError).
       const err = e as { code?: string; errno?: number };
       if (err && (err.code === 'ERR_ABORTED' || err.errno === -3)) {
         logger.debug('tab.goto: navigation superseded (ERR_ABORTED), ignoring', { url });
@@ -165,14 +200,22 @@ export class InstagramTab {
    *
    * Accepts either a source string or a zero-arg function (which is serialized
    * and invoked as an IIFE). The result is whatever the expression resolves to,
-   * structured-cloned back across the boundary.
+   * structured-cloned back across the boundary. Deadline-bounded: an
+   * `executeJavaScript` that never settles throws `TabUnresponsiveError`.
    */
   async evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T> {
     const code =
       typeof fnOrString === 'function'
         ? `(${fnOrString.toString()})()`
         : fnOrString;
-    return (await this.liveContents().executeJavaScript(code, true)) as T;
+    const result = await withTimeout(
+      this.liveContents().executeJavaScript(code, true) as Promise<T>,
+      this.timeouts.evaluateMs,
+    );
+    if (result === TIMED_OUT) {
+      throw new TabUnresponsiveError('evaluate', this.timeouts.evaluateMs);
+    }
+    return result;
   }
 
   /**
@@ -276,6 +319,50 @@ export class InstagramTab {
     };
   }
 
+  /**
+   * Recover a wedged tab: drop the CDP session, reload the page, and re-attach
+   * the debugger (Network domain + focus emulation) so network observation and
+   * input dispatch come back on the fresh renderer. Called by the main-process
+   * step watchdog after it detects a stalled run. Every wait inside is
+   * deadline-bounded, so recovery itself can never hang.
+   */
+  async recoverTab(): Promise<void> {
+    const wc = this.liveContents();
+    logger.warn('tab.recoverTab: reloading webContents and re-attaching debugger');
+    this.pending.clear();
+    const dbg = wc.debugger;
+    if (dbg.isAttached()) {
+      try {
+        dbg.detach();
+      } catch (e) {
+        logger.warn('tab.recoverTab: debugger detach failed', { error: String(e) });
+      }
+    }
+    // Drop our message listener before `attachDebugger` re-registers it —
+    // detach does not clear emitter listeners, and a double registration
+    // would emit every response twice.
+    dbg.removeListener('message', this.onDebuggerMessage);
+    this.debuggerReady = false;
+
+    // Reload, waiting (bounded) for the load to settle. `did-stop-loading`
+    // fires on success AND failure; a renderer too wedged to emit even that
+    // just runs out the deadline and we re-attach anyway.
+    const onLoadStop = { fn: (): void => {} };
+    const loaded = new Promise<void>((resolve) => {
+      onLoadStop.fn = (): void => resolve();
+      wc.once('did-stop-loading', onLoadStop.fn);
+    });
+    wc.reload();
+    const settled = await withTimeout(loaded, this.timeouts.gotoMs);
+    if (settled === TIMED_OUT) {
+      wc.removeListener('did-stop-loading', onLoadStop.fn);
+      logger.warn('tab.recoverTab: reload did not settle in time; re-attaching anyway', {
+        timeoutMs: this.timeouts.gotoMs,
+      });
+    }
+    this.attachDebugger();
+  }
+
   /** Detach the debugger and release the network observer. Idempotent. */
   dispose(): void {
     this.responseHandlers.clear();
@@ -370,9 +457,18 @@ export class InstagramTab {
       status: meta.status,
       mimeType: meta.mimeType,
       getBody: async () => {
-        const res = (await dbg.sendCommand('Network.getResponseBody', {
-          requestId,
-        })) as { body: string; base64Encoded: boolean };
+        // Deadline-bounded: a CDP call against a wedged debugger session can
+        // stay pending forever — surface that as `TabUnresponsiveError`.
+        const res = await withTimeout(
+          dbg.sendCommand('Network.getResponseBody', { requestId }) as Promise<{
+            body: string;
+            base64Encoded: boolean;
+          }>,
+          this.timeouts.getBodyMs,
+        );
+        if (res === TIMED_OUT) {
+          throw new TabUnresponsiveError('getBody', this.timeouts.getBodyMs);
+        }
         return res.base64Encoded
           ? Buffer.from(res.body, 'base64').toString('utf8')
           : res.body;

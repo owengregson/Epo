@@ -53,6 +53,28 @@ export class ActionBlockedError extends Error {
   }
 }
 
+/**
+ * Thrown when a tab-facing await (navigation, in-page evaluate, CDP body read)
+ * exceeded its deadline — the webContents is unresponsive or the call would
+ * never settle. Typed DISTINCTLY from `AdapterStaleError` on purpose: a stall
+ * is a tab/renderer-process condition, never selector drift, so it must never
+ * be scored against the surface version's DOM knowledge.
+ */
+export class TabUnresponsiveError extends Error {
+  /** The tab operation that stalled, e.g. `goto` / `evaluate` / `getBody`. */
+  readonly component: string;
+  /** The deadline that elapsed without a settlement, in ms. */
+  readonly timeoutMs: number;
+
+  constructor(component: string, timeoutMs: number) {
+    super(`Tab unresponsive [${component}]: no settlement within ${timeoutMs}ms`);
+    this.name = 'TabUnresponsiveError';
+    this.component = component;
+    this.timeoutMs = timeoutMs;
+    Object.setPrototypeOf(this, TabUnresponsiveError.prototype);
+  }
+}
+
 export class AdapterStaleError extends Error {
   /** The adapter operation that failed, e.g. `actor.follow`. */
   readonly component: string;

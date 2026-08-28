@@ -5,8 +5,10 @@ import {
   HARNESS,
   POLL,
   PRUNE,
+  RECOVERY,
   RIM,
   SCHEDULER,
+  TAB,
 } from '@/timing/config';
 
 describe('timing/config — registry invariants', () => {
@@ -29,6 +31,14 @@ describe('timing/config — registry invariants', () => {
     expect(RIM.SCROLL_WAIT_MS).toBe(2_000);
     expect(POLL.KEEPALIVE_MS).toBe(10_000);
     expect(HARNESS.LOGIN_POLL_MS).toBe(2_000);
+    // Tab-facing await deadlines (adapter-awaits-unbounded fix).
+    expect(TAB.GOTO_TIMEOUT_MS).toBe(30_000);
+    expect(TAB.EVALUATE_TIMEOUT_MS).toBe(15_000);
+    expect(TAB.GET_BODY_TIMEOUT_MS).toBe(10_000);
+    expect(TAB.FETCH_ABORT_MS).toBe(20_000);
+    expect(TAB.TEARDOWN_ENGINE_WAIT_MS).toBe(15_000);
+    expect(RECOVERY.STEP_WATCHDOG_MS).toBe(8 * 60_000);
+    expect(RECOVERY.STEP_WATCHDOG_CHECK_MS).toBe(60_000);
   });
 
   test('every min/max pair is ordered', () => {

@@ -103,7 +103,7 @@ import {
 } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { samplePhaseOffset } from '@/timing/circadian';
-import { ADAPTER, CIRCADIAN, POLL, PRUNE, SCHEDULER } from '@/timing/config';
+import { ADAPTER, CIRCADIAN, POLL, PRUNE, RECOVERY, SCHEDULER, TAB } from '@/timing/config';
 import { DelayManager } from '@/timing/delay-manager';
 import { sleep, TIMED_OUT, withTimeout } from '@/timing/primitives';
 import { ScheduleManager } from '@/timing/schedule-manager';
@@ -202,6 +202,33 @@ interface BuiltGraph {
   chain: ChainController;
   /** The organic pacing planner, present only when `Settings.pacingModel === 'organic'`. */
   pacing: SessionPlanner | undefined;
+}
+
+/** Inputs to the step-watchdog fire decision — see {@link stepWatchdogShouldFire}. */
+export interface StepWatchdogInput {
+  /** The growth engine's visible state right now. */
+  engineState: EngineStatus['state'];
+  now: number;
+  /** Epoch ms of the last engine status emission (or start baseline). */
+  lastActivityAt: number;
+  /** How long the engine may be silent before it counts as wedged. */
+  staleAfterMs: number;
+  /** Keys of every wait currently pending in the shared DelayManager. */
+  pendingDelayKeys: readonly string[];
+}
+
+/**
+ * Whether the main-process step watchdog must fire: the growth engine claims
+ * to be RUNNING, nothing has been heard from it beyond the stale window, AND
+ * no `engine:`-prefixed wait is pending in the DelayManager. Every legitimate
+ * long park (velocity park, enrich backoff, session gap) registers an
+ * `engine:` wait, so a parked loop can never false-positive here — only a
+ * loop wedged on a never-settling tab/CDP await is both silent AND waitless.
+ */
+export function stepWatchdogShouldFire(input: StepWatchdogInput): boolean {
+  if (input.engineState !== 'running') return false;
+  if (input.now - input.lastActivityAt <= input.staleAfterMs) return false;
+  return !input.pendingDelayKeys.some((k) => k.startsWith('engine:'));
 }
 
 export class Foundation {
@@ -303,6 +330,13 @@ export class Foundation {
   private lastOnline = true;
   /** The one ScheduleManager for Foundation-level periodic work + cadences. */
   private readonly scheduler = new ScheduleManager({ clock: new SystemClock() });
+  /**
+   * Epoch ms of the most recent growth-engine status emission (plus a baseline
+   * stamp at each start). The step watchdog reads this: a 'running' engine that
+   * has emitted nothing for `RECOVERY.STEP_WATCHDOG_MS` while holding no
+   * pending `engine:` wait is wedged on a dead tab await, not parked.
+   */
+  private lastEngineActivityAt = 0;
   /** Aborted once {@link dispose} begins — interrupts identity-resolution waits. */
   private readonly disposeAbort = new AbortController();
   /**
@@ -565,6 +599,9 @@ export class Foundation {
       return this.builtStatus();
     }
     this.activeDriver = 'growth';
+    // Watchdog baseline: a fresh run starts with a full stale window, even
+    // when the very first step wedges before any status emit lands.
+    this.lastEngineActivityAt = graph.clock.now();
     // Veil: bridge the spin-up gap — held until the engine's first status emit
     // (where the `growth-loop` signal takes over) or, as a backstop, loop exit.
     this.pendingGrowthStart = true;
@@ -572,12 +609,18 @@ export class Foundation {
     // Fire-and-forget: `start()` resolves only when the loop exits; do NOT await
     // here. f14: keep the loop promise so `dispose()` can await its exit before
     // closing the store (a mid-step store call must not hit a closed DB).
-    const loop = graph.engine
+    const loop: Promise<void> = graph.engine
       .start()
       .catch((e: unknown) => {
         logger.error('foundation: engine loop errored', { error: String(e) });
       })
       .finally(() => {
+        // Generation guard: after a watchdog restart the OLD wedged loop can
+        // settle long after a NEW run has started (its dead webContents finally
+        // reloads). Only the loop the graph still points at may clear the
+        // driver token / veil signal — a stale settlement clearing them would
+        // free the tab for prune while the live growth run is still driving it.
+        if (graph.enginePromise !== loop) return;
         if (this.activeDriver === 'growth') this.activeDriver = null;
         this.releaseGrowthStartBridge();
         this.activity.signal('growth-loop', false);
@@ -633,8 +676,17 @@ export class Foundation {
     if (refusal !== null) return refusal;
     graph.engine.stop();
     if (graph.enginePromise !== null) {
+      // Bounded (mirrors the manual-op drain below in teardown): a wedged loop
+      // that never settles must not park the restart forever — the new run
+      // repoints `graph.enginePromise`, and the stale loop's eventual
+      // settlement is neutralized by the generation guard in `startEngine`.
       try {
-        await graph.enginePromise;
+        const exited = await withTimeout(graph.enginePromise, TAB.TEARDOWN_ENGINE_WAIT_MS);
+        if (exited === TIMED_OUT) {
+          logger.warn('foundation.restartFromSeed: engine loop did not exit in time, restarting anyway', {
+            timeoutMs: TAB.TEARDOWN_ENGINE_WAIT_MS,
+          });
+        }
       } catch (e) {
         logger.error('foundation.restartFromSeed: loop rejected on stop', { error: String(e) });
       }
@@ -1205,6 +1257,81 @@ export class Foundation {
   }
 
   /**
+   * Begin the engine step watchdog: every `intervalMs` it evaluates
+   * {@link stepWatchdogShouldFire} against the live engine state, the last
+   * status-emission timestamp, and the DelayManager's pending waits. A hit
+   * means the loop is wedged on a never-settling tab/CDP await — the recovery
+   * path stops the engine, reloads + re-attaches the tab, and restarts through
+   * the same foundation path a manual Start uses. Idempotent; cleared on
+   * {@link dispose}.
+   */
+  startEngineStepWatchdog(intervalMs = RECOVERY.STEP_WATCHDOG_CHECK_MS): void {
+    this.scheduler.every(
+      'engine:step-watchdog',
+      intervalMs,
+      () => this.checkEngineStepWatchdog(),
+      { unref: true },
+    );
+  }
+
+  /**
+   * One watchdog evaluation; fires the recovery when the predicate says so.
+   * Returns the recovery promise so the ScheduleManager's overlap guard drops
+   * ticks that land while a recovery is still in flight.
+   */
+  private checkEngineStepWatchdog(): void | Promise<void> {
+    const graph = this.graph;
+    if (graph === null || this.disposing || this.tearingDown) return;
+    const shouldFire = stepWatchdogShouldFire({
+      engineState: graph.engine.status().state,
+      now: graph.clock.now(),
+      lastActivityAt: this.lastEngineActivityAt,
+      staleAfterMs: RECOVERY.STEP_WATCHDOG_MS,
+      pendingDelayKeys: graph.delays.pending().map((p) => p.key),
+    });
+    if (!shouldFire) return;
+    return this.recoverWedgedEngine();
+  }
+
+  /**
+   * Step-watchdog recovery: stop the wedged loop (its hung await cannot be
+   * settled from here — the generation guard in {@link startEngine} neutralizes
+   * its eventual stale settlement), recover the tab (reload + debugger
+   * re-attach, itself deadline-bounded), then restart the engine through
+   * {@link startEngine} so the new run owns the driver token and
+   * `graph.enginePromise` — dispose never awaits the permanently-pending
+   * stale loop.
+   */
+  private async recoverWedgedEngine(): Promise<void> {
+    const graph = this.graph;
+    if (graph === null || this.disposing) return;
+    logger.error('foundation: step watchdog fired — engine silent past the stale window with no pending wait; recovering', {
+      staleAfterMs: RECOVERY.STEP_WATCHDOG_MS,
+      lastActivityAt: this.lastEngineActivityAt,
+      now: graph.clock.now(),
+    });
+    graph.engine.stop();
+    // The wedged run still holds the driver token; release it so the restart
+    // below is not refused. The stale loop's `.finally` cannot re-clear the
+    // new run's token (generation guard).
+    if (this.activeDriver === 'growth') this.activeDriver = null;
+    if (typeof this.tab.recoverTab === 'function') {
+      try {
+        await this.tab.recoverTab();
+      } catch (e) {
+        // Recovery is best-effort: a restart against an un-recovered tab still
+        // fails loudly through the bounded tab seams instead of hanging.
+        logger.error('foundation.stepWatchdog: tab recovery failed', { error: String(e) });
+      }
+    }
+    if (this.disposing || this.graph === null) return;
+    const status = await this.startEngine();
+    logger.warn('foundation.stepWatchdog: engine restarted after recovery', {
+      state: status.state,
+    });
+  }
+
+  /**
    * One scheduled-prune check: start a run iff it is due and safe. A RUNNING
    * growth engine is no longer a blocker — {@link startPrune} pauses it for the
    * hand-off and resumes it when the prune finishes — so the only gates left are
@@ -1289,8 +1416,15 @@ export class Foundation {
     graph.engine.stop();
     graph.pruneEngine.stop();
     if (graph.enginePromise !== null) {
+      // Bounded (mirrors the manual-op drain below): quit must never hang
+      // behind a wedged loop whose tab await will never settle.
       try {
-        await graph.enginePromise;
+        const exited = await withTimeout(graph.enginePromise, TAB.TEARDOWN_ENGINE_WAIT_MS);
+        if (exited === TIMED_OUT) {
+          logger.warn('foundation.teardownGraph: engine loop did not exit in time, closing anyway', {
+            timeoutMs: TAB.TEARDOWN_ENGINE_WAIT_MS,
+          });
+        }
       } catch (e) {
         logger.error('foundation.teardownGraph: engine loop rejected on stop', {
           error: String(e),
@@ -2098,6 +2232,9 @@ export class Foundation {
   // -------------------------------------------------------------------------
 
   private emit(status: EngineStatus): void {
+    // Step-watchdog heartbeat: every engine status emission proves the loop is
+    // still advancing through its steps.
+    this.lastEngineActivityAt = this.graph?.clock.now() ?? Date.now();
     // Veil state machine: the growth loop holds the veil exactly while RUNNING
     // (paused/idle/halted release it — a parked engine issues no requests). The
     // signal is level-triggered, then the start bridge retires on the first
