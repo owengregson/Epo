@@ -71,7 +71,9 @@ export function NowTargetingCard({ status, index = 2 }: NowTargetingCardProps): 
                   '—'
                 )}
               </Stat>
-              <Stat label="Pool">{y ? commas(y.poolSize) : '—'}</Stat>
+              {/* Observed-edge count — labeled "scanned", never "pool": the true
+                  audience size lives on the Targets tab once enrichment lands. */}
+              <Stat label="Scanned">{y ? commas(y.poolSize) : '—'}</Stat>
               <Stat label="Followed">{y ? commas(y.total) : '—'}</Stat>
             </div>
           </Fragment>

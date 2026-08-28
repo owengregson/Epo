@@ -14,6 +14,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { Settings } from '@/settings/settings';
 import type {
   ActionResult,
+  ChainTargetDetail,
   ChainTargetView,
   EpoBridge,
   EpoEventChannel,
@@ -107,6 +108,8 @@ const bridge: EpoBridge = {
   onPruneStatus: (cb: (status: PruneStatus) => void): void => on('pruneStatus', cb),
   offPruneStatus: (cb: (status: PruneStatus) => void): void => off('pruneStatus', cb),
   chainList: (): Promise<ChainTargetView[]> => ipcRenderer.invoke('chain:list'),
+  chainDetail: (targetPk: string): Promise<ChainTargetDetail | null> =>
+    ipcRenderer.invoke('chain:detail', targetPk),
   growthSeries: (days: number): Promise<NetGrowthPoint[]> =>
     ipcRenderer.invoke('growth:series', days),
   checkSeed: (username: string): Promise<SeedCheck> => ipcRenderer.invoke('seed:check', username),

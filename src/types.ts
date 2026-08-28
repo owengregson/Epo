@@ -139,6 +139,53 @@ export interface ChainTargetView extends Target {
   yield: TargetYield;
 }
 
+/**
+ * Sample-size gate for conversion VERDICTS (docs/PRINCIPLES.md §1 — verdicts
+ * wait): the follow-back percentage and the median time-to-follow-back read as
+ * measurements only once this many follow outcomes have RESOLVED (reciprocated,
+ * or ran out the follow-back wait). Below it the UI shows the raw n-of-m tally
+ * and says the verdict is still forming.
+ */
+export const CONVERSION_VERDICT_MIN = 20;
+
+/**
+ * Runway display clamp: past this many days the projection is noise, so the UI
+ * reports "> N days" instead of false precision.
+ */
+export const RUNWAY_CAP_DAYS = 90;
+
+/** Per-lifecycle-state follow_record counts for one chain target (the funnel). */
+export type TargetFunnelCounts = Record<FollowState, number>;
+
+/**
+ * The Targets console's detail projection for ONE chain target: the chain row
+ * plus its live funnel, honest audience framing, and pace-derived runway. All
+ * graph-derived (§2) — served by the `chain:detail` invoke and re-read by the
+ * renderer on every `chainList` push (the store-mutation tick), so every number
+ * moves DURING acquisition walks.
+ */
+export interface ChainTargetDetail extends ChainTargetView {
+  /** follow_records per lifecycle state, zero-filled across the whole union. */
+  funnel: TargetFunnelCounts;
+  /** The target's true follower count (profile stat); null until enriched. */
+  trueFollowers: number | null;
+  /** Followers observed (walked into the graph) so far — never the audience size. */
+  scanned: number;
+  /** Actionable stock: queued records + scoreable not-yet-enqueued candidates. */
+  remainingActionable: number;
+  /** Follow outcomes that have settled (reached the follow stage and are no
+   *  longer awaiting a follow-back) — the conversion verdict's sample size. */
+  resolvedOutcomes: number;
+  /** Median follow-back latency (ms). Null until {@link CONVERSION_VERDICT_MIN}
+   *  outcomes resolve (§1), or when no follow-back has been observed yet. */
+  medianFollowbackMs: number | null;
+  /** Days until the actionable stock drains at the current pace (realized
+   *  7-day follow rate, falling back to today's plan before history exists);
+   *  null before any pace exists. `overCap` flags a projection past
+   *  {@link RUNWAY_CAP_DAYS} (shown clamped, not falsely precise). */
+  runway: { days: number; overCap: boolean } | null;
+}
+
 /** One follow_record row joined to its account, for a queue lifecycle tab. */
 export interface QueueRow {
   pk: string;
@@ -301,6 +348,7 @@ export type IpcInvokeChannel =
   | 'prune:status'
   | 'prune:candidates'
   | 'chain:list'
+  | 'chain:detail'
   | 'growth:series'
   | 'seed:check'
   | 'queue:list'
@@ -403,6 +451,13 @@ export interface EpoBridge {
   offPruneStatus(cb: (status: PruneStatus) => void): void;
   /** The chain lineage: every target with its username and computed yield. */
   chainList(): Promise<ChainTargetView[]>;
+  /**
+   * The Targets console's detail projection for one chain target (funnel,
+   * audience framing, runway, conversion). Null when the pk is not a chain
+   * target or nothing is built yet. Re-invoked by the renderer on every
+   * `chainList` push — the push is the store-mutation tick (§2).
+   */
+  chainDetail(targetPk: string): Promise<ChainTargetDetail | null>;
   /** Cumulative net own-follower growth per day for the last `days` days. */
   growthSeries(days: number): Promise<NetGrowthPoint[]>;
   /** Read-only precheck of a seed username (existence + followers visibility). */

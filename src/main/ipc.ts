@@ -18,6 +18,7 @@ import type { Foundation } from '@/main/foundation-wiring';
 import type { Settings } from '@/settings/settings';
 import type {
   ActionResult,
+  ChainTargetDetail,
   ChainTargetView,
   EpoStatus,
   FollowState,
@@ -193,6 +194,18 @@ export function registerIpc(ctx: IpcContext): () => void {
     }
   });
 
+  ipcMain.handle(
+    'chain:detail',
+    async (_e, targetPk: string): Promise<ChainTargetDetail | null> => {
+      try {
+        return await foundation.chainDetail(targetPk);
+      } catch (e) {
+        logger.error('chain:detail failed', { targetPk, error: String(e) });
+        return null;
+      }
+    },
+  );
+
   ipcMain.handle('growth:series', async (_e, days: number): Promise<NetGrowthPoint[]> => {
     try {
       return await foundation.growthSeries(days);
@@ -308,6 +321,7 @@ export function registerIpc(ctx: IpcContext): () => void {
     'prune:status',
     'prune:candidates',
     'chain:list',
+    'chain:detail',
     'growth:series',
     'seed:check',
     'queue:list',

@@ -9,6 +9,8 @@ import {
   type Edge,
   type EdgeType,
   type EnrichmentLevel,
+  FOLLOW_STATES,
+  type FollowbackTiming,
   type FollowRecord,
   type FollowState,
   type GraphAccountRow,
@@ -21,6 +23,7 @@ import {
   SOURCE_CONFIDENCE,
   type Source,
   type Target,
+  type TargetFunnelRead,
 } from './types';
 
 interface AccountRow {
@@ -387,6 +390,22 @@ export class KnowledgeStore {
   actionCountSince(sinceMs: number): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) AS c FROM action_ledger WHERE at >= ?`)
+      .get(sinceMs) as { c: number };
+    return row.c;
+  }
+
+  /**
+   * Follows that actually LANDED since `sinceMs` (`action = 'follow'`,
+   * `result = 'ok'`) — the realized-pace numerator the Targets console's
+   * runway divides by. Unlike {@link actionCountSince} it excludes unfollows
+   * and failures, so the rate reflects real forward progress only.
+   */
+  followActionCountSince(sinceMs: number): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM action_ledger
+         WHERE at >= ? AND action = 'follow' AND result = 'ok'`,
+      )
       .get(sinceMs) as { c: number };
     return row.c;
   }
@@ -1141,6 +1160,90 @@ export class KnowledgeStore {
     }).length;
 
     return { total, followedBack, followBackRate, poolSize, mutualOverlap };
+  }
+
+  /**
+   * The Targets console's funnel read for one chain target, in three cheap
+   * COUNT queries (safe in projection position — no Sets or per-pk loops):
+   *
+   *  - `states`: follow_records aimed at the target, grouped by lifecycle
+   *    state and zero-filled across the WHOLE {@link FOLLOW_STATES} union, so
+   *    `abandoned`/`external` can never be silently absent from the funnel.
+   *  - `observed`: followers of the target seen so far (active edges — what
+   *    the walk has scanned, never the audience size).
+   *  - `candidates`: COUNT-only twin of {@link candidatePksForTarget} — the
+   *    same exclusions (already recorded, Scanner-skipped, already followed,
+   *    self, the target itself) expressed in SQL instead of materialized Sets.
+   */
+  targetFunnel(targetPk: string): TargetFunnelRead {
+    const rows = this.db
+      .prepare(
+        `SELECT state, COUNT(*) AS c FROM follow_records WHERE target_pk = ? GROUP BY state`,
+      )
+      .all(targetPk) as Array<{ state: string; c: number }>;
+    const states = Object.fromEntries(FOLLOW_STATES.map((s) => [s, 0])) as Record<
+      FollowState,
+      number
+    >;
+    for (const row of rows) {
+      if ((FOLLOW_STATES as readonly string[]).includes(row.state)) {
+        states[row.state as FollowState] = row.c;
+      } else {
+        // Shape drift, loudly — never silently fold an unknown state away.
+        logger.warn('store.targetFunnel: unknown follow state', { state: row.state });
+      }
+    }
+
+    const candidates = (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM edges e
+           WHERE e.dst_pk = @target AND e.type = 'follows' AND e.status = 'active'
+             AND e.src_pk <> @target
+             AND (@own IS NULL OR e.src_pk <> @own)
+             AND NOT EXISTS (SELECT 1 FROM follow_records fr WHERE fr.account_pk = e.src_pk)
+             AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.pk = e.src_pk AND a.role = 'skipped')
+             AND (@own IS NULL OR NOT EXISTS (
+               SELECT 1 FROM edges w
+               WHERE w.src_pk = @own AND w.dst_pk = e.src_pk
+                 AND w.type = 'follows' AND w.status = 'active'))`,
+        )
+        .get({ target: targetPk, own: this.ownPk }) as { c: number }
+    ).c;
+
+    return { states, observed: this.observedFollowerCount(targetPk), candidates };
+  }
+
+  /**
+   * Follow-back latency sample for one target: how many records carry BOTH
+   * stamps (`followed_at` and `followed_back_at`) and the median of their
+   * deltas — the ORDER BY/LIMIT/OFFSET median (averaging the two middle rows
+   * on an even count), so no row set is ever materialized in JS.
+   */
+  followbackTimingFor(targetPk: string): FollowbackTiming {
+    const resolved = (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM follow_records
+           WHERE target_pk = ? AND followed_back_at IS NOT NULL AND followed_at IS NOT NULL`,
+        )
+        .get(targetPk) as { c: number }
+    ).c;
+    if (resolved === 0) return { resolved: 0, medianMs: null };
+    // LIMIT/OFFSET bound as plain integers (SQLite refuses arithmetic ON a
+    // parameter in the OFFSET clause with a datatype mismatch).
+    const limit = 2 - (resolved % 2);
+    const offset = Math.floor((resolved - 1) / 2);
+    const row = this.db
+      .prepare(
+        `SELECT AVG(d) AS m FROM (
+           SELECT followed_back_at - followed_at AS d FROM follow_records
+           WHERE target_pk = @t AND followed_back_at IS NOT NULL AND followed_at IS NOT NULL
+           ORDER BY d LIMIT @limit OFFSET @offset
+         )`,
+      )
+      .get({ t: targetPk, limit, offset }) as { m: number | null };
+    return { resolved, medianMs: row.m };
   }
 
   /**

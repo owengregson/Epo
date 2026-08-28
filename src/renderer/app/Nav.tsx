@@ -5,7 +5,7 @@ import { Icon } from '../ui/Icon';
 
 const ITEMS: ReadonlyArray<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: 'gauge-high', label: 'Overview' },
-  { key: 'chain', icon: 'link', label: 'Chain' },
+  { key: 'chain', icon: 'link', label: 'Targets' },
   { key: 'queues', icon: 'layer-group', label: 'Queues' },
   { key: 'settings', icon: 'sliders', label: 'Settings' },
 ];

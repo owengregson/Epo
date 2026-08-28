@@ -48,6 +48,43 @@ export type FollowState =
   | 'abandoned'            // terminal (retries exhausted)
   | 'external';            // terminal — an external actor owns the relationship; Epo backs off
 
+/**
+ * Every churn lifecycle state, in pipeline order — the funnel's vocabulary.
+ * The single iterable twin of {@link FollowState}: zero-filled per-state maps
+ * (e.g. `KnowledgeStore.targetFunnel`) enumerate THIS list so a new state can
+ * never be silently absent from a projection.
+ */
+export const FOLLOW_STATES = [
+  'queued',
+  'pending_followback',
+  'followed_back',
+  'unfollow_queued',
+  'unfollowed',
+  'abandoned',
+  'external',
+] as const satisfies readonly FollowState[];
+
+/**
+ * One target's funnel read (`KnowledgeStore.targetFunnel`): the per-state
+ * record counts plus the two pool counts every honest audience framing needs.
+ */
+export interface TargetFunnelRead {
+  /** follow_records per lifecycle state, zero-filled across the whole union. */
+  states: Record<FollowState, number>;
+  /** Followers of the target observed so far (active edges — the scanned pool). */
+  observed: number;
+  /** COUNT twin of `candidatePksForTarget`: scoreable, not-yet-enqueued pool. */
+  candidates: number;
+}
+
+/** Follow-back latency sample (`KnowledgeStore.followbackTimingFor`). */
+export interface FollowbackTiming {
+  /** Records with BOTH stamps (followed and followed back) — the sample size. */
+  resolved: number;
+  /** Median `followedBackAt − followedAt` in ms; null when the sample is empty. */
+  medianMs: number | null;
+}
+
 export interface FollowRecord {
   accountPk: string;
   targetPk: string | null;

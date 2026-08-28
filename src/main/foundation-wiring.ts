@@ -68,7 +68,12 @@ import {
   ObservedInputDriver,
 } from '@/interaction/input-driver';
 import { Interactor } from '@/interaction/interactor';
-import { shapeChainList, shapeGraphSnapshot, shapeQueueList } from '@/main/foundation-reads';
+import {
+  shapeChainList,
+  shapeGraphSnapshot,
+  shapeQueueList,
+  shapeTargetDetail,
+} from '@/main/foundation-reads';
 import { TabActivity } from '@/main/tab-activity';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
@@ -111,6 +116,7 @@ import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
 import { MS_PER_DAY } from '@/timing/units';
 import type {
   ActionResult,
+  ChainTargetDetail,
   ChainTargetView,
   EpoStatus,
   FollowState,
@@ -2247,6 +2253,29 @@ export class Foundation {
     } catch (e) {
       logger.error('foundation.chainList: failed', { error: String(e) });
       return [];
+    }
+  }
+
+  /**
+   * The Targets console's detail projection for one chain target (funnel,
+   * audience framing, runway, conversion). Builds the graph if needed; null
+   * when not logged in or when `targetPk` is not a chain target. Never throws
+   * across IPC. Liveness rides the chain-list push: the renderer re-invokes
+   * this whenever a `chainList` push arrives — that push IS the throttled
+   * store-mutation tick (§2), so the detail moves DURING acquisition walks
+   * where no status counter changes.
+   */
+  async chainDetail(targetPk: string): Promise<ChainTargetDetail | null> {
+    const graph = await this.builtGraph();
+    if (graph === null) return null;
+    try {
+      return shapeTargetDetail(graph.store, graph.ownPk, targetPk, {
+        now: graph.clock.now(),
+        plannedToday: graph.rate.plannedToday(),
+      });
+    } catch (e) {
+      logger.error('foundation.chainDetail: failed', { error: String(e) });
+      return null;
     }
   }
 

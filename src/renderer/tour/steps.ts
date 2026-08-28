@@ -70,7 +70,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     id: 'consoles',
     title: 'Four consoles',
     body:
-      'Overview shows live status and growth, Chain the lineage of targets, Queues every ' +
+      'Overview shows live status and growth, Targets the current audience funnel and chain ' +
+      'lineage, Queues every ' +
       `account in the pipeline, Settings the tuning knobs. ${MOD}1–${MOD}4 jump between ` +
       'them, and the ticker at the bottom streams the engine log.',
     target: 'nav',

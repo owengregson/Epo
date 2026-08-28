@@ -30,6 +30,14 @@ export function durationHm(ms: number): string {
   return `${h}h ${String(m).padStart(2, '0')}m`;
 }
 
+/** Milliseconds → coarse duration: "3d 4h" past a day, else the "2h 41m" form. */
+export function durationCoarse(ms: number): string {
+  const totalHours = Math.max(0, Math.floor(ms / 3_600_000));
+  const d = Math.floor(totalHours / 24);
+  if (d >= 1) return `${d}d ${totalHours % 24}h`;
+  return durationHm(ms);
+}
+
 /** Epoch ms → local wall clock "14:32:07" (log/ticker timestamps). */
 export function clockTime(atMs: number): string {
   const d = new Date(atMs);

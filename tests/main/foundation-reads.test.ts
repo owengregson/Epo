@@ -1,12 +1,16 @@
 import {
   shapeChainList,
   shapeQueueList,
+  shapeTargetDetail,
   QUEUE_ROW_CAP,
+  RUNWAY_RATE_WINDOW_DAYS,
   type ChainReadStore,
   type QueueReadStore,
+  type TargetDetailReadStore,
 } from '@/main/foundation-reads';
-import type { AccountState, FollowRecord, Target } from '@/store/types';
-import type { TargetYield } from '@/types';
+import type { AccountState, FollowRecord, FollowState, Target } from '@/store/types';
+import { CONVERSION_VERDICT_MIN, RUNWAY_CAP_DAYS, type TargetYield } from '@/types';
+import { MS_PER_DAY } from '@/timing/units';
 
 /**
  * The read-shaping helpers behind `chain:list` / `queue:list` (§5). They are pure —
@@ -75,6 +79,142 @@ describe('shapeChainList', () => {
       targetYield: () => ZERO_YIELD,
     };
     expect(shapeChainList(store, 'own')).toEqual([]);
+  });
+});
+
+describe('shapeTargetDetail', () => {
+  const NOW = 1_000_000_000;
+
+  const funnel = (over: Partial<Record<FollowState, number>> = {}): Record<FollowState, number> => ({
+    queued: 0,
+    pending_followback: 0,
+    followed_back: 0,
+    unfollow_queued: 0,
+    unfollowed: 0,
+    abandoned: 0,
+    external: 0,
+    ...over,
+  });
+
+  interface FakeOver {
+    target?: Target | null;
+    account?: AccountState | null;
+    yield?: Partial<TargetYield>;
+    states?: Partial<Record<FollowState, number>>;
+    observed?: number;
+    candidates?: number;
+    timing?: { resolved: number; medianMs: number | null };
+    /** Landed follows in the trailing window (the realized-pace numerator). */
+    follows7d?: number;
+  }
+
+  function detailStore(over: FakeOver = {}): TargetDetailReadStore & { askedSince: number[] } {
+    const askedSince: number[] = [];
+    return {
+      askedSince,
+      getTarget: (pk) =>
+        over.target !== undefined
+          ? over.target
+          : { accountPk: pk, source: 'seed', status: 'active', chainIndex: 0 },
+      getAccount: () => (over.account !== undefined ? over.account : account('T')),
+      targetYield: (_pk, ownPk) => {
+        expect(ownPk).toBe('own');
+        return { ...ZERO_YIELD, ...over.yield };
+      },
+      targetFunnel: () => ({
+        states: funnel(over.states),
+        observed: over.observed ?? 0,
+        candidates: over.candidates ?? 0,
+      }),
+      followbackTimingFor: () => over.timing ?? { resolved: 0, medianMs: null },
+      followActionCountSince: (since) => {
+        askedSince.push(since);
+        return over.follows7d ?? 0;
+      },
+    };
+  }
+
+  const shape = (store: TargetDetailReadStore, plannedToday = 0) =>
+    shapeTargetDetail(store, 'own', 'T', { now: NOW, plannedToday });
+
+  test('null for a pk that is not a chain target', () => {
+    expect(shape(detailStore({ target: null }))).toBeNull();
+  });
+
+  test('carries the chain-view fields plus the full funnel — abandoned and external included', () => {
+    const d = shape(
+      detailStore({
+        account: account('T', { username: 'hub', followers: 40_200 }),
+        yield: { total: 41, followedBack: 9, followBackRate: 9 / 41 },
+        states: { queued: 25, pending_followback: 30, abandoned: 3, external: 2 },
+        observed: 612,
+        candidates: 100,
+      }),
+    );
+    expect(d).toMatchObject({
+      accountPk: 'T',
+      source: 'seed',
+      username: 'hub',
+      yield: { total: 41, followedBack: 9 },
+      funnel: { queued: 25, pending_followback: 30, abandoned: 3, external: 2, unfollowed: 0 },
+      trueFollowers: 40_200,
+      scanned: 612,
+      remainingActionable: 125, // queued records + scoreable candidates — never the raw pool
+    });
+  });
+
+  test('MANDATORY degrade: followers null until enriched → trueFollowers null, scanned intact', () => {
+    const d = shape(detailStore({ account: account('T', { username: 'hub' }), observed: 612 }));
+    expect(d?.trueFollowers).toBeNull();
+    expect(d?.scanned).toBe(612);
+  });
+
+  test('resolvedOutcomes = followed total minus still-awaiting records', () => {
+    const d = shape(
+      detailStore({ yield: { total: 41 }, states: { pending_followback: 30 } }),
+    );
+    expect(d?.resolvedOutcomes).toBe(11);
+  });
+
+  test('sample-size gate: the median is WITHHELD below the resolved-outcome floor (§1)', () => {
+    const below = shape(
+      detailStore({
+        yield: { total: CONVERSION_VERDICT_MIN - 1 },
+        timing: { resolved: 5, medianMs: 86_400_000 },
+      }),
+    );
+    expect(below?.resolvedOutcomes).toBe(CONVERSION_VERDICT_MIN - 1);
+    expect(below?.medianFollowbackMs).toBeNull();
+
+    const at = shape(
+      detailStore({
+        yield: { total: CONVERSION_VERDICT_MIN },
+        timing: { resolved: 6, medianMs: 86_400_000 },
+      }),
+    );
+    expect(at?.medianFollowbackMs).toBe(86_400_000);
+  });
+
+  test('runway divides the actionable stock by the REALIZED 7-day pace', () => {
+    const store = detailStore({ states: { queued: 10 }, candidates: 4, follows7d: 14 }); // 2/day
+    const d = shape(store, 25);
+    expect(store.askedSince).toEqual([NOW - RUNWAY_RATE_WINDOW_DAYS * MS_PER_DAY]);
+    expect(d?.runway).toEqual({ days: 7, overCap: false });
+  });
+
+  test('plannedToday is the fallback pace ONLY before any follow history exists', () => {
+    const d = shape(detailStore({ states: { queued: 10 }, candidates: 10, follows7d: 0 }), 5);
+    expect(d?.runway).toEqual({ days: 4, overCap: false });
+  });
+
+  test('no realized pace and no plan → no runway (never a fabricated number)', () => {
+    expect(shape(detailStore({ candidates: 100, follows7d: 0 }), 0)?.runway).toBeNull();
+  });
+
+  test('runway clamp: a projection past the cap is flagged overCap, not falsely precise', () => {
+    const d = shape(detailStore({ candidates: 10_000, follows7d: 7 }), 0); // 1/day
+    expect(d?.runway?.overCap).toBe(true);
+    expect(d?.runway?.days).toBeGreaterThan(RUNWAY_CAP_DAYS);
   });
 });
 

@@ -11,19 +11,25 @@
 import {
   type AccountState,
   compareByScoreDesc,
+  type FollowbackTiming,
   type FollowRecord,
   type FollowState,
   type GraphSourceRows,
   type Target,
+  type TargetFunnelRead,
 } from '@/store/types';
+import { MS_PER_DAY } from '@/timing/units';
 import {
+  type ChainTargetDetail,
   type ChainTargetView,
+  CONVERSION_VERDICT_MIN,
   GRAPH_NODE_STATUSES,
   type GraphHub,
   type GraphNodeStatus,
   type GraphSnapshot,
   type QueueListResult,
   type QueueRow,
+  RUNWAY_CAP_DAYS,
   type TargetYield,
 } from '@/types';
 
@@ -53,6 +59,92 @@ export function shapeChainList(store: ChainReadStore, ownPk: string): ChainTarge
     username: store.getAccount(t.accountPk)?.username ?? null,
     yield: store.targetYield(t.accountPk, ownPk),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Targets console — the per-target detail projection (`chain:detail`)
+// ---------------------------------------------------------------------------
+
+/** The narrow slice of `KnowledgeStore` the target-detail projection reads. */
+export interface TargetDetailReadStore {
+  getTarget(pk: string): Target | null;
+  getAccount(pk: string): AccountState | null;
+  targetYield(targetPk: string, ownPk: string): TargetYield;
+  targetFunnel(targetPk: string): TargetFunnelRead;
+  followbackTimingFor(targetPk: string): FollowbackTiming;
+  followActionCountSince(sinceMs: number): number;
+}
+
+/** How far back the realized follow pace looks (action_ledger window, days). */
+export const RUNWAY_RATE_WINDOW_DAYS = 7;
+
+/** Inputs the detail shaper cannot read from the store. */
+export interface TargetDetailOpts {
+  /** Epoch ms "now" — anchors the realized-pace window. */
+  now: number;
+  /** Today's planned volume — the pace fallback before any follow history exists. */
+  plannedToday: number;
+}
+
+/**
+ * The Targets console's detail projection for one chain target. Pure store
+ * calls only (fake-store-testable, like every shaper in this file), and cheap
+ * by construction: the funnel read is COUNT-only SQL — no Sets, no per-pk
+ * loops (`targetYield`'s `mutualOverlap` walk is NOT repeated here).
+ *
+ * Honest-number rules baked in (docs/PRINCIPLES.md §1/§2):
+ *  - `trueFollowers` is null until the target's profile is enriched — the
+ *    scanned count must never impersonate the audience size.
+ *  - `remainingActionable` is the SCANNED actionable stock (queued records +
+ *    scoreable candidates), never the raw remaining pool: score-rejections
+ *    and the coverage cap make the raw pool a systematic overestimate.
+ *  - The runway divides by REALIZED pace (7-day landed follows) and only falls
+ *    back to today's plan before any history exists; no pace → no runway, and
+ *    a projection past {@link RUNWAY_CAP_DAYS} is flagged `overCap` rather
+ *    than reported with false precision.
+ *  - `medianFollowbackMs` is withheld (null) until
+ *    {@link CONVERSION_VERDICT_MIN} outcomes have RESOLVED — a verdict waits
+ *    for its sample.
+ */
+export function shapeTargetDetail(
+  store: TargetDetailReadStore,
+  ownPk: string,
+  targetPk: string,
+  opts: TargetDetailOpts,
+): ChainTargetDetail | null {
+  const target = store.getTarget(targetPk);
+  if (target === null) return null;
+  const acc = store.getAccount(targetPk);
+
+  const y = store.targetYield(targetPk, ownPk);
+  const f = store.targetFunnel(targetPk);
+  const timing = store.followbackTimingFor(targetPk);
+
+  // Settled outcomes: records that reached the follow stage and are no longer
+  // awaiting a follow-back — the conversion verdict's honest sample size.
+  const resolvedOutcomes = Math.max(0, y.total - f.states.pending_followback);
+
+  // Realized pace first; today's plan only before any history; no pace → null.
+  const realizedPerDay =
+    store.followActionCountSince(opts.now - RUNWAY_RATE_WINDOW_DAYS * MS_PER_DAY) /
+    RUNWAY_RATE_WINDOW_DAYS;
+  const pace =
+    realizedPerDay > 0 ? realizedPerDay : opts.plannedToday > 0 ? opts.plannedToday : null;
+  const remainingActionable = f.states.queued + f.candidates;
+  const days = pace === null ? null : remainingActionable / pace;
+
+  return {
+    ...target,
+    username: acc?.username ?? null,
+    yield: y,
+    funnel: f.states,
+    trueFollowers: acc?.followers ?? null,
+    scanned: f.observed,
+    remainingActionable,
+    resolvedOutcomes,
+    medianFollowbackMs: resolvedOutcomes >= CONVERSION_VERDICT_MIN ? timing.medianMs : null,
+    runway: days === null ? null : { days, overCap: days > RUNWAY_CAP_DAYS },
+  };
 }
 
 /**

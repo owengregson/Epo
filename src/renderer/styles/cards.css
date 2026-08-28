@@ -144,6 +144,67 @@
 }
 .view-h .fa-solid{flex:0 0 auto; font-size:var(--fs-md)}
 
+/* ============ TARGETS · lineage breadcrumb ============ */
+/* Tier 1: the chain as one compact horizontal strip of chips (chain-node
+   vocabulary — monogram avatar, badge — at pill scale). Day 0 it costs one
+   row; the full .chain-node trail renders beneath only when expanded. */
+.crumbs{
+  display:flex; align-items:center; flex-wrap:wrap;
+  gap:var(--sp-1) var(--sp-2);
+  margin-bottom:var(--sp-3);
+}
+.crumb{
+  display:inline-flex; align-items:center; gap:var(--sp-2);
+  padding:var(--sp-1) var(--sp-2);
+  background:var(--grad-control); border:1px solid var(--border); border-radius:var(--r-pill);
+  box-shadow:var(--elev-1);
+  font-size:var(--fs-md); color:var(--muted);
+  min-width:0;
+}
+.crumb .handle{font-weight:600; color:var(--text); letter-spacing:-0.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.crumb .avatar.small{box-shadow:none} /* pill-nested: the chip carries the elevation */
+.crumb.current{
+  background-color:var(--active-fill); background-image:var(--sheen);
+  border-color:var(--border-active); color:var(--silver);
+}
+.crumb.next{
+  background:transparent; border-style:dashed; box-shadow:none;
+  color:var(--faint); font-size:var(--fs-sm); letter-spacing:.04em;
+}
+.crumb-sep{color:var(--faint); flex:0 0 auto}
+.crumb-sep .fa-solid{font-size:var(--fs-xs)}
+.crumbs .chip{margin-left:auto} /* the expand/collapse toggle hugs the right edge */
+
+/* ============ TARGETS · funnel ============ */
+/* Tier 2: one row per lifecycle segment — palette dot, graph-legend label,
+   proportional bar (colors are injected inline from graph/palette.ts so the
+   funnel and the GraphStage legend always agree). Bar geometry mirrors .qbar
+   (3px/2px); dot geometry mirrors .pcomp-legend .dot (9px). */
+.funnel-status{margin-bottom:var(--sp-2)}
+.funnel{display:flex; flex-direction:column}
+.frow{display:flex; align-items:center; gap:var(--sp-2); padding:var(--sp-2) 0}
+.frow + .frow{border-top:1px solid var(--divider)}
+.frow .dot{
+  width:9px; height:9px; border-radius:3px; flex:0 0 auto;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.35);
+}
+.frow .fl{
+  flex:0 1 auto; min-width:0;
+  font-size:var(--fs-sm); color:var(--muted);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.frow.hazard .fl{color:var(--danger-text)}
+.frow .fbar{
+  flex:1; height:3px; border-radius:2px; /* 3px/2px: meter geometry (as .qbar) */
+  background:var(--track-bg); overflow:hidden;
+  box-shadow:inset 0 1px 1px rgba(0,0,0,.5);
+}
+.frow .fbar i{display:block; height:100%; border-radius:2px}
+.frow .fn{
+  flex:0 0 auto; min-width:6ch; text-align:right; /* 6ch: five digits + comma keep columns aligned */
+  font-size:var(--fs-base); font-weight:600; color:var(--text);
+}
+
 /* ============ QUEUES · lifecycle pipeline ============ */
 .qpipe{
   display:flex; align-items:stretch; gap:var(--sp-0);
@@ -317,6 +378,7 @@
 }
 @container console (max-width:360px){
   .qr .qbar{display:none}                  /* queue rows keep text   */
+  .frow .fbar{display:none}                /* funnel rows keep text  */
   .hero-what .rchip{display:none}
   .proj-legend{gap:var(--sp-2)}
 }
