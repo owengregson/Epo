@@ -205,4 +205,15 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE accounts ADD COLUMN bio TEXT;
   `,
+
+  // --- Migration: evidence-stamped target exhaustion --------------------------------
+  // `exhausted_at`: WHEN the chain concluded a target's pool was drained — the
+  // fact that makes the 'exhausted' verdict reversible. The engine's chain
+  // dead-end self-heal re-verifies only targets stamped within a recent window
+  // (a rate-wall outage must not permanently burn live targets). NULL on a
+  // deliberate retirement (restart-from-seed), which is never auto-revived.
+  // Append-only: never edit the migrations above.
+  `
+  ALTER TABLE targets ADD COLUMN exhausted_at INTEGER;
+  `,
 ];

@@ -69,6 +69,7 @@ interface TargetRow {
   source: string;
   status: string;
   chain_index: number | null;
+  exhausted_at: number | null;
 }
 
 /**
@@ -152,6 +153,7 @@ const rowToTarget = (row: TargetRow): Target => ({
   source: row.source as Target['source'],
   status: row.status as Target['status'],
   chainIndex: row.chain_index,
+  exhaustedAt: numOrUndef(row.exhausted_at),
 });
 
 const rowToFollowRecord = (row: FollowRecordRow): FollowRecord => ({
@@ -1017,18 +1019,20 @@ export class KnowledgeStore {
   addTarget(t: Target): void {
     this.db
       .prepare(
-        `INSERT INTO targets (account_pk, source, status, chain_index)
-         VALUES (@account_pk, @source, @status, @chain_index)
+        `INSERT INTO targets (account_pk, source, status, chain_index, exhausted_at)
+         VALUES (@account_pk, @source, @status, @chain_index, @exhausted_at)
          ON CONFLICT(account_pk) DO UPDATE SET
            source = excluded.source,
            status = excluded.status,
-           chain_index = excluded.chain_index`,
+           chain_index = excluded.chain_index,
+           exhausted_at = excluded.exhausted_at`,
       )
       .run({
         account_pk: t.accountPk,
         source: t.source,
         status: t.status,
         chain_index: orNull(t.chainIndex ?? undefined),
+        exhausted_at: orNull(t.exhaustedAt),
       });
     this.changed();
   }
@@ -1040,8 +1044,20 @@ export class KnowledgeStore {
     return row ? rowToTarget(row) : null;
   }
 
-  setTargetStatus(accountPk: string, status: Target['status']): void {
-    this.db.prepare(`UPDATE targets SET status = ? WHERE account_pk = ?`).run(status, accountPk);
+  /**
+   * Update a target's lifecycle status. Marking 'exhausted' WITH `at` stamps
+   * `exhausted_at` — the evidence time the chain concluded the pool was
+   * drained, which keeps the verdict REVERSIBLE (the engine's dead-end
+   * self-heal only reconsiders recently stamped targets, see
+   * {@link exhaustedTargetsSince}). Marking 'exhausted' WITHOUT `at` is a
+   * deliberate retirement (restart-from-seed): no stamp, never auto-revived.
+   * Any other status clears the stamp — an active/retained target is not
+   * exhausted.
+   */
+  setTargetStatus(accountPk: string, status: Target['status'], at?: number): void {
+    this.db
+      .prepare(`UPDATE targets SET status = ?, exhausted_at = ? WHERE account_pk = ?`)
+      .run(status, status === 'exhausted' ? orNull(at) : null, accountPk);
     this.changed();
   }
 
@@ -1053,6 +1069,23 @@ export class KnowledgeStore {
          ORDER BY chain_index IS NULL, chain_index ASC, account_pk ASC`,
       )
       .all() as TargetRow[];
+    return rows.map(rowToTarget);
+  }
+
+  /**
+   * Chain targets currently 'exhausted' whose evidence stamp is at/after
+   * `cutoff`, most recently exhausted first — the chain dead-end self-heal's
+   * re-verify candidates. Unstamped exhaustions (deliberate retirements via
+   * restart-from-seed) never appear here.
+   */
+  exhaustedTargetsSince(cutoff: number): Target[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM targets
+         WHERE status = 'exhausted' AND exhausted_at IS NOT NULL AND exhausted_at >= ?
+         ORDER BY exhausted_at DESC, account_pk ASC`,
+      )
+      .all(cutoff) as TargetRow[];
     return rows.map(rowToTarget);
   }
 

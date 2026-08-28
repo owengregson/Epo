@@ -118,6 +118,15 @@ export interface Target {
   source: 'seed' | 'discovered' | 'own_followers';
   status: 'active' | 'exhausted' | 'retained';
   chainIndex: number | null;
+  /**
+   * When the chain concluded this target's pool was drained (evidence-stamped
+   * by `setTargetStatus(pk, 'exhausted', at)`) — the fact that makes the
+   * exhaustion verdict REVERSIBLE: the engine's chain dead-end self-heal
+   * re-verifies only targets stamped within a recent window. Absent on active/
+   * retained targets and on deliberate retirements (restart-from-seed), which
+   * are never auto-revived.
+   */
+  exhaustedAt?: number;
 }
 
 /**

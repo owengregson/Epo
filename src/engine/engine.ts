@@ -17,7 +17,7 @@
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
-import type { FollowerAcquisition } from '../rim/types';
+import { type AcquireEndReason, isAcquireFailure } from '../rim/follower-acquisition';
 import type { Settings } from '../settings/settings';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { FollowRecord } from '../store/types';
@@ -119,6 +119,35 @@ export interface EngineScanner {
 export interface EngineChain {
   advance(currentTargetPk: string): Promise<AdvanceResult>;
 }
+
+/**
+ * The acquisition slice the Engine consumes: the rim port's `{observed,
+ * targetPk}` PLUS the typed {@link AcquireEndReason}. The end reason is
+ * REQUIRED here — the Engine may only latch a target exhausted on positive
+ * evidence, and a result that cannot say WHY the read ended is not evidence
+ * (an `observed: 0` from a failed read used to feed the irreversible
+ * exhaustion cascade). `AdapterBackedAcquisition` satisfies this structurally.
+ */
+export interface EngineAcquisition {
+  acquire(
+    targetUsername: string,
+  ): Promise<{ observed: number; targetPk: string | null; endReason: AcquireEndReason }>;
+}
+
+/**
+ * The GENUINE end reasons that are positive evidence a target's USABLE pool is
+ * done: 'no-more-pages' verified the end of the list, and 'coverage-cap' means
+ * the coverage policy is deliberately satisfied (scraping deeper is a quality
+ * dead-end by design — the target is finished for our purposes). Every other
+ * genuine reason ('target-reached' / 'page-budget' / 'no-new-for-caller' /
+ * 'stagnant') merely BOUNDS A SLICE — the persisted cursor resumes where it
+ * stopped — so a zero under one of those must reopen acquisition, never latch
+ * exhaustion. Failure reasons never reach this set (see the refill path).
+ */
+export const ACQUIRE_DRAIN_REASONS: ReadonlySet<AcquireEndReason> = new Set([
+  'no-more-pages',
+  'coverage-cap',
+]);
 
 /** The Follow-back Watcher's single verb: one request-bounded sweep. */
 export interface EngineFollowback {
@@ -404,7 +433,7 @@ export interface EngineDeps {
   scanner: EngineScanner;
   chain: EngineChain;
   followback: EngineFollowback;
-  acquisition: FollowerAcquisition;
+  acquisition: EngineAcquisition;
   /**
    * R1: the profile enricher the pool-refill step uses to fetch counts for
    * candidates the followers-list left count-less. The composition root injects
@@ -521,11 +550,17 @@ export class Engine {
    * All three reset when the chain advances (new target) or when a plan actually
    * enqueues candidates (real forward progress, so a later refill is allowed).
    *
-   * - `acquiredThisCycle`: `acquisition.acquire` has been attempted this cycle.
+   * - `acquiredThisCycle`: an acquisition GENUINELY COMPLETED this cycle (or
+   *   was rightly skipped: raw pool deep enough / username unknown). A FAILED
+   *   read (rate wall, sentinel, drift — see {@link isAcquireFailure}) leaves
+   *   it unset: the failure consumed nothing, and the retry after its long
+   *   backoff re-acquires instead of planning an empty pool into exhaustion.
    * - `enrichPassesThisCycle`: how many enrichment passes ran this cycle.
-   * - `targetExhausted`: the cycle's FINAL plan enqueued nothing — there is no
-   *   scorable candidate left (un-enriched ones were given their bounded chance),
-   *   so step 7 must not fire again and step 9 (chain advance) becomes reachable.
+   * - `targetExhausted`: the cycle's FINAL plan enqueued nothing, every
+   *   remaining candidate had its bounded chance, AND the latest acquire's end
+   *   reason is drain evidence ({@link ACQUIRE_DRAIN_REASONS}) — only then is
+   *   step 9 (chain advance) reachable. Latching on anything less converted
+   *   transient outages into permanently burned targets.
    *
    * Together these make step 7's IG traffic per cycle provably bounded
    * (1 acquire + K enrich passes), and a new cycle requires a plan that enqueued
@@ -538,6 +573,31 @@ export class Engine {
    *  backoff, target NOT exhausted). */
   private enrichedThisCycle = 0;
   private targetExhausted = false;
+  /**
+   * The latest GENUINE acquire end reason for the current target — the
+   * evidence the exhaustion latch consults. Null until a real acquire
+   * completes (also when none is possible: unknown username), in which case
+   * the latch falls back to the pre-evidence behavior so the cycle still
+   * terminates. Failed reads never overwrite it.
+   */
+  private lastAcquireEnd: AcquireEndReason | null = null;
+  /**
+   * Consecutive refill cycles whose acquire slice completed genuinely but
+   * yielded nothing plannable while the list was NOT verified done (a
+   * slice-bounding zero — see {@link ACQUIRE_DRAIN_REASONS}). The first
+   * couple reopen acquisition promptly (the cursor advances through a
+   * known-rows tail); from {@link RECOVERY_TIMING.WALLED_CYCLES_ENTRY} on,
+   * each reopen first takes the long enrich-backoff park so a pathological
+   * zero-yield list can never hot-loop the scraper.
+   */
+  private sliceReopens = 0;
+  /**
+   * Targets already granted their ONE dead-end re-verify this run (see
+   * {@link reviveRecentExhausted}) — a revived target that exhausts AGAIN has
+   * fresh drain evidence, and reviving it twice would loop the chain forever.
+   * Cleared on a manual start (user ack), like the recovery ladder.
+   */
+  private readonly revivedTargets = new Set<string>();
 
   /**
    * Sweep cadence port. Injected (persisted) by the composition root; the
@@ -723,6 +783,9 @@ export class Engine {
       log.info('engine: recovery ladder cleared by manual start (user ack)');
     }
     this.haltReason = null; // a fresh start clears the previous halt's cause
+    // A manual start is likewise a user ack for the chain self-heal: each
+    // exhausted target re-earns its ONE dead-end re-verify for this run.
+    this.revivedTargets.clear();
     this.sessionStartedAt = this.deps.clock.now();
     // Legacy-queue hygiene: score any queued records that predate score
     // persistence so nextDue (and the queue display) rank instead of falling
@@ -925,8 +988,10 @@ export class Engine {
    *     Otherwise a due record → `churn.execute` then sleep `rate.nextDelayMs()` —
    *     THE paced delay between actions → `'acted'`.
    *  9. Target exhausted (refill cycle closed on an empty plan, queue drained) →
-   *     `chain.advance`; adopt the next target → `'advanced-chain'`, or halt
-   *     (`chain-exhausted`) → `'halted'`.
+   *     `chain.advance`; adopt the next target → `'advanced-chain'`; on a
+   *     dead-end, first re-verify a recently exhausted target (the chain
+   *     self-heal) → `'advanced-chain'`, else halt (`chain-exhausted`) →
+   *     `'halted'`.
    * 10. Nothing due → short idle sleep → `'idle'`.
    *
    * Emits `onStatus` after every step, whatever the branch.
@@ -1207,6 +1272,18 @@ export class Engine {
         }
         return 'advanced-chain';
       }
+      // The chain found no next hop. Before the terminal halt, one self-heal
+      // pass: re-verify the most recently exhausted target — an exhaustion
+      // stamped during a rate-wall/drift window is absence of evidence, and
+      // dead-ending over it used to require a manual re-seed. The CURRENT
+      // target just latched on fresh drain evidence, so it consumed its
+      // chance up front and can never revive itself.
+      this.revivedTargets.add(current.pk);
+      const revived = this.reviveRecentExhausted();
+      if (revived !== null) {
+        this.adoptTarget(revived);
+        return 'advanced-chain';
+      }
       return this.halt('chain-exhausted');
     }
 
@@ -1244,16 +1321,25 @@ export class Engine {
     const seed = this.settings.seed.trim();
     if (seed === '') return this.halt('seed-missing');
 
-    const { targetPk } = await this.deps.acquisition.acquire(seed);
+    const acquired = await this.deps.acquisition.acquire(seed);
+    const targetPk = acquired.targetPk;
     if (targetPk === null) return this.halt('seed-unresolved');
 
     // NEVER silently resurrect a burned-out chain: with no ACTIVE target and
     // the seed already exhausted (a prior chain ran it dry), re-adding it at
     // index 0 would re-acquire, re-exhaust, and corrupt the chain lineage on
-    // every restart. Halting keeps the state visible; an explicit
-    // restart-from-seed (the Settings action) is the sanctioned way back in.
+    // every restart. But before the terminal halt, the chain self-heal gets
+    // its chance: a RECENT evidence-stamped exhaustion (the front of the
+    // chain, possibly this very seed) may be an outage artifact, not a dry
+    // chain — re-verify it once. Otherwise halting keeps the state visible;
+    // an explicit restart-from-seed (the Settings action) is the sanctioned
+    // way back in.
     if (this.deps.store.getTarget(targetPk)?.status === 'exhausted') {
-      return this.halt('chain-exhausted');
+      const revived = this.reviveRecentExhausted();
+      if (revived === null) return this.halt('chain-exhausted');
+      this.adoptTarget(revived);
+      await this.pacingSleep(); // the seed resolve was IG traffic — pace it.
+      return 'advanced-chain';
     }
 
     this.deps.store.addTarget({
@@ -1266,12 +1352,25 @@ export class Engine {
       pk: targetPk,
       username: this.deps.store.getAccount(targetPk)?.username ?? seed,
     };
-    this.acquiredThisCycle = true;
+    // Only a GENUINELY completed read consumes the first cycle's acquisition
+    // (and records latch evidence) — a failed seed read (a rate wall at first
+    // contact) leaves step 7 free to retry instead of planning an empty pool
+    // straight into the exhaustion latch.
+    const failed = isAcquireFailure(acquired.endReason);
+    this.acquiredThisCycle = !failed;
+    this.lastAcquireEnd = failed ? null : acquired.endReason;
     this.enrichPassesThisCycle = 0;
+    this.enrichedThisCycle = 0;
+    this.sliceReopens = 0;
     this.targetExhausted = false;
     const plan = this.deps.scanner.planTarget(targetPk);
     if (plan.queued.length > 0) this.acquiredThisCycle = false;
-    log.info('engine: seed target bootstrapped', { seed, targetPk, queued: plan.queued.length });
+    log.info('engine: seed target bootstrapped', {
+      seed,
+      targetPk,
+      queued: plan.queued.length,
+      endReason: acquired.endReason,
+    });
     await this.pacingSleep(); // f10: the bootstrap IS an acquisition — pace it.
     return 'acquired';
   }
@@ -1283,7 +1382,37 @@ export class Engine {
     this.enrichPassesThisCycle = 0;
     this.enrichedThisCycle = 0;
     this.walledCycles = 0;
+    this.lastAcquireEnd = null;
+    this.sliceReopens = 0;
     this.targetExhausted = false;
+  }
+
+  /**
+   * The chain dead-end self-heal — the REVERSAL path for evidence-stamped
+   * exhaustion: pick the most recently exhausted target whose `exhaustedAt`
+   * stamp is younger than {@link RECOVERY_TIMING.EXHAUSTED_REVERIFY_WINDOW_MS}
+   * and not yet re-verified this run, return it to 'active' in the store, and
+   * hand it back for re-adoption — the next refill cycle retries its
+   * acquisition ONCE. A re-exhaustion re-stamps it and the per-run set blocks
+   * a second revive, so a genuinely dry chain still reaches the terminal
+   * `chain-exhausted` halt. Deliberate retirements (no stamp —
+   * restart-from-seed) are never revived. Null when nothing qualifies.
+   */
+  private reviveRecentExhausted(): string | null {
+    const now = this.deps.clock.now();
+    const cutoff = now - RECOVERY_TIMING.EXHAUSTED_REVERIFY_WINDOW_MS;
+    for (const t of this.deps.store.exhaustedTargetsSince(cutoff)) {
+      if (this.revivedTargets.has(t.accountPk)) continue;
+      this.revivedTargets.add(t.accountPk);
+      this.deps.store.setTargetStatus(t.accountPk, 'active');
+      log.warn('engine: chain dead-end — re-verifying recently exhausted target', {
+        pk: t.accountPk,
+        exhaustedAt: t.exhaustedAt ?? null,
+        windowMs: RECOVERY_TIMING.EXHAUSTED_REVERIFY_WINDOW_MS,
+      });
+      return t.accountPk;
+    }
+    return null;
   }
 
   // --- Pool refill (R1) -------------------------------------------------------------
@@ -1317,18 +1446,30 @@ export class Engine {
     // the Scanner always selects from a deep pool — a bar of exactly one plan
     // starved selection and queued whatever ratios the last shallow batch had.
     if (!this.acquiredThisCycle) {
-      this.acquiredThisCycle = true;
       const rawPool = this.deps.store.candidatePksForTarget(current.pk).length;
       if (rawPool >= this.settings.dailyPlanSize * ACQUIRE_SKIP_POOL_FACTOR) {
+        this.acquiredThisCycle = true;
         log.info('engine: raw pool sufficient, skipping acquisition', {
           pk: current.pk,
           rawPool,
         });
       } else if (current.username === null) {
+        this.acquiredThisCycle = true;
         log.warn('engine: cannot acquire, target username unknown', { pk: current.pk });
       } else {
-        await this.deps.acquisition.acquire(current.username);
+        const acquired = await this.deps.acquisition.acquire(current.username);
         issuedTraffic = true;
+        if (isAcquireFailure(acquired.endReason)) {
+          // A FAILED read yielded no evidence about the audience: the cycle's
+          // acquisition opportunity stays UNCONSUMED (the retry after the
+          // backoff re-acquires) and the exhaustion latch is untouched — an
+          // `observed: 0` failure used to burn the target irreversibly.
+          return this.acquireFailedBackoff(current, acquired.endReason, token);
+        }
+        // Consume the cycle's acquisition only NOW — on a genuine completion —
+        // and record its end reason as the latch's evidence.
+        this.acquiredThisCycle = true;
+        this.lastAcquireEnd = acquired.endReason;
       }
     }
 
@@ -1362,6 +1503,7 @@ export class Engine {
       // land right after a burst of successful requests).
       this.enrichedThisCycle = 0;
       this.walledCycles = 0; // real progress — the read side is not walled
+      this.sliceReopens = 0; // real progress — the list is still yielding
     } else if (this.unenrichedUsernames(current.pk, 1).length > 0) {
       // NOT exhaustion: candidates remain that were never successfully
       // enriched. Two very different situations land here:
@@ -1398,16 +1540,77 @@ export class Engine {
       log.info('engine: pool not exhausted, opening next enrichment cycle', {
         target: current.pk,
       });
+    } else if (this.lastAcquireEnd !== null && !ACQUIRE_DRAIN_REASONS.has(this.lastAcquireEnd)) {
+      // The LOCAL pool is spent, but the latest acquire only BOUNDED A SLICE
+      // (demand met / page budget / known-rows window / stagnant) — the list
+      // was never verified done, so this zero is designed, not exhaustion
+      // evidence. Reopen the cycle's acquisition: the persisted cursor
+      // resumes exactly where the slice stopped. Bounded against a long
+      // known-only tail: from the walled-cycles threshold on, each reopen
+      // first takes the long backoff so zero-yield slices can never hot-loop.
+      this.acquiredThisCycle = false;
+      this.enrichPassesThisCycle = 0;
+      this.enrichedThisCycle = 0;
+      this.sliceReopens += 1;
+      log.info('engine: local pool spent but list not verified done — reopening acquisition', {
+        target: current.pk,
+        lastAcquireEnd: this.lastAcquireEnd,
+        sliceReopens: this.sliceReopens,
+      });
+      if (this.sliceReopens >= RECOVERY_TIMING.WALLED_CYCLES_ENTRY) {
+        await this.engineWait('engine:enrich-backoff', ENGINE_TIMING.ENRICH_BACKOFF_MS);
+        return 'idle';
+      }
     } else {
+      // POSITIVE evidence only: nothing plannable remains locally AND the
+      // latest acquire either VERIFIED the list's end ('no-more-pages') or
+      // deliberately closed it ('coverage-cap') — or no acquisition is
+      // possible at all (username unknown / a wiring without one), where
+      // latching is the only way the cycle terminates.
       this.targetExhausted = true;
     }
     log.info('engine: refill planned', {
       target: current.pk,
       queued: plan.queued.length,
       exhausted: this.targetExhausted,
+      lastAcquireEnd: this.lastAcquireEnd,
     });
     if (issuedTraffic) await this.pacingSleep();
     return 'acquired';
+  }
+
+  /**
+   * The refill path's response to a FAILED acquire ('shape-mismatch' /
+   * 'fetch-failed' / 'sentinel-blocked' / 'stopped' / 'dialog-failed'): no
+   * trustworthy evidence was read, so nothing latches and the cycle's
+   * acquisition slot stays open for the retry. Failed reads share the
+   * walled-cycle ladder with starved enrichment — the first entries take the
+   * long enrich-backoff park (a rate wall must not spin the refill loop at
+   * pacing speed); the {@link RECOVERY_TIMING.WALLED_CYCLES_ENTRY}-th in a row
+   * enters the recovery ladder, carrying drift evidence when the read itself
+   * reported shape drift.
+   */
+  private async acquireFailedBackoff(
+    current: CurrentTarget,
+    endReason: AcquireEndReason,
+    token: AbortController,
+  ): Promise<StepResult> {
+    this.walledCycles += 1;
+    if (this.walledCycles >= RECOVERY_TIMING.WALLED_CYCLES_ENTRY) {
+      this.walledCycles = 0;
+      log.warn('engine: acquisition failing repeatedly — entering recovery', {
+        target: current.pk,
+        endReason,
+      });
+      return this.enterRecovery(token, endReason === 'shape-mismatch' ? 'drift' : 'rate-limited');
+    }
+    log.warn('engine: acquire failed — backing off (cycle slot kept, target NOT exhausted)', {
+      target: current.pk,
+      endReason,
+      walledCycles: this.walledCycles,
+    });
+    await this.engineWait('engine:enrich-backoff', ENGINE_TIMING.ENRICH_BACKOFF_MS);
+    return 'idle';
   }
 
   /**

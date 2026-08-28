@@ -1,3 +1,4 @@
+import { type Clock, SystemClock } from '../governors/clock';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { info } from '../utils/logger';
 
@@ -58,6 +59,8 @@ interface ChainDeps {
   ownPk: string;
   discovery: TargetDiscovery;
   ownFollowers: OwnFollowersTargetSource;
+  /** Time source for the exhaustion evidence stamp; defaults to wall-clock. */
+  clock?: Clock;
   cfg?: ChainConfig;
 }
 
@@ -72,6 +75,7 @@ export class ChainController {
   private readonly ownPk: string;
   private readonly discovery: TargetDiscovery;
   private readonly ownFollowers: OwnFollowersTargetSource;
+  private readonly clock: Clock;
   private cfg: ChainConfig;
 
   /** Swap the live config in place (used when Settings are updated at runtime). */
@@ -84,6 +88,7 @@ export class ChainController {
     this.ownPk = deps.ownPk;
     this.discovery = deps.discovery;
     this.ownFollowers = deps.ownFollowers;
+    this.clock = deps.clock ?? new SystemClock();
     this.cfg = deps.cfg ?? CHAIN_DEFAULTS;
   }
 
@@ -96,8 +101,10 @@ export class ChainController {
    *  4. Otherwise report that no target is available.
    */
   async advance(currentTargetPk: string): Promise<AdvanceResult> {
-    // 1. The current target is poached out.
-    this.store.setTargetStatus(currentTargetPk, 'exhausted');
+    // 1. The current target is poached out — EVIDENCE-stamped (`exhaustedAt`),
+    //    so the verdict stays reversible: the engine's chain dead-end self-heal
+    //    re-verifies recently stamped targets instead of halting terminally.
+    this.store.setTargetStatus(currentTargetPk, 'exhausted', this.clock.now());
 
     // 2. Discover candidate next-targets and pick the best that clears the gate.
     const found = await this.discovery.discover(currentTargetPk);

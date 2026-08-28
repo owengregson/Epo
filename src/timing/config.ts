@@ -150,6 +150,17 @@ export const RECOVERY = {
    *  so post-wake work never lands at a fixed offset after every lid-open. */
   RESUME_SETTLE_MIN_MS: 3_000,
   RESUME_SETTLE_MAX_MS: 10_000,
+  /**
+   * Chain self-heal window: when the chain would otherwise dead-end in the
+   * terminal `chain-exhausted` halt, a target whose evidence-stamped
+   * `exhaustedAt` is younger than this is re-activated and its acquisition
+   * retried ONCE — an exhaustion latched during a rate-wall/drift outage is
+   * absence of evidence, and burning the lineage over it used to require a
+   * manual re-seed. 48 h comfortably outlasts the observed soft-wall windows
+   * AND a full run of the ladder's holds (≤ ~3×2 h + probes), while stamps
+   * older than that predate any current outage and stay final.
+   */
+  EXHAUSTED_REVERIFY_WINDOW_MS: 48 * 3600_000,
 } as const;
 
 export const RIM = {

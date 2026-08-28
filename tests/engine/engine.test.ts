@@ -17,6 +17,7 @@ import {
   MAX_ENRICH_PASSES_PER_CYCLE,
   REFILL_PACING_MAX_MS,
   REFILL_PACING_MIN_MS,
+  type EngineAcquisition,
   type EngineChain,
   type EngineChurn,
   type EngineEnricher,
@@ -28,10 +29,10 @@ import {
   type EngineStatus,
   type SleepFn,
 } from '@/engine/engine';
-import { NOISE, RECOVERY } from '@/timing/config';
+import { ENGINE, NOISE, RECOVERY } from '@/timing/config';
 import type { AdvanceResult } from '@/engine/chain-controller';
 import { Scanner, type ScanPlan } from '@/engine/scanner';
-import type { FollowerAcquisition } from '@/rim/types';
+import type { AcquireEndReason } from '@/rim/follower-acquisition';
 import type { SentinelStatus } from '@/adapter/sentinel';
 import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
 import type { AccountFields, FollowRecord } from '@/store/types';
@@ -188,12 +189,17 @@ class FakeFollowback implements EngineFollowback {
   }
 }
 
-class FakeAcquisition implements FollowerAcquisition {
+class FakeAcquisition implements EngineAcquisition {
   calls: string[] = [];
-  script: Array<{ observed: number; targetPk: string | null }> = [];
-  async acquire(targetUsername: string): Promise<{ observed: number; targetPk: string | null }> {
+  /** Scripted results; an omitted endReason defaults to the VERIFIED list end
+   *  ('no-more-pages') so legacy scripts keep exercising the genuine path. */
+  script: Array<{ observed: number; targetPk: string | null; endReason?: AcquireEndReason }> = [];
+  async acquire(
+    targetUsername: string,
+  ): Promise<{ observed: number; targetPk: string | null; endReason: AcquireEndReason }> {
     this.calls.push(targetUsername);
-    return this.script.shift() ?? { observed: 0, targetPk: null };
+    const next = this.script.shift() ?? { observed: 0, targetPk: null };
+    return { endReason: 'no-more-pages', ...next };
   }
 }
 
@@ -690,6 +696,180 @@ describe('Engine — pool refill (precedence 7) and the acquisition guard', () =
     expect(await h.engine.stepOnce()).toBe('halted');
     expect(h.halts).toEqual(['chain-exhausted']);
     expect(h.engine.status().state).toBe('halted');
+  });
+});
+
+// --- Exhaustion latches only on positive evidence (chain-burn fix) --------------------
+
+describe('Engine — acquire end reasons gate the exhaustion latch', () => {
+  test('a FAILED acquire does not latch, keeps the cycle slot, and takes the long backoff park', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 } });
+    h.acquisition.script = [
+      { observed: 0, targetPk: 't1', endReason: 'fetch-failed' },
+      { observed: 3, targetPk: 't1' }, // the retry after the park reads genuinely
+    ];
+    h.scanner.script = [['c1', 'c2']];
+
+    // Step 1: the failed read parks LONG — no plan, no latch, no chain advance.
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(h.scanner.planCalls).toEqual([]); // an empty pool was never planned into exhaustion
+    expect(h.chain.advanceCalls).toEqual([]);
+    expect(h.statuses.some((s) => s.parkReason === 'enrich-backoff')).toBe(true);
+    // The park is the noisified long backoff, never the short refill pacing.
+    expect(h.sleep.calls.length).toBe(1);
+    expect(h.sleep.calls[0]).toBeGreaterThanOrEqual(
+      ENGINE.ENRICH_BACKOFF_MS * NOISE.BACKOFF_MIN_FACTOR,
+    );
+    expect(h.sleep.calls[0]).toBeLessThanOrEqual(
+      ENGINE.ENRICH_BACKOFF_MS * NOISE.BACKOFF_MAX_FACTOR,
+    );
+
+    // Step 2: the cycle's acquisition slot was NOT pre-consumed — the refill
+    // re-acquires, and the genuine read plans normally.
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.acquisition.calls).toEqual(['targetone', 'targetone']);
+    expect(h.scanner.planCalls).toEqual(['t1']);
+    expect(h.engine.status().queued).toBe(2);
+    expect(h.halts).toEqual([]);
+  });
+
+  test('repeatedly failing acquires escalate to the recovery ladder, never burn the chain', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 } });
+    h.acquisition.script = [
+      { observed: 0, targetPk: 't1', endReason: 'fetch-failed' },
+      { observed: 0, targetPk: 't1', endReason: 'sentinel-blocked' },
+      { observed: 0, targetPk: 't1', endReason: 'fetch-failed' },
+    ];
+
+    expect(await h.engine.stepOnce()).toBe('idle'); // walled 1 — long park
+    expect(await h.engine.stepOnce()).toBe('idle'); // walled 2 — long park
+    expect(await h.engine.stepOnce()).toBe('recovering'); // walled 3 — the ladder
+    expect(h.engine.status().recovery?.phase).toBe('probing'); // hold served by fake sleep
+    expect(h.chain.advanceCalls).toEqual([]); // the target was never burned
+    expect(h.halts).toEqual([]);
+  });
+
+  test("a 'coverage-cap' zero IS positive evidence: the target latches and the chain advances", async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 } });
+    h.store.observe({
+      accountPk: 't2',
+      observedAt: T0,
+      source: 'profile',
+      fields: { username: 'targettwo' },
+    });
+    h.acquisition.script = [{ observed: 0, targetPk: 't1', endReason: 'coverage-cap' }];
+    h.chain.script = [{ nextTargetPk: 't2', source: 'own_followers', reason: 'fallback' }];
+
+    expect(await h.engine.stepOnce()).toBe('acquired'); // the designed close latches
+    expect(await h.engine.stepOnce()).toBe('advanced-chain');
+    expect(h.chain.advanceCalls).toEqual(['t1']);
+    expect(h.acquisition.calls).toEqual(['targetone']); // never re-scraped past the cap
+  });
+
+  test("a slice-bounding zero ('page-budget') does NOT latch: acquisition reopens and continues", async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 } });
+    h.store.observe({
+      accountPk: 't2',
+      observedAt: T0,
+      source: 'profile',
+      fields: { username: 'targettwo' },
+    });
+    h.acquisition.script = [
+      { observed: 0, targetPk: 't1', endReason: 'page-budget' },
+      { observed: 0, targetPk: 't1', endReason: 'no-more-pages' },
+    ];
+    h.chain.script = [{ nextTargetPk: 't2', source: 'own_followers', reason: 'fallback' }];
+
+    // Step 1: the zero only bounded a slice — no latch, the cycle reopens.
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.chain.advanceCalls).toEqual([]);
+    // Step 2: the reopened cycle re-acquires (cursor-resumed) and verifies the end.
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.acquisition.calls).toEqual(['targetone', 'targetone']);
+    // Step 3: verified end + drained pool → NOW the chain advances.
+    expect(await h.engine.stepOnce()).toBe('advanced-chain');
+    expect(h.chain.advanceCalls).toEqual(['t1']);
+  });
+
+  test('zero-yield slice reopens park long from the walled threshold on (no hot loop)', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 } });
+    h.acquisition.script = [
+      { observed: 0, targetPk: 't1', endReason: 'stagnant' },
+      { observed: 0, targetPk: 't1', endReason: 'stagnant' },
+      { observed: 0, targetPk: 't1', endReason: 'stagnant' },
+    ];
+
+    expect(await h.engine.stepOnce()).toBe('acquired'); // reopen 1 — prompt retry
+    expect(await h.engine.stepOnce()).toBe('acquired'); // reopen 2 — prompt retry
+    expect(await h.engine.stepOnce()).toBe('idle'); // reopen 3 — long park first
+    expect(h.statuses.some((s) => s.parkReason === 'enrich-backoff')).toBe(true);
+    expect(h.chain.advanceCalls).toEqual([]); // still never latched or burned
+  });
+});
+
+describe('Engine — chain dead-end re-verifies a recently exhausted target', () => {
+  /** Seed a prior hop `t0` as evidence-stamped exhausted at `at`. */
+  const exhaustedHop = (h: Harness, at: number): void => {
+    h.store.observe({
+      accountPk: 't0',
+      observedAt: T0,
+      source: 'profile',
+      fields: { username: 'targetzero' },
+    });
+    h.store.addTarget({
+      accountPk: 't0',
+      source: 'seed',
+      status: 'exhausted',
+      chainIndex: 0,
+      exhaustedAt: at,
+    });
+  };
+
+  test('a dead-end revives the recent hop instead of halting, then heals on a fresh acquire', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 } });
+    exhaustedHop(h, T0 - HOUR); // stamped during e.g. a rate-wall window
+    h.acquisition.script = [
+      { observed: 0, targetPk: 't1', endReason: 'no-more-pages' }, // t1 genuinely dry
+      { observed: 5, targetPk: 't0', endReason: 'target-reached' }, // t0's re-verify succeeds
+    ];
+    h.scanner.script = [[], ['c1', 'c2']];
+    // The chain has nowhere to go (FakeChain unscripted → null).
+
+    expect(await h.engine.stepOnce()).toBe('acquired'); // t1 latches exhausted
+    expect(await h.engine.stepOnce()).toBe('advanced-chain'); // dead-end → t0 revived
+    expect(h.halts).toEqual([]);
+    expect(h.engine.status().currentTargetPk).toBe('t0');
+    expect(h.store.getTarget('t0')!.status).toBe('active');
+    expect(h.store.getTarget('t0')!.exhaustedAt).toBeUndefined(); // the latch was cleared
+
+    // The revived target gets its ONE fresh acquisition and the chain heals.
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.acquisition.calls).toEqual(['targetone', 'targetzero']);
+    expect(h.engine.status().queued).toBe(2);
+  });
+
+  test('a STALE stamp (outside the re-verify window) is final — the chain halts', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 } });
+    exhaustedHop(h, T0 - RECOVERY.EXHAUSTED_REVERIFY_WINDOW_MS - HOUR);
+
+    expect(await h.engine.stepOnce()).toBe('acquired'); // t1 latches (dry, verified end)
+    expect(await h.engine.stepOnce()).toBe('halted');
+    expect(h.halts).toEqual(['chain-exhausted']);
+    expect(h.store.getTarget('t0')!.status).toBe('exhausted'); // untouched
+  });
+
+  test('a target is re-verified at most ONCE per run — a re-exhaustion halts honestly', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 } });
+    exhaustedHop(h, T0 - HOUR);
+
+    expect(await h.engine.stepOnce()).toBe('acquired'); // t1 latches (dry)
+    expect(await h.engine.stepOnce()).toBe('advanced-chain'); // t0 revived
+    expect(await h.engine.stepOnce()).toBe('acquired'); // t0's retry is ALSO dry → latches
+    // Simulate the real controller's fresh evidence stamp for the re-exhaustion
+    // (FakeChain does not touch the store).
+    h.store.setTargetStatus('t0', 'exhausted', h.clock.now());
+    expect(await h.engine.stepOnce()).toBe('halted'); // fresh stamp, but its chance is spent
+    expect(h.halts).toEqual(['chain-exhausted']);
   });
 });
 

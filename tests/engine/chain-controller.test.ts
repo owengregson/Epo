@@ -5,6 +5,7 @@ import {
   type TargetDiscovery,
   type OwnFollowersTargetSource,
 } from '@/engine/chain-controller';
+import { FakeClock } from '@/governors/clock';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import type { Target } from '@/store/types';
 
@@ -143,6 +144,25 @@ test('chooses the highest projectedFollowBackRate among several qualifying candi
 
   expect(res.nextTargetPk).toBe('HI');
   expect(res.source).toBe('discovered');
+});
+
+test('advance stamps exhaustedAt with the clock time — the verdict stays reversible', async () => {
+  store.addTarget(target({ accountPk: 'SEED', chainIndex: 0 }));
+
+  const c = new ChainController({
+    store,
+    ownPk: OWN,
+    discovery: new FakeDiscovery([]),
+    ownFollowers: new FakeOwnFollowers(null),
+    clock: new FakeClock(123_456),
+  });
+  await c.advance('SEED');
+
+  const seed = store.getTarget('SEED')!;
+  expect(seed.status).toBe('exhausted');
+  // The evidence stamp is what the engine's dead-end re-verify window reads.
+  expect(seed.exhaustedAt).toBe(123_456);
+  expect(store.exhaustedTargetsSince(0).map((t) => t.accountPk)).toEqual(['SEED']);
 });
 
 test('a candidate exactly at both thresholds qualifies (inclusive bounds)', async () => {
