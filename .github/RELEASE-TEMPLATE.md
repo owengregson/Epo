@@ -43,15 +43,19 @@
   <img src="https://raw.githubusercontent.com/owengregson/Epo/{{VERSION}}/project/assets/release/headers/install.svg" height="42" alt="Install">
 </p>
 
-**macOS** — download `Epo-{{VERSION_NUMBER}}-arm64.dmg` (Apple silicon) or
-`Epo-{{VERSION_NUMBER}}-x64.dmg` (Intel), open it, and drag Epo to
-Applications. The builds are not notarized yet, so macOS blocks the first
-launch: open Epo once, dismiss the dialog, then **System Settings →
-Privacy & Security** → **Open Anyway** (needed once).
+<p align="center">
+  <a href="https://github.com/owengregson/Epo/releases/download/{{VERSION}}/Epo-{{VERSION_NUMBER}}-arm64.dmg"><img src="https://raw.githubusercontent.com/owengregson/Epo/{{VERSION}}/project/assets/release/buttons/mac-arm64.svg" height="46" alt="Download for macOS (Apple silicon)"></a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/owengregson/Epo/releases/download/{{VERSION}}/Epo-{{VERSION_NUMBER}}-x64.dmg"><img src="https://raw.githubusercontent.com/owengregson/Epo/{{VERSION}}/project/assets/release/buttons/mac-x64.svg" height="46" alt="Download for macOS (Intel)"></a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/owengregson/Epo/releases/download/{{VERSION}}/Epo-Setup-{{VERSION_NUMBER}}.exe"><img src="https://raw.githubusercontent.com/owengregson/Epo/{{VERSION}}/project/assets/release/buttons/windows.svg" height="46" alt="Download for Windows"></a>
+</p>
 
-**Windows** — download `Epo-Setup-{{VERSION_NUMBER}}.exe` (recommended — it
-updates itself from here on) or `Epo-{{VERSION_NUMBER}}-portable.exe`.
-SmartScreen may warn on first run: **More info** → **Run anyway**.
+One click downloads the right package. First launch: **macOS** blocks
+un-notarized apps — dismiss the dialog, then **System Settings → Privacy &
+Security → Open Anyway** (needed once). **Windows** SmartScreen may warn —
+**More info → Run anyway**. A no-install Windows build,
+`Epo-{{VERSION_NUMBER}}-portable.exe`, is in the assets below.
 
 **Already running Epo?** Windows installs update themselves in the
 background; macOS shows the new version in Settings → Updates and brings
@@ -63,8 +67,8 @@ you here.
 
 - Your database, settings, and Instagram session carry over — updating is a
   drop-in replacement.
-- The `.zip`, `.blockmap`, and `latest*.yml` assets below are the
-  self-updater's feed; every file stays attached.
+- Every other asset below (`.zip`, `.blockmap`, `latest*.yml`) is the
+  self-updater's feed — apps update themselves from these files.
 - Epo acts on your Instagram account; use it at your own risk (see the
   README).
 

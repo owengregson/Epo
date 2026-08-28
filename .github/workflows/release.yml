@@ -193,11 +193,15 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: epo-${{ matrix.os }}
+          # No *.dmg.blockmap: the updater differential-downloads zips (mac)
+          # and the NSIS exe (win) — dmg blockmaps are dead weight that only
+          # clutters the release's asset list.
           path: |
             release/*.dmg
             release/*.zip
             release/*.exe
-            release/*.blockmap
+            release/*.zip.blockmap
+            release/*.exe.blockmap
             release/latest*.yml
           if-no-files-found: error
 
@@ -277,6 +281,7 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
           PREVIOUS_TAG: ${{ needs.detect.outputs.previous_tag }}
         run: |
+          # shellcheck disable=SC2016 # the backticks are literal markdown, not expansion
           changelog=$(git log "$PREVIOUS_TAG..HEAD" --no-merges --pretty='- %s (`%h`)')
           highlights=""
           if [ -f .github/release-highlights.md ] \

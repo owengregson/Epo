@@ -263,6 +263,31 @@ function releaseBannerSvg(version) {
   );
 }
 
+// Per-release download buttons (46h, the README download button's recipe) —
+// each links straight to one asset on the release page, so users click a
+// plate instead of hunting through the asset list.
+const RELEASE_BUTTONS = {
+  'mac-arm64': 'macOS · Apple silicon',
+  'mac-x64': 'macOS · Intel',
+  windows: 'Windows',
+};
+
+function releaseButtonSvg(label) {
+  const textLength = Math.round(label.length * 7.65);
+  const W = 24 + 18 + 12 + textLength + 24;
+  const textMid = 54 + (W - 24 - 54) / 2;
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="46" viewBox="0 0 ${W} 46" role="img" aria-label="Download for ${label}">` +
+    `<defs>${plateDefs('p', BTN_PRIMARY.top, BTN_PRIMARY.bot)}</defs>` +
+    plateRect(0, 0, W, 46, 9, 'p', BTN_PRIMARY.stroke) +
+    `<g stroke="${BTN_PRIMARY.text}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none">` +
+    `<path d="M33 14.5v11.5"/><path d="M27.5 20.5 33 26l5.5-5.5"/><path d="M25.5 31h15"/>` +
+    `</g>` +
+    `<text x="${textMid}" y="27.9" text-anchor="middle" font-family="${UI_FONT}" font-size="13.5" font-weight="600" letter-spacing="0.5" fill="${BTN_PRIMARY.text}" textLength="${textLength}" lengthAdjust="spacing">${label}</text>` +
+    `</svg>\n`
+  );
+}
+
 // 42h section plates for release bodies — the README's 54h plate formula, scaled.
 const RELEASE_HEADERS = {
   highlights: 'HIGHLIGHTS',
@@ -306,3 +331,5 @@ write('divider.svg', dividerSvg());
 write('release/banner.svg', releaseBannerSvg(VERSION));
 for (const [name, title] of Object.entries(RELEASE_HEADERS))
   write(`release/headers/${name}.svg`, releaseHeaderSvg(title));
+for (const [name, label] of Object.entries(RELEASE_BUTTONS))
+  write(`release/buttons/${name}.svg`, releaseButtonSvg(label));
