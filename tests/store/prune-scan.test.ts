@@ -3,7 +3,7 @@
  * the consumable remaining-candidates set that restores the prune panel across
  * restarts.
  */
-import { KnowledgeStore } from '@/store/knowledge-store';
+import { KnowledgeStore, type PruneCensusRecord } from '@/store/knowledge-store';
 import type { PruneScanSnapshot } from '@/store/types';
 import { setLevel } from '@/utils/logger';
 
@@ -74,5 +74,54 @@ describe('KnowledgeStore prune scan snapshot', () => {
     store.savePruneScan(SNAP);
     store.clearPruneScan();
     expect(store.getPruneScan()).toBeNull();
+  });
+
+  test('pruneScanRemainingCount counts the unvisited rows without loading them', () => {
+    expect(store.pruneScanRemainingCount()).toBe(0);
+    store.savePruneScan(SNAP);
+    expect(store.pruneScanRemainingCount()).toBe(3);
+    store.consumePruneScanCandidate('22');
+    expect(store.pruneScanRemainingCount()).toBe(2);
+  });
+});
+
+describe('KnowledgeStore last-complete prune census (meta-backed)', () => {
+  const CENSUS: PruneCensusRecord = {
+    at: 5_000,
+    following: 120,
+    followers: 90,
+    scrapedFollowing: 118,
+    scrapedFollowers: 89,
+    notFollowingBack: 40,
+    candidates: 33,
+  };
+
+  let store: KnowledgeStore;
+  beforeEach(() => {
+    store = new KnowledgeStore(':memory:');
+  });
+  afterEach(() => store.close());
+
+  test('empty store has no census', () => {
+    expect(store.getPruneCensus()).toBeNull();
+  });
+
+  test('save → get round-trips', () => {
+    store.savePruneCensus(CENSUS);
+    expect(store.getPruneCensus()).toEqual(CENSUS);
+  });
+
+  test('a second save replaces the first (singleton semantics)', () => {
+    store.savePruneCensus(CENSUS);
+    store.savePruneCensus({ ...CENSUS, at: 9_000, following: 100 });
+    expect(store.getPruneCensus()).toEqual({ ...CENSUS, at: 9_000, following: 100 });
+  });
+
+  test('clearing the runnable-scan snapshot leaves the census standing', () => {
+    store.savePruneScan(SNAP);
+    store.savePruneCensus(CENSUS);
+    store.clearPruneScan();
+    expect(store.getPruneScan()).toBeNull();
+    expect(store.getPruneCensus()).toEqual(CENSUS);
   });
 });

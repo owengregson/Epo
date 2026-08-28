@@ -1089,6 +1089,134 @@ describe('PruneEngine — scan freshness window', () => {
   });
 });
 
+// --- Last complete census (durable display truth) ----------------------------------
+
+describe('PruneEngine — last complete census', () => {
+  test('a completed scan projects the census: counts, scraped basis, and timestamp', async () => {
+    const h = build({
+      following: [OWN_PK, '1', '2', '3', '4'],
+      followers: ['2'],
+      cfg: { whitelist: ['u4'] },
+    });
+    // '1' is growth-managed: excluded from the prune census but still a
+    // scraped non-reciprocal follow — the census must carry both figures.
+    h.store.upsertFollowRecord({
+      accountPk: '1',
+      targetPk: null,
+      state: 'pending_followback',
+      retryCount: 0,
+    });
+    // Header counts exceed the walked lists — the gap is deactivated ghosts.
+    h.store.observe({
+      accountPk: OWN_PK,
+      observedAt: T0,
+      source: 'profile',
+      fields: { following: 6, followers: 2 },
+    });
+
+    await h.engine.scan();
+
+    const s = h.engine.status();
+    expect(s.census).toEqual({
+      at: T0,
+      following: 6, // display = header figure (scraped + ghost buffer)
+      followers: 2,
+      scrapedFollowing: 5, // what the list walk actually returned
+      scrapedFollowers: 1,
+      notFollowingBack: 3, // '1', '3', '4' (self and the follower excluded)
+      candidates: 2, // growth-managed '1' exempt; whitelist NOT applied
+    });
+    expect(s.scanAt).toBe(T0);
+    // The projection also carries the raw unvisited row count (whitelisted
+    // '4' included) next to the actionable count (whitelist applied).
+    expect(s.rawRemaining).toBe(2);
+    expect(s.candidates).toBe(1);
+    h.store.close();
+  });
+
+  test('an aborted scan retains the previous complete census — no partial counts stand', async () => {
+    const h = build({ following: [OWN_PK, '1', '2'], followers: ['2'] });
+    await h.engine.scan();
+    const first = h.engine.status().census;
+    expect(first).not.toBeNull();
+    h.clock.advance(60_000);
+
+    // Second scan: stop() lands during the followers phase, so the walk ends
+    // with partial counts gathered (following walked, followers empty).
+    h.ownFollowers.fetchAllPks = async (): Promise<PruneScanFetch> => {
+      h.engine.stop();
+      return { pks: [], complete: false, reason: 'stop-requested' };
+    };
+    const res = await h.engine.scan();
+    expect(res.aborted).toBe(true);
+
+    const s = h.engine.status();
+    // The census the aborted scan could not replace keeps standing…
+    expect(s.census).toEqual(first);
+    expect(s.scanAt).toBe(first?.at);
+    // …and the LIVE counts restore to it instead of the partial walk
+    // (previously: following = partial, followers = 0, no timestamp).
+    expect(s.following).toBe(first?.following);
+    expect(s.followers).toBe(first?.followers);
+    expect(s.candidates).toBe(1);
+    expect(s.remaining).toBe(1);
+    // The previous reviewed set is runnable again, exactly as after a restart.
+    expect(s.scanReady).toBe(true);
+    expect(s.state).toBe('idle');
+    h.store.close();
+  });
+
+  test('a FAILED scan (incomplete walk) also retains the previous census', async () => {
+    const h = build({ following: [OWN_PK, '1'], followers: [] });
+    await h.engine.scan();
+    const first = h.engine.status().census;
+    h.clock.advance(60_000);
+
+    h.ownFollowers.fetchAllPks = async (): Promise<PruneScanFetch> => ({
+      pks: [],
+      complete: false,
+      reason: 'stagnated',
+    });
+    await expect(h.engine.scan()).rejects.toThrow(/followers walk incomplete/);
+
+    const s = h.engine.status();
+    expect(s.census).toEqual(first);
+    expect(s.following).toBe(first?.following);
+    expect(s.scanReady).toBe(true); // the previous reviewed set is still runnable
+    h.store.close();
+  });
+
+  test('a consumed run keeps the census and its timestamp; only runnability clears', async () => {
+    const h = build({ following: [OWN_PK, '1', '2'], followers: [] });
+    await h.engine.scan();
+    const at = h.engine.status().census?.at;
+    expect(at).toBe(T0);
+    h.clock.advance(60_000);
+
+    await h.engine.run();
+
+    const s = h.engine.status();
+    expect(s.state).toBe('done');
+    expect(s.scanReady).toBe(false); // consumed — the next run needs a fresh scan
+    expect(s.scanAt).toBe(at); // …but "when was this censused" still answers
+    expect(s.census?.at).toBe(at);
+    expect(s.census?.candidates).toBe(2); // the census records what the scan found
+    expect(s.rawRemaining).toBe(0); // every census row was visited
+    h.store.close();
+  });
+
+  test('a fresh completed scan REPLACES the census', async () => {
+    const h = build({ following: [OWN_PK, '1'], followers: [] });
+    await h.engine.scan();
+    expect(h.engine.status().census?.at).toBe(T0);
+
+    h.clock.advance(3_600_000);
+    await h.engine.scan();
+    expect(h.engine.status().census?.at).toBe(T0 + 3_600_000);
+    h.store.close();
+  });
+});
+
 describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {
   test('nextCandidate returns the first actionable candidate, skipping whitelisted ones', async () => {
     const h = build({ following: ['a', 'b'], followers: [], cfg: { whitelist: ['ua'] } });

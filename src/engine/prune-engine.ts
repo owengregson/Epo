@@ -19,7 +19,7 @@
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
-import type { KnowledgeStore } from '../store/knowledge-store';
+import type { KnowledgeStore, PruneCensusRecord } from '../store/knowledge-store';
 import { PRUNE } from '../timing/config';
 import { cyclePlan } from '../timing/cycle-plan';
 import { DelayManager } from '../timing/delay-manager';
@@ -141,7 +141,11 @@ export interface PruneStatus {
    * re-derived against the live whitelist.
    */
   scanReady: boolean;
-  /** Epoch ms of the runnable census (persisted; survives restarts); null when none. */
+  /**
+   * Epoch ms of the last COMPLETE census (persisted; survives restarts AND a
+   * run consuming the candidate set — display must keep saying when the
+   * numbers were taken); null only when no scan has ever completed.
+   */
   scanAt: number | null;
   /** Real (verified, non-dry-run) unfollows performed this run. */
   unfollowed: number;
@@ -174,6 +178,23 @@ export interface PruneStatus {
    * appearing when it ends.
    */
   graph: { following: number; followers: number; notFollowingBack: number };
+  /**
+   * The last COMPLETE census (durable): the settled whole-list counts of the
+   * most recent finished scan plus the scraped basis the composition bar
+   * derives from. Unlike the runnable-set lifecycle (`scanReady`/`remaining`),
+   * this survives aborted scans, consumed runs, and relaunches — null only
+   * when no scan has ever completed. Optional so the pre-build projection
+   * (composed outside this engine) can omit it.
+   */
+  census?: PruneCensusRecord | null;
+  /**
+   * RAW census rows no run has visited yet (whitelist NOT applied) — the
+   * durable remaining set's size. With `census.candidates` and `remaining`
+   * this lets the display split the census candidates into prunable /
+   * whitelist-protected / already-handled without loading the rows. Optional
+   * for the same pre-build reason as `census`.
+   */
+  rawRemaining?: number;
 }
 
 /** Header-count list-size estimates projected while a scan is live. */
@@ -338,6 +359,13 @@ export class PruneEngine {
   private pendingCandidates: PruneCandidate[] | null = null;
   /** Clock time the pending candidate set was captured; drives freshness. */
   private pendingScanAt: number | null = null;
+  /**
+   * The last COMPLETE census (durable mirror of `store.getPruneCensus()`):
+   * replaced only when a scan verifiably finishes, so an aborted/failed scan
+   * and a run that consumes the candidate rows all leave it standing — the
+   * display truth the census tiles anchor on.
+   */
+  private lastCensus: PruneCensusRecord | null = null;
   /** Clock time of the last THROTTLED mid-scan progress emission. */
   private lastProgressEmitAt = 0;
   /** Which list the live scan is walking right now (status projection). */
@@ -369,6 +397,7 @@ export class PruneEngine {
     // candidates survive a restart, so the prune panel never resets to zeros
     // and a fresh-enough reviewed set stays runnable. The engine still starts
     // idle — data is restored, nothing auto-acts.
+    this.lastCensus = deps.store.getPruneCensus();
     const snap = deps.store.getPruneScan();
     if (snap !== null) {
       this.followingCount = snap.following;
@@ -471,20 +500,22 @@ export class PruneEngine {
       // (non-aborted) scan; an interrupted scan yields no runnable candidate set.
       // The run derives the actionable subset against the live whitelist.
       if (token.signal.aborted) {
-        this.pendingCandidates = null;
-        this.pendingScanAt = null;
+        // The census this scan was building is void; the last COMPLETE one
+        // (still durable — nothing was cleared up front) stays the runnable
+        // set and the displayed truth.
+        this.restoreLastCensus();
         return { ...result, aborted: true };
       }
       this.pendingCandidates = result.candidates;
       this.pendingScanAt = this.deps.clock.now();
       return { ...result, aborted: false };
     } catch (e) {
-      // A FAILED scan must not leave the previous scan's candidate set looking
-      // runnable: `performScan` cleared the durable snapshot up front, so a
-      // stale in-memory set would let a Run consume a census the store no
-      // longer has (and a restart would lose entirely).
-      this.pendingCandidates = null;
-      this.pendingScanAt = null;
+      // A FAILED scan keeps the LAST COMPLETE census standing: the durable
+      // snapshot is retained until a scan verifiably completes, so restore the
+      // projection (and the runnable rows, if any remain) exactly as a
+      // relaunch would — a failed attempt to replace the census must not
+      // destroy it.
+      this.restoreLastCensus();
       throw e;
     } finally {
       this.scanPhase = null;
@@ -539,8 +570,11 @@ export class PruneEngine {
       } catch (e) {
         // Not silent: a failed scrape (e.g. a stale DOM contact point) is logged
         // loud and lands the routine in `halted` — never a rejection across IPC.
+        // The last COMPLETE census (durable, untouched by the failed walk) is
+        // restored as the displayed truth.
         this.scanPhase = null;
         this.scanEstimates = null;
+        this.restoreLastCensus();
         log.error('prune: scan failed, halting run', { error: String(e) });
         this.setState('halted');
         return;
@@ -809,10 +843,14 @@ export class PruneEngine {
       lastSentinel: this.lastSentinel,
       nextActionAt: this.delays.nextDeadline('prune:action-delay'),
       scanReady: this.hasFreshScan(),
-      scanAt: this.pendingScanAt,
+      // The census timestamp outlives the runnable set: a run consuming the
+      // candidates must not turn "Scanned 2h ago" into "never scanned".
+      scanAt: this.lastCensus?.at ?? this.pendingScanAt,
       scanPhase: this.scanPhase,
       scanEstimates: this.scanEstimates,
       graph: this.deps.store.relationshipCounts(),
+      census: this.lastCensus,
+      rawRemaining: this.deps.store.pruneScanRemainingCount(),
     };
   }
 
@@ -981,7 +1019,10 @@ export class PruneEngine {
     // to ~4 emissions/sec so the IPC stream is never flooded); each phase's
     // settled total still lands unconditionally below. The stale candidate
     // figure is zeroed too — it belongs to the census being replaced. The
-    // durable snapshot goes with it: a partial scan must never be restorable.
+    // DURABLE snapshot and census, though, stay until this scan verifiably
+    // completes (`savePruneScan` replaces them atomically at the end): a
+    // stopped or failed walk restores them, so an interrupted scan never
+    // destroys the census it could not replace.
     this.followingCount = 0;
     this.followersCount = 0;
     this.candidateCount = 0;
@@ -989,7 +1030,6 @@ export class PruneEngine {
     this.feedHalted = false;
     this.feedConsecutiveFailed = 0;
     this.feedConsecutiveBlocked = 0;
-    this.deps.store.clearPruneScan();
 
     // The estimates below need our OWN header counts, and passively overhearing
     // them is unreliable (an SPA profile navigation may never issue
@@ -1081,9 +1121,14 @@ export class PruneEngine {
     const chainTargets = this.deps.store.targetPks();
 
     const candidates: PruneCandidate[] = [];
+    // Scraped non-reciprocal follows (self excluded), BEFORE the growth/chain
+    // exemptions — the census records it so the composition display can show
+    // the exempt slice honestly instead of folding it into "follows back".
+    let notFollowingBack = 0;
     for (const pk of followingPks) {
       if (pk === this.deps.ownPk) continue;
       if (followerSet.has(pk)) continue;
+      notFollowingBack += 1;
       if (growthManaged.has(pk)) continue;
       if (chainTargets.has(pk)) continue;
       const username = this.deps.store.getAccount(pk)?.username ?? null;
@@ -1108,13 +1153,29 @@ export class PruneEngine {
     this.remaining = actionable;
     // Persist the completed scan so a restart restores it (counts + the raw
     // unvisited census); a subsequent run consumes the remaining rows one by one.
+    const censusAt = this.deps.clock.now();
     this.deps.store.savePruneScan({
-      at: this.deps.clock.now(),
+      at: censusAt,
       following: displayFollowing,
       followers: displayFollowers,
       candidateCount: actionable,
       remaining: candidates,
     });
+    // The scan verifiably completed — NOW (and only now) the last-complete
+    // census is replaced, durable alongside the snapshot. Aborts and failures
+    // above never reach this line, which is what keeps the previous census
+    // standing through them.
+    const census: PruneCensusRecord = {
+      at: censusAt,
+      following: displayFollowing,
+      followers: displayFollowers,
+      scrapedFollowing: followingPks.length,
+      scrapedFollowers: followerSet.size,
+      notFollowingBack,
+      candidates: candidates.length,
+    };
+    this.deps.store.savePruneCensus(census);
+    this.lastCensus = census;
     log.info('prune: scan complete', {
       following: followingPks.length,
       followers: followerSet.size,
@@ -1135,20 +1196,54 @@ export class PruneEngine {
    * The aborted-scan resolution: `stop()` landed mid-scan, so report whatever
    * was gathered with an EMPTY candidate set (a partial diff must never feed a
    * run) and let the caller settle into `idle`. Logged loud, never a throw.
+   * The partial walked counts go only to the CALLER (typed `aborted` result);
+   * the LIVE projection restores the last complete census — a stopped scan
+   * must never leave "Following = partial, Followers = 0" standing as if it
+   * were a census.
    */
   private abortedScan(
     following: number,
     followers: number,
     phase: 'between-phases' | 'before-candidates',
   ): { following: number; followers: number; candidates: PruneCandidate[] } {
-    this.followersCount = followers;
-    this.candidateCount = 0;
-    this.remaining = 0;
+    this.restoreLastCensus();
     this.scanPhase = null;
     this.scanEstimates = null;
-    log.info('prune: scan aborted', { phase, following, followers });
+    log.info('prune: scan aborted, last complete census restored', {
+      phase,
+      following,
+      followers,
+    });
     this.emitStatus();
     return { following, followers, candidates: [] };
+  }
+
+  /**
+   * Reset the live projection to the durable last-complete state: counts from
+   * the retained scan snapshot, the unvisited candidate rows runnable again —
+   * exactly what a relaunch would restore (the constructor's twin). Used when
+   * a scan aborts or fails, so the census it could not replace keeps standing
+   * instead of partial walked counts (or zeros) taking its place.
+   */
+  private restoreLastCensus(): void {
+    const snap = this.deps.store.getPruneScan();
+    if (snap === null) {
+      // No census has ever completed: nothing to restore, nothing runnable.
+      this.followingCount = 0;
+      this.followersCount = 0;
+      this.candidateCount = 0;
+      this.remaining = 0;
+      this.pendingCandidates = null;
+      this.pendingScanAt = null;
+      return;
+    }
+    this.followingCount = snap.following;
+    this.followersCount = snap.followers;
+    const actionable = filterPruneCandidates(snap.remaining, this.cfg.whitelist).length;
+    this.candidateCount = actionable;
+    this.remaining = actionable;
+    this.pendingCandidates = snap.remaining.length > 0 ? snap.remaining : null;
+    this.pendingScanAt = snap.remaining.length > 0 ? snap.at : null;
   }
 
   // --- Internals -------------------------------------------------------------------

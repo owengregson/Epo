@@ -202,7 +202,6 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
       <div class="tour-wrap" data-tour="prune-census">
         <PruneCensusCard
           prune={prune}
-          scan={scan}
           scanning={scanning}
           visibleCount={visibleCandidates !== null ? visibleCandidates.length : null}
           whitelistCount={settings?.pruneWhitelist.length ?? 0}

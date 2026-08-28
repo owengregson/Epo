@@ -238,6 +238,69 @@ describe('PruneEngine persistence across restarts', () => {
     w.store.close();
   });
 
+  test('the last complete census survives a restart (durable, meta-backed)', async () => {
+    const w = world([OWN_PK, '1', '2'], ['2']);
+    await w.boot().scan();
+
+    const s = w.boot().status(); // the "restart"
+    expect(s.census).toEqual({
+      at: T0,
+      following: 3,
+      followers: 1,
+      scrapedFollowing: 3,
+      scrapedFollowers: 1,
+      notFollowingBack: 1,
+      candidates: 1,
+    });
+    expect(s.scanAt).toBe(T0);
+    expect(w.store.getPruneCensus()?.at).toBe(T0);
+    w.store.close();
+  });
+
+  test('a re-scan stopped mid-walk leaves the previous census restorable after restart', async () => {
+    const w = world([OWN_PK, '1'], []);
+    await w.boot().scan();
+    w.clock.advance(60_000);
+
+    // The second scan is stopped during its followers phase — before this
+    // change, starting it destroyed the durable snapshot up front, so a
+    // relaunch came back to zeros.
+    let second!: PruneEngine;
+    second = w.boot({
+      ownFollowers: {
+        fetchAllPks: async (): Promise<PruneScanFetch> => {
+          second.stop();
+          return { pks: [], complete: false, reason: 'stop-requested' };
+        },
+      },
+    });
+    const res = await second.scan();
+    expect(res.aborted).toBe(true);
+
+    const s = w.boot().status();
+    expect(s.following).toBe(2);
+    expect(s.candidates).toBe(1);
+    expect(s.remaining).toBe(1);
+    expect(s.scanReady).toBe(true); // the previous reviewed set is still runnable
+    expect(s.census?.at).toBe(T0);
+    w.store.close();
+  });
+
+  test('a consumed run keeps the census timestamp across a restart', async () => {
+    const w = world([OWN_PK, '1'], []);
+    const e = w.boot();
+    await e.scan();
+    w.clock.advance(60_000);
+    await e.run();
+
+    const s = w.boot().status();
+    expect(s.scanReady).toBe(false); // nothing runnable is left…
+    expect(s.scanAt).toBe(T0); // …but the tiles can still say when
+    expect(s.census?.following).toBe(2);
+    expect(s.rawRemaining).toBe(0);
+    w.store.close();
+  });
+
   test('a restart derives the restored counts against the CURRENT whitelist', async () => {
     // Scan with an empty whitelist, then restart an engine whose settings now
     // whitelist one of the two candidates: the raw persisted census re-derives.

@@ -5,13 +5,11 @@ import { commas, ratio, relTime } from '@/renderer/lib/format';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 import { NumberTicker } from '@/renderer/ui/NumberTicker';
 import { Stat } from '@/renderer/ui/Stat';
-import type { PruneScanResult, PruneStatus } from '@/types';
+import type { PruneStatus } from '@/types';
 
 export interface PruneCensusCardProps {
-  /** Live prune projection (carries the last persisted scan's counts). */
+  /** Live prune projection (carries the durable last-complete census). */
   prune: PruneStatus | null;
-  /** This session's scan result, when one has completed. */
-  scan: PruneScanResult | null;
   /** True while this view's `scanPrune()` call is in flight. */
   scanning: boolean;
   /** Actionable candidates after the LIVE whitelist; null before any census. */
@@ -20,111 +18,187 @@ export interface PruneCensusCardProps {
   whitelistCount: number;
 }
 
+/** Inline segment/dot colors for the composition classes the stylesheet does
+ *  not carry (`mutual`/`prunable`/`shielded` keep their CSS classes). */
+const SEG_BG = {
+  handled: 'background:linear-gradient(180deg, #9b90c4, #7c70a6)',
+  exempt: 'background:linear-gradient(180deg, #8fa8c9, #6d87a8)',
+  unresolvable: 'background:linear-gradient(180deg, #747985, #575c68)',
+} as const;
+const DOT_BG = {
+  handled: 'background:#8b7fb5',
+  exempt: 'background:#7d97b8',
+  unresolvable: 'background:#63687a',
+} as const;
+
 /**
  * Prune · Census — the page-wide overview: Following / Followers / ratio /
- * Not-following-back tiles plus the reciprocity bar showing how the following
- * count splits (follow back / prunable / whitelist-protected). All numbers are
- * LIVE during a scan (docs/PRINCIPLES.md §2): scan sources stream every row's
- * edge into the graph, and the pushed projection carries graph-derived counts —
- * so the tiles and the bar move WHILE the walk runs, not when it ends.
+ * Prunable tiles plus the composition bar showing how the census following
+ * count splits. Every number is anchored on the LAST COMPLETE census (durable;
+ * stamped "Scanned Nh ago" in the header) — a stopped scan or a consumed run
+ * never swaps partial or unlabeled figures into these tiles. While a scan is
+ * LIVE (docs/PRINCIPLES.md §2) the count tiles ride the walk's streaming
+ * totals and the fourth tile switches to the distinctly-labeled live
+ * "Unconfirmed" figure (the whole-graph not-following-back count, a broader
+ * quantity than the census candidates — never shown under the census label).
  */
 export function PruneCensusCard({
   prune,
-  scan,
   scanning,
   visibleCount,
   whitelistCount,
 }: PruneCensusCardProps): h.JSX.Element {
   const isScanning = scanning || prune?.state === 'scanning';
+  const census = prune?.census ?? null;
 
-  // While a scan is LIVE the pushed projection carries the mid-scrape counts —
-  // prefer it over a previous session's cached scan so the numbers tick in
-  // real time. Otherwise prefer this session's scan, then the persisted counts.
-  const following =
-    (isScanning ? prune?.following : undefined) ?? scan?.following ?? prune?.following ?? 0;
-  const followers =
-    (isScanning ? prune?.followers : undefined) ?? scan?.followers ?? prune?.followers ?? 0;
-  const notBack = isScanning
-    ? (prune?.graph.notFollowingBack ?? 0)
-    : scan !== null
-      ? scan.candidates.length
-      : (prune?.candidates ?? 0);
+  // Count tiles: the settled census while idle; the walk's LIVE streaming
+  // counts while a scan runs (the header marks that state 'live').
+  const following = isScanning ? (prune?.following ?? 0) : (census?.following ?? 0);
+  const followers = isScanning ? (prune?.followers ?? 0) : (census?.followers ?? 0);
 
-  // Paced count-ups while scanning (pushes land in page-sized jumps); the quick
-  // ease-out otherwise. The bar rides the same display values as the tiles.
+  // THE one 'Prunable' definition, at all times: candidates still unvisited
+  // after the live whitelist — always the same number as the candidate list.
+  const prunable = visibleCount ?? prune?.remaining ?? 0;
+  // The live mid-scan figure is a DIFFERENT quantity (whole-graph count,
+  // including whitelisted, growth-managed, and stale edges) — it only ever
+  // renders under its own label while scanning.
+  const unconfirmed = prune?.graph.notFollowingBack ?? 0;
+
+  // Paced count-ups while scanning (pushes land in page-sized jumps); the
+  // quick ease-out otherwise.
   const followingD = useCountUp(following, { paced: isScanning });
   const followersD = useCountUp(followers, { paced: isScanning });
-  const notBackD = useCountUp(notBack, { paced: isScanning });
+  const prunableD = useCountUp(prunable);
+  const unconfirmedD = useCountUp(unconfirmed, { paced: isScanning });
 
-  const scannedEver =
-    isScanning ||
-    scan !== null ||
-    (prune !== null && (prune.following > 0 || prune.followers > 0));
+  const showTiles = isScanning || census !== null;
 
-  // The whitelist shields part of the not-following-back set; the rest is
-  // prunable. Split the DISPLAY value the same way so the bar ticks with it.
-  const shielded =
-    visibleCount !== null ? Math.max(0, notBack - Math.min(notBack, visibleCount)) : 0;
-  const shieldedW = Math.min(shielded, notBackD);
-  const prunableW = Math.max(0, notBackD - shieldedW);
-  const mutualW = Math.max(0, followingD - notBackD);
-  const total = Math.max(1, followingD);
-  const pct = (n: number): string => `width:${((n / total) * 100).toFixed(2)}%`;
+  // Composition of the census following count, every segment from the same
+  // scraped basis so they sum to the total exactly:
+  //   scraped list  = follow back + exempt + (handled + prunable + shielded)
+  //   header count  = scraped list + unresolvable (deactivated ghosts)
+  const seg =
+    census !== null
+      ? (() => {
+          const rawRemaining = Math.min(prune?.rawRemaining ?? 0, census.candidates);
+          const actionable = Math.min(Math.max(0, prunable), rawRemaining);
+          return {
+            at: census.at,
+            mutual: Math.max(0, census.scrapedFollowing - census.notFollowingBack),
+            exempt: Math.max(0, census.notFollowingBack - census.candidates),
+            handled: census.candidates - rawRemaining,
+            prunable: actionable,
+            shielded: rawRemaining - actionable,
+            unresolvable: Math.max(0, census.following - census.scrapedFollowing),
+            total: Math.max(1, census.following),
+          };
+        })()
+      : null;
+  const pct = (n: number): string => `width:${((n / (seg?.total ?? 1)) * 100).toFixed(2)}%`;
 
   return (
     <Card raised index={0}>
       <CardHeader
         icon="chart-pie"
-        aux={isScanning ? 'live' : prune?.scanAt != null ? relTime(prune.scanAt) : undefined}
+        aux={isScanning ? 'live' : census !== null ? `Scanned ${relTime(census.at)}` : undefined}
       >
         Prune · Census
       </CardHeader>
       <CardBody>
         <div class="prune-stats">
           <Stat label="Following">
-            {scannedEver ? <NumberTicker value={followingD} /> : '—'}
+            {showTiles ? <NumberTicker value={followingD} /> : '—'}
           </Stat>
           <Stat label="Followers">
-            {scannedEver ? <NumberTicker value={followersD} /> : '—'}
+            {showTiles ? <NumberTicker value={followersD} /> : '—'}
           </Stat>
           <Stat label="Ratio" sub="followers per following">
-            {scannedEver && followingD > 0 ? ratio(followersD / followingD) : '—'}
+            {showTiles && followingD > 0 ? ratio(followersD / followingD) : '—'}
           </Stat>
-          <Stat label="Not following back">
-            {scannedEver ? <NumberTicker value={notBackD} /> : '—'}
-          </Stat>
+          {isScanning ? (
+            <Stat label="Unconfirmed" sub="not yet seen following back">
+              <NumberTicker value={unconfirmedD} />
+            </Stat>
+          ) : (
+            <Stat label="Prunable" sub="don’t follow back · unprotected">
+              {census !== null ? <NumberTicker value={prunableD} /> : '—'}
+            </Stat>
+          )}
           <Stat label="Whitelisted">{commas(whitelistCount)}</Stat>
         </div>
-        {scannedEver && followingD > 0 ? (
+        {seg !== null ? (
           <div class="pcomp">
+            {isScanning ? (
+              <div class="hint">
+                Composition from the last complete scan ({relTime(seg.at)}) — the tiles above are
+                live.
+              </div>
+            ) : null}
             <div
               class="pcomp-bar"
               role="img"
-              aria-label={`Of ${commas(followingD)} followed accounts: ${commas(mutualW)} follow back, ${commas(prunableW)} are prunable, ${commas(shieldedW)} are whitelist-protected`}
+              aria-label={
+                `Of ${commas(seg.total)} followed accounts at the last scan: ` +
+                `${commas(seg.mutual)} follow back, ${commas(seg.prunable)} are prunable, ` +
+                `${commas(seg.shielded)} are whitelist-protected, ` +
+                `${commas(seg.handled)} were already unfollowed or skipped by a run, ` +
+                `${commas(seg.exempt)} are managed by the growth engine, and ` +
+                `${commas(seg.unresolvable)} are unresolvable (deactivated or unavailable ` +
+                `accounts Instagram still counts but no longer lists)`
+              }
             >
-              <i class="pcomp-seg mutual" style={pct(mutualW)} />
-              <i class="pcomp-seg prunable" style={pct(prunableW)} />
-              {shieldedW > 0 ? <i class="pcomp-seg shielded" style={pct(shieldedW)} /> : null}
+              <i class="pcomp-seg mutual" style={pct(seg.mutual)} />
+              {seg.handled > 0 ? (
+                <i class="pcomp-seg" style={`${pct(seg.handled)};${SEG_BG.handled}`} />
+              ) : null}
+              <i class="pcomp-seg prunable" style={pct(seg.prunable)} />
+              {seg.shielded > 0 ? <i class="pcomp-seg shielded" style={pct(seg.shielded)} /> : null}
+              {seg.exempt > 0 ? (
+                <i class="pcomp-seg" style={`${pct(seg.exempt)};${SEG_BG.exempt}`} />
+              ) : null}
+              {seg.unresolvable > 0 ? (
+                <i class="pcomp-seg" style={`${pct(seg.unresolvable)};${SEG_BG.unresolvable}`} />
+              ) : null}
             </div>
             <div class="pcomp-legend">
               <span>
-                <i class="dot mutual" /> Follow back <b class="num">{commas(mutualW)}</b>
+                <i class="dot mutual" /> Follow back <b class="num">{commas(seg.mutual)}</b>
               </span>
               <span>
-                <i class="dot prunable" /> Prunable <b class="num">{commas(prunableW)}</b>
+                <i class="dot prunable" /> Prunable <b class="num">{commas(seg.prunable)}</b>
               </span>
-              <span>
-                <i class="dot shielded" /> Whitelist-protected{' '}
-                <b class="num">{commas(shieldedW)}</b>
-              </span>
+              {seg.shielded > 0 ? (
+                <span>
+                  <i class="dot shielded" /> Whitelist-protected{' '}
+                  <b class="num">{commas(seg.shielded)}</b>
+                </span>
+              ) : null}
+              {seg.handled > 0 ? (
+                <span title="Census candidates a run has already unfollowed or skipped">
+                  <i class="dot" style={DOT_BG.handled} /> Unfollowed / skipped{' '}
+                  <b class="num">{commas(seg.handled)}</b>
+                </span>
+              ) : null}
+              {seg.exempt > 0 ? (
+                <span title="Accounts the growth engine manages (including chain targets) — never pruned">
+                  <i class="dot" style={DOT_BG.exempt} /> Growth-managed{' '}
+                  <b class="num">{commas(seg.exempt)}</b>
+                </span>
+              ) : null}
+              {seg.unresolvable > 0 ? (
+                <span title="Deactivated or unavailable accounts Instagram still counts in your following total but no longer lists">
+                  <i class="dot" style={DOT_BG.unresolvable} /> Unresolvable{' '}
+                  <b class="num">{commas(seg.unresolvable)}</b>
+                </span>
+              ) : null}
             </div>
           </div>
-        ) : (
+        ) : !isScanning ? (
           <div class="hint">
             Run a scan to take the census — the bar shows how your following splits between
-            accounts that follow back, prunable accounts, and whitelisted ones.
+            accounts that follow back, prunable accounts, and protected or unresolvable ones.
           </div>
-        )}
+        ) : null}
       </CardBody>
     </Card>
   );

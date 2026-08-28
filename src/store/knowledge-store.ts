@@ -71,6 +71,33 @@ interface TargetRow {
   chain_index: number | null;
 }
 
+/**
+ * The last COMPLETE prune census: the settled counts of the most recent scan
+ * that verifiably walked both lists to the end, plus the scraped basis every
+ * derived composition figure rests on. Persisted in the meta table (see
+ * {@link KnowledgeStore.savePruneCensus}) so it survives relaunch, and only
+ * ever replaced by the NEXT complete scan — an aborted or failed scan and a
+ * run that consumes the candidate rows all leave it standing.
+ */
+export interface PruneCensusRecord {
+  /** Epoch ms the census-completing scan finished. */
+  at: number;
+  /** Display counts: scraped list + ghost buffer = the numbers Instagram's
+   *  own profile header shows (see the GHOST BUFFER note in prune-engine). */
+  following: number;
+  followers: number;
+  /** The walked lists' true sizes — what the list API actually returned. The
+   *  gap to `following`/`followers` is deactivated/unavailable accounts the
+   *  header still counts but the list never resolves ("unresolvable"). */
+  scrapedFollowing: number;
+  scrapedFollowers: number;
+  /** Scraped follows of ours with no reciprocal follower row (self excluded). */
+  notFollowingBack: number;
+  /** Of those, the raw prune census: growth-managed accounts and chain targets
+   *  excluded, whitelist NOT applied (the runnable set derives from it live). */
+  candidates: number;
+}
+
 const boolOrUndef = (v: number | null): boolean | undefined =>
   v === null ? undefined : v !== 0;
 const numOrUndef = (v: number | null): number | undefined => (v === null ? undefined : v);
@@ -446,6 +473,41 @@ export class KnowledgeStore {
     });
     tx();
     this.changed();
+  }
+
+  /** How many raw census rows a run has not yet visited (0 when no snapshot).
+   *  A cheap COUNT twin of {@link getPruneScan}'s `remaining` — safe to read on
+   *  every status projection, unlike loading the full row set. */
+  pruneScanRemainingCount(): number {
+    const row = this.db.prepare(`SELECT COUNT(*) AS c FROM prune_scan_remaining`).get() as {
+      c: number;
+    };
+    return row.c;
+  }
+
+  // --- Last complete prune census (meta-backed) ------------------------------------
+
+  /**
+   * Replace the durable last-COMPLETE-census record. Kept SEPARATE from the
+   * runnable-scan snapshot above on purpose: the snapshot's candidate rows are
+   * consumed by runs and replaced by the next scan, while THIS record is the
+   * settled whole-list census a finished scan produced — the display truth the
+   * prune panel anchors on. It is only ever replaced by the next COMPLETE scan,
+   * so an aborted/failed scan and a consumed run all leave it standing, and it
+   * survives relaunch (docs/PRINCIPLES.md §3) via the meta table.
+   */
+  savePruneCensus(census: PruneCensusRecord): void {
+    this.setMeta('prune_last_census', JSON.stringify(census));
+    this.changed();
+  }
+
+  /** The persisted last-complete census, or null when no scan ever completed. */
+  getPruneCensus(): PruneCensusRecord | null {
+    const raw = this.getMeta('prune_last_census');
+    if (raw === null) return null;
+    // Own-write round-trip: a corrupt value throws loud in JSON.parse rather
+    // than fabricating an empty census (no silent catches).
+    return JSON.parse(raw) as PruneCensusRecord;
   }
 
   // --- Churn lifecycle: follow_records (§3.4) ------------------------------------
