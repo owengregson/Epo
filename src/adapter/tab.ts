@@ -90,6 +90,17 @@ export class InstagramTab {
   private debuggerReady = false;
   /** Serializes CDP input dispatches so move/down/up order is guaranteed. */
   private inputChain: Promise<void> = Promise.resolve();
+  /**
+   * Set when a health event fires (debugger detach, renderer gone/unresponsive,
+   * input-dispatch fallback); cleared only by a completed {@link recoverTab}.
+   * {@link checkHealth} folds it in, so every diagnostic path routes to
+   * recovery even when the renderer's rAF still ticks.
+   */
+  private unhealthyReason: string | null = null;
+  /** Health-event policy callback — the composition root owns recovery. */
+  private onUnhealthyCb: ((reason: string) => void) | null = null;
+  /** The CDP→sendInputEvent fallback fires ONE health event per attach epoch. */
+  private inputFallbackReported = false;
 
   constructor(opts: InstagramTabOptions = {}) {
     this.timeouts = {
@@ -124,7 +135,47 @@ export class InstagramTab {
   /** Attach the tab to a host window and begin observing network traffic. */
   attach(win: BaseWindow): void {
     win.contentView.addChildView(this.view);
+    // Health eventing — registered ONCE per webContents (a reload keeps the
+    // same webContents, so recoverTab never needs to re-register these). A
+    // crashed or hung renderer must surface as an EVENT the composition root
+    // routes to recovery, never as a silently-dead onResponse stream.
+    const wc = this.view.webContents;
+    wc.on('render-process-gone', (_event, details) => {
+      this.debuggerReady = false;
+      this.markUnhealthy(`render-process-gone:${details.reason}`);
+    });
+    wc.on('unresponsive', () => {
+      this.markUnhealthy('unresponsive');
+    });
     this.attachDebugger();
+  }
+
+  /**
+   * Health-event callback (settable like the response observer): fired when
+   * the tab detects its own machinery is compromised — the CDP debugger
+   * detached (onResponse consumers observe NOTHING from then on), the renderer
+   * process crashed or hung, or input dispatch fell back to the
+   * focus-dependent `webContents.sendInputEvent` transport. The tab only
+   * REPORTS; recovery policy (when to call {@link recoverTab}) belongs to the
+   * caller — an event here must never trigger a reload on its own.
+   */
+  onUnhealthy(cb: (reason: string) => void): void {
+    this.onUnhealthyCb = cb;
+  }
+
+  /** True while a health event stands un-repaired (no recoverTab since). */
+  isMarkedUnhealthy(): boolean {
+    return this.unhealthyReason !== null;
+  }
+
+  private markUnhealthy(reason: string): void {
+    this.unhealthyReason = reason;
+    logger.error('tab: unhealthy', { reason });
+    try {
+      this.onUnhealthyCb?.(reason);
+    } catch (e) {
+      logger.error('tab.onUnhealthy callback threw', { reason, error: String(e) });
+    }
   }
 
   /** Position the tab within the host window. */
@@ -250,6 +301,14 @@ export class InstagramTab {
           type: event.type,
         });
         wc.sendInputEvent(event);
+        // One fallback means EVERY subsequent input rides the focus-dependent
+        // transport (documented to drop all background clicks) — a session-
+        // level health event, not a per-event warn. Fired once per attach
+        // epoch; recoverTab re-arms it along with the debugger.
+        if (!this.inputFallbackReported) {
+          this.inputFallbackReported = true;
+          this.markUnhealthy('input-fallback');
+        }
       })
       .catch((e: unknown) => {
         logger.error('tab.sendInputEvent: input dispatch failed', {
@@ -338,7 +397,15 @@ export class InstagramTab {
         }))()`,
       );
       const rafTicks = typeof ticks === 'number' ? ticks : 0;
-      return { healthy: rafTicks > 0, evaluateOk: true, rafTicks };
+      // A standing health mark (debugger detached, renderer gone, input on the
+      // focus-dependent fallback) is unhealthy even while rAF still ticks: the
+      // CDP layer the Reader and input dispatch ride is gone until recoverTab
+      // re-arms it — so every checkHealth caller routes to recovery.
+      return {
+        healthy: rafTicks > 0 && this.unhealthyReason === null,
+        evaluateOk: true,
+        rafTicks,
+      };
     } catch (e) {
       logger.warn('tab.checkHealth failed', { error: String(e) });
       return { healthy: false, evaluateOk: false, rafTicks: 0 };
@@ -369,6 +436,9 @@ export class InstagramTab {
     logger.warn('tab.recoverTab: reloading webContents and re-attaching debugger');
     this.pending.clear();
     const dbg = wc.debugger;
+    // A DELIBERATE detach must not fire the unhealthy event this recovery is
+    // here to repair — drop the detach listener before detaching.
+    dbg.removeListener('detach', this.onDebuggerDetach);
     if (dbg.isAttached()) {
       try {
         dbg.detach();
@@ -399,13 +469,22 @@ export class InstagramTab {
       });
     }
     this.attachDebugger();
+    // Re-armed: attachDebugger re-registered the detach + message listeners
+    // and re-enabled Network + focus emulation on the fresh session. Clear the
+    // health marks so the NEXT event (including a fresh input fallback in the
+    // new epoch) reports again instead of being swallowed as already-known.
+    this.unhealthyReason = null;
+    this.inputFallbackReported = false;
   }
 
   /** Detach the debugger and release the network observer. Idempotent. */
   dispose(): void {
     this.responseHandlers.clear();
     this.pending.clear();
+    // Teardown detach is deliberate — never a health event.
+    this.onUnhealthyCb = null;
     const dbg = this.view.webContents.debugger;
+    dbg.removeListener('detach', this.onDebuggerDetach);
     if (this.debuggerReady && dbg.isAttached()) {
       try {
         dbg.detach();
@@ -422,17 +501,24 @@ export class InstagramTab {
 
   private attachDebugger(): void {
     const dbg = this.view.webContents.debugger;
-    if (dbg.isAttached()) {
-      this.debuggerReady = true;
-      return;
+    if (!dbg.isAttached()) {
+      try {
+        dbg.attach('1.3');
+      } catch (e) {
+        // Loud, never silent: without CDP the Reader has no data source.
+        logger.error('tab.debugger.attach failed', { error: String(e) });
+        return;
+      }
     }
-    try {
-      dbg.attach('1.3');
-    } catch (e) {
-      // Loud, never silent: without CDP the Reader has no data source.
-      logger.error('tab.debugger.attach failed', { error: String(e) });
-      return;
-    }
+    // Idempotent (re-)registration — remove-then-add: recoverTab re-enters
+    // here after a reload, and a doubled listener would emit every response
+    // (and every detach) twice. The 'detach' listener MUST ride every
+    // (re-)attach: an event-loop detach (renderer crash under background
+    // memory pressure, sleep-resume teardown, a DevTools conflict) otherwise
+    // kills onResponse + CDP input silently, forever.
+    dbg.removeListener('message', this.onDebuggerMessage);
+    dbg.removeListener('detach', this.onDebuggerDetach);
+    dbg.on('detach', this.onDebuggerDetach);
     dbg.on('message', this.onDebuggerMessage);
     dbg
       .sendCommand('Network.enable')
@@ -446,12 +532,26 @@ export class InstagramTab {
     // The page always believes it is focused (Playwright's default): an
     // unfocused window otherwise fires window blur handlers that some SPAs
     // use to pause work. Best-effort — input and reads work without it.
+    // Re-applied on every (re-)attach, so a debugger re-creation restores it.
     dbg
       .sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
       .catch((e: unknown) => {
         logger.warn('tab.focus-state enable failed', { error: String(e) });
       });
   }
+
+  /**
+   * Chromium terminated the CDP session out from under us. From this moment
+   * onResponse consumers observe NOTHING (no error — the stream just goes
+   * quiet) and every input dispatch silently falls back to the
+   * focus-dependent transport, so this is a health EVENT, never a debug log.
+   * Deliberate detaches (recoverTab / dispose) remove this listener first.
+   */
+  private readonly onDebuggerDetach = (_event: ElectronEvent, reason: string): void => {
+    this.debuggerReady = false;
+    this.pending.clear();
+    this.markUnhealthy(`debugger-detach:${reason}`);
+  };
 
   private readonly onDebuggerMessage = (
     _event: ElectronEvent,

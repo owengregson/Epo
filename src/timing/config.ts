@@ -139,6 +139,17 @@ export const RECOVERY = {
   /** Scheduled prune stays off the tab this long after a rate-limit-classified
    *  halt — a census walk into the same wall would deepen the block. */
   PRUNE_COOLDOWN_AFTER_RATE_HALT_MS: 2 * 3600_000,
+  /** Tab health events (debugger detach, renderer gone/unresponsive, input
+   *  fallback) coalesce into at most ONE recovery attempt per this window: a
+   *  crashing renderer emits a burst of events, and each recovery is itself a
+   *  reload + debugger re-attach that must never stack on the previous one. */
+  TAB_EVENT_DEBOUNCE_MS: 60_000,
+  /** Post-wake settle band (uniform draw): after a system resume the network
+   *  stack and the tab's renderer take a few seconds to re-establish — probing
+   *  instantly reads a half-dead system and burns spurious failures. Jittered
+   *  so post-wake work never lands at a fixed offset after every lid-open. */
+  RESUME_SETTLE_MIN_MS: 3_000,
+  RESUME_SETTLE_MAX_MS: 10_000,
 } as const;
 
 export const RIM = {

@@ -105,7 +105,7 @@ import { KnowledgeStore } from '@/store/knowledge-store';
 import { samplePhaseOffset } from '@/timing/circadian';
 import { ADAPTER, CIRCADIAN, POLL, PRUNE, RECOVERY, SCHEDULER, TAB } from '@/timing/config';
 import { DelayManager } from '@/timing/delay-manager';
-import { sleep, TIMED_OUT, withTimeout } from '@/timing/primitives';
+import { sleep, TIMED_OUT, uniform, withTimeout } from '@/timing/primitives';
 import { ScheduleManager } from '@/timing/schedule-manager';
 import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
 import { MS_PER_DAY } from '@/timing/units';
@@ -165,6 +165,14 @@ export interface FoundationDeps {
    * main forwards it to the overlay veil's readout. Purely observational.
    */
   activityReporter?: ActivityReporter;
+  /**
+   * Ask the main-process ConnectivityMonitor for an IMMEDIATE re-probe (the
+   * post-wake sequence calls this — the periodic cadence is too slow to catch
+   * a network stack still re-establishing after sleep). Injected because the
+   * monitor lives in main (electron-bound) and the Foundation must stay
+   * electron-mockable for jest.
+   */
+  requestConnectivityCheck?: () => void;
 }
 
 /** The lazily-built dependency graph, cached once `ownPk` is resolvable. */
@@ -360,6 +368,31 @@ export class Foundation {
    * first emit).
    */
   private pendingGrowthStart = false;
+  /** Main's hook for an immediate ConnectivityMonitor re-probe (post-wake). */
+  private readonly requestConnectivityCheck?: () => void;
+  /**
+   * Epoch ms of the last tab-health-event recovery ATTEMPT: repeated events
+   * (a crashing renderer emits a burst) coalesce into one recovery per
+   * `RECOVERY.TAB_EVENT_DEBOUNCE_MS` window.
+   */
+  private lastTabEventRecoveryAt = 0;
+  /** Re-entrancy latch for the tab-health-event recovery flow. */
+  private tabEventRecoveryInFlight = false;
+  /**
+   * True from the OS 'suspend' event until the post-'resume' wake sequence
+   * completes. While set, tab health events are NOT acted on — the sleep
+   * transition itself tears renderers down, and the wake sequence re-validates
+   * connectivity, tab health, and the sentinel in order anyway.
+   */
+  private suspendedForSleep = false;
+  /**
+   * The growth engine was RUNNING when the system suspended, so the wake
+   * sequence must restart it (a user's own pause/stop/halt is never undone —
+   * same contract as the prune/tour hand-offs).
+   */
+  private resumeEngineAfterSleep = false;
+  /** Re-entrancy latch for the ordered post-wake sequence (double 'resume'). */
+  private resumeSequenceInFlight = false;
 
   constructor(deps: FoundationDeps) {
     this.tab = deps.tab;
@@ -368,10 +401,17 @@ export class Foundation {
     this.onChainListCb = deps.onChainList;
     this.cursorObserver = deps.cursorObserver;
     this.reporter = deps.activityReporter ?? NOOP_ACTIVITY_REPORTER;
+    this.requestConnectivityCheck = deps.requestConnectivityCheck;
     this.activity = new TabActivity((active, holds) => {
       logger.info('foundation: tab activity', { active, holds });
       deps.onActivity?.(active, holds);
     });
+    // Tab health events (debugger detach, renderer gone/unresponsive, input
+    // fallback): the tab reports, the Foundation owns the recovery policy.
+    // Guarded — partially-shaped test tabs may not carry the callback seam.
+    if (typeof this.tab.onUnhealthy === 'function') {
+      this.tab.onUnhealthy((reason) => this.handleTabUnhealthy(reason));
+    }
     logger.info('foundation created (graph deferred until login)');
   }
 
@@ -1345,6 +1385,191 @@ export class Foundation {
   }
 
   /**
+   * A tab health event landed (debugger detach, renderer gone/unresponsive,
+   * input fallback — see {@link InstagramTab.onUnhealthy}). Route it into the
+   * same recover-then-note flow the step watchdog uses: a bounded
+   * {@link InstagramTab.recoverTab} plus a recovery-ladder note. The engine is
+   * deliberately NOT stopped/restarted here — if it is mid-run against a
+   * genuinely dead tab, the step watchdog / recovery ladder escalate through
+   * their own machinery. Guarded: never while disposing / tearing down / the
+   * tour hold is up / a system sleep-wake is in progress (the wake sequence
+   * re-validates the tab itself); never re-entrant; and repeated events
+   * coalesce into ONE recovery per `RECOVERY.TAB_EVENT_DEBOUNCE_MS` window.
+   */
+  private handleTabUnhealthy(reason: string): void {
+    logger.error('foundation: tab reported unhealthy', { reason });
+    if (this.disposing || this.tearingDown || this.tourHold || this.suspendedForSleep) {
+      logger.warn('foundation: tab health event not acted on (teardown/hold/sleep in progress)', {
+        reason,
+      });
+      return;
+    }
+    if (this.tabEventRecoveryInFlight) {
+      logger.warn('foundation: tab health event coalesced into in-flight recovery', { reason });
+      return;
+    }
+    const now = Date.now();
+    if (now - this.lastTabEventRecoveryAt < RECOVERY.TAB_EVENT_DEBOUNCE_MS) {
+      logger.warn('foundation: tab health event debounced (recent recovery attempt)', {
+        reason,
+        sinceLastMs: now - this.lastTabEventRecoveryAt,
+        debounceMs: RECOVERY.TAB_EVENT_DEBOUNCE_MS,
+      });
+      return;
+    }
+    this.lastTabEventRecoveryAt = now;
+    this.tabEventRecoveryInFlight = true;
+    void this.recoverAfterTabEvent(reason).finally(() => {
+      this.tabEventRecoveryInFlight = false;
+    });
+  }
+
+  /** The bounded recover-then-note body of {@link handleTabUnhealthy}. */
+  private async recoverAfterTabEvent(reason: string): Promise<void> {
+    logger.warn('foundation: recovering tab after health event', { reason });
+    if (typeof this.tab.recoverTab === 'function') {
+      try {
+        // recoverTab is internally deadline-bounded (reload + re-attach).
+        await this.tab.recoverTab();
+      } catch (e) {
+        logger.error('foundation: tab recovery after health event failed', {
+          reason,
+          error: String(e),
+        });
+        return;
+      }
+    }
+    // Generation-safe (mirrors the watchdog path): the graph may have been
+    // torn down or a dispose begun while the recovery ran — never touch a
+    // stale engine. The ladder keeps the full history: this external recovery
+    // is a 'tab-unhealthy' note in its tally (a note, never a hold).
+    if (this.disposing || this.graph === null) return;
+    this.graph.engine.noteExternalTabRecovery();
+  }
+
+  // -------------------------------------------------------------------------
+  // System sleep/resume (powerMonitor — wired by main, policy lives here)
+  // -------------------------------------------------------------------------
+
+  /**
+   * The OS is suspending (lid close — NOT covered by the app-suspension power
+   * save blocker). Freeze cleanly NOW, synchronously: a suspend handler cannot
+   * hold off sleep, so nothing here may await. A RUNNING growth engine is
+   * stopped via {@link Engine.stop} — stop (not pause) aborts the run signal,
+   * so an in-flight adapter wait surfaces as `ActionAbortedError` → `'blocked'`
+   * in the churn rim (record untouched) instead of stalling across the sleep
+   * and burning a spurious failure on wake. Whether it was running is
+   * remembered so {@link resumeFromSleep} restarts it; a paused/halted/idle
+   * engine (a user's own state) is left exactly as it is.
+   */
+  suspendForSleep(): void {
+    if (this.disposing) return;
+    this.suspendedForSleep = true;
+    const graph = this.graph;
+    const state = graph?.engine.status().state ?? null;
+    this.resumeEngineAfterSleep = state === 'running';
+    logger.warn('foundation: system suspend — freezing', {
+      engineState: state,
+      activeDriver: this.activeDriver,
+      willResumeEngine: this.resumeEngineAfterSleep,
+    });
+    if (graph !== null && state === 'running') {
+      graph.engine.stop();
+      // The stopped run holds the driver token until its loop's in-flight step
+      // settles (possibly seconds after wake) — release it now so the wake
+      // sequence's restart is never refused. The stale loop's own settlement
+      // is generation-guarded (mirrors {@link recoverWedgedEngine}).
+      if (this.activeDriver === 'growth') this.activeDriver = null;
+    }
+  }
+
+  /**
+   * The OS resumed. Run the ordered wake sequence:
+   *
+   *  1. a short JITTERED settle delay (`RECOVERY.RESUME_SETTLE_MIN/MAX_MS`) —
+   *     the network stack and the tab's renderer re-establish for a few
+   *     seconds after wake, and probing instantly reads a half-dead system;
+   *  2. an immediate connectivity re-probe (the monitor's own cadence is too
+   *     slow) — a still-offline network then flows through the engine's
+   *     existing offline auto-hold;
+   *  3. tab health canary → bounded {@link InstagramTab.recoverTab} when
+   *     unhealthy (a sleep-teardown debugger detach lands here);
+   *  4. sentinel re-check (diagnostic — the engine's own per-step sentinel
+   *     gate stays authoritative);
+   *  5. THEN restart the growth engine IFF it was running at suspend and
+   *     nothing else has claimed the tab meanwhile.
+   *
+   * `settleMsOverride` is test-injectable; production draws the jitter from
+   * the shared distributions primitives.
+   */
+  async resumeFromSleep(opts: { settleMsOverride?: number } = {}): Promise<void> {
+    if (this.disposing) return;
+    if (this.resumeSequenceInFlight) {
+      logger.warn('foundation: resume ignored — wake sequence already in flight');
+      return;
+    }
+    this.resumeSequenceInFlight = true;
+    try {
+      const restart = this.resumeEngineAfterSleep;
+      this.resumeEngineAfterSleep = false;
+      logger.warn('foundation: system resumed — running wake sequence', {
+        restartEngine: restart,
+      });
+      const settleMs =
+        opts.settleMsOverride ??
+        uniform(RECOVERY.RESUME_SETTLE_MIN_MS, RECOVERY.RESUME_SETTLE_MAX_MS).sample(Math.random);
+      await sleep(settleMs, this.disposeAbort.signal);
+      if (this.disposing) return;
+
+      this.requestConnectivityCheck?.();
+
+      if (typeof this.tab.checkHealth === 'function') {
+        const health = await this.tab.checkHealth();
+        if (!health.healthy && typeof this.tab.recoverTab === 'function') {
+          logger.warn('foundation: post-wake tab unhealthy, recovering', { health });
+          try {
+            await this.tab.recoverTab();
+            // Same tally note as every other external tab recovery.
+            if (!this.disposing && this.graph !== null) {
+              this.graph.engine.noteExternalTabRecovery();
+            }
+          } catch (e) {
+            logger.error('foundation: post-wake tab recovery failed', { error: String(e) });
+          }
+        }
+      }
+      if (this.disposing) return;
+
+      const graph = this.graph;
+      if (graph !== null) {
+        try {
+          const sentinel = await graph.sentinel.check();
+          if (sentinel !== 'ok') {
+            logger.warn('foundation: post-wake sentinel not clear', { sentinel });
+          }
+        } catch (e) {
+          logger.warn('foundation: post-wake sentinel check failed', { error: String(e) });
+        }
+      }
+
+      if (
+        restart &&
+        !this.disposing &&
+        !this.tourHold &&
+        this.activeDriver === null &&
+        this.graph !== null &&
+        this.graph.engine.status().state === 'idle'
+      ) {
+        logger.info('foundation: restarting growth engine after system resume');
+        await this.startEngine();
+      }
+    } finally {
+      this.resumeSequenceInFlight = false;
+      this.suspendedForSleep = false;
+    }
+  }
+
+  /**
    * The halt-time diagnostic bundle (recovery-terminal halts): input probe,
    * tab canary, and the recovery ladder's failure-kind tally — logged at error
    * level so the halt log states decisively which layer failed. Best-effort;
@@ -1503,8 +1728,15 @@ export class Foundation {
       }
     }
     if (graph.prunePromise !== null) {
+      // Bounded (mirrors the engine-loop wait above): a prune run wedged on a
+      // never-settling tab await must not park quit forever either.
       try {
-        await graph.prunePromise;
+        const exited = await withTimeout(graph.prunePromise, TAB.TEARDOWN_ENGINE_WAIT_MS);
+        if (exited === TIMED_OUT) {
+          logger.warn('foundation.teardownGraph: prune run did not exit in time, closing anyway', {
+            timeoutMs: TAB.TEARDOWN_ENGINE_WAIT_MS,
+          });
+        }
       } catch (e) {
         logger.error('foundation.teardownGraph: prune run rejected on stop', {
           error: String(e),

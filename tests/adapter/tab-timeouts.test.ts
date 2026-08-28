@@ -27,8 +27,10 @@ jest.mock('electron', () => {
     detach: (): void => {
       dbg.attached = false;
     },
-    on: (_event: string, fn: (event: unknown, method: string, params: unknown) => void): void => {
-      state.messageHandler = fn;
+    on: (event: string, fn: (event: unknown, method: string, params: unknown) => void): void => {
+      // Event-keyed: the tab also registers a 'detach' health listener now —
+      // only the 'message' handler is what these tests drive.
+      if (event === 'message') state.messageHandler = fn;
     },
     removeListener: (): void => {},
     sendCommand: (method: string): Promise<unknown> => state.sendCommand(method),
@@ -38,6 +40,11 @@ jest.mock('electron', () => {
     isDestroyed: (): boolean => false,
     loadURL: (): Promise<unknown> => state.loadURL(),
     executeJavaScript: (): Promise<unknown> => state.executeJavaScript(),
+    on: (): void => {},
+    once: (): void => {},
+    removeListener: (): void => {},
+    reload: (): void => {},
+    sendInputEvent: (): void => {},
     debugger: dbg,
   };
   class WebContentsView {

@@ -12,7 +12,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, BaseWindow, ipcMain, nativeImage, powerSaveBlocker, screen, WebContentsView } from 'electron';
+import { app, BaseWindow, ipcMain, nativeImage, powerMonitor, powerSaveBlocker, screen, WebContentsView } from 'electron';
 import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
 import { claimAppIdentity } from '@/main/app-identity';
 import { ConnectivityMonitor } from '@/main/connectivity';
@@ -225,6 +225,13 @@ function createWindow(): void {
         dash.webContents.send('epo:chain-list', list);
       }
     },
+    // Post-wake immediate connectivity re-probe: stop+start is the monitor's
+    // public way to force one (start's first check is immediate). Closure over
+    // the module ref — the monitor is constructed just below.
+    requestConnectivityCheck: () => {
+      connectivityMonitor?.stop();
+      connectivityMonitor?.start();
+    },
   });
   foundation = found;
 
@@ -262,6 +269,22 @@ function createWindow(): void {
   });
   connectivityMonitor = connectivity;
   connectivity.start();
+
+  // --- System sleep/resume (powerMonitor) -----------------------------------
+  // The `prevent-app-suspension` blocker (whenReady, below) does NOT cover
+  // lid-close sleep: during it every in-flight await stalls, and on wake the
+  // network stack, the CDP attachment, and the sentinel all need re-validation
+  // before the engine may act. The Foundation owns the policy (a clean freeze
+  // on suspend; the ordered wake sequence on resume) — main only forwards the
+  // events, keeping the Foundation electron-mockable for jest.
+  powerMonitor.on('suspend', () => {
+    logger.warn('main: system suspend');
+    foundation?.suspendForSleep();
+  });
+  powerMonitor.on('resume', () => {
+    logger.warn('main: system resumed');
+    void foundation?.resumeFromSleep();
+  });
 
   // Opt-in scheduled auto-prune (Phase 5): fires a prune run when the user's
   // `pruneScheduleDays` cadence is due and it is safe (growth idle, active hours).
