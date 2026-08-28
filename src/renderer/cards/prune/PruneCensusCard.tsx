@@ -18,19 +18,6 @@ export interface PruneCensusCardProps {
   whitelistCount: number;
 }
 
-/** Inline segment/dot colors for the composition classes the stylesheet does
- *  not carry (`mutual`/`prunable`/`shielded` keep their CSS classes). */
-const SEG_BG = {
-  handled: 'background:linear-gradient(180deg, #9b90c4, #7c70a6)',
-  exempt: 'background:linear-gradient(180deg, #8fa8c9, #6d87a8)',
-  unresolvable: 'background:linear-gradient(180deg, #747985, #575c68)',
-} as const;
-const DOT_BG = {
-  handled: 'background:#8b7fb5',
-  exempt: 'background:#7d97b8',
-  unresolvable: 'background:#63687a',
-} as const;
-
 /**
  * Prune · Census — the page-wide overview: Following / Followers / ratio /
  * Prunable tiles plus the composition bar showing how the census following
@@ -90,7 +77,10 @@ export function PruneCensusCard({
             prunable: actionable,
             shielded: rawRemaining - actionable,
             unresolvable: Math.max(0, census.following - census.scrapedFollowing),
-            total: Math.max(1, census.following),
+            // Both sums the segments can form (scraped list, or header count
+            // when it runs higher) — so widths can never exceed 100% and get
+            // silently distorted by flex-shrink.
+            total: Math.max(1, census.following, census.scrapedFollowing),
           };
         })()
       : null;
@@ -147,17 +137,13 @@ export function PruneCensusCard({
                 `accounts Instagram still counts but no longer lists)`
               }
             >
-              <i class="pcomp-seg mutual" style={pct(seg.mutual)} />
-              {seg.handled > 0 ? (
-                <i class="pcomp-seg" style={`${pct(seg.handled)};${SEG_BG.handled}`} />
-              ) : null}
-              <i class="pcomp-seg prunable" style={pct(seg.prunable)} />
+              {seg.mutual > 0 ? <i class="pcomp-seg mutual" style={pct(seg.mutual)} /> : null}
+              {seg.handled > 0 ? <i class="pcomp-seg handled" style={pct(seg.handled)} /> : null}
+              {seg.prunable > 0 ? <i class="pcomp-seg prunable" style={pct(seg.prunable)} /> : null}
               {seg.shielded > 0 ? <i class="pcomp-seg shielded" style={pct(seg.shielded)} /> : null}
-              {seg.exempt > 0 ? (
-                <i class="pcomp-seg" style={`${pct(seg.exempt)};${SEG_BG.exempt}`} />
-              ) : null}
+              {seg.exempt > 0 ? <i class="pcomp-seg exempt" style={pct(seg.exempt)} /> : null}
               {seg.unresolvable > 0 ? (
-                <i class="pcomp-seg" style={`${pct(seg.unresolvable)};${SEG_BG.unresolvable}`} />
+                <i class="pcomp-seg unresolvable" style={pct(seg.unresolvable)} />
               ) : null}
             </div>
             <div class="pcomp-legend">
@@ -175,19 +161,19 @@ export function PruneCensusCard({
               ) : null}
               {seg.handled > 0 ? (
                 <span title="Census candidates a run has already unfollowed or skipped">
-                  <i class="dot" style={DOT_BG.handled} /> Unfollowed / skipped{' '}
+                  <i class="dot handled" /> Unfollowed / skipped{' '}
                   <b class="num">{commas(seg.handled)}</b>
                 </span>
               ) : null}
               {seg.exempt > 0 ? (
                 <span title="Accounts the growth engine manages (including chain targets) — never pruned">
-                  <i class="dot" style={DOT_BG.exempt} /> Growth-managed{' '}
+                  <i class="dot exempt" /> Growth-managed{' '}
                   <b class="num">{commas(seg.exempt)}</b>
                 </span>
               ) : null}
               {seg.unresolvable > 0 ? (
                 <span title="Deactivated or unavailable accounts Instagram still counts in your following total but no longer lists">
-                  <i class="dot" style={DOT_BG.unresolvable} /> Unresolvable{' '}
+                  <i class="dot unresolvable" /> Unresolvable{' '}
                   <b class="num">{commas(seg.unresolvable)}</b>
                 </span>
               ) : null}

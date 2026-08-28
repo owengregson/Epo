@@ -53,7 +53,8 @@ export function ConversionCard({ detail, index = 2 }: ConversionCardProps): h.JS
             ) : (
               <div class="hint">
                 Warming up — the rate and median form as follows resolve (
-                {commas(detail.resolvedOutcomes)} of {CONVERSION_VERDICT_MIN} outcomes settled).
+                <span class="num">{commas(detail.resolvedOutcomes)}</span> of{' '}
+                {CONVERSION_VERDICT_MIN} outcomes settled).
               </div>
             )}
           </Fragment>

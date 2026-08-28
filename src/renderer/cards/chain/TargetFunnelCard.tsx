@@ -23,6 +23,21 @@ interface FunnelRow {
 }
 
 /**
+ * Funnel-local fill overrides — colors tuned for the card's track, not the
+ * canvas ground. The `unfollowed` spent-graphite reads on `--bg` as a dot but
+ * vanishes as a 3px fill on the card track, so the funnel lifts its lightness
+ * ~10 points; the graph palette itself is untouched.
+ */
+const FUNNEL_COLOR_OVERRIDES: Partial<Record<GraphNodeStatus, string>> = {
+  unfollowed: 'hsl(240 6% 37%)',
+};
+
+/** The fill/dot color for one funnel row (palette color unless overridden). */
+function funnelColor(status: GraphNodeStatus): string {
+  return FUNNEL_COLOR_OVERRIDES[status] ?? legendColor(status);
+}
+
+/**
  * Truthful status tail for the header: an exhausted target that never yielded
  * a follow reads "exhausted (unworked)" — drained without work is a different
  * fact from poached out.
@@ -46,15 +61,17 @@ function statusBadge(detail: ChainTargetDetail, current: boolean): h.JSX.Element
  * explicitly. The two terminal oddities are never folded away silently:
  * `abandoned` renders as a hazard row whose copy explains the red (an earlier
  * systemic failure — a requeue healer lands separately), and `external` is
- * labeled hands-off. Counts tick during walks — the hosting view re-reads the
- * detail on every chain push (§2).
+ * labeled hands-off. The observed pool renders as a context stat ABOVE the
+ * funnel, never as a funnel row: it is the crowd the stages draw from, and
+ * keeping it out of the bar denominator keeps the stage bars legible. Counts
+ * tick during walks — the hosting view re-reads the detail on every chain
+ * push (§2).
  */
 export function TargetFunnelCard({ detail, current, index = 0 }: TargetFunnelCardProps): h.JSX.Element {
   const rows: FunnelRow[] =
     detail === null
       ? []
       : [
-          { status: 'known', label: 'Pool observed', n: detail.scanned },
           { status: 'queued', label: LEGEND_LABELS.queued, n: detail.funnel.queued },
           { status: 'waiting', label: LEGEND_LABELS.waiting, n: detail.funnel.pending_followback },
           { status: 'held', label: LEGEND_LABELS.held, n: detail.funnel.followed_back },
@@ -76,13 +93,16 @@ export function TargetFunnelCard({ detail, current, index = 0 }: TargetFunnelCar
   if (detail !== null && detail.funnel.external > 0) {
     rows.push({ status: 'external', label: LEGEND_LABELS.external, n: detail.funnel.external });
   }
+  // Widths are relative to the largest LIFECYCLE segment only. The observed
+  // pool (thousands after a walk) is context, not a stage — folding it into
+  // the denominator would crush every lifecycle bar to sub-pixel widths.
   const denom = Math.max(1, ...rows.map((r) => r.n));
 
   return (
     <Card raised index={index}>
       <CardHeader
         icon="filter"
-        aux={detail !== null ? withAt(detail.username) : undefined}
+        aux={detail !== null ? withAt(detail.username) || detail.accountPk : undefined}
       >
         Target Funnel
       </CardHeader>
@@ -92,15 +112,22 @@ export function TargetFunnelCard({ detail, current, index = 0 }: TargetFunnelCar
         ) : (
           <Fragment>
             <div class="funnel-status">{statusBadge(detail, current)}</div>
+            <div class="funnel-pool num">
+              <span class="dot" style={`background:${funnelColor('known')}`} />
+              <span class="fl">Pool observed</span>
+              <span class="fn">{commas(detail.scanned)}</span>
+            </div>
             <div class="funnel num">
               {rows.map((r) => (
                 <div key={r.status} class={r.hazard ? 'frow hazard' : 'frow'}>
-                  <span class="dot" style={`background:${legendColor(r.status)}`} />
+                  <span class="dot" style={`background:${funnelColor(r.status)}`} />
                   <span class="fl">{r.label}</span>
                   <span class="fbar">
-                    <i
-                      style={`width:${Math.min(100, (r.n / denom) * 100)}%;background:${legendColor(r.status)}`}
-                    />
+                    {r.n > 0 ? (
+                      <i
+                        style={`width:${Math.min(100, (r.n / denom) * 100)}%;background:${funnelColor(r.status)}`}
+                      />
+                    ) : null}
                   </span>
                   <span class="fn">{commas(r.n)}</span>
                 </div>

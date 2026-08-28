@@ -125,7 +125,8 @@ export function QueueRowItem({ stage, row, windows }: QueueRowItemProps): h.JSX.
           ) : null}
         </div>
       </div>
-      <span class="rchip num">r={ratio(row.ratio ?? 0)}</span>
+      {/* An unknown ratio is unknown — never fabricated as the worst case. */}
+      <span class="rchip num">r={row.ratio === null ? '—' : ratio(row.ratio)}</span>
     </div>
   );
 }

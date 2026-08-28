@@ -21,6 +21,9 @@
 }
 .hn-ring .glyph{position:absolute; inset:0; display:grid; place-items:center; color:var(--muted); pointer-events:none}
 .hn-ring .glyph .fa-solid{font-size:var(--fs-xl)}
+/* Fill the row so the trailing hold chip pins to the card's right edge
+   regardless of caption length (max-content sizing let it float mid-card). */
+.hn-main{flex:1; min-width:0}
 .hn-count{font-size:34px; font-size:var(--fs-fluid-hero); font-weight:700; letter-spacing:-0.04em; line-height:1; color:var(--chrome)}
 .console:not([data-state="running"]) .hn-count{color:var(--muted)}
 .hn-cap{font-size:var(--fs-xs); font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); margin-top:var(--sp-1)}
@@ -98,6 +101,14 @@
   stroke:var(--silver); stroke-width:1.2; fill:none;
   stroke-dasharray:3 4; stroke-linecap:round; opacity:.55;
 }
+/* The overlay reads as a continuation of the realized line, so it holds
+   hidden until the reveal reaches its endpoint — GrowthChart flips .on from
+   place() at e >= 1. Reduced motion drops the fade with the rest. */
+.growth-proj-g{opacity:0; transition:opacity .3s var(--ease)}
+.growth-proj-g.on{opacity:1}
+@media (prefers-reduced-motion: reduce){
+  .growth-proj-g{transition:none}
+}
 .growth-proj-note{
   margin-top:var(--sp-2);
   font-size:var(--fs-sm); color:var(--faint); letter-spacing:.02em;
@@ -118,13 +129,15 @@
   font-family:var(--mono); font-size:var(--fs-md); line-height:1.8;
   color:var(--muted);
 }
-.log .ln{display:flex; gap:var(--sp-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.log .ln{display:flex; gap:var(--sp-2); white-space:nowrap; overflow:hidden}
 .log .ts{color:var(--faint)}
 .log .lv{width:38px; flex:0 0 38px; font-weight:700; letter-spacing:.05em}
 .log .lv.info{color:var(--silver)}
 .log .lv.ok{color:var(--live)}
 .log .lv.warn{color:var(--warn)}
-.log .msg{color:var(--muted)}
+/* min-width:0 lets the flex item actually shrink; the ellipsis must live on
+   the overflowing ITEM (text-overflow on the flex container is inert). */
+.log .msg{color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis}
 .log .msg b{color:var(--text); font-weight:600}
 
 /* ============ CHAIN ============ */
@@ -196,27 +209,53 @@
    funnel and the GraphStage legend always agree). Bar geometry mirrors .qbar
    (3px/2px); dot geometry mirrors .pcomp-legend .dot (9px). */
 .funnel-status{margin-bottom:var(--sp-2)}
-.funnel{display:flex; flex-direction:column}
-.frow{display:flex; align-items:center; gap:var(--sp-2); padding:var(--sp-2) 0}
-.frow + .frow{border-top:1px solid var(--divider)}
-.frow .dot{
+/* Pool context header: the observed crowd is what the stages draw FROM, not a
+   stage — it sits above the rows as a stat line, outside the shared track. */
+.funnel-pool{
+  display:flex; align-items:center; gap:var(--sp-2);
+  padding:var(--sp-2) 0;
+  border-bottom:1px solid var(--border);
+}
+.funnel-pool .dot{
   width:9px; height:9px; border-radius:3px; flex:0 0 auto;
   box-shadow:inset 0 0 0 1px rgba(0,0,0,.35);
 }
+.funnel-pool .fl{
+  flex:1; min-width:0;
+  font-size:var(--fs-sm); color:var(--muted);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.funnel-pool .fn{
+  flex:0 0 auto;
+  font-size:var(--fs-base); font-weight:600; color:var(--text);
+}
+.funnel{display:flex; flex-direction:column}
+/* Fixed columns (dot · label · track · count) so every row's track shares the
+   same origin AND length — cross-row bar widths stay comparable magnitudes. */
+.frow{
+  display:grid; grid-template-columns:9px 140px 1fr 6ch; /* 6ch: five digits + comma */
+  align-items:center; column-gap:var(--sp-2); padding:var(--sp-2) 0;
+}
+.frow + .frow{border-top:1px solid var(--divider)}
+.frow .dot{
+  width:9px; height:9px; border-radius:3px;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.35);
+}
 .frow .fl{
-  flex:0 1 auto; min-width:0;
+  min-width:0;
   font-size:var(--fs-sm); color:var(--muted);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 .frow.hazard .fl{color:var(--danger-text)}
 .frow .fbar{
-  flex:1; height:3px; border-radius:2px; /* 3px/2px: meter geometry (as .qbar) */
+  height:3px; border-radius:2px; /* 3px/2px: meter geometry (as .qbar) */
   background:var(--track-bg); overflow:hidden;
   box-shadow:inset 0 1px 1px rgba(0,0,0,.5);
 }
-.frow .fbar i{display:block; height:100%; border-radius:2px}
+/* min-width keeps any nonzero segment visible; zero rows render no fill. */
+.frow .fbar i{display:block; height:100%; min-width:2px; border-radius:2px}
 .frow .fn{
-  flex:0 0 auto; min-width:6ch; text-align:right; /* 6ch: five digits + comma keep columns aligned */
+  text-align:right;
   font-size:var(--fs-base); font-weight:600; color:var(--text);
 }
 
@@ -313,17 +352,25 @@
 .prune-stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(108px, 1fr)); gap:var(--sp-2)}
 .pcomp{margin-top:var(--sp-3)}
 .pcomp-bar{display:flex; height:10px; border-radius:6px; overflow:hidden; background:var(--inset-bg); border:1px solid var(--border); box-shadow:var(--inset-shadow-soft)}
-.pcomp-seg{display:block; height:100%; min-width:0; transition:width .5s var(--ease)}
+/* Segments only render when nonzero, so the 2px floor keeps slivers visible
+   without a zero-width segment ever painting its stray 1px divider. */
+.pcomp-seg{display:block; height:100%; min-width:2px; transition:width .5s var(--ease)}
 .pcomp-seg+.pcomp-seg{border-left:1px solid rgba(0,0,0,.5)}
 .pcomp-seg.mutual{background:linear-gradient(180deg, #7cbd97, #5d9c7b)}
 .pcomp-seg.prunable{background:linear-gradient(180deg, #d28080, #b25e5e)}
 .pcomp-seg.shielded{background:linear-gradient(180deg, #b6bcc9, #8d93a1)}
+.pcomp-seg.handled{background:linear-gradient(180deg, #9b90c4, #7c70a6)}
+.pcomp-seg.exempt{background:linear-gradient(180deg, #8fa8c9, #6d87a8)}
+.pcomp-seg.unresolvable{background:linear-gradient(180deg, #747985, #575c68)}
 .pcomp-legend{display:flex; flex-wrap:wrap; gap:var(--sp-1) var(--sp-4); margin-top:var(--sp-2); font-size:var(--fs-sm); color:var(--muted)}
 .pcomp-legend b{color:var(--text); font-weight:600}
 .pcomp-legend .dot{display:inline-block; width:9px; height:9px; border-radius:3px; margin-right:var(--sp-1); vertical-align:-1px; box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}
 .pcomp-legend .dot.mutual{background:#6db28a}
 .pcomp-legend .dot.prunable{background:#c96a6a}
 .pcomp-legend .dot.shielded{background:#a7adba}
+.pcomp-legend .dot.handled{background:#8b7fb5}
+.pcomp-legend .dot.exempt{background:#7d97b8}
+.pcomp-legend .dot.unresolvable{background:#63687a}
 
 /* Whitelist add row: input + Add button on one line (input margin lives on the row). */
 .wl-add{display:flex; align-items:center; gap:var(--sp-2); margin-top:var(--sp-2)}

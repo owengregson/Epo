@@ -1,6 +1,6 @@
 /** @jsx h */
 import { h } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { clamp, commas } from '../lib/format';
 import { prefersReducedMotion } from '../lib/motion';
 import type { ProjectionResult } from './growth-model';
@@ -38,6 +38,7 @@ export function ProjectionChart({ result }: ProjectionChartProps): h.JSX.Element
     useRef<SVGPathElement>(null),
   ];
   const drawn = useRef(false);
+  const dashArmed = useRef(false);
   const dashTimer = useRef<number | null>(null);
 
   const { scenarios, vmax } = result;
@@ -76,6 +77,7 @@ export function ProjectionChart({ result }: ProjectionChartProps): h.JSX.Element
       for (const e of entries) {
         if (!e.isIntersecting || drawn.current) continue;
         drawn.current = true;
+        dashArmed.current = true;
         const els = pathRefs.map((r) => r.current).filter(Boolean) as SVGPathElement[];
         els.forEach((p) => {
           const len = p.getTotalLength();
@@ -93,6 +95,7 @@ export function ProjectionChart({ result }: ProjectionChartProps): h.JSX.Element
             const cs = getComputedStyle(els[0]);
             const drawMs = cssTimeMs(cs.transitionDuration) + cssTimeMs(cs.transitionDelay);
             dashTimer.current = window.setTimeout(() => {
+              dashArmed.current = false;
               els.forEach((p) => {
                 p.style.strokeDasharray = '';
                 p.style.strokeDashoffset = '';
@@ -112,6 +115,32 @@ export function ProjectionChart({ result }: ProjectionChartProps): h.JSX.Element
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A settings edit mid-draw commits new `d` geometry under the stale
+  // single-value dasharray, whose pattern repeats along the changed length — a
+  // detached tail. Strip the dash pre-paint (useLayoutEffect) so the edit
+  // lands undecorated; drawn stays true, so the reveal never re-arms.
+  const dKey = paths.join('|');
+  useLayoutEffect(() => {
+    if (!dashArmed.current) return;
+    dashArmed.current = false;
+    if (dashTimer.current !== null) {
+      window.clearTimeout(dashTimer.current);
+      dashTimer.current = null;
+    }
+    for (const r of pathRefs) {
+      const p = r.current;
+      if (!p) continue;
+      p.style.strokeDasharray = '';
+      p.style.strokeDashoffset = '';
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dKey]);
+
+  // X-axis day ticks drawn INSIDE the svg at the plot's own x positions — the
+  // old flex-spread foot labels stretched across the full card width while the
+  // plot spans x=8..348 of 400, drifting "30" about 13% off its gridline.
+  const tickDays = [0, 1, 2, 3].map((i) => Math.round((result.days * i) / 3));
+
   return (
     <svg
       class="proj-svg"
@@ -125,6 +154,17 @@ export function ProjectionChart({ result }: ProjectionChartProps): h.JSX.Element
       <text class="growth-ylab" x="354" y="107">
         0
       </text>
+      {tickDays.map((d, i) => (
+        <text
+          key={d}
+          class="growth-ylab"
+          x={(X0 + (X1 - X0) * (d / result.days)).toFixed(1)}
+          y="119"
+          text-anchor={i === 0 ? 'start' : 'middle'}
+        >
+          {i === 0 ? `day ${d}` : d}
+        </text>
+      ))}
       <path class="proj-line bad" ref={pathRefs[0]} d={paths[0]} />
       <path class="proj-line avg" ref={pathRefs[1]} d={paths[1]} />
       <path class="proj-line good" ref={pathRefs[2]} d={paths[2]} />

@@ -11,9 +11,10 @@ export interface ViewStageProps {
 }
 
 /**
- * The view stage. Every view stays mounted inside its own `.view` section so it
- * retains scroll position and one-shot animations; the controller decides which
- * carries `active`/`entering`/`exiting` this frame.
+ * The view stage. Every view stays mounted inside its own `.view` section so
+ * its transient state and one-shot animations survive tab switches; scroll is
+ * NOT preserved — App's useScrollReset opens every view at the top. The
+ * controller decides which section carries `active`/`entering`/`exiting`.
  */
 export function ViewStage({ controller, views }: ViewStageProps): h.JSX.Element {
   return (

@@ -6,8 +6,11 @@ import { Badge } from '@/renderer/ui/Badge';
 import type { ChainTargetView } from '@/types';
 
 export interface ChainNodeProps extends ChainTargetView {
-  /** True when this node is the engine's active target. */
+  /** True when this node is the ENGINE's active target. */
   current: boolean;
+  /** True when the console details this node WITHOUT it being the engine's
+   *  current one — a highlight ring only, never "Current" semantics. */
+  viewing: boolean;
   /** True for the final node in the trail. */
   isLast: boolean;
   /** Label for the `.chain-link` connector rendered after this node. */
@@ -51,11 +54,13 @@ export function ChainNode(props: ChainNodeProps): h.JSX.Element {
 
   return (
     <Fragment>
-      <div class={props.current ? 'chain-node current' : 'chain-node'}>
+      {/* `viewing` shares the highlight ring only — the badge and status line
+          below stay engine-truthful (`current` alone claims "Current"). */}
+      <div class={props.current || props.viewing ? 'chain-node current' : 'chain-node'}>
         <Avatar small>{monogram(props.username)}</Avatar>
         <div class="cn-body">
           <div class="h">
-            <span class="handle">{withAt(props.username)}</span>
+            <span class="handle">{withAt(props.username) || props.accountPk}</span>
             {seed ? <Badge>Seed</Badge> : null}
             {props.current ? (
               <Badge tone="live">Current · Hop {props.chainIndex ?? 0}</Badge>

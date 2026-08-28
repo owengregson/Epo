@@ -13,9 +13,9 @@ export interface ViewController {
 }
 
 /**
- * The console's cinematic view router (spec: scale+fade stage). All five views
- * stay mounted (so each keeps its scroll position and one-shot animations); only
- * classes toggle.
+ * The console's cinematic view router (spec: scale+fade stage). All four views
+ * stay mounted (transient state and one-shot animations survive; scroll does
+ * NOT — App's useScrollReset opens every view at the top); only classes toggle.
  *
  * Responsiveness (immediate crossfade): a tab press swaps the active view on the
  * SAME frame — the incoming view starts its enter animation at once while the

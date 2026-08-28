@@ -118,6 +118,9 @@ body {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    /* Delays must collapse too: staggered card entrances (fill-mode both)
+       otherwise hold opacity:0 for up to ~580ms and blink in one by one. */
+    animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }

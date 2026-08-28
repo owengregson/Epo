@@ -71,6 +71,10 @@
   font-size:var(--fs-xs); font-weight:700; letter-spacing:.08em; text-transform:uppercase;
   background:var(--chip-bg); border:1px solid var(--border-strong); color:var(--silver);
 }
+/* Badge tones (Badge.tsx `tone` prop) — the .ready chip recipe at pill scale:
+   steel for live/current state, brass for warnings/holds. */
+.badge.live{color:var(--live); border-color:var(--border-active)}
+.badge.warn{color:var(--warn); border-color:#4a4030} /* brass-dimmed rim, as .ready */
 .rchip{
   font-family:var(--mono); font-size:var(--fs-sm); color:var(--silver);
   padding:var(--sp-0) var(--sp-2); border-radius:var(--r-pill);
@@ -319,6 +323,8 @@ input[type=range]::-moz-range-thumb{
   border:1px solid #82868d;
   box-shadow:0 2px 6px rgba(0,0,0,.5);
 }
+input[type=range]:disabled{opacity:.45; cursor:default}
+input[type=range]:focus-visible{outline:2px solid var(--silver); outline-offset:2px}
 
 /* snap ticks under a slider — 7px side padding centres the marks
    under the 15px thumb's travel (unavoidable thumb geometry) */
@@ -449,10 +455,15 @@ input[type=range]::-moz-range-thumb{
 /* ---------- reusable confirmation modal ---------- */
 /* z-index 80: the modal layer sits ABOVE the toasts (70) so a raised toast is
    dimmed and blocked like everything else; the tooltip layer stays at 100.
+   position:fixed + a shell-level host (App renders ConfirmHost OUTSIDE
+   .console, like the tour) so the scrim dims the WHOLE window — .console's
+   container-type makes it the containing block for fixed descendants, which
+   would trap the scrim in the console column and leave stage-hosted pages
+   clickable behind an open dialog.
    The closed scrim swaps to visibility:hidden AFTER the opacity fade (delayed
    visibility transition), so its invisible buttons leave the tab order. */
 .scrim{
-  position:absolute; inset:0; z-index:80;
+  position:fixed; inset:0; z-index:80;
   display:flex; align-items:center; justify-content:center;
   background:rgba(5,5,7,.62);
   -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);

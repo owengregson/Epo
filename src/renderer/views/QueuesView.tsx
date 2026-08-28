@@ -87,7 +87,10 @@ export function QueuesView(props: QueuesViewProps): h.JSX.Element {
           {/* Keyed by stage so a tab switch remounts the list and replays qfade.
               The id is the pipeline tabs' aria-controls target. */}
           <div class="qlist" id={QUEUE_STAGE_PANEL_ID} role="tabpanel" key={stageKey}>
-            {loading ? (
+            {/* "Loading…" only before the FIRST rows land — count-change
+                refetches keep the stale rows on screen (the useTargetDetail
+                hold-previous pattern) instead of blanking the list. */}
+            {loading && rows.length === 0 ? (
               <QueueNote text="Loading…" />
             ) : rows.length === 0 ? (
               <QueueNote text="Nothing here yet." />

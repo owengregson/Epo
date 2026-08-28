@@ -48,7 +48,10 @@ export function ChainView(props: ChainViewProps): h.JSX.Element {
       <div class="view-h">
         <Icon name="link" /> Targets · Chain Lineage
       </div>
-      <ChainBreadcrumb chain={chain} currentPk={detailPk} />
+      {/* "Current" semantics come from the ENGINE's pk; the detailed target
+          (which can fall back to an exhausted node while stopped) only gets
+          the viewing highlight — the tiers must never contradict. */}
+      <ChainBreadcrumb chain={chain} currentPk={currentPk} viewingPk={detailPk} />
       <TargetFunnelCard
         detail={detail}
         current={currentPk !== null && detailPk === currentPk}

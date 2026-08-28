@@ -143,7 +143,10 @@ export function PruneRunCard({
             </span>
           </div>
         </div>
-        {active ? (
+        {/* Stop here means stop the RUN — a live scan's stop (with its own
+            confirm copy) lives on PruneScanCard, so mid-scan this card keeps
+            its (locked) Run affordance instead of a second, mislabeled stop. */}
+        {state === 'running' ? (
           <Button
             wide
             icon="stop"
@@ -161,7 +164,7 @@ export function PruneRunCard({
             danger
             icon="user-minus"
             iconSpin={pending === 'run'}
-            disabled={!readyToRun || pending !== null}
+            disabled={!readyToRun || active || pending !== null}
             onClick={onRun}
           >
             Run prune

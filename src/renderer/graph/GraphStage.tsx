@@ -22,10 +22,12 @@
  *    expanding ring, so lifecycle transitions are visible live;
  *  - camera EASES for Fit view, double-click zoom, and click-a-hub framing
  *    (wheel/drag stay immediate and cancel any camera animation);
- *  - the hover ring grows in and the previous one fades out.
+ *  - the hover ring grows in and the previous one fades out;
+ *  - under prefers-reduced-motion everything collapses: entrances draw at end
+ *    state, rings are skipped, and the camera snaps instead of easing.
  */
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import {
   GraphLayout,
   HUB_R,
@@ -43,6 +45,7 @@ import {
 } from '@/renderer/graph/palette';
 import type { GraphBoard } from '@/renderer/hooks/useGraphBoard';
 import { commas } from '@/renderer/lib/format';
+import { prefersReducedMotion } from '@/renderer/lib/motion';
 import { Button } from '@/renderer/ui/Button';
 import { Icon } from '@/renderer/ui/Icon';
 import { GRAPH_NODE_STATUSES, type GraphNodeStatus, type GraphSnapshot } from '@/types';
@@ -158,6 +161,7 @@ export interface GraphStageProps {
 export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<Tip | null>(null);
   const [dragCursor, setDragCursor] = useState(false);
   const [legendOpen, setLegendOpen] = useState(true);
@@ -219,6 +223,12 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
       surface: cssVar('--elevated', world.colors.surface),
     };
     world.mono = cssVar('--mono', world.mono);
+
+    // The canvas honors the same gate as every DOM animation (lib/motion.ts):
+    // when reduced, entrances/rings draw at end state and the camera snaps.
+    // Tracked live so an OS-level toggle takes effect without a remount.
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let reducedMotion = motionQuery.matches;
 
     const viewSize = (): { vw: number; vh: number } => ({
       vw: canvas.width / (window.devicePixelRatio || 1),
@@ -283,7 +293,7 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
       }
 
       const aggregate = NODE_SPACING * cam.scale < AGGREGATE_BELOW_PX;
-      const entering = now < world.enterUntil;
+      const entering = !reducedMotion && now < world.enterUntil;
       const lists = world.bucketLists;
 
       for (let hIdx = 0; hIdx < layout.clusters.length; hIdx++) {
@@ -410,7 +420,9 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
         }
       }
 
-      // Status-change rings: one-shot, expanding and fading.
+      // Status-change rings: one-shot, expanding and fading (skipped whole
+      // under reduced motion — their end state is nothing).
+      if (reducedMotion) world.flash.clear();
       if (world.flash.size > 0 && !aggregate) {
         for (const [pk, at] of world.flash) {
           const t = (now - at) / FLASH_MS;
@@ -476,11 +488,14 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
         ctx.globalAlpha = 1;
       };
       if (world.hover !== null) {
-        drawHoverRing(world.hover, easeInOutCubic(clamp01((now - world.hoverAt) / HOVER_MS)));
+        drawHoverRing(
+          world.hover,
+          reducedMotion ? 1 : easeInOutCubic(clamp01((now - world.hoverAt) / HOVER_MS)),
+        );
       }
       if (world.lastHover !== null) {
         const t = (now - world.lastHover.at) / HOVER_MS;
-        if (t >= 1) world.lastHover = null;
+        if (reducedMotion || t >= 1) world.lastHover = null;
         else drawHoverRing(world.lastHover.hit, 1 - easeInOutCubic(clamp01(t)));
       }
 
@@ -497,6 +512,13 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
     };
 
     const startCamAnim = (tx: number, ty: number, ts: number, dur: number): void => {
+      if (reducedMotion) {
+        // No eased glide under reduced motion — land on the target at once.
+        world.camAnim = null;
+        world.cam = { x: tx, y: ty, scale: ts };
+        redraw();
+        return;
+      }
       const now = performance.now();
       world.camAnim = {
         fx: world.cam.x,
@@ -611,8 +633,10 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
         setTip(null);
         return;
       }
-      const left = Math.min(pointer.sx + 14, host.clientWidth - 190);
-      const top = Math.min(pointer.sy + 12, host.clientHeight - 96);
+      // Desired spot beside the pointer; the layout effect below clamps it to
+      // the stage using the bubble's MEASURED size once it has rendered.
+      const left = pointer.sx + 14;
+      const top = pointer.sy + 12;
       if (next.kind === 'hub') {
         const hub = snapshot.hubs[next.index];
         if (!hub) return;
@@ -670,6 +694,28 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
     const ro = new ResizeObserver(resize);
     ro.observe(host);
     resize();
+
+    // The ResizeObserver never fires when the window moves to a display with a
+    // different scale factor (the CSS box is unchanged), which left a stale
+    // backing store — blurry dots and offset hit-testing. Watch the dpr itself
+    // via a resolution query, re-registering for each new ratio.
+    let dprQuery: MediaQueryList | null = null;
+    const onDprChange = (): void => {
+      resize();
+      watchDpr();
+    };
+    const watchDpr = (): void => {
+      dprQuery?.removeEventListener('change', onDprChange);
+      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      dprQuery.addEventListener('change', onDprChange);
+    };
+    watchDpr();
+
+    const onMotionChange = (): void => {
+      reducedMotion = motionQuery.matches;
+      redraw();
+    };
+    motionQuery.addEventListener('change', onMotionChange);
 
     // --- Interaction --------------------------------------------------------
     const onPointerDown = (e: PointerEvent): void => {
@@ -746,6 +792,8 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
 
     return () => {
       ro.disconnect();
+      dprQuery?.removeEventListener('change', onDprChange);
+      motionQuery.removeEventListener('change', onMotionChange);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
@@ -781,14 +829,21 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
       world.idxByPk = idxByPk;
 
       // Entrances: the FIRST snapshot blooms outward from each hub (delay by
-      // distance from the cluster core); later refreshes pop newcomers now.
-      const firstSnapshot = world.lastStatusByPk === null;
+      // distance from the cluster core); later refreshes pop only pks ABSENT
+      // from the PREVIOUS snapshot (lastStatusByPk holds its full membership).
+      // `born` is purely the in-flight animation map — it empties as entrances
+      // finish, so it can never decide newcomer-ness. Reduced motion registers
+      // no entrances at all: new dots appear at full size.
+      const prevMembers = world.lastStatusByPk;
+      const firstSnapshot = prevMembers === null;
+      const reduced = prefersReducedMotion();
       const nextStatus = new Map<string, number>();
       let enterUntil = world.enterUntil;
       for (let i = 0; i < n; i++) {
         const pk = snap.pks[i] as string;
         nextStatus.set(pk, snap.statuses[i] as number);
-        if (!world.born.has(pk)) {
+        if (reduced) continue;
+        if ((firstSnapshot || !prevMembers.has(pk)) && !world.born.has(pk)) {
           let delay = 0;
           if (firstSnapshot) {
             const c = world.layout.clusters[snap.hubIndex[i] as number];
@@ -810,8 +865,8 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
       if (enterUntil > world.animUntil) world.animUntil = enterUntil;
 
       // Status-change rings: visible lifecycle transitions between refreshes.
-      const prev = world.lastStatusByPk;
-      if (prev !== null) {
+      const prev = prevMembers;
+      if (prev !== null && !reduced) {
         let fired = 0;
         for (const [pk, statusIdx] of nextStatus) {
           const before = prev.get(pk);
@@ -848,6 +903,19 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
   useEffect(() => {
     if (active) redrawRef.current();
   }, [active]);
+
+  // Edge-clamp the tooltip with its MEASURED size (TooltipHost's measure-then-
+  // place pattern), before paint — width/height estimates drifted from the
+  // real .graph-tip maxima and clipped hub tips at the right/bottom edges.
+  useLayoutEffect(() => {
+    const el = tipRef.current;
+    const host = hostRef.current;
+    if (!el || !host || !tip) return;
+    const left = Math.max(4, Math.min(tip.left, host.clientWidth - el.offsetWidth - 4));
+    const top = Math.max(4, Math.min(tip.top, host.clientHeight - el.offsetHeight - 4));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }, [tip]);
 
   const snap = board.snapshot;
   const empty = snap !== null && snap.pks.length === 0;
@@ -918,7 +986,7 @@ export function GraphStage({ board, active }: GraphStageProps): h.JSX.Element {
       </div>
 
       {tip ? (
-        <div class="graph-tip" style={`left:${tip.left}px;top:${tip.top}px`}>
+        <div class="graph-tip" ref={tipRef} style={`left:${tip.left}px;top:${tip.top}px`}>
           <div class="graph-tip__title">{tip.title}</div>
           {tip.lines.map((line) => (
             <div key={line} class="graph-tip__line">

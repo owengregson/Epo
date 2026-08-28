@@ -62,7 +62,14 @@ export function useCountdown(status: EpoStatus | null, now: number): Countdown {
 export function useHoldCountdown(until: number | null, now: number): Countdown {
   const anchor = useRef<{ deadline: number; seenAt: number } | null>(null);
   if (until == null) {
-    anchor.current = null;
+    // Transient interruption (offline blip, mid-park pause): a still-pending
+    // anchor is RETAINED, so the same deadline reappearing resumes the ring
+    // mid-depletion instead of reseeding at full. Only a genuinely finished
+    // hold (deadline already passed) clears it; a real new park carries a
+    // different deadline and reseeds below either way.
+    if (anchor.current !== null && anchor.current.deadline <= now) {
+      anchor.current = null;
+    }
     return IDLE;
   }
   if (anchor.current?.deadline !== until) {

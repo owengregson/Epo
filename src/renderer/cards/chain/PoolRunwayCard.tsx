@@ -53,7 +53,15 @@ export function PoolRunwayCard({ detail, index = 1 }: PoolRunwayCardProps): h.JS
                 {commas(detail.remainingActionable)}
               </Stat>
             </div>
-            {audience !== null && audience > 0 ? (
+            {/* "Pending" is an enrichment fact (audience === null); an enriched
+                zero-follower audience is a different, settled fact. The > 0
+                guard only protects the coverage ratio/Meter division. */}
+            {audience === null ? (
+              <div class="hint">
+                <span class="num">{commas(scanned)}</span> scanned · audience size pending — the
+                true follower count lands with the target&apos;s profile enrichment.
+              </div>
+            ) : audience > 0 ? (
               <Fragment>
                 <KeyValue k="Pool coverage">
                   {commas(scanned)} of {commas(audience)}
@@ -62,14 +70,16 @@ export function PoolRunwayCard({ detail, index = 1 }: PoolRunwayCardProps): h.JS
                 <Meter pct={(scanned / audience) * 100} live />
               </Fragment>
             ) : (
-              <div class="hint">
-                {commas(scanned)} scanned · audience size pending — the true follower count lands
-                with the target&apos;s profile enrichment.
-              </div>
+              <div class="hint">Enriched: this audience has zero followers — no pool to walk.</div>
             )}
             {detail.runway === null ? (
               <KeyValue k="Runway">
                 <span class="dim">forms after the first follows</span>
+              </KeyValue>
+            ) : detail.remainingActionable === 0 ? (
+              <KeyValue k="Runway">
+                drained
+                <span class="dim">chain advances next</span>
               </KeyValue>
             ) : (
               <KeyValue k="Runway" live>

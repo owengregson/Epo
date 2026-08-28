@@ -309,21 +309,21 @@ export function App(): h.JSX.Element {
       <Nav current={view.current} onGo={goTo} />
       <ViewStage controller={view} views={views} />
       <Ticker line={latest} />
-      <ConfirmHost {...confirmCtl.state} onClose={confirmCtl.close} />
       <TooltipHost />
 
-      {toasts.toasts.length > 0 ? (
-        <div class="toasts" role="status" aria-live="polite">
-          {toasts.toasts.map((t) => (
-            <div key={t.id} class="toast" data-kind={t.kind}>
-              <span class="toast__msg">{t.message}</span>
-              <button class="toast__close" aria-label="Dismiss" onClick={() => toasts.dismiss(t.id)}>
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {/* Permanently mounted (even empty) so the aria-live region exists
+          BEFORE the first toast arrives — a region that mounts together with
+          its first message is typically not announced by screen readers. */}
+      <div class="toasts" role="status" aria-live="polite">
+        {toasts.toasts.map((t) => (
+          <div key={t.id} class="toast" data-kind={t.kind}>
+            <span class="toast__msg">{t.message}</span>
+            <button class="toast__close" aria-label="Dismiss" onClick={() => toasts.dismiss(t.id)}>
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
       </div>
       <div class="stagepane">
         <StageBar
@@ -351,6 +351,11 @@ export function App(): h.JSX.Element {
           </div>
         </div>
       </div>
+      {/* Shell-level (like the tour) so the fixed scrim covers the WHOLE
+          window — inside .console its container-type would trap it in the
+          console column, leaving stage-hosted (Prune) confirms with a fully
+          clickable page behind the open dialog. */}
+      <ConfirmHost {...confirmCtl.state} onClose={confirmCtl.close} />
       <Tour open={tourOpen} onClose={closeTour} goTo={goTo} setStage={setStage} />
     </div>
   );

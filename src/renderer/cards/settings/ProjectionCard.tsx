@@ -44,12 +44,6 @@ export function ProjectionCard({ draft, index }: ProjectionCardProps): h.JSX.Ele
     >
       <CardBody>
         <ProjectionChart result={result} />
-        <div class="growth-x num">
-          <span>day 0</span>
-          <span>10</span>
-          <span>20</span>
-          <span>30</span>
-        </div>
         <div class="proj-legend num">
           <span class="pl bad">
             <i />
@@ -63,7 +57,7 @@ export function ProjectionCard({ draft, index }: ProjectionCardProps): h.JSX.Ele
             <i />
             Optimistic <b>{pctInt(result.scenarios[2].P)}%</b>
           </span>
-          <span class="plc">follow-back</span>
+          <span>follow-back</span>
         </div>
         <div class="hint">
           Estimate assumes you sustain this pace and keep chaining fresh targets; real yield varies

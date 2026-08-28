@@ -133,6 +133,17 @@ export function recoveryHoldCaption(
   return `recent actions aren't landing · retrying${at} (attempt ${rec.attempt} of ${rec.maxAttempts})`;
 }
 
+/**
+ * Hold chip copy: "in 12:34" (or "in 2h 05m" for long holds) while the
+ * deadline is pending — "resuming…" once it passes while the hold is still
+ * displayed, so an expired hold never sits on a dead "in 0:00" until the
+ * engine's next push swaps the layout.
+ */
+export function holdChipText(until: number, now: number, remainingSec: number): string {
+  if (remainingSec <= 0) return 'resuming…';
+  return `in ${remainingSec >= 3600 ? durationHm(until - now) : mmss(remainingSec)}`;
+}
+
 /** Short sentinel readout ("sentinel ok" in the mockup). */
 function sentinelLabel(s: Sentinel): string {
   switch (s) {
@@ -210,12 +221,6 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
   // its own rung-aware caption; a probing ladder gets a hint line below.
   const recovery = status?.recovery ?? null;
   const hold = useHoldCountdown(parkHold?.until ?? null, now);
-  const holdRemainText =
-    parkHold != null
-      ? hold.remainingSec >= 3600
-        ? durationHm(parkHold.until - now)
-        : mmss(hold.remainingSec)
-      : null;
 
   // What the engine will REALLY do next mirrors nextDue's precedence: reclaim
   // slots first — any due unfollow fires before a new follow. The card used to
@@ -288,7 +293,7 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
           {offlineHold ? (
             <span class="rchip">Reconnecting…</span>
           ) : parkHold ? (
-            <span class="rchip num">in {holdRemainText}</span>
+            <span class="rchip num">{holdChipText(parkHold.until, now, hold.remainingSec)}</span>
           ) : null}
         </div>
         {offline && !offlineHold ? <div class="hint">Offline — no internet connection detected.</div> : null}

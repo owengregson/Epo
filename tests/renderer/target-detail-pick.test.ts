@@ -5,7 +5,7 @@
  * all-terminal chain still details its last node so the funnel can label it
  * truthfully (e.g. "exhausted (unworked)") instead of going blank.
  */
-import { pickDetailTarget } from '@/renderer/hooks/useTargetDetail';
+import { crumbTier, pickDetailTarget } from '@/renderer/hooks/useTargetDetail';
 import type { ChainTargetView, TargetYield } from '@/types';
 
 const ZERO_YIELD: TargetYield = {
@@ -58,4 +58,35 @@ test('an all-terminal chain still details its last node (the funnel labels it)',
     t({ accountPk: 'B', chainIndex: 1, status: 'exhausted' }),
   ];
   expect(pickDetailTarget(chain, null)).toBe('B');
+});
+
+describe('crumbTier — the current-vs-viewing split ("Current" is engine-truth only)', () => {
+  test("the ENGINE's current target alone is 'current'", () => {
+    expect(crumbTier('A', 'A', 'A')).toBe('current');
+    expect(crumbTier('A', 'A', null)).toBe('current');
+  });
+
+  test("the detailed-but-not-current node is 'viewing', never 'current'", () => {
+    // The stopped-engine fallback: pickDetailTarget landed on an exhausted
+    // last node — the strip highlights it without claiming "Current".
+    expect(crumbTier('B', null, 'B')).toBe('viewing');
+    expect(crumbTier('B', 'A', 'B')).toBe('viewing');
+  });
+
+  test("every other node is 'plain'", () => {
+    expect(crumbTier('C', 'A', 'B')).toBe('plain');
+    expect(crumbTier('C', null, null)).toBe('plain');
+  });
+
+  test('the picker fallback + tier together never mark an exhausted node Current while stopped', () => {
+    const chain = [
+      t({ accountPk: 'A', chainIndex: 0, status: 'exhausted' }),
+      t({ accountPk: 'B', chainIndex: 1, status: 'exhausted' }),
+    ];
+    const currentPk = null; // engine stopped
+    const viewingPk = pickDetailTarget(chain, currentPk);
+    expect(viewingPk).toBe('B');
+    expect(crumbTier('B', currentPk, viewingPk)).toBe('viewing');
+    expect(crumbTier('A', currentPk, viewingPk)).toBe('plain');
+  });
 });

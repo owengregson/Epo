@@ -27,7 +27,21 @@ export interface OverviewViewProps {
  * cards so the third is deliberately cut at the fold — a scroll affordance.
  */
 export function OverviewView(props: OverviewViewProps): h.JSX.Element {
-  usePeekFit('view-overview', props.loggedOut);
+  // The peek-fit measures the cards' NATURAL heights, so it must re-run when
+  // the hero's content shape changes — a multi-line park caption, halt banner,
+  // or offline hint would otherwise bake a stale min-height that outlives the
+  // state (or eat the peek when it appears after the fit). The key folds in
+  // every status facet that adds/removes hero lines.
+  const s = props.status;
+  const heroShape = [
+    props.loggedOut,
+    s?.state ?? '',
+    s?.parkReason ?? '',
+    s?.haltReason ?? '',
+    s != null && !s.online,
+    s?.recovery?.phase ?? '',
+  ].join('|');
+  usePeekFit('view-overview', heroShape);
 
   // The sign-in gate takes stagger slot 0 when it leads; every other card
   // shifts down one so the entrance cascade matches the visual order.

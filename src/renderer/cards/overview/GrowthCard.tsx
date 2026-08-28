@@ -43,7 +43,7 @@ export interface GrowthCardProps {
  */
 export function GrowthCard({ status, settings, index = 1 }: GrowthCardProps): h.JSX.Element {
   const [win, setWin] = useState<GrowthWindowKey>(DEFAULT_GROWTH_WINDOW);
-  const { points, baselineAt } = useGrowthSeries(win, status);
+  const { points, baselineAt, forWindow } = useGrowthSeries(win, status);
   const chain = useChainList(status);
 
   const total = points.length > 0 ? points[points.length - 1].cumulativeNet : 0;
@@ -112,7 +112,7 @@ export function GrowthCard({ status, settings, index = 1 }: GrowthCardProps): h.
             </div>
           )}
         </div>
-        <GrowthChart points={points} overlay={overlay} />
+        <GrowthChart points={points} overlay={overlay} revealKey={forWindow} baselineAt={baselineAt} />
         {overlay !== null ? (
           <div class="growth-proj-note">
             {overlay.measuredYield

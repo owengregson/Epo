@@ -47,7 +47,33 @@ export const VIEW_ENTER_HOLD_MS =
 export const GROWTH_REVEAL_DELAY_MS = 300;
 export const GROWTH_REVEAL_DUR_MS = 1400;
 
-/** easeOutCubic — the curve the chart reveal rides. */
-export function easeOutCubic(x: number): number {
-  return 1 - (1 - x) ** 3;
+/**
+ * Per-frame delta cap (ms) for the reveal's elapsed-time accumulator — about
+ * two frames at 60Hz. Wall-clock rAF deltas materialize a main-thread stall
+ * (whole-App re-renders, the view-enter teardown) as one giant jump — or end
+ * the tween inside the stall entirely. Capping each frame's contribution makes
+ * dropped frames SLOW the draw instead of skipping it.
+ */
+export const GROWTH_REVEAL_MAX_FRAME_MS = 34;
+
+/** Opacity fade (ms) for the line/dot/area when the reveal's hold ends. */
+export const GROWTH_REVEAL_FADE_MS = 200;
+
+/**
+ * Advance a reveal accumulator by one rAF frame, capping the contribution at
+ * {@link GROWTH_REVEAL_MAX_FRAME_MS}. The first frame (no previous timestamp)
+ * and clock anomalies (non-increasing timestamps) contribute nothing.
+ */
+export function accumulateFrame(elapsed: number, lastTs: number | null, ts: number): number {
+  if (lastTs === null) return elapsed;
+  return elapsed + Math.max(0, Math.min(ts - lastTs, GROWTH_REVEAL_MAX_FRAME_MS));
+}
+
+/**
+ * easeInOutCubic — the curve the chart reveal rides. Gentle entry (derivative
+ * 0 at x=0, so the first post-hold frame never jumps at 3× average speed the
+ * way easeOutCubic did), fast middle, settled tail.
+ */
+export function easeInOutCubic(x: number): number {
+  return x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2;
 }

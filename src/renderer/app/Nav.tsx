@@ -10,6 +10,10 @@ const ITEMS: ReadonlyArray<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'settings', icon: 'sliders', label: 'Settings' },
 ];
 
+/** Platform modifier for the ⌘/Ctrl+1–4 shortcut hints (matches tour copy). */
+const MOD =
+  typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+';
+
 export interface NavProps {
   current: ViewKey;
   onGo(key: ViewKey): void;
@@ -20,12 +24,13 @@ export interface NavProps {
 export function Nav({ current, onGo }: NavProps): h.JSX.Element {
   return (
     <nav class="nav" aria-label="Console views" data-tour="nav">
-      {ITEMS.map((it) => (
+      {ITEMS.map((it, i) => (
         <button
           key={it.key}
           type="button"
           class={it.key === current ? 'active' : undefined}
           data-view={it.key}
+          data-tip={`${it.label} · ${MOD}${i + 1}`}
           aria-current={it.key === current ? 'page' : undefined}
           aria-label={it.label}
           onClick={() => onGo(it.key)}

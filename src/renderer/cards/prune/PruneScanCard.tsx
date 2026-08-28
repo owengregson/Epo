@@ -120,7 +120,11 @@ export function PruneScanCard({
       : 100;
   const barTargetRef = useRef(0);
   if (scanningBar) barTargetRef.current = scanPct;
-  else if (flashBar) barTargetRef.current = flashPct;
+  // The flash target only ever RISES from whatever the bar last showed: the
+  // scanning pct is capped at 99 while the re-base starts from the settled
+  // totals, so a plain assignment could target below the shown value — and
+  // useCountUp snaps downward instantly (a visible backwards step).
+  else if (flashBar) barTargetRef.current = Math.max(barTargetRef.current, flashPct);
   const barPct = useCountUp(barTargetRef.current, { durationMs: 450, round: false });
 
   const barLabel = flashBar

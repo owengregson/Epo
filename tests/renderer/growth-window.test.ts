@@ -81,9 +81,40 @@ describe('computeMomentum', () => {
     const pts = series([0, 1, 1, 2, 4, 7]);
     const m = computeMomentum(pts, daysAgo(30));
     expect(m.ready).toBe(true);
-    // mid=3: prior = 2-0 = 2, recent = 7-2 = 5 → delta 3, halves of 3 days.
-    expect(m.delta).toBe(3);
+    // h = ⌊5/2⌋ = 2: recent = p5−p3 = 7−2 = 5, prior = p3−p1 = 2−1 = 1 → 4.
+    expect(m.delta).toBe(4);
+    expect(m.halfDays).toBe(2);
+  });
+
+  it('compares halves of EQUAL span on an even-length window', () => {
+    // n=14 (the default window): the old mid=⌊n/2⌋ split compared a 7-interval
+    // prior against a 6-interval recent while the caption claimed symmetry.
+    const pts = series([0, 1, 3, 3, 4, 6, 7, 8, 10, 13, 13, 16, 18, 21]);
+    const m = computeMomentum(pts, daysAgo(30));
+    expect(m.ready).toBe(true);
+    // h = ⌊13/2⌋ = 6: recent = p13−p7 = 21−8 = 13, prior = p7−p1 = 8−1 = 7.
+    expect(m.halfDays).toBe(6);
+    expect(m.delta).toBe(6);
+    // The excluded oldest interval must not influence the delta.
+    const shifted = series([-100, 1, 3, 3, 4, 6, 7, 8, 10, 13, 13, 16, 18, 21]);
+    expect(computeMomentum(shifted, daysAgo(30)).delta).toBe(6);
+  });
+
+  it('keeps odd-interval windows on the classic split (oldest interval dropped)', () => {
+    const pts = series([0, 1, 1, 2, 4, 7, 9]);
+    const m = computeMomentum(pts, daysAgo(30));
+    expect(m.ready).toBe(true);
+    // n=7 → h=3: recent = p6−p3 = 9−2 = 7, prior = p3−p0 = 2−0 = 2 → 5.
+    expect(m.delta).toBe(5);
     expect(m.halfDays).toBe(3);
+  });
+
+  it('reads at the four-point minimum with one-interval halves', () => {
+    const m = computeMomentum(series([0, 0, 2, 5]), daysAgo(30));
+    expect(m.ready).toBe(true);
+    // h=1: recent = p3−p2 = 3, prior = p2−p1 = 2 → delta 1.
+    expect(m.delta).toBe(1);
+    expect(m.halfDays).toBe(1);
   });
 
   it('accepts a baseline stamped mid-day on the window: start day counts as covered', () => {

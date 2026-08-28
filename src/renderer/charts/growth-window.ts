@@ -82,17 +82,22 @@ export interface Momentum {
  *
  * The store emits one point per day including empty days, so a length guard
  * alone would always pass — exactly the dishonesty this gate exists to stop.
+ *
+ * Both halves span exactly h = ⌊(n−1)/2⌋ day-intervals, measured back from the
+ * latest point — a lopsided split (7-day prior vs 6-day recent on a 14-point
+ * window) would belie the symmetric "vs prior Nd" caption. When the window
+ * holds an odd number of intervals, the OLDEST interval is left out.
  */
 export function computeMomentum(points: NetGrowthPoint[], baselineAt: number | null): Momentum {
   const n = points.length;
-  const halfDays = Math.floor(n / 2);
+  const halfDays = Math.max(0, Math.floor((n - 1) / 2));
   const covered =
     baselineAt !== null && n > 0 && startOfLocalDay(baselineAt) <= points[0].dayStartMs;
   const ready = n >= 4 && covered && hasMeasuredSignal(points);
   if (!ready) return { ready: false, delta: 0, halfDays };
-  const mid = Math.floor(n / 2);
-  const prior = points[mid].cumulativeNet - points[0].cumulativeNet;
-  const recent = points[n - 1].cumulativeNet - points[mid].cumulativeNet;
+  const h = halfDays;
+  const recent = points[n - 1].cumulativeNet - points[n - 1 - h].cumulativeNet;
+  const prior = points[n - 1 - h].cumulativeNet - points[n - 1 - 2 * h].cumulativeNet;
   return { ready: true, delta: recent - prior, halfDays };
 }
 

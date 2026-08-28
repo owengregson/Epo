@@ -4,6 +4,7 @@
  * resume time) instead of the "running with dashes" that read as broken.
  */
 import {
+  holdChipText,
   parkCaption,
   parkHeadline,
   recoveryHoldCaption,
@@ -61,6 +62,26 @@ describe('park hold copy — plain reason + real resume time', () => {
     expect(
       parkCaption('enrich-backoff', t('2026-08-12T14:32:00'), t('2026-08-12T14:22:00'), 12, 40),
     ).toBe('after fetch trouble · retrying 14:32');
+  });
+});
+
+describe('holdChipText — the countdown chip beside a hold', () => {
+  it('counts short holds down in m:ss', () => {
+    const now = t('2026-08-12T13:50:00');
+    const until = t('2026-08-12T14:10:00');
+    expect(holdChipText(until, now, 20 * 60)).toBe('in 20:00');
+  });
+
+  it('renders long holds as h m', () => {
+    const now = t('2026-08-12T20:15:00');
+    const until = t('2026-08-13T08:00:00');
+    expect(holdChipText(until, now, Math.round((until - now) / 1000))).toBe('in 11h 45m');
+  });
+
+  it("says resuming… once the deadline passes instead of a dead 'in 0:00'", () => {
+    const until = t('2026-08-12T14:10:00');
+    expect(holdChipText(until, until, 0)).toBe('resuming…');
+    expect(holdChipText(until, until + 5_000, 0)).toBe('resuming…');
   });
 });
 

@@ -23,6 +23,26 @@ export function pickDetailTarget(
   return chain.length > 0 ? (chain[chain.length - 1]?.accountPk ?? null) : null;
 }
 
+/** How the lineage tier marks one chain node. */
+export type CrumbTier = 'current' | 'viewing' | 'plain';
+
+/**
+ * The lineage tier's marking for one node. "Current" belongs to the ENGINE's
+ * current target ALONE — the node the console merely details (the picker's
+ * stopped-engine fallback can be an exhausted one) is 'viewing': a visual
+ * highlight, never a "Current" claim the funnel's own status would contradict.
+ * Exported for the unit test alongside {@link pickDetailTarget}.
+ */
+export function crumbTier(
+  accountPk: string,
+  currentPk: string | null,
+  viewingPk: string | null,
+): CrumbTier {
+  if (currentPk !== null && accountPk === currentPk) return 'current';
+  if (viewingPk !== null && accountPk === viewingPk) return 'viewing';
+  return 'plain';
+}
+
 /**
  * The `chain:detail` projection for one target, live (§2). Liveness comes from
  * the `chainList` push: main re-shapes and pushes the chain projection on every
