@@ -783,6 +783,28 @@ export class KnowledgeStore {
   }
 
   /**
+   * The per-install noise entropy (meta `install_entropy`): one random 32-bit
+   * value drawn ON FIRST ACCESS and persisted, so every timing-noise seed
+   * derived from it (daily-boundary wake offsets, the engines' noise rngs) is
+   * different per install but stable across relaunches (§3 — a mid-park
+   * restart re-derives the same jittered wake). Upgraded installs with no
+   * stored value draw-and-persist cleanly here; a corrupted value is replaced
+   * with a fresh draw, loudly.
+   */
+  installEntropy(): number {
+    const raw = this.getMeta('install_entropy');
+    if (raw !== null) {
+      const n = Number(raw);
+      if (Number.isFinite(n)) return n >>> 0;
+      logger.warn('store: install_entropy corrupted, redrawing', { raw });
+    }
+    const drawn = Math.floor(Math.random() * 0x1_0000_0000) >>> 0;
+    this.setMeta('install_entropy', String(drawn));
+    logger.info('store: install entropy established', { value: drawn });
+    return drawn;
+  }
+
+  /**
    * Persist the recovery ladder's durable state (raw JSON: attempt, holdUntil,
    * enteredAt, kindTally) so a relaunch mid-hold serves the REMAINDER of the
    * absolute deadline instead of forgetting the wall it was backing off from

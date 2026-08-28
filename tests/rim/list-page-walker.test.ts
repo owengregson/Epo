@@ -12,6 +12,7 @@ import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
 import { RIM } from '@/timing/config';
+import { nextRestStride } from '@/timing/noise';
 import { FakeTab, FakeSentinel, followersBody } from './fakes';
 import { setLevel } from '@/utils/logger';
 
@@ -377,8 +378,10 @@ test('a non-ok sentinel at the top of a page halts the walk', async () => {
 });
 
 
-test('every Nth page draws a LONG jittered rest on top of the pace', async () => {
-  const n = RIM.LIST_WALK_REST_EVERY;
+test('the drawn rest stride triggers a LONG jittered rest on top of the pace', async () => {
+  // The stride is DRAWN (timing-noise layer), not fixed: the harness rng is
+  // pinned at 0.5, so this is exactly the stride the walker draws at start.
+  const n = nextRestStride(() => 0.5);
   const envs = [
     ...Array.from({ length: n + 1 }, (_, i) =>
       okEnv(followersBody([`p${i}`], i === n ? null : `C${i}`, i !== n)),

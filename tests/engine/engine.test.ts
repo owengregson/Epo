@@ -28,7 +28,7 @@ import {
   type EngineStatus,
   type SleepFn,
 } from '@/engine/engine';
-import { RECOVERY } from '@/timing/config';
+import { NOISE, RECOVERY } from '@/timing/config';
 import type { AdvanceResult } from '@/engine/chain-controller';
 import { Scanner, type ScanPlan } from '@/engine/scanner';
 import type { FollowerAcquisition } from '@/rim/types';
@@ -478,7 +478,11 @@ describe('Engine — active-hours and ceiling gates (precedence 3–4)', () => {
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('waited-active-hours');
-    expect(h.sleep.calls).toEqual([6 * HOUR]); // 02:00 → 08:00
+    // The park is the exact 02:00→08:00 base plus the POSITIVE-ONLY boundary
+    // jitter — a wake never precedes the window and never lands exactly on it.
+    expect(h.sleep.calls.length).toBe(1);
+    expect(h.sleep.calls[0]).toBeGreaterThan(6 * HOUR);
+    expect(h.sleep.calls[0]).toBeLessThanOrEqual(6 * HOUR + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
     expect(h.churn.executed).toEqual([]);
     expect(h.churn.advanceCalls).toBe(0); // gate fires before timers
 
@@ -495,7 +499,10 @@ describe('Engine — active-hours and ceiling gates (precedence 3–4)', () => {
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('waited-ceiling');
-    expect(h.sleep.calls).toEqual([12 * HOUR]); // noon → midnight
+    // noon → midnight, plus the positive-only daily-boundary jitter.
+    expect(h.sleep.calls.length).toBe(1);
+    expect(h.sleep.calls[0]).toBeGreaterThan(12 * HOUR);
+    expect(h.sleep.calls[0]).toBeLessThanOrEqual(12 * HOUR + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
     expect(h.churn.executed).toEqual([]);
     expect(h.engine.status().atHardCeiling).toBe(false); // ledger rolled over at midnight
   });
@@ -518,7 +525,11 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
     const pushed = h.statuses[h.statuses.length - 1];
     expect(pushed.state).toBe('running');
     expect(pushed.parkReason).toBe('active-hours');
-    expect(pushed.parkedUntil).toBe(Date.parse('2026-08-13T08:00:00'));
+    // parkedUntil carries the REAL jittered deadline: past the window open,
+    // within the boundary-jitter band.
+    const windowOpen = Date.parse('2026-08-13T08:00:00');
+    expect(pushed.parkedUntil!).toBeGreaterThan(windowOpen);
+    expect(pushed.parkedUntil!).toBeLessThanOrEqual(windowOpen + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
     expect(pushed.lastStep).toBeNull();
     expect(h.engine.status().parkReason).toBe('active-hours');
 
@@ -538,9 +549,11 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
     const result = await h.engine.stepOnce(); // the fake sleep advances through the park
 
     expect(result).toBe('waited-active-hours');
-    // A mid-park push carried the hold with its deadline...
+    // A mid-park push carried the hold with its REAL (jittered) deadline...
     const mid = h.statuses.find((s) => s.parkReason === 'active-hours');
-    expect(mid?.parkedUntil).toBe(Date.parse('2026-08-12T08:00:00'));
+    const windowOpen = Date.parse('2026-08-12T08:00:00');
+    expect(mid?.parkedUntil ?? 0).toBeGreaterThan(windowOpen);
+    expect(mid?.parkedUntil ?? 0).toBeLessThanOrEqual(windowOpen + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
     // ...and the post-step push (and the live read) show it cleared.
     const last = h.statuses[h.statuses.length - 1];
     expect(last.parkReason).toBeNull();
@@ -578,7 +591,12 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.engine.status().parkReason).toBe('daily-ceiling');
-    expect(h.engine.status().parkedUntil).toBe(T0 + 12 * HOUR); // noon → midnight
+    // noon → midnight plus the positive-only boundary jitter.
+    const cycleReset = T0 + 12 * HOUR;
+    expect(h.engine.status().parkedUntil!).toBeGreaterThan(cycleReset);
+    expect(h.engine.status().parkedUntil!).toBeLessThanOrEqual(
+      cycleReset + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS,
+    );
 
     h.engine.stop();
     expect(await stepping).toBe('waited-ceiling');
@@ -605,8 +623,9 @@ describe('Engine — follow-back sweep cadence (precedence 6)', () => {
     expect(await h.engine.stepOnce()).toBe('idle');
     expect(h.followback.checks).toBe(1);
 
-    // Drive the FakeClock past the cadence: due again.
-    h.clock.advance(4 * HOUR);
+    // Drive the FakeClock past the cadence — including the widest interval
+    // factor the noise layer can draw (≤ CADENCE_MAX_FACTOR): due again.
+    h.clock.advance(4 * HOUR * NOISE.CADENCE_MAX_FACTOR);
     expect(await h.engine.stepOnce()).toBe('swept-followback');
     expect(h.followback.checks).toBe(2);
   });
@@ -735,7 +754,10 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     const started = h.engine.start();
     await new Promise((r) => setTimeout(r, 0)); // let the loop reach its first sleep
     expect(h.engine.status().state).toBe('running');
-    expect(h.sleep.calls).toEqual([ENGINE_IDLE_MS]); // parked in the idle sleep
+    // Parked in the idle sleep — a local beat, drawn inside its band.
+    expect(h.sleep.calls.length).toBe(1);
+    expect(h.sleep.calls[0]).toBeGreaterThanOrEqual(ENGINE_IDLE_MS * NOISE.BEAT_MIN_FACTOR);
+    expect(h.sleep.calls[0]).toBeLessThanOrEqual(ENGINE_IDLE_MS * NOISE.BEAT_MAX_FACTOR);
 
     h.engine.stop();
     await started; // resolves cleanly — the sleep was interrupted
@@ -1234,7 +1256,10 @@ describe('Engine — f9: per-step resilience', () => {
     expect(h.halts).toEqual([]);
     expect(h.engine.status().state).not.toBe('halted');
     expect(h.churn.executed).toEqual([]);
-    expect(h.sleep.calls).toEqual([ENGINE_IDLE_MS]); // one idle back-off beat
+    // One transient-backoff beat, drawn inside the local-beat band.
+    expect(h.sleep.calls.length).toBe(1);
+    expect(h.sleep.calls[0]).toBeGreaterThanOrEqual(ENGINE_IDLE_MS * NOISE.BEAT_MIN_FACTOR);
+    expect(h.sleep.calls[0]).toBeLessThanOrEqual(ENGINE_IDLE_MS * NOISE.BEAT_MAX_FACTOR);
 
     expect(await h.engine.stepOnce()).toBe('acted'); // the next step proceeds normally
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
@@ -1580,7 +1605,11 @@ describe('Engine — recovery ladder', () => {
     h.churn.blockedStreak = 1;
 
     expect(await h.engine.stepOnce()).toBe('idle');
-    expect(h.sleep.calls).toEqual([30_000]); // PRUNE.PARK_MS — not the paced delay
+    // The blocked park is a retry backoff: jittered around PRUNE.PARK_MS,
+    // bounded — and NOT the paced delay (240s), which sits outside the band.
+    expect(h.sleep.calls.length).toBe(1);
+    expect(h.sleep.calls[0]).toBeGreaterThanOrEqual(30_000 * NOISE.BACKOFF_MIN_FACTOR);
+    expect(h.sleep.calls[0]).toBeLessThanOrEqual(30_000 * NOISE.BACKOFF_MAX_FACTOR);
     expect(h.churn.due.map((r) => r.accountPk)).toEqual(['a']); // record untouched
     expect(h.engine.status().recovery).toBeNull(); // below the streak: no ladder
   });

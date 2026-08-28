@@ -1,5 +1,7 @@
 import type { CircadianProfile } from '@/timing/circadian';
 import { intensityAt } from '@/timing/circadian';
+import { NOISE } from '@/timing/config';
+import { boundarySeedKey, cadenceFactor, jitterBoundary } from '@/timing/noise';
 import { jittered } from '@/timing/primitives';
 import { sample } from '@/timing/primitives';
 import {
@@ -212,5 +214,43 @@ describe('macro-pattern — organic timeline over 30 simulated days', () => {
     const legacyWithin = legacyGaps.filter((g) => g < 30 * 60_000);
     expect(cv(within)).toBeGreaterThan(cv(legacyWithin));
     expect(cv(within)).toBeGreaterThan(0.4);
+  });
+});
+
+/**
+ * The LEGACY path's timing-noise (deterministic-scheduling fix): the shipped
+ * default model is the legacy metronome, so its macro cadence must carry
+ * entropy DIRECTLY — daily wake instants and sweep intervals over a simulated
+ * week must vary, never repeat to the second.
+ */
+describe('macro-pattern — legacy-path timing noise over a simulated week', () => {
+  const variance = (xs: number[]): number => mean(xs.map((x) => (x - mean(xs)) ** 2));
+
+  test('daily wake instants vary day to day and never land exactly on the o’clock', () => {
+    const entropy = 0xc0ffee;
+    const offsets: number[] = [];
+    for (let day = 0; day < 7; day += 1) {
+      const boundary = new Date(2026, 0, 5 + day, 8, 0, 0, 0).getTime(); // 08:00 local
+      const parkedFrom = boundary - 10 * MS_PER_HOUR; // engine parked at 22:00 the evening before
+      const base = boundary - parkedFrom;
+      const wake =
+        parkedFrom +
+        jitterBoundary(base, boundarySeedKey(boundary, 'engine:active-hours-park'), entropy);
+      const offset = wake - boundary;
+      expect(offset).toBeGreaterThan(0); // never before (or exactly on) the window open
+      expect(offset).toBeLessThanOrEqual(NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
+      offsets.push(offset);
+    }
+    expect(variance(offsets)).toBeGreaterThan(0); // wake instants genuinely differ per day
+  });
+
+  test('sweep intervals vary run to run within the cadence band', () => {
+    const rng = mulberry32(99);
+    const intervals = Array.from({ length: 24 }, () => MS_PER_HOUR * cadenceFactor(rng));
+    for (const iv of intervals) {
+      expect(iv).toBeGreaterThanOrEqual(MS_PER_HOUR * NOISE.CADENCE_MIN_FACTOR);
+      expect(iv).toBeLessThanOrEqual(MS_PER_HOUR * NOISE.CADENCE_MAX_FACTOR);
+    }
+    expect(variance(intervals)).toBeGreaterThan(0); // no bare hourly grid
   });
 });

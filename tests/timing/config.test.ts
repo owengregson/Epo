@@ -3,6 +3,7 @@ import {
   CONNECTIVITY,
   ENGINE,
   HARNESS,
+  NOISE,
   POLL,
   PRUNE,
   RECOVERY,
@@ -45,5 +46,25 @@ describe('timing/config — registry invariants', () => {
     expect(ENGINE.REFILL_PACING_MIN_MS).toBeLessThanOrEqual(ENGINE.REFILL_PACING_MAX_MS);
     expect(HARNESS.OP_DELAY_MIN_MS).toBeLessThanOrEqual(HARNESS.OP_DELAY_MAX_MS);
     expect(HARNESS.ENRICH_PACE_MIN_MS).toBeLessThanOrEqual(HARNESS.ENRICH_PACE_MAX_MS);
+    expect(RIM.NOTIFICATIONS_SCROLL_WAIT_MIN_MS).toBeLessThanOrEqual(
+      RIM.NOTIFICATIONS_SCROLL_WAIT_MAX_MS,
+    );
+    expect(RIM.NOTIFICATIONS_CLOSE_DELAY_MIN_MS).toBeLessThanOrEqual(
+      RIM.NOTIFICATIONS_CLOSE_DELAY_MAX_MS,
+    );
+    expect(RIM.ACQUIRE_SCROLL_MIN_MS).toBeLessThanOrEqual(RIM.ACQUIRE_SCROLL_MAX_MS);
+    expect(NOISE.CADENCE_MIN_FACTOR).toBeLessThanOrEqual(NOISE.CADENCE_MAX_FACTOR);
+    expect(NOISE.BACKOFF_MIN_FACTOR).toBeLessThanOrEqual(NOISE.BACKOFF_MAX_FACTOR);
+    expect(NOISE.BEAT_MIN_FACTOR).toBeLessThanOrEqual(NOISE.BEAT_MAX_FACTOR);
+    expect(NOISE.LIST_WALK_REST_EVERY_MIN).toBeLessThanOrEqual(NOISE.LIST_WALK_REST_EVERY_MAX);
+  });
+
+  test('noise-layer invariants: positive jitter ceilings, park-preserving floors', () => {
+    expect(NOISE.DAILY_BOUNDARY_JITTER_MAX_MS).toBeGreaterThan(0);
+    expect(NOISE.PRUNE_LAUNCH_JITTER_MAX_MS).toBeGreaterThan(0);
+    expect(NOISE.BACKOFF_MIN_FACTOR).toBeGreaterThan(0); // a park always stays a park
+    expect(NOISE.BEAT_MIN_FACTOR).toBeGreaterThan(0);
+    expect(NOISE.CADENCE_MIN_FACTOR).toBeGreaterThan(0);
+    expect(NOISE.LIST_WALK_REST_EVERY_MIN).toBeGreaterThanOrEqual(1);
   });
 });

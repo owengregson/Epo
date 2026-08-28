@@ -103,9 +103,9 @@ import {
 } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { samplePhaseOffset } from '@/timing/circadian';
-import { ADAPTER, CIRCADIAN, POLL, PRUNE, RECOVERY, SCHEDULER, TAB } from '@/timing/config';
+import { ADAPTER, CIRCADIAN, NOISE, POLL, PRUNE, RECOVERY, SCHEDULER, TAB } from '@/timing/config';
 import { DelayManager } from '@/timing/delay-manager';
-import { sleep, TIMED_OUT, uniform, withTimeout } from '@/timing/primitives';
+import { sample, sleep, TIMED_OUT, uniform, withTimeout } from '@/timing/primitives';
 import { ScheduleManager } from '@/timing/schedule-manager';
 import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
 import { MS_PER_DAY } from '@/timing/units';
@@ -1637,6 +1637,39 @@ export class Foundation {
     // started in the meantime. (Growth running is fine — startPrune hands it off.)
     if (this.activeDriver !== null) return;
     if (!graph.rate.withinActiveHours()) return;
+
+    // Launch jitter (timing-noise layer): the 30-min due-poll is LOCAL (no IG
+    // traffic on the tick), but launching the moment the tick lands put every
+    // scheduled prune on a half-hour-aligned grid. Hold a uniform slice —
+    // interruptible by dispose — then RE-RUN the safety gates: the world may
+    // have changed during a hold this long.
+    const launchHoldMs = sample(uniform(0, NOISE.PRUNE_LAUNCH_JITTER_MAX_MS));
+    logger.info('foundation: scheduled prune due, holding jittered launch slot', {
+      launchHoldMs,
+    });
+    await sleep(launchHoldMs, this.disposeAbort.signal);
+    if (this.disposing || this.tourHold || this.activeDriver !== null) return;
+    if (!graph.rate.withinActiveHours()) return;
+    // A manual prune may have started AND completed during the hold — its
+    // fresh lastRunAt makes the schedule no longer due.
+    {
+      const s = this.resolveSettings();
+      if (!pruneDue(s.pruneScheduleDays, s.pruneLastRunAt, graph.clock.now())) return;
+    }
+    const haltAfterHold = graph.engine.lastHaltInfo();
+    if (
+      haltAfterHold !== null &&
+      (haltAfterHold.reason === 'recovery-exhausted' ||
+        haltAfterHold.reason === 'sentinel:action-blocked') &&
+      graph.clock.now() - haltAfterHold.at < RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS
+    ) {
+      logger.info('foundation: scheduled prune skipped after hold — rate-limit halt cool-down', {
+        haltReason: haltAfterHold.reason,
+        haltAt: haltAfterHold.at,
+      });
+      return;
+    }
+
     logger.info('foundation: scheduled prune due, auto-starting', {
       scheduleDays: settings.pruneScheduleDays,
       lastRunAt: settings.pruneLastRunAt,
@@ -1986,12 +2019,22 @@ export class Foundation {
       cfg: toChainConfig(settings),
     });
 
-    // The follow-back sweep cadence, persisted through Settings so the 4h rhythm
+    // The follow-back sweep cadence, persisted through Settings so the rhythm
     // survives restarts (Settings.sweepLastRunAt; same pattern as pruneLastRunAt).
+    // The jitter factor (timing-noise layer) is persisted beside it: each
+    // completed sweep redraws a bounded interval factor, so the drawer check
+    // never lands on a bare hourly grid — and a restart mid-interval keeps the
+    // factor already drawn.
     const sweepCadence = this.scheduler.cadence('engine:followback-sweep', {
       getLastRunAt: () => this.resolveSettings().sweepLastRunAt,
       setLastRunAt: (at) => {
         void this.updateSettings({ sweepLastRunAt: at });
+      },
+      jitter: {
+        getFactor: () => this.resolveSettings().sweepIntervalFactor,
+        setFactor: (factor) => {
+          void this.updateSettings({ sweepIntervalFactor: factor });
+        },
       },
     });
 
@@ -2033,6 +2076,10 @@ export class Foundation {
       atDailyCap: (now) => pruneEngineRef?.atDailyCap(now) ?? true,
     };
 
+    // Per-install noise entropy (store meta, drawn once): seeds the engines'
+    // dedicated timing-noise rngs + the restart-stable daily-boundary jitter.
+    const installEntropy = store.installEntropy();
+
     const engine = createEngine({
       store,
       clock,
@@ -2049,6 +2096,7 @@ export class Foundation {
       pacing,
       unfollowFeed,
       sweepCadence,
+      installEntropy,
       // The recovery ladder's tab-diagnostics port: input probe + renderer
       // canary decide tab-vs-rate-wall at entry; recoverTab is the repair.
       // Guarded so partially-shaped test tabs degrade to "healthy" no-ops.
@@ -2115,6 +2163,7 @@ export class Foundation {
       sentinel,
       cfg: toPruneConfig(settings),
       delays,
+      installEntropy,
       lastRunAt: settings.pruneLastRunAt,
       // A run stops at the active-hours edge instead of rolling past local
       // midnight (where the daily count re-zeroes and one run could spend 2×

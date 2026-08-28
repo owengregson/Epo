@@ -66,6 +66,15 @@ export interface AcquisitionConfig {
   /** Dialog-scroll FALLBACK bounds (only when the direct walk cannot fetch). */
   maxRounds: number;
   noNewStop: number;
+  /**
+   * Dialog-scroll FALLBACK pacing band (uniform per-round draw). Optional so
+   * existing config literals keep compiling; absent falls back to
+   * `RIM.ACQUIRE_SCROLL_{MIN,MAX}_MS` — never to the page reader's fixed
+   * metronome (the timing-noise layer removed that path's only bound-less
+   * call site).
+   */
+  scrollMinMs?: number;
+  scrollMaxMs?: number;
 }
 
 export const ACQUISITION_DEFAULTS: AcquisitionConfig = {
@@ -79,6 +88,8 @@ export const ACQUISITION_DEFAULTS: AcquisitionConfig = {
   maxCoverageFraction: 0.5,
   maxRounds: RIM.ACQUIRE_MAX_ROUNDS,
   noNewStop: RIM.ACQUIRE_NO_NEW_STOP,
+  scrollMinMs: RIM.ACQUIRE_SCROLL_MIN_MS,
+  scrollMaxMs: RIM.ACQUIRE_SCROLL_MAX_MS,
 };
 
 /**
@@ -396,6 +407,11 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
       sentinel: this.sentinel,
       maxRounds: this.cfg.maxRounds,
       noNewStop: this.cfg.noNewStop,
+      // Jittered per-round pacing (timing-noise layer): passing the band routes
+      // the reader onto its uniform branch — without it this was the one call
+      // site pacing every scroll at the fixed 2 s metronome.
+      scrollMinMs: this.cfg.scrollMinMs ?? RIM.ACQUIRE_SCROLL_MIN_MS,
+      scrollMaxMs: this.cfg.scrollMaxMs ?? RIM.ACQUIRE_SCROLL_MAX_MS,
     });
 
     const now = this.clock.now();

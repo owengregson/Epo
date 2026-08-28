@@ -46,6 +46,7 @@ import { type Clock, SystemClock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
 import type { Observation } from '@/store/types';
 import { RIM } from '@/timing/config';
+import { nextRestStride } from '@/timing/noise';
 import { sample, sleep, uniform } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
@@ -164,6 +165,10 @@ export class ListPageWalker {
       args.pageMaxMs ?? RIM.LIST_WALK_PAGE_MAX_MS,
     );
     const restPolicy = uniform(RIM.LIST_WALK_REST_MIN_MS, RIM.LIST_WALK_REST_MAX_MS);
+    // The long-rest STRIDE is drawn, not fixed (timing-noise layer): the next
+    // breather lands after a fresh 5–10 pages, redrawn after each rest, so the
+    // walk never rests on an exact every-Nth-page metronome.
+    let nextRestAtPage = nextRestStride(this.rng);
 
     // Live veil readout: this walk hits the private JSON API directly (not the
     // page), so it reads as an 'api' phase, counting followers as they arrive.
@@ -440,7 +445,7 @@ export class ListPageWalker {
       }
 
       await this.sleepFn(sample(pacePolicy, this.rng), this.abortSignal?.());
-      if (pages % RIM.LIST_WALK_REST_EVERY === 0 && !shouldStop()) {
+      if (pages >= nextRestAtPage && !shouldStop()) {
         const restMs = sample(restPolicy, this.rng);
         logger.info('rim.list-page-walker: long rest between page bursts', {
           pk,
@@ -449,6 +454,7 @@ export class ListPageWalker {
           restMs,
         });
         await this.sleepFn(restMs, this.abortSignal?.());
+        nextRestAtPage = pages + nextRestStride(this.rng);
       }
     }
 

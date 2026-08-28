@@ -53,6 +53,7 @@ describe('pruneDue (scheduled auto-run predicate)', () => {
 import type { SleepFn } from '@/engine/engine';
 import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import type { SentinelStatus } from '@/adapter/sentinel';
+import { NOISE } from '@/timing/config';
 import { cyclePlan } from '@/timing/cycle-plan';
 import { setLevel } from '@/utils/logger';
 
@@ -590,8 +591,12 @@ describe('PruneEngine.run', () => {
 
     expect(h.churn.unfollows).toEqual(['u1', 'u1', 'u2']); // retried, then moved on
     expect(h.store.pruneCountSince(0)).toBe(2); // both eventually reached the ledger
-    // The brief park, then u1's inter-action delay, then u2's (60s base ×1/3 = 20s).
-    expect(h.sleeps).toEqual([PRUNE_PARK_MS, 20_000, 20_000]);
+    // The brief park (a retry backoff — jittered around PRUNE_PARK_MS, bounded),
+    // then u1's inter-action delay, then u2's (60s base ×1/3 = 20s, exact).
+    expect(h.sleeps.length).toBe(3);
+    expect(h.sleeps[0]).toBeGreaterThanOrEqual(PRUNE_PARK_MS * NOISE.BACKOFF_MIN_FACTOR);
+    expect(h.sleeps[0]).toBeLessThanOrEqual(PRUNE_PARK_MS * NOISE.BACKOFF_MAX_FACTOR);
+    expect(h.sleeps.slice(1)).toEqual([20_000, 20_000]);
     expect(h.engine.status().state).toBe('done');
     h.store.close();
   });

@@ -36,6 +36,24 @@
       "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
     },
     {
+      "includes": ["src/engine/**/*.ts", "src/rim/**/*.ts", "src/governors/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "setTimeout": "IG-facing cadences must not originate from raw timers here — wait through src/timing (primitives.sleep / DelayManager), which the noise layer gates.",
+                  "setInterval": "IG-facing cadences must not originate from raw timers here — schedule through src/timing (ScheduleManager), which persists and jitters cadences."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["src/**/*.tsx"],
       "linter": { "rules": { "style": { "useImportType": "off" } } }
     }

@@ -23,9 +23,11 @@ import type { KnowledgeStore, PruneCensusRecord } from '../store/knowledge-store
 import { PRUNE } from '../timing/config';
 import { cyclePlan } from '../timing/cycle-plan';
 import { DelayManager } from '../timing/delay-manager';
+import { mulberry32, noisify, type WaitClass } from '../timing/noise';
 import {
   type DelayPolicy,
   jittered,
+  type Rng,
   type SleepFn,
   sample,
   scaled,
@@ -244,6 +246,12 @@ export interface PruneEngineDeps {
   delays?: DelayManager;
   /** Seed for `lastRunAt` (from persisted Settings); null when never run. */
   lastRunAt?: number | null;
+  /**
+   * Per-install noise entropy (store meta `install_entropy`) seeding the
+   * DEDICATED timing-noise rng — same contract as the growth engine's
+   * (`EngineDeps.installEntropy`). Absent (tests) → 0.
+   */
+  installEntropy?: number;
   /** Called with a fresh status projection after every step and state change. */
   onStatus?: (s: PruneStatus) => void;
   /** Called exactly once per COMPLETED run so the root can persist lastRunAt. */
@@ -282,6 +290,23 @@ export interface PruneEngineDeps {
 
 /** Brief park after a blocked action before continuing. */
 export const PRUNE_PARK_MS = PRUNE.PARK_MS;
+
+/**
+ * Every DelayManager key the PruneEngine waits under — the closed set the
+ * noise registry classifies (mirrors {@link ENGINE_WAIT_CLASS} in engine.ts).
+ */
+export type PruneWaitKey = 'prune:park' | 'prune:action-delay';
+
+/**
+ * The per-key noise classification `pruneWait` applies: the blocked/bio park
+ * is a retry backoff (log-normal around its base, bounded), while the paced
+ * inter-unfollow delay already draws its own jitter (`nextDelayMs`) and stays
+ * exact. The `satisfies` makes an unclassified new key a tsc error.
+ */
+export const PRUNE_WAIT_CLASS = {
+  'prune:park': 'retry-backoff',
+  'prune:action-delay': 'exact',
+} as const satisfies Record<PruneWaitKey, WaitClass>;
 
 /**
  * Consecutive FAILED unfollows that halt a prune run (`actions-failing`).
@@ -335,6 +360,13 @@ export class PruneEngine {
   /** The shared wait owner: every prune wait is a named `prune:*` entry here. */
   private readonly delays: DelayManager;
   private readonly rng: () => number;
+  /**
+   * The DEDICATED timing-noise rng — never {@link rng}, whose seeded stream
+   * feeds the paced delay draw (deterministic tests stay byte-identical).
+   * Seeded from the install entropy ⊕ construction time ⊕ a prune-side salt,
+   * so growth and prune noise streams differ even on one install.
+   */
+  private readonly noiseRng: Rng;
   private cfg: PruneConfig;
 
   private pruneState: PruneState = 'idle';
@@ -389,6 +421,9 @@ export class PruneEngine {
       deps.delays ??
       new DelayManager({ clock: deps.clock, rng: deps.rng, sleep: deps.sleep ?? timingSleep });
     this.rng = deps.rng ?? Math.random;
+    this.noiseRng = mulberry32(
+      (((deps.installEntropy ?? 0) >>> 0) ^ (deps.clock.now() & 0xffffffff) ^ 0x51abc0de) >>> 0,
+    );
     this.cfg = deps.cfg;
     this.lastRunAt = deps.lastRunAt ?? null;
 
@@ -1392,10 +1427,15 @@ export class PruneEngine {
    * run's abort token — `stop()` wakes any in-flight wait immediately (mirrors
    * `engine.ts`). The `prune:action-delay` wait additionally emits a status
    * right after registration, so the renderer sees the REAL next-unfollow
-   * deadline (`nextActionAt`) while the wait is pending.
+   * deadline (`nextActionAt`) while the wait is pending. Non-exact keys pass
+   * the noise gate ({@link PRUNE_WAIT_CLASS}) first — the noisified policy
+   * draws from the dedicated noise rng, so the seeded {@link rng} stream and
+   * any injected DelayManager's rng stay untouched.
    */
-  private async pruneWait(key: string, policyOrMs: DelayPolicy | number): Promise<void> {
-    const wait = this.delays.wait(key, policyOrMs, { signal: this.runAbort.signal });
+  private async pruneWait(key: PruneWaitKey, policyOrMs: DelayPolicy | number): Promise<void> {
+    const cls = PRUNE_WAIT_CLASS[key];
+    const noised = cls === 'exact' ? policyOrMs : noisify(cls, policyOrMs, this.noiseRng);
+    const wait = this.delays.wait(key, noised, { signal: this.runAbort.signal });
     if (key === 'prune:action-delay') this.emitStatus();
     await wait;
   }

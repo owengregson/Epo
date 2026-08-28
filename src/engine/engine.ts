@@ -30,7 +30,16 @@ import {
 import { DelayManager, type WaitResult } from '../timing/delay-manager';
 import { clamp, logNormal } from '../timing/distributions';
 import {
+  boundarySeedKey,
+  cadenceFactor,
+  jitterBoundary,
+  mulberry32,
+  noisify,
+  type WaitClass,
+} from '../timing/noise';
+import {
   type DelayPolicy,
+  type Rng,
   type SleepFn,
   TIMED_OUT,
   sleep as timingSleep,
@@ -272,6 +281,47 @@ export type EngineParkReason =
   | 'recovery';
 
 /**
+ * Every DelayManager key the Engine waits under — the closed set the noise
+ * registry classifies. Adding an `engineWait` call site with a new key REQUIRES
+ * adding it here and to {@link ENGINE_WAIT_CLASS}, or tsc fails.
+ */
+export type EngineWaitKey =
+  | 'engine:active-hours-park'
+  | 'engine:daily-ceiling-park'
+  | 'engine:session-park'
+  | 'engine:velocity-park'
+  | 'engine:enrich-backoff'
+  | 'engine:prune-park'
+  | 'engine:blocked-park'
+  | 'engine:idle'
+  | 'engine:transient-backoff'
+  | 'engine:action-delay'
+  | 'engine:refill-pacing'
+  | 'engine:recovery-hold';
+
+/**
+ * The per-key noise classification (timing/noise.ts) `engineWait` applies —
+ * the deterministic-scheduling fix. 'exact' keys already draw their own jitter
+ * at the call site (paced action delay, refill band, session/velocity parks,
+ * the recovery hold's clamped log-normal) — noising them again would be a
+ * double-jitter bug. The `satisfies` makes an unclassified new key a tsc error.
+ */
+export const ENGINE_WAIT_CLASS = {
+  'engine:active-hours-park': 'daily-boundary',
+  'engine:daily-ceiling-park': 'daily-boundary',
+  'engine:enrich-backoff': 'retry-backoff',
+  'engine:prune-park': 'retry-backoff',
+  'engine:blocked-park': 'retry-backoff',
+  'engine:idle': 'local-beat',
+  'engine:transient-backoff': 'local-beat',
+  'engine:action-delay': 'exact',
+  'engine:refill-pacing': 'exact',
+  'engine:session-park': 'exact',
+  'engine:velocity-park': 'exact',
+  'engine:recovery-hold': 'exact',
+} as const satisfies Record<EngineWaitKey, WaitClass>;
+
+/**
  * DelayManager keys whose waits are LONG parks the status must surface. The
  * short operational waits (idle beat, refill pacing, transient backoff, the
  * brief prune-park retry) stay unlisted — they are step-scale, not hold-scale;
@@ -389,6 +439,14 @@ export interface EngineDeps {
   delays?: DelayManager;
   /** Randomness for the jittered pacing draw; injectable for deterministic tests. */
   rng?: () => number;
+  /**
+   * Per-install noise entropy (store meta `install_entropy`, drawn once and
+   * persisted): seeds the DEDICATED timing-noise rng and the restart-stable
+   * daily-boundary jitter, so no two installs share wake offsets while one
+   * install's offset survives a mid-park relaunch (§3). Absent (plain test
+   * fakes) → 0, keeping every noise draw deterministic under a fake clock.
+   */
+  installEntropy?: number;
   /**
    * Due-by-timestamp cadence for the follow-back sweep. The composition root
    * injects a persisted cadence (Settings.sweepLastRunAt) so the 4h rhythm
@@ -553,19 +611,41 @@ export class Engine {
   /** Randomness for the weave interleave draw; injectable for deterministic tests. */
   private readonly rng: () => number;
 
+  /** Per-install noise entropy (see {@link EngineDeps.installEntropy}). */
+  private readonly installEntropy: number;
+
+  /**
+   * The DEDICATED timing-noise rng — NEVER {@link rng}: the seeded engine rng
+   * feeds the weave interleave draw (and injected DelayManagers sample 'exact'
+   * policies with their own), so drawing noise from it would shift every
+   * downstream draw and churn seeded tests. Seeded from the install entropy ⊕
+   * construction time: per-install, fresh per run, deterministic under a fake
+   * clock. Restart-STABLE draws (daily boundaries) bypass this via
+   * {@link jitterBoundary}'s own seed material instead.
+   */
+  private readonly noiseRng: Rng;
+
   constructor(deps: EngineDeps) {
     this.deps = deps;
     this.delays =
       deps.delays ??
       new DelayManager({ clock: deps.clock, rng: deps.rng, sleep: deps.sleep ?? timingSleep });
+    this.installEntropy = deps.installEntropy ?? 0;
+    this.noiseRng = mulberry32(((this.installEntropy >>> 0) ^ (deps.clock.now() & 0xffffffff)) >>> 0);
     this.sweepCadence =
       deps.sweepCadence ??
       ((): SweepCadence => {
+        // In-memory fallback (starts due, catch-up sweep on the first eligible
+        // step) — with the same watcher-cadence factor treatment the persisted
+        // cadence gets: each completed sweep redraws a bounded interval factor
+        // so the fallback never ticks on a bare hourly grid either.
         let last = 0;
+        let factor = 1;
         return {
-          isDue: (now, everyMs) => now - last >= everyMs,
+          isDue: (now, everyMs) => now - last >= everyMs * factor,
           markRun: (now) => {
             last = now;
+            factor = cadenceFactor(this.noiseRng);
           },
         };
       })();
@@ -1590,8 +1670,10 @@ export class Engine {
    * so a multi-hour hold is visible the moment it starts, not after it ends.
    * The remaining short keys stay quiet to avoid doubling every step's push.
    */
-  private async engineWait(key: string, policyOrMs: DelayPolicy | number): Promise<WaitResult> {
-    const wait = this.delays.wait(key, policyOrMs, { signal: this.runAbort.signal });
+  private async engineWait(key: EngineWaitKey, policyOrMs: DelayPolicy | number): Promise<WaitResult> {
+    const wait = this.delays.wait(key, this.applyWaitNoise(key, policyOrMs), {
+      signal: this.runAbort.signal,
+    });
     // Registration is synchronous (before the wait's first internal await), so
     // the real deadline is readable — and emittable — before awaiting.
     const parkReason = PARK_REASON_BY_KEY.get(key);
@@ -1612,6 +1694,34 @@ export class Engine {
       // stop); the step's own status emit publishes the cleared state.
       if (parkReason !== undefined) this.park = null;
     }
+  }
+
+  /**
+   * The noise gate every engine wait passes through (the deterministic-
+   * scheduling fix, per {@link ENGINE_WAIT_CLASS}):
+   *
+   *  - 'daily-boundary': the exact ms-to-boundary gets a POSITIVE-ONLY offset
+   *    seeded by the RESUME day's key (computed from now + base — a park armed
+   *    tonight for tomorrow 08:00 and a restart re-arming it after midnight
+   *    derive the SAME key) ⊕ the wait key ⊕ the install entropy: stable
+   *    within a day and across a mid-park restart (§3), different per day,
+   *    per key, and per install. Applied BEFORE the wait registers, so
+   *    `parkedUntil` (and the pushed status) carry the REAL jittered deadline.
+   *  - 'retry-backoff' / 'local-beat': a noisified policy whose draws come
+   *    from the dedicated noise rng — the seeded engine rng stream stays
+   *    byte-identical with or without noise.
+   *  - 'exact': untouched (the call site already draws its own jitter).
+   */
+  private applyWaitNoise(key: EngineWaitKey, policyOrMs: DelayPolicy | number): DelayPolicy | number {
+    const cls = ENGINE_WAIT_CLASS[key];
+    if (cls === 'exact') return policyOrMs;
+    if (cls === 'daily-boundary') {
+      const base =
+        typeof policyOrMs === 'number' ? policyOrMs : policyOrMs.sample(this.noiseRng);
+      const resumeAt = this.deps.clock.now() + base;
+      return jitterBoundary(base, boundarySeedKey(resumeAt, key), this.installEntropy);
+    }
+    return noisify(cls, policyOrMs, this.noiseRng);
   }
 
   /** The CURRENT run-generation abort signal (adapter waits link to this). */

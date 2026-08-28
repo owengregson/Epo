@@ -171,6 +171,10 @@ export const RIM = {
   /** Follower-acquisition scrape bounds (one refill slice). */
   ACQUIRE_MAX_ROUNDS: 5,
   ACQUIRE_NO_NEW_STOP: 2,
+  /** Growth-acquisition DIALOG-FALLBACK scroll pacing band (uniform draw) —
+   *  replaces the fixed SCROLL_WAIT_MS metronome on the one bound-less path. */
+  ACQUIRE_SCROLL_MIN_MS: 1_400,
+  ACQUIRE_SCROLL_MAX_MS: 3_600,
   /**
    * Direct list-page walk (prune census): runaway page bound (~200 × 50-user
    * pages = 10k accounts) and default per-page pacing when the caller supplies
@@ -179,8 +183,8 @@ export const RIM = {
   LIST_WALK_MAX_PAGES: 200,
   LIST_WALK_PAGE_MIN_MS: 1_000,
   LIST_WALK_PAGE_MAX_MS: 3_000,
-  /** Every Nth page the walk takes a long jittered rest (anti-throttle breather). */
-  LIST_WALK_REST_EVERY: 7,
+  /** Long jittered rest duration between page bursts (anti-throttle breather);
+   *  the STRIDE between rests is drawn per rest — NOISE.LIST_WALK_REST_EVERY_*. */
   LIST_WALK_REST_MIN_MS: 5_000,
   LIST_WALK_REST_MAX_MS: 15_000,
   /** Consecutive zero-new-pk pages tolerated (duplicate windows) before stopping. */
@@ -191,14 +195,18 @@ export const RIM = {
    * failed (the drawer fetch normally lands within a second or two).
    */
   NOTIFICATIONS_WAIT_MS: 10_000,
-  /** Brief settle before toggling the notifications drawer closed again. */
-  NOTIFICATIONS_CLOSE_DELAY_MS: 800,
+  /** Brief settle band (uniform draw) before closing the notifications drawer —
+   *  a fixed settle closed the drawer the same beat after every check. */
+  NOTIFICATIONS_CLOSE_DELAY_MIN_MS: 500,
+  NOTIFICATIONS_CLOSE_DELAY_MAX_MS: 1_200,
   /** Max follow requests auto-accepted per notifications check (bounded write burst). */
   REQUEST_ACCEPT_CAP: 20,
   /** Max drawer-scroll rounds per check (each may load an older feed page). */
   NOTIFICATIONS_SCROLL_ROUNDS: 2,
-  /** How long to wait after a drawer scroll for an older feed page to land. */
-  NOTIFICATIONS_SCROLL_WAIT_MS: 2_000,
+  /** Post-scroll wait band (uniform draw) for an older feed page to land —
+   *  jittered so drawer deepening never scrolls on a fixed 2 s metronome. */
+  NOTIFICATIONS_SCROLL_WAIT_MIN_MS: 1_400,
+  NOTIFICATIONS_SCROLL_WAIT_MAX_MS: 2_800,
   /** Poll interval while waiting for the captured inbox response to parse. */
   NOTIFICATIONS_POLL_MS: 150,
   /** Deadline + poll interval for verifying an accept click consumed its row. */
@@ -207,6 +215,41 @@ export const RIM = {
   /** Jittered pause between Confirm clicks while accepting follow requests. */
   ACCEPT_PACE_MIN_MS: 1_500,
   ACCEPT_PACE_MAX_MS: 3_000,
+} as const;
+
+/**
+ * Timing-noise layer (timing/noise.ts) — the fix for deterministic default-
+ * config scheduling: without these, every install woke at exactly
+ * activeHoursStart:00:00.000, resumed ceiling parks on the same o'clock
+ * instant, and swept notifications on a bare hourly grid.
+ */
+export const NOISE = {
+  /** Ceiling of the positive-only wake offset PAST a daily boundary (active-hours
+   *  open / cycle reset): spreads every install's "morning" across ~40 min. */
+  DAILY_BOUNDARY_JITTER_MAX_MS: 40 * 60_000,
+  /** Log-space spread of the per-run watcher-cadence factor (follow-back sweep). */
+  CADENCE_SIGMA: 0.3,
+  /** Cadence-factor floor — a drawn interval never shrinks below half the configured one. */
+  CADENCE_MIN_FACTOR: 0.5,
+  /** Cadence-factor ceiling — a drawn interval never exceeds double the configured one. */
+  CADENCE_MAX_FACTOR: 2.0,
+  /** Ceiling of the uniform hold between "scheduled prune due" and its launch —
+   *  kills the 30-min-aligned start grid (the poll tick itself is local, no IG traffic). */
+  PRUNE_LAUNCH_JITTER_MAX_MS: 20 * 60_000,
+  /** Log-space spread of a retry-backoff park draw (enrich backoff, blocked/prune parks). */
+  BACKOFF_SIGMA: 0.3,
+  /** Backoff draw floor as a factor of its base — a park always stays a real park. */
+  BACKOFF_MIN_FACTOR: 0.5,
+  /** Backoff draw ceiling as a factor of its base — the tail stays bounded. */
+  BACKOFF_MAX_FACTOR: 2.0,
+  /** Local-beat band floor (idle beat, transient backoff) as a factor of the base. */
+  BEAT_MIN_FACTOR: 0.7,
+  /** Local-beat band ceiling — asymmetric (0.7–1.45×) so the mean drifts long, never a fixed beat. */
+  BEAT_MAX_FACTOR: 1.45,
+  /** List-walk long-rest stride band (pages): the breather lands every 5–10 pages,
+   *  redrawn after each rest — was a fixed every-7th-page metronome. */
+  LIST_WALK_REST_EVERY_MIN: 5,
+  LIST_WALK_REST_EVERY_MAX: 10,
 } as const;
 
 export const POLL = {

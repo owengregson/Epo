@@ -250,7 +250,10 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
         const before = seenEvents.size;
         const scrolled = await this.actor.scrollNotificationsList();
         if (!scrolled) break; // list fits or already bottomed
-        await this.sleep(RIM.NOTIFICATIONS_SCROLL_WAIT_MS, signal);
+        await this.sleep(
+          sample(uniform(RIM.NOTIFICATIONS_SCROLL_WAIT_MIN_MS, RIM.NOTIFICATIONS_SCROLL_WAIT_MAX_MS)),
+          signal,
+        );
         await Promise.all(pendingReads.splice(0));
         if (seenEvents.size === before) break; // no older page / nothing new
       }
@@ -280,7 +283,10 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
       // bell when no close control is found. Best-effort: every subsequent
       // operation begins with a `goto` that resets the SPA anyway.
       try {
-        await this.sleep(RIM.NOTIFICATIONS_CLOSE_DELAY_MS, this.abortSignal?.());
+        await this.sleep(
+          sample(uniform(RIM.NOTIFICATIONS_CLOSE_DELAY_MIN_MS, RIM.NOTIFICATIONS_CLOSE_DELAY_MAX_MS)),
+          this.abortSignal?.(),
+        );
         const closed = await this.actor.clickNotificationsClose();
         if (!closed) await this.actor.clickNotifications();
       } catch (e) {

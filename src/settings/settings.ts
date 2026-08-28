@@ -6,7 +6,7 @@ import type { PruneConfig } from '../engine/prune-engine';
 import type { ScannerConfig } from '../engine/scanner';
 import { SCORER_DEFAULTS, type ScorerConfig } from '../engine/scorer';
 import type { RateGovernorConfig } from '../governors/rate-governor';
-import { PATTERN, SESSION } from '../timing/config';
+import { NOISE, PATTERN, SESSION } from '../timing/config';
 import type { SessionPlannerConfig } from '../timing/session-planner';
 import { MS_PER_DAY, MS_PER_MINUTE } from '../timing/units';
 import { warn } from '../utils/logger';
@@ -61,6 +61,13 @@ export interface Settings {
   followbackSweepHours: number;
   /** Epoch ms of the last completed follow-back sweep; null when never run. */
   sweepLastRunAt: number | null;
+  /**
+   * Timing-noise factor stretching the CURRENT sweep interval (isDue compares
+   * against `everyMs × factor`); redrawn and persisted at each completed sweep
+   * so consecutive intervals differ while a restart mid-interval keeps the one
+   * already drawn. 1 = the exact configured cadence.
+   */
+  sweepIntervalFactor: number;
   /**
    * Auto-accept incoming follow requests during each follow-back check. On a
    * PRIVATE account, follow-backs arrive as requests — without accepting them
@@ -163,6 +170,7 @@ export const DEFAULT_SETTINGS: Settings = {
   // run hourly (the old whole-list paged sweep budgeted for multi-hour gaps).
   followbackSweepHours: 1,
   sweepLastRunAt: null,
+  sweepIntervalFactor: 1,
   autoAcceptFollowRequests: true,
 
   lowWaterCandidates: 5,
@@ -293,6 +301,12 @@ export function sanitizeSettings(s: Settings): Settings {
 
   out.followbackSweepHours = num(s.followbackSweepHours, d.followbackSweepHours, 0.5, 168);
   out.sweepLastRunAt = epochOrNull(s.sweepLastRunAt);
+  out.sweepIntervalFactor = num(
+    s.sweepIntervalFactor,
+    d.sweepIntervalFactor,
+    NOISE.CADENCE_MIN_FACTOR,
+    NOISE.CADENCE_MAX_FACTOR,
+  );
 
   out.dailyPlanSize = intNum(s.dailyPlanSize, d.dailyPlanSize, 1, 200);
   out.lowWaterCandidates = intNum(s.lowWaterCandidates, d.lowWaterCandidates, 0, 100);

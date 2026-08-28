@@ -307,7 +307,17 @@ describe('dialog-scroll fallback', () => {
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       clock,
-      cfg: { targetNewPks: 60, maxPages: 8, maxCoverageFraction: 0.5, maxRounds: 5, noNewStop: 2 },
+      // scrollMin/Max = 1 keeps the (real-timer) dialog pacing instant in tests
+      // while still exercising the jittered uniform branch.
+      cfg: {
+        targetNewPks: 60,
+        maxPages: 8,
+        maxCoverageFraction: 0.5,
+        maxRounds: 5,
+        noNewStop: 2,
+        scrollMinMs: 1,
+        scrollMaxMs: 1,
+      },
     });
 
     const result = await acquisition.acquire('target');

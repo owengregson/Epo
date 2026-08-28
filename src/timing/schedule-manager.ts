@@ -16,6 +16,9 @@
 
 import type { Clock } from '../governors/clock';
 import * as log from '../utils/logger';
+import { NOISE } from './config';
+import { cadenceFactor } from './noise';
+import type { Rng } from './primitives';
 
 export interface EveryOpts {
   /** `unref` the timer so it can never hold the process open (main-process loops). */
@@ -91,17 +94,44 @@ export class ScheduleManager {
     this.loops.delete(key);
   }
 
+  /**
+   * `jitter` (optional, timing-noise layer): `isDue` stretches the interval by a
+   * PERSISTED factor (`everyMs × factor`), and each `markRun` redraws a fresh
+   * `cadenceFactor` and persists it — so consecutive intervals differ while a
+   * restart mid-interval keeps the factor already drawn (§3, durable schedules).
+   * The read factor is sanitized into the cadence band; a missing/garbage value
+   * degrades to the exact interval (factor 1), never to a throw.
+   */
   cadence(
     key: string,
-    cfg: { getLastRunAt: () => number | null; setLastRunAt: (at: number) => void },
+    cfg: {
+      getLastRunAt: () => number | null;
+      setLastRunAt: (at: number) => void;
+      jitter?: {
+        getFactor: () => number | null;
+        setFactor: (factor: number) => void;
+        /** Randomness for the factor redraw; defaults to Math.random. */
+        rng?: Rng;
+      };
+    },
   ): Cadence {
+    const factorNow = (): number => {
+      const raw = cfg.jitter?.getFactor() ?? null;
+      if (raw === null || !Number.isFinite(raw)) return 1;
+      return Math.min(NOISE.CADENCE_MAX_FACTOR, Math.max(NOISE.CADENCE_MIN_FACTOR, raw));
+    };
     return {
       isDue: (now, everyMs) => {
         const last = cfg.getLastRunAt();
-        return last === null || now - last >= everyMs;
+        return last === null || now - last >= everyMs * factorNow();
       },
       markRun: (now) => {
         cfg.setLastRunAt(now);
+        if (cfg.jitter !== undefined) {
+          const factor = cadenceFactor(cfg.jitter.rng ?? Math.random);
+          cfg.jitter.setFactor(factor);
+          log.debug('schedule: cadence factor redrawn', { key, factor });
+        }
         log.debug('schedule: cadence run recorded', { key, at: now, recordedAt: this.clock.now() });
       },
       lastRunAt: cfg.getLastRunAt,
