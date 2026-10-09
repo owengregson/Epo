@@ -1,6 +1,9 @@
+import { deriveOperatingPlan } from '@/kernel/derive';
+import { EMPIRICAL } from '@/kernel/fundamentals';
+import { POLICY, SCALES } from '@/kernel/policy';
 import {
-  PERSONAS,
   type PatternSettings,
+  PERSONAS,
   patternCircadianProfile,
   personaPattern,
   resolvePattern,
@@ -123,5 +126,70 @@ describe('personas', () => {
   test('the aggressive activity level plans ~100 follows/day', () => {
     const r = resolvePattern({ ...PERSONAS.balanced, activityLevel: 'aggressive' });
     expect(r.dailyOperatingRate).toBe(100);
+  });
+});
+
+/**
+ * Since ADR 0605 the level tables are derived rather than hand-written. These
+ * are the identities: the number, and the sentence it came from.
+ */
+describe('pattern-map — the level tables come from the fundamentals', () => {
+  test('D1: the hourly cap is the observed wall at the safety margin, scaled by caution', () => {
+    const w = EMPIRICAL.FOLLOW_WALL_PER_HOUR.typical;
+    expect(resolvePattern(P({ caution: 'cautious' })).hourlyVelocityCap).toBe(
+      Math.round(w * POLICY.SAFETY_MARGIN * SCALES.caution.cautious),
+    );
+    expect(resolvePattern(P({ caution: 'standard' })).hourlyVelocityCap).toBe(
+      Math.round(w * POLICY.SAFETY_MARGIN),
+    );
+    expect(resolvePattern(P({ caution: 'bold' })).hourlyVelocityCap).toBe(
+      Math.round(w * POLICY.SAFETY_MARGIN * SCALES.caution.bold),
+    );
+  });
+
+  test('D1: the daily plan is the daily wall at the same margin, scaled by activity', () => {
+    const w = EMPIRICAL.FOLLOW_WALL_PER_DAY.typical;
+    for (const level of ['minimal', 'light', 'moderate', 'active', 'aggressive'] as const) {
+      expect(resolvePattern(P({ activityLevel: level })).dailyOperatingRate).toBe(
+        Math.round(w * POLICY.SAFETY_MARGIN * SCALES.activity[level]),
+      );
+    }
+  });
+
+  test('D2: the gap median is the human within-session median, scaled by rhythm', () => {
+    expect(resolvePattern(P({ rhythm: 'sessions' })).gapMedianSeconds).toBe(
+      EMPIRICAL.HUMAN_GAP.medianMs / 1_000,
+    );
+  });
+
+  test('D2: the gap floor enforces the burst tolerance at its own cap', () => {
+    for (const caution of ['cautious', 'standard', 'bold'] as const) {
+      const r = resolvePattern(P({ caution, rhythm: 'trickle' }));
+      // The shipped cautious/bold floors are pinned overrides (ADR 0606), so the
+      // law is the safety direction, not equality: the floor never permits a
+      // burst faster than the tolerance allows at more than a 20% margin.
+      const sanctioned = 3_600 / (r.hourlyVelocityCap * POLICY.BURST_TOLERANCE);
+      expect(3_600 / r.gapFloorSeconds).toBeLessThanOrEqual(
+        (3_600 / sanctioned) * 1.2,
+      );
+    }
+  });
+
+  test('consistency maps the human day-volume CV and rest-day rate directly', () => {
+    expect(resolvePattern(P({ consistency: 'natural' })).dailyVolumeVariancePct).toBe(
+      Math.round(EMPIRICAL.HUMAN_DAY_VOLUME_CV.value * 100),
+    );
+    expect(resolvePattern(P({ consistency: 'natural' })).restDayChancePct).toBe(
+      Math.round(EMPIRICAL.HUMAN_REST_DAY_RATE.value * 100),
+    );
+  });
+
+  test('every persona is a feasible operating plan, and reports its effective margin', () => {
+    for (const id of Object.keys(PERSONAS) as Array<keyof typeof PERSONAS>) {
+      const plan = deriveOperatingPlan(PERSONAS[id]);
+      expect(plan.kind).toBe('coherent');
+      expect(plan.effectiveMargin).toBeGreaterThan(0);
+      expect(plan.effectiveMargin).toBeLessThanOrEqual(1);
+    }
   });
 });

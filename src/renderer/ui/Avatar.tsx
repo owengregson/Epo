@@ -1,5 +1,4 @@
-/** @jsx h */
-import { type ComponentChildren, h } from 'preact';
+import { type ComponentChildren, type JSX } from 'preact';
 
 export interface AvatarProps {
   /** Monogram letter (or glyph) shown inside. */
@@ -10,7 +9,7 @@ export interface AvatarProps {
 }
 
 /** A monogram avatar disc (`.avatar`). */
-export function Avatar({ children, small, class: cls }: AvatarProps): h.JSX.Element {
+export function Avatar({ children, small, class: cls }: AvatarProps): JSX.Element {
   const classes = ['avatar', small ? 'small' : null, cls || null].filter(Boolean).join(' ');
   return <div class={classes}>{children}</div>;
 }

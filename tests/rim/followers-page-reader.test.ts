@@ -1,17 +1,17 @@
-import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
+import { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { Observation } from '@/store/types';
 import type { TabResponse } from '@/types';
 import {
-  FakeTab,
-  FakeSentinel,
   FakeActor,
-  followersUrl,
+  FakeSentinel,
+  FakeTab,
   followersBody,
+  followersUrl,
   mkResp,
-} from './fakes';
+} from '../kit/fakes';
 
 const reader = new Reader();
 const clock = new FakeClock(1_000_000);
@@ -305,18 +305,18 @@ test('shouldStop true from the start skips the initial post-open wait and all sc
   expect([...result.observedPks].sort()).toEqual(['a', 'b']);
 });
 
-test('default path (no min/max/shouldStop) keeps the fixed scrollWaitMs pacing', async () => {
+test('default scroll path draws a fresh bounded pause for every round', async () => {
   const tab = new FakeTab();
   const actor = new FakeActor();
   scriptEndlessPages(tab, actor);
 
   const sleeps: number[] = [];
+  const draws = [0, 0.5, 1];
+  let index = 0;
   await makePacedReader(tab, actor, {
     sleeps,
-    rng: () => {
-      throw new Error('rng must not be consulted on the fixed-pacing path');
-    },
-    scrollWaitMs: 7,
+    rng: () => draws[index++ % draws.length],
+    scrollWaitMs: 2_000,
   }).collect({
     targetUsername: 'target',
     onObservation: () => {},
@@ -325,7 +325,7 @@ test('default path (no min/max/shouldStop) keeps the fixed scrollWaitMs pacing',
     noNewStop: 5,
   });
 
-  expect(sleeps).toEqual([7, 7, 7]); // post-open + one per round, all fixed
+  expect(sleeps).toEqual([1_400, 2_150, 2_900]); // post-open + each scroll
 });
 
 test('R5: drain awaits a response that lands during teardown', async () => {

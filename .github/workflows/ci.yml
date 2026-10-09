@@ -1,16 +1,23 @@
-# The PR/branch validation pipeline. Every push and PR against main proves
-# the same four gates a local dev runs before committing:
+# The PR/branch validation pipeline. Every push and PR against main proves the
+# same gates a local `npm run check` runs before committing:
 #
-#   typecheck (tsc --noEmit) → lint (biome) → test (jest) → build (esbuild)
+#   gen:targets:check → typecheck → lint → boundaries → build:page:check
+#     → knip (advisory) → test (jest) → build (esbuild)
 #
-# The matrix runs Node 25.x on Linux — the line Epo is developed against.
-# Epo itself ships inside Electron's bundled Node, but the toolchain (esbuild,
-# jest, better-sqlite3's node build used by tests) must work on that line.
-# fail-fast is off so a failure still reports every matrix leg's result.
+# The Node matrix is DERIVED, not typed (ADR 1001). `.node-version` holds the
+# major Electron bundles — the runtime Epo actually ships inside — and the
+# `versions` job turns it into the primary leg. The second leg is `lts/*`,
+# resolved by setup-node at run time: today it lands on the same line, and the
+# day the next LTS is cut it becomes a canary with no edit to this file.
 #
-# better-sqlite3 is a native module: `npm run rebuild:node` compiles it
-# against the runner's Node before jest loads it. The step probes for the
-# script first so the workflow keeps working if the script is ever renamed.
+# A second job runs jest alone on macOS, the platform the app is developed and
+# released from, so a path/filesystem/native-module difference cannot hide
+# behind Linux-only green. fail-fast is off so a failure still reports every
+# leg's result.
+#
+# Installs use `npm ci --ignore-scripts`: a transitive postinstall does not get
+# to run in CI. The three packages that legitimately need theirs are rebuilt by
+# name in the following step (see ADR 0503 for better-sqlite3).
 name: ci
 
 on:
@@ -28,14 +35,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The single place a Node version is decided: `.node-version`, which
+  # `scripts/gen-targets.mjs` derives from the installed Electron.
+  versions:
+    name: derive node matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.derive.outputs.matrix }}
+      pinned: ${{ steps.derive.outputs.pinned }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read .node-version
+        id: derive
+        run: |
+          PINNED="$(tr -d '[:space:]' < .node-version)"
+          if [ -z "$PINNED" ]; then
+            echo "::error file=.node-version::.node-version is empty"
+            exit 1
+          fi
+          echo "pinned=${PINNED}" >> "$GITHUB_OUTPUT"
+          echo "matrix=[\"${PINNED}.x\", \"lts/*\"]" >> "$GITHUB_OUTPUT"
+          echo "Pinned Node ${PINNED}.x (from .node-version) plus an lts/* canary leg."
+
   check:
     name: node ${{ matrix.node-version }}
+    needs: versions
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['25.x']
+        node-version: ${{ fromJSON(needs.versions.outputs.matrix) }}
 
     steps:
       - name: Checkout
@@ -50,26 +85,50 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
-      # better-sqlite3 ships prebuilds for common Node ABIs, but tests must
-      # load it against THIS runner's Node — rebuild when the script exists,
-      # skip quietly when it does not.
-      - name: Rebuild native modules (better-sqlite3)
+      # esbuild and @swc/core stage a platform binary in their install script;
+      # better-sqlite3 is ADR 0503's rebuild, kept until the two-platform proof.
+      # Naming them is the point: nothing else in 900+ packages runs code here.
+      - name: Run the install scripts we actually want
         run: |
+          npm rebuild esbuild @swc/core
           if [ "$(npm pkg get scripts.rebuild:node)" != "{}" ]; then
             npm run rebuild:node
           else
             echo "No rebuild:node script — skipping native rebuild."
           fi
 
-      - name: Typecheck
-        run: npx tsc --noEmit
+      # Version truth (ADR 1001). Without the Electron binary (--ignore-scripts
+      # never downloads it) this compares the recorded electronVersion against
+      # the installed `electron` package — the drift a dependency bump causes.
+      - name: Derived targets are current
+        run: npm run gen:targets:check
 
-      # `npm run lint` is `biome ci src`: lint rules + formatter drift +
+      # `npm run typecheck` is two passes: src (tsconfig.json) and src + tests
+      # (tsconfig.test.json). Tests are production code for this purpose.
+      - name: Typecheck
+        run: npm run typecheck
+
+      # `npm run lint` is `biome ci src tests`: lint rules + formatter drift +
       # assists (import organizing) in one gate.
       - name: Lint
         run: npm run lint
+
+      # The layering gate (ADR 1002). Errors fail; the seeded warn tier is the
+      # migration ledger and is printed for the log.
+      - name: Boundaries
+        run: npm run boundaries
+
+      # The committed in-page bundle must match its TypeScript sources.
+      - name: Page bundle is fresh
+        run: npm run build:page:check
+
+      # Advisory while wave A lands leaves before their consumers: unused
+      # exports there are expected, not defects. Flip to blocking in wave C.
+      - name: Dead code (advisory)
+        run: npm run knip
+        continue-on-error: true
 
       - name: Test (with coverage)
         run: npm test -- --coverage --coverageReporters=text --coverageReporters=json-summary --coverageReporters=lcov
@@ -79,7 +138,7 @@ jobs:
         run: |
           if [ -f coverage/coverage-summary.json ]; then
             {
-              echo '## Coverage'
+              echo '## Coverage (node ${{ matrix.node-version }})'
               echo '| Metric | % |'
               echo '|---|---|'
               for m in lines statements branches functions; do
@@ -88,14 +147,54 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # One artifact per matrix leg: a shared name collides on upload. `lts/*`
+      # is not a valid path fragment, so the name is sanitized.
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-lcov
+          name: coverage-lcov-node-${{ strategy.job-index }}
           path: coverage/lcov.info
           if-no-files-found: ignore
           retention-days: 7
 
       - name: Build
         run: npm run build
+
+  # The suite is ~2 s, so proving it on the release platform is close to free.
+  # Typecheck/lint/build are OS-independent and stay on the Linux legs.
+  jest-macos:
+    name: jest (macos)
+    needs: versions
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      # Electron's binary is not needed for jest and is the slowest install
+      # step on macOS runners; --ignore-scripts skips its download anyway.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - name: Run the install scripts we actually want
+        run: |
+          npm rebuild esbuild @swc/core
+          if [ "$(npm pkg get scripts.rebuild:node)" != "{}" ]; then
+            npm run rebuild:node
+          else
+            echo "No rebuild:node script — skipping native rebuild."
+          fi
+
+      - name: Test
+        run: npx jest

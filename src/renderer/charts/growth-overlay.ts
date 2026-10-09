@@ -16,9 +16,9 @@
  * upward as outcomes resolve.
  */
 
+import { PROJ_SCEN, projNet, projP } from '@/renderer/charts/growth-model';
+import { clamp } from '@/renderer/lib/format';
 import { CONVERSION_VERDICT_MIN } from '@/types';
-import { clamp } from '../lib/format';
-import { PROJ_SCEN, projNet, projP } from './growth-model';
 
 /** Sanity clamp on measured/settings yield ratio (guards a degenerate model P). */
 const LIVE_RATIO_MIN = 0.2;

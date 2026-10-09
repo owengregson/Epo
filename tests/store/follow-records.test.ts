@@ -1,8 +1,9 @@
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
+import { memoryStore } from '../kit/store';
 
 let s: KnowledgeStore;
-beforeEach(() => { s = new KnowledgeStore(':memory:'); });
+beforeEach(() => { s = memoryStore(); });
 afterEach(() => s.close());
 
 const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({

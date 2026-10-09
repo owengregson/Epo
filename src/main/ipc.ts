@@ -1,341 +1,201 @@
 /**
- * Typed IPC channel registration (main process side).
+ * The main-process side of the IPC contract: one handler per bridge method.
  *
- * Every renderer-invocable channel from the `EpoBridge` contract is registered
- * here and delegates to a single `Foundation` instance (the Wave 4 composition
- * root — see `foundation-wiring.ts`). The engine controls (`engine:*`) and the
- * manual live-gate ops (`foundation:*`) both route through the same real rim/Engine.
- * `tab:show`/`tab:hide` toggle the embedded tab's visibility directly.
- *
- * No silent catches: `Foundation` already returns typed results and logs its own
- * failures, so handlers delegate directly; the manual/read handlers keep a defensive
- * wrapper that logs and returns a typed failure so nothing rejects an opaque invoke.
+ * Handlers are thin — `Foundation` already returns typed results and logs its
+ * own failures, so nothing here re-implements a fallible path. `registerIpc`
+ * supplies the per-channel error guard and the disposer; the `fallbacks` map
+ * below states what each channel answers with when a handler throws anyway.
+ * Channel strings live only in `src/ipc/contract.ts`.
  */
 
-import { ipcMain } from 'electron';
 import type { InstagramTab } from '@/adapter/tab';
+import { type IpcFallbacks, type IpcHandlers, registerIpc } from '@/ipc/register';
 import type { Foundation } from '@/main/foundation-wiring';
-import type { Settings } from '@/settings/settings';
-import type {
-  ActionResult,
-  ChainTargetDetail,
-  ChainTargetView,
-  EpoStatus,
-  FollowState,
-  GraphSnapshot,
-  GrowthSeriesRead,
-  PruneCandidate,
-  PruneControlResult,
-  PruneScanResult,
-  PruneStatus,
-  QueueListResult,
-  ReadFollowersResult,
-  SeedCheck,
-  StageMode,
-} from '@/types';
+import type { EpoStatus, StageMode, UpdateStatus } from '@/types';
 import * as logger from '@/utils/logger';
+
+/**
+ * The updater's renderer-facing surface, as a structural port: `updater.ts`
+ * pulls in `electron-updater` (which requires electron at module load), so
+ * nothing outside `main.ts` may import it.
+ */
+export interface UpdaterPort {
+  check(): Promise<UpdateStatus>;
+  install(): UpdateStatus | Promise<UpdateStatus>;
+  openLatest(): Promise<void>;
+  current(): UpdateStatus;
+}
 
 export interface IpcContext {
   tab: InstagramTab;
   foundation: Foundation;
+  updater: UpdaterPort;
   /**
    * Swap what fills the window region right of the console: the Instagram tab
    * ('tab') or the renderer's Graph stage ('graph'). Owned by `main.ts`, which
-   * holds the window layout.
+   * holds the window layout. `covered` hides the native views regardless of
+   * mode (a renderer modal is open and must not sit under them).
    */
-  setStage(mode: StageMode): void;
+  setStage(mode: StageMode, covered: boolean): void;
 }
 
-/**
- * Register all renderer-invocable handlers. Returns a disposer that removes
- * every handler (used on window teardown to avoid duplicate registration).
- */
-export function registerIpc(ctx: IpcContext): () => void {
-  const { tab, foundation, setStage } = ctx;
+/** Register every contract channel; returns the disposer for window teardown. */
+export function registerEpoIpc(ctx: IpcContext): () => void {
+  const { tab, foundation, updater, setStage } = ctx;
 
-  // --- Manual live-gate ops --------------------------------------------------
-
-  ipcMain.handle('foundation:login', async (): Promise<EpoStatus> => {
-    logger.info('foundation:login — opening Instagram in embedded tab');
-    return foundation.login();
-  });
-
-  ipcMain.handle(
-    'foundation:readFollowers',
-    async (_event, target: string): Promise<ReadFollowersResult> => {
-      try {
-        return await foundation.readFollowers(target);
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        logger.error('foundation:readFollowers failed', { target, error: reason });
-        return { target, observed: 0, ok: false, reason };
-      }
+  const handlers: IpcHandlers = {
+    // --- Manual live-gate ops ------------------------------------------------
+    login: () => {
+      logger.info('foundation:login — opening Instagram in embedded tab');
+      return foundation.login();
     },
-  );
+    readFollowers: (target) => foundation.readFollowers(target),
+    followOne: (username) => foundation.followOne(username),
+    unfollowOne: (username) => foundation.unfollowOne(username),
+    status: () => foundation.status(),
 
-  ipcMain.handle(
-    'foundation:followOne',
-    async (_event, username: string): Promise<ActionResult> => {
-      try {
-        return await foundation.followOne(username);
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        logger.error('foundation:followOne failed', { username, error: reason });
-        return { ok: false, username, reason };
-      }
+    // --- Engine controls -----------------------------------------------------
+    startEngine: () => {
+      logger.info('engine:start');
+      return foundation.startEngine();
     },
-  );
-
-  ipcMain.handle(
-    'foundation:unfollowOne',
-    async (_event, username: string): Promise<ActionResult> => {
-      try {
-        return await foundation.unfollowOne(username);
-      } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        logger.error('foundation:unfollowOne failed', { username, error: reason });
-        return { ok: false, username, reason };
-      }
+    pauseEngine: () => {
+      logger.info('engine:pause');
+      return foundation.pauseEngine();
     },
-  );
+    resumeEngine: () => {
+      logger.info('engine:resume');
+      return foundation.resumeEngine();
+    },
+    stopEngine: () => {
+      logger.info('engine:stop');
+      return foundation.stopEngine();
+    },
+    restartFromSeed: (seed) => {
+      logger.info('engine:restartFromSeed');
+      return foundation.restartFromSeed(seed);
+    },
+    engineStatus: () => foundation.status(),
 
-  ipcMain.handle('foundation:status', async (): Promise<EpoStatus> => {
-    return foundation.status();
-  });
-
-  // --- Engine controls -------------------------------------------------------
-
-  ipcMain.handle('engine:start', async (): Promise<EpoStatus> => {
-    logger.info('engine:start');
-    return foundation.startEngine();
-  });
-
-  ipcMain.handle('engine:pause', async (): Promise<EpoStatus> => {
-    logger.info('engine:pause');
-    return foundation.pauseEngine();
-  });
-
-  ipcMain.handle('engine:resume', async (): Promise<EpoStatus> => {
-    logger.info('engine:resume');
-    return foundation.resumeEngine();
-  });
-
-  ipcMain.handle('engine:stop', async (): Promise<EpoStatus> => {
-    logger.info('engine:stop');
-    return foundation.stopEngine();
-  });
-
-  ipcMain.handle('engine:restartFromSeed', async (_event, seed: string): Promise<EpoStatus> => {
-    logger.info('engine:restartFromSeed');
-    return foundation.restartFromSeed(seed);
-  });
-
-  ipcMain.handle('engine:status', async (): Promise<EpoStatus> => {
-    return foundation.status();
-  });
-
-  // --- Auto-prune controls (Phase 5) -----------------------------------------
-  // Foundation returns typed results (mutual-exclusion refusals included); the
-  // defensive wrapper guarantees nothing rejects an opaque invoke.
-
-  ipcMain.handle('prune:scan', async (): Promise<PruneScanResult> => {
-    try {
+    // --- Auto-prune controls -------------------------------------------------
+    scanPrune: () => {
       logger.info('prune:scan');
-      return await foundation.scanPrune();
-    } catch (e) {
-      logger.error('prune:scan failed', { error: String(e) });
-      return { ok: false, reason: String(e), following: 0, followers: 0, candidates: [] };
-    }
-  });
-
-  ipcMain.handle('prune:start', async (): Promise<PruneControlResult> => {
-    try {
+      return foundation.scanPrune();
+    },
+    pruneCandidates: () => foundation.pruneCandidates(),
+    startPrune: () => {
       logger.info('prune:start');
-      return await foundation.startPrune();
-    } catch (e) {
-      logger.error('prune:start failed', { error: String(e) });
-      return { ok: false, reason: String(e), status: await foundation.pruneStatus() };
-    }
-  });
-
-  ipcMain.handle('prune:stop', async (): Promise<PruneStatus> => {
-    try {
+      return foundation.startPrune();
+    },
+    stopPrune: () => {
       logger.info('prune:stop');
-      return await foundation.stopPrune();
-    } catch (e) {
-      logger.error('prune:stop failed', { error: String(e) });
-      return await foundation.pruneStatus();
-    }
-  });
-
-  ipcMain.handle('prune:status', async (): Promise<PruneStatus> => {
-    return foundation.pruneStatus();
-  });
-
-  ipcMain.handle('prune:candidates', async (): Promise<PruneCandidate[]> => {
-    try {
-      return await foundation.pruneCandidates();
-    } catch (e) {
-      logger.error('prune:candidates failed', { error: String(e) });
-      return [];
-    }
-  });
-
-  // --- Read-only list projections + settings (§5) ----------------------------
-  // Foundation already logs and returns safe values on failure; the defensive
-  // wrapper guarantees nothing rejects an opaque invoke.
-
-  ipcMain.handle('chain:list', async (): Promise<ChainTargetView[]> => {
-    try {
-      return await foundation.chainList();
-    } catch (e) {
-      logger.error('chain:list failed', { error: String(e) });
-      return [];
-    }
-  });
-
-  ipcMain.handle(
-    'chain:detail',
-    async (_e, targetPk: string): Promise<ChainTargetDetail | null> => {
-      try {
-        return await foundation.chainDetail(targetPk);
-      } catch (e) {
-        logger.error('chain:detail failed', { targetPk, error: String(e) });
-        return null;
-      }
+      return foundation.stopPrune();
     },
-  );
-
-  ipcMain.handle('growth:series', async (_e, days?: number): Promise<GrowthSeriesRead> => {
-    try {
-      return await foundation.growthSeries(days);
-    } catch (e) {
-      logger.error('growth:series failed', { error: String(e) });
-      return { points: [], baselineAt: null };
-    }
-  });
-
-  ipcMain.handle('seed:check', async (_e, username: string): Promise<SeedCheck> => {
-    try {
-      return await foundation.checkSeed(username);
-    } catch (e) {
-      logger.error('seed:check failed', { error: String(e) });
-      return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'error' };
-    }
-  });
-
-  ipcMain.handle(
-    'queue:list',
-    async (_event, state: FollowState): Promise<QueueListResult> => {
-      try {
-        return await foundation.queueList(state);
-      } catch (e) {
-        logger.error('queue:list failed', { state, error: String(e) });
-        return { rows: [], truncated: false };
-      }
+    pausePrune: () => {
+      logger.info('prune:pause');
+      return foundation.pausePrune();
     },
-  );
+    resumePrune: () => {
+      logger.info('prune:resume');
+      return foundation.resumePrune();
+    },
+    pruneStatus: () => foundation.pruneStatus(),
 
-  ipcMain.handle('settings:get', async (): Promise<Settings> => {
-    return foundation.getSettings();
-  });
-
-  ipcMain.handle(
-    'settings:update',
-    async (_event, partial: Partial<Settings>): Promise<Settings> => {
+    // --- Read-only list projections + settings -------------------------------
+    chainList: () => foundation.chainList(),
+    chainDetail: (targetPk) => foundation.chainDetail(targetPk),
+    growthSeries: (days) => foundation.growthSeries(days),
+    checkSeed: (username) => foundation.checkSeed(username),
+    queueList: (state) => foundation.queueList(state),
+    getSettings: () => foundation.getSettings(),
+    updateSettings: (partial) => {
       logger.info('settings:update');
       return foundation.updateSettings(partial);
     },
-  );
-
-  ipcMain.handle('settings:reset', async (): Promise<Settings> => {
-    try {
+    resetSettings: () => {
       logger.info('settings:reset');
-      return await foundation.resetSettings();
-    } catch (e) {
-      logger.error('settings:reset failed', { error: String(e) });
-      return await foundation.getSettings();
-    }
-  });
-
-  ipcMain.handle('data:clear', async (): Promise<EpoStatus> => {
-    try {
+      return foundation.resetSettings();
+    },
+    clearData: () => {
       logger.info('data:clear');
-      return await foundation.clearData();
-    } catch (e) {
-      logger.error('data:clear failed', { error: String(e) });
-      return await foundation.status();
-    }
-  });
+      return foundation.clearData();
+    },
 
-  // --- Tab visibility --------------------------------------------------------
+    // --- Tab visibility / stage ----------------------------------------------
+    showTab: () => {
+      tab.show();
+    },
+    hideTab: () => {
+      tab.hide();
+    },
+    graphSnapshot: () => foundation.graphSnapshot(),
+    // Renderer input is unvalidated at the boundary: only the three known modes
+    // move the stage.
+    setStage: (mode: unknown, covered: unknown) => {
+      if (mode === 'tab' || mode === 'graph' || mode === 'prune') setStage(mode, covered === true);
+    },
+    // Park/unpark the app while the renderer's tour is on screen (see
+    // Foundation.setTourHold). Main engages the hold itself at launch when the
+    // tour is pending; the renderer releases it when the tour closes.
+    setTourHold: (held: unknown) => {
+      foundation.setTourHold(held === true);
+    },
 
-  ipcMain.handle('tab:show', async (): Promise<void> => {
-    tab.show();
-  });
-
-  ipcMain.handle('tab:hide', async (): Promise<void> => {
-    tab.hide();
-  });
-
-  // --- Graph view ------------------------------------------------------------
-
-  ipcMain.handle('graph:snapshot', async (): Promise<GraphSnapshot | null> => {
-    try {
-      return await foundation.graphSnapshot();
-    } catch (e) {
-      logger.error('graph:snapshot failed', { error: String(e) });
-      return null;
-    }
-  });
-
-  ipcMain.handle('stage:set', async (_event, mode: unknown): Promise<void> => {
-    if (mode === 'tab' || mode === 'graph' || mode === 'prune') setStage(mode);
-  });
-
-  // --- Intro tour ------------------------------------------------------------
-
-  // Park/unpark the app while the renderer's tour is on screen (see
-  // Foundation.setTourHold): no self-starting work, growth paused for the
-  // duration. Main engages the hold itself at launch when the tour is pending;
-  // the renderer releases it when the tour closes.
-  ipcMain.handle('tour:hold', async (_event, held: unknown): Promise<void> => {
-    foundation.setTourHold(held === true);
-  });
-
-  const channels = [
-    'foundation:login',
-    'foundation:readFollowers',
-    'foundation:followOne',
-    'foundation:unfollowOne',
-    'foundation:status',
-    'engine:start',
-    'engine:pause',
-    'engine:resume',
-    'engine:stop',
-    'engine:restartFromSeed',
-    'engine:status',
-    'prune:scan',
-    'prune:start',
-    'prune:stop',
-    'prune:status',
-    'prune:candidates',
-    'chain:list',
-    'chain:detail',
-    'growth:series',
-    'seed:check',
-    'queue:list',
-    'settings:get',
-    'settings:update',
-    'settings:reset',
-    'data:clear',
-    'tab:show',
-    'tab:hide',
-    'graph:snapshot',
-    'stage:set',
-    'tour:hold',
-  ];
-  return () => {
-    for (const channel of channels) ipcMain.removeHandler(channel);
+    // --- Self-updater --------------------------------------------------------
+    checkForUpdate: () => updater.check(),
+    installUpdate: () => updater.install(),
+    openLatestRelease: () => updater.openLatest(),
   };
+
+  // A refused/failed control still owes the renderer a real status: the
+  // status-shaped fallbacks re-read the projection rather than fabricating one.
+  const status = (): Promise<EpoStatus> => foundation.status();
+  const pruneStatus = () => foundation.pruneStatus();
+  const seedFailure = {
+    ok: false,
+    exists: false,
+    followersVisible: false,
+    isPrivate: false,
+    reason: 'error',
+  } as const;
+
+  const fallbacks: IpcFallbacks = {
+    login: status,
+    readFollowers: () => ({ target: '', observed: 0, ok: false, reason: 'error' }),
+    followOne: () => ({ ok: false, username: '', reason: 'error' }),
+    unfollowOne: () => ({ ok: false, username: '', reason: 'error' }),
+    status,
+    startEngine: status,
+    pauseEngine: status,
+    resumeEngine: status,
+    stopEngine: status,
+    restartFromSeed: status,
+    engineStatus: status,
+    scanPrune: () => ({ ok: false, reason: 'error', following: 0, followers: 0, candidates: [] }),
+    pruneCandidates: () => [],
+    startPrune: async () => ({ ok: false, reason: 'error', status: await pruneStatus() }),
+    stopPrune: pruneStatus,
+    pausePrune: pruneStatus,
+    resumePrune: pruneStatus,
+    pruneStatus,
+    chainList: () => [],
+    chainDetail: () => null,
+    growthSeries: () => ({ points: [], baselineAt: null }),
+    checkSeed: () => ({ ...seedFailure }),
+    queueList: () => ({ rows: [], truncated: false }),
+    getSettings: () => foundation.getSettings(),
+    updateSettings: () => foundation.getSettings(),
+    resetSettings: () => foundation.getSettings(),
+    clearData: status,
+    showTab: () => undefined,
+    hideTab: () => undefined,
+    graphSnapshot: () => null,
+    setStage: () => undefined,
+    setTourHold: () => undefined,
+    checkForUpdate: () => updater.current(),
+    installUpdate: () => updater.current(),
+    openLatestRelease: () => undefined,
+  };
+
+  return registerIpc(handlers, fallbacks);
 }

@@ -9,7 +9,7 @@ import {
   parkHeadline,
   recoveryHoldCaption,
   stepLabel,
-} from '@/renderer/cards/overview/LiveStatusCard';
+} from '@/renderer/cards/overview/live-status-copy';
 import type { EpoStatus } from '@/types';
 
 type Step = NonNullable<EpoStatus['lastStep']>;

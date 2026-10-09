@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useRef } from 'preact/hooks';
+import { logSignal } from '@/renderer/app/shell-context';
+import { useBridgeEvent } from '@/renderer/hooks/useBridgeEvent';
 import type { LogEntry } from '@/types';
 
 /** Ring-buffer cap for the in-memory log (Activity pane + ticker). */
@@ -10,31 +12,18 @@ export interface LogLine extends LogEntry {
   seq: number;
 }
 
-export interface LogFeed {
-  /** Buffered log lines, oldest → newest, capped at {@link CAP}. */
-  lines: LogLine[];
-  /** The most recent line, or null before anything has streamed. */
-  latest: LogLine | null;
-}
-
 /**
  * Subscribes to the streamed structured log (`on('log')`) and keeps a capped
- * rolling buffer. One subscription for the whole shell; torn down on unmount.
+ * rolling buffer on {@link logSignal}. One subscription for the whole shell;
+ * torn down on unmount. Publishing to a signal is what keeps a streamed line
+ * from re-rendering the tree — only the Ticker and the Activity card read it.
  */
-export function useLogFeed(): LogFeed {
-  const [lines, setLines] = useState<LogLine[]>([]);
+export function useLogFeed(): void {
   const seq = useRef(0);
 
-  useEffect(() => {
-    const onLog = (entry: LogEntry): void => {
-      setLines((prev) => {
-        const next = prev.concat({ ...entry, seq: seq.current++ });
-        return next.length > CAP ? next.slice(next.length - CAP) : next;
-      });
-    };
-    window.epo.on('log', onLog);
-    return () => window.epo.off('log', onLog);
-  }, []);
-
-  return { lines, latest: lines.length ? lines[lines.length - 1] : null };
+  useBridgeEvent('log', (entry) => {
+    const prev = logSignal.value;
+    const next = prev.concat({ ...entry, seq: seq.current++ });
+    logSignal.value = next.length > CAP ? next.slice(next.length - CAP) : next;
+  });
 }

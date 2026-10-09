@@ -1,0 +1,180 @@
+/*
+ * Prune — the stage-hosted page (hero + two card columns) and its card internals.
+ * The page is a console-named size container, so cards keep their
+ * container-query typography at any pane width.
+ */
+
+/* Prune as a full PAGE on the wide stage: a hero strip, the census card
+   across the top, then two independent card columns. The page and each
+   column are console-named size containers carrying the shared --sp rhythm
+   (shell.css), so console cards keep their container-query typography at
+   any pane width. */
+.prune-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 18px 22px 34px;
+}
+.prune-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-1) var(--sp-1) var(--sp-4);
+}
+.prune-hero h2 {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--chrome);
+  line-height: 1.2;
+}
+.prune-hero p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: var(--fs-base);
+}
+.prune-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+  align-items: start;
+}
+.prune-col {
+  min-width: 0;
+}
+/* Resolves against .prune-page (the columns' nearest container ancestor):
+   below this width side-by-side columns would starve, so they stack. */
+@container console (max-width: 720px) {
+  .prune-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============ PRUNE ============ */
+/* Candidates list: contained scroll so a thousand-row scan can't swallow the view. */
+.prune-list {
+  max-height: 320px;
+  overflow-y: auto;
+} /* 320px: ~8 rows before scrolling */
+/* On the stage-hosted prune page the list owns a whole column — let it run taller. */
+.prune-page .prune-list {
+  max-height: 480px;
+}
+
+/* Census card — the page-wide overview: stat tiles + the reciprocity bar
+   (how the following count splits: follow back / prunable / whitelisted).
+   auto-fit lets the tile row reflow at any pane width. */
+.prune-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: var(--sp-2);
+}
+.pcomp {
+  margin-top: var(--sp-3);
+}
+.pcomp-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--inset-bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--inset-shadow-soft);
+}
+/* Segments only render when nonzero, so the 2px floor keeps slivers visible
+   without a zero-width segment ever painting its stray 1px divider. */
+.pcomp-seg {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  transition: width 0.5s var(--ease);
+}
+.pcomp-seg + .pcomp-seg {
+  border-left: 1px solid rgba(0, 0, 0, 0.5);
+}
+.pcomp-seg.mutual {
+  background: linear-gradient(180deg, #7cbd97, #5d9c7b);
+}
+.pcomp-seg.prunable {
+  background: linear-gradient(180deg, #d28080, #b25e5e);
+}
+.pcomp-seg.shielded {
+  background: linear-gradient(180deg, #b6bcc9, #8d93a1);
+}
+.pcomp-seg.handled {
+  background: linear-gradient(180deg, #9b90c4, #7c70a6);
+}
+.pcomp-seg.exempt {
+  background: linear-gradient(180deg, #8fa8c9, #6d87a8);
+}
+.pcomp-seg.unresolvable {
+  background: linear-gradient(180deg, #747985, #575c68);
+}
+.pcomp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.pcomp-legend b {
+  color: var(--text);
+  font-weight: 600;
+}
+.pcomp-legend .dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  margin-right: var(--sp-1);
+  vertical-align: -1px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.pcomp-legend .dot.mutual {
+  background: #6db28a;
+}
+.pcomp-legend .dot.prunable {
+  background: #c96a6a;
+}
+.pcomp-legend .dot.shielded {
+  background: #a7adba;
+}
+.pcomp-legend .dot.handled {
+  background: #8b7fb5;
+}
+.pcomp-legend .dot.exempt {
+  background: #7d97b8;
+}
+.pcomp-legend .dot.unresolvable {
+  background: #63687a;
+}
+
+/* Whitelist add row: input + Add button on one line (input margin lives on the row). */
+.wl-add {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.wl-add .tinput {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+.wl-add .tbtn {
+  flex: 0 0 auto;
+}
+
+/* Whitelist entries: removable chips — the × warms to danger on hover. */
+.wl-chips {
+  margin-top: var(--sp-3);
+}
+.wl-chip .icon {
+  font-size: var(--fs-2xs);
+  margin-left: var(--sp-1);
+  color: var(--faint);
+}
+.wl-chip:hover .icon {
+  color: var(--danger);
+}

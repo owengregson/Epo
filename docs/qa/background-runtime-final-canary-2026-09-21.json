@@ -1,0 +1,174 @@
+{
+  "measuredAt": "2026-09-21T20:40:22.023Z",
+  "passed": true,
+  "bundleSha256": "64d18fb0d09f559f3339c84e187fa1f8c84fd0b556fdc20164e2cb929bc9343c",
+  "runtime": {
+    "electron": "44.1.1",
+    "chrome": "152.0.7977.65",
+    "node": "24.19.0",
+    "platform": "darwin",
+    "osRelease": "25.3.0",
+    "arch": "arm64"
+  },
+  "isolation": {
+    "temporaryProfile": true,
+    "network": "loopback only",
+    "productionTabAndDriver": true
+  },
+  "configuration": {
+    "only": "hidden-after-navigation,hidden-after-recovery",
+    "soakMs": 0,
+    "frameRateLimitDisabled": true
+  },
+  "identity": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.65 Safari/537.36",
+    "platform": "MacIntel",
+    "languages": [
+      "en-US",
+      "zh-Hans-US"
+    ],
+    "webdriver": false,
+    "userAgentData": {
+      "brands": [
+        {
+          "brand": "Not?A_Brand",
+          "version": "24"
+        },
+        {
+          "brand": "Chromium",
+          "version": "152"
+        }
+      ],
+      "mobile": false,
+      "platform": "macOS"
+    },
+    "highEntropy": {
+      "architecture": "arm",
+      "bitness": "64",
+      "brands": [
+        {
+          "brand": "Not?A_Brand",
+          "version": "24"
+        },
+        {
+          "brand": "Chromium",
+          "version": "152"
+        }
+      ],
+      "fullVersionList": [
+        {
+          "brand": "Not?A_Brand",
+          "version": "24.0.0.0"
+        },
+        {
+          "brand": "Chromium",
+          "version": "152.0.7977.65"
+        }
+      ],
+      "mobile": false,
+      "platform": "macOS",
+      "platformVersion": "26.3.0"
+    },
+    "headers": {
+      "host": "127.0.0.1:65281",
+      "connection": "keep-alive",
+      "sec-ch-ua-platform": "\"macOS\"",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.65 Safari/537.36",
+      "sec-ch-ua": "\"Not?A_Brand\";v=\"24\", \"Chromium\";v=\"152\"",
+      "sec-ch-ua-mobile": "?0",
+      "accept": "*/*",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-dest": "empty",
+      "referer": "http://127.0.0.1:65281/",
+      "accept-encoding": "gzip, deflate, br, zstd",
+      "accept-language": "en-US,zh-Hans-US;q=0.9"
+    }
+  },
+  "clickGuards": {
+    "originalTargetAccepted": true,
+    "samePositionReplacementRejected": true,
+    "coveredTargetRejected": true
+  },
+  "results": [
+    {
+      "name": "hidden-after-navigation",
+      "passed": true,
+      "elapsedMs": 7197,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 29
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 36
+      },
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 439,
+      "timerTicks": 288,
+      "maximumRendererTimerGapMs": 38.1000000089407,
+      "maximumMainTimerGapMs": 33.291541999999026,
+      "longestInputDispatchMs": 35.55812499999956,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 232,
+      "trustedPointerMoves": 232,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 5,
+      "scrollDelta": 404
+    },
+    {
+      "name": "hidden-after-recovery",
+      "passed": true,
+      "elapsedMs": 7417,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 29
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 36
+      },
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 452,
+      "timerTicks": 296,
+      "maximumRendererTimerGapMs": 33.79999999701977,
+      "maximumMainTimerGapMs": 28.049832999999126,
+      "longestInputDispatchMs": 36.891083999998955,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 217,
+      "trustedPointerMoves": 217,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 6,
+      "scrollDelta": 393
+    }
+  ],
+  "unhealthy": [],
+  "limitations": [
+    "No forced OS sleep, lid close, display-off, network outage, Windows or Linux measurement.",
+    "Local fixture verifies page progress and input transport; it does not validate Instagram behavior or detection."
+  ]
+}

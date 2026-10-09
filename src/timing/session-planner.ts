@@ -133,8 +133,6 @@ export class SessionPlanner implements PacingPlanner {
     this.cfg = cfg;
   }
 
-  // --- Public API (all sync first) -------------------------------------------------
-
   advance(now: number): void {
     this.sync(now);
   }
@@ -179,7 +177,9 @@ export class SessionPlanner implements PacingPlanner {
     for (const a of this.recentActions) {
       if (a.at <= now) excitation += this.cfg.hawkesAlpha * Math.exp(-(now - a.at) / this.cfg.hawkesTauMs);
     }
-    return Math.max(this.cfg.gapFloorMs, Math.round(base / excitation));
+    // Compress above the floor; dividing then clamping created repeated floor gaps.
+    const discretionary = Math.max(0, base - this.cfg.gapFloorMs);
+    return this.cfg.gapFloorMs + Math.round(discretionary / excitation);
   }
 
   recordAction(now: number, kind: PlannerActionKind): void {
@@ -235,10 +235,9 @@ export class SessionPlanner implements PacingPlanner {
     // 2. Close a spent or long-idle session (a >30 min gap ends it — the engine may have
     //    parked mid-session, in which case the next due session takes over).
     if (this.session !== null) {
-      const lastAt =
-        this.recentActions.length > 0
-          ? this.recentActions[this.recentActions.length - 1].at
-          : this.session.startedAt;
+      // Idle from THIS session's start at the earliest: the trailing-hour ring still holds
+      // the PREVIOUS session's actions, which would close a just-opened session unspent.
+      const lastAt = Math.max(this.session.startedAt, this.recentActions.at(-1)?.at ?? 0);
       if (this.session.used >= this.session.budget || now - lastAt > SESSION_BOUNDARY_MS) {
         this.session = null;
       }

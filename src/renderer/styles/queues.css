@@ -1,0 +1,228 @@
+/*
+ * Queues — the lifecycle pipeline selector and the row list.
+ * Card-internal layouts for the Queues view.
+ */
+
+/* ============ QUEUES · lifecycle pipeline ============ */
+.qpipe {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-0);
+  padding: var(--sp-1);
+  background: var(--inset-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--inset-shadow);
+  margin-bottom: var(--sp-2);
+}
+.qstage {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--sp-2) var(--sp-1);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  transition:
+    color 0.18s,
+    background 0.18s,
+    border-color 0.18s,
+    box-shadow 0.18s;
+}
+.qstage:hover {
+  color: var(--silver);
+  background: var(--hover-veil);
+}
+.qstage:focus-visible {
+  outline: 2px solid var(--silver);
+  outline-offset: -2px;
+}
+.qstage.active {
+  background-color: #212127;
+  background-image: var(
+    --sheen
+  ); /* one-off: --active-fill dimmed a step for the recessed pipeline */
+  border-color: var(--border-hover);
+  color: var(--chrome);
+  box-shadow: var(--elev-2);
+}
+.qstage .n {
+  font-size: var(--fs-fluid-stat);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.qstage .l {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  margin-top: var(--sp-0);
+}
+.qflow {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--faint);
+  padding: 0 var(--sp-0);
+}
+.qflow .icon {
+  font-size: var(--fs-xs);
+}
+.qsum {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-0);
+  margin-bottom: var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--faint);
+  letter-spacing: 0.02em;
+}
+.qsum b {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.qrows {
+  padding: var(--sp-1) 0;
+}
+.qr {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  transition: background 0.15s;
+}
+.qr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.qr + .qr {
+  border-top: 1px solid var(--divider);
+}
+.qr.due {
+  background: rgba(216, 183, 104, 0.028);
+}
+.qr.due:hover {
+  background: rgba(216, 183, 104, 0.05);
+}
+.qr-av {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  flex: 0 0 26px;
+  background: linear-gradient(150deg, #34343c, #1b1b20);
+  border: 1px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--silver);
+}
+.qr-main {
+  flex: 1;
+  min-width: 0;
+}
+.qr-top {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.qr-top .handle {
+  font-weight: 600;
+  font-size: var(--fs-base);
+  color: var(--text);
+  letter-spacing: -0.01em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qr.due .handle {
+  color: var(--chrome);
+}
+.priv,
+.ready {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: var(--sp-0) var(--sp-2);
+  border-radius: var(--r-pill);
+  background: var(--chip-bg);
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.ready {
+  color: var(--warn);
+  border-color: #4a4030;
+}
+.priv .icon {
+  font-size: 7px;
+  margin-right: var(--sp-1);
+  vertical-align: 0;
+}
+.qr-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--faint);
+  min-width: 0;
+}
+.qr-sub .ctx {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.qbar {
+  flex: 1;
+  max-width: 110px;
+  height: 3px;
+  border-radius: 2px; /* 3px/2px: meter geometry */
+  background: var(--track-bg);
+  overflow: hidden;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.5);
+}
+.qbar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--grad-meter);
+}
+.qbar.brass i {
+  background: var(--grad-meter-brass);
+}
+.qlist {
+  animation: qfade 0.3s var(--ease);
+}
+@keyframes qfade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- responsive: queue rows keep their text; drop the arrows ---------- */
+@container console (max-width: 360px) {
+  .qr .qbar {
+    display: none;
+  }
+}
+@container console (max-width: 300px) {
+  .qflow {
+    display: none;
+  }
+}

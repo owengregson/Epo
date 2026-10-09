@@ -19,7 +19,9 @@
  */
 
 import { isShapeMismatch, SURFACE } from '@/adapter/ig-surface';
-import type { Observation } from '@/store/types';
+import type { Observation, Source } from '@/store/types';
+import type { Projection } from '@/surface/schema/surface';
+import { shadowParse } from '@/surface/shadow';
 import * as logger from '@/utils/logger';
 
 // Re-export the stable result types so existing consumers keep one import site.
@@ -39,14 +41,47 @@ import type {
   ShowManyEntry,
 } from '@/adapter/ig-surface';
 
+/** Which profile body a parse is reading — the two containers differ. */
+export type ProfileKind = Extract<EndpointKind, 'profile-info' | 'profile-graphql'>;
+
 export class Reader {
   /**
    * Route a response URL to the parser that handles it, or `null`. Ordering
    * concerns (e.g. `friendship-show` before `show-many`/`followers-list`)
    * live inside the versioned endpoint table.
    */
-  matchEndpoint(url: string): EndpointKind | null {
-    return SURFACE.matchEndpoint(url);
+  matchEndpoint(url: string, friendlyName?: string): EndpointKind | null {
+    return SURFACE.matchEndpoint(url, friendlyName);
+  }
+
+  /**
+   * Route an OBSERVED response — URL plus the request headers the tab
+   * recorded. Use this over {@link Reader.matchEndpoint} for passive traffic:
+   * the GraphQL profile body is identified by its operation name, which lives
+   * in a request header, and a URL-only match cannot see it.
+   */
+  kindOf(resp: { url: string; requestHeaders?: Record<string, string> }): EndpointKind | null {
+    return SURFACE.matchEndpoint(resp.url, SURFACE.friendlyName(resp.requestHeaders));
+  }
+
+  /** The GraphQL operation name a request carried, read off its headers. */
+  friendlyName(requestHeaders?: Record<string, string>): string | undefined {
+    return SURFACE.friendlyName(requestHeaders);
+  }
+
+  /**
+   * Whether an observed response's media type carries a parseable body. The
+   * GraphQL profile body is `text/javascript`, so a json-only gate would drop
+   * it — consumers ask the surface instead of testing a media type themselves.
+   */
+  parseableBody(mimeType: string): boolean {
+    return SURFACE.parseableMime(mimeType);
+  }
+
+  /** The profile kind this observed response carries, or `null`. */
+  profileKindOf(resp: { url: string; requestHeaders?: Record<string, string> }): ProfileKind | null {
+    const kind = this.kindOf(resp);
+    return kind === 'profile-info' || kind === 'profile-graphql' ? kind : null;
   }
 
   /**
@@ -89,11 +124,14 @@ export class Reader {
    */
   parseFollowersListStrict(body: unknown, at: number): FollowersListResult | null {
     const result = SURFACE.extractFollowersList(this.coerce(body, 'followers-list'), at);
-    if (isShapeMismatch(result)) {
+    const legacy = isShapeMismatch(result) ? null : result;
+    this.shadow('followers-list', body, at, 'followers-list', legacy === null,
+      Reader.compareList(legacy));
+    if (legacy === null) {
       this.warnUnexpected('followers-list', body);
       return null;
     }
-    return result;
+    return legacy;
   }
 
   /**
@@ -121,11 +159,14 @@ export class Reader {
       at,
       'following-list',
     );
-    if (isShapeMismatch(result)) {
+    const legacy = isShapeMismatch(result) ? null : result;
+    this.shadow('following-list', body, at, 'following-list', legacy === null,
+      Reader.compareList(legacy));
+    if (legacy === null) {
       this.warnUnexpected('following-list', body);
       return null;
     }
-    return result;
+    return legacy;
   }
 
   /**
@@ -139,16 +180,44 @@ export class Reader {
   }
 
   /**
-   * Parse a profile-info body into a single profile observation (with
-   * follower and following counts). Returns `null` when the body has no user.
+   * Parse a profile body into a single profile observation (with follower and
+   * following counts). Returns `null` when the body has no user.
+   *
+   * `kind` names WHICH profile body this is: `profile-info` (what Epo fetches
+   * from `/users/<pk>/info/`) or `profile-graphql` (the query Instagram's own
+   * client fires, observed during ordinary navigation). The records inside are
+   * the same shape; only the container and the shadow-parse schema differ.
    */
-  parseProfileInfo(body: unknown, at: number): Observation | null {
-    const result = SURFACE.extractProfileInfo(this.coerce(body, 'web-profile-info'), at);
-    if (isShapeMismatch(result)) {
-      this.warnUnexpected('web-profile-info', body);
+  parseProfileInfo(
+    body: unknown,
+    at: number,
+    kind: ProfileKind = 'profile-info',
+  ): Observation | null {
+    const result = SURFACE.extractProfileInfo(this.coerce(body, kind), at);
+    const mismatch = isShapeMismatch(result);
+    this.shadow(kind, body, at, 'profile', mismatch, (p) => {
+      const legacy = mismatch ? null : (result as Observation | null);
+      if (legacy === null) {
+        return p.absent === true ? null : 'extractor read no profile, schema projected one';
+      }
+      const fact = p.facts[0];
+      if (fact === undefined) return 'schema projected no profile, extractor read one';
+      if (fact.accountPk !== legacy.accountPk) {
+        return `pk ${fact.accountPk} vs ${legacy.accountPk}`;
+      }
+      if (fact.fields.followers !== legacy.fields.followers) {
+        return `followers ${fact.fields.followers} vs ${legacy.fields.followers}`;
+      }
+      if (fact.fields.username !== legacy.fields.username) {
+        return `username differs for ${fact.accountPk}`;
+      }
+      return null;
+    });
+    if (mismatch) {
+      this.warnUnexpected(kind, body);
       return null;
     }
-    return result;
+    return result as Observation | null;
   }
 
   /**
@@ -157,8 +226,8 @@ export class Reader {
    * followers are visible to us — we can read the followers of anyone we
    * follow. Returns `null` when the flag is absent.
    */
-  profileFollowedByViewer(body: unknown): boolean | null {
-    return SURFACE.extractProfileFollowedByViewer(this.coerce(body, 'web-profile-info'));
+  profileFollowedByViewer(body: unknown, kind: ProfileKind = 'profile-info'): boolean | null {
+    return SURFACE.extractProfileFollowedByViewer(this.coerce(body, kind));
   }
 
   /**
@@ -168,11 +237,27 @@ export class Reader {
    */
   parseShowMany(body: unknown, _at: number): ShowManyEntry[] {
     const result = SURFACE.extractShowMany(this.coerce(body, 'show-many'));
-    if (isShapeMismatch(result)) {
+    const mismatch = isShapeMismatch(result);
+    const legacy = mismatch ? null : (result as ShowManyEntry[]);
+    this.shadow('show-many', body, _at, 'show-many', mismatch, (p) => {
+      if (legacy === null) return 'extractor reported a mismatch, schema parsed';
+      if (p.relationships.length !== legacy.length) {
+        return `rows ${p.relationships.length} vs ${legacy.length}`;
+      }
+      for (const row of p.relationships) {
+        const twin = legacy.find((e) => e.pk === row.pk);
+        if (twin === undefined) return `pk ${row.pk} missing from the extractor's rows`;
+        if (twin.following !== row.following || twin.outgoingRequest !== row.outgoingRequest) {
+          return `relationship differs for ${row.pk}`;
+        }
+      }
+      return null;
+    });
+    if (legacy === null) {
       this.warnUnexpected('show-many', body);
       return [];
     }
-    return result;
+    return legacy;
   }
 
   /**
@@ -185,6 +270,20 @@ export class Reader {
    */
   parseFriendshipShow(body: unknown, _at: number, pk: string): FriendshipShowResult | null {
     const result = SURFACE.extractFriendshipShow(this.coerce(body, 'friendship-show'), pk);
+    const legacyShow = isShapeMismatch(result) ? null : (result as FriendshipShowResult);
+    this.shadow('friendship-show', body, _at, 'show-many', legacyShow === null, (p) => {
+      if (legacyShow === null) return 'extractor reported a mismatch, schema parsed';
+      const row = p.relationships[0];
+      if (row === undefined) return 'schema projected no relationship';
+      if (
+        row.following !== legacyShow.following ||
+        row.followedBy !== legacyShow.followedBy ||
+        row.outgoingRequest !== legacyShow.outgoingRequest
+      ) {
+        return `relationship differs for ${pk}`;
+      }
+      return null;
+    }, pk);
     if (isShapeMismatch(result)) {
       // An unexpected shape (error body, drift) must NOT map to all-false: a
       // false "we do not follow them" fact terminates held records downstream.
@@ -206,11 +305,14 @@ export class Reader {
       at,
       'friend-requests',
     );
-    if (isShapeMismatch(result)) {
+    const legacy = isShapeMismatch(result) ? null : result;
+    this.shadow('friend-requests', body, at, 'friend-requests', legacy === null,
+      Reader.compareList(legacy));
+    if (legacy === null) {
       this.warnUnexpected('friend-requests', body);
       return empty;
     }
-    return result;
+    return legacy;
   }
 
   /**
@@ -222,11 +324,20 @@ export class Reader {
    */
   parseActivityFeedStrict(body: unknown): FollowEvent[] | null {
     const result = SURFACE.extractActivityFeed(this.coerce(body, 'activity-feed'));
-    if (isShapeMismatch(result)) {
+    const legacy = isShapeMismatch(result) ? null : (result as FollowEvent[]);
+    this.shadow('activity-feed', body, Date.now(), 'activity-feed', legacy === null, (p) => {
+      if (legacy === null) return 'extractor reported a mismatch, schema parsed';
+      if (p.events.length !== legacy.length) {
+        return `events ${p.events.length} vs ${legacy.length}`;
+      }
+      const diverged = p.events.find((e, i) => legacy[i]?.pk !== e.pk);
+      return diverged === undefined ? null : `event pk order diverges at ${diverged.pk}`;
+    });
+    if (legacy === null) {
       this.warnUnexpected('activity-feed', body);
       return null;
     }
-    return result;
+    return legacy;
   }
 
   /** Lenient variant for callers that only merge facts: drift collapses to `[]`. */
@@ -239,9 +350,11 @@ export class Reader {
    * the ONLY bodies worth the async read + parse in the reconciler. List pages
    * and the activity feed parse to nothing here.
    */
-  relationshipBearing(url: string): boolean {
-    const kind = this.matchEndpoint(url);
-    return kind === 'show-many' || kind === 'friendship-show' || kind === 'web-profile-info';
+  relationshipBearing(url: string, friendlyName?: string): boolean {
+    const kind = this.matchEndpoint(url, friendlyName);
+    // `profile-info` carries NO viewer-side relationship (`/users/<pk>/info/`
+    // has no `friendship_status`); the observed GraphQL profile body does.
+    return kind === 'show-many' || kind === 'friendship-show' || kind === 'profile-graphql';
   }
 
   /**
@@ -260,8 +373,9 @@ export class Reader {
     url: string,
     body: unknown,
     at: number,
+    friendlyName?: string,
   ): Array<{ pk: string; weFollow: boolean }> {
-    switch (this.matchEndpoint(url)) {
+    switch (this.matchEndpoint(url, friendlyName)) {
       case 'show-many':
         return this.parseShowMany(body, at).map((e) => ({
           pk: e.pk,
@@ -274,11 +388,11 @@ export class Reader {
         if (r === null) return []; // unparsed ≠ "no relationship"
         return [{ pk, weFollow: r.following || r.outgoingRequest }];
       }
-      case 'web-profile-info': {
-        const obs = this.parseProfileInfo(body, at);
-        const followed = this.profileFollowedByViewer(body);
+      case 'profile-graphql': {
+        const obs = this.parseProfileInfo(body, at, 'profile-graphql');
+        const followed = this.profileFollowedByViewer(body, 'profile-graphql');
         const requested = SURFACE.extractProfileRequestedByViewer(
-          this.coerce(body, 'web-profile-info'),
+          this.coerce(body, 'profile-graphql'),
         );
         // Emit only when BOTH the pk and the viewer-side flag are present.
         if (obs === null || followed === null) return [];
@@ -305,6 +419,62 @@ export class Reader {
       });
       return undefined;
     }
+  }
+
+
+  // -------------------------------------------------------------------------
+  // Shadow parse (PHASE 1 of the surface migration)
+  //
+  // Every parse above still DRIVES BEHAVIOUR through the legacy extractor. The
+  // calls below run the endpoint's zod schema over the same body and report a
+  // disagreement — nothing more. That is what earns the right to flip an
+  // endpoint's `mode` to `enforce`: real disagreement counts over real
+  // sessions, per endpoint, reversible without a release.
+  //
+  // Wrapped so it can NEVER break the live path: a shadow parse that can throw
+  // into a census walk is worse than no shadow parse at all.
+  // -------------------------------------------------------------------------
+
+  private shadow(
+    kind: EndpointKind,
+    body: unknown,
+    at: number,
+    source: Source,
+    legacyMismatch: boolean,
+    compare?: (p: Projection) => string | null,
+    pk?: string,
+  ): void {
+    try {
+      shadowParse({
+        kind,
+        body: this.coerce(body, kind),
+        ctx: { at, source, pk },
+        legacyMismatch,
+        compare,
+      });
+    } catch (e) {
+      logger.debug('reader.shadow: shadow parse failed', { kind, error: String(e) });
+    }
+  }
+
+  /** Compare a list projection against the legacy list result. */
+  private static compareList(
+    legacy: FollowersListResult | null,
+  ): (p: Projection) => string | null {
+    return (p) => {
+      if (legacy === null) return 'extractor reported a mismatch, schema parsed';
+      const diffs: string[] = [];
+      if (p.facts.length !== legacy.observations.length) {
+        diffs.push(`rows ${p.facts.length} vs ${legacy.observations.length}`);
+      }
+      if (p.cursor !== legacy.cursor) diffs.push(`cursor ${p.cursor} vs ${legacy.cursor}`);
+      if (p.hasMore !== legacy.hasMore) diffs.push(`hasMore ${p.hasMore} vs ${legacy.hasMore}`);
+      const mismatchedPk = p.facts.find(
+        (f, i) => legacy.observations[i]?.accountPk !== f.accountPk,
+      );
+      if (mismatchedPk !== undefined) diffs.push(`pk order diverges at ${mismatchedPk.accountPk}`);
+      return diffs.length === 0 ? null : diffs.join(', ');
+    };
   }
 
   private warnUnexpected(kind: EndpointKind, body: unknown): void {

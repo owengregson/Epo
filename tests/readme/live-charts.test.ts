@@ -1,6 +1,6 @@
-import { growthCharts, paceCharts, planOneDay } from '@/readme/live-charts';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { MS_PER_HOUR } from '@/timing/units';
+import { growthCharts, paceCharts, planOneDay } from '@/tools/readme/live-charts';
 
 /**
  * The README's nightly panels draw REAL data — the growth model and the

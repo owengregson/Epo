@@ -1,26 +1,25 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { type JSX } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
-import type { LogEntry, LogLevel } from '@/types';
-import { clockTime } from '../lib/format';
-import { prefersReducedMotion } from '../lib/motion';
+import { latestLogSignal } from '@/renderer/app/shell-context';
+import { clockTime } from '@/renderer/lib/format';
+import { prefersReducedMotion } from '@/renderer/lib/motion';
+import type { LogLevel } from '@/types';
 
 /** Collapse the four log levels onto the ticker's two accent tones. */
 function tone(level: LogLevel): string {
   return level === 'warn' ? 'warn' : level === 'error' ? 'error' : 'info';
 }
 
-export interface TickerProps {
-  /** The latest log line, or null before anything has streamed. */
-  line: LogEntry | null;
-}
-
 /**
  * The docked activity ticker: a pulsing beacon (live only while running, via
  * `.console[data-state]`) and the most recent log line, which swaps in with a
  * short upward wipe whenever it changes.
+ *
+ * It reads the newest line straight off {@link latestLogSignal}: a streamed
+ * line re-renders the ticker (and the Activity card), never the whole console.
  */
-export function Ticker({ line }: TickerProps): h.JSX.Element {
+export function Ticker(): JSX.Element {
+  const line = latestLogSignal.value;
   const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {

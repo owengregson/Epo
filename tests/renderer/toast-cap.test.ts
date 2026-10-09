@@ -4,7 +4,7 @@
  * dock would clip the overflow unreadable and undismissable); the OLDEST
  * toasts drop first and are reported so their auto-dismiss timers get cleared.
  */
-import { appendCapped, type Toast, TOAST_CAP } from '@/renderer/hooks/useToasts';
+import { appendCapped, TOAST_CAP, type Toast } from '@/renderer/hooks/useToasts';
 
 const toast = (id: number): Toast => ({ id, kind: 'error', message: `failure ${id}` });
 

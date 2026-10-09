@@ -2,13 +2,14 @@
  * Interactor facade: event sequences through a recording InputDriver, with an
  * injected rng + sleep recorder (no real timers, fully deterministic).
  */
-import { Interactor } from '@/interaction/interactor';
+
 import {
   ElectronInputDriver,
-  type PointerInputEvent,
   type InputDriver,
+  type PointerInputEvent,
 } from '@/interaction/input-driver';
-import { PRESS_MAX_MS, PRESS_MIN_MS, type ElementRect } from '@/interaction/motion-profile';
+import { Interactor } from '@/interaction/interactor';
+import { type ElementRect, PRESS_MAX_MS, PRESS_MIN_MS } from '@/interaction/motion-profile';
 
 const mulberry32 = (seed: number) => (): number => {
   seed = (seed + 0x6d2b79f5) | 0;
@@ -195,7 +196,7 @@ describe('Interactor.scroll', () => {
 describe('ElectronInputDriver', () => {
   test('maps port calls onto sendInputEvent payloads (wheel sign inverted)', () => {
     const sent: PointerInputEvent[] = [];
-    const driver = new ElectronInputDriver({ sendInputEvent: (e) => sent.push(e) });
+    const driver = new ElectronInputDriver({ sendInputEvent: (e) => { sent.push(e); } });
 
     driver.mouseMove(10.6, 20.2);
     driver.mouseDown(10, 20);
@@ -203,7 +204,7 @@ describe('ElectronInputDriver', () => {
     driver.wheel(10, 20, 120); // DOM +120 (content down) → Electron deltaY -120
 
     expect(sent).toEqual([
-      { type: 'mouseMove', x: 11, y: 20 },
+      { type: 'mouseMove', x: 10.6, y: 20.2 },
       { type: 'mouseDown', x: 10, y: 20, button: 'left', clickCount: 1 },
       { type: 'mouseUp', x: 10, y: 20, button: 'left', clickCount: 1 },
       { type: 'mouseWheel', x: 10, y: 20, deltaX: 0, deltaY: -120 },

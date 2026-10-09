@@ -1,20 +1,17 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import { filterPruneCandidates } from '@/engine/prune-whitelist';
-import type { EpoStatus, PruneCandidate, PruneScanResult, Settings } from '@/types';
-import { PruneCandidatesCard } from '../cards/prune/PruneCandidatesCard';
-import { PruneCensusCard } from '../cards/prune/PruneCensusCard';
-import { PruneRunCard, stateChip } from '../cards/prune/PruneRunCard';
-import { PruneScanCard } from '../cards/prune/PruneScanCard';
-import { PruneScheduleCard } from '../cards/prune/PruneScheduleCard';
-import { PruneWhitelistCard } from '../cards/prune/PruneWhitelistCard';
-import type { ConfirmOptions } from '../hooks/useConfirm';
-import { usePruneStatus } from '../hooks/usePruneStatus';
-import type { ToastKind } from '../hooks/useToasts';
-import { commas } from '../lib/format';
-import { Badge } from '../ui/Badge';
-import { Card, CardBody } from '../ui/Card';
+import { useShell } from '@/renderer/app/shell-context';
+import { PruneCandidatesCard } from '@/renderer/cards/prune/PruneCandidatesCard';
+import { PruneCensusCard } from '@/renderer/cards/prune/PruneCensusCard';
+import { PruneRunCard, stateChip } from '@/renderer/cards/prune/PruneRunCard';
+import { PruneScanCard } from '@/renderer/cards/prune/PruneScanCard';
+import { PruneScheduleCard } from '@/renderer/cards/prune/PruneScheduleCard';
+import { PruneWhitelistCard } from '@/renderer/cards/prune/PruneWhitelistCard';
+import { commas } from '@/renderer/lib/format';
+import { Badge } from '@/renderer/ui/Badge';
+import { Card, CardBody } from '@/renderer/ui/Card';
+import { filterPruneCandidates } from '@/shared/prune-whitelist';
+import type { PruneCandidate, PruneScanResult, Settings } from '@/types';
 
 /** Readable message for a typed prune refusal (`ok: false` from scan/start). */
 function refusalMessage(reason: string | undefined): string {
@@ -32,31 +29,21 @@ function refusalMessage(reason: string | undefined): string {
   }
 }
 
-export interface PruneViewProps {
-  /** Engine status — the run controls disable while growth owns the tab. */
-  status: EpoStatus | null;
-  settings: Settings | null;
-  onSaved(next: Settings): void;
-  confirm(options: ConfirmOptions): Promise<boolean>;
-  /** The shell's toast pusher — typed refusals and rejects surface here. */
-  toast(kind: ToastKind, message: string): void;
-}
-
 /**
- * Prune view — Phase 5 auto-prune, laid out as a full PAGE on the wide stage:
+ * Prune view — auto-prune laid out as a full PAGE on the wide stage:
  * a hero strip (title + live state badge), the Census card across the top
  * (tiles + reciprocity bar), then two card columns — Scan / Run / Schedule on
  * the left, Candidates / Whitelist on the right. Prune settings persist
- * immediately as partials through `settings:update`; the live projection
- * arrives via {@link usePruneStatus}.
+ * immediately as partials through `settings:update`; every shared projection
+ * (engine status, the live prune status, settings) comes from the shell.
  */
-export function PruneView({ status, settings, onSaved, confirm, toast }: PruneViewProps): h.JSX.Element {
-  const prune = usePruneStatus();
+export function PruneView(): JSX.Element {
+  const { status, prune, settings, onSaved, confirm, toast } = useShell();
   const [scan, setScan] = useState<PruneScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [pending, setPending] = useState<'run' | 'stop' | null>(null);
 
-  // Phase 5 hand-off: prune no longer waits for growth to be idle — pressing Scan
+  // Prune does not wait for growth to be idle — pressing Scan
   // or Run pauses a RUNNING growth engine, does the prune, and resumes it after.
   // So the only thing the cards surface is an informational "this will pause
   // growth" note while growth is actively running (a user-paused engine leaves
@@ -248,7 +235,7 @@ export function PruneView({ status, settings, onSaved, confirm, toast }: PruneVi
               onSave={save}
             />
           ) : (
-            <Card index={2}>
+            <Card>
               <CardBody>Loading settings…</CardBody>
             </Card>
           )}

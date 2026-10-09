@@ -5,18 +5,16 @@
  *        jitter is positive-only (never < base, never exactly base);
  *  (ii)  the per-key class registries cover exactly the engines' wait keys
  *        (compile-time via `satisfies`, runtime via the key-set assertions);
- *  (iii) grep guard — every DelayManager wait in the engines routes through
- *        the ONE noise-gating wrapper (engineWait / pruneWait), so no
- *        classified key can be invoked with a bare, un-noised number;
+ *  (iii) structural gate — a spy DelayManager under a real loop sees only
+ *        CLASSIFIED keys, and a non-exact key is never served its bare base;
  *  (iv)  boundary jitter keys on the RESUME day: a just-before-midnight park
  *        and a just-after-midnight restart resume at the SAME jittered instant;
  *  (v)   different boundary keys draw DIFFERENT offsets the same morning.
  */
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { ENGINE_WAIT_CLASS, type EngineWaitKey } from '@/engine/engine';
 import { PRUNE_WAIT_CLASS, type PruneWaitKey } from '@/engine/prune-engine';
-import { NOISE } from '@/timing/config';
+import { ENGINE, NOISE } from '@/timing/config';
+import { DelayManager } from '@/timing/delay-manager';
 import {
   boundarySeedKey,
   cadenceFactor,
@@ -27,6 +25,7 @@ import {
   type WaitClass,
 } from '@/timing/noise';
 import { type DelayPolicy, sample, uniform } from '@/timing/primitives';
+import { makeEngineHarness, makePruneHarness } from '../kit/engine-harness';
 
 const BASE_MS = 60_000;
 const NON_EXACT: Exclude<WaitClass, 'exact'>[] = [
@@ -165,34 +164,77 @@ describe('noise — the class registries cover exactly the wait keys (ii)', () =
   });
 });
 
-describe('noise — every engine wait routes through the ONE noise gate (iii)', () => {
-  const readSrc = (rel: string): string =>
-    fs.readFileSync(path.join(__dirname, '..', '..', 'src', rel), 'utf8');
-
-  test('engine.ts touches the DelayManager only inside engineWait', () => {
-    const src = readSrc('engine/engine.ts');
-    expect((src.match(/this\.delays\.wait\(/g) ?? []).length).toBe(1);
-  });
-
-  test('prune-engine.ts touches the DelayManager only inside pruneWait', () => {
-    const src = readSrc('engine/prune-engine.ts');
-    expect((src.match(/this\.delays\.wait\(/g) ?? []).length).toBe(1);
-  });
-
-  test('no classified non-exact key is handed to the DelayManager directly', () => {
-    const src = readSrc('engine/engine.ts') + readSrc('engine/prune-engine.ts');
-    const nonExactKeys = [
-      ...Object.entries(ENGINE_WAIT_CLASS),
-      ...Object.entries(PRUNE_WAIT_CLASS),
-    ]
-      .filter(([, cls]) => cls !== 'exact')
-      .map(([key]) => key);
-    expect(nonExactKeys.length).toBeGreaterThan(0);
-    for (const key of nonExactKeys) {
-      // A bare-number direct wait would bypass the noise gate entirely.
-      expect(src.includes(`delays.wait('${key}'`)).toBe(false);
-      expect(src.includes(`delays.wait("${key}"`)).toBe(false);
+describe('noise — every engine wait routes through the ONE gate (iii)', () => {
+  /** A DelayManager that records every key a loop registers a wait under. */
+  class SpyDelays extends DelayManager {
+    readonly keys: string[] = [];
+    override wait(
+      key: string,
+      policyOrMs: DelayPolicy | number,
+      opts?: Parameters<DelayManager['wait']>[2],
+    ): Promise<{ completed: boolean }> {
+      this.keys.push(key);
+      return super.wait(key, policyOrMs, opts);
     }
+  }
+
+  test('every key the growth loop registers is classified', async () => {
+    let spy!: SpyDelays;
+    const h = makeEngineHarness({
+      delays: (deps) => {
+        spy = new SpyDelays(deps);
+        return spy;
+      },
+      settings: { lowWaterCandidates: 5 },
+    });
+    // Representative paths: an idle beat, a paced action, a blocked park, a
+    // refill that fails its acquire (enrich backoff), and a transient throw.
+    await h.engine.stepOnce(); // refill → acquire → refill-pacing
+    h.churn.due = [{ accountPk: 'a', targetPk: null, state: 'queued', retryCount: 0 }];
+    await h.engine.stepOnce(); // acted → action-delay
+    h.churn.due = [{ accountPk: 'a', targetPk: null, state: 'queued', retryCount: 0 }];
+    h.churn.outcome = 'blocked';
+    await h.engine.stepOnce(); // blocked-park
+    h.churn.due = [];
+    h.churn.outcome = 'ok';
+    h.sentinel.failNext = 1;
+    await h.engine.stepOnce(); // transient-backoff
+    await h.engine.stepOnce(); // idle
+
+    expect(spy.keys.length).toBeGreaterThan(3);
+    for (const key of spy.keys) expect(ENGINE_WAIT_CLASS).toHaveProperty(key);
+  });
+
+  test('every key a prune run registers is classified', async () => {
+    let spy!: SpyDelays;
+    const h = makePruneHarness({
+      following: ['1', '2'],
+      followers: [],
+      delays: (deps) => {
+        spy = new SpyDelays(deps);
+        return spy;
+      },
+    });
+    h.churn.outcomes.set('u1', { status: 'blocked' }); // park, then retry
+    await h.engine.run();
+
+    expect(spy.keys.length).toBeGreaterThan(1);
+    for (const key of spy.keys) expect(PRUNE_WAIT_CLASS).toHaveProperty(key);
+  });
+
+  test('a non-exact key is never served its bare base (the gate ran)', async () => {
+    // 'engine:idle' is a local beat: the served duration must land inside the
+    // band around ENGINE.IDLE_MS, and vary between beats.
+    const h = makeEngineHarness();
+    for (let i = 0; i < 8; i += 1) await h.engine.stepOnce();
+
+    const beats = h.sleep.calls;
+    expect(beats.length).toBe(8);
+    for (const ms of beats) {
+      expect(ms).toBeGreaterThanOrEqual(ENGINE.IDLE_MS * NOISE.BEAT_MIN_FACTOR);
+      expect(ms).toBeLessThanOrEqual(ENGINE.IDLE_MS * NOISE.BEAT_MAX_FACTOR);
+    }
+    expect(new Set(beats).size).toBeGreaterThan(1); // genuinely noised, not the base
   });
 });
 

@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
 import { Chips } from '@/renderer/ui/Chips';
 import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
@@ -10,7 +9,6 @@ import type { Settings } from '@/types';
 export interface AdvancedCardProps {
   draft: Settings;
   set: SettingsDraftController['set'];
-  index?: number;
 }
 
 const SWEEP_OPTIONS = [1, 2, 4, 6, 12, 24].map((hrs) => ({ value: String(hrs), label: `${hrs}h` }));
@@ -20,9 +18,9 @@ const SWEEP_OPTIONS = [1, 2, 4, 6, 12, 24].map((hrs) => ({ value: String(hrs), l
  * when to refill the candidate queue, and how many times to retry a failed unfollow. (Pace,
  * volume, and lifecycle windows come from the Behavior card's qualitative knobs.)
  */
-export function AdvancedCard({ draft: d, set, index }: AdvancedCardProps): h.JSX.Element {
+export function AdvancedCard({ draft: d, set }: AdvancedCardProps): JSX.Element {
   return (
-    <CollapsibleCard icon="sliders" title="Advanced" index={index} defaultCollapsed>
+    <CollapsibleCard icon="sliders" title="Advanced" defaultCollapsed>
       <Field
         label="Follow-back check"
         tip="How often the engine opens the notifications feed to see who followed back — one click, one request per check. Frequent checks recycle follow slots sooner."

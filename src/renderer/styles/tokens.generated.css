@@ -1,0 +1,71 @@
+/*
+ * GENERATED — do not edit. Edit `src/renderer/design/scale.ts` and run
+ * `npm run gen:tokens`. `tests/renderer/tokens.test.ts` fails the gate when
+ * this file drifts from the scale module.
+ *
+ * The derived half of the Epo design tokens: the spacing ramp, the type
+ * ladder and the control-size ramp, all reproduced from the fitted rules in
+ * the scale module. The palette and every other judgement call stays
+ * hand-authored in `tokens.palette.css`.
+ */
+
+:root {
+  /* ============ TYPE SCALE ============
+     One ladder for all static text. Near-duplicate mockup sizes snap to the
+     nearest step (8/8.5→2xs · 9/9.5→xs · 10/10.5→sm · 11→md · 11.5/12/12.5→base
+     · 13/13.5→lg · 14/14.5/15→xl). SVG clock text (7px caps, 14px readout) stays
+     literal where the clock-face geometry depends on it. Linear, not geometric:
+     12px base + [-3.5, -3, -2, -1, 0, 1, 3]. */
+  --fs-2xs: 8.5px; /* micro badge caps (LOCKED, PRIVATE, pipeline stage labels) */
+  --fs-xs: 9px; /* uppercase eyebrows, mono axis/scale labels, badges */
+  --fs-sm: 10px; /* hints, legends, chips, ticker, dense meta */
+  --fs-md: 11px; /* small body: log lines, nav, tooltips, sub-lines */
+  --fs-base: 12px; /* body + control text (inputs, kv values, buttons) */
+  --fs-lg: 13px; /* document base, emphasized handles */
+  --fs-xl: 15px; /* headings, large glyphs, stepper +/- */
+
+  /* Fluid (container-tracking) type — cqi resolves against the .console
+     container. HAND-TUNED per role, not derived: no single container width
+     reproduces them (see FLUID_TYPE in design/scale.ts). */
+  --fs-fluid-cap: clamp(9px, 2.13cqi, 10.5px); /* card-header eyebrows */
+  --fs-fluid-title: clamp(12.5px, 2.98cqi, 15px); /* console title */
+  --fs-fluid-handle: clamp(13.5px, 3.3cqi, 16px); /* target @handle */
+  --fs-fluid-stat: clamp(13px, 3.4cqi, 17px); /* stat + pipeline numbers */
+  --fs-fluid-display: clamp(19px, 5.53cqi, 28px); /* growth number */
+  --fs-fluid-hero: clamp(24px, 7.23cqi, 36px); /* hero countdown */
+
+  /* ============ SPACING (derived — 4px × [0.5, 1, 2, 3, 4, 5, 6]) ============
+     The one spacing scale (4px base @ the design width) — fluid: tracks the
+     viewport, compresses on small panes, breathes a touch on large ones.
+     The console root re-declares these against its own inline size. */
+  --sp-0: clamp(1.5px, 0.161vw, 2.5px);
+  --sp-1: clamp(3px, 0.322vw, 5px);
+  --sp-2: clamp(6px, 0.645vw, 9px);
+  --sp-3: clamp(9px, 0.967vw, 13px);
+  --sp-4: clamp(12px, 1.29vw, 18px);
+  --sp-5: clamp(15px, 1.612vw, 22px);
+  --sp-6: clamp(18px, 1.935vw, 27px);
+
+  /* ============ CONTROL SIZES (derived — 24 + 2n) ============ */
+  --h-xs: 24px; /* preset chips */
+  --h-sm: 26px; /* segmented-control buttons */
+  --h-md: 28px; /* number input, stepper */
+  --h-lg: 30px; /* transport buttons, select, text input */
+  --h-ticker: 34px; /* docked ticker bar (toasts offset against it) — off the ramp */
+}
+
+/* The console — and the stage-hosted Prune page plus each of its card columns —
+   is a size container (see shell.css), so the SAME ramp resolves against its
+   inline size instead of the viewport: identical px at the 470.5px container
+   design width, compressing/expanding with the pane not the page. */
+.console,
+.prune-page,
+.prune-col {
+  --sp-0: clamp(1.5px, 0.43cqi, 2.5px);
+  --sp-1: clamp(3px, 0.85cqi, 5px);
+  --sp-2: clamp(6px, 1.7cqi, 9px);
+  --sp-3: clamp(9px, 2.55cqi, 13px);
+  --sp-4: clamp(12px, 3.4cqi, 18px);
+  --sp-5: clamp(15px, 4.26cqi, 22px);
+  --sp-6: clamp(18px, 5.1cqi, 27px);
+}

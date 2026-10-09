@@ -1,4 +1,4 @@
-import { shapeGraphSnapshot, type GraphShapeOpts } from '@/main/foundation-reads';
+import { type GraphShapeOpts, shapeGraphSnapshot } from '@/main/foundation-reads';
 import type { GraphSourceRows } from '@/store/types';
 import { GRAPH_NODE_STATUSES, type GraphNodeStatus, type GraphSnapshot } from '@/types';
 

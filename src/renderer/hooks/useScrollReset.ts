@@ -3,7 +3,7 @@ import type { ViewKey } from '@/renderer/hooks/useView';
 
 /**
  * Scroll reset on view open. Every view stays mounted inside its own `.view`
- * section (`id="view-<key>"`, the actual scroll container — see layout.css), so
+ * section (`id="view-<key>"`, the actual scroll container — see shell.css), so
  * by default each would preserve its scroll position across tab switches. This
  * hook resets the INCOMING view's scrollTop to 0 whenever the active view
  * changes, so a view always opens at the top; the outgoing view keeps its

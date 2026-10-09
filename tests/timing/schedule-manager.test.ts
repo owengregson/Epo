@@ -1,5 +1,5 @@
-import { ScheduleManager } from '@/timing/schedule-manager';
 import { FakeClock, SystemClock } from '@/governors/clock';
+import { ScheduleManager } from '@/timing/schedule-manager';
 
 describe('ScheduleManager.every', () => {
   beforeEach(() => jest.useFakeTimers());

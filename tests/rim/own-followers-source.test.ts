@@ -1,20 +1,20 @@
-import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
-import { FollowersPageReader } from '@/rim/followers-page-reader';
-import { ListPageWalker } from '@/rim/list-page-walker';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
+import { FollowersPageReader } from '@/rim/followers-page-reader';
+import { ListPageWalker } from '@/rim/list-page-walker';
+import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
+import { KnowledgeStore } from '@/store/knowledge-store';
 import type { TabResponse } from '@/types';
-import {
-  FakeTab,
-  FakeSentinel,
-  FakeActor,
-  followersUrl,
-  followersBody,
-  mkResp,
-} from './fakes';
 import { setLevel } from '@/utils/logger';
+import {
+  FakeActor,
+  FakeSentinel,
+  FakeTab,
+  followersBody,
+  followersUrl,
+  mkResp,
+} from '../kit/fakes';
 
 beforeAll(() => setLevel('error'));
 

@@ -159,3 +159,10 @@ test('delay respects bounds with jitter off', () => {
   expect(d).toBe(1500);
   store.close();
 });
+
+test('equal positive action delays still vary and never undercut the configured interval', () => {
+  const store = new KnowledgeStore(':memory:');
+  const g = new RateGovernor(store, new FakeClock(0), { ...cfg, minDelayMs: 60_000, maxDelayMs: 60_000 });
+  expect([0, 0.5, 1].map((draw) => g.nextDelayMs(() => draw))).toEqual([60_000, 73_500, 87_000]);
+  store.close();
+});

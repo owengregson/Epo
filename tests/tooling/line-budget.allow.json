@@ -1,0 +1,149 @@
+{
+  "budget": 300,
+  "allow": [
+    {
+      "file": "src/main/foundation-wiring.ts",
+      "lines": 1987
+    },
+    {
+      "file": "src/engine/prune-engine.ts",
+      "lines": 1496
+    },
+    {
+      "file": "src/engine/engine.ts",
+      "lines": 1103
+    },
+    {
+      "file": "src/kernel/derive.ts",
+      "lines": 994
+    },
+    {
+      "file": "src/adapter/actor.ts",
+      "lines": 831
+    },
+    {
+      "file": "src/livetest/steps.ts",
+      "lines": 758
+    },
+    {
+      "file": "src/renderer/graph/world.ts",
+      "lines": 745
+    },
+    {
+      "file": "src/store/knowledge-store.ts",
+      "lines": 686
+    },
+    {
+      "file": "src/capture/capture-harness.ts",
+      "lines": 683
+    },
+    {
+      "file": "src/adapter/tab.ts",
+      "lines": 666
+    },
+    {
+      "file": "src/adapter/versions/2026-08-12.ts",
+      "lines": 621
+    },
+    {
+      "file": "src/engine/churn-scheduler.ts",
+      "lines": 609
+    },
+    {
+      "file": "src/settings/settings.ts",
+      "lines": 593
+    },
+    {
+      "file": "src/adapter/ig-surface.ts",
+      "lines": 557
+    },
+    {
+      "file": "src/main/services/graph-builder.ts",
+      "lines": 537
+    },
+    {
+      "file": "src/surface/versions/2026-08-12/surface.ts",
+      "lines": 524
+    },
+    {
+      "file": "src/adapter/reader.ts",
+      "lines": 485
+    },
+    {
+      "file": "src/rim/list-page-walker.ts",
+      "lines": 466
+    },
+    {
+      "file": "src/rim/follower-acquisition.ts",
+      "lines": 449
+    },
+    {
+      "file": "src/engine/target-pipeline.ts",
+      "lines": 441
+    },
+    {
+      "file": "src/surface/versions/2026-08-12/literals.ts",
+      "lines": 433
+    },
+    {
+      "file": "src/types.ts",
+      "lines": 422
+    },
+    {
+      "file": "src/rim/followers-page-reader.ts",
+      "lines": 419
+    },
+    {
+      "file": "src/main/foundation-reads.ts",
+      "lines": 410
+    },
+    {
+      "file": "src/rim/follow-notifications.ts",
+      "lines": 376
+    },
+    {
+      "file": "src/engine/ports.ts",
+      "lines": 351
+    },
+    {
+      "file": "src/timing/session-planner.ts",
+      "lines": 345
+    },
+    {
+      "file": "src/engine/recovery.ts",
+      "lines": 340
+    },
+    {
+      "file": "src/kernel/policy.ts",
+      "lines": 331
+    },
+    {
+      "file": "src/renderer/charts/GrowthChart.tsx",
+      "lines": 325
+    },
+    {
+      "file": "src/store/repos/analytics.ts",
+      "lines": 319
+    },
+    {
+      "file": "src/renderer/design/scale.ts",
+      "lines": 316
+    },
+    {
+      "file": "src/surface/schema/surface.ts",
+      "lines": 313
+    },
+    {
+      "file": "src/renderer/cards/settings/BehaviorCard.tsx",
+      "lines": 312
+    },
+    {
+      "file": "src/engine/rules.ts",
+      "lines": 308
+    },
+    {
+      "file": "src/store/schema.ts",
+      "lines": 304
+    }
+  ]
+}

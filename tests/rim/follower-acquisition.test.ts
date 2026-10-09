@@ -1,11 +1,11 @@
+import { Reader } from '@/adapter/reader';
+import type { Sentinel } from '@/adapter/sentinel';
+import { FakeClock } from '@/governors/clock';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
-import { Reader } from '@/adapter/reader';
-import type { Sentinel } from '@/adapter/sentinel';
 import { KnowledgeStore } from '@/store/knowledge-store';
-import { FakeClock } from '@/governors/clock';
-import { FakeTab, FakeSentinel, FakeActor, followersUrl, followersBody, mkResp } from './fakes';
+import { FakeActor, FakeSentinel, FakeTab, followersBody, followersUrl, mkResp } from '../kit/fakes';
 
 const reader = new Reader();
 const clock = new FakeClock(2_000_000);
@@ -24,18 +24,17 @@ const okEnv = (body: unknown): unknown => ({
   json: body,
 });
 
-/** A web_profile_info body carrying the target's own pk + counts. */
+/** A `/users/<pk>/info/` body carrying the target's own pk + counts. */
 const profileBody = (pk: string, username: string): unknown => ({
-  data: {
-    user: {
-      id: pk,
-      username,
-      edge_followed_by: { count: 500 },
-      edge_follow: { count: 480 },
-      edge_mutual_followed_by: { count: 4 },
-      is_private: false,
-      is_verified: false,
-    },
+  user: {
+    pk: Number(pk),
+    id: pk,
+    username,
+    follower_count: 500,
+    following_count: 480,
+    mutual_followers_count: 4,
+    is_private: false,
+    is_verified: false,
   },
 });
 
@@ -43,7 +42,7 @@ describe('direct API walk (the request-efficient path)', () => {
   test('resolves pk via one profile fetch, pages the API directly, writes edges + cursor', async () => {
     const tab = new FakeTab();
     tab.onEvaluate = (script) => {
-      if (script.includes('web_profile_info')) return okEnv(profileBody('999', 'target'));
+      if (script.includes('topsearch')) return okEnv(profileBody('999', 'target'));
       // Two followers pages, then the API says the list is done. The built
       // script embeds the cursor as encodeURIComponent("C1"), so match on "C1".
       if (script.includes('"C1"')) return okEnv(followersBody(['c', 'd'], null, false));
@@ -105,8 +104,8 @@ describe('direct API walk (the request-efficient path)', () => {
     const result = await acquisition.acquire('target');
 
     expect(result.targetPk).toBe('999');
-    // No profile-info fetch (pk was already known) — only list-page scripts.
-    expect(seenUrls.every((s) => !s.includes('web_profile_info'))).toBe(true);
+    // No profile fetch (pk was already known) — only list-page scripts.
+    expect(seenUrls.every((s) => !s.includes('topsearch'))).toBe(true);
     // The first (and only) fetched page carried the resume cursor (embedded as
     // encodeURIComponent("C1")).
     expect(seenUrls[0]).toContain('max_id');
@@ -333,6 +332,62 @@ describe('dialog-scroll fallback', () => {
       expect(edge!.status).toBe('active');
     }
     expect(store.getScrapeCursor('999')).toBe('C2');
+  });
+
+  test('edges are written PER ROW — a scrape stopped mid-walk keeps every edge it paid for', async () => {
+    // docs/PRINCIPLES.md §1: an aborted collection must cost only the
+    // un-fetched remainder. The dialog path used to back-fill edges after the
+    // scrape, so a stop between pages threw away every edge already observed.
+    const tab = new FakeTab();
+    const actor = new FakeActor();
+    const ac = new AbortController();
+    const pages = [
+      mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)),
+      mkResp(followersUrl('999', 'C1'), followersBody(['c', 'd'], 'C2', true)),
+    ];
+    let i = 0;
+    // The first page lands, then the driver is stopped before any scroll.
+    actor.onOpen = () => {
+      tab.emit(pages[i++]);
+      ac.abort();
+    };
+    actor.onScroll = () => {
+      if (i < pages.length) tab.emit(pages[i++]);
+    };
+
+    const pageReader = new FollowersPageReader({
+      tab,
+      reader,
+      actor,
+      clock,
+      scrollWaitMs: 1,
+      abortSignal: () => ac.signal,
+    });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      clock,
+      cfg: {
+        targetNewPks: 60,
+        maxPages: 8,
+        maxCoverageFraction: 0.5,
+        maxRounds: 5,
+        noNewStop: 2,
+        scrollMinMs: 1,
+        scrollMaxMs: 1,
+      },
+    });
+
+    const result = await acquisition.acquire('target');
+
+    expect(result.endReason).toBe('stopped');
+    expect(actor.scrollCalls).toBe(0); // it really did stop before the next page
+    // The first page's edges survived the stop.
+    for (const pk of ['a', 'b']) {
+      expect(store.getEdge(pk, '999', 'follows')).not.toBeNull();
+    }
+    expect(store.getEdge('c', '999', 'follows')).toBeNull();
   });
 });
 

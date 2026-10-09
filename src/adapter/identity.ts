@@ -13,16 +13,26 @@
  * routes) comes from the active `SURFACE` version module.
  */
 
-import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
+import type { ActorInteractor } from '@/adapter/actor';
+import { ActionAbortedError, AdapterStaleError, TabUnavailableError, TabUnresponsiveError } from '@/adapter/errors';
+import { fetchJson } from '@/adapter/fetch-json';
+import { type LocateRectResult, SURFACE } from '@/adapter/ig-surface';
+import type { Navigable } from '@/adapter/tab-ports';
 import { ADAPTER } from '@/timing/config';
-import { sleep } from '@/timing/primitives';
+import { pauseBeforePageRetry } from '@/timing/page-pacing';
+import { type Rng, sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
 /** The narrow tab surface this resolver needs; `InstagramTab` satisfies it. */
-export interface IdentityTab {
-  goto(url: string): Promise<void>;
-  evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T>;
-  currentUrl(): string;
+export type IdentityTab = Navigable;
+
+export interface IdentityOptions {
+  attempts?: number;
+  retryMs?: number;
+  signal?: AbortSignal;
+  rng?: Rng;
+  /** Production supplies the guarded CDP interactor even before the graph exists. */
+  interactor?: Pick<ActorInteractor, 'click'>;
 }
 
 /**
@@ -39,12 +49,28 @@ async function tryEvaluate<T>(tab: IdentityTab, script: string, label: string): 
   try {
     return await tab.evaluate<T>(script);
   } catch (e) {
-    const msg = String(e);
     // A destroyed/absent tab won't recover across retries — let the resolver
     // abort at once instead of logging the same failure for every script.
-    if (msg.includes('webContents unavailable')) throw e;
-    logger.warn('identity: evaluate failed', { label, error: msg });
+    if (e instanceof TabUnavailableError || e instanceof TabUnresponsiveError) throw e;
+    logger.warn('identity: evaluate failed', { label, error: String(e) });
     return null;
+  }
+}
+
+async function clickProfile(tab: IdentityTab, opts: IdentityOptions): Promise<boolean> {
+  if (!opts.interactor || opts.signal?.aborted) return false;
+  const located = await tryEvaluate<LocateRectResult>(tab, SURFACE.locateProfileLinkScript(), 'locate-profile');
+  if (opts.signal?.aborted) return false;
+  const rect = located?.found ? located.rect : undefined;
+  if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+    || rect.width < 2 || rect.height < 2) return false;
+  try {
+    await opts.interactor.click(rect);
+    return true;
+  } catch (error) {
+    if (!(error instanceof AdapterStaleError)) throw error;
+    logger.debug('identity: profile control changed before click', { error: String(error) });
+    return false;
   }
 }
 
@@ -54,7 +80,7 @@ async function tryEvaluate<T>(tab: IdentityTab, script: string, label: string): 
  * Strategy order (most to least reliable, non-destructive first):
  *   1. nav profile-link href → `/<username>/`  (no navigation)
  *   2. the avatar's alt text (parsed by the surface's alt-format knowledge)
- *   3. click the profile link → read the resulting profile URL
+   *   3. guarded native click of the profile link → read the resulting profile URL
  *   4. `current_user` JSON endpoint (last resort; envelope-checked, never throws
  *      on an HTML/error body)
  *
@@ -62,10 +88,11 @@ async function tryEvaluate<T>(tab: IdentityTab, script: string, label: string): 
  */
 export async function resolveOwnUsername(
   tab: IdentityTab,
-  opts: { attempts?: number; retryMs?: number; signal?: AbortSignal } = {},
+  opts: IdentityOptions = {},
 ): Promise<string | undefined> {
   const attempts = opts.attempts ?? ADAPTER.IDENTITY_ATTEMPTS;
   const retryMs = opts.retryMs ?? ADAPTER.IDENTITY_RETRY_MS;
+  if (opts.signal?.aborted) return undefined;
   const home = `${SURFACE.origin}/`;
 
   // Ensure we're on the Instagram origin so the nav is present. The base
@@ -101,14 +128,14 @@ export async function resolveOwnUsername(
       return fromAlt;
     }
 
-    // 3) click through to our profile and read the URL.
-    const clicked = await tryEvaluate<boolean>(
-      tab, SURFACE.clickProfileLinkScript(), 'click-profile',
-    );
+    // 3) Locate only in-page; every press uses the guarded input transport.
+    const clicked = await clickProfile(tab, opts);
+    if (opts.signal?.aborted) return undefined;
     if (clicked) {
       for (let i = 0; i < ADAPTER.NAV_SETTLE_ROUNDS; i++) {
         if (opts.signal?.aborted) return undefined;
         await sleep(ADAPTER.NAV_SETTLE_MS, opts.signal);
+        if (opts.signal?.aborted) return undefined;
         let url = '';
         try {
           url = tab.currentUrl();
@@ -123,28 +150,29 @@ export async function resolveOwnUsername(
       }
     }
 
-    // 4) last resort: private JSON endpoint (FetchEnvelope; an HTML/error body
-    //    is a typed miss, never a throw).
-    const raw = await tryEvaluate<unknown>(tab, SURFACE.currentUserScript(), 'current-user');
-    const env = asFetchEnvelope(raw);
-    if (env !== null && !env.ok) {
+    // 4) last resort: the private JSON endpoint. An HTML/error body is a typed
+    //    miss, never a throw; a dead tab aborts the whole resolution.
+    const res = await fetchJson(tab, SURFACE.currentUserScript());
+    if (!res.ok) {
+      if (res.kind === 'tab-unavailable') throw new TabUnavailableError('identity');
       logger.warn('identity: current_user endpoint answered non-JSON/non-ok', {
-        status: env.status,
-        contentType: env.contentType,
+        kind: res.kind,
+        ...res.detail,
       });
     }
-    const fromApi = env?.ok ? SURFACE.extractCurrentUsername(env.json) : null;
+    const fromApi = res.ok ? SURFACE.extractCurrentUsername(res.json) : null;
     if (fromApi && SURFACE.usernameFromProfileUrl(`/${fromApi}/`)) {
       logger.info('identity: resolved via current_user', { username: fromApi });
       return fromApi;
     }
 
-    if (attempt < attempts - 1) await sleep(retryMs, opts.signal);
+    if (attempt < attempts - 1) await pauseBeforePageRetry(retryMs, opts.signal, opts.rng);
    }
   } catch (e) {
+    if (e instanceof ActionAbortedError || opts.signal?.aborted) return undefined;
     // The tab's webContents was destroyed/absent (a hard load failure or a
     // teardown race). Retrying can't recover it — abort with one clear line.
-    logger.warn('identity: tab unavailable, aborting username resolution', { error: String(e) });
+    logger.warn('identity: input or tab failed, aborting username resolution', { error: String(e) });
     return undefined;
   }
 

@@ -1,6 +1,12 @@
 import { projectAccount } from '@/store/projections';
-const obs = (pk: string, source: any, fields: any, t: number) =>
-  ({ accountPk: pk, observedAt: t, source, fields });
+import type { AccountFields, Observation, Source } from '@/store/types';
+
+const obs = (pk: string, source: Source, fields: AccountFields, t: number): Observation => ({
+  accountPk: pk,
+  observedAt: t,
+  source,
+  fields,
+});
 
 test('list read creates a listed stub with private flag', () => {
   const s = projectAccount(null, obs('1', 'followers-list', { username: 'a', isPrivate: true }, 100));

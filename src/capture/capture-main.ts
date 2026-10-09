@@ -19,23 +19,24 @@
 
 import { mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
-import { app, BaseWindow, session } from 'electron';
+import { app } from 'electron';
 import { resolveOwnUsername } from '@/adapter/identity';
-import { IG_HOME_URL, IG_PARTITION, InstagramTab } from '@/adapter/tab';
+import type { InstagramTab } from '@/adapter/tab';
+import { createTabInteractor } from '@/adapter/tab-interactor';
 import { CaptureHarness } from '@/capture/capture-harness';
-import { claimAppIdentity } from '@/main/app-identity';
-import { HARNESS } from '@/timing/config';
-import { sleep } from '@/timing/primitives';
+import {
+  awaitLogin,
+  bootstrapApp,
+  ensureInstagramOrigin,
+  openToolWindow,
+} from '@/main/bootstrap';
 import * as logger from '@/utils/logger';
 
-// Identity first (name + userData path) — same reasoning as in `main.ts`; the
-// capture harness shares the production userData directory and login partition.
-claimAppIdentity();
+// Identity + the background-survival switches — the capture harness must run in
+// the SAME renderer environment production does, or it captures misleading DOM.
+// It shares the production userData directory and login partition.
+bootstrapApp();
 
-/** Poll interval while waiting for login. */
-const LOGIN_POLL_MS = HARNESS.LOGIN_POLL_MS;
-
-let mainWindow: BaseWindow | null = null;
 let instagramTab: InstagramTab | null = null;
 let harness: CaptureHarness | null = null;
 let finished = false;
@@ -48,22 +49,9 @@ function resolveOutDir(): string {
 }
 
 
-/** True once the persistent IG session holds a non-empty `sessionid` cookie. */
-async function isLoggedIn(): Promise<boolean> {
-  try {
-    const cookies = await session
-      .fromPartition(IG_PARTITION)
-      .cookies.get({ name: 'sessionid' });
-    return cookies.some((c) => c.value && c.value.length > 0);
-  } catch (e) {
-    logger.warn('capture.isLoggedIn cookie check failed', { error: String(e) });
-    return false;
-  }
-}
-
 /** Detect the logged-in user's own username (robust — see `@/adapter/identity`). */
 async function detectOwnUsername(tab: InstagramTab): Promise<string | null> {
-  return (await resolveOwnUsername(tab)) ?? null;
+  return (await resolveOwnUsername(tab, { interactor: createTabInteractor(tab) })) ?? null;
 }
 
 /**
@@ -138,25 +126,9 @@ function resolveSamples(ownUsername: string): string[] {
 async function run(): Promise<void> {
   const outDir = resolveOutDir();
 
-  const win = new BaseWindow({
-    width: 1400,
-    height: 900,
-    title: 'Epo — Task E Capture',
-    backgroundColor: '#0e0e10',
-  });
-  mainWindow = win;
-
-  const tab = new InstagramTab();
+  const tool = openToolWindow({ title: 'Epo — Task E Capture' });
+  const { win, tab } = tool;
   instagramTab = tab;
-  tab.attach(win);
-  tab.show();
-
-  const layout = (): void => {
-    const { width, height } = win.getContentBounds();
-    tab.setBounds({ x: 0, y: 0, width, height });
-  };
-  win.on('resize', layout);
-  layout();
 
   const cap = new CaptureHarness(tab, outDir);
   harness = cap;
@@ -166,26 +138,16 @@ async function run(): Promise<void> {
     void finish();
   });
 
-  await tab.goto(IG_HOME_URL);
+  await tool.ready;
   await cap.setStatus(
     'Please log in to Instagram in this window…',
     'Capture begins once you are logged in.',
   );
 
-  // Poll for login.
-  while (mainWindow && !(await isLoggedIn())) {
-    await sleep(LOGIN_POLL_MS);
-  }
-  if (!mainWindow) return; // window closed during login wait
+  if (!(await awaitLogin(tool.isOpen))) return; // window closed during login wait
 
   await cap.setStatus('Logged in — preparing capture…');
-
-  // Ensure we're on an instagram.com origin so the page's own fetches are
-  // same-origin (required by detectOwnUsername + the direct shape fetches).
-  if (!tab.currentUrl().includes('instagram.com')) {
-    await tab.goto(IG_HOME_URL);
-    await sleep(2000);
-  }
+  await ensureInstagramOrigin(tab);
 
   // Detect the own username best-effort. This drives own-followers capture, but
   // its absence must NEVER dead-end the run — profile-shape capture always runs.
@@ -264,7 +226,6 @@ async function finish(): Promise<void> {
     logger.warn('capture.dispose tab failed', { error: String(e) });
   }
   instagramTab = null;
-  mainWindow = null;
   harness = null;
   app.quit();
 }

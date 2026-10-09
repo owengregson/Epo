@@ -1,50 +1,74 @@
-/** @jsx h */
-import { h } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import type { EpoStatus, Settings, StageMode } from '@/types';
-import { GraphStage } from '../graph/GraphStage';
-import { useConfirm } from '../hooks/useConfirm';
-import { useEngineStatus } from '../hooks/useEngineStatus';
-import { useGraphBoard } from '../hooks/useGraphBoard';
-import { useLogFeed } from '../hooks/useLogFeed';
-import { useScrollReset } from '../hooks/useScrollReset';
-import { useToasts } from '../hooks/useToasts';
-import { useUpdateStatus } from '../hooks/useUpdateStatus';
-import { useView, type ViewKey } from '../hooks/useView';
-import { commas } from '../lib/format';
-import { CARD_STAGGER } from '../lib/motion';
-import { Tour } from '../tour/Tour';
-import { ChainView } from '../views/ChainView';
-import { OverviewView } from '../views/OverviewView';
-import { PruneView } from '../views/PruneView';
-import { QueuesView } from '../views/QueuesView';
-import { SettingsView } from '../views/SettingsView';
-import { ConfirmHost } from './ConfirmHost';
-import { Header } from './Header';
-import { Nav } from './Nav';
-import { StageBar } from './StageBar';
-import { Ticker } from './Ticker';
-import { TooltipHost } from './TooltipHost';
-import { ViewStage } from './ViewStage';
+import { type JSX } from 'preact';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { ConfirmHost } from '@/renderer/app/ConfirmHost';
+import { Header } from '@/renderer/app/Header';
+import { Nav } from '@/renderer/app/Nav';
+import { StageBar } from '@/renderer/app/StageBar';
+import {
+  ShellContext,
+  type ShellServices,
+  settingsSignal,
+  transportSignal,
+} from '@/renderer/app/shell-context';
+import { Ticker } from '@/renderer/app/Ticker';
+import { TooltipHost } from '@/renderer/app/TooltipHost';
+import { ViewStage } from '@/renderer/app/ViewStage';
+import { GraphStage } from '@/renderer/graph/GraphStage';
+import { useConfirm } from '@/renderer/hooks/useConfirm';
+import { useControl } from '@/renderer/hooks/useControl';
+import { useEngineStatus } from '@/renderer/hooks/useEngineStatus';
+import { useGraphBoard } from '@/renderer/hooks/useGraphBoard';
+import { useLogFeed } from '@/renderer/hooks/useLogFeed';
+import { usePruneStatus } from '@/renderer/hooks/usePruneStatus';
+import { useScrollReset } from '@/renderer/hooks/useScrollReset';
+import { useSettings } from '@/renderer/hooks/useSettings';
+import { useStartWatch } from '@/renderer/hooks/useStartWatch';
+import { useToasts } from '@/renderer/hooks/useToasts';
+import { useTourGate } from '@/renderer/hooks/useTourGate';
+import { useTransportControls } from '@/renderer/hooks/useTransportControls';
+import { useUpdateStatus } from '@/renderer/hooks/useUpdateStatus';
+import { useUpdateToasts } from '@/renderer/hooks/useUpdateToasts';
+import { useView, type ViewKey } from '@/renderer/hooks/useView';
+import { useViewShortcuts } from '@/renderer/hooks/useViewShortcuts';
+import { commas } from '@/renderer/lib/format';
+import { staggerCards } from '@/renderer/lib/stagger';
+import { Tour } from '@/renderer/tour/Tour';
+import { ChainView } from '@/renderer/views/ChainView';
+import { OverviewView } from '@/renderer/views/OverviewView';
+import { PruneView } from '@/renderer/views/PruneView';
+import { QueuesView } from '@/renderer/views/QueuesView';
+import { SettingsView } from '@/renderer/views/SettingsView';
+import type { StageMode } from '@/types';
 
 /**
- * The dashboard shell. Owns the single engine-status subscription, the settings
- * load, the toast + confirm layers, view routing, and the async control handlers
- * (each shows pending + surfaces typed failures as a toast). The engine state is
- * projected onto `.console[data-state]`, which drives the brand ring, transport
- * sheen, and ticker beacon in CSS.
+ * The dashboard shell. Owns the two status subscriptions, the settings load,
+ * the log feed, the toast + confirm layers and view routing — each exactly
+ * once. The four projections are published as SIGNALS (see `shell-context.ts`),
+ * so the shell subscribes without READING them: a status push or a streamed log
+ * line re-renders only the components that read it, never this tree. The engine
+ * state is projected onto `.console[data-state]`, which drives the brand ring,
+ * transport sheen, and ticker beacon in CSS. Every side-effect machine lives in
+ * its own hook.
  */
-export function App(): h.JSX.Element {
-  const status = useEngineStatus();
+export function App(): JSX.Element {
+  // The shell's four single subscription points. They publish to signals and
+  // return nothing — nothing here re-renders when a projection moves.
+  useEngineStatus();
+  // The prune projection feeds the shell too (unified status): while a prune
+  // holds the tab the transport controls IT, not the parked growth engine.
+  usePruneStatus();
+  useSettings();
+  useLogFeed();
+
   const toasts = useToasts();
   const view = useView('overview');
   const { goTo } = view;
   // A view always OPENS at the top — no preserved scroll between tab switches.
   useScrollReset(view.current);
-  const { lines, latest } = useLogFeed();
   const confirmCtl = useConfirm();
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [pending, setPending] = useState<string | null>(null);
+  const updateStatus = useUpdateStatus();
+  const control = useControl(toasts.push);
+  const { pending, run } = control;
   // Bumped when Start is pressed without a seed; SettingsView relays it to the
   // seed card, which focuses + flags the field.
   const [seedPrompt, setSeedPrompt] = useState(0);
@@ -55,308 +79,137 @@ export function App(): h.JSX.Element {
   // way, so its camera and layout slots survive round-trips.
   const [stage, setStage] = useState<StageMode>('tab');
   const graphBoard = useGraphBoard(stage === 'graph');
+  // The prune page is a card host like a view, so opening it replays the same
+  // entrance cascade the console views get.
+  const pruneStage = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    void window.epo.setStage(stage);
+    if (stage === 'prune') staggerCards(pruneStage.current);
   }, [stage]);
-
-  // The intro tour. Auto-opens once per install (persisted `tourCompletedAt`);
-  // replayable from Settings → Data & session. Any way out — Finish, Skip, ×,
-  // Esc — persists completion, so it never nags twice.
-  const [tourOpen, setTourOpen] = useState(false);
-  const tourAutoChecked = useRef(false);
+  // The native tab (and its veil) float above anything this page draws, so an
+  // open confirm asks main to cover them — otherwise the whole-window scrim
+  // and its dialog render UNDER the Instagram page. The tab keeps running.
+  const modalOpen = confirmCtl.state.open;
   useEffect(() => {
-    if (settings === null || tourAutoChecked.current) return;
-    tourAutoChecked.current = true;
-    if (settings.tourCompletedAt !== null) return;
-    // Let the console's entrance animations land before dimming it.
-    const t = window.setTimeout(() => setTourOpen(true), 900);
-    return () => window.clearTimeout(t);
-  }, [settings]);
-  // The tour runs over a QUIET app: while it is open the foundation holds all
-  // self-starting work and pauses a running engine ('tour:hold'). On FIRST
-  // launch main engages the hold itself (before this renderer even loads);
-  // a replay engages it here. Every close path releases it, returning the app
-  // to its pre-tour state (deferred startup work runs, a paused engine resumes).
-  const openTour = useCallback(() => {
-    void window.epo.setTourHold(true);
-    setTourOpen(true);
-  }, []);
-  const closeTour = useCallback(() => {
-    setTourOpen(false);
-    // Land ready to go: Overview + the Instagram tab (where login happens).
+    void window.epo.setStage(stage, modalOpen);
+  }, [stage, modalOpen]);
+
+  // Land ready to go: Overview + the Instagram tab (where login happens).
+  const landAfterTour = useCallback(() => {
     goTo('overview');
     setStage('tab');
-    void window.epo.setTourHold(false);
-    window.epo
-      .updateSettings({ tourCompletedAt: Date.now() })
-      .then(setSettings)
-      .catch(() => {
-        /* foundation logs; worst case the tour offers itself again next launch */
-      });
   }, [goTo]);
+  const tour = useTourGate(landAfterTour);
 
-  // ⌘/Ctrl+1–4 jump between the console views (hints live on the nav tips).
-  useEffect(() => {
-    const KEYS: ViewKey[] = ['overview', 'chain', 'queues', 'settings'];
-    const onKey = (e: KeyboardEvent): void => {
-      if (tourOpen) return; // the tour owns the keyboard while open
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      const n = Number.parseInt(e.key, 10);
-      const key = n >= 1 && n <= KEYS.length ? KEYS[n - 1] : undefined;
-      if (key !== undefined) {
-        e.preventDefault();
-        goTo(key);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [goTo, tourOpen]);
-
-  // Self-updater status (pushed from main). One toast per state transition —
-  // suppressed while the tour is open (the tour runs over a quiet app; when it
-  // closes, the effect re-runs and the toast lands then).
-  const updateStatus = useUpdateStatus();
-  const updateToastKey = useRef<string | null>(null);
-  useEffect(() => {
-    if (updateStatus === null || tourOpen) return;
-    const key = `${updateStatus.state}:${updateStatus.version ?? ''}`;
-    if (updateToastKey.current === key) return;
-    if (updateStatus.state === 'ready') {
-      updateToastKey.current = key;
-      toasts.push(
-        'info',
-        `Epo v${updateStatus.version} is downloaded — restart from Settings → Updates, or it installs when you quit.`,
-      );
-    } else if (updateStatus.state === 'available' && updateStatus.mode === 'notify') {
-      updateToastKey.current = key;
-      toasts.push('info', `Epo v${updateStatus.version} is available — see Settings → Updates.`);
-    }
-  }, [updateStatus, tourOpen, toasts]);
-
-  // Canonical settings, loaded once (rate meters + dry-run indicator read it; the
-  // Settings view edits a draft and reports saves back through onSaved).
-  useEffect(() => {
-    let alive = true;
-    window.epo
-      .getSettings()
-      .then((s) => {
-        if (alive) setSettings(s);
-      })
-      .catch(() => {
-        /* the Settings view shows its own loading state */
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const runControl = useCallback(
-    async (name: string, label: string, fn: () => Promise<unknown>) => {
-      setPending(name);
-      try {
-        const res = await fn();
-        // A control REFUSAL is not an IPC rejection — it comes back as a normal
-        // status carrying `refusal` (e.g. a prune holds the tab). Without this
-        // the button just spun and reverted with zero feedback.
-        const refusal =
-          typeof res === 'object' && res !== null && 'refusal' in res
-            ? (res as { refusal?: string }).refusal
-            : undefined;
-        if (refusal === 'prune-running') {
-          toasts.push('info', `${label} refused — a prune holds the tab; it resumes growth when done.`);
-        } else if (refusal !== undefined) {
-          toasts.push('error', `${label} refused: ${refusal}`);
-        }
-      } catch (e) {
-        toasts.push('error', `${label} failed: ${e instanceof Error ? e.message : String(e)}`);
-      } finally {
-        setPending(null);
-      }
-    },
-    [toasts],
-  );
-
-  // One-shot Start watch: pressing Start outside the activity window otherwise
-  // yields hours of silence. Armed on a user-initiated Start with the engine's
-  // step markers at press time; the next pushed statuses are inspected — the
-  // first one carrying a window park gets the toast, and any other sign of the
-  // engine at work (a different park, a step marker moving) disarms silently.
-  // Time-boxed: a first-thing park registers within seconds of Start, so an
-  // expired watch can never toast "Started" long after the button press.
-  const startWatch = useRef<{
-    lastStep: EpoStatus['lastStep'];
-    lastActionAt: number | null;
-    armedAt: number;
-  } | null>(null);
-  const statusRef = useRef(status);
-  statusRef.current = status;
-  useEffect(() => {
-    const armed = startWatch.current;
-    if (armed === null || status === null) return;
-    if (Date.now() - armed.armedAt > 90_000) {
-      startWatch.current = null; // stale — whatever happens now is not "at Start"
-      return;
-    }
-    if (status.state === 'idle' || status.state === 'halted') {
-      startWatch.current = null; // start refused, failed, or already over
-      return;
-    }
-    const reason = status.parkReason ?? null;
-    const until = status.parkedUntil ?? null;
-    if ((reason === 'active-hours' || reason === 'session') && until != null) {
-      startWatch.current = null;
-      const d = new Date(until);
-      toasts.push(
-        'info',
-        `Started — first actions at ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}.`,
-      );
-      return;
-    }
-    if (reason != null || status.lastStep !== armed.lastStep || status.lastActionAt !== armed.lastActionAt) {
-      startWatch.current = null; // the engine went to work — no hold toast owed
-    }
-  }, [status, toasts]);
+  useViewShortcuts(goTo, !tour.open);
+  useUpdateToasts(updateStatus, tour.open, toasts.push);
+  const armStartWatch = useStartWatch(toasts.push);
 
   const onStart = useCallback(() => {
-    if (!settings?.seed?.trim()) {
+    // Read at press time, not at render time — the shell does not subscribe to
+    // settings just to know whether a seed exists.
+    if (!settingsSignal.peek()?.seed?.trim()) {
       setSeedPrompt((n) => n + 1);
       goTo('settings');
       return;
     }
-    startWatch.current = {
-      lastStep: statusRef.current?.lastStep ?? null,
-      lastActionAt: statusRef.current?.lastActionAt ?? null,
-      armedAt: Date.now(),
-    };
-    void runControl('start', 'Start', () => window.epo.startEngine());
+    armStartWatch();
+    void run('start', 'Start', () => window.epo.startEngine());
     goTo('overview');
-  }, [runControl, goTo, settings]);
+  }, [run, goTo, armStartWatch]);
 
-  const onPauseResume = useCallback(() => {
-    const paused = status?.state === 'paused';
-    void runControl('pauseResume', paused ? 'Resume' : 'Pause', () =>
-      paused ? window.epo.resumeEngine() : window.epo.pauseEngine(),
-    );
-  }, [runControl, status?.state]);
-
-  const onCancel = useCallback(async () => {
-    const ok = await confirmCtl.confirm({
-      title: 'Cancel the session?',
-      body: 'Stops the engine between actions. Today’s action count is kept; pacing resumes where it left off.',
-      confirm: 'Stop engine',
-      dismiss: 'Keep running',
-      danger: true,
-    });
-    if (!ok) return;
-    await runControl('stop', 'Cancel', () => window.epo.stopEngine());
-    goTo('overview');
-  }, [confirmCtl, runControl, goTo]);
-
-  const onLogin = useCallback(
-    () => void runControl('login', 'Log in', () => window.epo.login()),
-    [runControl],
+  const backToOverview = useCallback(() => goTo('overview'), [goTo]);
+  const { onPauseResume, onCancel, onLogin } = useTransportControls(
+    control,
+    confirmCtl.confirm,
+    backToOverview,
   );
 
-  const loggedOut = status !== null && !status.loggedIn;
+  // Both are stable useCallbacks, so the services object is built once — a
+  // changing context value would re-render every consumer on every render.
+  const services = useMemo<ShellServices>(
+    () => ({ confirm: confirmCtl.confirm, toast: toasts.push }),
+    [confirmCtl.confirm, toasts.push],
+  );
 
-  const views: Record<ViewKey, h.JSX.Element> = {
-    overview: (
-      <OverviewView
-        status={status}
-        settings={settings}
-        logLines={lines}
-        loggedOut={loggedOut}
-        pending={pending}
-        onLogin={onLogin}
-      />
-    ),
-    chain: <ChainView status={status} />,
-    queues: <QueuesView status={status} />,
+  const views: Record<ViewKey, JSX.Element> = {
+    overview: <OverviewView pending={pending} onLogin={onLogin} />,
+    chain: <ChainView />,
+    queues: <QueuesView />,
     settings: (
       <SettingsView
-        settings={settings}
-        onSaved={setSettings}
-        confirm={confirmCtl.confirm}
         goTo={goTo}
-        toast={toasts.push}
         seedPrompt={seedPrompt}
-        onReplayTour={openTour}
+        onReplayTour={tour.openTour}
         updateStatus={updateStatus}
       />
     ),
   };
 
-  // Publish the card-entrance stagger table (lib/motion.ts CARD_STAGGER) as CSS
-  // custom properties so primitives.css and VIEW_ENTER_HOLD_MS share one source.
-  const staggerVars =
-    `--card-in-dur:${CARD_STAGGER.DUR_MS}ms;` +
-    `--card-stagger-step:${CARD_STAGGER.STEP_MS}ms;` +
-    `--card-stagger-base:${CARD_STAGGER.BASE_MS}ms;` +
-    `--card-stagger-cap:${CARD_STAGGER.CAP}`;
-
   return (
-    // The stagger table rides the shell root so BOTH card hosts inherit it:
-    // the console column and the stage-hosted prune column.
-    <div class="shell" style={staggerVars}>
-      <div class="console" data-state={status?.state ?? 'idle'}>
-      <Header
-        state={status?.state}
-        pending={pending}
-        onStart={onStart}
-        onPauseResume={onPauseResume}
-        onCancel={onCancel}
-      />
-      <Nav current={view.current} onGo={goTo} />
-      <ViewStage controller={view} views={views} />
-      <Ticker line={latest} />
-      <TooltipHost />
+    <ShellContext.Provider value={services}>
+      <div class="shell">
+        {/* data-state carries the UNIFIED posture: a prune scan/run reads as
+            running (ring breathes, beacon lives), a paused prune as paused —
+            the transport trio then controls whichever driver holds the tab.
+            `transportSignal` caches its object while the posture is unchanged,
+            so the ticking counts underneath never re-render the shell. */}
+        <div class="console" data-state={transportSignal.value.state}>
+          <Header
+            pending={pending}
+            onStart={onStart}
+            onPauseResume={onPauseResume}
+            onCancel={onCancel}
+          />
+          <Nav current={view.current} onGo={goTo} />
+          <ViewStage controller={view} views={views} />
+          <Ticker />
+          <TooltipHost />
 
-      {/* Permanently mounted (even empty) so the aria-live region exists
-          BEFORE the first toast arrives — a region that mounts together with
-          its first message is typically not announced by screen readers. */}
-      <div class="toasts" role="status" aria-live="polite">
-        {toasts.toasts.map((t) => (
-          <div key={t.id} class="toast" data-kind={t.kind}>
-            <span class="toast__msg">{t.message}</span>
-            <button class="toast__close" aria-label="Dismiss" onClick={() => toasts.dismiss(t.id)}>
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
-      </div>
-      <div class="stagepane">
-        <StageBar
-          stage={stage}
-          onSelect={setStage}
-          aux={
-            stage === 'graph' && graphBoard.snapshot !== null
-              ? `${commas(graphBoard.snapshot.pks.length)} nodes`
-              : undefined
-          }
-        />
-        <div class="stagepane-body" data-tour="stagebody">
-          <GraphStage board={graphBoard} active={stage === 'graph'} />
-          {/* Prune lives on the stage (kept mounted so scan results survive
-              tab round-trips) and renders its own wide page (.prune-page,
-              graph.css) with the shared console rhythm (layout.css). */}
-          <div class={stage === 'prune' ? 'stage-view active' : 'stage-view'}>
-            <PruneView
-              status={status}
-              settings={settings}
-              onSaved={setSettings}
-              confirm={confirmCtl.confirm}
-              toast={toasts.push}
-            />
+          {/* Permanently mounted (even empty) so the aria-live region exists
+              BEFORE the first toast arrives — a region that mounts together with
+              its first message is typically not announced by screen readers. */}
+          <div class="toasts" role="status" aria-live="polite">
+            {toasts.toasts.map((t) => (
+              <div key={t.id} class="toast" data-kind={t.kind}>
+                <span class="toast__msg">{t.message}</span>
+                <button
+                  class="toast__close"
+                  aria-label="Dismiss"
+                  onClick={() => toasts.dismiss(t.id)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
           </div>
         </div>
+        <div class="stagepane">
+          <StageBar
+            stage={stage}
+            onSelect={setStage}
+            aux={
+              stage === 'graph' && graphBoard.snapshot !== null
+                ? `${commas(graphBoard.snapshot.pks.length)} nodes`
+                : undefined
+            }
+          />
+          <div class="stagepane-body" data-tour="stagebody">
+            <GraphStage board={graphBoard} active={stage === 'graph'} />
+            {/* Prune lives on the stage (kept mounted so scan results survive
+                tab round-trips) and renders its own wide page (.prune-page)
+                with the shared console rhythm. */}
+            <div class={stage === 'prune' ? 'stage-view active' : 'stage-view'} ref={pruneStage}>
+              <PruneView />
+            </div>
+          </div>
+        </div>
+        {/* Shell-level (like the tour) so the fixed scrim covers the WHOLE
+            window — inside .console its container-type would trap it in the
+            console column, leaving stage-hosted (Prune) confirms with a fully
+            clickable page behind the open dialog. */}
+        <ConfirmHost {...confirmCtl.state} onClose={confirmCtl.close} />
+        <Tour open={tour.open} onClose={tour.closeTour} goTo={goTo} setStage={setStage} />
       </div>
-      {/* Shell-level (like the tour) so the fixed scrim covers the WHOLE
-          window — inside .console its container-type would trap it in the
-          console column, leaving stage-hosted (Prune) confirms with a fully
-          clickable page behind the open dialog. */}
-      <ConfirmHost {...confirmCtl.state} onClose={confirmCtl.close} />
-      <Tour open={tourOpen} onClose={closeTour} goTo={goTo} setStage={setStage} />
-    </div>
+    </ShellContext.Provider>
   );
 }

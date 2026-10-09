@@ -1,5 +1,4 @@
 import { useRef } from 'preact/hooks';
-import type { EpoStatus } from '@/types';
 
 export interface Countdown {
   /** True while the engine is running and a real deadline is pending. */
@@ -12,22 +11,32 @@ export interface Countdown {
 
 const IDLE: Countdown = { active: false, remainingSec: 0, frac: 0 };
 
+/** What the countdown counts toward — either driver's live pacing projection. */
+export interface CountdownSource {
+  /** True while the owning driver is actively running (not paused/idle). */
+  running: boolean;
+  /** The DelayManager's registered action-delay deadline, epoch ms. */
+  nextActionAt: number | null;
+  /** When the last action genuinely executed (anchors the ring's denominator). */
+  lastActionAt: number | null;
+}
+
 /**
- * Time-to-next-action from the engine's REAL pending deadline (`nextActionAt`,
- * the DelayManager's registered action-delay deadline) — no more estimating from
- * the settings band midpoint, so the countdown is exact for growth and would be
- * exact for prune's ×1/3 pace alike. The caller supplies `now` (its `useNow`
- * tick) so one clock drives every readout in the card — no second interval.
+ * Time-to-next-action from a driver's REAL pending deadline (`nextActionAt`,
+ * the DelayManager's registered action-delay deadline) — no more estimating
+ * from the settings band midpoint, so the countdown is exact for growth and
+ * for prune's ×1/3 pace alike (the caller picks whichever driver holds the
+ * tab). The caller supplies `now` (its `useNow` tick) so one clock drives
+ * every readout in the card — no second interval.
  */
-export function useCountdown(status: EpoStatus | null, now: number): Countdown {
+export function useCountdown(src: CountdownSource, now: number): Countdown {
   /** First sighting of a RESTORED deadline (no lastActionAt) — anchors the
    *  ring's denominator so it depletes across ticks instead of re-deriving
    *  from the same `now` as the numerator (which pinned it at "full" until
    *  the final second, then snapped to empty). */
   const restored = useRef<{ deadline: number; seenAt: number } | null>(null);
 
-  const running = status?.state === 'running';
-  if (!running || !status || status.nextActionAt == null) {
+  if (!src.running || src.nextActionAt == null) {
     return IDLE;
   }
   // `lastActionAt` is in-memory only, so after an app relaunch the engine can
@@ -35,16 +44,16 @@ export function useCountdown(status: EpoStatus | null, now: number): Countdown {
   // record — the countdown must still show, anchored at the deadline's first
   // sighting so the fill genuinely depletes.
   let intervalMs: number;
-  if (status.lastActionAt != null) {
-    intervalMs = status.nextActionAt - status.lastActionAt;
+  if (src.lastActionAt != null) {
+    intervalMs = src.nextActionAt - src.lastActionAt;
   } else {
-    if (restored.current?.deadline !== status.nextActionAt) {
-      restored.current = { deadline: status.nextActionAt, seenAt: now };
+    if (restored.current?.deadline !== src.nextActionAt) {
+      restored.current = { deadline: src.nextActionAt, seenAt: now };
     }
-    intervalMs = Math.max(1, status.nextActionAt - restored.current.seenAt);
+    intervalMs = Math.max(1, src.nextActionAt - restored.current.seenAt);
   }
   if (intervalMs <= 0) return IDLE;
-  const remaining = Math.max(0, status.nextActionAt - now);
+  const remaining = Math.max(0, src.nextActionAt - now);
   return {
     active: true,
     remainingSec: Math.round(remaining / 1000),

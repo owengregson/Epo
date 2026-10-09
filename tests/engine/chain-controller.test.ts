@@ -1,9 +1,9 @@
 import {
-  ChainController,
   CHAIN_DEFAULTS,
+  ChainController,
   type DiscoveredTarget,
-  type TargetDiscovery,
   type OwnFollowersTargetSource,
+  type TargetDiscovery,
 } from '@/engine/chain-controller';
 import { FakeClock } from '@/governors/clock';
 import { KnowledgeStore } from '@/store/knowledge-store';

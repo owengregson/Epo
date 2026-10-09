@@ -12,188 +12,83 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, BaseWindow, ipcMain, nativeImage, powerMonitor, powerSaveBlocker, screen, WebContentsView } from 'electron';
-import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
-import { claimAppIdentity } from '@/main/app-identity';
+import { app, type BaseWindow, nativeImage, powerMonitor, powerSaveBlocker } from 'electron';
+import type { InstagramTab } from '@/adapter/tab';
+import { PUSH, type PushContract, type PushMethod } from '@/ipc/contract';
+import { type App, composeApp } from '@/main/app';
+import { bootstrapApp, ensureSingleInstance } from '@/main/bootstrap';
 import { ConnectivityMonitor } from '@/main/connectivity';
 import { Foundation } from '@/main/foundation-wiring';
-import { registerIpc } from '@/main/ipc';
-import { OverlayVeil } from '@/main/overlay/veil-view';
-import { EpoUpdater } from '@/main/updater';
-import {
-  loadWindowState,
-  MIN_WINDOW,
-  saveWindowState,
-  type WindowState,
-} from '@/main/window-state';
+import { registerEpoIpc } from '@/main/ipc';
+import type { OverlayVeil } from '@/main/overlay/veil-view';
+import { RuntimePower } from '@/main/runtime-power';
+import { electronIgSession } from '@/main/services/ig-session';
+import { createAppShell } from '@/main/window/shell';
 import type { LogEntry, LogLevel } from '@/types';
 import * as logger from '@/utils/logger';
 
-// Identity first: the userData path derives from the app name, so this must
-// run before anything in the process resolves `app.getPath('userData')`.
-claimAppIdentity();
+// Identity + the background-survival switches, at module top level: the
+// userData path derives from the app name, and the switches only take effect
+// before `app.whenReady()`.
+bootstrapApp();
 
-// ---------------------------------------------------------------------------
-// Background-run survival (measured, 2026-08-14 input lab):
-//
-// With stock settings, ANY backgrounded state — window blurred, occluded by
-// another window, hidden, or minimized — marks the page `visibilityState:
-// 'hidden'`, stops requestAnimationFrame COMPLETELY (0 frames vs 180/1.5s),
-// and clamps timers ~15× (escalating to ~1/minute after 5 min hidden). CDP
-// input still arrives, but Instagram's SPA cannot hydrate pages or advance its
-// UI state machine in that state, so every action times out. These switches
-// (plus `backgroundThrottling: false` on the tab, set in `tab.ts`) keep the
-// renderer fully alive regardless of window state — verified: all background
-// scenarios then measure identical to foreground.
-// Must run before `app.whenReady()`.
-// ---------------------------------------------------------------------------
-app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-background-timer-throttling');
-app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-
-/** Fixed width of the dashboard sidebar; the IG tab fills the remainder. */
-const SIDEBAR_WIDTH = 460;
-
-/** Height of the renderer's stage bar — must match `.stagebar` in graph.css. */
-const STAGE_BAR_HEIGHT = 44;
-
-// Kept for parity with the view refs (cleared on 'closed'); nothing reads it
-// since the activate→createWindow path was removed (see app.whenReady below).
-let _mainWindow: BaseWindow | null = null;
-let _dashboardView: WebContentsView | null = null;
+/** The live window — read only by the single-instance focus handler. */
+let mainWindow: BaseWindow | null = null;
 let instagramTab: InstagramTab | null = null;
 let overlayVeil: OverlayVeil | null = null;
 let foundation: Foundation | null = null;
 let _disposeIpc: (() => void) | null = null;
 let connectivityMonitor: ConnectivityMonitor | null = null;
-let updater: EpoUpdater | null = null;
+/** The composed module graph (`src/main/app.ts`) — disposed on quit. */
+let composedApp: App | null = null;
+let runtimePower: RuntimePower | null = null;
 
 /** Where the main window's persisted geometry lives (a settings-file sibling). */
 function windowStateFile(): string {
   return path.join(app.getPath('userData'), 'window-state.json');
 }
 
-function createWindow(): void {
-  // Reopen with the geometry the last session closed with. The saved position
-  // is validated against the CURRENT displays (an unplugged monitor drops it
-  // back to OS placement, never an off-screen window).
-  const displays = screen.getAllDisplays().map((d) => d.workArea);
-  const state = loadWindowState(windowStateFile(), displays);
-  const win = new BaseWindow({
-    width: state.width,
-    height: state.height,
-    ...(state.x !== undefined && state.y !== undefined ? { x: state.x, y: state.y } : {}),
-    minWidth: MIN_WINDOW.width,
-    minHeight: MIN_WINDOW.height,
-    title: 'Epo',
-    backgroundColor: '#0e0e10',
-  });
-  if (state.maximized) win.maximize();
-  _mainWindow = win;
-
-  // Persist geometry as it changes (debounced — resize/move fire per frame).
-  // getNormalBounds() keeps reporting the un-maximized rect while maximized,
-  // so a maximized close still restores to a sane normal size.
-  let boundsTimer: ReturnType<typeof setTimeout> | null = null;
-  const persistBounds = (): void => {
-    if (win.isDestroyed()) return;
-    const b = win.getNormalBounds();
-    const next: WindowState = {
-      x: b.x,
-      y: b.y,
-      width: b.width,
-      height: b.height,
-      maximized: win.isMaximized(),
-    };
-    try {
-      saveWindowState(windowStateFile(), next);
-    } catch (e) {
-      logger.warn('main: window-state persist failed', { error: String(e) });
-    }
-  };
-  const queuePersistBounds = (): void => {
-    if (boundsTimer !== null) clearTimeout(boundsTimer);
-    boundsTimer = setTimeout(persistBounds, 500);
-  };
-  win.on('move', queuePersistBounds);
-  win.on('maximize', queuePersistBounds);
-  win.on('unmaximize', queuePersistBounds);
-  win.on('close', () => {
-    if (boundsTimer !== null) clearTimeout(boundsTimer);
-    persistBounds();
-  });
-
-  // --- Dashboard renderer (left) ------------------------------------------
-  const dash = new WebContentsView({
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  _dashboardView = dash;
-  // Bottom layer, full window: the page renders the console column PLUS the
-  // stage area (the stage bar and, in graph mode, the graph canvas). The tab
-  // and veil views stack above it, covering the stage body in 'tab' mode.
-  win.contentView.addChildView(dash);
-  void dash.webContents.loadFile(
-    path.join(__dirname, '..', 'renderer', 'index.html'),
-  );
-
-  // --- Embedded Instagram tab (right) -------------------------------------
-  const tab = new InstagramTab();
+async function createWindow(): Promise<void> {
+  const shell = createAppShell({ windowStateFile: windowStateFile() });
+  const { win, tab, veil } = shell;
+  mainWindow = win;
   instagramTab = tab;
-  tab.attach(win);
-  void tab.goto(IG_HOME_URL);
-
-  // --- Activity veil (stacked above the tab) ------------------------------
-  const veil = new OverlayVeil();
   overlayVeil = veil;
-  veil.attach(win); // added after the tab → renders on top of it
-
-  // --- Layout --------------------------------------------------------------
-  // The stage bar (the renderer's Instagram ⟷ Graph selector) owns the top
-  // strip of the stage area, so the tab view starts below it. 'stage:set'
-  // swaps the stage body: 'graph' hides the tab view (it KEEPS RUNNING — the
-  // hidden state is one the background-run switches above are measured to
-  // survive, so the engine never notices) and mutes the veil; 'tab' restores
-  // both.
-  const layout = (): void => {
-    const { width, height } = win.getContentBounds();
-    dash.setBounds({ x: 0, y: 0, width, height });
-    const tabBounds = {
-      x: SIDEBAR_WIDTH,
-      y: STAGE_BAR_HEIGHT,
-      width: Math.max(0, width - SIDEBAR_WIDTH),
-      height: Math.max(0, height - STAGE_BAR_HEIGHT),
-    };
-    tab.setBounds(tabBounds);
-    veil.setBounds(tabBounds); // the veil tracks the tab region exactly
-  };
-  win.on('resize', () => {
-    layout();
-    queuePersistBounds();
+  win.on('closed', () => {
+    mainWindow = null;
   });
-  layout();
 
-  // --- Stream structured logs to the renderer log pane --------------------
+  /**
+   * The typed push seam. Every main→renderer channel string comes from the
+   * contract's `PUSH` table and the payload is checked against `PushContract`,
+   * so a channel can no longer be misspelled here or drift from what preload
+   * subscribes to (ADR 1008).
+   */
+  const push = <C extends PushMethod>(channel: C, payload: PushContract[C]): void => {
+    shell.send(PUSH[channel], payload);
+  };
+
+  // Stream structured logs to the renderer's log pane.
   logger.setSink((level: LogLevel, message: string, meta?: unknown) => {
     const entry: LogEntry = { level, message, meta, at: Date.now() };
-    if (!dash.webContents.isDestroyed()) {
-      dash.webContents.send('epo:log', entry);
-    }
+    push('log', entry);
   });
 
-  // --- Foundation (composition root) + IPC ---------------------------------
-  // Push each engine status projection to the renderer (§5 — pushed, not polled).
-  // The veil mirrors the Foundation's TabActivity state machine: it is up
-  // (and blocking the tab) exactly while ANY routine holds the page — graph
-  // build/identity navigation, the growth loop, a prune scan/run from the moment
-  // the IPC lands, and every manual one-off op — not merely while a status
-  // projection reads `running`.
+  // --- Foundation (composition root) ---------------------------------------
+  // Status projections are PUSHED, not polled. The veil mirrors the
+  // Foundation's TabActivity state machine: it is up (and blocking the tab)
+  // exactly while ANY routine holds the page — graph build/identity
+  // navigation, the growth loop, a prune scan/run from the moment the IPC
+  // lands, and every manual one-off op — not merely while a status projection
+  // reads `running`.
+  // Electron seams the composition root must not own itself: the userData
+  // directory and the persistent IG session (identity cookie + logout wipe).
+  const host = { userDataDir: app.getPath('userData'), igSession: electronIgSession(), push };
+
   const found = new Foundation({
     tab,
+    userDataDir: host.userDataDir,
+    igSession: host.igSession,
     // Digital cursor: mirror the Interactor's simulated pointer onto the veil.
     // The tap observes synthetic driver output only — the user's real mouse
     // never reaches it (and the veil page itself has no mouse listeners).
@@ -210,21 +105,9 @@ function createWindow(): void {
       report: (info) => veil.setActivity(info),
       clear: () => veil.setActivity(null),
     },
-    onStatus: (status) => {
-      if (!dash.webContents.isDestroyed()) {
-        dash.webContents.send('epo:status', status);
-      }
-    },
-    onPruneStatus: (status) => {
-      if (!dash.webContents.isDestroyed()) {
-        dash.webContents.send('epo:prune-status', status);
-      }
-    },
-    onChainList: (list) => {
-      if (!dash.webContents.isDestroyed()) {
-        dash.webContents.send('epo:chain-list', list);
-      }
-    },
+    // One push seam for every store-derived projection; which projections ride
+    // it is the PROJECTIONS table in `main/modules/projections.ts` (§2).
+    push,
     // Post-wake immediate connectivity re-probe: stop+start is the monitor's
     // public way to force one (start's first check is immediate). Closure over
     // the module ref — the monitor is constructed just below.
@@ -241,20 +124,26 @@ function createWindow(): void {
   // closes ('tour:hold'), which then runs the deferred startup work.
   if (found.tourPending()) found.setTourHold(true);
 
-  _disposeIpc = registerIpc({
+  // --- The module graph (src/main/app.ts) ----------------------------------
+  // The self-updater (docs/RELEASE.md §5) is a MODULE now: built, STARTED and
+  // disposed by the kernel rather than by three hand-placed calls here.
+  // Constructed there and ONLY there — never through the Foundation: jest
+  // builds Foundation with no electron mock, and electron-updater requires
+  // electron at module load. Dev runs resolve to mode 'off' and never check
+  // anything. Its three channels ride the same contract/disposer as everything
+  // else.
+  const composed = await composeApp(host);
+  composedApp = composed;
+  const upd = composed.updater;
+  // The renderer may finish loading after the launch check settled — replay
+  // the current status so the Updates card never starts blank.
+  shell.onRendererLoad(() => push('updateStatus', upd.current()));
+
+  _disposeIpc = registerEpoIpc({
     tab,
     foundation: found,
-    setStage: (mode) => {
-      if (mode === 'tab') {
-        tab.show();
-        veil.setObscured(false);
-      } else {
-        // Graph or Prune stage: the renderer owns the region; the tab keeps
-        // running hidden and the veil stays out of the way.
-        tab.hide();
-        veil.setObscured(true);
-      }
-    },
+    updater: upd,
+    setStage: shell.setStage,
   });
 
   // Default page: rest on the user's OWN profile, not the home feed. The
@@ -270,24 +159,8 @@ function createWindow(): void {
   connectivityMonitor = connectivity;
   connectivity.start();
 
-  // --- System sleep/resume (powerMonitor) -----------------------------------
-  // The `prevent-app-suspension` blocker (whenReady, below) does NOT cover
-  // lid-close sleep: during it every in-flight await stalls, and on wake the
-  // network stack, the CDP attachment, and the sentinel all need re-validation
-  // before the engine may act. The Foundation owns the policy (a clean freeze
-  // on suspend; the ordered wake sequence on resume) — main only forwards the
-  // events, keeping the Foundation electron-mockable for jest.
-  powerMonitor.on('suspend', () => {
-    logger.warn('main: system suspend');
-    foundation?.suspendForSleep();
-  });
-  powerMonitor.on('resume', () => {
-    logger.warn('main: system resumed');
-    void foundation?.resumeFromSleep();
-  });
-
-  // Opt-in scheduled auto-prune (Phase 5): fires a prune run when the user's
-  // `pruneScheduleDays` cadence is due and it is safe (growth idle, active hours).
+  // Opt-in scheduled auto-prune: fires a prune run when the user's
+  // `pruneScheduleDays` cadence is due and it is safe (tab free, active hours).
   // No-op unless the user enabled a schedule; cleared in the foundation's dispose.
   found.startScheduledPruneWatcher();
 
@@ -296,37 +169,6 @@ function createWindow(): void {
   // only when the engine is silent past the stale window AND the DelayManager
   // holds no pending engine wait — a legitimate long park never trips it.
   found.startEngineStepWatchdog();
-
-  // --- Self-updater (docs/RELEASE.md §5) -----------------------------------
-  // Wired here and ONLY here — never through the Foundation: jest constructs
-  // Foundation with no electron mock, and electron-updater requires electron
-  // at module load. Dev runs resolve to mode 'off' and never check anything.
-  const upd = new EpoUpdater({
-    onStatus: (status) => {
-      if (!dash.webContents.isDestroyed()) {
-        dash.webContents.send('epo:update-status', status);
-      }
-    },
-  });
-  updater = upd;
-  ipcMain.handle('update:check', async () => upd.check());
-  ipcMain.handle('update:install', async () => upd.install());
-  ipcMain.handle('update:open-latest', async () => upd.openLatest());
-  // The renderer may finish loading after the launch check settled — replay
-  // the current status so the Updates card never starts blank.
-  dash.webContents.on('did-finish-load', () => {
-    if (!dash.webContents.isDestroyed()) {
-      dash.webContents.send('epo:update-status', upd.current());
-    }
-  });
-  upd.start();
-
-  // Teardown runs on `before-quit` (below) so it can be awaited; closing the
-  // window just drops the UI refs — `window-all-closed` then quits the app.
-  win.on('closed', () => {
-    _dashboardView = null;
-    _mainWindow = null;
-  });
 
   logger.info('Epo window ready');
 }
@@ -346,15 +188,30 @@ function setDevDockIcon(): void {
   if (!icon.isEmpty()) app.dock?.setIcon(icon);
 }
 
+// A second process would open a second window over the SAME epo.db and the same
+// `persist:ig` partition; SQLite will not stop it. Take the lock before
+// anything else runs.
+const isPrimaryInstance = ensureSingleInstance(() => {
+  if (mainWindow === null || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+});
+
 app.whenReady().then(() => {
+  if (!isPrimaryInstance) return;
   setDevDockIcon();
-  // macOS App Nap throttles the MAIN process's timers when the app is hidden —
-  // the motion profile's step pacing and the engine's action-delay deadlines
-  // all run on main-process timers, so an unattended run must never nap. Held
-  // for the app's lifetime (released implicitly at process exit); the display
-  // may still sleep — only app suspension is blocked.
-  powerSaveBlocker.start('prevent-app-suspension');
-  createWindow();
+  // Protect main-process pacing and durable wake schedules while the display
+  // sleeps. Forced system sleep still needs the ordered Foundation recovery.
+  runtimePower = new RuntimePower({
+    blocker: powerSaveBlocker,
+    monitor: powerMonitor,
+    suspend: () => foundation?.suspendForSleep(),
+    resume: async () => foundation?.resumeFromSleep(),
+  });
+  runtimePower.start();
+  void createWindow().catch((e: unknown) => {
+    logger.error('main: window composition failed', { error: String(e) });
+  });
 
   // NB: no `activate` → createWindow() handler. `window-all-closed` always
   // quits (below), so a live app never has a null window to re-create — and
@@ -376,6 +233,7 @@ app.on('before-quit', (event) => {
   if (shuttingDown) return;
   shuttingDown = true;
   event.preventDefault();
+  runtimePower?.stopWatching();
 
   // NB: we deliberately do NOT remove the IPC handlers here. The renderer's
   // in-flight polling invokes (chain:list / growth:series) can still drain after
@@ -384,16 +242,29 @@ app.on('before-quit', (event) => {
   // "No handler registered". Everything is freed when the process exits below.
   const finish = (): void => {
     _disposeIpc = null;
-    updater?.dispose();
-    updater = null;
     connectivityMonitor?.stop();
     connectivityMonitor = null;
     instagramTab?.dispose();
     instagramTab = null;
     overlayVeil?.dispose();
     overlayVeil = null;
+    runtimePower?.dispose();
+    runtimePower = null;
     app.exit(0);
   };
+
+  // The module graph releases in the exact reverse of the order it started
+  // (the kernel's guarantee, so nothing here maintains a teardown list).
+  const composed = composedApp;
+  composedApp = null;
+  const disposeModules = (): Promise<void> =>
+    composed === null
+      ? Promise.resolve()
+      : composed
+          .dispose()
+          .catch((e: unknown) =>
+            logger.error('main: module dispose failed', { error: String(e) }),
+          );
 
   const found = foundation;
   foundation = null;
@@ -401,8 +272,9 @@ app.on('before-quit', (event) => {
     found
       .dispose()
       .catch((e: unknown) => logger.error('main: foundation dispose failed', { error: String(e) }))
+      .then(disposeModules)
       .finally(finish);
   } else {
-    finish();
+    void disposeModules().finally(finish);
   }
 });

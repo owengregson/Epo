@@ -95,14 +95,10 @@ export function jitterBoundary(baseMs: number, seedKey: string, installEntropy: 
   return baseMs + Math.max(1, Math.round(u * NOISE.DAILY_BOUNDARY_JITTER_MAX_MS));
 }
 
-/** A log-normal factor around 1, bounded by re-draw (mirrors distributions.clamp). */
+/** A log-normal factor around 1, bounded by re-draw — `clamp` in factor space. */
 function boundedFactor(rng: Rng, sigma: number, min: number, max: number): number {
-  let f = 1;
-  for (let i = 0; i < 4; i += 1) {
-    f = Math.exp(sigma * normal01(rng));
-    if (f >= min && f <= max) return f;
-  }
-  return f < min ? min : max;
+  return clamp({ kind: 'logNormalFactor', sample: (r) => Math.exp(sigma * normal01(r)) }, min, max)
+    .sample(rng);
 }
 
 /**

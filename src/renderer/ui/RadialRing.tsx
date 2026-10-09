@@ -1,7 +1,6 @@
-/** @jsx h */
-import { h } from 'preact';
-import { clamp } from '../lib/format';
-import { Icon } from './Icon';
+import { type JSX } from 'preact';
+import { clamp } from '@/renderer/lib/format';
+import { Icon } from '@/renderer/ui/Icon';
 
 const R = 25;
 const CIRC = 2 * Math.PI * R;
@@ -17,7 +16,7 @@ export interface RadialRingProps {
  * The depleting countdown ring (`.hn-ring`). The fill arc shrinks as `frac`
  * falls; the −90° rotation (12-o'clock start) comes from CSS.
  */
-export function RadialRing({ frac, glyph }: RadialRingProps): h.JSX.Element {
+export function RadialRing({ frac, glyph }: RadialRingProps): JSX.Element {
   const offset = CIRC * (1 - clamp(frac, 0, 1));
   return (
     <div class="hn-ring" aria-hidden="true">

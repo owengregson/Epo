@@ -1,13 +1,13 @@
+import { isShapeMismatch, SHAPE_MISMATCH, SURFACE } from '@/adapter/ig-surface';
 import { Reader } from '@/adapter/reader';
-import { SURFACE, SHAPE_MISMATCH, isShapeMismatch } from '@/adapter/ig-surface';
-
-import followersPage1 from '../fixtures/adapter/followers-list-page1.json';
 import followersLast from '../fixtures/adapter/followers-list-last.json';
-import showMany from '../fixtures/adapter/show-many.json';
+import followersPage1 from '../fixtures/adapter/followers-list-page1.json';
 import friendshipShowPrivate from '../fixtures/adapter/friendship-show-private.json';
 import friendshipShowPublic from '../fixtures/adapter/friendship-show-public.json';
+import profileGraphql1 from '../fixtures/adapter/profile-graphql-1.json';
 import profileInfo1 from '../fixtures/adapter/profile-info-1.json';
 import profileInfo2 from '../fixtures/adapter/profile-info-2.json';
+import showMany from '../fixtures/adapter/show-many.json';
 
 const r = new Reader();
 const AT = 1_700_000_000_000;
@@ -41,12 +41,22 @@ describe('Reader.matchEndpoint', () => {
     ).toBe('following-list');
   });
 
-  test('web_profile_info -> web-profile-info', () => {
+  test('users/<pk>/info -> profile-info', () => {
     expect(
-      r.matchEndpoint(
-        'https://www.instagram.com/api/v1/users/web_profile_info/?username=x',
-      ),
-    ).toBe('web-profile-info');
+      r.matchEndpoint('https://www.instagram.com/api/v1/users/1000000003/info/'),
+    ).toBe('profile-info');
+  });
+
+  test('the GraphQL profile query is routed by its operation name, not its URL', () => {
+    const url = 'https://www.instagram.com/api/graphql';
+    // `/api/graphql` serves dozens of operations; without the name it is no
+    // endpoint of ours, and a DIFFERENT operation never routes to the profile.
+    expect(r.matchEndpoint(url)).toBeNull();
+    expect(r.matchEndpoint(url, 'PolarisFeedTimelineRootV2Query')).toBeNull();
+    expect(r.matchEndpoint(url, 'PolarisProfilePageContentQuery')).toBe('profile-graphql');
+    expect(
+      r.kindOf({ url, requestHeaders: { 'x-fb-friendly-name': 'PolarisProfilePageContentQuery' } }),
+    ).toBe('profile-graphql');
   });
 
   test('news/inbox -> activity-feed', () => {
@@ -231,12 +241,12 @@ describe('Reader.parseProfileInfo', () => {
       mutuals: 18,
       isPrivate: true,
       isVerified: false,
-      bio: '',
+      bio: 'seoul | ucla',
     });
   });
 
   test('extracts the biography so the prune bio filter has a fact to match on', () => {
-    const body = { data: { user: { id: '9', username: 'x', biography: 'Dog mom 🐶 | photographer' } } };
+    const body = { user: { pk: 9, username: 'x', biography: 'Dog mom 🐶 | photographer' } };
     expect(r.parseProfileInfo(body, AT)!.fields.bio).toBe('Dog mom 🐶 | photographer');
   });
 
@@ -247,27 +257,51 @@ describe('Reader.parseProfileInfo', () => {
   });
 
   test('missing user -> null', () => {
-    expect(r.parseProfileInfo({ data: {} }, AT)).toBeNull();
-    expect(r.parseProfileInfo({}, AT)).toBeNull();
+    expect(r.parseProfileInfo({ user: null }, AT)).toBeNull();
+    expect(r.parseProfileInfo({ data: {} }, AT, 'profile-graphql')).toBeNull();
+  });
+
+  test('a body carrying NO user container at all is drift, not a deletion', () => {
+    // A soft-block body parses cleanly as JSON; reading it as "profile gone"
+    // would retire a live account (ADR 0303). `null` here means gone, so drift
+    // must not produce it silently — the Reader warns and yields null only
+    // after SHAPE_MISMATCH, never confusing the two upstream.
+    expect(SURFACE.extractProfileInfo({ status: 'fail' }, AT)).toBe(SHAPE_MISMATCH);
+    expect(SURFACE.extractProfileInfo({}, AT)).toBe(SHAPE_MISMATCH);
+  });
+
+  test('both containers read: `user` (fetched) and `data.user` (observed)', () => {
+    const info = r.parseProfileInfo(profileInfo1, AT);
+    const gql = r.parseProfileInfo(profileGraphql1, AT, 'profile-graphql');
+    expect(info!.accountPk).toBe('1000000003');
+    expect(gql!.accountPk).toBe('1000000003');
+    expect(info!.fields.followers).toBe(561);
+    expect(gql!.fields.followers).toBe(561);
   });
 });
 
 describe('Reader.profileFollowedByViewer', () => {
+  const gql = (friendship: unknown): unknown => ({
+    data: { user: { pk: '1', friendship_status: friendship } },
+  });
+
   test('true when the viewer already follows the account (private followers visible)', () => {
-    expect(
-      r.profileFollowedByViewer({ data: { user: { id: '1', followed_by_viewer: true } } }),
-    ).toBe(true);
+    expect(r.profileFollowedByViewer(gql({ following: true }), 'profile-graphql')).toBe(true);
   });
 
   test('false when the viewer does not follow', () => {
-    expect(
-      r.profileFollowedByViewer({ data: { user: { id: '1', followed_by_viewer: false } } }),
-    ).toBe(false);
+    expect(r.profileFollowedByViewer(gql({ following: false }), 'profile-graphql')).toBe(false);
+  });
+
+  test('the FETCHED profile body carries no viewer flag — unknown, never false', () => {
+    // `/users/<pk>/info/` has no `friendship_status`; the seed check reads
+    // `friendships/show/<pk>/` instead of inferring "we do not follow them".
+    expect(r.profileFollowedByViewer(profileInfo1)).toBeNull();
   });
 
   test('null when the flag or user is absent', () => {
-    expect(r.profileFollowedByViewer({ data: { user: { id: '1' } } })).toBeNull();
-    expect(r.profileFollowedByViewer({ data: {} })).toBeNull();
+    expect(r.profileFollowedByViewer(gql({}), 'profile-graphql')).toBeNull();
+    expect(r.profileFollowedByViewer({ data: {} }, 'profile-graphql')).toBeNull();
     expect(r.profileFollowedByViewer({})).toBeNull();
   });
 });
@@ -338,7 +372,9 @@ describe('Reader.parseFriendshipShow', () => {
 describe('Reader.relationshipFacts', () => {
   const SHOW_MANY_URL = 'https://i.instagram.com/api/v1/friendships/show_many/';
   const SHOW_URL = 'https://www.instagram.com/api/v1/friendships/show/999/';
-  const PROFILE_URL = 'https://www.instagram.com/api/v1/users/web_profile_info/?username=x';
+  const GRAPHQL_URL = 'https://www.instagram.com/api/graphql';
+  const GQL_NAME = 'PolarisProfilePageContentQuery';
+  const PROFILE_URL = 'https://www.instagram.com/api/v1/users/1000000003/info/';
 
   test('show-many → one fact per entry, weFollow from following', () => {
     const facts = r.relationshipFacts(SHOW_MANY_URL, showMany, AT);
@@ -360,16 +396,23 @@ describe('Reader.relationshipFacts', () => {
     expect(r.relationshipFacts(SHOW_URL, body, AT)).toEqual([{ pk: '999', weFollow: false }]);
   });
 
-  test('web-profile-info → fact from pk + followed_by_viewer', () => {
-    expect(r.relationshipFacts(PROFILE_URL, profileInfo1, AT)).toEqual([
+  test('the observed GraphQL profile → fact from pk + friendship_status', () => {
+    expect(r.relationshipFacts(GRAPHQL_URL, profileGraphql1, AT, GQL_NAME)).toEqual([
       { pk: '1000000003', weFollow: true },
     ]);
   });
 
-  test('web-profile-info without a user or without the flag → []', () => {
-    expect(r.relationshipFacts(PROFILE_URL, { data: {} }, AT)).toEqual([]);
+  test('the FETCHED profile body carries no relationship → []', () => {
+    // `/users/<pk>/info/` has no viewer side, so it is not relationship-bearing
+    // at all — reading it as "we do not follow them" would retire live records.
+    expect(r.relationshipBearing(PROFILE_URL)).toBe(false);
+    expect(r.relationshipFacts(PROFILE_URL, profileInfo1, AT)).toEqual([]);
+  });
+
+  test('the GraphQL profile without a user or without the flag → []', () => {
+    expect(r.relationshipFacts(GRAPHQL_URL, { data: {} }, AT, GQL_NAME)).toEqual([]);
     expect(
-      r.relationshipFacts(PROFILE_URL, { data: { user: { id: '1', username: 'x' } } }, AT),
+      r.relationshipFacts(GRAPHQL_URL, { data: { user: { pk: '1', username: 'x' } } }, AT, GQL_NAME),
     ).toEqual([]);
   });
 
@@ -424,7 +467,8 @@ describe('SURFACE.listPageScript (direct list pagination)', () => {
 
   test('later pages resume from the cursor; the following variant hits following/', () => {
     const script = SURFACE.listPageScript('42', 'following', 'QVFEabc==');
-    expect(script).toContain("/following/?count=50'");
+    // Following is read in the fixed order (the default is re-ranked per request).
+    expect(script).toContain("/following/?count=50&order=date_followed_earliest'");
     expect(script).toContain('max_id');
     expect(script).toContain('"QVFEabc=="');
   });

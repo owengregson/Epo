@@ -1,0 +1,44 @@
+/*
+ * The dev gallery's own chrome (`?gallery=1`) — the scenario/surface rail that
+ * replaces the stage pane. Deliberately minimal: everything to the LEFT of it
+ * is the real console drawing on the real tokens, and this file must never
+ * influence it. Nothing here is reachable without the query flag.
+ */
+
+.gallery-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  height: 100%;
+  overflow: auto;
+  padding: var(--sp-4);
+  background: var(--bg);
+}
+
+.gallery-rail__h {
+  margin-top: var(--sp-3);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.gallery-rail__h:first-child {
+  margin-top: 0;
+}
+
+.gallery-rail__note {
+  margin-top: auto;
+  padding-top: var(--sp-4);
+  max-width: 34ch;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.gallery-rail__note code {
+  font-family: var(--mono);
+  color: var(--muted);
+}

@@ -1,6 +1,6 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { place } from '@/renderer/lib/anchor';
 
 interface TipState {
   text: string;
@@ -20,7 +20,7 @@ const GAP_PX = 8;
  * settings pane never clips it). Positioned above the anchor, flipping below near
  * the top edge and clamping to the viewport.
  */
-export function TooltipHost(): h.JSX.Element {
+export function TooltipHost(): JSX.Element {
   const [tip, setTip] = useState<TipState | null>(null);
   const [shown, setShown] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -71,11 +71,12 @@ export function TooltipHost(): h.JSX.Element {
       setShown(false);
       return;
     }
-    const tw = el.offsetWidth;
-    const th = el.offsetHeight;
-    const left = Math.max(EDGE_PX, Math.min(tip.rect.left, window.innerWidth - tw - EDGE_PX));
-    let top = tip.rect.top - th - GAP_PX;
-    if (top < EDGE_PX) top = tip.rect.bottom + GAP_PX;
+    const { left, top } = place(
+      { x: tip.rect.left, y: tip.rect.top, w: tip.rect.width, h: tip.rect.height },
+      { w: el.offsetWidth, h: el.offsetHeight },
+      { w: window.innerWidth, h: window.innerHeight },
+      { side: 'above', align: 'start', gap: GAP_PX, edge: EDGE_PX },
+    );
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
     setShown(true);

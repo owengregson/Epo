@@ -1,19 +1,39 @@
-import type { EpoStatus, Settings } from '@/types';
+import type { EpoStatus, PruneState, Settings } from '@/types';
 
 export type EngineState = EpoStatus['state'];
 
-/** Display label for an engine state. */
-export function stateLabel(state: EngineState): string {
-  switch (state) {
-    case 'running':
-      return 'Running';
-    case 'paused':
-      return 'Paused';
-    case 'halted':
-      return 'Halted';
-    default:
-      return 'Idle';
+/** Which driver the shell's transport controls (mirrors main's tab driver token). */
+export type TransportDriver = 'growth' | 'prune';
+
+/** The unified console posture the shell derives from BOTH status channels. */
+export interface TransportModel {
+  /** Drives `.console[data-state]` and the Start/Pause/Cancel posture. */
+  state: EngineState;
+  driver: TransportDriver;
+  /** Prune is walking lists — no between-action boundary, so Pause locks. */
+  pruneScanning: boolean;
+}
+
+/**
+ * ONE transport for two drivers (the unified-status contract): while a prune
+ * holds the tab its state wins — the growth engine underneath is idle or
+ * parked-for-prune, and projecting THAT made the top bar offer a Start that
+ * main could only refuse (`prune-running`). A prune scan/run reads as running;
+ * a paused prune reads as paused (Resume routes back to the prune); any other
+ * prune state defers to the growth engine's own projection.
+ */
+export function transportModel(
+  engine: EngineState | undefined,
+  prune: PruneState | undefined,
+): TransportModel {
+  if (prune === 'scanning' || prune === 'running' || prune === 'paused') {
+    return {
+      state: prune === 'paused' ? 'paused' : 'running',
+      driver: 'prune',
+      pruneScanning: prune === 'scanning',
+    };
   }
+  return { state: engine ?? 'idle', driver: 'growth', pruneScanning: false };
 }
 
 /** Whole-hour → "08:00". */

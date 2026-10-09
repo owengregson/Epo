@@ -119,6 +119,20 @@ describe('SessionPlanner — sessions', () => {
     expect(p.isSessionOpen(t)).toBe(false);
   });
 
+  test('a session opening 30–60 min after the previous one’s last action stays open', () => {
+    // The previous session's last action is still inside the trailing-hour ring
+    // but older than the idle boundary: idleness must be measured from the NEW
+    // session's own start, or it closes on the next sync with its budget unspent.
+    const snap = openable();
+    snap.recentActions = [{ at: mon(15) - 45 * 60_000, kind: 'follow' }];
+    snap.dayUsed = 1;
+    const p = make(11, BASE, snap);
+    expect(p.isSessionOpen(mon(15) + 1000)).toBe(true);
+    expect(p.isSessionOpen(mon(15) + 2000)).toBe(true);
+    p.recordAction(mon(15) + 3000, 'follow');
+    expect(p.isSessionOpen(mon(15) + 4000)).toBe(true);
+  });
+
   test('sessionEndsAt is a future estimate while open, null while closed', () => {
     const p = make(11, BASE, openable());
     expect(p.sessionEndsAt(mon(15) - 1000)).toBeNull();
@@ -157,6 +171,18 @@ describe('SessionPlanner — within-session gaps', () => {
     p.advance(mon(12));
     for (let i = 0; i < 5; i++) p.recordAction(mon(12) + i * 60_000, 'follow');
     expect(p.nextActionGapMs(mon(12) + 5 * 60_000)).toBeGreaterThan(30 * 60_000);
+  });
+
+  test('busy sessions preserve varied gaps instead of collapsing to the safety floor', () => {
+    const p = make(20260921);
+    p.advance(mon(12));
+    for (let i = 0; i < 3; i++) p.recordAction(mon(12), 'follow');
+    const gaps = Array.from({ length: 20_000 }, () => p.nextActionGapMs(mon(12)));
+    const atFloor = gaps.filter((gap) => gap === BASE.gapFloorMs).length / gaps.length;
+    expect(atFloor).toBeLessThan(0.002);
+    expect(new Set(gaps).size / gaps.length).toBeGreaterThan(0.8);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(BASE.gapFloorMs);
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(BASE.gapCapMs);
   });
 });
 

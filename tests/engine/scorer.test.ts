@@ -1,8 +1,8 @@
 import {
   ratioScore,
-  scoreCandidate,
   SCORER_DEFAULTS,
   type ScorerConfig,
+  scoreCandidate,
 } from '@/engine/scorer';
 import type { AccountState } from '@/store/types';
 

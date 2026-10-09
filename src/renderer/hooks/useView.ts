@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { prefersReducedMotion, VIEW_ENTER_HOLD_MS } from '../lib/motion';
+import { prefersReducedMotion, VIEW_SWAP_MS } from '@/renderer/lib/motion';
 
 export type ViewKey = 'overview' | 'chain' | 'queues' | 'settings';
 
@@ -36,7 +36,7 @@ export function useView(initial: ViewKey = 'overview'): ViewController {
   useEffect(() => {
     const t = window.setTimeout(
       () => setEntering((e) => (e === initial ? null : e)),
-      VIEW_ENTER_HOLD_MS,
+      VIEW_SWAP_MS,
     );
     return () => {
       window.clearTimeout(t);
@@ -70,7 +70,7 @@ export function useView(initial: ViewKey = 'overview'): ViewController {
           window.setTimeout(() => {
             setEntering((e) => (e === next ? null : e));
             setExiting((x) => (x === cur ? null : x));
-          }, VIEW_ENTER_HOLD_MS),
+          }, VIEW_SWAP_MS),
         );
         return next;
       });

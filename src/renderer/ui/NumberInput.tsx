@@ -1,6 +1,5 @@
-/** @jsx h */
-import { h } from 'preact';
-import { commas } from '../lib/format';
+import { type JSX } from 'preact';
+import { commas } from '@/renderer/lib/format';
 
 export interface NumberInputProps {
   value: number;
@@ -20,7 +19,7 @@ export function NumberInput({
   min = 0,
   max = 1_000_000,
   ariaLabel,
-}: NumberInputProps): h.JSX.Element {
+}: NumberInputProps): JSX.Element {
   return (
     <input
       class="ninput num"

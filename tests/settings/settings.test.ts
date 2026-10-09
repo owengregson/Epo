@@ -1,21 +1,21 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import { SCORER_DEFAULTS } from '@/engine/scorer';
 import {
   DEFAULT_SETTINGS,
-  type Settings,
   loadSettings,
+  type Settings,
   saveSettings,
-  toScorerConfig,
-  toChurnConfig,
-  toRateGovernorConfig,
-  toFollowbackConfig,
-  toScannerConfig,
   toChainConfig,
-  toPruneConfig,
+  toChurnConfig,
+  toFollowbackConfig,
   toPacingConfig,
+  toPruneConfig,
+  toRateGovernorConfig,
+  toScannerConfig,
+  toScorerConfig,
 } from '@/settings/settings';
 
 let dir: string;
@@ -183,6 +183,7 @@ describe('projections from DEFAULT_SETTINGS', () => {
     expect(toChurnConfig(DEFAULT_SETTINGS)).toEqual({
       maxWaitForFollowbackMs: 345_600_000,
       maxRetries: 3,
+      bioKeepWords: [],
     });
     expect(toChurnConfig(DEFAULT_SETTINGS).maxWaitForFollowbackMs).toBe(4 * 24 * 3600 * 1000);
   });
@@ -223,7 +224,6 @@ describe('projections from DEFAULT_SETTINGS', () => {
     expect(toPruneConfig(DEFAULT_SETTINGS)).toEqual({
       dailyLimit: 50,
       whitelist: [],
-      bioFilterWords: [],
       minDelayMs: 180_000,
       maxDelayMs: 420_000,
       jitterPercent: 30,
@@ -240,7 +240,6 @@ describe('projections from DEFAULT_SETTINGS', () => {
     ).toEqual({
       dailyLimit: 5,
       whitelist: ['Keep_Me'],
-      bioFilterWords: ['dog mom'],
       minDelayMs: 180_000,
       maxDelayMs: 420_000,
       jitterPercent: 30,

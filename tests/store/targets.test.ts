@@ -1,15 +1,12 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import Database from 'better-sqlite3';
-import { KnowledgeStore } from '@/store/knowledge-store';
-import { MIGRATIONS } from '@/store/schema';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord, Target } from '@/store/types';
+import { memoryStore } from '../kit/store';
+import { LATEST_SCHEMA_VERSION, withLegacyDb } from '../kit/store-legacy-db';
 
 const OWN = 'me';
 
 let s: KnowledgeStore;
-beforeEach(() => { s = new KnowledgeStore(':memory:'); });
+beforeEach(() => { s = memoryStore(); });
 afterEach(() => s.close());
 
 const target = (over: Partial<Target> & { accountPk: string }): Target => ({
@@ -92,27 +89,21 @@ test('exhaustedTargetsSince: stamped + exhausted + fresh only, most recent first
 });
 
 test('an existing pre-exhausted_at database migrates cleanly, preserving target rows', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'epo-target-mig-'));
-  try {
-    const dbPath = path.join(dir, 'pre.db');
-    // Build a database at the schema version just BEFORE the exhausted_at
-    // migration, exactly as a live install would have it.
-    const raw = new Database(dbPath);
-    const prior = 10; // schema version just BEFORE the exhausted_at migration (index 10)
-    for (let i = 0; i < prior; i += 1) raw.exec(MIGRATIONS[i]);
-    raw.pragma(`user_version = ${prior}`);
-    raw
+  // Version 10 is the schema immediately before the exhausted_at column.
+  withLegacyDb(10, (legacy) => {
+    legacy.raw
       .prepare(
         `INSERT INTO targets (account_pk, source, status, chain_index)
          VALUES (?, 'seed', 'exhausted', 0)`,
       )
       .run('T1');
-    const before = raw.prepare(`PRAGMA table_info(targets)`).all() as Array<{ name: string }>;
+    const before = legacy.raw.prepare(`PRAGMA table_info(targets)`).all() as Array<{
+      name: string;
+    }>;
     expect(before.some((c) => c.name === 'exhausted_at')).toBe(false);
-    raw.close();
 
     // Opening through the store applies the pending migration.
-    const store = new KnowledgeStore(dbPath);
+    const store = legacy.open();
     // The pre-existing row survived, UN-stamped — old exhaustions are never
     // auto-revived, only ones evidence-stamped after this migration.
     expect(store.getTarget('T1')).toEqual(
@@ -121,15 +112,11 @@ test('an existing pre-exhausted_at database migrates cleanly, preserving target 
     expect(store.exhaustedTargetsSince(0)).toEqual([]);
     // The new column works end to end.
     store.setTargetStatus('T1', 'exhausted', 7777);
-    expect(store.getTarget('T1')!.exhaustedAt).toBe(7777);
+    expect(store.getTarget('T1')?.exhaustedAt).toBe(7777);
     store.close();
 
-    const check = new Database(dbPath);
-    expect(check.pragma('user_version', { simple: true })).toBe(MIGRATIONS.length);
-    check.close();
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+    expect(legacy.schemaVersion()).toBe(LATEST_SCHEMA_VERSION);
+  });
 });
 
 test('listTargets orders by chain_index, nulls last', () => {

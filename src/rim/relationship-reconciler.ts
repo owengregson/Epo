@@ -4,7 +4,7 @@
  * The engine is NOT the only actor on the account's follow graph: the user (or
  * another tool) can follow/unfollow outside Epo, silently diverging
  * `follow_records`/`edges` from reality. Instagram's own responses already
- * carry the truth — `show_many` / `friendships/show` / `web_profile_info`
+ * carry the truth — `show_many` / `friendships/show` / the profile query
  * bodies report whether WE currently follow each account — so this subscribes
  * to the tab's response pipeline and feeds every such fact into the store's
  * single policy sink (`reconcileOwnFollow`, leave-alone policy: Epo only ever
@@ -42,8 +42,13 @@ export class RelationshipReconciler {
    * full CDP body read + JSON.parse for every followers/following page a
    * 200-page walk fetched — all of which parse to zero facts here.
    */
-  matches(url: string): boolean {
-    return this.reader.relationshipBearing(url);
+  matches(resp: { url: string; requestHeaders?: Record<string, string> }): boolean {
+    return this.reader.relationshipBearing(resp.url, this.friendlyNameOf(resp));
+  }
+
+  /** The GraphQL operation name an observed request carried, if any. */
+  private friendlyNameOf(resp: { requestHeaders?: Record<string, string> }): string | undefined {
+    return this.reader.friendlyName(resp.requestHeaders);
   }
 
   /**
@@ -64,7 +69,13 @@ export class RelationshipReconciler {
     }
     try {
       const at = this.clock.now();
-      for (const { pk, weFollow } of this.reader.relationshipFacts(resp.url, body, at)) {
+      const facts = this.reader.relationshipFacts(
+        resp.url,
+        body,
+        at,
+        this.friendlyNameOf(resp),
+      );
+      for (const { pk, weFollow } of facts) {
         if (pk === this.ownPk) continue; // never reconcile our own account
         this.store.reconcileOwnFollow(pk, weFollow, at);
       }
@@ -87,7 +98,7 @@ export function installRelationshipReconciler(
 ): Unsubscribe {
   const unsubscribe = tab.onResponse((resp) => {
     // Only pay the async body read for URLs the Reader recognizes.
-    if (reconciler.matches(resp.url)) void reconciler.ingest(resp);
+    if (reconciler.matches(resp)) void reconciler.ingest(resp);
   });
   logger.debug('rim.relationship-reconciler installed');
   return unsubscribe;

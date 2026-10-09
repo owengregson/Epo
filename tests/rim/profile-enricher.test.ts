@@ -1,38 +1,38 @@
-import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
-import { Reader } from '@/adapter/reader';
 import { SURFACE } from '@/adapter/ig-surface';
+import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
+import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import type { RimTab } from '@/rim/types';
+import { KnowledgeStore } from '@/store/knowledge-store';
+import { RECOVERY } from '@/timing/config';
 import type { ResponseHandler, Unsubscribe } from '@/types';
-import { FakeSentinel } from './fakes';
 import { setLevel } from '@/utils/logger';
+import { FakeSentinel } from '../kit/fakes';
 
 beforeAll(() => setLevel('error'));
 
-/** The `web_profile_info` body shape the Reader parses (data.user.*). */
+/** The `/users/<pk>/info/` body shape the Reader parses (`user.*`). */
 const profileBody = (
   id: string,
   username: string,
   followers: number,
   following: number,
 ): unknown => ({
-  data: {
-    user: {
-      id,
-      username,
-      edge_followed_by: { count: followers },
-      edge_follow: { count: following },
-      is_private: false,
-      is_verified: false,
-    },
+  user: {
+    pk: Number(id),
+    id,
+    username,
+    follower_count: followers,
+    following_count: following,
+    is_private: false,
+    is_verified: false,
   },
 });
 
 /**
  * A fake port-tab whose `evaluate` resolves the FetchEnvelope the surface's
- * in-page fetch script yields, wrapping the scripted `web_profile_info` body
+ * in-page fetch script yields, wrapping the scripted profile body
  * chosen by matching the username the enricher embedded in the fetch script.
  * `wallFor` simulates an HTML/rate-limit wall: a typed non-ok envelope (the
  * in-page script never rejects on a non-JSON body).
@@ -145,7 +145,7 @@ test('paces even when the sentinel blocks, so a persistent block cannot spin', a
   expect(sleeps.length).toBe(2); // paced after the 1st and 2nd (no wait after the last)
 });
 
-test('enriches each username: fetches web_profile_info, parses, and store.observe writes counts', async () => {
+test('enriches each username: fetches the profile, parses, and store.observe writes counts', async () => {
   const { enricher, tab } = build();
   tab.bodies = {
     alice: profileBody('101', 'alice', 1200, 300),
@@ -163,7 +163,7 @@ test('enriches each username: fetches web_profile_info, parses, and store.observ
   expect(store.getAccount('102')?.followers).toBe(50);
 });
 
-test('the fetch script targets web_profile_info with the app-id header and encoded username', async () => {
+test('the fetch script resolves the username then reads that pk\'s profile, app-id header and all', async () => {
   const { enricher, tab } = build();
   tab.bodies = { alice: profileBody('101', 'alice', 10, 10) };
 
@@ -171,7 +171,11 @@ test('the fetch script targets web_profile_info with the app-id header and encod
 
   expect(tab.evalCalls).toHaveLength(1);
   const script = tab.evalCalls[0];
-  expect(script).toContain('/api/v1/users/web_profile_info/?username=');
+  // Hop 1 resolves the username, hop 2 reads `/users/<pk>/info/` — the pk is
+  // only known at runtime, so the script carries the prefix and the suffix.
+  expect(script).toContain('/api/v1/web/search/topsearch/');
+  expect(script).toContain('/api/v1/users/');
+  expect(script).toContain("'/info/'");
   expect(script).toContain(`'x-ig-app-id': '${SURFACE.appId}'`);
   expect(script).toContain("credentials: 'include'");
   expect(script).toContain('encodeURIComponent("alice")');
@@ -330,4 +334,25 @@ test('a later successful stats observation heals the enrich-failed marker', asyn
   expect(store.getAccount('77')?.enrichFailedAt).toBe(2);
   store.observe({ accountPk: '77', observedAt: 3, source: 'profile', fields: { followers: 10, following: 5 } });
   expect(store.getAccount('77')?.enrichFailedAt).toBeUndefined();
+});
+
+test('a rate WALL ends the pass: consecutive walled reads stop the batch instead of draining it', async () => {
+  // Live shape: a pass of 20 usernames × 2 hops kept firing into a read wall,
+  // four passes per refill, before anything upstream counted a walled cycle.
+  const { enricher, tab } = build();
+  const names = Array.from({ length: 12 }, (_, i) => `walled${i}`);
+  for (const n of names) tab.wallFor.add(n);
+
+  expect(await enricher.enrich(names)).toBe(0);
+  expect(tab.evalCalls).toHaveLength(RECOVERY.BLOCKED_STREAK_ENTRY);
+});
+
+test('an isolated walled read does not end the pass', async () => {
+  const { enricher, tab } = build();
+  tab.wallFor.add('w1');
+  tab.bodies.ok1 = profileBody('11', 'ok1', 100, 100);
+  tab.wallFor.add('w2');
+  tab.bodies.ok2 = profileBody('12', 'ok2', 100, 100);
+
+  expect(await enricher.enrich(['w1', 'ok1', 'w2', 'ok2'])).toBe(2);
 });

@@ -1,16 +1,16 @@
-import {
-  RelationshipReconciler,
-  installRelationshipReconciler,
-} from '@/rim/relationship-reconciler';
 import { Reader } from '@/adapter/reader';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
-import { setLevel } from '@/utils/logger';
+import {
+  installRelationshipReconciler,
+  RelationshipReconciler,
+} from '@/rim/relationship-reconciler';
+import { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
-import { FakeTab, mkResp } from './fakes';
+import { setLevel } from '@/utils/logger';
+import profileGraphql1 from '../fixtures/adapter/profile-graphql-1.json';
 
 import showMany from '../fixtures/adapter/show-many.json';
-import profileInfo1 from '../fixtures/adapter/profile-info-1.json';
+import { FakeTab, mkProfileGraphqlResp, mkResp } from '../kit/fakes';
 
 // Keep test output quiet; the store logs info on every reconciliation drop.
 beforeAll(() => setLevel('error'));
@@ -22,7 +22,7 @@ const T0 = 1_700_000_000_000;
 const SHOW_MANY_URL = 'https://i.instagram.com/api/v1/friendships/show_many/';
 const showUrl = (pk: string): string =>
   `https://www.instagram.com/api/v1/friendships/show/${pk}/`;
-const PROFILE_URL = 'https://www.instagram.com/api/v1/users/web_profile_info/?username=x';
+
 
 const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({
   targetPk: null,
@@ -73,12 +73,12 @@ test('a friendship-show following:false drops a held record', async () => {
   expect(store.actionCountSince(0)).toBe(0);
 });
 
-test('a web_profile_info followed_by_viewer:true drops a queued candidate', async () => {
-  // Fixture profile-info-1: pk 1000000003, followed_by_viewer: true — someone
-  // (the user, another tool) already follows this queued candidate.
+test('an observed profile whose friendship_status.following is true drops a queued candidate', async () => {
+  // Fixture profile-graphql-1: pk 1000000003, friendship_status.following true
+  // — someone (the user, another tool) already follows this queued candidate.
   store.upsertFollowRecord(rec({ accountPk: '1000000003', state: 'queued' }));
 
-  await reconciler.ingest(mkResp(PROFILE_URL, profileInfo1));
+  await reconciler.ingest(mkProfileGraphqlResp(profileGraphql1));
 
   expect(store.getFollowRecord('1000000003')!.state).toBe('external');
   expect(store.getEdge(OWN, '1000000003', 'follows')!.status).toBe('active');
@@ -110,9 +110,9 @@ test('installRelationshipReconciler ingests matching responses only, until unsub
 
   store.upsertFollowRecord(rec({ accountPk: '1000000003', state: 'queued' }));
   // Non-matching URL: never ingested (no edge, record untouched).
-  tab.emit(mkResp('https://www.instagram.com/static/bundle.js', profileInfo1));
+  tab.emit(mkResp('https://www.instagram.com/static/bundle.js', profileGraphql1));
   // Matching URL: ingested asynchronously.
-  tab.emit(mkResp(PROFILE_URL, profileInfo1));
+  tab.emit(mkProfileGraphqlResp(profileGraphql1));
   await new Promise((resolve) => setImmediate(resolve));
 
   expect(store.getFollowRecord('1000000003')!.state).toBe('external');
@@ -120,7 +120,7 @@ test('installRelationshipReconciler ingests matching responses only, until unsub
   // After unsubscribe, further responses are ignored.
   store.upsertFollowRecord(rec({ accountPk: '1000000003', state: 'queued' }));
   unsubscribe();
-  tab.emit(mkResp(PROFILE_URL, profileInfo1));
+  tab.emit(mkProfileGraphqlResp(profileGraphql1));
   await new Promise((resolve) => setImmediate(resolve));
   expect(store.getFollowRecord('1000000003')!.state).toBe('queued');
 });

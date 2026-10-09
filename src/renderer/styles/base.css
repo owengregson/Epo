@@ -31,10 +31,27 @@ body {
   height: 100%;
 }
 
+/* ---------- icons ----------
+   Inline SVG sized in `em`, so every `.icon` rule elsewhere tunes an icon with
+   font-size alone; the baseline nudge matches how a text glyph used to sit. */
+.icon {
+  display: inline-block;
+  vertical-align: -0.125em;
+  flex: 0 0 auto;
+}
+.icon-spin {
+  animation: icon-spin 2s linear infinite;
+}
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Tabular figures for every counter/readout. */
 .num {
   font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
+  font-feature-settings: "tnum";
 }
 
 /* Thin graphite scrollbars everywhere. */
@@ -56,7 +73,7 @@ body {
   cursor: help;
 }
 [data-tip]::after {
-  content: '?';
+  content: "?";
   display: inline-block;
   width: 12px;
   height: 12px;
@@ -70,18 +87,22 @@ body {
   font-weight: 700;
   text-align: center;
   vertical-align: 1px;
-  transition: color 0.15s, border-color 0.15s;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
 }
 [data-tip]:hover::after {
   color: var(--silver);
   border-color: #45454e;
 }
-/* Controls that carry their own affordance (the card minimize chevron) get the hover
-   tooltip but NOT the "?" help badge. */
-.card-collapse {
+/* Controls that carry their own affordance (the card minimize chevron, the nav
+   rail's view buttons) get the hover tooltip but NOT the "?" help badge. */
+.card-collapse,
+.nav button {
   cursor: pointer;
 }
-.card-collapse::after {
+.card-collapse::after,
+.nav button::after {
   content: none;
 }
 .tip {

@@ -39,7 +39,8 @@ import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { asFetchEnvelope, classifyEnvelope, SURFACE } from '@/adapter/ig-surface';
+import { fetchJson } from '@/adapter/fetch-json';
+import { SURFACE } from '@/adapter/ig-surface';
 import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { type Clock, SystemClock } from '@/governors/clock';
@@ -226,39 +227,23 @@ export class ListPageWalker {
         logger.warn('rim.list-page-walker: sentinel non-ok, stopping walk', { pk, which, status });
         break;
       }
-      let env: ReturnType<typeof asFetchEnvelope> = null;
-      let failureDetail: Record<string, unknown> | null = null;
-      try {
-        env = asFetchEnvelope(
-          await this.tab.evaluate<unknown>(SURFACE.listPageScript(pk, which, cursor)),
-        );
-        if (env === null || !env.ok) {
-          failureDetail = {
-            status: env?.status ?? null,
-            textHead: env?.textHead?.slice(0, 80) ?? null,
-          };
-        }
-      } catch (e) {
-        failureDetail = { error: String(e) };
-      }
-      if (failureDetail !== null || env === null || !env.ok) {
+      const res = await fetchJson(this.tab, SURFACE.listPageScript(pk, which, cursor, pendingEndClaim));
+      if (!res.ok) {
+        const failureDetail = res.detail;
         // A rejected past-the-end probe confirms the end ONLY when the
         // rejection is the SPECIFIC past-the-limit refusal: IG answers a
         // past-the-limit offset with a 400 (e.g. "unable to fetch followers").
-        // `classifyEnvelope` screens out the failure families that mean the
-        // FETCH broke, not the list ended — a 429/5xx or wall (`rate-limited`),
-        // a login/challenge redirect (`auth`), a network error (`network`), or
-        // an evaluate throw. Treating those as confirmation would launder a
-        // throttle into a verified-complete walk and feed absence-based
-        // verdicts (lost followers, exhaustion) a fabricated end.
-        const cls = env === null ? null : classifyEnvelope(env);
+        // The failure families that mean the FETCH broke, not the list ended —
+        // a 429/5xx or wall (`rate-limited`), a login/challenge redirect
+        // (`auth`), a network error, an evaluate throw — are screened out.
+        // Treating those as confirmation would launder a throttle into a
+        // verified-complete walk and feed absence-based verdicts (lost
+        // followers, exhaustion) a fabricated end.
         const pastTheLimitRejection =
-          cls !== null &&
-          env !== null &&
-          env.status === 400 &&
-          cls.kind !== 'rate-limited' &&
-          cls.kind !== 'auth' &&
-          cls.kind !== 'network';
+          res.status === 400 &&
+          res.kind !== 'rate-limited' &&
+          res.kind !== 'auth' &&
+          res.kind !== 'network';
         if (pendingEndClaim && pastTheLimitRejection) {
           complete = true;
           endConfirmed = true;
@@ -300,8 +285,8 @@ export class ListPageWalker {
       const now = this.clock.now();
       const parsed =
         which === 'following'
-          ? this.reader.parseFollowingListStrict(env.json, now)
-          : this.reader.parseFollowersListStrict(env.json, now);
+          ? this.reader.parseFollowingListStrict(res.json, now)
+          : this.reader.parseFollowersListStrict(res.json, now);
       if (parsed === null) {
         // SHAPE DRIFT: the page fetched fine but the versioned extractor no
         // longer recognizes it. The typed empty page is the END-OF-LIST shape,

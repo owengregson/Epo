@@ -12,8 +12,8 @@
  * tip card docks over the console column, which the native view never covers).
  */
 
+import type { ViewKey } from '@/renderer/hooks/useView';
 import type { StageMode } from '@/types';
-import type { ViewKey } from '../hooks/useView';
 
 export interface TourStep {
   id: string;

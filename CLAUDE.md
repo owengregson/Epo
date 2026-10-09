@@ -1,10 +1,43 @@
 # Epo — instructions for AI-assisted development
 
-Epo (formerly Peanut) is an Electron desktop Instagram growth engine: SQLite
-knowledge graph (`src/store`) → governors → versioned IG adapter
-(`src/adapter`, all IG literals live in `src/adapter/versions/*`) → rim ports
-(`src/rim`) → engines (`src/engine`) → composition root
-(`src/main/foundation-wiring.ts`) → Preact renderer (`src/renderer`).
+Epo (formerly Peanut) is an Electron desktop Instagram growth engine. Read
+the pipeline left to right:
+
+- `src/kernel/` — the dependency-free kernel (ADR 06xx): brands and units,
+  ONE `Outcome` algebra, `Res`, `Schedule`, `Scope`, `parse` (zod at the
+  edges only), capabilities, `Module`/`Session`, and the fundamentals →
+  policy → derive → overrides chain. Every numeric constant is either derived
+  from a fundamental, a named policy dial, or an override with a reason; a
+  golden test pins which is which. Add a constant there, never inline.
+- `src/store/` — SQLite knowledge graph on Node's built-in `node:sqlite`
+  (`src/store/driver/`, ADR 0702; no native packages, a test enforces it),
+  nine repos behind the `KnowledgeStore` facade, a tables manifest,
+  append-only migrations (`{id,name,sql}`), Chronos durable timers and
+  SpanSink spans.
+- `src/surface/` + `src/adapter/` — the Instagram surface. ALL IG literals
+  (URLs, selectors, JSON paths) live ONLY in `src/surface/versions/*` and
+  `src/adapter/versions/*`; the surface is a validated zod document (ADR
+  0801) currently in shadow mode beside the versioned adapter; in-page logic
+  is real TypeScript in `src/adapter/page/*` bundled into the committed
+  `bundle.generated.ts` (regenerate with `npm run build:page`, freshness is a
+  test). Scrubbed fixtures only under `tests/fixtures/surface/`; real
+  captures in `docs/adapter/fixtures/` are git-ignored and never published.
+- `src/rim/` ports → `src/engine/` (Facts + pure rules with a precedence
+  property, an ordered `GATES` table, `Pacer` port, `target-pipeline.ts`,
+  typed `HaltReason`, `EFFECT_POLICY` as data).
+- `src/main/` composition root (`bootstrap.ts`, `window/shell.ts`,
+  `services/*`, modules, `foundation-wiring.ts` — being dismantled in wave B)
+  → typed IPC in `src/ipc/contract.ts` (CHANNELS + PUSH + GUARDS; every
+  channel name appears exactly once; guards validate and never throw;
+  `EpoBridge` is derived from it) → Preact renderer (`src/renderer`:
+  `@preact/signals` in ONE shell context, generated tokens from
+  `design/scale.ts`, inline SVG icons, WAAPI stagger, a dev gallery route).
+- Pure code shared by renderer and engines lives in `src/shared/`. Design
+  rationale lives in `docs/adr/` (01xx main, 02xx engine, 03xx adapter,
+  04xx renderer, 05xx store/tooling, 06xx kernel, 07xx store v4, 08xx
+  surface, 09xx runtime, 10xx toolchain/shell) — read the relevant ADR
+  before changing a load-bearing behavior. The v4 design and its wave plan:
+  `docs/superpowers/specs/2026-09-02-epo-v4-framework-design.md`.
 
 ## Mandatory design principles
 
@@ -35,7 +68,16 @@ Non-negotiable highlights:
 
 ## Verification
 
-`npx jest` (fast, in-memory), `npx tsc --noEmit`, `npm run lint`
-(`biome ci src` — lint + format + import organizing), `npm run build:dev`.
-All four must be green before a change is done. DOM-level adapter changes additionally need
-`npm run livetest` against a real session.
+`npm run check` runs every gate and must be green before a change is done:
+`gen:targets:check` and `gen:tokens:check` (generated files are current),
+`npm run typecheck` (`tsc` over `src` AND `tests` — tests are type-checked
+too), `npm run lint` (`biome ci src tests`), `npm run boundaries`
+(dependency-cruiser; 0 errors, warnings are the wave-B backlog and must not
+grow), `npm run build:page:check`, `npx jest` (fast, in-memory), `npm run
+build:dev`. `npm run knip` is advisory. The line budget test (300 lines per
+`.ts/.tsx` file, monotone allow-list in `scripts/gen-line-budget.mjs`)
+refuses new oversize files. Shared test fakes live in `tests/kit/` (setup,
+store helpers, port fakes) — extend those rather than hand-rolling a fake per
+suite. DOM-level adapter or surface changes additionally need
+`npm run livetest` against a real session; `npm run surface` opens the
+surface lab.

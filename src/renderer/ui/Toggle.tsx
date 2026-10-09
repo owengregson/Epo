@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 
 export interface ToggleProps {
   checked: boolean;
@@ -8,7 +7,7 @@ export interface ToggleProps {
 }
 
 /** A pill switch (`.toggle`). Space/Enter toggle; controlled via `checked`. */
-export function Toggle({ checked, onChange, ariaLabel }: ToggleProps): h.JSX.Element {
+export function Toggle({ checked, onChange, ariaLabel }: ToggleProps): JSX.Element {
   const toggle = (): void => onChange(!checked);
   return (
     <div

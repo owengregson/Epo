@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { useRef } from 'preact/hooks';
 import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
 import { clamp, commas } from '@/renderer/lib/format';
@@ -15,7 +14,6 @@ export interface TargetingCardProps {
   draft: Settings;
   patch: SettingsDraftController['patch'];
   set: SettingsDraftController['set'];
-  index?: number;
 }
 
 /** Absolute limits for the hard-bound steppers (mockup range). */
@@ -31,7 +29,7 @@ const snap05 = (v: number): number => Number((Math.round(v / 0.05) * 0.05).toFix
  * Targeting — ratio band (dual range with peak plateau overlay), peak/hard-bound
  * steppers, follower range, and the private-account boost.
  */
-export function TargetingCard({ draft: d, patch, set, index }: TargetingCardProps): h.JSX.Element {
+export function TargetingCard({ draft: d, patch, set }: TargetingCardProps): JSX.Element {
   // The peak plateau keeps its PROPORTIONAL position inside the band (mockup:
   // peakFracLo/peakFracHi). Anchored once from the draft; band drags re-fit the
   // peak from these fractions, manual stepper edits re-anchor them.
@@ -76,7 +74,7 @@ export function TargetingCard({ draft: d, patch, set, index }: TargetingCardProp
   };
 
   return (
-    <CollapsibleCard icon="bullseye" title="Targeting" index={index} defaultCollapsed>
+    <CollapsibleCard icon="bullseye" title="Targeting" defaultCollapsed>
       <Field
         label={
           <Fragment>

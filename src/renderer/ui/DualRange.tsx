@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useRef } from 'preact/hooks';
 
 export interface DualRangeProps {
@@ -43,7 +42,7 @@ export function DualRange({
   ariaLabelLo = 'Minimum',
   ariaLabelHi = 'Maximum',
   disabled,
-}: DualRangeProps): h.JSX.Element {
+}: DualRangeProps): JSX.Element {
   const trackRef = useRef<HTMLDivElement>(null);
   const pct = (v: number): number => ((v - min) / (max - min)) * 100;
   const snap = (v: number): number => Math.round(v / step) * step;

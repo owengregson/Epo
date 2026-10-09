@@ -21,15 +21,6 @@ export const PRESETS: Record<Exclude<Aggressiveness, 'custom'>, Preset> = {
   aggressive: { rate: 90, dLo: 2, dHi: 4, jit: 15, hint: '90 / day · 2–4 min delay · ±15% jitter' },
 };
 
-export const CUSTOM_HINT = 'Manual — these knobs hold their tuned values.';
-
-export const AGGRESSIVENESS_ORDER: readonly Aggressiveness[] = [
-  'conservative',
-  'balanced',
-  'aggressive',
-  'custom',
-];
-
 /** The subset of Settings a preset writes. */
 export type PresetPatch = Pick<
   Settings,
@@ -61,9 +52,4 @@ export function presetPatch(key: Exclude<Aggressiveness, 'custom'>): PresetPatch
     maxDelayMinutes: p.dHi,
     jitterPercent: p.jit,
   };
-}
-
-/** The hint text for any selection. */
-export function presetHint(key: Aggressiveness): string {
-  return key === 'custom' ? CUSTOM_HINT : PRESETS[key].hint;
 }

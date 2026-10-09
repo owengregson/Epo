@@ -1,67 +1,34 @@
-/**
- * Prune persistence across restarts: a completed scan's census + reviewed
- * candidate set survive in the store, and a NEW PruneEngine over the same store
- * (the restart) rehydrates them — counts restored, remaining candidates
- * runnable while fresh, everything gone when the whitelist changes. Restart is
- * simulated by constructing a second engine over the same `:memory:` store.
- */
-import { KnowledgeStore } from '@/store/knowledge-store';
-import { FakeClock } from '@/governors/clock';
+import type { SentinelStatus } from '@/adapter/sentinel';
 import {
-  PruneEngine,
   PRUNE_SCAN_FRESH_MS,
-  type PruneConfig,
+  PruneEngine,
   type PruneEngineDeps,
   type PruneScanFetch,
 } from '@/engine/prune-engine';
-import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
-import type { SentinelStatus } from '@/adapter/sentinel';
-import { setLevel } from '@/utils/logger';
-
-beforeAll(() => setLevel('error'));
-
-const T0 = Date.parse('2026-08-12T12:00:00'); // local noon
-const OWN_PK = 'ME';
-
-const CFG: PruneConfig = {
-  dailyLimit: 50,
-  whitelist: [],
-  bioFilterWords: [],
-  minDelayMs: 60_000,
-  maxDelayMs: 60_000,
-  jitterPercent: 0,
-  scanMinMs: 1_000,
-  scanMaxMs: 3_000,
-};
-
-class FakeListSource {
-  constructor(private readonly pks: string[]) {}
-  async fetchAllPks(): Promise<PruneScanFetch> {
-    return { pks: [...this.pks], complete: true, reason: 'no-more-pages' };
-  }
-}
-
-class FakeChurnActions {
-  unfollows: string[] = [];
-  async unfollow(username: string): Promise<ChurnActionOutcome> {
-    this.unfollows.push(username);
-    return { status: 'ok' };
-  }
-}
+import { FakeClock } from '@/governors/clock';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import {
+  PRUNE_CFG as CFG,
+  FakeListSource,
+  FakePruneActions,
+  kitStore,
+  OWN_PK,
+  T0,
+} from '../kit/engine-harness';
 
 interface World {
   store: KnowledgeStore;
   clock: FakeClock;
-  churn: FakeChurnActions;
+  churn: FakePruneActions;
   /** Construct a PruneEngine over the SAME store/clock — a fresh one models a restart. */
   boot: (over?: Partial<PruneEngineDeps>) => PruneEngine;
 }
 
 const world = (following: string[], followers: string[]): World => {
-  const store = new KnowledgeStore(':memory:');
+  const store = kitStore();
   store.setOwnPk(OWN_PK);
   const clock = new FakeClock(T0);
-  const churn = new FakeChurnActions();
+  const churn = new FakePruneActions();
   // Give every non-self pk a stored username (u<pk>), as the live sources do.
   for (const pk of following) {
     if (pk === OWN_PK) continue;

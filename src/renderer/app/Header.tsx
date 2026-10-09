@@ -1,6 +1,6 @@
-/** @jsx h */
-import { h } from 'preact';
-import { Transport, type TransportProps } from './Transport';
+import { type JSX } from 'preact';
+import { transportSignal } from '@/renderer/app/shell-context';
+import { Transport, type TransportProps } from '@/renderer/app/Transport';
 
 /**
  * The one intentional inline SVG in the app: the Epo brand mark. Every other
@@ -12,7 +12,7 @@ import { Transport, type TransportProps } from './Transport';
  * (one mask) so the brushed-metal gradient flows seamlessly, with the shine in
  * the edge: a bright top highlight over a satin body and a shadowed lower edge.
  */
-function EpoMark(): h.JSX.Element {
+function EpoMark(): JSX.Element {
   return (
     <svg width="20" height="20" viewBox="0 0 64 64" fill="none" role="img" aria-label="Epo">
       <defs>
@@ -48,14 +48,20 @@ function EpoMark(): h.JSX.Element {
   );
 }
 
-export type HeaderProps = TransportProps;
+/** Everything the header cannot derive: the in-flight control and the handlers. */
+export type HeaderProps = Omit<TransportProps, 'state' | 'driver' | 'pruneScanning'>;
 
 /**
  * The console header: the brand mark (whose hairline ring breathes while the
  * engine runs — driven by `.console[data-state]`), the static tagline, and the
  * transport trio beneath.
+ *
+ * The unified posture is read HERE, from {@link transportSignal}, so a status
+ * push that changes the posture re-renders the header alone — the shell above
+ * it does not have to re-render to hand the trio new props.
  */
-export function Header(props: HeaderProps): h.JSX.Element {
+export function Header(props: HeaderProps): JSX.Element {
+  const transport = transportSignal.value;
   return (
     <div class="con-head">
       <div class="brand-row">
@@ -67,7 +73,12 @@ export function Header(props: HeaderProps): h.JSX.Element {
           <div class="tagline">Growth engine</div>
         </div>
       </div>
-      <Transport {...props} />
+      <Transport
+        state={transport.state}
+        driver={transport.driver}
+        pruneScanning={transport.pruneScanning}
+        {...props}
+      />
     </div>
   );
 }

@@ -4,9 +4,9 @@
  * overlay veil's digital cursor rides on.
  */
 import {
-  ObservedInputDriver,
   type CursorObserver,
   type InputDriver,
+  ObservedInputDriver,
 } from '@/interaction/input-driver';
 
 type Recorded =
@@ -50,17 +50,17 @@ const build = (): { driver: ObservedInputDriver; inner: RecordingDriver; obs: Re
 };
 
 describe('ObservedInputDriver', () => {
-  test('mouseMove forwards unchanged and reports the position', () => {
+  test('mouseMove forwards unchanged and reports the position', async () => {
     const { driver, inner, obs } = build();
-    driver.mouseMove(120, 340);
+    await driver.mouseMove(120, 340);
     expect(inner.events).toEqual([{ kind: 'move', x: 120, y: 340 }]);
     expect(obs.events).toEqual([{ kind: 'moved', x: 120, y: 340 }]);
   });
 
-  test('mouseDown/mouseUp report position BEFORE button state', () => {
+  test('mouseDown/mouseUp report position BEFORE button state', async () => {
     const { driver, inner, obs } = build();
-    driver.mouseDown(50, 60);
-    driver.mouseUp(50, 60);
+    await driver.mouseDown(50, 60);
+    await driver.mouseUp(50, 60);
     expect(inner.events).toEqual([
       { kind: 'down', x: 50, y: 60 },
       { kind: 'up', x: 50, y: 60 },
@@ -73,19 +73,19 @@ describe('ObservedInputDriver', () => {
     ]);
   });
 
-  test('wheel forwards the delta and reports the resting position', () => {
+  test('wheel forwards the delta and reports the resting position', async () => {
     const { driver, inner, obs } = build();
-    driver.wheel(400, 500, 240);
+    await driver.wheel(400, 500, 240);
     expect(inner.events).toEqual([{ kind: 'wheel', x: 400, y: 500, deltaY: 240 }]);
     expect(obs.events).toEqual([{ kind: 'moved', x: 400, y: 500 }]);
   });
 
-  test('observation never mutates the forwarded event stream', () => {
+  test('observation never mutates the forwarded event stream', async () => {
     const { driver, inner } = build();
-    driver.mouseMove(1, 2);
-    driver.mouseDown(1, 2);
-    driver.wheel(1, 2, -30);
-    driver.mouseUp(1, 2);
+    await driver.mouseMove(1, 2);
+    await driver.mouseDown(1, 2);
+    await driver.wheel(1, 2, -30);
+    await driver.mouseUp(1, 2);
     expect(inner.events.map((e) => e.kind)).toEqual(['move', 'down', 'wheel', 'up']);
   });
 });

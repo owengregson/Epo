@@ -1,357 +1,32 @@
 /**
- * Engine runtime tests (§3.1 loop, §3.3 interruptible sleep, §5 halt/status, E1).
+ * Engine runtime tests (the loop's precedence, interruptible waits, halt/status).
  *
- * Real `:memory:` KnowledgeStore + real governors beneath a FakeClock; scripted
- * fakes for every live-edge collaborator; an injected fake sleep that advances the
- * FakeClock and resolves immediately (unless deliberately hung to test abort).
- * A shared `events` log proves ordering — most importantly that the loop can NEVER
- * perform two actions without an interposed paced delay.
+ * Real `:memory:` KnowledgeStore + real governors beneath a FakeClock; the shared
+ * engine kit supplies every fake port and the one fake-time contract (a sleep
+ * advances the clock unless deliberately hung). A shared `events` log proves
+ * ordering — most importantly that the loop can NEVER perform two actions
+ * without an interposed paced delay.
  */
-import { KnowledgeStore } from '@/store/knowledge-store';
-import { FakeClock } from '@/governors/clock';
-import { RateGovernor, type RateGovernorConfig } from '@/governors/rate-governor';
+
 import {
-  Engine,
   ENGINE_IDLE_MS,
   ENRICH_BATCH_SIZE,
+  type EnginePacing,
+  type EngineUnfollowFeed,
   MAX_ENRICH_PASSES_PER_CYCLE,
   REFILL_PACING_MAX_MS,
   REFILL_PACING_MIN_MS,
-  type EngineAcquisition,
-  type EngineChain,
-  type EngineChurn,
-  type EngineEnricher,
-  type EngineFollowback,
-  type EnginePacing,
-  type EngineTabDiagnostics,
-  type EngineUnfollowFeed,
-  type EngineScanner,
-  type EngineStatus,
-  type SleepFn,
 } from '@/engine/engine';
-import { ENGINE, NOISE, RECOVERY } from '@/timing/config';
-import type { AdvanceResult } from '@/engine/chain-controller';
-import { Scanner, type ScanPlan } from '@/engine/scanner';
-import type { AcquireEndReason } from '@/rim/follower-acquisition';
-import type { SentinelStatus } from '@/adapter/sentinel';
-import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
 import type { AccountFields, FollowRecord } from '@/store/types';
-import { setLevel } from '@/utils/logger';
-
-beforeAll(() => setLevel('error'));
-
-const T0 = Date.parse('2026-08-12T12:00:00'); // local noon
-const DELAY_MS = 240_000; // fixed paced delay (min=max, jitter 0)
-const HOUR = 3_600_000;
-
-const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({
-  targetPk: null,
-  state: 'queued',
-  retryCount: 0,
-  ...over,
-});
-
-// --- Fakes -------------------------------------------------------------------------
-
-class FakeSentinel {
-  checks = 0;
-  /** f9: while > 0, check() REJECTS (a transient evaluate failure), decrementing. */
-  failNext = 0;
-  private readonly queue: SentinelStatus[];
-  constructor(statuses: SentinelStatus[] = []) {
-    this.queue = [...statuses];
-  }
-  async check(): Promise<SentinelStatus> {
-    this.checks += 1;
-    if (this.failNext > 0) {
-      this.failNext -= 1;
-      throw new Error('evaluate failed: tab navigated mid-call');
-    }
-    return this.queue.shift() ?? 'ok';
-  }
-}
-
-/**
- * R1 fake enricher: `enrich(usernames)` writes a scripted profile observation
- * (counts) into the store for every username it has a profile for — exactly what
- * the real adapter-backed ProfileEnricher does via web_profile_info.
- */
-class FakeEnricher implements EngineEnricher {
-  calls: string[][] = [];
-  /** username → the pk + profile fields to observe when enriched. */
-  profiles = new Map<string, { pk: string; fields: AccountFields }>();
-  constructor(
-    private readonly store: KnowledgeStore,
-    private readonly clock: FakeClock,
-  ) {}
-  async enrich(usernames: string[]): Promise<number> {
-    this.calls.push([...usernames]);
-    let enriched = 0;
-    for (const u of usernames) {
-      const p = this.profiles.get(u);
-      if (p === undefined) continue;
-      this.store.observe({
-        accountPk: p.pk,
-        observedAt: this.clock.now(),
-        source: 'profile',
-        fields: { username: u, ...p.fields },
-      });
-      enriched += 1;
-    }
-    return enriched;
-  }
-}
-
-class FakeChurn implements EngineChurn {
-  due: FollowRecord[] = [];
-  advanceCalls = 0;
-  executed: FollowRecord[] = [];
-  /** Scripted outcome execute reports (default 'ok'). */
-  outcome: 'ok' | 'failed' | 'blocked' | 'simulated' | 'noop' = 'ok';
-  /** Scripted consecutive-failure readout (the systemic-breakage breaker). */
-  failStreak = 0;
-  /** Scripted consecutive-blocked readout (the rate-wall streak). */
-  blockedStreak = 0;
-  /** Scripted drift-caused share of the failure window. */
-  driftStreak = 0;
-  resetCalls = 0;
-  resetBlockedCalls = 0;
-  constructor(private readonly events: string[]) {}
-  advanceTimers(): void {
-    this.advanceCalls += 1;
-  }
-  nextDue(): FollowRecord | null {
-    return this.due[0] ?? null;
-  }
-  async execute(r: FollowRecord): Promise<'ok' | 'failed' | 'blocked' | 'simulated' | 'noop'> {
-    // A blocked outcome leaves the record completely untouched (still due),
-    // exactly like the real scheduler.
-    if (this.outcome !== 'blocked') {
-      this.due = this.due.filter((d) => d.accountPk !== r.accountPk);
-    }
-    this.executed.push(r);
-    this.events.push(`execute:${r.accountPk}`);
-    return this.outcome;
-  }
-  consecutiveFailureCount(): number {
-    return this.failStreak;
-  }
-  resetConsecutiveFailures(): void {
-    this.resetCalls += 1;
-    this.failStreak = 0;
-  }
-  consecutiveBlockedCount(): number {
-    return this.blockedStreak;
-  }
-  resetConsecutiveBlocked(): void {
-    this.resetBlockedCalls += 1;
-    this.blockedStreak = 0;
-  }
-  consecutiveDriftFailureCount(): number {
-    return this.driftStreak;
-  }
-}
-
-/** Scripted scanner: each planTarget call enqueues the next pk-list into the store. */
-class FakeScanner implements EngineScanner {
-  planCalls: string[] = [];
-  script: string[][] = [];
-  constructor(private readonly store: KnowledgeStore) {}
-  planTarget(targetPk: string): ScanPlan {
-    this.planCalls.push(targetPk);
-    const pks = this.script.shift() ?? [];
-    for (const pk of pks) {
-      this.store.upsertFollowRecord(rec({ accountPk: pk, targetPk, state: 'queued' }));
-    }
-    return { targetPk, queued: pks, considered: pks.length, eligible: pks.length };
-  }
-}
-
-class FakeChain implements EngineChain {
-  advanceCalls: string[] = [];
-  script: AdvanceResult[] = [];
-  advance(currentTargetPk: string): Promise<AdvanceResult> {
-    this.advanceCalls.push(currentTargetPk);
-    const next = this.script.shift() ?? {
-      nextTargetPk: null,
-      source: 'none' as const,
-      reason: 'unscripted',
-    };
-    return Promise.resolve(next);
-  }
-}
-
-class FakeFollowback implements EngineFollowback {
-  checks = 0;
-  async check(): Promise<{ detected: string[] }> {
-    this.checks += 1;
-    return { detected: [] };
-  }
-}
-
-class FakeAcquisition implements EngineAcquisition {
-  calls: string[] = [];
-  /** Scripted results; an omitted endReason defaults to the VERIFIED list end
-   *  ('no-more-pages') so legacy scripts keep exercising the genuine path. */
-  script: Array<{ observed: number; targetPk: string | null; endReason?: AcquireEndReason }> = [];
-  async acquire(
-    targetUsername: string,
-  ): Promise<{ observed: number; targetPk: string | null; endReason: AcquireEndReason }> {
-    this.calls.push(targetUsername);
-    const next = this.script.shift() ?? { observed: 0, targetPk: null };
-    return { endReason: 'no-more-pages', ...next };
-  }
-}
-
-/**
- * The injected fake sleep: records every duration, advances the FakeClock by `ms`
- * and resolves immediately — unless `hang` is set, in which case it resolves only
- * when the Engine aborts it (proving E1 interruptibility with real control flow).
- */
-class SleepRecorder {
-  calls: number[] = [];
-  hang = false;
-  aborted = 0;
-  constructor(
-    private readonly clock: FakeClock,
-    private readonly events: string[],
-  ) {}
-  fn: SleepFn = (ms, signal) => {
-    this.calls.push(ms);
-    this.events.push(`sleep:${ms}`);
-    if (signal?.aborted) {
-      this.aborted += 1;
-      return Promise.resolve();
-    }
-    if (!this.hang) {
-      this.clock.advance(ms);
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      signal?.addEventListener(
-        'abort',
-        () => {
-          this.aborted += 1;
-          resolve();
-        },
-        { once: true },
-      );
-    });
-  };
-}
-
-// --- Harness -----------------------------------------------------------------------
-
-interface HarnessOpts {
-  startAt?: number;
-  ceiling?: number;
-  activeHours?: { start: number; end: number };
-  settings?: Partial<Settings>;
-  seedTarget?: boolean; // default true: t1/'targetone' active at chainIndex 0
-  sentinel?: SentinelStatus[]; // scripted statuses, then 'ok'
-  useRealScanner?: boolean; // wire the REAL Scanner over the store (R1 pipeline tests)
-  rng?: () => number; // injected randomness for the pacing draw
-  pacing?: EnginePacing; // organic pacing model (absent → legacy metronome)
-  unfollowFeed?: EngineUnfollowFeed; // woven prune feed
-  sweepCadence?: { isDue(now: number, everyMs: number): boolean; markRun(now: number): void };
-  /** The recovery ladder's tab-diagnostics port (absent → presumed healthy). */
-  tabDiag?: EngineTabDiagnostics;
-  /** Seed the store BEFORE engine construction (e.g. a persisted action-delay deadline). */
-  preseedStore?: (store: KnowledgeStore) => void;
-}
-
-interface Harness {
-  store: KnowledgeStore;
-  clock: FakeClock;
-  sentinel: FakeSentinel;
-  churn: FakeChurn;
-  scanner: FakeScanner;
-  chain: FakeChain;
-  followback: FakeFollowback;
-  acquisition: FakeAcquisition;
-  enricher: FakeEnricher;
-  sleep: SleepRecorder;
-  events: string[];
-  statuses: EngineStatus[];
-  halts: string[];
-  engine: Engine;
-}
-
-const makeHarness = (opts: HarnessOpts = {}): Harness => {
-  const startAt = opts.startAt ?? T0;
-  const hours = opts.activeHours ?? { start: 0, end: 24 };
-  const store = new KnowledgeStore(':memory:');
-  const clock = new FakeClock(startAt);
-  const events: string[] = [];
-  const statuses: EngineStatus[] = [];
-  const halts: string[] = [];
-
-  const rateCfg: RateGovernorConfig = {
-    dailyHardCeiling: opts.ceiling ?? 1000,
-    dailyOperatingRate: opts.ceiling ?? 1000,
-    minDelayMs: DELAY_MS,
-    maxDelayMs: DELAY_MS,
-    jitterPercent: 0,
-    activeHoursStart: hours.start,
-    activeHoursEnd: hours.end,
-  };
-  const settings: Settings = {
-    ...DEFAULT_SETTINGS,
-    seed: 'seeduser',
-    activeHoursStart: hours.start,
-    activeHoursEnd: hours.end,
-    followbackSweepHours: Number.POSITIVE_INFINITY, // sweeps off unless a test opts in
-    lowWaterCandidates: 0, // refills off unless a test opts in
-    ...opts.settings,
-  };
-
-  const sentinel = new FakeSentinel(opts.sentinel ?? []);
-  const churn = new FakeChurn(events);
-  const scanner = new FakeScanner(store);
-  const chain = new FakeChain();
-  const followback = new FakeFollowback();
-  const acquisition = new FakeAcquisition();
-  const enricher = new FakeEnricher(store, clock);
-  const sleep = new SleepRecorder(clock, events);
-
-  if (opts.seedTarget !== false) {
-    store.observe({
-      accountPk: 't1',
-      observedAt: startAt,
-      source: 'profile',
-      fields: { username: 'targetone' },
-    });
-    store.addTarget({ accountPk: 't1', source: 'seed', status: 'active', chainIndex: 0 });
-  }
-  opts.preseedStore?.(store);
-
-  const engine = new Engine({
-    store,
-    clock,
-    rate: new RateGovernor(store, clock, rateCfg),
-    sentinel,
-    churn,
-    scanner: opts.useRealScanner === true ? new Scanner({ store }) : scanner,
-    chain,
-    followback,
-    acquisition,
-    enricher,
-    settings,
-    sleep: sleep.fn,
-    rng: opts.rng,
-    pacing: opts.pacing,
-    unfollowFeed: opts.unfollowFeed,
-    sweepCadence: opts.sweepCadence,
-    tabDiag: opts.tabDiag,
-    onStatus: (s) => statuses.push(s),
-    onHalt: (reason) => halts.push(reason),
-  });
-
-  return {
-    store, clock, sentinel, churn, scanner, chain,
-    followback, acquisition, enricher, sleep, events, statuses, halts, engine,
-  };
-};
+import { ENGINE, NOISE, RECOVERY } from '@/timing/config';
+import {
+  DELAY_MS,
+  type EngineHarness as Harness,
+  HOUR,
+  makeEngineHarness as makeHarness,
+  rec,
+  T0,
+} from '../kit/engine-harness';
 
 // --- Tests ---------------------------------------------------------------------------
 
@@ -950,7 +625,9 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
   test("a step that outlives its generation (stop()+start() mid-action) reports 'aborted' and leaves pacing to the new run", async () => {
     const pacing = new FakePacing(T0 + 3600_000);
     const h = makeHarness({ pacing });
-    h.churn.due = [rec({ accountPk: 'a' })];
+    // Two due records: the stale generation consumes the first (its click DID
+    // land), so the new generation has its own action to perform.
+    h.churn.due = [rec({ accountPk: 'a' }), rec({ accountPk: 'b' })];
 
     // Gate churn.execute so the step can be caught mid-action (a non-signal-
     // linked await — exactly where a stale generation can wake up).
@@ -966,7 +643,7 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     h.churn.execute = async (r: FollowRecord) => {
       reached();
       await gate;
-      await orig(r);
+      return orig(r);
     };
 
     const stale = h.engine.stepOnce(); // old generation, parked inside the action
@@ -1663,12 +1340,12 @@ class FakeFeed implements EngineUnfollowFeed {
   candidates: Array<{ pk: string; username: string }> = [];
   cap = false;
   executed: Array<{ pk: string; username: string }> = [];
-  outcome: 'ok' | 'failed' | 'simulated' | 'blocked' | 'skipped' = 'ok';
+  outcome: 'ok' | 'failed' | 'simulated' | 'blocked' = 'ok';
   nextCandidate(): { pk: string; username: string } | null {
     return this.cap ? null : (this.candidates[0] ?? null);
   }
   async executeUnfollow(cand: { pk: string; username: string }): Promise<
-    'ok' | 'failed' | 'simulated' | 'blocked' | 'skipped'
+    'ok' | 'failed' | 'simulated' | 'blocked'
   > {
     this.executed.push(cand);
     if (this.outcome !== 'blocked') this.candidates = this.candidates.filter((c) => c.pk !== cand.pk);
@@ -1718,20 +1395,6 @@ describe('Engine — woven prune feed', () => {
     await h.engine.stepOnce();
 
     expect(feed.executed).toEqual([]);
-  });
-
-  test('a bio-filter skip records no action and does not park (candidate was consumed)', async () => {
-    const pacing = new FakePacing(T0);
-    const feed = new FakeFeed();
-    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
-    feed.outcome = 'skipped';
-    const h = makeHarness({ pacing, unfollowFeed: feed });
-
-    const result = await h.engine.stepOnce();
-
-    expect(result).toBe('idle');
-    expect(pacing.recorded).toEqual([]); // nothing acted, nothing to pace
-    expect(h.sleep.calls).not.toContain(30_000); // no blocked-style park either
   });
 
   test('a blocked woven unfollow parks and records no action', async () => {
@@ -1792,6 +1455,19 @@ describe('Engine — recovery ladder', () => {
     expect(h.sleep.calls[0]).toBeLessThanOrEqual(30_000 * NOISE.BACKOFF_MAX_FACTOR);
     expect(h.churn.due.map((r) => r.accountPk)).toEqual(['a']); // record untouched
     expect(h.engine.status().recovery).toBeNull(); // below the streak: no ladder
+  });
+
+  test('a DEFINITIVE rate limit (the server refused the mutation) enters recovery on the FIRST block', async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.outcome = 'blocked';
+    h.churn.blockedStreak = 1; // far below the streak threshold…
+    h.churn.lastCause = 'rate-limited'; // …but Instagram said so in the response body
+
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(h.churn.due.map((r) => r.accountPk)).toEqual(['a']); // record untouched
+    expect(h.halts).toEqual([]);
+    expect(h.engine.status().recovery?.phase).toBe('probing'); // hold served by fake sleep
   });
 
   test('a blocked streak of BLOCKED_STREAK_ENTRY enters recovery without touching records', async () => {

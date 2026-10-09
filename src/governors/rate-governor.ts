@@ -1,7 +1,8 @@
 import type { KnowledgeStore } from '../store/knowledge-store';
+import { actionGap } from '../timing/action-gap';
 import { cyclePlan } from '../timing/cycle-plan';
-import { jittered, sample } from '../timing/primitives';
-import { startOfLocalDay } from '../timing/units';
+import { sample } from '../timing/primitives';
+import { MS_PER_HOUR, startOfLocalDay } from '../timing/units';
 import type { Clock } from './clock';
 
 export interface RateGovernorConfig {
@@ -23,6 +24,7 @@ export class RateGovernor {
     private readonly store: KnowledgeStore,
     private readonly clock: Clock,
     private cfg: RateGovernorConfig,
+    private readonly rng: () => number = Math.random,
   ) {}
 
   /** Swap the live config in place (used when Settings are updated at runtime). */
@@ -94,7 +96,7 @@ export class RateGovernor {
    * the planner's in-memory ring as a second, ledger-backed net.
    */
   actionsInLastHour(now: number = this.clock.now()): number {
-    const since = now - 3_600_000;
+    const since = now - MS_PER_HOUR;
     return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since);
   }
 
@@ -132,12 +134,12 @@ export class RateGovernor {
 
   /**
    * A paced delay before the next action: a base uniformly in [min,max], then a
-   * symmetric ± jitter of `jitterPercent` (the canonical `jittered` policy from
-   * timing/primitives — written exactly once for the whole app). `rng` is
-   * injectable for deterministic tests.
+   * symmetric ± jitter of `jitterPercent`. Equal bounds with zero jitter receive
+   * positive-only variation, so an exact configured interval stays the minimum.
+   * `rng` is injectable for deterministic tests.
    */
-  nextDelayMs(rng: () => number = Math.random): number {
+  nextDelayMs(rng: () => number = this.rng): number {
     const { minDelayMs, maxDelayMs, jitterPercent } = this.cfg;
-    return sample(jittered(minDelayMs, maxDelayMs, jitterPercent), rng);
+    return sample(actionGap(minDelayMs, maxDelayMs, jitterPercent), rng);
   }
 }

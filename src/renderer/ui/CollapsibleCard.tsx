@@ -1,14 +1,11 @@
-/** @jsx h */
-import { type ComponentChildren, h } from 'preact';
+import { type ComponentChildren, type JSX } from 'preact';
 import { useState } from 'preact/hooks';
-import { Icon } from './Icon';
+import { Icon } from '@/renderer/ui/Icon';
 
 export interface CollapsibleCardProps {
   /** Leading FontAwesome glyph (without `fa-`). */
   icon?: string;
   title: string;
-  /** Entrance-stagger index (`--i`). */
-  index?: number;
   /** Start minimized (body hidden). */
   defaultCollapsed?: boolean;
   /** Right-aligned auxiliary readout, shown in the header even when collapsed. */
@@ -27,18 +24,17 @@ export interface CollapsibleCardProps {
 export function CollapsibleCard({
   icon,
   title,
-  index,
   defaultCollapsed = false,
   aux,
   raised,
   children,
-}: CollapsibleCardProps): h.JSX.Element {
+}: CollapsibleCardProps): JSX.Element {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const classes = ['card', raised ? 'raised' : null, collapsed ? 'collapsed' : null]
     .filter(Boolean)
     .join(' ');
   return (
-    <div class={classes} style={index != null ? `--i:${index}` : undefined}>
+    <div class={classes}>
       {/* The whole header row is the toggle; the chevron carries the hover tooltip. */}
       <button
         type="button"

@@ -1,6 +1,6 @@
+import { FakeClock } from '@/governors/clock';
 import { DelayManager } from '@/timing/delay-manager';
 import { jittered } from '@/timing/primitives';
-import { FakeClock } from '@/governors/clock';
 
 /** A controllable sleep: records calls, resolves when released or aborted. */
 function makeSleepHarness() {
@@ -100,22 +100,6 @@ describe('DelayManager', () => {
     expect(dm.pending()).toHaveLength(1);
     h.releases.at(-1)?.();
     await expect(second).resolves.toEqual({ completed: true });
-  });
-
-  test('onChange fires on register and settle; unsubscribe stops it', async () => {
-    const h = makeSleepHarness();
-    const dm = new DelayManager({ clock: new FakeClock(0), sleep: h.sleep });
-    const snapshots: number[] = [];
-    const off = dm.onChange((pending) => snapshots.push(pending.length));
-    const p = dm.wait('k', 1000);
-    h.releases[0]();
-    await p;
-    expect(snapshots).toEqual([1, 0]);
-    off();
-    const p2 = dm.wait('k', 1000);
-    h.releases[1]();
-    await p2;
-    expect(snapshots).toEqual([1, 0]); // no further notifications
   });
 
   test('dispose cancels everything', async () => {

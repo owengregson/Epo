@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { commas } from '@/renderer/lib/format';
 import { Icon } from '@/renderer/ui/Icon';
 import type { EpoStatus, FollowState } from '@/types';
@@ -87,7 +86,7 @@ export const QUEUE_STAGE_PANEL_ID = 'queue-stage-list';
  * Keyboard: the tabs pattern (roving tabindex + arrow keys), mirroring
  * `Segmented`, so both selectors behave identically for keyboard users.
  */
-export function QueuePipeline({ status, active, onSelect }: QueuePipelineProps): h.JSX.Element {
+export function QueuePipeline({ status, active, onSelect }: QueuePipelineProps): JSX.Element {
   const idx = Math.max(
     0,
     QUEUE_STAGES.findIndex((s) => s.key === active),

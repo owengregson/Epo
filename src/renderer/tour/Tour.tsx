@@ -1,4 +1,3 @@
-/** @jsx h */
 /**
  * The interactive intro tour — a coach-marks overlay across the whole window.
  * One spotlight ring cuts a hole in the dim over the current step's target
@@ -11,12 +10,13 @@
  * dismiss. Every way out lands in `onClose`, which persists completion — the
  * tour never nags twice.
  */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import type { ViewKey } from '@/renderer/hooks/useView';
+import { place } from '@/renderer/lib/anchor';
+import { TOUR_STEPS } from '@/renderer/tour/steps';
+import { Icon } from '@/renderer/ui/Icon';
 import type { StageMode } from '@/types';
-import type { ViewKey } from '../hooks/useView';
-import { Icon } from '../ui/Icon';
-import { TOUR_STEPS } from './steps';
 
 export interface TourProps {
   open: boolean;
@@ -50,7 +50,7 @@ const sameBox = (a: Box | null, b: Box | null): boolean => {
   );
 };
 
-export function Tour({ open, onClose, goTo, setStage }: TourProps): h.JSX.Element | null {
+export function Tour({ open, onClose, goTo, setStage }: TourProps): JSX.Element | null {
   const [idx, setIdx] = useState(0);
   const [box, setBox] = useState<Box | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -112,29 +112,14 @@ export function Tour({ open, onClose, goTo, setStage }: TourProps): h.JSX.Elemen
       card.style.top = '';
       return;
     }
-    const cw = card.offsetWidth;
-    const ch = card.offsetHeight;
-    const side = step?.side ?? 'below';
-    let left: number;
-    let top: number;
-    if (side === 'inside') {
-      left = box.x + box.w / 2 - cw / 2;
-      top = box.y + box.h / 2 - ch / 2;
-    } else if (side === 'right') {
-      left = box.x + box.w + GAP;
-      top = box.y + box.h / 2 - ch / 2;
-    } else if (side === 'left') {
-      left = box.x - cw - GAP;
-      top = box.y + box.h / 2 - ch / 2;
-    } else if (side === 'above') {
-      left = box.x + box.w / 2 - cw / 2;
-      top = box.y - ch - GAP;
-    } else {
-      left = box.x + box.w / 2 - cw / 2;
-      top = box.y + box.h + GAP;
-    }
-    card.style.left = `${Math.max(EDGE, Math.min(left, window.innerWidth - cw - EDGE))}px`;
-    card.style.top = `${Math.max(EDGE, Math.min(top, window.innerHeight - ch - EDGE))}px`;
+    const { left, top } = place(
+      box,
+      { w: card.offsetWidth, h: card.offsetHeight },
+      { w: window.innerWidth, h: window.innerHeight },
+      { side: step?.side ?? 'below', gap: GAP, edge: EDGE, flip: false },
+    );
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
   }, [open, box, step]);
 
   // Keyboard: Esc dismisses, arrows step. Enter is left to the focused button.

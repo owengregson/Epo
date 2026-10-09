@@ -1,64 +1,29 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-
 /**
  * §2 live mirror — the Targets console's detail surface ticks DURING a pure
  * acquisition walk.
  *
  * The renderer's `useTargetDetail` re-invokes `chain:detail` every time a
  * `chainList` push arrives; that push rides the throttled store-mutation
- * subscription, so the push IS the mutation tick. This test exercises the REAL
+ * subscription, so the push IS the mutation tick. This exercises the REAL
  * wiring end to end: a built Foundation, its real SQLite-backed store, and
  * per-row writes shaped like a walk's `ingestRow` (accounts + edges only — no
  * engine, no status counter moves). Each mutation burst must (a) fire the
  * chain-list push the hook keys on, and (b) leave `chainDetail` returning the
- * FRESH funnel/scanned numbers at that moment — together, the detail surface
- * provably updates mid-walk.
- *
- * Electron is mocked at module scope exactly as in foundation-chain-push.test.ts.
+ * FRESH funnel/scanned numbers at that moment.
  */
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'epo-chain-detail-'));
-
-jest.mock('electron', () => ({
-  app: { getPath: () => tmp },
-  session: {
-    fromPartition: () => ({
-      cookies: { get: async () => [{ name: 'ds_user_id', value: '4242' }] },
-      clearStorageData: async () => {},
-      clearCache: async () => {},
-    }),
-  },
-}));
-
-import type { InstagramTab } from '@/adapter/tab';
-import { Foundation } from '@/main/foundation-wiring';
-import type { KnowledgeStore } from '@/store/knowledge-store';
 import { POLL } from '@/timing/config';
 import type { ChainTargetView } from '@/types';
-import { setLevel } from '@/utils/logger';
+import { builtFoundation, cleanupMainHarness, foundationStore } from '../kit/main-harness';
 
-beforeAll(() => setLevel('error'));
-afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
-
-const fakeTab = {
-  show: () => {},
-  hide: () => {},
-  goto: async () => {},
-  currentUrl: () => 'https://www.instagram.com/',
-  evaluate: async () => '/myself/',
-  onResponse: () => () => {},
-} as unknown as InstagramTab;
+afterAll(cleanupMainHarness);
 
 const settle = () => new Promise((r) => setTimeout(r, POLL.GRAPH_PUSH_THROTTLE_MS + 250));
 
 test('chain:detail reflects each mutation burst of a simulated walk, tick by tick', async () => {
   const pushes: ChainTargetView[][] = [];
-  const f = new Foundation({ tab: fakeTab, onChainList: (list) => pushes.push(list) });
-
-  expect(await f.ensureBuilt()).toBe(true);
-  const store = (f as unknown as { graph: { store: KnowledgeStore } }).graph.store;
+  const { foundation: f } = await builtFoundation({ onChainList: (list) => pushes.push(list) });
+  const store = foundationStore(f);
   const now = Date.now();
 
   // Walk start: the chain target lands, then its first crowd row streams in.

@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import { Button } from '@/renderer/ui/Button';
 import { Card, CardHeader } from '@/renderer/ui/Card';
@@ -10,7 +9,7 @@ import type { Settings } from '@/types';
 export interface PruneWhitelistCardProps {
   /** The persisted whitelist (usernames, matched case-insensitively). */
   whitelist: string[];
-  /** Bio words/phrases that protect an account from prune unfollows. */
+  /** The bio keep-list: words that keep a FOLLOW-BACK followed (see below). */
   bioFilterWords: string[];
   /** Persist a partial settings change (the view saves + relays onSaved). */
   onSave(part: Partial<Settings>): void;
@@ -20,14 +19,15 @@ export interface PruneWhitelistCardProps {
  * Prune · Whitelist — accounts that are never pruned. Add via the input
  * (Enter or the + button; trimmed, lowercased, deduped) and remove by clicking
  * an entry's chip. Every change persists immediately through `settings:update`.
- * Below it, the bio filter: words/phrases that protect any account whose
- * profile bio contains one (checked just before each unfollow).
+ * Below it, the bio keep-list: words/phrases that keep an account followed
+ * ONLY when it follows you back (the churn rotation's keep gate) — someone
+ * who doesn't follow back is pruned regardless of their bio.
  */
 export function PruneWhitelistCard({
   whitelist,
   bioFilterWords,
   onSave,
-}: PruneWhitelistCardProps): h.JSX.Element {
+}: PruneWhitelistCardProps): JSX.Element {
   const [value, setValue] = useState('');
   const clean = value.trim().replace(/^@/, '').toLowerCase();
 
@@ -57,7 +57,7 @@ export function PruneWhitelistCard({
   };
 
   return (
-    <Card index={2}>
+    <Card>
       <CardHeader icon="shield-halved" aux={whitelist.length > 0 ? `${whitelist.length} protected` : undefined}>
         Prune · Whitelist
       </CardHeader>
@@ -111,9 +111,9 @@ export function PruneWhitelistCard({
         </div>
       </Field>
       <Field
-        label="Protected bio words"
+        label="Bio keep-words"
         htmlFor="bioWordInput"
-        tip="Anyone whose profile bio contains one of these words or phrases is never unfollowed by a prune run. Matched anywhere in the bio, ignoring case."
+        tip="Someone who FOLLOWS YOU BACK and whose bio contains one of these words or phrases stays followed — the rotation never unfollows them. Matched anywhere in the bio, ignoring case. Accounts that don't follow back are pruned regardless of bio."
       >
         <div class="wl-add">
           <input
@@ -124,7 +124,7 @@ export function PruneWhitelistCard({
             placeholder="word or phrase"
             spellcheck={false}
             autocomplete="off"
-            aria-label="Bio word or phrase to protect"
+            aria-label="Bio keep-word or phrase"
             onInput={(e) => setWordValue((e.currentTarget as HTMLInputElement).value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -133,7 +133,7 @@ export function PruneWhitelistCard({
               }
             }}
           />
-          <Button icon="plus" title="Add protected bio word" disabled={!cleanWord} onClick={addWord}>
+          <Button icon="plus" title="Add bio keep-word" disabled={!cleanWord} onClick={addWord}>
             Add
           </Button>
         </div>
@@ -144,7 +144,7 @@ export function PruneWhitelistCard({
                 key={w}
                 type="button"
                 class="chip wl-chip"
-                aria-label={`Remove "${w}" from the protected bio words`}
+                aria-label={`Remove "${w}" from the bio keep-words`}
                 onClick={() => removeWord(w)}
               >
                 {w}
@@ -153,11 +153,11 @@ export function PruneWhitelistCard({
             ))}
           </div>
         ) : (
-          <div class="hint">No protected bio words yet.</div>
+          <div class="hint">No keep-words yet.</div>
         )}
         <div class="hint">
-          Bios are checked just before each unfollow, so matches are honored even when a
-          bio was unknown at scan time.
+          Keeps mutuals you care about: a follow-back whose bio matches is held forever
+          instead of being rotated out. It does not shield non-followers from a prune.
         </div>
       </Field>
     </Card>

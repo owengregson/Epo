@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 
 export interface StepperProps {
   value: number;
@@ -15,7 +14,7 @@ export interface StepperProps {
 }
 
 /** A −/value/+ numeric stepper (`.stepper`). Clamps + snaps to `step`. */
-export function Stepper({ value, min, max, step, dec, suffix, onChange, ariaLabel }: StepperProps): h.JSX.Element {
+export function Stepper({ value, min, max, step, dec, suffix, onChange, ariaLabel }: StepperProps): JSX.Element {
   const fmt = (v: number): string => (dec ? v.toFixed(dec) : String(Math.round(v))) + (suffix || '');
 
   const commit = (raw: number): void => {

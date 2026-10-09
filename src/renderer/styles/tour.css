@@ -162,7 +162,7 @@
 
 /* A tour spotlight anchor wrapping ONE card. The wrapped card becomes the
    wrapper's :last-child, which zeroes the card's own inter-card margin
-   (primitives.css) — so the wrapper carries the card's slot in the column
+   (controls.css) — so the wrapper carries the card's slot in the column
    rhythm itself, and the inner margin is retired. */
 .tour-wrap {
   margin-bottom: var(--sp-3);

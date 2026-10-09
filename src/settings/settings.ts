@@ -14,6 +14,7 @@ import {
   type PatternSettings,
   PERSONAS,
   type PersonaId,
+  type ResolvedPattern,
   resolvePattern,
 } from './pattern-map';
 
@@ -88,8 +89,10 @@ export interface Settings {
   // --- Auto-prune: unfollow non-reciprocating accounts (separate from growth). ---
   /** Usernames never auto-pruned (case-insensitive; pk entries also match). */
   pruneWhitelist: string[];
-  /** Bio words/phrases that protect an account from prune unfollows
-   *  (case-insensitive substring match on the profile bio). */
+  /** The bio keep-list: words/phrases (case-insensitive substring match on
+   *  the profile bio) that keep an account followed — ONLY when it follows
+   *  back. A protected mutual is never rotated out by the churn cycle; a
+   *  non-follower is pruned regardless of bio. */
   pruneBioFilterWords: string[];
   /** Max prune unfollows per local day (its OWN ledger, independent of growth). */
   pruneDailyLimit: number;
@@ -141,277 +144,64 @@ export interface Settings {
   tourCompletedAt: number | null;
 }
 
-/**
- * Fallback values for every knob, consistent with each component's own `*_DEFAULTS`
- * (v3 §4: the component defaults live here). Time knobs are in display units.
- */
-export const DEFAULT_SETTINGS: Settings = {
-  seed: '',
+// --- The one knob table -------------------------------------------------------
+//
+// Every knob is declared ONCE here, with its default and its safe range in the
+// same line. `DEFAULT_SETTINGS` is projected out of it and `sanitizeSettings`
+// applies it, so a new knob cannot ship with a default but no clamp (or the
+// reverse) — and `satisfies` below makes a knob missing from either the
+// `Settings` interface or this table a compile error.
 
-  bandLow: 0.9,
-  bandHigh: 1.5,
-  peakLow: 1.0,
-  peakHigh: 1.2,
-  hardLow: 0.5,
-  hardHigh: 3.0,
-
-  minFollowers: 50,
-  maxFollowers: 20000,
-  privateBoost: 0.15,
-
-  maxRetries: 3,
-
-  // Legacy pacing knobs — retained for the prune-scan / manual paths and the legacy
-  // (non-organic) model only. The growth pace comes from the qualitative pattern.
-  minDelayMinutes: 3,
-  maxDelayMinutes: 7,
-  jitterPercent: 30,
-  activeHoursStart: 8,
-  activeHoursEnd: 22,
-
-  // The notifications-based check is one click + one request, cheap enough to
-  // run hourly (the old whole-list paged sweep budgeted for multi-hour gaps).
-  followbackSweepHours: 1,
-  sweepLastRunAt: null,
-  sweepIntervalFactor: 1,
-  autoAcceptFollowRequests: true,
-
-  lowWaterCandidates: 5,
-  minFollowBackRate: 0.15,
-  minPoolSize: 300,
-
-  dryRun: false,
-
-  pruneWhitelist: [],
-  pruneBioFilterWords: [],
-  pruneDailyLimit: 50,
-  pruneScheduleDays: 0,
-  pruneLastRunAt: null,
-  // Matched to the widely-used console tool's scan cadence (~1.5–3.3 s per
-  // 50-user API page): with the direct list walk this completes ~3200
-  // followers in a few minutes while staying inside its proven rate band.
-  pruneScanMinSeconds: 1,
-  pruneScanMaxSeconds: 3,
-
-  pacingModel: 'organic',
-
-  // The qualitative pattern is the source of truth for the pacing numbers: every
-  // derived knob (daily volume, sessions, gaps, velocity, weave, prune cap, follow-back
-  // windows, plan size) comes from resolvePattern(balanced), so there is ONE home.
-  persona: 'balanced',
-  pattern: { ...PERSONAS.balanced },
-  ...resolvePattern(PERSONAS.balanced),
-
-  tourCompletedAt: null,
-};
-
-
-/**
- * Load settings from `filePath`, merged over {@link DEFAULT_SETTINGS} so a partial or
- * older file still yields a complete object. A missing file or a parse error is NOT an
- * error condition: it returns the defaults and logs a warning (never throws).
- */
-export function loadSettings(filePath: string): Settings {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(filePath, 'utf8');
-  } catch (err) {
-    warn('settings: no settings file, using defaults', { filePath, error: String(err) });
-    return { ...DEFAULT_SETTINGS };
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<Settings>;
-    // Migration: a file predating the qualitative pattern model has no `persona`/`pattern`.
-    // Treat it as 'custom' AND drop the default-merged pattern so its hand-set numeric
-    // knobs survive rather than being re-derived from a nominal pattern (§5.6.5).
-    const legacyNoPattern = !('pattern' in parsed);
-    if (!('persona' in parsed)) parsed.persona = 'custom';
-    const merged = { ...DEFAULT_SETTINGS, ...parsed };
-    if (legacyNoPattern && merged.persona === 'custom') {
-      (merged as { pattern?: PatternSettings }).pattern = undefined;
-    }
-    return sanitizeSettings(merged);
-  } catch (err) {
-    warn('settings: failed to parse settings file, using defaults', {
-      filePath,
-      error: String(err),
-    });
-    return { ...DEFAULT_SETTINGS };
-  }
+/** How one knob's stored value is repaired: never a throw, always the nearest safe value. */
+interface Rule<T> {
+  fallback: T;
+  coerce(raw: unknown): T;
 }
 
-// --- Validation -------------------------------------------------------------------
-
-const num = (v: unknown, fallback: number, min: number, max: number): number => {
+const clamp = (v: unknown, fallback: number, min: number, max: number): number => {
   const n = typeof v === 'number' && Number.isFinite(v) ? v : fallback;
   return Math.min(max, Math.max(min, n));
 };
-const intNum = (v: unknown, fallback: number, min: number, max: number): number =>
-  Math.round(num(v, fallback, min, max));
-const boolVal = (v: unknown, fallback: boolean): boolean =>
-  typeof v === 'boolean' ? v : fallback;
-const strVal = (v: unknown, fallback: string): string => (typeof v === 'string' ? v : fallback);
-const strArr = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-const epochOrNull = (v: unknown): number | null =>
-  typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
 
-/**
- * Clamp every knob into its sane range. The UI keeps its own input guards, but
- * settings also arrive from disk and over IPC unvalidated — a hand-edited file
- * (or a bad renderer payload) must never produce a negative delay, a 100%
- * jitter that fires actions back-to-back, an inverted band, or a whitelist that
- * isn't an array (which used to crash the prune scan). Every out-of-range value
- * degrades to the nearest safe one, never to a throw.
- */
-export function sanitizeSettings(s: Settings): Settings {
-  const d = DEFAULT_SETTINGS;
-  const out: Settings = { ...s };
+/** A real-valued knob, clamped into `[min, max]`. */
+const num = (fallback: number, min: number, max: number): Rule<number> => ({
+  fallback,
+  coerce: (v) => clamp(v, fallback, min, max),
+});
 
-  out.seed = strVal(s.seed, d.seed).trim();
+/** An integer knob: clamped, then rounded. */
+const int = (fallback: number, min: number, max: number): Rule<number> => ({
+  fallback,
+  coerce: (v) => Math.round(clamp(v, fallback, min, max)),
+});
 
-  // Ratio bands: numeric sanity first, then enforce the piecewise ordering
-  // hardLow ≤ bandLow ≤ peakLow ≤ peakHigh ≤ bandHigh ≤ hardHigh.
-  out.hardLow = num(s.hardLow, d.hardLow, 0, 100);
-  out.bandLow = Math.max(num(s.bandLow, d.bandLow, 0, 100), out.hardLow);
-  out.peakLow = Math.max(num(s.peakLow, d.peakLow, 0, 100), out.bandLow);
-  out.peakHigh = Math.max(num(s.peakHigh, d.peakHigh, 0, 100), out.peakLow);
-  out.bandHigh = Math.max(num(s.bandHigh, d.bandHigh, 0, 100), out.peakHigh);
-  out.hardHigh = Math.max(num(s.hardHigh, d.hardHigh, 0, 100), out.bandHigh);
+const bool = (fallback: boolean): Rule<boolean> => ({
+  fallback,
+  coerce: (v) => (typeof v === 'boolean' ? v : fallback),
+});
 
-  out.minFollowers = intNum(s.minFollowers, d.minFollowers, 0, 10_000_000);
-  out.maxFollowers = Math.max(
-    intNum(s.maxFollowers, d.maxFollowers, 1, 100_000_000),
-    out.minFollowers,
-  );
-  out.privateBoost = num(s.privateBoost, d.privateBoost, 0, 1);
+const str = (fallback: string): Rule<string> => ({
+  fallback,
+  coerce: (v) => (typeof v === 'string' ? v : fallback).trim(),
+});
 
-  out.maxWaitForFollowbackDays = num(s.maxWaitForFollowbackDays, d.maxWaitForFollowbackDays, 0.25, 60);
-  out.holdAfterFollowbackDays = num(s.holdAfterFollowbackDays, d.holdAfterFollowbackDays, 0, 60);
-  out.maxRetries = intNum(s.maxRetries, d.maxRetries, 0, 10);
+/** A list of strings; anything else (a hand-edited object, null) reads as empty. */
+const strList = (): Rule<string[]> => ({
+  fallback: [],
+  coerce: (v) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []),
+});
 
-  out.dailyOperatingRate = intNum(s.dailyOperatingRate, d.dailyOperatingRate, 1, 500);
-  out.dailyHardCeiling = Math.max(
-    intNum(s.dailyHardCeiling, d.dailyHardCeiling, 1, 1000),
-    out.dailyOperatingRate,
-  );
-  out.minDelayMinutes = num(s.minDelayMinutes, d.minDelayMinutes, 0.5, 240);
-  out.maxDelayMinutes = Math.max(num(s.maxDelayMinutes, d.maxDelayMinutes, 0.5, 480), out.minDelayMinutes);
-  out.jitterPercent = num(s.jitterPercent, d.jitterPercent, 0, 90);
-  out.activeHoursStart = intNum(s.activeHoursStart, d.activeHoursStart, 0, 23);
-  out.activeHoursEnd = intNum(s.activeHoursEnd, d.activeHoursEnd, 0, 23);
+/** An epoch-ms timestamp, or null when absent/garbage. */
+const epoch = (): Rule<number | null> => ({
+  fallback: null,
+  coerce: (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null),
+});
 
-  out.followbackSweepHours = num(s.followbackSweepHours, d.followbackSweepHours, 0.5, 168);
-  out.sweepLastRunAt = epochOrNull(s.sweepLastRunAt);
-  out.sweepIntervalFactor = num(
-    s.sweepIntervalFactor,
-    d.sweepIntervalFactor,
-    NOISE.CADENCE_MIN_FACTOR,
-    NOISE.CADENCE_MAX_FACTOR,
-  );
-
-  out.dailyPlanSize = intNum(s.dailyPlanSize, d.dailyPlanSize, 1, 200);
-  out.lowWaterCandidates = intNum(s.lowWaterCandidates, d.lowWaterCandidates, 0, 100);
-  out.minFollowBackRate = num(s.minFollowBackRate, d.minFollowBackRate, 0, 1);
-  out.minPoolSize = intNum(s.minPoolSize, d.minPoolSize, 0, 1_000_000);
-
-  out.dryRun = boolVal(s.dryRun, d.dryRun);
-  out.autoAcceptFollowRequests = boolVal(s.autoAcceptFollowRequests, d.autoAcceptFollowRequests);
-
-  out.pruneWhitelist = strArr(s.pruneWhitelist);
-  out.pruneBioFilterWords = strArr(s.pruneBioFilterWords);
-  out.pruneDailyLimit = intNum(s.pruneDailyLimit, d.pruneDailyLimit, 1, 1000);
-  out.pruneScheduleDays = num(s.pruneScheduleDays, d.pruneScheduleDays, 0, 365);
-  out.pruneLastRunAt = epochOrNull(s.pruneLastRunAt);
-  out.tourCompletedAt = epochOrNull(s.tourCompletedAt);
-  out.pruneScanMinSeconds = num(s.pruneScanMinSeconds, d.pruneScanMinSeconds, 0.5, 300);
-  out.pruneScanMaxSeconds = Math.max(
-    num(s.pruneScanMaxSeconds, d.pruneScanMaxSeconds, 0.5, 600),
-    out.pruneScanMinSeconds,
-  );
-
-  // Both models are valid stored values (an explicit 'legacy' from an existing
-  // install is respected); anything else degrades to the default ('organic').
-  out.pacingModel =
-    s.pacingModel === 'organic' || s.pacingModel === 'legacy' ? s.pacingModel : d.pacingModel;
-  out.dailyVolumeVariancePct = num(s.dailyVolumeVariancePct, d.dailyVolumeVariancePct, 0, 60);
-  out.restDayChancePct = num(s.restDayChancePct, d.restDayChancePct, 0, 30);
-  out.sessionsPerDayMin = intNum(s.sessionsPerDayMin, d.sessionsPerDayMin, 1, 12);
-  out.sessionsPerDayMax = Math.max(
-    intNum(s.sessionsPerDayMax, d.sessionsPerDayMax, 1, 12),
-    out.sessionsPerDayMin,
-  );
-  out.gapMedianSeconds = num(s.gapMedianSeconds, d.gapMedianSeconds, 30, 600);
-  out.gapFloorSeconds = Math.min(
-    num(s.gapFloorSeconds, d.gapFloorSeconds, 15, 300),
-    out.gapMedianSeconds,
-  );
-  out.hourlyVelocityCap = intNum(s.hourlyVelocityCap, d.hourlyVelocityCap, 3, 40);
-  out.weaveEnabled = boolVal(s.weaveEnabled, d.weaveEnabled);
-  out.maxUnfollowFractionPerSession = num(
-    s.maxUnfollowFractionPerSession,
-    d.maxUnfollowFractionPerSession,
-    0,
-    1,
-  );
-
-  // Qualitative pattern (§5.6). A NAMED persona is authoritative: the numeric pacing
-  // knobs are DERIVED from its bundle (users tune behavior, not distributions). In
-  // 'custom' mode — or a legacy file with no `persona` — the numeric knobs are kept as
-  // clamped (the renderer materializes them from the qualitative knobs on edit; a legacy
-  // file's hand-set numbers survive migration). The default persona 'balanced' derives
-  // exactly the historical numeric defaults, so a fresh install is unchanged.
-  const hasNamedPersona =
-    typeof s.persona === 'string' &&
-    PERSONA_IDS.includes(s.persona as PersonaId) &&
-    s.persona !== 'custom';
-  if (hasNamedPersona) {
-    const persona = s.persona as PersonaId;
-    const pattern = { ...PERSONAS[persona as Exclude<PersonaId, 'custom'>] };
-    out.persona = persona;
-    out.pattern = pattern;
-    const rp = resolvePattern(pattern);
-    out.dailyOperatingRate = rp.dailyOperatingRate;
-    out.dailyHardCeiling = rp.dailyHardCeiling;
-    out.dailyVolumeVariancePct = rp.dailyVolumeVariancePct;
-    out.restDayChancePct = rp.restDayChancePct;
-    out.sessionsPerDayMin = rp.sessionsPerDayMin;
-    out.sessionsPerDayMax = rp.sessionsPerDayMax;
-    out.gapMedianSeconds = rp.gapMedianSeconds;
-    out.gapFloorSeconds = rp.gapFloorSeconds;
-    out.hourlyVelocityCap = rp.hourlyVelocityCap;
-    out.weaveEnabled = rp.weaveEnabled;
-    out.maxUnfollowFractionPerSession = rp.maxUnfollowFractionPerSession;
-    out.maxWaitForFollowbackDays = rp.maxWaitForFollowbackDays;
-    out.holdAfterFollowbackDays = rp.holdAfterFollowbackDays;
-    out.dailyPlanSize = rp.dailyPlanSize;
-  } else {
-    out.persona = 'custom';
-    out.pattern = sanitizePattern(s.pattern);
-    if (s.pattern !== undefined && s.pattern !== null) {
-      // A UI-tuned custom pattern derives its numbers too (a legacy numbers-only file
-      // has no `pattern`, so its hand-set knobs are preserved instead).
-      const rp = resolvePattern(out.pattern);
-      out.dailyOperatingRate = rp.dailyOperatingRate;
-      out.dailyHardCeiling = rp.dailyHardCeiling;
-      out.dailyVolumeVariancePct = rp.dailyVolumeVariancePct;
-      out.restDayChancePct = rp.restDayChancePct;
-      out.sessionsPerDayMin = rp.sessionsPerDayMin;
-      out.sessionsPerDayMax = rp.sessionsPerDayMax;
-      out.gapMedianSeconds = rp.gapMedianSeconds;
-      out.gapFloorSeconds = rp.gapFloorSeconds;
-      out.hourlyVelocityCap = rp.hourlyVelocityCap;
-      out.weaveEnabled = rp.weaveEnabled;
-      out.maxUnfollowFractionPerSession = rp.maxUnfollowFractionPerSession;
-      out.maxWaitForFollowbackDays = rp.maxWaitForFollowbackDays;
-      out.holdAfterFollowbackDays = rp.holdAfterFollowbackDays;
-      out.dailyPlanSize = rp.dailyPlanSize;
-    }
-  }
-
-  return out;
-}
+/** A closed set of stored values; anything else degrades to `fallback`. */
+const oneOf = <T extends string>(allowed: readonly T[], fallback: T): Rule<T> => ({
+  fallback,
+  coerce: (v) => (typeof v === 'string' && allowed.includes(v as T) ? (v as T) : fallback),
+});
 
 /** Allowed values for each qualitative knob (for sanitizing a hand-edited file). */
 const PATTERN_ALLOWED = {
@@ -425,7 +215,7 @@ const PATTERN_ALLOWED = {
   patience: ['quick', 'normal', 'patient'],
 } as const;
 
-const PERSONA_IDS: PersonaId[] = [
+const PERSONA_IDS: readonly PersonaId[] = [
   'casual',
   'balanced',
   'grower',
@@ -453,6 +243,226 @@ function sanitizePattern(raw: unknown): PatternSettings {
     cleanup: pick('cleanup'),
     patience: pick('patience'),
   };
+}
+
+/** The `balanced` persona IS the historical numeric default set — one home for both. */
+const BALANCED = resolvePattern(PERSONAS.balanced);
+
+const RULES = {
+  seed: str(''),
+
+  // Ratio bands. The piecewise ordering is enforced by ORDERINGS below.
+  bandLow: num(0.9, 0, 100),
+  bandHigh: num(1.5, 0, 100),
+  peakLow: num(1.0, 0, 100),
+  peakHigh: num(1.2, 0, 100),
+  hardLow: num(0.5, 0, 100),
+  hardHigh: num(3.0, 0, 100),
+
+  minFollowers: int(50, 0, 10_000_000),
+  maxFollowers: int(20_000, 1, 100_000_000),
+  privateBoost: num(0.15, 0, 1),
+
+  maxWaitForFollowbackDays: num(BALANCED.maxWaitForFollowbackDays, 0.25, 60),
+  holdAfterFollowbackDays: num(BALANCED.holdAfterFollowbackDays, 0, 60),
+  maxRetries: int(3, 0, 10),
+
+  dailyHardCeiling: int(BALANCED.dailyHardCeiling, 1, 1000),
+  dailyOperatingRate: int(BALANCED.dailyOperatingRate, 1, 500),
+  // Legacy pacing knobs — the prune-scan / manual paths and the legacy model
+  // only. The growth pace comes from the qualitative pattern.
+  minDelayMinutes: num(3, 0.5, 240),
+  maxDelayMinutes: num(7, 0.5, 480),
+  jitterPercent: num(30, 0, 90),
+  activeHoursStart: int(8, 0, 23),
+  activeHoursEnd: int(22, 0, 23),
+
+  // The notifications-based check is one click + one request, cheap enough to
+  // run hourly (the old whole-list paged sweep budgeted for multi-hour gaps).
+  followbackSweepHours: num(1, 0.5, 168),
+  sweepLastRunAt: epoch(),
+  sweepIntervalFactor: num(1, NOISE.CADENCE_MIN_FACTOR, NOISE.CADENCE_MAX_FACTOR),
+  autoAcceptFollowRequests: bool(true),
+
+  dailyPlanSize: int(BALANCED.dailyPlanSize, 1, 200),
+  lowWaterCandidates: int(5, 0, 100),
+  minFollowBackRate: num(0.15, 0, 1),
+  minPoolSize: int(300, 0, 1_000_000),
+
+  dryRun: bool(false),
+
+  pruneWhitelist: strList(),
+  pruneBioFilterWords: strList(),
+  pruneDailyLimit: int(50, 1, 1000),
+  pruneScheduleDays: num(0, 0, 365),
+  pruneLastRunAt: epoch(),
+  // Matched to the widely-used console tool's scan cadence (~1.5–3.3 s per
+  // 50-user API page): with the direct list walk this completes ~3200
+  // followers in a few minutes while staying inside its proven rate band.
+  pruneScanMinSeconds: num(1, 0.5, 300),
+  pruneScanMaxSeconds: num(3, 0.5, 600),
+
+  // Both models are valid stored values (an explicit 'legacy' from an existing
+  // install is respected); anything else degrades to the default.
+  pacingModel: oneOf(['legacy', 'organic'] as const, 'organic'),
+  dailyVolumeVariancePct: num(BALANCED.dailyVolumeVariancePct, 0, 60),
+  restDayChancePct: num(BALANCED.restDayChancePct, 0, 30),
+  sessionsPerDayMin: int(BALANCED.sessionsPerDayMin, 1, 12),
+  sessionsPerDayMax: int(BALANCED.sessionsPerDayMax, 1, 12),
+  gapMedianSeconds: num(BALANCED.gapMedianSeconds, 30, 600),
+  gapFloorSeconds: num(BALANCED.gapFloorSeconds, 15, 300),
+  hourlyVelocityCap: int(BALANCED.hourlyVelocityCap, 3, 40),
+  weaveEnabled: bool(BALANCED.weaveEnabled),
+  maxUnfollowFractionPerSession: num(BALANCED.maxUnfollowFractionPerSession, 0, 1),
+
+  // The qualitative pair is re-decided wholesale after the per-knob pass (see
+  // the persona block in `sanitizeSettings`); these rules only supply defaults.
+  persona: oneOf(PERSONA_IDS, 'balanced'),
+  pattern: { fallback: { ...PERSONAS.balanced }, coerce: sanitizePattern } as Rule<PatternSettings>,
+
+  tourCompletedAt: epoch(),
+} satisfies { [K in keyof Settings]: Rule<Settings[K]> };
+
+/**
+ * Pairs that must stay ordered after the per-knob clamps: `[a, b]` lifts `a` to
+ * at least `b`. Applied in sequence, so the ratio band's five links compose
+ * into hardLow ≤ bandLow ≤ peakLow ≤ peakHigh ≤ bandHigh ≤ hardHigh.
+ */
+const AT_LEAST: ReadonlyArray<readonly [NumericKnob, NumericKnob]> = [
+  ['bandLow', 'hardLow'],
+  ['peakLow', 'bandLow'],
+  ['peakHigh', 'peakLow'],
+  ['bandHigh', 'peakHigh'],
+  ['hardHigh', 'bandHigh'],
+  ['maxFollowers', 'minFollowers'],
+  ['dailyHardCeiling', 'dailyOperatingRate'],
+  ['maxDelayMinutes', 'minDelayMinutes'],
+  ['pruneScanMaxSeconds', 'pruneScanMinSeconds'],
+  ['sessionsPerDayMax', 'sessionsPerDayMin'],
+];
+
+/** Pairs where `a` must not exceed `b` (the gap floor never passes the median). */
+const AT_MOST: ReadonlyArray<readonly [NumericKnob, NumericKnob]> = [
+  ['gapFloorSeconds', 'gapMedianSeconds'],
+];
+
+/** Knob names whose value is a plain number (the only ones the orderings touch). */
+type NumericKnob = {
+  [K in keyof Settings]: Settings[K] extends number ? K : never;
+}[keyof Settings];
+
+/**
+ * Every knob name, projected from {@link RULES} — the ONE list of what a
+ * settings object may contain. The IPC boundary guard (`src/ipc/guards.ts`)
+ * builds its `updateSettings` shape check from this, so a new knob is admitted
+ * over IPC by the same edit that declares it (ADR 1009). Values stay
+ * unvalidated there on purpose: clamping is {@link sanitizeSettings}'s job,
+ * and coercion is not validation (ADR 0103).
+ */
+export const SETTINGS_KEYS: readonly (keyof Settings)[] = Object.keys(RULES) as (keyof Settings)[];
+
+/**
+ * Fallback values for every knob, projected from {@link RULES} so the default
+ * and the clamp can never describe different values. Time knobs are in display
+ * units; the 14 pacing knobs come from the `balanced` persona's bundle.
+ */
+export const DEFAULT_SETTINGS: Settings = Object.fromEntries(
+  Object.entries(RULES).map(([key, rule]) => [key, (rule as Rule<unknown>).fallback]),
+) as unknown as Settings;
+
+/**
+ * Clamp every knob into its sane range. The UI keeps its own input guards, but
+ * settings also arrive from disk and over IPC unvalidated — a hand-edited file
+ * (or a bad renderer payload) must never produce a negative delay, a 100%
+ * jitter that fires actions back-to-back, an inverted band, or a whitelist that
+ * isn't an array (which used to crash the prune scan). Every out-of-range value
+ * degrades to the nearest safe one, never to a throw.
+ */
+export function sanitizeSettings(s: Settings): Settings {
+  const raw = s as unknown as Record<string, unknown>;
+  const out = Object.fromEntries(
+    Object.entries(RULES).map(([key, rule]) => [key, (rule as Rule<unknown>).coerce(raw[key])]),
+  ) as unknown as Settings;
+
+  const nums = out as unknown as Record<NumericKnob, number>;
+  for (const [a, b] of AT_LEAST) nums[a] = Math.max(nums[a], nums[b]);
+  for (const [a, b] of AT_MOST) nums[a] = Math.min(nums[a], nums[b]);
+
+  // Qualitative pattern: a NAMED persona is authoritative — the numeric pacing
+  // knobs are DERIVED from its bundle (users tune behavior, not distributions).
+  // In 'custom' mode the numeric knobs are kept as clamped UNLESS a `pattern`
+  // object exists, in which case the UI tuned it and its numbers derive too. A
+  // legacy numbers-only file has no `pattern`, so its hand-set knobs survive
+  // migration. The default persona 'balanced' derives exactly the historical
+  // numeric defaults, so a fresh install is unchanged.
+  const named =
+    typeof s.persona === 'string' &&
+    PERSONA_IDS.includes(s.persona) &&
+    s.persona !== 'custom'
+      ? (s.persona as Exclude<PersonaId, 'custom'>)
+      : null;
+  if (named !== null) {
+    out.persona = named;
+    out.pattern = { ...PERSONAS[named] };
+    applyResolvedPattern(out, resolvePattern(out.pattern));
+  } else {
+    out.persona = 'custom';
+    out.pattern = sanitizePattern(s.pattern);
+    if (s.pattern !== undefined && s.pattern !== null) {
+      applyResolvedPattern(out, resolvePattern(out.pattern));
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Write the 14 persona-derived knobs into `out`. `ResolvedPattern`'s keys ARE
+ * those knobs, so adding one to the bundle lands here with no edit.
+ */
+function applyResolvedPattern(out: Settings, rp: ResolvedPattern): void {
+  Object.assign(out, rp);
+}
+
+/**
+ * Load settings from `filePath`, merged over {@link DEFAULT_SETTINGS} so a partial or
+ * older file still yields a complete object. A missing file or a parse error is NOT an
+ * error condition: it returns the defaults and logs a warning (never throws).
+ */
+export function loadSettings(filePath: string): Settings {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    warn('settings: no settings file, using defaults', { filePath, error: String(err) });
+    return { ...DEFAULT_SETTINGS };
+  }
+
+  try {
+    return sanitizeSettings(migrateLegacyPattern(JSON.parse(raw) as Partial<Settings>));
+  } catch (err) {
+    warn('settings: failed to parse settings file, using defaults', {
+      filePath,
+      error: String(err),
+    });
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+/**
+ * A file predating the qualitative pattern model has no `persona`/`pattern`.
+ * Treat it as 'custom' AND drop the default-merged pattern, so its hand-set
+ * numeric knobs survive instead of being re-derived from a nominal pattern.
+ * Runs BEFORE the sanitizer, which is where the derivation happens.
+ */
+function migrateLegacyPattern(parsed: Partial<Settings>): Settings {
+  const legacyNoPattern = !('pattern' in parsed);
+  if (!('persona' in parsed)) parsed.persona = 'custom';
+  const merged = { ...DEFAULT_SETTINGS, ...parsed };
+  if (legacyNoPattern && merged.persona === 'custom') {
+    (merged as { pattern?: PatternSettings }).pattern = undefined;
+  }
+  return merged;
 }
 
 /**
@@ -493,6 +503,9 @@ export function toChurnConfig(s: Settings): ChurnConfig {
   return {
     maxWaitForFollowbackMs: s.maxWaitForFollowbackDays * MS_PER_DAY,
     maxRetries: s.maxRetries,
+    // The bio keep-list lives with churn (not prune): it protects mutuals
+    // from the hold-elapsed rotation, while prune ignores bios entirely.
+    bioKeepWords: s.pruneBioFilterWords,
   };
 }
 
@@ -571,7 +584,6 @@ export function toPruneConfig(s: Settings): PruneConfig {
   return {
     dailyLimit: s.pruneDailyLimit,
     whitelist: s.pruneWhitelist,
-    bioFilterWords: s.pruneBioFilterWords,
     minDelayMs: s.minDelayMinutes * MS_PER_MINUTE,
     maxDelayMs: s.maxDelayMinutes * MS_PER_MINUTE,
     jitterPercent: s.jitterPercent,

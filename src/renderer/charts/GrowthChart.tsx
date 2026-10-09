@@ -1,8 +1,8 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import type { NetGrowthPoint } from '@/types';
-import { shortDate } from '../lib/format';
+import { smoothPath } from '@/renderer/charts/catmull-rom';
+import type { GrowthOverlay } from '@/renderer/charts/growth-overlay';
+import { shortDate } from '@/renderer/lib/format';
 import {
   accumulateFrame,
   EASE,
@@ -11,9 +11,8 @@ import {
   GROWTH_REVEAL_DUR_MS,
   GROWTH_REVEAL_FADE_MS,
   prefersReducedMotion,
-} from '../lib/motion';
-import { smoothPath } from './catmull-rom';
-import type { GrowthOverlay } from './growth-overlay';
+} from '@/renderer/lib/motion';
+import type { NetGrowthPoint } from '@/types';
 
 const X0 = 8;
 const X1 = 362;
@@ -72,7 +71,7 @@ export function GrowthChart({
   overlay,
   revealKey,
   baselineAt,
-}: GrowthChartProps): h.JSX.Element {
+}: GrowthChartProps): JSX.Element {
   const lineRef = useRef<SVGPathElement>(null);
   const areaRef = useRef<SVGPathElement>(null);
   const dotRef = useRef<SVGCircleElement>(null);

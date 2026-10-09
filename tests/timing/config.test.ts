@@ -1,4 +1,16 @@
 import {
+  blockedStreakThreshold,
+  gapCapMs,
+  holdMediansMs,
+  holdSigma,
+  PROVENANCE,
+  pollEveryFor,
+  reentryFailThreshold,
+  stagnantPageThreshold,
+  timeoutFor,
+} from '@/kernel/derive';
+import { POLICY } from '@/kernel/policy';
+import {
   ADAPTER,
   CONNECTIVITY,
   ENGINE,
@@ -9,6 +21,7 @@ import {
   RECOVERY,
   RIM,
   SCHEDULER,
+  SESSION,
   TAB,
 } from '@/timing/config';
 
@@ -66,5 +79,57 @@ describe('timing/config — registry invariants', () => {
     expect(NOISE.BEAT_MIN_FACTOR).toBeGreaterThan(0);
     expect(NOISE.CADENCE_MIN_FACTOR).toBeGreaterThan(0);
     expect(NOISE.LIST_WALK_REST_EVERY_MIN).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/**
+ * Since ADR 0605 this registry is a SHIM: the values come from
+ * `src/kernel/derive.ts`. These identities are the documentation — they say
+ * WHICH derivation each constant is, in a form that goes red if the wiring is
+ * ever quietly re-pointed at a literal.
+ */
+describe('timing/config — the registry is derived, not declared', () => {
+  test('D3: the recovery ladder, its rung count and every jitter width', () => {
+    expect(RECOVERY.HOLD_MEDIANS_MS).toEqual(holdMediansMs());
+    expect(RECOVERY.MAX_HOLDS).toBe(RECOVERY.HOLD_MEDIANS_MS.length);
+    expect(RECOVERY.HOLD_SIGMA).toBe(holdSigma());
+    // One policy number (DESYNC_WIDTH_MS) sets the daily-boundary jitter and,
+    // through the clamp band, the three log-normal spreads.
+    expect(NOISE.DAILY_BOUNDARY_JITTER_MAX_MS).toBe(POLICY.DESYNC_WIDTH_MS);
+    expect(NOISE.PRUNE_LAUNCH_JITTER_MAX_MS).toBe(POLICY.DESYNC_WIDTH_MS / 2);
+    expect(NOISE.CADENCE_SIGMA).toBe(NOISE.BACKOFF_SIGMA);
+    expect(ENGINE.VELOCITY_PARK_SIGMA).toBe(NOISE.BACKOFF_SIGMA);
+  });
+
+  test('D4: five adapter/tab deadlines and three poll intervals, one formula each', () => {
+    expect(ADAPTER.MUTATION_RESPONSE_TIMEOUT_MS).toBe(timeoutFor('mutation'));
+    expect(ADAPTER.POLL_TIMEOUT_MS).toBe(timeoutFor('control'));
+    expect(TAB.GOTO_TIMEOUT_MS).toBe(timeoutFor('nav'));
+    expect(TAB.EVALUATE_TIMEOUT_MS).toBe(timeoutFor('evaluate'));
+    expect(TAB.FETCH_ABORT_MS).toBe(timeoutFor('fetchEnvelope'));
+    expect(CONNECTIVITY.REQUEST_TIMEOUT_MS).toBe(timeoutFor('probe'));
+    expect(ADAPTER.POLL_INTERVAL_MS).toBe(pollEveryFor('hydration'));
+    expect(ADAPTER.NAV_SETTLE_MS).toBe(pollEveryFor('nav'));
+    expect(RIM.NOTIFICATIONS_POLL_MS).toBe(pollEveryFor('control'));
+    expect(RIM.ACCEPT_VERIFY_POLL_MS).toBe(pollEveryFor('acceptRow'));
+  });
+
+  test('D5: the streak constants are Bayesian posteriors, not tastes', () => {
+    expect(RECOVERY.REENTRY_FAILS).toBe(reentryFailThreshold());
+    expect(RECOVERY.BLOCKED_STREAK_ENTRY).toBe(blockedStreakThreshold());
+    expect(RECOVERY.WALLED_CYCLES_ENTRY).toBe(blockedStreakThreshold());
+    expect(RIM.LIST_WALK_STAGNANT_STOP).toBe(stagnantPageThreshold());
+  });
+
+  test('one gap cap sizes the velocity park AND the step watchdog', () => {
+    expect(SESSION.GAP_CAP_MS).toBe(gapCapMs());
+    expect(ENGINE.VELOCITY_PARK_MEDIAN_MS).toBe(SESSION.GAP_CAP_MS);
+    expect(RECOVERY.STEP_WATCHDOG_MS).toBe(SESSION.GAP_CAP_MS);
+  });
+
+  test('the HARNESS group is the one that is NOT derived, and says so', () => {
+    for (const [key, tier] of Object.entries(PROVENANCE)) {
+      expect(`${key}:${tier === 'harness'}`).toBe(`${key}:${key.startsWith('HARNESS.')}`);
+    }
   });
 });

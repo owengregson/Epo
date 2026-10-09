@@ -1,6 +1,6 @@
 /**
  * AdapterBackedOwnFollowingSource — the live own-following port used by the
- * auto-prune routine (Phase 5). It scrapes OUR OWN FOLLOWING list — every
+ * auto-prune routine. It scrapes OUR OWN FOLLOWING list — every
  * account we currently follow — in one bounded pass.
  *
  * Mirrors `AdapterBackedOwnFollowersSource` but opens the FOLLOWING dialog
@@ -18,10 +18,10 @@ import type { Sentinel } from '@/adapter/sentinel';
 import type { PruneOwnFollowing, PruneScanFetch, PruneScanOpts } from '@/engine/prune-engine';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { ListPageWalker } from '@/rim/list-page-walker';
+import { walkOwnList } from '@/rim/walk-own-list';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { Observation } from '@/store/types';
 import { RIM } from '@/timing/config';
-import * as logger from '@/utils/logger';
 
 /** Bounded-sweep tuning. Prune walks the ENTIRE list, so rounds run generous. */
 export interface OwnFollowingSourceConfig {
@@ -94,57 +94,18 @@ export class AdapterBackedOwnFollowingSource implements PruneOwnFollowing {
    * the result against the profile-header count.
    */
   async fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch> {
-    const status = await this.sentinel.check();
-    if (status !== 'ok') {
-      // NOT an empty list: the caller must see an incomplete fetch — an empty
-      // "complete" following list would zero the candidate set silently.
-      logger.warn('rim.own-following-source: sentinel blocked, incomplete scrape', { status });
-      return { pks: [], complete: false, reason: `sentinel:${status}` };
-    }
-    if (this.walker !== undefined && this.ownPk !== undefined) {
-      const walk = await this.walker.walkAll({
-        pk: this.ownPk,
-        which: 'following',
-        onObservation: (obs) => this.ingestRow(obs),
-        sentinel: this.sentinel,
-        pageMinMs: opts?.scrollMinMs,
-        pageMaxMs: opts?.scrollMaxMs,
-        shouldStop: opts?.shouldStop,
-        onProgress: opts?.onProgress,
-      });
-      // The walk's own completeness verdict travels with the pks — a stagnant/
-      // sentinel/max-pages truncation must never masquerade as a full census.
-      if (walk.reason !== 'fetch-failed') {
-        return { pks: walk.pks, complete: walk.complete, reason: walk.reason };
-      }
-      logger.warn('rim.own-following-source: direct page walk failed, falling back to dialog', {
-        pages: walk.pages,
-        observed: walk.pks.length,
-      });
-    }
-    const result = await this.pageReader.collect({
-      dialog: 'following',
-      targetUsername: this.ownUsername,
-      onObservation: (obs) => this.ingestRow(obs),
+    return walkOwnList({
+      which: 'following',
+      label: 'rim.own-following-source',
+      ownUsername: this.ownUsername,
       sentinel: this.sentinel,
-      maxRounds: this.cfg.maxRounds,
-      noNewStop: this.cfg.noNewStop,
-      shouldStop: opts?.shouldStop,
-      scrollMinMs: opts?.scrollMinMs,
-      scrollMaxMs: opts?.scrollMaxMs,
-      onProgress: opts?.onProgress,
-      // Prune semantics: an unopened dialog must FAIL the scan, never read as
-      // "the list is empty" (which would make every followed account a candidate).
-      throwOnOpenFailure: true,
+      pageReader: this.pageReader,
+      walker: this.walker,
+      ownPk: this.ownPk,
+      bounds: this.cfg,
+      onRow: (obs) => this.ingestRow(obs),
+      opts,
     });
-    // The dialog scrape can only PROVE completion when the API itself said
-    // no-more-pages; a stagnation stop is ambiguous (small list vs. throttle)
-    // and is left to the prune engine's completeness gate to refuse.
-    return {
-      pks: result.observedPks,
-      complete: result.endReason === 'no-more-pages',
-      reason: result.endReason,
-    };
   }
 
   /**

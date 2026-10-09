@@ -5,19 +5,19 @@
  * and cadence bounds, and hold-duration bounds.
  */
 import {
-  PRESS_MAX_MS,
-  PRESS_MIN_MS,
+  type ElementRect,
+  gaussian,
   MOVE_MAX_MS,
   MOVE_MIN_MS,
-  targetPoint,
-  pathBetween,
-  travelDurationMs,
-  gaussian,
-  pressDurationMs,
-  wheelPlan,
-  stepDelays,
-  type ElementRect,
   type Point,
+  PRESS_MAX_MS,
+  PRESS_MIN_MS,
+  pathBetween,
+  pressDurationMs,
+  stepDelays,
+  targetPoint,
+  travelDurationMs,
+  wheelPlan,
 } from '@/interaction/motion-profile';
 
 /** mulberry32 — a tiny deterministic PRNG for reproducible sampling. */
@@ -162,16 +162,17 @@ describe('pathBetween', () => {
     expect(dev).toBeGreaterThan(2);
   });
 
-  test('the arc is SMOOTH: consecutive segment headings turn gently (no zig-zag shiver)', () => {
+  test('main-flight headings turn gently, with precise corrections allowed near the target', () => {
     for (let seed = 62; seed < 72; seed++) {
       const path = pathBetween(from, to, mulberry32(seed), { overshoot: false });
       for (let i = 2; i < path.length; i++) {
+        if (dist(path[i], to) < 48) continue;
         const a = Math.atan2(path[i - 1].y - path[i - 2].y, path[i - 1].x - path[i - 2].x);
         const b = Math.atan2(path[i].y - path[i - 1].y, path[i].x - path[i - 1].x);
         let turn = Math.abs(b - a);
         if (turn > Math.PI) turn = 2 * Math.PI - turn;
-        // A parabolic arc with damped-random-walk tremor turns a few degrees per
-        // step; independent per-point jitter would zig-zag far harder than 30°.
+        // WindMouse changes course continuously during the main flight. Its
+        // damped target acquisition is allowed sharper, small corrections.
         expect(turn).toBeLessThan(Math.PI / 6);
       }
     }

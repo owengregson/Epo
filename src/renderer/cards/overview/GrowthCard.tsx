@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import { GrowthChart } from '@/renderer/charts/GrowthChart';
 import { computeGrowthOverlay, type GrowthOverlay } from '@/renderer/charts/growth-overlay';
@@ -29,8 +28,6 @@ export interface GrowthCardProps {
   status: EpoStatus | null;
   /** Persisted settings — the projection overlay's model inputs. */
   settings: Settings | null;
-  /** Entrance-stagger index (`--i`); shifts down when the sign-in gate leads. */
-  index?: number;
 }
 
 /**
@@ -41,7 +38,7 @@ export interface GrowthCardProps {
  * once measurement genuinely covers the compared windows — before that it
  * shows a quiet collecting state, never a fabricated "+0".
  */
-export function GrowthCard({ status, settings, index = 1 }: GrowthCardProps): h.JSX.Element {
+export function GrowthCard({ status, settings }: GrowthCardProps): JSX.Element {
   const [win, setWin] = useState<GrowthWindowKey>(DEFAULT_GROWTH_WINDOW);
   const { points, baselineAt, forWindow } = useGrowthSeries(win, status);
   const chain = useChainList(status);
@@ -52,7 +49,7 @@ export function GrowthCard({ status, settings, index = 1 }: GrowthCardProps): h.
 
   // Aggregate realized follow-back sample across every chain target — the
   // overlay centers its expected path on this measured rate once the sample
-  // clears the shared conversion-verdict gate (§1: the verdict waits).
+  // clears the shared conversion-verdict gate (docs/PRINCIPLES.md §1: the verdict waits).
   const sampleTotal = chain.reduce((a, t) => a + t.yield.total, 0);
   const sampleBack = chain.reduce((a, t) => a + t.yield.followedBack, 0);
   const sample = sampleTotal > 0 ? { followedBack: sampleBack, total: sampleTotal } : null;
@@ -72,7 +69,7 @@ export function GrowthCard({ status, settings, index = 1 }: GrowthCardProps): h.
       : null;
 
   return (
-    <Card index={index}>
+    <Card>
       <CardHeader
         icon="arrow-trend-up"
         controls={

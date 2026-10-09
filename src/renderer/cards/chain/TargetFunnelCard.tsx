@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { LEGEND_LABELS, legendColor } from '@/renderer/graph/palette';
 import { commas, withAt } from '@/renderer/lib/format';
 import { Badge } from '@/renderer/ui/Badge';
@@ -10,8 +9,6 @@ export interface TargetFunnelCardProps {
   detail: ChainTargetDetail | null;
   /** True when this target is the engine's active one. */
   current: boolean;
-  /** Entrance-stagger index (`--i`). */
-  index?: number;
 }
 
 /** One funnel row: a lifecycle segment with its graph-palette identity. */
@@ -42,7 +39,7 @@ function funnelColor(status: GraphNodeStatus): string {
  * a follow reads "exhausted (unworked)" — drained without work is a different
  * fact from poached out.
  */
-function statusBadge(detail: ChainTargetDetail, current: boolean): h.JSX.Element {
+function statusBadge(detail: ChainTargetDetail, current: boolean): JSX.Element {
   if (current) return <Badge tone="live">Current · Hop {detail.chainIndex ?? 0}</Badge>;
   if (detail.status === 'exhausted') {
     return <Badge>{detail.yield.total === 0 ? 'exhausted (unworked)' : 'exhausted'}</Badge>;
@@ -65,9 +62,9 @@ function statusBadge(detail: ChainTargetDetail, current: boolean): h.JSX.Element
  * funnel, never as a funnel row: it is the crowd the stages draw from, and
  * keeping it out of the bar denominator keeps the stage bars legible. Counts
  * tick during walks — the hosting view re-reads the detail on every chain
- * push (§2).
+ * push (docs/PRINCIPLES.md §2).
  */
-export function TargetFunnelCard({ detail, current, index = 0 }: TargetFunnelCardProps): h.JSX.Element {
+export function TargetFunnelCard({ detail, current }: TargetFunnelCardProps): JSX.Element {
   const rows: FunnelRow[] =
     detail === null
       ? []
@@ -99,7 +96,7 @@ export function TargetFunnelCard({ detail, current, index = 0 }: TargetFunnelCar
   const denom = Math.max(1, ...rows.map((r) => r.n));
 
   return (
-    <Card raised index={index}>
+    <Card raised>
       <CardHeader
         icon="filter"
         aux={detail !== null ? withAt(detail.username) || detail.accountPk : undefined}

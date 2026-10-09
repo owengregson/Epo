@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
+import { useBridgeEvent } from '@/renderer/hooks/useBridgeEvent';
 import type { ChainTargetView, EpoStatus } from '@/types';
 
 /**
@@ -23,7 +24,7 @@ export function chainListKey(status: EpoStatus | null): string {
 }
 
 /**
- * The chain lineage (`chain:list`), live (§2). Primary source: the pushed
+ * The chain lineage (`chain:list`), live (docs/PRINCIPLES.md §2). Primary source: the pushed
  * `chainList` projection, re-shaped in main on every store mutation (throttled)
  * — this is what makes per-target yields tick DURING an acquisition walk, where
  * observations write accounts/edges only and no status counter moves. A pull
@@ -33,11 +34,7 @@ export function chainListKey(status: EpoStatus | null): string {
 export function useChainList(status: EpoStatus | null): ChainTargetView[] {
   const [list, setList] = useState<ChainTargetView[]>([]);
 
-  useEffect(() => {
-    const onPush = (l: ChainTargetView[]): void => setList(l);
-    window.epo.on('chainList', onPush);
-    return () => window.epo.off('chainList', onPush);
-  }, []);
+  useBridgeEvent('chainList', setList);
 
   const key = chainListKey(status);
   useEffect(() => {

@@ -1,7 +1,6 @@
-/** @jsx h */
-import { h } from 'preact';
-import type { ViewKey } from '../hooks/useView';
-import { Icon } from '../ui/Icon';
+import { type JSX } from 'preact';
+import type { ViewKey } from '@/renderer/hooks/useView';
+import { Icon } from '@/renderer/ui/Icon';
 
 const ITEMS: ReadonlyArray<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: 'gauge-high', label: 'Overview' },
@@ -21,7 +20,7 @@ export interface NavProps {
 
 /** The four-way view rail (Prune lives on the stage bar). Icon-only when the
  * console is very narrow (CSS). */
-export function Nav({ current, onGo }: NavProps): h.JSX.Element {
+export function Nav({ current, onGo }: NavProps): JSX.Element {
   return (
     <nav class="nav" aria-label="Console views" data-tour="nav">
       {ITEMS.map((it, i) => (

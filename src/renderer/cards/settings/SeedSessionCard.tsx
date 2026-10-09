@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import { useSeedCheck } from '@/renderer/hooks/useSeedCheck';
@@ -31,7 +30,7 @@ export function SeedSessionCard({
   confirm,
   goTo,
   requiredPrompt,
-}: SeedSessionCardProps): h.JSX.Element {
+}: SeedSessionCardProps): JSX.Element {
   const seed = useSeedCheck(draft.seed);
   const clean = seed.value.trim().replace(/^@/, '');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -92,7 +91,7 @@ export function SeedSessionCard({
   };
 
   return (
-    <Card raised index={0}>
+    <Card raised>
       <CardHeader icon="seedling">Seed · Session</CardHeader>
       <Field
         label="Seed username"

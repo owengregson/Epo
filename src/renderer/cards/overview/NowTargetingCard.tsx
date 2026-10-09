@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { useChainList } from '@/renderer/hooks/useChainList';
 import { commas, monogram, pctInt, withAt } from '@/renderer/lib/format';
 import { Avatar } from '@/renderer/ui/Avatar';
@@ -22,8 +21,6 @@ function sourceLabel(source: ChainTargetView['source']): string {
 
 export interface NowTargetingCardProps {
   status: EpoStatus | null;
-  /** Entrance-stagger index (`--i`); shifts down when the sign-in gate leads. */
-  index?: number;
 }
 
 /**
@@ -31,7 +28,7 @@ export interface NowTargetingCardProps {
  * live yield (follow-back rate · candidate pool · followed so far), joined
  * from the chain lineage by pk.
  */
-export function NowTargetingCard({ status, index = 2 }: NowTargetingCardProps): h.JSX.Element {
+export function NowTargetingCard({ status }: NowTargetingCardProps): JSX.Element {
   const chain = useChainList(status);
 
   const username = status?.currentTargetUsername ?? null;
@@ -41,7 +38,7 @@ export function NowTargetingCard({ status, index = 2 }: NowTargetingCardProps): 
   const y = target?.yield ?? null;
 
   return (
-    <Card raised index={index}>
+    <Card raised>
       <CardHeader icon="bullseye" aux={<Badge>Hop {hop ?? '—'}</Badge>}>
         Now Targeting
       </CardHeader>

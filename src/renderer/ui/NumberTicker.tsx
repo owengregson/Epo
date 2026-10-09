@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { prefersReducedMotion } from '@/renderer/lib/motion';
 import { formatTicker, tickerCells } from '@/renderer/lib/ticker';
 
@@ -18,7 +17,7 @@ export interface NumberTickerProps {
  * Each digit is a vertical 0–9 reel shifted with an em-based
  * `translateY` transform, so a value change ROLLS every changed column to its
  * new digit (~420 ms on the shared `--ease` curve, see `.nt-reel` in
- * `primitives.css`). Cells are keyed from the RIGHT (see `tickerCells`) so the
+ * `controls.css`). Cells are keyed from the RIGHT (see `tickerCells`) so the
  * units column survives length changes and count-ups read like an odometer.
  * Separators (thousands commas, signs) render as static glyphs.
  *
@@ -26,7 +25,7 @@ export interface NumberTickerProps {
  * Screen readers get the whole value once via `aria-label`; the reels (which
  * contain every digit 0–9) are hidden from the accessibility tree.
  */
-export function NumberTicker({ value, signed }: NumberTickerProps): h.JSX.Element {
+export function NumberTicker({ value, signed }: NumberTickerProps): JSX.Element {
   const text = formatTicker(value, signed);
   if (prefersReducedMotion()) return <span class="num">{text}</span>;
   return (

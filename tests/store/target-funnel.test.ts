@@ -1,5 +1,6 @@
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
+import { memoryStore } from '../kit/store';
 
 /**
  * The Targets console's store reads (`targetFunnel`, `followbackTimingFor`,
@@ -11,7 +12,7 @@ const OWN = 'me';
 
 let s: KnowledgeStore;
 beforeEach(() => {
-  s = new KnowledgeStore(':memory:');
+  s = memoryStore();
 });
 afterEach(() => s.close());
 

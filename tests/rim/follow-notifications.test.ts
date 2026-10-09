@@ -1,9 +1,10 @@
-import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
+import type { LocateConfirmRequestResult } from '@/adapter/ig-surface';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
+import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
 import { KnowledgeStore } from '@/store/knowledge-store';
-import { FakeTab, FakeSentinel, mkResp } from './fakes';
 import { setLevel } from '@/utils/logger';
+import { FakeSentinel, FakeTab, mkResp } from '../kit/fakes';
 
 beforeAll(() => setLevel('error'));
 
@@ -84,8 +85,8 @@ class FakeNotificationsActor {
     return { clicked: true, username: head, remaining };
   }
 
-  /** What the source's verify-probe evaluate should report right now. */
-  probeResult(): { found: boolean; username: string | null; remaining: number } {
+  /** The read-only head probe the accept loop uses to verify progress. */
+  async probeFollowRequestHead(): Promise<LocateConfirmRequestResult> {
     const head = this.requestQueue[0];
     return head === undefined
       ? { found: false, username: null, remaining: 0 }
@@ -96,10 +97,6 @@ class FakeNotificationsActor {
 const build = (opts?: { sentinel?: FakeSentinel; waitMs?: number; store?: KnowledgeStore }) => {
   const tab = new FakeTab();
   const actor = new FakeNotificationsActor();
-  // The accept loop's verify-probe evaluates the confirm-request locate script
-  // read-only; answer it from the scripted actor's live queue.
-  tab.onEvaluate = (script) =>
-    script.includes('actor:locate-confirm-request') ? actor.probeResult() : undefined;
   const source = new AdapterBackedFollowNotifications({
     tab,
     actor,
@@ -212,6 +209,7 @@ test('an unlocatable notifications control is a typed failure (control-not-locat
       scrollNotificationsList: async () => false,
       clickFollowRequestsEntry: async () => false,
       confirmNextFollowRequest: async () => ({ clicked: false, username: null, remaining: 0 }),
+      probeFollowRequestHead: async () => ({ found: false }),
     },
     reader,
     sentinel: new FakeSentinel() as unknown as Sentinel,
@@ -316,7 +314,7 @@ test('an accept click that never consumes its row stops the loop (no hammering)'
   actor.requestQueue = ['stuck'];
   // Sabotage: the click reports success but the row never disappears.
   actor.confirmNextFollowRequest = async () => ({ clicked: true, username: 'stuck', remaining: 1 });
-  actor.probeResult = () => ({ found: true, username: 'stuck', remaining: 1 });
+  actor.probeFollowRequestHead = async () => ({ found: true, username: 'stuck', remaining: 1 });
   actor.onClick = () => {
     if (actor.clicks === 1) tab.emit(mkResp(INBOX_URL, emptyInbox()));
   };

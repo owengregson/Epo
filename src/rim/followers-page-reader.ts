@@ -26,7 +26,8 @@ import { type Clock, SystemClock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
 import type { Observation } from '@/store/types';
 import { RIM } from '@/timing/config';
-import { fixed, sample, sleep, uniform } from '@/timing/primitives';
+import { noisify } from '@/timing/noise';
+import { sample, sleep, uniform } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
 /** The list-dialog operations the scraper needs. `Actor` satisfies this. */
@@ -82,6 +83,13 @@ export interface CollectArgs {
    * verdicts and counts, not as the carrier of facts.
    */
   onObservation: (obs: Observation, cursor: string | null) => void;
+  /**
+   * Invoked ONCE with the target's pk the moment it is derived from a list
+   * page's URL — which happens BEFORE that page's rows are parsed. Lets a
+   * caller write per-row relationship edges as rows arrive (§1) instead of
+   * back-filling them once the scrape ends.
+   */
+  onTargetPk?: (pk: string) => void;
   /**
    * Live-progress callback (optional, additive): invoked with the CUMULATIVE
    * observed-pk count whenever a parsed page GROWS the observed set (per page,
@@ -168,12 +176,10 @@ export class FollowersPageReader {
     const externalStop = args.shouldStop ?? ((): boolean => false);
     const shouldStop = (): boolean =>
       externalStop() || this.abortSignal?.()?.aborted === true;
-    // Each call draws a FRESH jittered wait when both bounds are set (the prune
-    // scan path); otherwise the fixed scrollWaitMs (growth, unchanged). The
-    // `uniform` policy carries the min ≥ 0 / max ≥ min clamps.
+    // Explicit bounds already vary; the default scroll cadence must vary too.
     const waitPolicy =
       args.scrollMinMs === undefined || args.scrollMaxMs === undefined
-        ? fixed(this.scrollWaitMs)
+        ? noisify('sub-cadence', this.scrollWaitMs, this.rng)
         : uniform(args.scrollMinMs, args.scrollMaxMs);
     const nextWaitMs = (): number => sample(waitPolicy, this.rng);
     // The one endpoint kind this scrape parses list pages from — the paginated
@@ -217,12 +223,14 @@ export class FollowersPageReader {
     // Register BEFORE navigation so the first profile-info + followers page that
     // fire on `openFollowersDialog` are not missed.
     const unsubscribe = this.tab.onResponse((resp) => {
-      const kind = this.reader.matchEndpoint(resp.url);
-      if (kind !== listKind && kind !== 'web-profile-info') return;
+      const kind = this.reader.kindOf(resp);
+      const profileKind = this.reader.profileKindOf(resp);
+      if (kind !== listKind && profileKind === null) return;
 
-      // Do not parse blind: a non-2xx status or a non-JSON body on an API URL is
-      // a rate-limit / block / login wall, not data. Warn and stop the scrape.
-      if (resp.status >= 400 || !resp.mimeType.toLowerCase().includes('json')) {
+      // Do not parse blind: a non-2xx status or an unparseable body on an API
+      // URL is a rate-limit / block / login wall, not data. Warn and stop the
+      // scrape.
+      if (resp.status >= 400 || !this.reader.parseableBody(resp.mimeType)) {
         logger.warn('rim.followers-page-reader: non-JSON/error response, halting scrape', {
           url: resp.url,
           status: resp.status,
@@ -239,6 +247,7 @@ export class FollowersPageReader {
           listKind === 'following-list'
             ? this.reader.extractTargetPkFromFollowingUrl(resp.url)
             : this.reader.extractTargetPkFromFollowersUrl(resp.url);
+        if (targetPk !== null) args.onTargetPk?.(targetPk);
       }
 
       pending.push(
@@ -246,8 +255,8 @@ export class FollowersPageReader {
           .getBody()
           .then((body) => {
             const now = this.clock.now();
-            if (kind === 'web-profile-info') {
-              const obs = this.reader.parseProfileInfo(body, now);
+            if (profileKind !== null) {
+              const obs = this.reader.parseProfileInfo(body, now, profileKind);
               if (obs) onObservation(obs, null);
               return;
             }

@@ -164,7 +164,7 @@ export interface GraphSourceRows {
   ownFollowing: GraphAccountRow[];
 }
 
-/** A node in the poaching chain (§3.5). Maps 1:1 to a row in the `targets` table. */
+/** A node in the poaching chain. Maps 1:1 to a row in the `targets` table. */
 export interface Target {
   accountPk: string;
   source: 'seed' | 'discovered' | 'own_followers';
@@ -182,7 +182,7 @@ export interface Target {
 }
 
 /**
- * The durable snapshot of the latest COMPLETED prune scan (Phase 5): the census
+ * The durable snapshot of the latest COMPLETED prune scan: the census
  * counts plus the candidates a run has not yet visited. Saved when a scan
  * completes, consumed row-by-row as a run acts, cleared when the whitelist
  * changes or a new scan begins — so a restart restores exactly the prune data

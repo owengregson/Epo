@@ -1,10 +1,9 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
+import type { QueueStageKey } from '@/renderer/cards/queues/QueuePipeline';
 import { clamp, monogram, pctInt, ratio, withAt } from '@/renderer/lib/format';
 import { Icon } from '@/renderer/ui/Icon';
 import { MS_PER_DAY } from '@/timing/units';
 import type { QueueRow } from '@/types';
-import type { QueueStageKey } from './QueuePipeline';
 
 /** Fallback follow-back window while settings load (`maxWaitForFollowbackDays` = 4). */
 const FOLLOWBACK_WINDOW_MS = 4 * MS_PER_DAY;
@@ -97,7 +96,7 @@ export interface QueueRowItemProps {
  * real timestamps, and the follower-ratio chip. The only inline style is the
  * mockup-sanctioned `.qbar i` fill width.
  */
-export function QueueRowItem({ stage, row, windows }: QueueRowItemProps): h.JSX.Element {
+export function QueueRowItem({ stage, row, windows }: QueueRowItemProps): JSX.Element {
   const due = stage === 'due';
   const { ctx, barFrac, brass } = deriveContext(stage, row, Date.now(), windows);
   const handle = withAt(row.username) || row.pk;

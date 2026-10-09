@@ -24,13 +24,14 @@ import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
+import { fetchJson } from '@/adapter/fetch-json';
+import { SURFACE } from '@/adapter/ig-surface';
 import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import { RIM } from '@/timing/config';
+import { RECOVERY, RIM } from '@/timing/config';
 import { sample, sleep, uniform } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
@@ -94,7 +95,7 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
   async enrich(usernames: string[]): Promise<number> {
     const batch = usernames.slice(0, this.batchCap);
     let enriched = 0;
-    // Profile enrichment fetches web_profile_info directly — an 'api' phase.
+    // Profile enrichment fetches the profile endpoint directly — an 'api' phase.
     // The batch size is an exact denominator, so the overlay draws a true bar.
     const reportActivity = (count: number): void =>
       this.reporter.report({
@@ -104,6 +105,9 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         total: batch.length,
       });
 
+    // Consecutive reads a WALL answered (rate limit / session wall). Three in a
+    // row is a wall, not luck: the rest of the batch would only deepen it.
+    let walledInARow = 0;
     for (let i = 0; i < batch.length; i++) {
       const username = batch[i];
       // Progress = usernames COMPLETED so far, counted at the top of each
@@ -129,50 +133,39 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         continue;
       }
 
-      let raw: unknown;
-      try {
-        raw = await this.tab.evaluate<unknown>(SURFACE.profileInfoScript(username));
-      } catch (e) {
-        logger.error('rim.profile-enricher: fetch/evaluate failed', {
-          username,
-          error: String(e),
-        });
+      // An HTML wall, rate-limit or network error is a CLASSIFIED failure, not
+      // a raw error: skip and continue (a future pass retries).
+      const res = await fetchJson(this.tab, SURFACE.profileInfoScript(username));
+      if (!res.ok) {
+        // `gone` is Instagram's definitive "no such profile" (deleted/
+        // suspended/renamed): mark it so the engine's batch selection stops
+        // resending it every pass of every cycle. Every other family (rate
+        // wall, HTML interstitial, 5xx, network) is transient — never marked.
+        if (res.kind === 'gone') {
+          this.store.markEnrichmentFailed(username, this.clock.now());
+          logger.warn('rim.profile-enricher: profile gone, marking enrich-failed', { username });
+        } else {
+          logger.warn('rim.profile-enricher: fetch failed, skipping', {
+            username,
+            kind: res.kind,
+            ...res.detail,
+          });
+        }
+        walledInARow = res.kind === 'rate-limited' || res.kind === 'auth' ? walledInARow + 1 : 0;
+        if (walledInARow >= RECOVERY.BLOCKED_STREAK_ENTRY) {
+          logger.warn('rim.profile-enricher: read wall, ending the pass early', {
+            walledInARow,
+            unread: batch.length - i - 1,
+          });
+          break;
+        }
         // Pace even on failure so a run of errors cannot hammer the endpoint.
         await this.pace(i, batch.length);
         continue;
       }
+      walledInARow = 0;
 
-      // The script resolves to a FetchEnvelope — an HTML wall, rate-limit or
-      // network error is a typed non-ok envelope, NOT a raw error. Skip and
-      // continue (a future pass retries) with a warn, never an error log.
-      const env = asFetchEnvelope(raw);
-      if (env === null) {
-        logger.warn('rim.profile-enricher: unexpected evaluate result (no envelope), skipping', {
-          username,
-        });
-        await this.pace(i, batch.length);
-        continue;
-      }
-      if (!env.ok) {
-        // A 404 is Instagram's definitive "no such profile" (deleted/
-        // suspended/renamed): mark it so the engine's batch selection stops
-        // resending it every pass of every cycle. Any OTHER non-ok status
-        // (rate wall, HTML interstitial, 5xx) is transient — never marked.
-        if (env.status === 404) {
-          this.store.markEnrichmentFailed(username, this.clock.now());
-          logger.warn('rim.profile-enricher: profile 404, marking enrich-failed', { username });
-        } else {
-          logger.warn('rim.profile-enricher: non-ok response, skipping', {
-            username,
-            status: env.status,
-            contentType: env.contentType,
-          });
-        }
-        await this.pace(i, batch.length);
-        continue;
-      }
-
-      const obs = this.reader.parseProfileInfo(env.json, this.clock.now());
+      const obs = this.reader.parseProfileInfo(res.json, this.clock.now());
       if (obs === null) {
         // A 2xx body that yields no observation is AMBIGUOUS: it can be a
         // genuinely-gone profile (`data.user` empty) but also a soft-block

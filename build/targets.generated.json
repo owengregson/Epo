@@ -1,0 +1,7 @@
+{
+  "node": "node24",
+  "chrome": "chrome152",
+  "electronVersion": "44.1.1",
+  "nodeVersion": "24.19.0",
+  "chromeVersion": "152.0.7977.65"
+}

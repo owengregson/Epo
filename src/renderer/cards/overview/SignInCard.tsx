@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { Button } from '@/renderer/ui/Button';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 
@@ -14,10 +13,10 @@ export interface SignInCardProps {
  * The logged-out gate. Shown first on the Overview whenever the persisted IG
  * session is missing; the rest of the console stays visible (read-only) below.
  */
-export function SignInCard({ pending, onLogin }: SignInCardProps): h.JSX.Element {
+export function SignInCard({ pending, onLogin }: SignInCardProps): JSX.Element {
   const opening = pending === 'login';
   return (
-    <Card raised index={0}>
+    <Card raised>
       <CardHeader icon="user-lock">Not signed in</CardHeader>
       <CardBody>
         <div class="hint">

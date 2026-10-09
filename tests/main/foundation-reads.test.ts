@@ -1,16 +1,16 @@
 import {
+  type ChainReadStore,
+  QUEUE_ROW_CAP,
+  type QueueReadStore,
+  RUNWAY_RATE_WINDOW_DAYS,
   shapeChainList,
   shapeQueueList,
   shapeTargetDetail,
-  QUEUE_ROW_CAP,
-  RUNWAY_RATE_WINDOW_DAYS,
-  type ChainReadStore,
-  type QueueReadStore,
   type TargetDetailReadStore,
 } from '@/main/foundation-reads';
 import type { AccountState, FollowRecord, FollowState, Target } from '@/store/types';
-import { CONVERSION_VERDICT_MIN, RUNWAY_CAP_DAYS, type TargetYield } from '@/types';
 import { MS_PER_DAY } from '@/timing/units';
+import { CONVERSION_VERDICT_MIN, RUNWAY_CAP_DAYS, type TargetYield } from '@/types';
 
 /**
  * The read-shaping helpers behind `chain:list` / `queue:list` (§5). They are pure —

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
+import { useBridgeEvent } from '@/renderer/hooks/useBridgeEvent';
 import type { UpdateStatus } from '@/types';
 
 /**
@@ -8,10 +9,6 @@ import type { UpdateStatus } from '@/types';
  */
 export function useUpdateStatus(): UpdateStatus | null {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
-  useEffect(() => {
-    const cb = (s: UpdateStatus): void => setStatus(s);
-    window.epo.on('updateStatus', cb);
-    return () => window.epo.off('updateStatus', cb);
-  }, []);
+  useBridgeEvent('updateStatus', setStatus);
   return status;
 }

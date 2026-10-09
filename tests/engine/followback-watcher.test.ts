@@ -1,11 +1,11 @@
 import {
-  FollowbackWatcher,
   FOLLOWBACK_DEFAULTS,
   type FollowbackEvent,
   type FollowbackNotifications,
+  FollowbackWatcher,
 } from '@/engine/followback-watcher';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
+import { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
 import { setLevel } from '@/utils/logger';
 

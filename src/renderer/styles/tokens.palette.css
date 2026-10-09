@@ -1,0 +1,130 @@
+/*
+ * Epo v3 — design tokens (Command Console), the HAND-AUTHORED half.
+ * "Instrument panel, not app": monotone graphite with whitish-silver / brushed-metal
+ * accents and one restrained shine. The palette + spacing values are the approved
+ * mockup's, verbatim — do not retune here. Everything below them (type scale, radii,
+ * hairlines, fills, elevation, control sizes) is the normalized vocabulary the
+ * component sheets draw from.
+ *
+ * The DERIVED half — the spacing ramp, the type ladder and the control-size ramp —
+ * now lives in `tokens.generated.css`, emitted from `design/scale.ts`. Everything
+ * in this file is a judgement call with no generating rule, so it stays by hand.
+ */
+
+:root {
+  /* ============ PALETTE (approved — do not retune) ============ */
+
+  /* Surfaces (graphite, back-to-front) */
+  --bg: #0d0d0f;
+  --surface: #141417;
+  --elevated: #1b1b1f;
+  --border: #26262b;
+  --border-strong: #33333a;
+
+  /* Text */
+  --text: #ececee;
+  --muted: #9a9aa2;
+  --faint: #66666e;
+
+  /* Metal accents — used sparingly (hairlines, active states, the running pulse) */
+  --silver: #c9ccd1;
+  --chrome: #eef1f4;
+  --live: #d8dde3; /* near-white steel: the single "live/go" accent */
+  --warn: #d8b768; /* muted brass */
+  --danger: #c96a6a;
+  /* Danger ramp — every destructive/invalid treatment draws from these
+     (confirm-danger button, error toasts, danger-hover borders, invalid
+     inputs) so the red family stays one tint. */
+  --danger-text: #e2a3a3; /* error toast body */
+  --danger-text-strong: #e29090; /* destructive confirm button */
+  --danger-text-hover: #efabab;
+  --danger-border-soft: #4a3333; /* danger-hover on a neutral button */
+  --danger-border: #553838; /* resting destructive border */
+  --danger-border-hover: #6b4646; /* hovered destructive / invalid input */
+  --danger-border-strong: #855050; /* focused invalid input */
+  --ok: #6db28a;
+
+  /* Interaction borders — the three brightening steps controls move through */
+  --border-hover: #3d3d45; /* hovered inputs + subtly-lit active segments */
+  --border-active: #43434c; /* primary/selected controls (transport, chips) */
+  --border-focus: #55555f; /* keyboard/caret focus on text-ish inputs */
+
+  /* ============ TYPEFACES ============ */
+  --font:
+    "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
+    "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* ============ RADII ============ */
+  --r-sm: 6px; /* inputs + segments nested inside --r containers */
+  --r: 7px; /* the house radius: cards, buttons, wells */
+  --r-lg: 10px; /* modal / largest raised surfaces */
+  --r-pill: 99px; /* pills: badges, chips, toggle */
+
+  /* ============ HAIRLINES · DIVIDERS · INSETS ============ */
+  --divider: rgba(255, 255, 255, 0.03); /* row/field seam (1px solid) */
+  --hover-veil: rgba(255, 255, 255, 0.025); /* hover wash on flat buttons */
+  --inset-bg: rgba(
+    0,
+    0,
+    0,
+    0.22
+  ); /* recessed wells: inputs, stats, pipelines */
+  --inset-shadow-soft: inset 0 1px 2px rgba(0, 0, 0, 0.3); /* shallow wells (stat cells) */
+  --inset-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35); /* standard control recess */
+  --inset-shadow-deep: inset 0 1px 2px rgba(0, 0, 0, 0.5); /* meter/slider troughs */
+
+  /* ============ COMPONENT FILLS (graphite tones) ============ */
+  --chip-bg: #202025; /* flat pill/badge fill + lit-gradient top stop */
+  --track-bg: #212126; /* meter/slider/toggle trough fill */
+  --active-fill: #26262c; /* selected segment / chip / pressed stepper */
+
+  /* Recurring surface gradients (all 180deg, brushed top-lit) */
+  --grad-control: linear-gradient(
+    180deg,
+    #1d1d22,
+    #16161a
+  ); /* resting buttons + chips */
+  --grad-active: linear-gradient(
+    180deg,
+    var(--chip-bg),
+    #18181c
+  ); /* lit nav / stepper keys */
+  --grad-raised: linear-gradient(
+    180deg,
+    #232328,
+    #18181c
+  ); /* popovers, toasts, primary transport */
+
+  /* Meter fills (progress bars) */
+  --grad-meter: linear-gradient(90deg, #8f939a, var(--chrome));
+  --grad-meter-brass: linear-gradient(90deg, #9a8654, var(--warn));
+
+  /* ============ ELEVATION ============
+     The only shines: a brushed sheen for raised surfaces + a 1px top highlight.
+     Each elevation step bakes the top highlight in. */
+  --sheen: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0) 42%,
+    rgba(0, 0, 0, 0.12) 100%
+  );
+  --shine: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  --elev-1:
+    var(--shine), 0 3px 10px rgba(0, 0, 0, 0.35); /* small controls (buttons, segments) */
+  --elev-2:
+    var(--shine), 0 5px 14px rgba(0, 0, 0, 0.4); /* lit nav, marks, chain nodes */
+  --elev-3:
+    var(--shine), 0 8px 22px rgba(0, 0, 0, 0.38), 0 2px 6px rgba(0, 0, 0, 0.3); /* card */
+  --elev-4:
+    var(--shine), 0 14px 34px rgba(0, 0, 0, 0.5), 0 3px 9px rgba(0, 0, 0, 0.35); /* raised card */
+  --elev-5:
+    var(--shine), 0 14px 36px rgba(0, 0, 0, 0.65),
+    0 3px 10px rgba(0, 0, 0, 0.45); /* popover / toast */
+  --elev-6:
+    var(--shine), 0 34px 90px rgba(0, 0, 0, 0.72), 0 6px 22px rgba(0, 0, 0, 0.5); /* modal */
+
+  /* ============ MOTION ============ */
+  --ease: cubic-bezier(0.22, 0.9, 0.28, 1);
+}

@@ -4,9 +4,10 @@
  * after-deadline), exhaustion, drift confirmation, and the success reset.
  * Fake clock, in-memory store slice, seeded rng — no timers, no browser.
  */
-import { FakeClock } from '@/governors/clock';
-import { RecoverySupervisor, type RecoveryStateStore } from '@/engine/recovery';
+
 import { ACTIONS_FAILING_HALT } from '@/engine/engine';
+import { type RecoveryStateStore, RecoverySupervisor } from '@/engine/recovery';
+import { FakeClock } from '@/governors/clock';
 import { RECOVERY } from '@/timing/config';
 import { setLevel } from '@/utils/logger';
 

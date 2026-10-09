@@ -1,6 +1,5 @@
-/** @jsx h */
-import { h } from 'preact';
-import type { LogLine } from '@/renderer/hooks/useLogFeed';
+import { type JSX } from 'preact';
+import { logSignal } from '@/renderer/app/shell-context';
 import { clockTime } from '@/renderer/lib/format';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 import type { LogEntry } from '@/types';
@@ -20,21 +19,16 @@ function levelClass(level: LogEntry['level']): 'info' | 'warn' | 'error' {
   }
 }
 
-export interface ActivityCardProps {
-  logLines: LogLine[];
-  /** Entrance-stagger index (`--i`); shifts down when the sign-in gate leads. */
-  index?: number;
-}
-
 /**
  * Activity — the newest slice of the streamed structured log, newest first
- * (the full rolling buffer lives in the shell's log feed).
+ * (the full rolling buffer lives on {@link logSignal}, which this card reads
+ * directly so a streamed line re-renders nothing above it).
  */
-export function ActivityCard({ logLines, index = 4 }: ActivityCardProps): h.JSX.Element {
-  const recent = logLines.slice(-VISIBLE_LINES).reverse();
+export function ActivityCard(): JSX.Element {
+  const recent = logSignal.value.slice(-VISIBLE_LINES).reverse();
 
   return (
-    <Card index={index}>
+    <Card>
       <CardHeader icon="wave-square">Activity</CardHeader>
       <CardBody>
         <div class="log">

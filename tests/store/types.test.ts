@@ -1,4 +1,5 @@
 import { ratioOf, SOURCE_CONFIDENCE } from '@/store/types';
+
 test('ratioOf computes following/followers', () => {
   expect(ratioOf(100, 120)).toBeCloseTo(1.2);
   expect(ratioOf(0, 50)).toBeUndefined();

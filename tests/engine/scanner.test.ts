@@ -1,4 +1,4 @@
-import { Scanner, SCANNER_DEFAULTS } from '@/engine/scanner';
+import { SCANNER_DEFAULTS, Scanner } from '@/engine/scanner';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import type { AccountFields } from '@/store/types';
 

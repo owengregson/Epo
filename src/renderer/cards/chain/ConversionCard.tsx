@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { commas, durationCoarse, pctInt } from '@/renderer/lib/format';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 import { KeyValue } from '@/renderer/ui/KeyValue';
@@ -7,8 +6,6 @@ import { type ChainTargetDetail, CONVERSION_VERDICT_MIN } from '@/types';
 
 export interface ConversionCardProps {
   detail: ChainTargetDetail | null;
-  /** Entrance-stagger index (`--i`). */
-  index?: number;
 }
 
 /**
@@ -20,11 +17,11 @@ export interface ConversionCardProps {
  * the card says the verdict is still forming rather than presenting three
  * follow-backs as a rate.
  */
-export function ConversionCard({ detail, index = 2 }: ConversionCardProps): h.JSX.Element {
+export function ConversionCard({ detail }: ConversionCardProps): JSX.Element {
   const verdictReady = detail !== null && detail.resolvedOutcomes >= CONVERSION_VERDICT_MIN;
 
   return (
-    <Card index={index}>
+    <Card>
       <CardHeader
         icon="arrow-trend-up"
         aux={detail !== null ? `${commas(detail.resolvedOutcomes)} resolved` : undefined}

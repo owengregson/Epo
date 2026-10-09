@@ -1,4 +1,3 @@
-/** @jsx h */
 /**
  * The stage bar — the slim rail across the top of the main region (right of
  * the console) that swaps what fills the stage body: the embedded Instagram
@@ -7,16 +6,16 @@
  * the tab view below it — heights must agree: STAGE_BAR_HEIGHT ↔ `.stagebar`).
  *
  * The selector is the console's own recessed segmented control (the `.seg`
- * recipe from primitives.css) stretched across the full bar width, with one
+ * recipe from controls.css) stretched across the full bar width, with one
  * addition: the raised active segment is a real element (`.stageseg-thumb`)
  * that SLIDES between the equal-width tabs. Its geometry is data-driven —
  * `--seg-n` / `--seg-i` here feed the CSS — so adding a tab to TABS is the
  * whole change. Keyboard behavior mirrors ui/Segmented.tsx: roving tabindex
  * plus arrow keys.
  */
-import { h } from 'preact';
+import { type JSX } from 'preact';
+import { Icon } from '@/renderer/ui/Icon';
 import type { StageMode } from '@/types';
-import { Icon } from '../ui/Icon';
 
 const TABS: ReadonlyArray<{ key: StageMode; icon: string; brand?: boolean; label: string }> = [
   { key: 'tab', icon: 'instagram', brand: true, label: 'Instagram' },
@@ -31,7 +30,7 @@ export interface StageBarProps {
   aux?: string;
 }
 
-export function StageBar({ stage, onSelect, aux }: StageBarProps): h.JSX.Element {
+export function StageBar({ stage, onSelect, aux }: StageBarProps): JSX.Element {
   const idx = Math.max(
     0,
     TABS.findIndex((t) => t.key === stage),

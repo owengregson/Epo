@@ -1,6 +1,5 @@
-/** @jsx h */
-import { type ComponentChildren, h } from 'preact';
-import { Icon } from './Icon';
+import { type ComponentChildren, type JSX } from 'preact';
+import { Icon } from '@/renderer/ui/Icon';
 
 export interface ButtonProps {
   /** Destructive styling (`.danger` / red hover). */
@@ -34,7 +33,7 @@ export function Button({
   disabled,
   onClick,
   children,
-}: ButtonProps): h.JSX.Element {
+}: ButtonProps): JSX.Element {
   const classes = ['tbtn', danger ? 'danger' : null, wide ? 'wide' : null].filter(Boolean).join(' ');
   return (
     <button id={id} type={type} class={classes} title={title} disabled={disabled} onClick={onClick}>

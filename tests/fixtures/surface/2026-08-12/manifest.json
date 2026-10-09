@@ -1,0 +1,258 @@
+{
+  "surfaceId": "2026-08-12",
+  "scrubbedAt": "2026-08-12T11:33:20.000Z",
+  "replayAt": 1786534400000,
+  "bodies": [
+    {
+      "file": "followers-list-01.json",
+      "endpoint": "followers-list",
+      "source": "followers-list",
+      "origin": "0021-followers-list.json",
+      "expect": {
+        "facts": 12,
+        "relationships": 0,
+        "events": 0,
+        "cursor": "36",
+        "hasMore": true,
+        "absent": null,
+        "rowIssues": 0,
+        "novelKeys": [
+          "follow_ranking_token",
+          "should_limit_list_of_followers",
+          "show_spam_follow_request_tab",
+          "use_clickable_see_more",
+          "users[].account_badges",
+          "users[].fbid_v2",
+          "users[].has_anonymous_profile_picture",
+          "users[].id",
+          "users[].latest_reel_media",
+          "users[].pk_id",
+          "users[].profile_pic_id",
+          "users[].strong_id__",
+          "users[].third_party_downloads_enabled"
+        ]
+      }
+    },
+    {
+      "file": "followers-list-02.json",
+      "endpoint": "followers-list",
+      "source": "followers-list",
+      "origin": "0023-followers-list.json",
+      "expect": {
+        "facts": 12,
+        "relationships": 0,
+        "events": 0,
+        "cursor": null,
+        "hasMore": false,
+        "absent": null,
+        "rowIssues": 0,
+        "novelKeys": [
+          "follow_ranking_token",
+          "should_limit_list_of_followers",
+          "show_spam_follow_request_tab",
+          "use_clickable_see_more",
+          "users[].account_badges",
+          "users[].fbid_v2",
+          "users[].has_anonymous_profile_picture",
+          "users[].id",
+          "users[].latest_reel_media",
+          "users[].pk_id",
+          "users[].profile_pic_id",
+          "users[].strong_id__",
+          "users[].third_party_downloads_enabled"
+        ]
+      }
+    },
+    {
+      "file": "followers-list-03.json",
+      "endpoint": "followers-list",
+      "source": "followers-list",
+      "origin": "0043-followers-list.json",
+      "expect": {
+        "facts": 12,
+        "relationships": 0,
+        "events": 0,
+        "cursor": "cursor.700000000073.len120",
+        "hasMore": true,
+        "absent": null,
+        "rowIssues": 0,
+        "novelKeys": [
+          "follow_ranking_token",
+          "groups",
+          "more_groups_available",
+          "should_limit_list_of_followers",
+          "show_spam_follow_request_tab",
+          "use_clickable_see_more",
+          "users[].account_badges",
+          "users[].fbid_v2",
+          "users[].has_anonymous_profile_picture",
+          "users[].id",
+          "users[].latest_reel_media",
+          "users[].pk_id",
+          "users[].profile_pic_id",
+          "users[].strong_id__",
+          "users[].third_party_downloads_enabled"
+        ]
+      }
+    },
+    {
+      "file": "followers-list-04.json",
+      "endpoint": "followers-list",
+      "source": "followers-list",
+      "origin": "0015-other.json",
+      "expect": {
+        "facts": 12,
+        "relationships": 0,
+        "events": 0,
+        "cursor": "48",
+        "hasMore": true,
+        "absent": null,
+        "rowIssues": 0,
+        "novelKeys": [
+          "follow_ranking_token",
+          "should_limit_list_of_followers",
+          "use_clickable_see_more",
+          "users[].account_badges",
+          "users[].fbid_v2",
+          "users[].has_anonymous_profile_picture",
+          "users[].id",
+          "users[].is_favorite",
+          "users[].latest_reel_media",
+          "users[].pk_id",
+          "users[].profile_pic_id",
+          "users[].strong_id__",
+          "users[].third_party_downloads_enabled"
+        ]
+      }
+    },
+    {
+      "file": "friend-requests-01.json",
+      "endpoint": "friend-requests",
+      "source": "friend-requests",
+      "origin": "0027-followers-list.json",
+      "expect": {
+        "facts": 3,
+        "relationships": 0,
+        "events": 0,
+        "cursor": null,
+        "hasMore": false,
+        "absent": null,
+        "rowIssues": 0,
+        "novelKeys": [
+          "friend_requests",
+          "users[].account_badges",
+          "users[].fbid_v2",
+          "users[].has_anonymous_profile_picture",
+          "users[].id",
+          "users[].latest_reel_media",
+          "users[].pk_id",
+          "users[].profile_pic_id",
+          "users[].strong_id__",
+          "users[].third_party_downloads_enabled"
+        ]
+      }
+    },
+    {
+      "file": "friendship-show-01.json",
+      "endpoint": "friendship-show",
+      "source": "show-many",
+      "pk": "700000000096",
+      "origin": "0009-friendship-show.json",
+      "expect": {
+        "facts": 0,
+        "relationships": 1,
+        "events": 0,
+        "cursor": null,
+        "hasMore": false,
+        "absent": null,
+        "rowIssues": 0,
+        "novelKeys": [
+          "blocking",
+          "is_bestie",
+          "is_blocking_reel",
+          "is_eligible_to_subscribe",
+          "is_feed_favorite",
+          "is_guardian_of_viewer",
+          "is_muting_media_notes",
+          "is_muting_media_reposts",
+          "is_muting_notes",
+          "is_muting_reel",
+          "is_restricted",
+          "is_supervised_by_viewer",
+          "is_viewer_unconnected",
+          "muting",
+          "subscribed"
+        ]
+      }
+    },
+    {
+      "file": "show-many-01.json",
+      "endpoint": "show-many",
+      "source": "show-many",
+      "origin": "0028-show-many.json",
+      "expect": {
+        "facts": 0,
+        "relationships": 3,
+        "events": 0,
+        "cursor": null,
+        "hasMore": false,
+        "absent": null,
+        "rowIssues": 0,
+        "novelKeys": [
+          "friendship_statuses.*.is_bestie",
+          "friendship_statuses.*.is_feed_favorite",
+          "friendship_statuses.*.is_restricted",
+          "friendship_statuses.*.text_post_app_pre_following",
+          "status_code"
+        ]
+      }
+    }
+  ],
+  "dom": [
+    {
+      "file": "profile-header-01.html",
+      "kind": "profile-header",
+      "origin": "confirmButton:0 confirmText:0 scroller:0 action:1 rows:1 stat:1",
+      "bytes": 18153
+    },
+    {
+      "file": "dialog-01.html",
+      "kind": "dialog",
+      "origin": "confirmButton:1 confirmText:1 scroller:0 action:0 rows:0 stat:0",
+      "bytes": 1831
+    },
+    {
+      "file": "dialog-02.html",
+      "kind": "dialog",
+      "origin": "confirmButton:0 confirmText:1 scroller:0 action:0 rows:0 stat:0",
+      "bytes": 18083
+    },
+    {
+      "file": "dialog-03.html",
+      "kind": "dialog",
+      "origin": "confirmButton:0 confirmText:0 scroller:0 action:1 rows:0 stat:0",
+      "bytes": 19462
+    },
+    {
+      "file": "dialog-04.html",
+      "kind": "dialog",
+      "origin": "confirmButton:0 confirmText:0 scroller:1 action:1 rows:1 stat:1",
+      "bytes": 24461
+    }
+  ],
+  "missing": [
+    "following-list",
+    "activity-feed",
+    "profile-info",
+    "profile-graphql"
+  ],
+  "dropped": [],
+  "stats": {
+    "handles": 297,
+    "names": 118,
+    "pks": 121,
+    "urls": 52,
+    "texts": 1,
+    "unknownKeys": 564
+  }
+}

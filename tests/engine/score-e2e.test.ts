@@ -1,8 +1,8 @@
-import { KnowledgeStore } from '@/store/knowledge-store';
+import { CHURN_DEFAULTS, ChurnScheduler } from '@/engine/churn-scheduler';
 import { Scanner } from '@/engine/scanner';
-import { ChurnScheduler, CHURN_DEFAULTS } from '@/engine/churn-scheduler';
-import { RateGovernor } from '@/governors/rate-governor';
 import { FakeClock } from '@/governors/clock';
+import { RateGovernor } from '@/governors/rate-governor';
+import { KnowledgeStore } from '@/store/knowledge-store';
 
 test('E2E: Scanner ranking → persisted score → nextDue picks the best candidate', async () => {
   const store = new KnowledgeStore(':memory:');
@@ -14,7 +14,7 @@ test('E2E: Scanner ranking → persisted score → nextDue picks the best candid
   const mk = (pk: string, followers: number, following: number, mutuals: number) => {
     store.observe({
       accountPk: pk, observedAt: 1_000, source: 'profile',
-      fields: { username: 'u' + pk, followers, following, mutuals },
+      fields: { username: `u${pk}`, followers, following, mutuals },
     });
     store.observeEdge(pk, 'T', 'follows', true, 1_000);
   };

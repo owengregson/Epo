@@ -1,10 +1,16 @@
-import { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import {
+  ActionBlockedError,
+  ActionRateLimitedError,
+  AdapterStaleError,
+  TabUnavailableError,
+  TabUnresponsiveError,
+} from '@/adapter/errors';
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
-import { ActionBlockedError, AdapterStaleError, TabUnresponsiveError } from '@/adapter/errors';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
-import { ok, err, type Result } from '@/utils/result';
-import { FakeSentinel } from './fakes';
+import { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import { KnowledgeStore } from '@/store/knowledge-store';
+import { err, ok, type Result } from '@/utils/result';
+import { FakeSentinel } from '../kit/fakes';
 
 /** A fake action-actor recording calls and returning a scripted Result. */
 class FakeActionActor {
@@ -149,12 +155,19 @@ test('a POST-CLICK tab stall additionally flags the unverified click (amendment 
 });
 
 test('a destroyed webContents maps to blocked/tab-unhealthy', async () => {
-  const { actions } = buildThrowing(
-    new Error('instagram-tab: webContents unavailable (destroyed or not initialized)'),
-  );
+  const { actions } = buildThrowing(new TabUnavailableError('instagram-tab'));
   const r = await actions.follow('bob');
   expect(r.status).toBe('blocked');
   expect(r.cause).toBe('tab-unhealthy');
+});
+
+test('an ActionRateLimitedError (the server REFUSED the mutation) maps to blocked/rate-limited', async () => {
+  const { actions } = buildThrowing(
+    new ActionRateLimitedError('actor.follow', 400, 'feedback_required: Try Again Later'),
+  );
+  // Record-neutral like every block (nothing landed), but the cause is a
+  // DEFINITIVE rate wall — the engine ladders on it at once, no streak needed.
+  expect(await actions.follow('bob')).toEqual({ status: 'blocked', cause: 'rate-limited' });
 });
 
 test('an AdapterStaleError maps to failed/drift (retry burned; drift evidence tallied)', async () => {

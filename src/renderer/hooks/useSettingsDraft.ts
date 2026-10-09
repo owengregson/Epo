@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { ceilFor, planFor } from '@/renderer/lib/settings-derive';
+import { type Aggressiveness, detectPreset, presetPatch } from '@/renderer/lib/strategy-presets';
 import type { Settings } from '@/types';
-import { ceilFor, planFor } from '../lib/settings-derive';
-import { type Aggressiveness, detectPreset, presetPatch } from '../lib/strategy-presets';
 
-/** Debounce before persisting an edit (settings apply live — spec §3). */
+/** Debounce before persisting an edit (settings apply live). */
 export const AUTOSAVE_MS = 600;
 /** How long the "Saved" chip lingers before decaying back to idle. */
 export const SAVED_TTL_MS = 1800;

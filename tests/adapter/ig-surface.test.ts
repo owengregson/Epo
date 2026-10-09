@@ -3,11 +3,12 @@
  * enricher branch on) and the labelled signature / endpoint-id tables.
  */
 import {
-  SURFACE,
   asFetchEnvelope,
   classifyEnvelope,
   envelopeLooksLikeHtml,
   type FetchEnvelope,
+  SHAPE_MISMATCH,
+  SURFACE,
 } from '@/adapter/ig-surface';
 import { TAB } from '@/timing/config';
 
@@ -144,11 +145,49 @@ describe('classifyEnvelope — the recovery ladder’s read-side failure familie
     ).toBe('rate-limited');
   });
 
+  test('a refusal BODY on a read is a wall whatever its status — never an unknown refusal', () => {
+    // The list walker reads an unclassified 400 on its past-the-end probe as
+    // "end confirmed": a throttle that classified as drift-suspect laundered
+    // itself into a verified-complete census.
+    const throttled = '{"message":"feedback_required","spam":true,"feedback_title":"Try Again Later"';
+    expect(classifyEnvelope(env({ status: 400, textHead: throttled }))).toEqual({
+      kind: 'rate-limited',
+      wall: 'action-blocked',
+    });
+    expect(
+      classifyEnvelope(
+        env({ status: 401, textHead: '{"message":"Please wait a few minutes before you try again."' }),
+      ),
+    ).toEqual({ kind: 'rate-limited', wall: 'action-blocked' });
+    expect(
+      classifyEnvelope(env({ status: 403, textHead: '{"message":"login_required"' })),
+    ).toEqual({ kind: 'auth', wall: 'logged-out' });
+    // The genuine past-the-limit rejection stays what it was.
+    expect(
+      classifyEnvelope(env({ status: 400, textHead: '{"message":"unable to fetch followers"' })).kind,
+    ).toBe('drift-suspect');
+  });
+
   test('a JSON 404 is gone; status 0 is network; an unknown refusal is drift-suspect', () => {
     expect(classifyEnvelope(env({ status: 404 })).kind).toBe('gone');
     expect(classifyEnvelope(env({ status: 0, contentType: '', textHead: 'TypeError: failed' })).kind).toBe(
       'network',
     );
     expect(classifyEnvelope(env({ status: 403 })).kind).toBe('drift-suspect');
+  });
+});
+
+describe('an unreadable body is never an empty fact', () => {
+  // `Reader.coerce` hands the extractors `undefined` for a body that is not
+  // JSON. Parsed as the typed EMPTY result, that is the genuine end-of-list
+  // shape (`hasMore: false`) — a fabricated "walk complete" the prune census
+  // then draws lost-follower verdicts from.
+  test('extractFollowersList: a non-record body is SHAPE_MISMATCH, not end-of-list', () => {
+    expect(SURFACE.extractFollowersList(undefined, 1)).toBe(SHAPE_MISMATCH);
+    expect(SURFACE.extractFollowersList('<!DOCTYPE html>', 1)).toBe(SHAPE_MISMATCH);
+  });
+
+  test('extractShowMany: a non-record body is SHAPE_MISMATCH, not "no relationships"', () => {
+    expect(SURFACE.extractShowMany(undefined)).toBe(SHAPE_MISMATCH);
   });
 });

@@ -1,5 +1,13 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
+import {
+  haltText,
+  holdChipText,
+  lastStepSummary,
+  parkCaption,
+  parkGlyph,
+  parkHeadline,
+  recoveryHoldCaption,
+} from '@/renderer/cards/overview/live-status-copy';
 import { useCountdown, useHoldCountdown } from '@/renderer/hooks/useCountdown';
 import { useNow } from '@/renderer/hooks/useNow';
 import { useQueue } from '@/renderer/hooks/useQueue';
@@ -11,181 +19,14 @@ import { Meter } from '@/renderer/ui/Meter';
 import { NumberTicker } from '@/renderer/ui/NumberTicker';
 import { RadialRing } from '@/renderer/ui/RadialRing';
 import { Stat } from '@/renderer/ui/Stat';
-import type { EpoStatus, Settings } from '@/types';
-
-type Step = NonNullable<EpoStatus['lastStep']>;
-type Sentinel = NonNullable<EpoStatus['lastSentinel']>;
-type ParkReason = NonNullable<EpoStatus['parkReason']>;
-
-/** Readable phrase for what the engine's last step did. */
-export function stepLabel(step: Step): string {
-  switch (step) {
-    case 'acted':
-      return 'acted';
-    case 'swept-followback':
-      return 'swept follow-backs';
-    case 'advanced-chain':
-      return 'advanced chain';
-    case 'acquired':
-      return 'acquired pool';
-    case 'waited-active-hours':
-      return 'waited · hours';
-    case 'waited-session':
-      return 'waited · session';
-    case 'waited-ceiling':
-      return 'waited · ceiling';
-    case 'recovering':
-      return 'backing off';
-    case 'halted':
-      return 'halted';
-    case 'aborted':
-      return 'aborted';
-    default:
-      return 'idle';
-  }
-}
-
-/** Epoch ms → local wall clock "8:00" / "14:10" (resume times in hold copy). */
-function wallTime(atMs: number): string {
-  const d = new Date(atMs);
-  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-/** Whether two epochs fall on the same local calendar day. */
-function sameLocalDay(a: number, b: number): boolean {
-  const da = new Date(a);
-  const db = new Date(b);
-  return (
-    da.getFullYear() === db.getFullYear() &&
-    da.getMonth() === db.getMonth() &&
-    da.getDate() === db.getDate()
-  );
-}
-
-/** Big headline word for a hold state (the offline hold's "Offline" slot). */
-export function parkHeadline(reason: ParkReason): string {
-  switch (reason) {
-    case 'daily-ceiling':
-      return 'Plan done';
-    case 'velocity':
-      return 'Pacing';
-    case 'enrich-backoff':
-    case 'recovery':
-      return 'Backing off';
-    default:
-      return 'Resting'; // active-hours and between-sessions are both a rest
-  }
-}
-
-/** Centered ring glyph for a hold state (the offline hold's "wifi" slot). */
-function parkGlyph(reason: ParkReason): string {
-  switch (reason) {
-    case 'daily-ceiling':
-      return 'calendar-check';
-    case 'velocity':
-      return 'gauge-high';
-    case 'enrich-backoff':
-    case 'recovery':
-      return 'arrows-rotate';
-    case 'session':
-      return 'hourglass-half';
-    default:
-      return 'moon';
-  }
-}
-
-/** One-line caption under the headline: why, and when work resumes. */
-export function parkCaption(
-  reason: ParkReason,
-  until: number,
-  now: number,
-  done: number,
-  planned: number | null,
-): string {
-  const at = `${sameLocalDay(until, now) ? '' : 'tomorrow '}${wallTime(until)}`;
-  switch (reason) {
-    case 'active-hours':
-      return `outside active hours · resumes ${at}`;
-    case 'daily-ceiling':
-      return `today's plan is done (${done}/${planned ?? done}) · resumes ${at}`;
-    case 'session':
-      return `between sessions · next session ${at}`;
-    case 'velocity':
-      return `easing off this hour · resumes ${at}`;
-    case 'recovery':
-      // Fallback when the status carries no recovery detail (attempt numbers
-      // live in `recoveryHoldCaption`, preferred by the card).
-      return `recent actions aren't landing · retrying ~${at}`;
-    default:
-      return `after fetch trouble · retrying ${at}`;
-  }
-}
-
-/** Recovery-hold caption with the ladder's rung — the card's preferred copy. */
-export function recoveryHoldCaption(
-  rec: { attempt: number; maxAttempts: number; resumeAt: number | null },
-  now: number,
-): string {
-  const at =
-    rec.resumeAt != null
-      ? ` ~${sameLocalDay(rec.resumeAt, now) ? '' : 'tomorrow '}${wallTime(rec.resumeAt)}`
-      : ' soon';
-  return `recent actions aren't landing · retrying${at} (attempt ${rec.attempt} of ${rec.maxAttempts})`;
-}
-
-/**
- * Hold chip copy: "in 12:34" (or "in 2h 05m" for long holds) while the
- * deadline is pending — "resuming…" once it passes while the hold is still
- * displayed, so an expired hold never sits on a dead "in 0:00" until the
- * engine's next push swaps the layout.
- */
-export function holdChipText(until: number, now: number, remainingSec: number): string {
-  if (remainingSec <= 0) return 'resuming…';
-  return `in ${remainingSec >= 3600 ? durationHm(until - now) : mmss(remainingSec)}`;
-}
-
-/** Short sentinel readout ("sentinel ok" in the mockup). */
-function sentinelLabel(s: Sentinel): string {
-  switch (s) {
-    case 'ok':
-      return 'ok';
-    case 'action-blocked':
-      return 'blocked';
-    case 'challenge':
-      return 'challenge';
-    default:
-      return 'logged out';
-  }
-}
-
-/** Readable sentence for an engine halt reason (raw reason shown when unknown). */
-function haltText(reason: string): string {
-  if (reason.startsWith('sentinel:')) {
-    return `Halted — Instagram flagged the session (${reason.slice('sentinel:'.length)}). Resolve it in the tab, then start again.`;
-  }
-  switch (reason) {
-    case 'actions-failing':
-      return 'Halted — every recent action failed to register. Something systemic (Instagram change, input pipeline) needs a look before restarting.';
-    case 'recovery-exhausted':
-      return 'Halted — actions kept failing after 3 long backoffs (~4h). This is not a normal rate limit; check the session in the Instagram tab, then press Start to try again.';
-    case 'adapter-drift':
-      return "Halted — Instagram's interface appears to have changed. Check for an Epo update.";
-    case 'chain-exhausted':
-      return 'Halted — the target chain is exhausted. Restart from a new seed.';
-    case 'seed-missing':
-      return 'Halted — no seed account is configured.';
-    case 'seed-unresolved':
-      return 'Halted — the seed account could not be resolved.';
-    default:
-      return `Halted — ${reason}.`;
-  }
-}
+import type { EpoStatus, PruneStatus, Settings } from '@/types';
 
 export interface LiveStatusCardProps {
   status: EpoStatus | null;
+  /** The prune projection — while a prune holds the tab, the hero counts ITS
+   *  next unfollow (unified status) instead of freezing on an idle engine. */
+  prune: PruneStatus | null;
   settings: Settings | null;
-  /** Entrance-stagger index (`--i`); shifts down when the sign-in gate leads. */
-  index?: number;
 }
 
 /**
@@ -193,13 +34,27 @@ export interface LiveStatusCardProps {
  * countdown ring, what fires next (head of the queued list), the compact
  * Today readout, and the Net-today / Session / Last-action cells.
  */
-export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardProps): h.JSX.Element {
+export function LiveStatusCard({ status, prune, settings }: LiveStatusCardProps): JSX.Element {
   const running = status?.state === 'running';
+  // Unified status: while a prune holds the tab (growth idle or parked under
+  // it), the hero's clock and countdown follow the PRUNE's pacing — the timer
+  // used to freeze at "—" for a whole run.
+  const pruneRunning = prune?.state === 'running';
+  const pruneDrives = pruneRunning || prune?.state === 'paused';
 
   // ONE 1 Hz clock for the whole card — countdown, session uptime, and the
   // last-action age all read the same tick (holds when paused/idle).
-  const now = useNow(1000, running);
-  const cd = useCountdown(status, now);
+  const now = useNow(1000, running || pruneRunning);
+  const cd = useCountdown(
+    pruneDrives
+      ? { running: pruneRunning, nextActionAt: prune?.nextActionAt ?? null, lastActionAt: null }
+      : {
+          running,
+          nextActionAt: status?.nextActionAt ?? null,
+          lastActionAt: status?.lastActionAt ?? null,
+        },
+    now,
+  );
   const queued = useQueue('queued', status);
   const unfollowQ = useQueue('unfollow_queued', status);
 
@@ -246,15 +101,10 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
   // handle beside non-action steps like "waited · ceiling".
   const lastActionAt = status?.lastActionAt ?? null;
   const lastActText = lastActionAt != null ? `${durationHm(Math.max(0, now - lastActionAt))} ago` : '—';
-  const lastSub =
-    lastStep == null
-      ? '—'
-      : lastSentinel == null
-        ? stepLabel(lastStep)
-        : `${stepLabel(lastStep)} · sentinel ${sentinelLabel(lastSentinel)}`;
+  const lastSub = lastStepSummary(lastStep, lastSentinel);
 
   return (
-    <Card raised index={index}>
+    <Card raised>
       <CardHeader icon="stopwatch">Live Status</CardHeader>
       <CardBody>
         {/* next action: small depleting ring + prominent countdown.
@@ -285,8 +135,8 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
               </Fragment>
             ) : (
               <Fragment>
-                <div class="hn-count num">{running && cd.active ? mmss(cd.remainingSec) : '—'}</div>
-                <div class="hn-cap">until next action</div>
+                <div class="hn-count num">{cd.active ? mmss(cd.remainingSec) : '—'}</div>
+                <div class="hn-cap">{pruneDrives ? 'until next unfollow' : 'until next action'}</div>
               </Fragment>
             )}
           </div>
@@ -308,12 +158,20 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
           </div>
         ) : null}
 
-        {/* what fires next */}
+        {/* what fires next — the prune's own subject while it drives the tab */}
         <div class="hero-what num">
           <span class="hw-k">Next</span>
           <Icon name="arrow-right-long" />
           <span class="hw-act">
-            {next ? (
+            {pruneDrives ? (
+              (prune?.upNext ?? null) !== null ? (
+                <Fragment>
+                  unfollow <b>{withAt(prune?.upNext ?? '')}</b>
+                </Fragment>
+              ) : (
+                '—'
+              )
+            ) : next ? (
               <Fragment>
                 {nextVerb} <b>{withAt(next.username)}</b>
               </Fragment>
@@ -322,7 +180,9 @@ export function LiveStatusCard({ status, settings, index = 0 }: LiveStatusCardPr
             )}
           </span>
           <span class="spacer" />
-          <span class="rchip num">{next && next.ratio != null ? `r=${ratio(next.ratio)}` : '—'}</span>
+          <span class="rchip num">
+            {!pruneDrives && next && next.ratio != null ? `r=${ratio(next.ratio)}` : '—'}
+          </span>
         </div>
 
         {/* compact Today readout (full detail lives in Rate & Safety) */}

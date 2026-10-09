@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { commas, monogram, withAt } from '@/renderer/lib/format';
 import { Card, CardHeader } from '@/renderer/ui/Card';
 import type { PruneCandidate } from '@/types';
@@ -8,7 +7,7 @@ import type { PruneCandidate } from '@/types';
 const MAX_ROWS = 200;
 
 /** A muted, row-aligned message line (mirrors the Queues view's note rows). */
-function CandidateNote({ text }: { text: string }): h.JSX.Element {
+function CandidateNote({ text }: { text: string }): JSX.Element {
   return (
     <div class="qr">
       <div class="qr-main">
@@ -35,11 +34,11 @@ export interface PruneCandidatesCardProps {
  * rows instantly, no re-scan). Rendered rows are capped at {@link MAX_ROWS}
  * with a truncation note.
  */
-export function PruneCandidatesCard({ scanned, candidates, scanning }: PruneCandidatesCardProps): h.JSX.Element {
+export function PruneCandidatesCard({ scanned, candidates, scanning }: PruneCandidatesCardProps): JSX.Element {
   const shown = candidates.slice(0, MAX_ROWS);
 
   return (
-    <Card index={1}>
+    <Card>
       <CardHeader
         icon="users-slash"
         aux={scanned ? `${commas(candidates.length)} to prune` : undefined}

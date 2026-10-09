@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
+import { useBridgeEvent } from '@/renderer/hooks/useBridgeEvent';
+import { chainListKey } from '@/renderer/hooks/useChainList';
 import type { ChainTargetDetail, ChainTargetView, EpoStatus } from '@/types';
-import { chainListKey } from './useChainList';
 
 /**
  * Which target the Targets console details: the engine's current target when
@@ -44,7 +45,7 @@ export function crumbTier(
 }
 
 /**
- * The `chain:detail` projection for one target, live (§2). Liveness comes from
+ * The `chain:detail` projection for one target, live (docs/PRINCIPLES.md §2). Liveness comes from
  * the `chainList` push: main re-shapes and pushes the chain projection on every
  * throttled store mutation — including pure acquisition walks, where no status
  * counter moves — so each push IS the mutation tick, and this hook re-invokes
@@ -60,11 +61,7 @@ export function useTargetDetail(
   // Bumped on every chainList push — the throttled store-mutation tick.
   const [tick, setTick] = useState(0);
 
-  useEffect(() => {
-    const onPush = (): void => setTick((n) => n + 1);
-    window.epo.on('chainList', onPush);
-    return () => window.epo.off('chainList', onPush);
-  }, []);
+  useBridgeEvent('chainList', () => setTick((n) => n + 1));
 
   const key = `${targetPk ?? ''}|${chainListKey(status)}`;
   useEffect(() => {

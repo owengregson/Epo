@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 import { Field } from '@/renderer/ui/Field';
 import { Stepper } from '@/renderer/ui/Stepper';
@@ -23,12 +22,12 @@ export interface PruneScheduleCardProps {
  * growth engine is running when one is due, it is paused for the prune and
  * resumed afterward. (The per-day unfollow cap lives on Prune · Run.)
  */
-export function PruneScheduleCard({ settings, onSave }: PruneScheduleCardProps): h.JSX.Element {
+export function PruneScheduleCard({ settings, onSave }: PruneScheduleCardProps): JSX.Element {
   const days = settings.pruneScheduleDays;
   const scheduled = days > 0;
 
   return (
-    <Card index={3}>
+    <Card>
       <CardHeader icon="calendar-check">Prune · Schedule</CardHeader>
 
       {/* Label left, switch right. The .kv row has no side padding of its own —

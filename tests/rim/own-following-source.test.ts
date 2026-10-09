@@ -5,24 +5,25 @@
  * `following/` endpoint is what gets parsed, and every parsed profile lands in
  * the store so prune candidates carry usernames.
  */
-import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
-import { FollowersPageReader } from '@/rim/followers-page-reader';
-import { ListPageWalker } from '@/rim/list-page-walker';
+
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
+import { FollowersPageReader } from '@/rim/followers-page-reader';
+import { ListPageWalker } from '@/rim/list-page-walker';
+import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
+import { KnowledgeStore } from '@/store/knowledge-store';
 import type { TabResponse } from '@/types';
+import { setLevel } from '@/utils/logger';
 import {
-  FakeTab,
-  FakeSentinel,
   FakeActor,
+  FakeSentinel,
+  FakeTab,
+  followersBody,
   followersUrl,
   followingUrl,
-  followersBody,
   mkResp,
-} from './fakes';
-import { setLevel } from '@/utils/logger';
+} from '../kit/fakes';
 
 beforeAll(() => setLevel('error'));
 

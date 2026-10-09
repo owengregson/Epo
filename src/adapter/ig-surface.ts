@@ -11,7 +11,13 @@
  * everything else in the app stays untouched.
  */
 
-import type { ShapeMismatch } from '@/adapter/parse-helpers';
+import type {
+  MutationKind,
+  MutationMatch,
+  MutationRequest,
+  MutationVerdict,
+} from '@/adapter/mutation-types';
+import { isShapeMismatch, type ShapeMismatch } from '@/adapter/parse-helpers';
 import type { Observation } from '@/store/types';
 
 // Re-export the shape-mismatch sentinel as part of the stable surface (it is
@@ -26,7 +32,10 @@ export type EndpointKind =
   | 'friend-requests'
   | 'show-many'
   | 'friendship-show'
-  | 'web-profile-info'
+  /** `/api/v1/users/<pk>/info/` — what Epo fetches for a profile. */
+  | 'profile-info'
+  /** The GraphQL profile query Instagram's own client fires; OBSERVED only. */
+  | 'profile-graphql'
   | 'activity-feed';
 
 /**
@@ -87,8 +96,8 @@ export interface EnvelopeClassification {
  *  - `ok`            — a 2xx JSON body; nothing to recover from.
  *  - `auth`          — `finalUrl` matched a logged-out/challenge wall: the SESSION
  *                      is the problem (terminal, exactly like the sentinel path).
- *  - `rate-limited`  — HTTP 429/5xx, an `action-blocked` wall signature, or an
- *                      HTML page where an API body belongs (the classic soft wall).
+ *  - `rate-limited`  — HTTP 429/5xx, an `action-blocked` wall signature (URL or
+ *                      refusal BODY), or an HTML page where an API body belongs.
  *  - `network`       — status 0: the fetch never reached Instagram.
  *  - `gone`          — a JSON 404: the resource genuinely does not exist.
  *  - `drift-suspect` — none of the above: an unrecognized refusal shape.
@@ -98,9 +107,10 @@ export interface EnvelopeClassification {
  */
 export function classifyEnvelope(env: FetchEnvelope): EnvelopeClassification {
   if (env.ok) return { kind: 'ok' };
-  const wall = env.finalUrl
-    ? SURFACE.blockSignatures.find((sig) => sig.pattern.test(env.finalUrl as string))
-    : undefined;
+  // A wall names itself by its final URL or, on a JSON refusal, by its body.
+  const wall =
+    SURFACE.blockSignatures.find((sig) => sig.pattern.test(env.finalUrl ?? '')) ??
+    SURFACE.mutationRefusalSignatures.find((sig) => sig.pattern.test(env.textHead ?? ''));
   if (wall !== undefined) {
     return {
       kind: wall.status === 'logged-out' || wall.status === 'challenge' ? 'auth' : 'rate-limited',
@@ -114,12 +124,91 @@ export function classifyEnvelope(env: FetchEnvelope): EnvelopeClassification {
   return { kind: 'drift-suspect' };
 }
 
+// ---------------------------------------------------------------------------
+// Follow / unfollow MUTATIONS — the response is the arbiter of an action.
+//
+// The web client flips the header button OPTIMISTICALLY when it is pressed and
+// snaps it back when the server refuses; a throttled follow shows no page-level
+// error at all. So the DOM alone can report a phantom success (the flip was seen)
+// or an anonymous failure (the snap-back was seen). The mutation's HTTP status +
+// body carry the real verdict, and the Actor arms a watch on them BEFORE the click.
+// ---------------------------------------------------------------------------
+
+export type {
+  MutationKind,
+  MutationMatch,
+  MutationRequest,
+  MutationVerdict,
+} from '@/adapter/mutation-types';
+
+/**
+ * The failure family of a mutation response:
+ *
+ *  - `ok`            — 2xx with an ok verdict: the action landed.
+ *  - `rate-limited`  — the server refused the action as throttling
+ *                      (`feedback_required` / "Try Again Later" / spam flag /
+ *                      HTTP 429 or 5xx): back off, the record is untouched.
+ *  - `auth`          — a checkpoint / login wall: the SESSION is the problem.
+ *  - `refused`       — an ordinary refusal (unknown message, 404): a real
+ *                      failed attempt for THIS account.
+ *  - `drift-suspect` — contradictory or unreadable: the DOM decides instead.
+ */
+export type MutationOutcomeKind = 'ok' | 'rate-limited' | 'auth' | 'refused' | 'drift-suspect';
+
+export interface MutationClassification {
+  kind: MutationOutcomeKind;
+  /** Human-readable detail (the server's own words when it gave any). */
+  detail: string;
+  /** The sentinel status of the refusal signature that matched, when one did. */
+  wall?: SentinelStatus;
+}
+
+/**
+ * Classify a mutation response. Version-agnostic: reads the NUMBERS here and
+ * delegates every pattern to the active `SURFACE`'s refusal signatures.
+ * Ambiguity deliberately defaults TOWARD `rate-limited` (waiting is cheap and
+ * reversible) — except a 2xx that cannot be read, which is `drift-suspect`
+ * so an unreadable body is never claimed as a success.
+ */
+export function classifyMutationResponse(
+  httpStatus: number,
+  verdict: MutationVerdict | ShapeMismatch,
+): MutationClassification {
+  const ok2xx = httpStatus >= 200 && httpStatus < 300;
+  if (isShapeMismatch(verdict)) {
+    if (httpStatus === 401 || httpStatus === 403) {
+      return { kind: 'auth', detail: `HTTP ${httpStatus} (unreadable body)` };
+    }
+    if (httpStatus === 404) return { kind: 'refused', detail: 'HTTP 404 (unreadable body)' };
+    if (ok2xx) return { kind: 'drift-suspect', detail: `HTTP ${httpStatus} with an unreadable body` };
+    return { kind: 'rate-limited', detail: `HTTP ${httpStatus} (unreadable body)` };
+  }
+  if (verdict.verdict === 'ok') {
+    return ok2xx
+      ? { kind: 'ok', detail: verdict.result ?? 'ok' }
+      : { kind: 'drift-suspect', detail: `ok verdict on HTTP ${httpStatus}` };
+  }
+  const text = [verdict.message, verdict.feedbackText]
+    .filter((s): s is string => s !== null && s !== '')
+    .join(' — ');
+  const detail = text !== '' ? text : `HTTP ${httpStatus} fail`;
+  const signature = SURFACE.mutationRefusalSignatures.find((sig) => sig.pattern.test(text));
+  if (signature !== undefined) {
+    const kind =
+      signature.status === 'logged-out' || signature.status === 'challenge' ? 'auth' : 'rate-limited';
+    return { kind, detail, wall: signature.status };
+  }
+  if (verdict.spam) return { kind: 'rate-limited', detail, wall: 'action-blocked' };
+  if (httpStatus === 429 || httpStatus >= 500) return { kind: 'rate-limited', detail };
+  if (httpStatus === 401 || httpStatus === 403) return { kind: 'auth', detail };
+  return { kind: 'refused', detail };
+}
+
 /** Sentinel classification of the tab / a response URL. */
 export type SentinelStatus = 'ok' | 'action-blocked' | 'challenge' | 'logged-out';
 
 /**
- * A labelled block/challenge/logged-out signature. Replaces the old positional
- * `BLOCK_SIGNATURES.urls` index→label contract: each pattern carries the
+ * A labelled block/challenge/logged-out signature: each pattern carries the
  * status it maps to.
  */
 export interface BlockSignature {
@@ -179,10 +268,9 @@ export interface FriendshipShowResult {
 }
 
 // ---------------------------------------------------------------------------
-// Interactor locate-script results (additive). The locate scripts perform the
-// SAME element search as the click scripts but return the target's viewport
-// bounding rect (getBoundingClientRect) WITHOUT clicking — the Interactor then
-// performs the click/scroll with native input events.
+// Locate-script results. A locate script searches for a control and returns its
+// viewport bounding rect (getBoundingClientRect) WITHOUT clicking — the
+// Interactor then performs the click/scroll with native input events.
 // ---------------------------------------------------------------------------
 
 /** A viewport bounding rect as the locate scripts report it (CSS px). */
@@ -197,6 +285,14 @@ export interface LocatedRect {
 export interface LocateRectResult {
   found: boolean;
   rect?: LocatedRect;
+  /**
+   * True when the control was found by a script's SELF-RECOVERY pass (a deep
+   * text scan) after its primary role-marked search went blind — the control
+   * was on screen, just not where the primary anchors expected. The Actor
+   * warns on it: a persistent fallback is an early drift signal for the
+   * primary anchors, caught while the operation still succeeds.
+   */
+  fallback?: boolean;
 }
 
 /** Locate result for the follow-requests Confirm control: rect + WHO it accepts. */
@@ -209,7 +305,7 @@ export interface LocateConfirmRequestResult {
   remaining?: number;
 }
 
-/** Locate-only variant of `findAndActScript`: same search + decision, no click. */
+/** The action button's state + rect, plus whether the op would press it. */
 export interface LocateActionResult {
   found: boolean;
   state?: 'follow' | 'follow-back' | 'following' | 'requested';
@@ -219,7 +315,7 @@ export interface LocateActionResult {
   rect?: LocatedRect;
 }
 
-/** Locate-only variant of `scrollFollowersScript`: container rect + metrics. */
+/** A scroll container's rect + metrics (the Interactor wheels it). */
 export interface LocateScrollResult {
   found: boolean;
   rect?: LocatedRect;
@@ -252,12 +348,29 @@ export interface EndpointIds {
 export interface IgSurface {
   /** Capture provenance — the version module's date. */
   version: string;
-  /** When these facts were last verified against live Instagram. */
-  capturedAt: string;
 
   // --- Endpoints ----------------------------------------------------------
-  /** Route a response URL to the endpoint kind that handles it, or `null`. */
-  matchEndpoint(url: string): EndpointKind | null;
+  /**
+   * Route a response URL to the endpoint kind that handles it, or `null`.
+   *
+   * `friendlyName` is the GraphQL operation name the REQUEST carried (see
+   * {@link IgSurface.friendlyName}). One URL can serve many operations, so an
+   * endpoint identified by its operation name matches only when that name is
+   * supplied and matches.
+   */
+  matchEndpoint(url: string, friendlyName?: string): EndpointKind | null;
+
+  /**
+   * The GraphQL operation name a request carried, read off its (lower-cased)
+   * headers. Keeps the header's NAME an Instagram literal of the surface.
+   */
+  friendlyName(requestHeaders?: Record<string, string>): string | undefined;
+
+  /**
+   * Whether a response's media type carries a parseable body. An API URL that
+   * answers anything else is a wall (HTML interstitial), not data.
+   */
+  parseableMime(mimeType: string): boolean;
   /** Pull the pk/targetPk a `kind`'s URL carries (empty object on no match). */
   extractIds(kind: EndpointKind, url: string): EndpointIds;
 
@@ -299,6 +412,22 @@ export interface IgSurface {
    */
   extractActivityFeed(body: unknown): FollowEvent[] | ShapeMismatch;
 
+  // --- Mutations (the action button's own requests) ------------------------
+  /**
+   * Recognise the follow/unfollow mutation request the web client fires when
+   * the action button is pressed — by URL, and for GraphQL by the request's
+   * friendly-name header. `null` for reads and everything else.
+   */
+  matchMutation(req: MutationRequest): MutationMatch | null;
+  /** The server's verdict from a mutation body; `SHAPE_MISMATCH` when unreadable. */
+  extractMutationVerdict(body: unknown, kind?: MutationKind): MutationVerdict | ShapeMismatch;
+  /**
+   * Refusal signatures matched against a FAILED verdict's message + feedback
+   * text (`feedback_required`, "Try Again Later", `checkpoint_required`, …),
+   * each labelled with the wall it means.
+   */
+  mutationRefusalSignatures: readonly BlockSignature[];
+
   // --- In-page FETCH scripts (each resolves to a FetchEnvelope) -----------
   profileInfoScript(username: string): string;
   currentUserScript(): string;
@@ -310,7 +439,7 @@ export interface IgSurface {
    * `maxId` is the previous page's resume cursor (`null` for the first page);
    * the body parses with {@link extractFollowersList}.
    */
-  listPageScript(pk: string, which: 'followers' | 'following', maxId: string | null): string;
+  listPageScript(pk: string, which: 'followers' | 'following', maxId: string | null, endProbe?: boolean): string;
   /**
    * A synthesized cursor pointing just PAST `rowsFetched` rows — used to probe
    * one page beyond a claimed end-of-list so the end is VERIFIED, not trusted.
@@ -323,54 +452,57 @@ export interface IgSurface {
   /** Read the page's visible body text (Sentinel's block-text backstop). */
   bodyTextProbeScript(): string;
 
-  // --- Actor scripts (embed the verified selectors / text matchers) --------
-  findAndActScript(op: 'follow' | 'unfollow'): string;
+  // --- Actor probes -------------------------------------------------------
+  /** Read the profile action button's current leading state (post-click check). */
   probeStateScript(): string;
-  confirmUnfollowScript(): string;
-  clickFollowersStatScript(): string;
-  clickFollowingStatScript(): string;
+  /** Whether the list modal is on screen. */
   dialogPresentScript(): string;
-  scrollFollowersScript(): string;
 
-  // --- Interactor locate scripts (OPTIONAL — additive) ----------------------
-  // Same element searches as the click scripts above, but they RETURN the
-  // target's bounding rect instead of clicking; the Actor uses them only when
-  // a Interactor is wired, and falls back to the click scripts when a surface
-  // version does not provide them.
-  locateActionButtonScript?(op: 'follow' | 'unfollow'): string;
-  locateConfirmUnfollowScript?(): string;
-  locateFollowersStatScript?(): string;
-  locateFollowingStatScript?(): string;
-  locateScrollContainerScript?(): string;
+  // --- Actor LOCATE scripts -----------------------------------------------
+  // Each searches for a control and returns its viewport rect WITHOUT clicking;
+  // the Interactor then presses/scrolls it with native input events. There is
+  // no in-page `.click()` tier: the SPA ignores a synthetic click on several of
+  // these controls, so a version module must implement every locate script.
+  locateActionButtonScript(op: 'follow' | 'unfollow'): string;
+  locateConfirmUnfollowScript(): string;
+  locateFollowersStatScript(): string;
+  locateFollowingStatScript(): string;
+  locateScrollContainerScript(): string;
   /** The nav profile-avatar link's rect — the Interactor clicks it to land on our profile. */
-  locateProfileLinkScript?(): string;
+  locateProfileLinkScript(): string;
   /**
    * The nav notifications (bell/heart) control's rect — clicking it opens the
    * activity drawer, which fires the news-inbox fetch the Reader observes.
    */
-  locateNotificationsLinkScript?(): string;
-  /** The "Follows" category filter chip inside the open drawer (soft-optional). */
-  locateNotificationsFollowsFilterScript?(): string;
+  locateNotificationsLinkScript(): string;
+  /** The "Follows" category filter chip inside the open drawer. */
+  locateNotificationsFollowsFilterScript(): string;
   /** The drawer's CLOSE (X) control — the supported way to leave the drawer. */
-  locateNotificationsCloseScript?(): string;
+  locateNotificationsCloseScript(): string;
   /** The drawer's scroll container + metrics (for loading older pages). */
-  locateNotificationsScrollScript?(): string;
+  locateNotificationsScrollScript(): string;
   /**
    * The "Follow requests" entry INSIDE the open notifications drawer —
    * clicking it opens the pending-requests panel, which fires the
    * friendships/pending fetch. `found: false` when no requests entry exists
    * (public account / nothing pending) — a soft skip, never stale.
    */
-  locateFollowRequestsEntryScript?(): string;
+  locateFollowRequestsEntryScript(): string;
   /**
    * The FIRST "Confirm" control in the open follow-requests panel, plus the
    * row's username (from its profile link) so the caller knows WHO it is
    * accepting and can verify progress between clicks.
    */
-  locateConfirmFollowRequestScript?(): string;
+  locateConfirmFollowRequestScript(): string;
 
   // --- Identity scripts ----------------------------------------------------
   readProfileHrefScript(): string;
+  /**
+   * Click the nav profile-avatar link IN PAGE. The identity resolver runs
+   * before any Interactor exists (it is what names the account the graph is
+   * built for), so this one control keeps a JS-click script; every Actor
+   * control goes through a locate script + native input instead.
+   */
   clickProfileLinkScript(): string;
   readAvatarAltScript(): string;
 
@@ -382,10 +514,6 @@ export interface IgSurface {
   usernameFromAvatarAlt(alt: string): string | null;
   /** Extract a username from a profile URL/path (`/foo/`); `null` otherwise. */
   usernameFromProfileUrl(href: string): string | null;
-  /** First path segments that must never be taken as a username. */
-  reservedRoutes: ReadonlySet<string>;
-  usernameRegex: RegExp;
-  profilePathRegex: RegExp;
 
   // --- Sentinel signatures --------------------------------------------------
   /** URL block/challenge/logged-out signatures (labelled). */
@@ -400,8 +528,6 @@ export interface IgSurface {
   origin: string;
   /** The desktop UA the persistent session pins (private API rejects Electron's). */
   userAgent: string;
-  /** Observed max user-ids per batched relationship request. */
-  showManyMaxBatch: number;
 }
 
 // ---------------------------------------------------------------------------

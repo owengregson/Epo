@@ -1,6 +1,5 @@
-/** @jsx h */
-import { type ComponentChildren, h } from 'preact';
-import { Icon } from './Icon';
+import { type ComponentChildren, type JSX } from 'preact';
+import { Icon } from '@/renderer/ui/Icon';
 
 export type HintKind = 'default' | 'warn' | 'alarm';
 
@@ -45,7 +44,7 @@ export function Field({
   hintKind = 'default',
   hintHidden,
   children,
-}: FieldProps): h.JSX.Element {
+}: FieldProps): JSX.Element {
   const fieldClass = ['field', locked ? 'locked' : null].filter(Boolean).join(' ');
   const hintClass = ['hint', hintKind !== 'default' ? hintKind : null].filter(Boolean).join(' ');
   return (

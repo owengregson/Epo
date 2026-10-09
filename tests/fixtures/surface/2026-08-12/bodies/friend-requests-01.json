@@ -1,0 +1,60 @@
+{
+ "users": [
+  {
+   "strong_id__": "string",
+   "pk": 700000000097,
+   "pk_id": "string",
+   "username": "user_t2",
+   "full_name": "Name E2",
+   "is_private": false,
+   "is_verified": false,
+   "profile_pic_url": "https://example.invalid/pic/700000000100.jpg",
+   "profile_pic_id": "string",
+   "has_anonymous_profile_picture": false,
+   "account_badges": "array",
+   "id": "string",
+   "fbid_v2": "number",
+   "latest_reel_media": 0,
+   "third_party_downloads_enabled": 1
+  },
+  {
+   "strong_id__": "string",
+   "pk": 700000000098,
+   "pk_id": "string",
+   "username": "user_l5",
+   "full_name": "Name K4",
+   "is_private": false,
+   "is_verified": false,
+   "profile_pic_url": "https://example.invalid/pic/700000000101.jpg",
+   "profile_pic_id": "string",
+   "has_anonymous_profile_picture": false,
+   "account_badges": "array",
+   "id": "string",
+   "fbid_v2": "number",
+   "latest_reel_media": "number",
+   "third_party_downloads_enabled": 0
+  },
+  {
+   "strong_id__": "string",
+   "pk": 700000000099,
+   "pk_id": "string",
+   "username": "user_m5",
+   "full_name": "Name L4",
+   "is_private": true,
+   "is_verified": false,
+   "profile_pic_url": "https://example.invalid/pic/700000000102.jpg",
+   "profile_pic_id": "string",
+   "has_anonymous_profile_picture": false,
+   "account_badges": "array",
+   "id": "string",
+   "fbid_v2": "number",
+   "latest_reel_media": 0,
+   "third_party_downloads_enabled": 0
+  }
+ ],
+ "big_list": false,
+ "next_max_id": null,
+ "page_size": 3,
+ "friend_requests": "object",
+ "status": "ok"
+}

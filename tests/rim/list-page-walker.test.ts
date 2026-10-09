@@ -7,14 +7,15 @@
  * `fetch-failed` (two consecutive failures) lets callers fall back to the
  * dialog-scroll scrape.
  */
-import { ListPageWalker } from '@/rim/list-page-walker';
+
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
+import { ListPageWalker } from '@/rim/list-page-walker';
 import { RIM } from '@/timing/config';
 import { nextRestStride } from '@/timing/noise';
-import { FakeTab, FakeSentinel, followersBody } from './fakes';
 import { setLevel } from '@/utils/logger';
+import { FakeSentinel, FakeTab, followersBody } from '../kit/fakes';
 
 beforeAll(() => setLevel('error'));
 
@@ -484,4 +485,37 @@ test('an UNBOUNDED census reports no total (honest indeterminate progress)', asy
 
   const reports = activity.filter(Boolean) as Array<{ total?: number }>;
   expect(reports.every((r) => r.total === undefined)).toBe(true);
+});
+
+test('the FOLLOWING walk asks for the deterministic order; its end probe asks in the plain form', async () => {
+  // Live 2026-09-20: the default following order is re-ranked per request (each
+  // page carries a fresh `follow_ranking_token`), so offset paging repeated 405
+  // of 3,447 rows and never returned 404 accounts. `order=date_followed_earliest`
+  // answers the WHOLE list at once, ignoring `max_id` — so the past-the-end
+  // probe must NOT carry it, or it re-downloads the entire list to learn nothing.
+  const h = harness([
+    okEnv(followersBody(['a', 'b', 'c'], null, false)),
+    okEnv(followersBody([], null, false)),
+  ]);
+  const result = await h.walker.walkAll({
+    pk: '42',
+    which: 'following',
+    onObservation: () => {},
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+  });
+  expect(result).toMatchObject({ complete: true, endConfirmed: true, pks: ['a', 'b', 'c'] });
+  expect(h.scripts[0]).toContain('order=date_followed_earliest');
+  expect(h.scripts[1]).not.toContain('order=');
+  expect(h.scripts[1]).toContain('max_id');
+});
+
+test('the FOLLOWERS walk carries no order parameter', async () => {
+  const h = harness([okEnv(followersBody(['a'], null, false)), okEnv(followersBody([], null, false))]);
+  await h.walker.walkAll({
+    pk: '42',
+    which: 'followers',
+    onObservation: () => {},
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+  });
+  expect(h.scripts.join('\n')).not.toContain('order=');
 });

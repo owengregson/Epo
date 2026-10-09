@@ -18,66 +18,32 @@
  *   6. On window close: dispose (store close + metering unsub) and quit.
  */
 
-import { app, BaseWindow, session } from 'electron';
-import { IG_HOME_URL, IG_PARTITION, InstagramTab } from '@/adapter/tab';
-import { claimAppIdentity } from '@/main/app-identity';
-
-// Identity first (name + userData path) — same reasoning as in `main.ts`; the
-// livetest shares the production userData directory and login partition.
-claimAppIdentity();
-
-// Same background-run switches as production `main.ts` (measured 2026-08-14):
-// the livetest must exercise the identical renderer environment, including
-// running while the window is backgrounded/occluded.
-app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-background-timer-throttling');
-app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-
+import { app } from 'electron';
+import type { InstagramTab } from '@/adapter/tab';
 import { LiveTestHarness } from '@/livetest/steps';
-import { HARNESS } from '@/timing/config';
-import { sleep } from '@/timing/primitives';
+import {
+  awaitLogin,
+  bootstrapApp,
+  ensureInstagramOrigin,
+  openToolWindow,
+} from '@/main/bootstrap';
 import * as logger from '@/utils/logger';
 
-/** Poll interval while waiting for login. */
-const LOGIN_POLL_MS = HARNESS.LOGIN_POLL_MS;
+// Identity + the background-survival switches — the livetest must exercise the
+// identical renderer environment production does, including running while the
+// window is backgrounded/occluded. It shares the production userData directory
+// and login partition.
+bootstrapApp();
 
-let mainWindow: BaseWindow | null = null;
 let instagramTab: InstagramTab | null = null;
 let harness: LiveTestHarness | null = null;
 let finished = false;
 
 
-/** True once the persistent IG session holds a non-empty `sessionid` cookie. */
-async function isLoggedIn(): Promise<boolean> {
-  try {
-    const cookies = await session.fromPartition(IG_PARTITION).cookies.get({ name: 'sessionid' });
-    return cookies.some((c) => c.value && c.value.length > 0);
-  } catch (e) {
-    logger.warn('livetest.isLoggedIn cookie check failed', { error: String(e) });
-    return false;
-  }
-}
-
 async function run(): Promise<void> {
-  const win = new BaseWindow({
-    width: 1400,
-    height: 900,
-    title: 'Epo — Live Action Test',
-    backgroundColor: '#0e0e10',
-  });
-  mainWindow = win;
-
-  const tab = new InstagramTab();
+  const tool = openToolWindow({ title: 'Epo — Live Action Test' });
+  const { win, tab } = tool;
   instagramTab = tab;
-  tab.attach(win);
-  tab.show();
-
-  const layout = (): void => {
-    const { width, height } = win.getContentBounds();
-    tab.setBounds({ x: 0, y: 0, width, height });
-  };
-  win.on('resize', layout);
-  layout();
 
   const test = new LiveTestHarness(tab);
   harness = test;
@@ -86,26 +52,16 @@ async function run(): Promise<void> {
     void finish();
   });
 
-  await tab.goto(IG_HOME_URL);
+  await tool.ready;
   await test.setStatus(
     'Log in — the live action test begins once you are logged in.',
     'Nothing runs until a session cookie appears.',
   );
 
-  // Poll for login.
-  while (mainWindow && !(await isLoggedIn())) {
-    await sleep(LOGIN_POLL_MS);
-  }
-  if (!mainWindow) return; // window closed during login wait
+  if (!(await awaitLogin(tool.isOpen))) return; // window closed during login wait
 
   await test.setStatus('Logged in — starting live action test…');
-
-  // Ensure we're on an instagram.com origin so the page's own fetches are
-  // same-origin (required by current_user + the direct JSON fetches).
-  if (!tab.currentUrl().includes('instagram.com')) {
-    await tab.goto(IG_HOME_URL);
-    await sleep(2000);
-  }
+  await ensureInstagramOrigin(tab);
 
   let summary: Awaited<ReturnType<typeof test.run>>;
   try {
@@ -138,7 +94,6 @@ async function finish(): Promise<void> {
   }
   harness = null;
   instagramTab = null;
-  mainWindow = null;
   app.quit();
 }
 

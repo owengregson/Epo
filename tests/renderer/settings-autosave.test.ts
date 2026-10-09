@@ -8,8 +8,8 @@
 import {
   AUTOSAVE_MS,
   type AutosaveHost,
-  type SaveState,
   SAVED_TTL_MS,
+  type SaveState,
   SettingsAutosave,
 } from '@/renderer/hooks/useSettingsDraft';
 import type { Settings } from '@/types';

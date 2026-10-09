@@ -54,6 +54,34 @@ export class ActionBlockedError extends Error {
 }
 
 /**
+ * Thrown when Instagram's SERVER refused a follow/unfollow mutation as
+ * throttling — the response said so (`feedback_required`, "Try Again Later",
+ * the spam flag, HTTP 429): the "you're following too fast" case. On the web
+ * client this shows NO page-level dialog; the header button merely snaps
+ * back, which the DOM-only verification read as a phantom success (the
+ * optimistic flip) or an anonymous failure. Distinct from `ActionBlockedError`
+ * (an on-screen interstitial) because it is DEFINITIVE: the engine ladders
+ * up on the first one instead of proving a streak against the wall.
+ */
+export class ActionRateLimitedError extends Error {
+  /** The adapter operation that was refused, e.g. `actor.follow`. */
+  readonly component: string;
+  /** The mutation response's HTTP status. */
+  readonly httpStatus: number;
+  /** The server's own words (message + feedback text) for the log. */
+  readonly detail: string;
+
+  constructor(component: string, httpStatus: number, detail: string) {
+    super(`Adapter action rate-limited [${component}]: HTTP ${httpStatus}: ${detail}`);
+    this.name = 'ActionRateLimitedError';
+    this.component = component;
+    this.httpStatus = httpStatus;
+    this.detail = detail;
+    Object.setPrototypeOf(this, ActionRateLimitedError.prototype);
+  }
+}
+
+/**
  * Thrown when a tab-facing await (navigation, in-page evaluate, CDP body read)
  * exceeded its deadline — the webContents is unresponsive or the call would
  * never settle. Typed DISTINCTLY from `AdapterStaleError` on purpose: a stall
@@ -81,6 +109,25 @@ export class TabUnresponsiveError extends Error {
     this.timeoutMs = timeoutMs;
     this.phase = phase;
     Object.setPrototypeOf(this, TabUnresponsiveError.prototype);
+  }
+}
+
+/**
+ * Thrown when the tab's `webContents` is destroyed or was never initialized (a
+ * teardown race, a hard navigation failure). Typed rather than string-matched:
+ * every caller that must treat it as a TAB condition — record-neutral, never
+ * selector drift — tests `instanceof`, so renaming the message cannot silently
+ * reclassify it as a generic failure and burn a candidate.
+ */
+export class TabUnavailableError extends Error {
+  /** The tab operation that found the webContents gone, e.g. `evaluate`. */
+  readonly component: string;
+
+  constructor(component: string) {
+    super(`Tab unavailable [${component}]: webContents destroyed or not initialized`);
+    this.name = 'TabUnavailableError';
+    this.component = component;
+    Object.setPrototypeOf(this, TabUnavailableError.prototype);
   }
 }
 

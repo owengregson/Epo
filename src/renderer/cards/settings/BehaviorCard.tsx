@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import type { SettingsDraftController } from '@/renderer/hooks/useSettingsDraft';
 import { activeHoursText } from '@/renderer/lib/engine-view';
 import { CollapsibleCard } from '@/renderer/ui/CollapsibleCard';
@@ -20,7 +19,6 @@ export interface BehaviorCardProps {
   draft: Settings;
   patch: SettingsDraftController['patch'];
   set: SettingsDraftController['set'];
-  index?: number;
 }
 
 const PERSONA_OPTIONS: ReadonlyArray<{ value: PersonaId; label: string }> = [
@@ -163,7 +161,7 @@ function dayIntensities(pattern: PatternSettings): number[] {
 }
 
 /**
- * Behavior — the PRIMARY, qualitative settings surface (§5.6). The pacing model comes
+ * Behavior — the PRIMARY, qualitative settings surface. The pacing model comes
  * first (it decides which knobs below actually run): adaptive sessions is the default;
  * steady intervals stays selectable, and every knob only the adaptive model consults is
  * then disabled with a plain note rather than silently ignored. A persona sets the whole
@@ -172,7 +170,7 @@ function dayIntensities(pattern: PatternSettings): number[] {
  * will follow — or the flat pace when steady intervals are selected. Two operational
  * toggles (auto-accept requests, dry run) sit at the bottom.
  */
-export function BehaviorCard({ draft, patch, set, index }: BehaviorCardProps): h.JSX.Element {
+export function BehaviorCard({ draft, patch, set }: BehaviorCardProps): JSX.Element {
   const pattern = draft.pattern;
   const r = resolvePattern(pattern);
   const adaptive = draft.pacingModel === 'organic';
@@ -188,7 +186,7 @@ export function BehaviorCard({ draft, patch, set, index }: BehaviorCardProps): h
     applyPattern({ ...pattern, [key]: value } as PatternSettings, 'custom');
   };
 
-  const renderKnob = (k: Knob): h.JSX.Element => {
+  const renderKnob = (k: Knob): JSX.Element => {
     const gated = !adaptive && ADAPTIVE_ONLY_KNOBS.has(k.key);
     return (
       <Field key={k.key} label={k.label} tip={k.tip} hint={gated ? ADAPTIVE_ONLY_NOTE : undefined}>
@@ -207,7 +205,7 @@ export function BehaviorCard({ draft, patch, set, index }: BehaviorCardProps): h
   const restNote = r.restDayChancePct > 0 ? ` · ~${r.restDayChancePct}% rest days` : '';
 
   return (
-    <CollapsibleCard icon="wand-magic-sparkles" title="Behavior" index={index} defaultCollapsed>
+    <CollapsibleCard icon="wand-magic-sparkles" title="Behavior" defaultCollapsed>
       <Field
         label="Pacing"
         tip="How the engine times its actions. Adaptive sessions spreads a varying daily plan across natural sessions shaped by the knobs below; Steady intervals spaces actions evenly inside active hours. A model change takes effect the next time Epo starts."

@@ -14,7 +14,7 @@ directories:
   buildResources: build
 
 # The esbuild output is self-contained except for native/external modules
-# (better-sqlite3 stays external and is loaded from node_modules at runtime;
+# (only `electron` is external;
 # @fortawesome fonts are already inlined into dist/renderer/index.css as data:
 # URIs by esbuild, so they are not needed at runtime). electron-builder also
 # packages the production "dependencies" from package.json automatically.
@@ -22,14 +22,9 @@ files:
   - dist/**
   - package.json
 
-# Native module: better-sqlite3 cannot be loaded from inside the asar archive.
-asarUnpack:
-  - "**/node_modules/better-sqlite3/**"
-
-# electron-builder rebuilds native deps (better-sqlite3) against the target
-# Electron ABI on its own; run `npm run rebuild:node` afterwards if you want
-# to run Jest again in the same checkout (tests need the Node ABI).
-npmRebuild: true
+# Nothing native ships: the store runs on the runtime's built-in `node:sqlite`
+# (src/store/driver/), so there is no addon to unpack or rebuild.
+npmRebuild: false
 
 mac:
   category: public.app-category.productivity

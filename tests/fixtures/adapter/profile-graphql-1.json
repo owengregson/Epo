@@ -1,0 +1,35 @@
+{
+  "data": {
+    "user": {
+      "pk": "1000000003",
+      "id": "1000000003",
+      "username": "user_005",
+      "full_name": "Test User 5",
+      "biography": "seoul | ucla",
+      "follower_count": 561,
+      "following_count": 305,
+      "mutual_followers_count": 18,
+      "media_count": 42,
+      "is_private": true,
+      "is_verified": false,
+      "profile_pic_url": "https://scontent.cdninstagram.com/v/t51/000_n.jpg",
+      "friendship_status": {
+        "following": true,
+        "followed_by": true,
+        "blocking": false,
+        "outgoing_request": false,
+        "incoming_request": false,
+        "is_restricted": false,
+        "is_bestie": false,
+        "muting": false,
+        "is_muting_reel": false,
+        "is_feed_favorite": false
+      },
+      "bio_links": [],
+      "is_memorialized": false
+    }
+  },
+  "extensions": {
+    "is_final": true
+  }
+}

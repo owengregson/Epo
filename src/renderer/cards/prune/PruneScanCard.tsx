@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import { useCountUp } from '@/renderer/hooks/useCountUp';
@@ -45,7 +44,7 @@ export function PruneScanCard({
   onScan,
   onStop,
   confirm,
-}: PruneScanCardProps): h.JSX.Element {
+}: PruneScanCardProps): JSX.Element {
   // Scan is live off the PUSHED state (so the Stop affordance covers scheduled
   // scans too), with the local flag bridging the gap before the first push.
   const isScanning = scanning || prune?.state === 'scanning';
@@ -143,7 +142,7 @@ export function PruneScanCard({
   const lastBarRef = useRef(liveBar);
   if (showBar) lastBarRef.current = liveBar;
   const barView = showBar ? liveBar : lastBarRef.current;
-  const pruneRunning = prune?.state === 'running';
+  const pruneRunning = prune?.state === 'running' || prune?.state === 'paused';
   const busy = isScanning || pruneRunning;
 
   const onStopScan = async (): Promise<void> => {
@@ -162,7 +161,7 @@ export function PruneScanCard({
   const lastRunAt = prune?.lastRunAt ?? null;
 
   return (
-    <Card index={1}>
+    <Card>
       <CardHeader icon="magnifying-glass-chart" aux={isScanning ? 'scanning…' : undefined}>
         Prune · Scan
       </CardHeader>

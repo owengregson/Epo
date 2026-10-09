@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { commas } from '@/renderer/lib/format';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
 import { KeyValue } from '@/renderer/ui/KeyValue';
@@ -9,8 +8,6 @@ import { type ChainTargetDetail, RUNWAY_CAP_DAYS } from '@/types';
 
 export interface PoolRunwayCardProps {
   detail: ChainTargetDetail | null;
-  /** Entrance-stagger index (`--i`). */
-  index?: number;
 }
 
 /** Coverage percent, honest at small fractions: "1.5%" under 10%, else "23%". */
@@ -30,12 +27,12 @@ function coveragePct(scanned: number, audience: number): string {
  * systematic overestimate) by the realized follow pace, clamped past
  * {@link RUNWAY_CAP_DAYS} rather than reported with false precision.
  */
-export function PoolRunwayCard({ detail, index = 1 }: PoolRunwayCardProps): h.JSX.Element {
+export function PoolRunwayCard({ detail }: PoolRunwayCardProps): JSX.Element {
   const audience = detail?.trueFollowers ?? null;
   const scanned = detail?.scanned ?? 0;
 
   return (
-    <Card index={index}>
+    <Card>
       <CardHeader icon="chart-pie">Pool &amp; Runway</CardHeader>
       <CardBody>
         {detail === null ? (

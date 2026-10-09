@@ -1,4 +1,5 @@
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import { memoryStore } from '../kit/store';
 
 /**
  * `graphSnapshotRows` — the bulk joined reads feeding the Graph view. Real
@@ -8,7 +9,7 @@ import { KnowledgeStore } from '@/store/knowledge-store';
 
 let s: KnowledgeStore;
 beforeEach(() => {
-  s = new KnowledgeStore(':memory:');
+  s = memoryStore();
 });
 afterEach(() => s.close());
 

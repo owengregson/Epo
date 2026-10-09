@@ -1,9 +1,8 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import { clamp, commas } from '../lib/format';
-import { prefersReducedMotion } from '../lib/motion';
-import type { ProjectionResult } from './growth-model';
+import type { ProjectionResult } from '@/renderer/charts/growth-model';
+import { clamp, commas } from '@/renderer/lib/format';
+import { prefersReducedMotion } from '@/renderer/lib/motion';
 
 const X0 = 8;
 const X1 = 348;
@@ -30,7 +29,7 @@ export interface ProjectionChartProps {
  * its curves in the first time it becomes visible (IntersectionObserver, since it
  * lives on the initially-hidden Settings view), then updates instantly on edits.
  */
-export function ProjectionChart({ result }: ProjectionChartProps): h.JSX.Element {
+export function ProjectionChart({ result }: ProjectionChartProps): JSX.Element {
   const svgRef = useRef<SVGSVGElement>(null);
   const pathRefs = [
     useRef<SVGPathElement>(null),

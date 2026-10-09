@@ -30,6 +30,18 @@ export interface TabResponse {
   /** Response MIME type (e.g. `application/json`). */
   mimeType: string;
   /**
+   * The request's HTTP method (from `Network.requestWillBeSent`), when the
+   * observer saw the request go out. Absent for responses whose request
+   * predates the observer (a debugger re-attach mid-flight).
+   */
+  method?: string;
+  /**
+   * The request headers the page sent, keys LOWER-CASED. Lets a consumer tell
+   * a GraphQL mutation apart from a query by its friendly-name header without
+   * the tab knowing any Instagram literal. Absent when `method` is.
+   */
+  requestHeaders?: Record<string, string>;
+  /**
    * Lazily fetch the decoded response body as a UTF-8 string.
    * Rejects if the body is no longer available in the CDP resource cache.
    */
@@ -44,6 +56,7 @@ export type Unsubscribe = () => void;
 
 import type { EngineParkReason, EngineStatus } from '@/engine/engine';
 import type { PruneCandidate, PruneState, PruneStatus } from '@/engine/prune-engine';
+import type { BridgeInvokers, PushContract, PushMethod } from '@/ipc/contract';
 import type { Settings } from '@/settings/settings';
 import type { FollowState, Target } from '@/store/types';
 
@@ -339,46 +352,6 @@ export interface SeedCheck {
 }
 
 // ---------------------------------------------------------------------------
-// Channel names — kept as string-literal unions so both sides stay in sync
-// ---------------------------------------------------------------------------
-
-/** Channels invoked from the renderer and handled in the main process. */
-export type IpcInvokeChannel =
-  | 'foundation:login'
-  | 'foundation:readFollowers'
-  | 'foundation:followOne'
-  | 'foundation:unfollowOne'
-  | 'foundation:status'
-  | 'engine:start'
-  | 'engine:pause'
-  | 'engine:resume'
-  | 'engine:stop'
-  | 'engine:restartFromSeed'
-  | 'engine:status'
-  | 'prune:scan'
-  | 'prune:start'
-  | 'prune:stop'
-  | 'prune:status'
-  | 'prune:candidates'
-  | 'chain:list'
-  | 'chain:detail'
-  | 'growth:series'
-  | 'seed:check'
-  | 'queue:list'
-  | 'settings:get'
-  | 'settings:update'
-  | 'settings:reset'
-  | 'data:clear'
-  | 'tab:show'
-  | 'tab:hide'
-  | 'graph:snapshot'
-  | 'stage:set'
-  | 'tour:hold'
-  | 'update:check'
-  | 'update:install'
-  | 'update:open-latest';
-
-// ---------------------------------------------------------------------------
 // Self-updater (docs/RELEASE.md §5)
 // ---------------------------------------------------------------------------
 
@@ -404,108 +377,31 @@ export interface UpdateStatus {
   error: string | null;
 }
 
-/** Payload pushed on each renderer-facing event channel. */
-export interface EpoEventPayloads {
-  log: LogEntry;
-  status: EpoStatus;
-  pruneStatus: PruneStatus;
-  updateStatus: UpdateStatus;
-  /**
-   * The chain projection, re-shaped and pushed on every store mutation (same
-   * throttled push as `status` — §2), so target yields tick DURING walks when
-   * observations move no status counter.
-   */
-  chainList: ChainTargetView[];
-}
+/**
+ * Payload pushed on each renderer-facing event channel — DERIVED from the push
+ * half of the IPC contract (`PushContract` in `src/ipc/contract.ts`), which is
+ * also where the channel strings live. This used to be a third hand-written
+ * table alongside `preload.ts`'s map and `main.ts`'s literal sends. See ADR 1008.
+ */
+export type EpoEventPayloads = PushContract;
 
 /** Channels pushed from the main process to the renderer. */
-export type EpoEventChannel = keyof EpoEventPayloads;
+export type EpoEventChannel = PushMethod;
 
 // ---------------------------------------------------------------------------
 // The bridge exposed on `window.epo` by the preload script
 // ---------------------------------------------------------------------------
 
-export interface EpoBridge {
-  /** Open Instagram in the embedded tab (login is performed by the user). */
-  login(): Promise<EpoStatus>;
-  /** Read a target account's followers into the knowledge graph. */
-  readFollowers(target: string): Promise<ReadFollowersResult>;
-  /** Follow a single account by username via a DOM click. */
-  followOne(username: string): Promise<ActionResult>;
-  /** Unfollow a single account by username via a DOM click. */
-  unfollowOne(username: string): Promise<ActionResult>;
-  /** Fetch a status snapshot for the control shell. */
-  status(): Promise<EpoStatus>;
-  /** Start the engine loop (builds the graph if needed). */
-  startEngine(): Promise<EpoStatus>;
-  /** Pause the engine between actions. */
-  pauseEngine(): Promise<EpoStatus>;
-  /** Resume a paused engine. */
-  resumeEngine(): Promise<EpoStatus>;
-  /** Stop the engine loop (aborts in-flight sleeps). */
-  stopEngine(): Promise<EpoStatus>;
-  /** Scrap the current chain and restart from `seed` (persists the seed first). */
-  restartFromSeed(seed: string): Promise<EpoStatus>;
-  /** Fetch the engine status snapshot (same projection as {@link status}). */
-  engineStatus(): Promise<EpoStatus>;
-  /** READ-ONLY auto-prune scan: the raw following − followers census (no unfollows). */
-  scanPrune(): Promise<PruneScanResult>;
-  /** The persisted scan's not-yet-visited candidates (raw census) — restores the list on launch. */
-  pruneCandidates(): Promise<PruneCandidate[]>;
-  /** Start one auto-prune run (mutually exclusive with the growth engine). */
-  startPrune(): Promise<PruneControlResult>;
-  /** Stop an active prune scan/run between actions. */
-  stopPrune(): Promise<PruneStatus>;
-  /** Fetch the prune status projection. */
-  pruneStatus(): Promise<PruneStatus>;
+/**
+ * `window.epo`. The invoke half is DERIVED from the IPC contract (one entry per
+ * channel in `src/ipc/contract.ts`), so a method signature can never drift from
+ * the handler it reaches; only the push-subscription verbs are declared here.
+ */
+export interface EpoBridge extends BridgeInvokers {
   /** Subscribe to pushed prune status projections (`on('pruneStatus', …)` sugar). */
   onPruneStatus(cb: (status: PruneStatus) => void): void;
   /** Unsubscribe a previously-registered prune status listener. */
   offPruneStatus(cb: (status: PruneStatus) => void): void;
-  /** The chain lineage: every target with its username and computed yield. */
-  chainList(): Promise<ChainTargetView[]>;
-  /**
-   * The Targets console's detail projection for one chain target (funnel,
-   * audience framing, runway, conversion). Null when the pk is not a chain
-   * target or nothing is built yet. Re-invoked by the renderer on every
-   * `chainList` push — the push is the store-mutation tick (§2).
-   */
-  chainDetail(targetPk: string): Promise<ChainTargetDetail | null>;
-  /** Cumulative net own-follower growth per day for the last `days` days
-   *  (default 14), plus the measurement baseline. */
-  growthSeries(days?: number): Promise<GrowthSeriesRead>;
-  /** Read-only precheck of a seed username (existence + followers visibility). */
-  checkSeed(username: string): Promise<SeedCheck>;
-  /** A capped page of follow_records in one lifecycle state, joined to accounts. */
-  queueList(state: FollowState): Promise<QueueListResult>;
-  /** The persisted settings object. */
-  getSettings(): Promise<Settings>;
-  /** Merge a partial into settings, persist, and reload the live engine configs. */
-  updateSettings(partial: Partial<Settings>): Promise<Settings>;
-  /** Reset all settings to defaults (data + session kept). */
-  resetSettings(): Promise<Settings>;
-  /** Wipe the knowledge DB + IG session (logout); settings kept. */
-  clearData(): Promise<EpoStatus>;
-  /** Reveal the embedded Instagram tab. */
-  showTab(): Promise<void>;
-  /** Hide the embedded Instagram tab. */
-  hideTab(): Promise<void>;
-  /** The full knowledge graph shaped for the Graph view (null before login). */
-  graphSnapshot(): Promise<GraphSnapshot | null>;
-  /** Swap the window region right of the console: the IG tab or the graph stage. */
-  setStage(mode: StageMode): Promise<void>;
-  /**
-   * Park/unpark the app while the intro tour is on screen: no self-starting
-   * work (lazy build, profile landing, scheduled prune), and a running growth
-   * engine is paused, then restored on release.
-   */
-  setTourHold(held: boolean): Promise<void>;
-  /** Ask the updater to check the release feed now; resolves with the status. */
-  checkForUpdate(): Promise<UpdateStatus>;
-  /** Full mode, state 'ready': install the downloaded update and restart. */
-  installUpdate(): Promise<UpdateStatus>;
-  /** Notify mode: open the latest-release page in the default browser. */
-  openLatestRelease(): Promise<void>;
   /** Subscribe to a push channel (the streaming log or pushed status). */
   on<C extends EpoEventChannel>(
     channel: C,

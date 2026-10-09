@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import { computeProjection } from '@/renderer/charts/growth-model';
 import { ProjectionChart } from '@/renderer/charts/ProjectionChart';
@@ -12,7 +11,6 @@ import type { Settings } from '@/types';
 
 export interface ProjectionCardProps {
   draft: Settings;
-  index?: number;
 }
 
 /**
@@ -20,7 +18,7 @@ export interface ProjectionCardProps {
  * the current draft settings. The audience-yield slider is view-local (it models
  * a hypothesis, not a persisted setting).
  */
-export function ProjectionCard({ draft, index }: ProjectionCardProps): h.JSX.Element {
+export function ProjectionCard({ draft }: ProjectionCardProps): JSX.Element {
   const [yieldSlider, setYieldSlider] = useState(() => sliderFromYieldMult(1));
   const mult = yieldMultFromSlider(yieldSlider);
 
@@ -39,7 +37,6 @@ export function ProjectionCard({ draft, index }: ProjectionCardProps): h.JSX.Ele
       icon="arrow-trend-up"
       title="Projected growth"
       aux="next 30 days · if sustained"
-      index={index}
       defaultCollapsed
     >
       <CardBody>

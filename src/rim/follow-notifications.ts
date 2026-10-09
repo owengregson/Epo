@@ -27,7 +27,7 @@ import {
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
 import type { Actor } from '@/adapter/actor';
-import { type LocateConfirmRequestResult, SURFACE } from '@/adapter/ig-surface';
+import type { LocateConfirmRequestResult } from '@/adapter/ig-surface';
 import type { FollowEvent, Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import type { RimTab } from '@/rim/types';
@@ -71,6 +71,8 @@ export interface NotificationsActor {
     username: string | null;
     remaining: number;
   }>;
+  /** Read the requests panel's head WITHOUT clicking — the accept-progress probe. */
+  probeFollowRequestHead(): Promise<LocateConfirmRequestResult>;
 }
 
 export interface FollowNotificationsDeps {
@@ -321,15 +323,9 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     accepted: AcceptedFollowRequest[],
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    const locate = SURFACE.locateConfirmFollowRequestScript;
-    const probeHead = async (): Promise<LocateConfirmRequestResult> => {
-      if (!locate) return { found: false };
-      return this.tab.evaluate<LocateConfirmRequestResult>(locate());
-    };
-
     for (let i = 0; i < RIM.REQUEST_ACCEPT_CAP; i++) {
       if (signal?.aborted) return;
-      const before = await probeHead();
+      const before = await this.actor.probeFollowRequestHead();
       if (!before.found) return; // no rows left (or panel gone)
 
       const click = await this.actor.confirmNextFollowRequest();
@@ -339,7 +335,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
       let progressed = false;
       const deadline = Date.now() + this.acceptVerifyMs;
       for (;;) {
-        const after = await probeHead();
+        const after = await this.actor.probeFollowRequestHead();
         if (
           !after.found ||
           (after.remaining ?? 0) < (before.remaining ?? 1) ||

@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useNow } from '@/renderer/hooks/useNow';
 import { activeHoursText, dailyRateView, hoursOpen } from '@/renderer/lib/engine-view';
 import { Badge } from '@/renderer/ui/Badge';
@@ -11,14 +10,12 @@ import type { EpoStatus, Settings } from '@/types';
 export interface RateSafetyCardProps {
   status: EpoStatus | null;
   settings: Settings | null;
-  /** Entrance-stagger index (`--i`); shifts down when the sign-in gate leads. */
-  index?: number;
 }
 
 /**
  * Rate & Safety — today's operating-rate meter and the active-hours gate.
  */
-export function RateSafetyCard({ status, settings, index = 3 }: RateSafetyCardProps): h.JSX.Element {
+export function RateSafetyCard({ status, settings }: RateSafetyCardProps): JSX.Element {
   const { done, rate, pct: ratePct } = dailyRateView(status, settings);
 
   // A minute tick keeps Open/Closed truthful across hour boundaries even while
@@ -27,7 +24,7 @@ export function RateSafetyCard({ status, settings, index = 3 }: RateSafetyCardPr
   const open = settings !== null && hoursOpen(settings, new Date(now).getHours());
 
   return (
-    <Card index={index}>
+    <Card>
       <CardHeader icon="shield-halved">Rate &amp; Safety</CardHeader>
       <CardBody>
         <div class="kv-block">

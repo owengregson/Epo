@@ -1,6 +1,6 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { useState } from 'preact/hooks';
+import { useShell } from '@/renderer/app/shell-context';
 import {
   QUEUE_STAGE_BY_KEY,
   QUEUE_STAGE_PANEL_ID,
@@ -10,18 +10,12 @@ import {
 } from '@/renderer/cards/queues/QueuePipeline';
 import { QueueRowItem, type QueueWindows } from '@/renderer/cards/queues/QueueRowItem';
 import { useQueue } from '@/renderer/hooks/useQueue';
-import { useSettings } from '@/renderer/hooks/useSettings';
 import { commas } from '@/renderer/lib/format';
 import { Card, CardHeader } from '@/renderer/ui/Card';
 import { MS_PER_DAY } from '@/timing/units';
-import type { EpoStatus } from '@/types';
-
-export interface QueuesViewProps {
-  status: EpoStatus | null;
-}
 
 /** The `.qsum` line for the active stage — derived only from the live count. */
-function stageSummary(key: QueueStageKey, count: number): h.JSX.Element {
+function stageSummary(key: QueueStageKey, count: number): JSX.Element {
   const n = commas(count);
   switch (key) {
     case 'queued':
@@ -44,7 +38,7 @@ function stageSummary(key: QueueStageKey, count: number): h.JSX.Element {
 }
 
 /** A muted, row-aligned message line (loading / empty / truncation notes). */
-function QueueNote({ text }: { text: string }): h.JSX.Element {
+function QueueNote({ text }: { text: string }): JSX.Element {
   return (
     <div class="qr">
       <div class="qr-main">
@@ -61,15 +55,14 @@ function QueueNote({ text }: { text: string }): h.JSX.Element {
  * (Queued → Awaiting → Held → Due) bound to the live status counts, a derived
  * `.qsum` line, and one card listing the active stage's rows from `queue:list`.
  */
-export function QueuesView(props: QueuesViewProps): h.JSX.Element {
-  const { status } = props;
+export function QueuesView(): JSX.Element {
+  // Settings come from the shell's single load, so the row progress bars track
+  // the USER's configured windows without a second fetch that could disagree.
+  const { status, settings } = useShell();
   const [stageKey, setStageKey] = useState<QueueStageKey>('queued');
   const stage = QUEUE_STAGE_BY_KEY[stageKey];
   const count = stageCount(stageKey, status);
   const { rows, truncated, loading } = useQueue(stage.state, status);
-  // Live settings so the row progress bars track the USER's configured windows
-  // instead of hardcoded design defaults (which silently desync on edit).
-  const settings = useSettings();
   const windows: QueueWindows | null = settings
     ? {
         followbackMs: settings.maxWaitForFollowbackDays * MS_PER_DAY,
@@ -81,7 +74,7 @@ export function QueuesView(props: QueuesViewProps): h.JSX.Element {
     <Fragment>
       <QueuePipeline status={status} active={stageKey} onSelect={setStageKey} />
       <div class="qsum num">{stageSummary(stageKey, count)}</div>
-      <Card index={0}>
+      <Card>
         <CardHeader>{stage.title}</CardHeader>
         <div class="qrows">
           {/* Keyed by stage so a tab switch remounts the list and replays qfade.

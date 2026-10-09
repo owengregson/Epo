@@ -1,5 +1,167 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-09-18 (Instagram retired `web_profile_info` — profile read rebuilt) —**
+> Symptom: every seed check failed with `kind: rate-limited, status: 429`, and
+> the tab logged `body was not valid JSON … Unexpected token '<'`. Not a rate
+> wall and not the account: `/api/v1/users/web_profile_info/` now answers a
+> 21,600-byte HTML shell under HTTP 429 for EVERY request shape (no headers,
+> the full app-id/csrf/www-claim/asbd set, Chrome 128 and Chrome 152 alike)
+> while, on the SAME session and minute, profile pages return 200 and
+> followers-list / following-list / friendship-show / news-inbox /
+> friendships-pending all return healthy JSON. Instagram's own web client no
+> longer calls it — a recorded profile load fires `POST /api/graphql` with
+> `x-fb-friendly-name: PolarisProfilePageContentQuery`. So: a retirement, not
+> a throttle. REPLACEMENT (verified live, `2026-08-12` amended in place, no
+> `doc_id` and no `fb_dtsg`/`lsd` scraping — those rotate every IG release):
+> a profile read is now two plain `x-ig-app-id` GETs in ONE in-page script —
+> `topsearch` (`/api/v1/web/search/topsearch/?context=blended&query=<u>`)
+> resolves username → pk on an EXACT case-insensitive username match, then
+> `/api/v1/users/<pk>/info/` returns the counts. No exact match is reported as
+> a synthetic 404 so `classifyEnvelope` reads it as `gone`, exactly like the
+> real 404 a dead pk returns. `/users/<pk>/info/` carries NO
+> `friendship_status`, so `checkSeed` pays one extra `friendships/show/<pk>/`
+> read for a PRIVATE seed only (`Foundation.viewerFollows`). PASSIVE harvest
+> kept (PRINCIPLES §1): the Reader routes the GraphQL profile body by its
+> operation name — endpoint matchers gained an optional `friendlyName`, since
+> `/api/graphql` serves ~14 other Polaris queries per profile load and a
+> URL-only match would drift-log all of them — and the mime gate now accepts
+> `text/javascript`, which is how that body is served. Two endpoint kinds
+> replace `web-profile-info`: `profile-info` (fetched) and `profile-graphql`
+> (observed); both project through ONE shared user reader, because the field
+> names are identical (`follower_count`, not the retired `edge_followed_by.
+> count`) and only the container differs. The corpus body for the dead
+> endpoint left the manifest (kept on disk as `.retired`); `profile-info` and
+> `profile-graphql` are listed as documented blind spots until a fresh
+> `npm run capture` lands real bodies — unit tests cover them meanwhile. Line
+> budget re-seeded: the nine files this touched grew, and `store/schema.ts`
+> (+1) and `store/schema/tables.ts` (dropped, now 298) came from uncommitted
+> wave-B work already in the tree.
+
+> **2026-09-02 (Epo v4 framework — design + wave A landed, wave B pending) —**
+> Owner's ask: rebuild the framework so correctness, safety and
+> maintainability hold by DESIGN, constants derive from the codebase's
+> fundamentals, everything on latest runtimes. Design:
+> `docs/superpowers/specs/2026-09-02-epo-v4-framework-design.md` (§9 waves,
+> §10 six owner questions); rationale in 25 new ADRs (06xx kernel and
+> fundamentals, 07xx store v4, 08xx surface, 09xx runtime, 10xx toolchain,
+> renderer, shell). Frameworks REJECTED with reasons: Effect, xstate,
+> kysely/drizzle, Vite/Vitest, pnpm workspaces, Storybook, electron-trpc,
+> Playwright at runtime (a remote-debugging port is a security hole).
+> Landed in wave A (eight parallel owners): `src/kernel/` (brands, units,
+> ONE Outcome algebra, `Res`, Schedule, Scope, parse-with-zod, capabilities,
+> Module/Session, fundamentals → policy → derive → overrides with a golden
+> test: 49 constants derive exactly, 41 are policy dials, 18 are explained
+> overrides); `node:sqlite` is THE store driver (`src/store/driver/`, ADR
+> 0702; `better-sqlite3`, its types and `@electron/rebuild` are uninstalled,
+> the rebuild scripts and `asarUnpack` are gone, `npmRebuild: false`; a
+> test asserts none creeps back), migration 12 adds `timers` + `spans`
+> (user_version 13) behind Chronos (durable timers) and SpanSink; the tables
+> manifest; `src/surface/` holds the IG surface as a validated zod document
+> running in SHADOW mode beside the legacy adapter (0 disagreements over 36
+> captured bodies; scrubbed fixtures only under `tests/fixtures/surface/`,
+> real captures in `docs/adapter/fixtures/` stay git-ignored), plus Verdict /
+> Arbiter / ResponseWatch, a SurfaceMeter, the input-fallback hard stop and
+> a `surface-lab` Electron entry (`npm run surface`); shell/IPC gained the
+> PUSH contract, GUARDS that validate and never throw, the PROJECTIONS
+> registry, UpdaterModule and GraphSession; runtime gained Facts + eleven
+> pure rules with a precedence property test, `decidePruneCandidate`,
+> `EFFECT_POLICY` as data (`ACTIONS_FAILING_HALT` derives to 7, the shipped 8
+> is an override); renderer moved to `@preact/signals` in the shell context,
+> generated tokens (`npm run gen:tokens`), `GraphStage` split (149 lines), a
+> dev gallery route; toolchain truth is tests: `deps-verify` (types agree
+> with the Electron-bundled Node, esbuild targets derive from `.node-version`
+> via `gen:targets`), dependency-cruiser boundaries (`npm run boundaries`,
+> 0 errors / warnings are the wave-B backlog), a monotone 300-line budget
+> over `.ts/.tsx` (37 files / 9862 lines seeded), knip advisory,
+> `noImplicitOverride`. Integration fixes this pass: arrow icons that
+> `GrowthCard` rendered blank, the deprecated string overload of
+> `isRateLimitHalt` (use `isRateLimitHaltKey` for strings), the kernel barrel.
+> WAVE B (not started): Outcome algebra across adapter→rim→engine (delete
+> `ActionRateLimitedError` / `ActionBlockedError` / `action-result.ts`),
+> Chronos await + Scope + TabCap in the conductor, prune as a mode, the
+> events-log migration with rebuild + shadow diff, Foundation dismantled into
+> lifecycle / manual-ops / prune-control, legacy pacer deletion (ADR 0901),
+> surface ENFORCE per endpoint, `listEndProbeCursor` opaque cursor,
+> `esbuild.page.mjs` hardcoded chrome150 → derived targets, the `src/types.ts`
+> barrel split (34 cycles, 65 renderer allow-list warnings), `causeSpanId` on
+> status projections + `spans:chain` / `spanTail` / `timers` /
+> `surfaceHealth` / `operatingPlan` channels, delete the `engineStatus` alias
+> and `onPruneStatus/offPruneStatus`, SurfaceMeter persistence,
+> `npm run livetest` for every DOM-level surface change. Suite: 1725 tests /
+> 154 suites; `npm run check` green. Checkpoints (full tree, untracked
+> included): `refs/backups/v4-wave0-2026-09-02` (before),
+> `refs/backups/v4-waveA-2026-09-02` (after). Sidebar revamp runs in
+> parallel: the card-based visual direction was rejected by the owner; the
+> data model in `docs/superpowers/specs/2026-09-02-sidebar-revamp-design.md`
+> survives, five from-zero UI concepts are being produced with the design
+> skills (see `2026-09-02-sidebar-concepts.md` once written).
+
+> **2026-09-02 (maintainability refactor — five adversarial reviews, five
+> parallel implementation passes) —** Design + decisions in
+> `docs/superpowers/specs/2026-09-02-maintainability-refactor-design.md`;
+> rationale in 22 ADRs under `docs/adr/` (01xx main, 02xx engine, 03xx
+> adapter, 04xx renderer, 05xx store/tooling). Frameworks REJECTED with
+> measurements (Tailwind, CSS Modules, animation libs, xstate, kysely/drizzle,
+> vitest/tsup, electron-trpc, zod-for-settings); ADOPTED: jsdom render tests,
+> page scripts as real TypeScript, a Web Animations stagger helper, a typed IPC
+> contract, contexts over prop drilling. Headlines: `foundation-wiring.ts`
+> 2724→2208 (electron injected, `buildGraph()`/`TabLease`/`shell.ts`/
+> `bootstrap.ts` extracted — capture/inspect were running WITHOUT the
+> anti-throttling switches, fixed; single-instance lock); `engine.ts`
+> 2081→1125 (ordered `GATES` table, `Pacer` port, `target-pipeline.ts`,
+> `decisions.ts`, typed `HaltReason`, one `WaitRunner` for both engines, one
+> `applyOutcome`); `knowledge-store.ts` 1614→684 (nine repos behind the same
+> facade, column manifest, migrations as `{id,name,sql}`, `username_history`
+> change-check); `versions/2026-08-12.ts` 1450→992 (in-page logic now
+> `src/adapter/page/*.ts`, bundled into a committed, freshness-tested
+> `bundle.generated.ts`; JS-click fallback deleted — `Interactor` is required;
+> the livetest finally drives the production CDP input path); renderer CSS
+> bundle 489 KB→66 KB (FontAwesome replaced by `ui/icons.ts`), `App.tsx`
+> 402→207 across six hooks, `index` prop drilling gone, stylesheets re-cut by
+> feature, 4 render suites on a fake bridge — and a real bug: the one-shot
+> "Started" toast never fired (watch effect re-ran on its own arming render).
+> Cross-cutting: `tests/**` is now type-checked (`npm run typecheck`) and
+> linted (`biome ci src tests`); shared fakes in `tests/kit/`; `src/shared/`
+> for renderer+engine pure code; renderer→engine import removed. Deferred
+> (high risk / cross-layer): prune as a conductor mode, rim walk-engine
+> unification, tab split, `GraphStage` split, `observations` table decision,
+> the vestigial ABI rebuild scripts (need a two-platform proof — ADR 0503),
+> LICENSE (AGPL text vs MIT declaration — owner's call). NEEDS
+> `npm run livetest`: every DOM-level path (page bundle, interactor-only
+> Actor, harness scrolling). Suite: 1262 tests / 114 suites, typecheck + lint
+> + build + page-bundle check clean. Git checkpoints of the tree before/after:
+> `refs/backups/pre-refactor-2026-09-02`, `refs/backups/post-refactor-2026-09-02`.
+
+> **2026-09-02 (follow rate-limit detection — the response is the arbiter) —**
+> User report: after enough outgoing follows Instagram throttles ("you're
+> following too fast" on mobile); on the web the button clicks and the state
+> just doesn't change — no dialog. Root cause: the Actor's only success
+> arbiter was the header button's TEXT, but the web client flips it
+> optimistically and snaps it back when the server refuses, so a throttled
+> follow read as either a phantom `ok` (the flip was polled) or an anonymous
+> `failed` (the snap-back was) — and the tab already observed the mutation
+> response via CDP without anyone routing it. Now: `InstagramTab` also records
+> `Network.requestWillBeSent` (method + lower-cased headers → `TabResponse`);
+> the surface gained `matchMutation` (REST `…/web/friendships/<pk>/follow|unfollow/`,
+> `friendships/create|destroy/<pk>/`, and GraphQL by the `x-fb-friendly-name`
+> header), `extractMutationVerdict` (`status`/`message`/`spam`/feedback text,
+> GraphQL `errors`/`data`), and `mutationRefusalSignatures`;
+> `classifyMutationResponse` (ig-surface, version-agnostic numbers) yields
+> `ok | rate-limited | auth | refused | drift-suspect`. The Actor arms a
+> `MutationWatch` (new `src/adapter/mutation-watch.ts`) BEFORE every action
+> click and lets the response decide: `rate-limited` → new
+> `ActionRateLimitedError` → churn-actions `{blocked, cause:'rate-limited'}` →
+> the growth engine enters the recovery ladder on the FIRST one (no streak to
+> prove; `ChurnScheduler.lastBlockedCause`), the prune run halts with
+> `haltReason:'rate-limited'` (remainder runnable; PruneRunCard says so) and the
+> woven feed suspends. No response in `ADAPTER.MUTATION_RESPONSE_TIMEOUT_MS`
+> (12 s) → the DOM verification decides exactly as before (a warn names the
+> gap so a surface drift is diagnosable). NOT yet live-verified: the exact
+> mutation URL the current web client fires — if the log shows "no mutation
+> response observed" after clicks, capture the request and extend
+> `MUTATION_TABLE`/the friendly-name test in `versions/2026-08-12.ts`.
+> Suite: 1044 tests, tsc + lint + build clean.
+
 > **2026-08-15 (LIVE unfollow debug — verdict) —** Two live labs against real
 > Instagram (scratchpad `unfollow-lab*.ts` → `dist/lab/`, using the user's
 > session): 6/6 unfollows succeeded, 5 of them the EXACT usernames that failed

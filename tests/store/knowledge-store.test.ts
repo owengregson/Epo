@@ -1,6 +1,29 @@
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import { memoryStore } from '../kit/store';
+
+/**
+ * A fixed LOCAL instant every day-bucket assertion is anchored to. The growth
+ * series buckets by local midnight, so reading "today" off the machine's clock
+ * made these tests a function of when they ran (and of DST). The store takes
+ * `now`, so the calendar is an input here, not an accident.
+ */
+const NOON_TODAY = new Date(2026, 4, 14, 12, 0, 0, 0).getTime(); // local noon
+const localMidnight = (ms: number): number => {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+const TODAY_MS = localMidnight(NOON_TODAY);
+const YESTERDAY_MS = (() => {
+  const d = new Date(TODAY_MS);
+  d.setDate(d.getDate() - 1);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+})();
+const DAY = 86_400_000;
+
 let s: KnowledgeStore;
-beforeEach(() => { s = new KnowledgeStore(':memory:'); });
+beforeEach(() => { s = memoryStore({ now: () => NOON_TODAY }); });
 afterEach(() => s.close());
 
 test('observe then getAccount projects state', () => {
@@ -51,6 +74,37 @@ test('edges track follow-back as reciprocal actives', () => {
   expect(s.getEdge('7', 'ME', 'follows')!.status).toBe('active');
 });
 
+test('username_history logs only real changes, never one row per observation', () => {
+  const rows = (): Array<{ username: string; seen_at: number }> =>
+    (s as unknown as {
+      db: { prepare(q: string): { all(pk: string): Array<{ username: string; seen_at: number }> } };
+    }).db
+      .prepare(`SELECT username, seen_at FROM username_history WHERE pk = ? ORDER BY seen_at`)
+      .all('7');
+
+  // First sighting is a change (nothing was known before).
+  s.observe({ accountPk: '7', observedAt: 100, source: 'followers-list', fields: { username: 'z' } });
+  expect(rows()).toEqual([{ username: 'z', seen_at: 100 }]);
+
+  // Re-observing the SAME username — what every census row does — writes nothing.
+  s.observe({ accountPk: '7', observedAt: 200, source: 'followers-list', fields: { username: 'z' } });
+  s.observe({ accountPk: '7', observedAt: 300, source: 'followers-list', fields: { username: 'z' } });
+  expect(rows()).toHaveLength(1);
+
+  // A genuine rename is history.
+  s.observe({ accountPk: '7', observedAt: 400, source: 'profile', fields: { username: 'zed' } });
+  expect(rows()).toEqual([
+    { username: 'z', seen_at: 100 },
+    { username: 'zed', seen_at: 400 },
+  ]);
+
+  // An OLDER read the projection rejects leaves no trace either — the log
+  // follows the projected username, not every payload seen.
+  s.observe({ accountPk: '7', observedAt: 150, source: 'followers-list', fields: { username: 'z' } });
+  expect(s.getAccount('7')?.username).toBe('zed');
+  expect(rows()).toHaveLength(2);
+});
+
 test('action ledger drives durable daily count', () => {
   s.recordAction('7', 'follow', 'ok', 1000);
   s.recordAction('8', 'follow', 'ok', 2000);
@@ -59,39 +113,27 @@ test('action ledger drives durable daily count', () => {
 });
 
 test('netGrowthSeries buckets gains/losses into cumulative local-day series', () => {
-  const today0 = new Date();
-  today0.setHours(0, 0, 0, 0);
-  const todayMs = today0.getTime();
-  const yest = new Date(today0);
-  yest.setDate(yest.getDate() - 1);
-  yest.setHours(0, 0, 0, 0);
-  const yestMs = yest.getTime();
-
   // f1 gains us today; f2 gained us yesterday then dropped us today; f3 is
   // outside the 3-day window and must be excluded.
-  s.observeEdge('f1', 'ME', 'follows', true, todayMs + 3_600_000);
-  s.observeEdge('f2', 'ME', 'follows', true, yestMs + 3_600_000);
-  s.observeEdge('f2', 'ME', 'follows', false, todayMs + 7_200_000);
-  s.observeEdge('f3', 'ME', 'follows', true, todayMs - 5 * 86_400_000);
+  s.observeEdge('f1', 'ME', 'follows', true, TODAY_MS + 3_600_000);
+  s.observeEdge('f2', 'ME', 'follows', true, YESTERDAY_MS + 3_600_000);
+  s.observeEdge('f2', 'ME', 'follows', false, TODAY_MS + 7_200_000);
+  s.observeEdge('f3', 'ME', 'follows', true, TODAY_MS - 5 * DAY);
 
   const series = s.netGrowthSeries(3, 'ME');
   expect(series).toHaveLength(3);
   expect(series[0].cumulativeNet).toBe(0); // two days ago: no activity
-  expect(series[1].dayStartMs).toBe(yestMs);
+  expect(series[1].dayStartMs).toBe(YESTERDAY_MS);
   expect(series[1].cumulativeNet).toBe(1); // +1 (f2 gained)
-  expect(series[2].dayStartMs).toBe(todayMs);
+  expect(series[2].dayStartMs).toBe(TODAY_MS);
   expect(series[2].cumulativeNet).toBe(1); // +1 (f1) -1 (f2 removed) on top of 1
 });
 
 test('the first census sets the growth BASELINE: its bulk never charts as one-day growth', () => {
-  const today0 = new Date();
-  today0.setHours(0, 0, 0, 0);
-  const noonToday = today0.getTime() + 12 * 3_600_000;
-
   s.setOwnPk('ME');
   // Initial app run: the first complete census records ~everyone at once.
-  s.ingestScanCensus(['x1', 'x2'], ['f1', 'f2', 'f3'], noonToday);
-  expect(s.followersBaselineAt()).toBe(noonToday);
+  s.ingestScanCensus(['x1', 'x2'], ['f1', 'f2', 'f3'], NOON_TODAY);
+  expect(s.followersBaselineAt()).toBe(NOON_TODAY);
 
   // The census bulk is STOCK — the series stays flat at zero.
   const flat = s.netGrowthSeries(3, 'ME');
@@ -99,95 +141,76 @@ test('the first census sets the growth BASELINE: its bulk never charts as one-da
 
   // A follower gained AFTER the baseline is real growth; a baseline follower
   // dropping us after it is a real loss.
-  s.observeEdge('f4', 'ME', 'follows', true, noonToday + 3_600_000);
-  s.observeEdge('f1', 'ME', 'follows', false, noonToday + 7_200_000);
+  s.observeEdge('f4', 'ME', 'follows', true, NOON_TODAY + 3_600_000);
+  s.observeEdge('f1', 'ME', 'follows', false, NOON_TODAY + 7_200_000);
   const series = s.netGrowthSeries(3, 'ME');
   expect(series[series.length - 1].cumulativeNet).toBe(0); // +1 (f4) − 1 (f1)
-  s.observeEdge('f5', 'ME', 'follows', true, noonToday + 10_800_000);
+  s.observeEdge('f5', 'ME', 'follows', true, NOON_TODAY + 10_800_000);
   expect(s.netGrowthSeries(3, 'ME')[2].cumulativeNet).toBe(1);
 });
 
 test('the baseline is set-once and retroactively absorbs earlier partial sweeps', () => {
-  const today0 = new Date();
-  today0.setHours(0, 0, 0, 0);
-  const noonToday = today0.getTime() + 12 * 3_600_000;
-
   s.setOwnPk('ME');
   // A follow-back sweep ran BEFORE any census and bulk-recorded head followers.
-  s.observeEdge('s1', 'ME', 'follows', true, noonToday - 3_600_000);
-  s.observeEdge('s2', 'ME', 'follows', true, noonToday - 3_600_000);
+  s.observeEdge('s1', 'ME', 'follows', true, NOON_TODAY - 3_600_000);
+  s.observeEdge('s2', 'ME', 'follows', true, NOON_TODAY - 3_600_000);
   // Without a baseline they chart (nothing better is known yet)…
   expect(s.netGrowthSeries(3, 'ME')[2].cumulativeNet).toBe(2);
 
   // …but the first census heals it: sweep edges predate the baseline → stock.
-  s.ingestScanCensus([], ['s1', 's2', 'f1'], noonToday);
+  s.ingestScanCensus([], ['s1', 's2', 'f1'], NOON_TODAY);
   expect(s.netGrowthSeries(3, 'ME')[2].cumulativeNet).toBe(0);
 
   // A SECOND census does not move the baseline; genuinely new followers in it
   // (first seen after the baseline) count as growth.
-  s.ingestScanCensus([], ['s1', 's2', 'f1', 'NEW'], noonToday + 3_600_000);
-  expect(s.followersBaselineAt()).toBe(noonToday);
+  s.ingestScanCensus([], ['s1', 's2', 'f1', 'NEW'], NOON_TODAY + 3_600_000);
+  expect(s.followersBaselineAt()).toBe(NOON_TODAY);
   expect(s.netGrowthSeries(3, 'ME')[2].cumulativeNet).toBe(1); // just NEW
 });
 
 test('REGRESSION: event gains observed weeks before the first census survive it', () => {
-  const today0 = new Date();
-  today0.setHours(0, 0, 0, 0);
-  const noonToday = today0.getTime() + 12 * 3_600_000;
-  const day = 86_400_000;
-
   s.setOwnPk('ME');
   // Measurement began weeks ago: the first sweep anchored the baseline, then
   // the watcher recorded genuine follow events at their own times.
-  s.ensureFollowersBaseline(noonToday - 21 * day);
-  s.observeOwnFollowerEvent('e1', 'ME', noonToday - 20 * day);
-  s.observeOwnFollowerEvent('e2', 'ME', noonToday - 10 * day);
+  s.ensureFollowersBaseline(NOON_TODAY - 21 * DAY);
+  s.observeOwnFollowerEvent('e1', 'ME', NOON_TODAY - 20 * DAY);
+  s.observeOwnFollowerEvent('e2', 'ME', NOON_TODAY - 10 * DAY);
   expect(s.netFollowersSince(0)).toBe(2);
 
   // The user's FIRST prune scan lands weeks later. Its census re-confirms the
   // event-observed followers and discovers never-seen stock in bulk.
-  s.ingestScanCensus([], ['e1', 'e2', 'st1', 'st2', 'st3'], noonToday);
+  s.ingestScanCensus([], ['e1', 'e2', 'st1', 'st2', 'st3'], NOON_TODAY);
 
   // The pre-census gains still chart — the census did not move the baseline —
   // and the discovered stock never charts as a census-day cliff.
-  expect(s.followersBaselineAt()).toBe(noonToday - 21 * day);
+  expect(s.followersBaselineAt()).toBe(NOON_TODAY - 21 * DAY);
   expect(s.netFollowersSince(0)).toBe(2);
   const series = s.netGrowthSeries(30, 'ME');
   expect(series[series.length - 1].cumulativeNet).toBe(2);
 });
 
 test('DEFENSE: pre-census event gains survive even when no path anchored a baseline', () => {
-  const today0 = new Date();
-  today0.setHours(0, 0, 0, 0);
-  const noonToday = today0.getTime() + 12 * 3_600_000;
-  const day = 86_400_000;
-
   s.setOwnPk('ME');
   // A collection path recorded raw event edges and forgot ensureFollowersBaseline.
-  s.observeEdge('e1', 'ME', 'follows', true, noonToday - 20 * day);
-  s.observeEdge('e2', 'ME', 'follows', true, noonToday - 10 * day);
-  s.ingestScanCensus([], ['e1', 'e2', 'st1'], noonToday);
+  s.observeEdge('e1', 'ME', 'follows', true, NOON_TODAY - 20 * DAY);
+  s.observeEdge('e2', 'ME', 'follows', true, NOON_TODAY - 10 * DAY);
+  s.ingestScanCensus([], ['e1', 'e2', 'st1'], NOON_TODAY);
 
   // The first census stamps the baseline just BELOW the earliest observed
   // gain, so both pre-census gains count; its own discovery (st1) is stock.
-  expect(s.followersBaselineAt()).toBe(noonToday - 20 * day - 1);
+  expect(s.followersBaselineAt()).toBe(NOON_TODAY - 20 * DAY - 1);
   expect(s.netFollowersSince(0)).toBe(2);
 });
 
 test('the first census absorbs its walk-streamed discoveries as stock (no one-day cliff)', () => {
-  const today0 = new Date();
-  today0.setHours(0, 0, 0, 0);
-  const noonToday = today0.getTime() + 12 * 3_600_000;
-  const day = 86_400_000;
-
   s.setOwnPk('ME');
-  s.ensureFollowersBaseline(noonToday - 15 * day);
-  s.observeOwnFollowerEvent('gain', 'ME', noonToday - 10 * day);
-  // The scan's followers walk streams its rows per-item (§1), minutes before
+  s.ensureFollowersBaseline(NOON_TODAY - 15 * DAY);
+  s.observeOwnFollowerEvent('gain', 'ME', NOON_TODAY - 10 * DAY);
+  // The scan's followers walk streams its rows per-item, minutes before
   // the census verdict — never-seen accounts land with fresh first_seen_at.
-  s.observeEdge('w1', 'ME', 'follows', true, noonToday - 30 * 60_000);
-  s.observeEdge('w2', 'ME', 'follows', true, noonToday - 20 * 60_000);
-  s.ingestScanCensus([], ['gain', 'w1', 'w2'], noonToday);
+  s.observeEdge('w1', 'ME', 'follows', true, NOON_TODAY - 30 * 60_000);
+  s.observeEdge('w2', 'ME', 'follows', true, NOON_TODAY - 20 * 60_000);
+  s.ingestScanCensus([], ['gain', 'w1', 'w2'], NOON_TODAY);
 
   // Only the event gain charts; the walk's stock discoveries were re-dated
   // onto the baseline instead of charting as a census-day cliff.
@@ -195,7 +218,7 @@ test('the first census absorbs its walk-streamed discoveries as stock (no one-da
 
   // A SECOND census discovering a new follower still charts it (a genuine
   // gain the notifications missed) — the stock absorption is first-census-only.
-  s.ingestScanCensus([], ['gain', 'w1', 'w2', 'NEW'], noonToday + 3_600_000);
+  s.ingestScanCensus([], ['gain', 'w1', 'w2', 'NEW'], NOON_TODAY + 3_600_000);
   expect(s.netFollowersSince(0)).toBe(2);
 });
 
@@ -219,7 +242,7 @@ test('observeOwnFollowerEvent anchors the baseline: the first-ever event is the 
 });
 
 test('netGrowthSeries guards non-positive days and empty ownPk', () => {
-  s.observeEdge('f1', 'ME', 'follows', true, Date.now());
+  s.observeEdge('f1', 'ME', 'follows', true, NOON_TODAY);
   expect(s.netGrowthSeries(0, 'ME')).toEqual([]);
   expect(s.netGrowthSeries(-3, 'ME')).toEqual([]);
   expect(s.netGrowthSeries(7, '')).toEqual([]);
@@ -271,6 +294,38 @@ test('an authoritative census records lost followers and healed follows', () => 
   expect(s.getFollowRecord('p')?.state).toBe('pending_followback');
 });
 
+test('absence is a verdict PER SIDE: a following walk that missed rows heals nothing on its side', () => {
+  // Live 2026-08-31: the following walk returned 2,928 of 3,329 rows, "complete",
+  // and the census declared 361 follows gone — which then re-entered the
+  // candidate pool as accounts to follow. The followers walk (99.6%) was sound.
+  s.setOwnPk('ME');
+  s.observeEdge('ME', 'x', 'follows', true, 1000);
+  s.observeEdge('ME', 'missed', 'follows', true, 1000);
+  s.observeEdge('gone', 'ME', 'follows', true, 1000);
+
+  s.ingestScanCensus(['x'], ['z'], 2000, { authoritative: { followers: true, following: false } });
+
+  expect(s.getEdge('gone', 'ME', 'follows')?.status).toBe('removed');
+  expect(s.getEdge('ME', 'missed', 'follows')?.status).toBe('active');
+});
+
+test('an authoritative census never flips a record growth still holds', () => {
+  // A request to a private account never appears in the following list, in ANY
+  // held state: flipping an `unfollow_queued` one to external left the request
+  // outstanding forever. Churn's own unfollow visit reads the true state instead.
+  s.setOwnPk('ME');
+  for (const [pk, state] of [['q', 'unfollow_queued'], ['b', 'followed_back']] as const) {
+    s.observeEdge('ME', pk, 'follows', true, 1000);
+    s.upsertFollowRecord({ accountPk: pk, targetPk: null, state, followedAt: 1000, retryCount: 0 });
+  }
+
+  s.ingestScanCensus([], [], 2000, { authoritative: true });
+
+  expect(s.getFollowRecord('q')?.state).toBe('unfollow_queued');
+  expect(s.getFollowRecord('b')?.state).toBe('followed_back');
+  expect(s.getEdge('ME', 'q', 'follows')?.status).toBe('active');
+});
+
 test('a non-authoritative census stays purely additive', () => {
   s.setOwnPk('ME');
   s.observeEdge('x', 'ME', 'follows', true, 1000);
@@ -281,7 +336,7 @@ test('a non-authoritative census stays purely additive', () => {
 test('migrations are idempotent across reopen', () => {
   s.observe({ accountPk: '7', observedAt: 100, source: 'profile', fields: { followers: 1, following: 1 } });
   s.close();
-  const s2 = new KnowledgeStore(':memory:'); // fresh; just asserts constructor+migrate doesn't throw
+  const s2 = memoryStore(); // fresh; just asserts constructor+migrate doesn't throw
   expect(s2.getAccount('nope')).toBeNull();
   s2.close();
 });

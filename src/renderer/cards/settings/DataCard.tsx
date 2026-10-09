@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import { Button } from '@/renderer/ui/Button';
@@ -11,7 +10,6 @@ export interface DataCardProps {
   onClearData(): Promise<void>;
   /** Re-open the intro tour (the walkthrough the shell shows on first launch). */
   onReplayTour(): void;
-  index?: number;
 }
 
 /** Which destructive action is currently awaiting the backend. */
@@ -29,8 +27,7 @@ export function DataCard({
   onResetSettings,
   onClearData,
   onReplayTour,
-  index,
-}: DataCardProps): h.JSX.Element {
+}: DataCardProps): JSX.Element {
   const [pending, setPending] = useState<PendingAction>(null);
 
   const resetSettings = async (): Promise<void> => {
@@ -70,7 +67,7 @@ export function DataCard({
   };
 
   return (
-    <CollapsibleCard icon="database" title="Data & session" index={index} defaultCollapsed>
+    <CollapsibleCard icon="database" title="Data & session" defaultCollapsed>
       <div class="field">
         <div class="ftop">
           <label>Intro tour</label>

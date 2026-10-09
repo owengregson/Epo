@@ -1,4 +1,4 @@
-import { dailyRateView, hoursOpen } from '@/renderer/lib/engine-view';
+import { dailyRateView, hoursOpen, transportModel } from '@/renderer/lib/engine-view';
 import type { EpoStatus, Settings } from '@/types';
 
 const statusWith = (actionsToday: number, plannedToday?: number): EpoStatus =>
@@ -43,5 +43,57 @@ describe('hoursOpen', () => {
     expect(hoursOpen(s, 23)).toBe(true);
     expect(hoursOpen(s, 3)).toBe(true);
     expect(hoursOpen(s, 12)).toBe(false);
+  });
+});
+
+describe('transportModel — ONE transport for two drivers (unified status)', () => {
+  it('defers to the growth engine when no prune is active', () => {
+    expect(transportModel('running', 'idle')).toEqual({
+      state: 'running',
+      driver: 'growth',
+      pruneScanning: false,
+    });
+    expect(transportModel(undefined, undefined)).toEqual({
+      state: 'idle',
+      driver: 'growth',
+      pruneScanning: false,
+    });
+    expect(transportModel('halted', 'done')).toEqual({
+      state: 'halted',
+      driver: 'growth',
+      pruneScanning: false,
+    });
+  });
+
+  it('a prune run reads as running and takes the transport', () => {
+    expect(transportModel('idle', 'running')).toEqual({
+      state: 'running',
+      driver: 'prune',
+      pruneScanning: false,
+    });
+  });
+
+  it('a prune scan reads as running with the pause lock flagged', () => {
+    expect(transportModel('idle', 'scanning')).toEqual({
+      state: 'running',
+      driver: 'prune',
+      pruneScanning: true,
+    });
+  });
+
+  it('a prune outranks the growth engine it parked underneath', () => {
+    expect(transportModel('paused', 'running')).toEqual({
+      state: 'running',
+      driver: 'prune',
+      pruneScanning: false,
+    });
+  });
+
+  it('a paused prune reads as paused so Resume routes back to it', () => {
+    expect(transportModel('idle', 'paused')).toEqual({
+      state: 'paused',
+      driver: 'prune',
+      pruneScanning: false,
+    });
   });
 });

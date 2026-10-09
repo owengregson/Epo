@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import { Button } from '@/renderer/ui/Button';
@@ -9,7 +8,6 @@ import type { UpdateStatus } from '@/types';
 export interface UpdatesCardProps {
   status: UpdateStatus | null;
   confirm(options: ConfirmOptions): Promise<boolean>;
-  index?: number;
 }
 
 /** The status line for each updater state (docs/RELEASE.md §5). */
@@ -38,7 +36,7 @@ function describe(s: UpdateStatus): string {
  * open-the-download-page on macOS and portable builds, which cannot replace
  * themselves). The restart is always confirm-gated: it quits the whole app.
  */
-export function UpdatesCard({ status, confirm, index }: UpdatesCardProps): h.JSX.Element {
+export function UpdatesCard({ status, confirm }: UpdatesCardProps): JSX.Element {
   const [busy, setBusy] = useState(false);
 
   const check = async (): Promise<void> => {
@@ -65,7 +63,7 @@ export function UpdatesCard({ status, confirm, index }: UpdatesCardProps): h.JSX
 
   const s = status;
   return (
-    <CollapsibleCard icon="circle-up" title="Updates" index={index} defaultCollapsed>
+    <CollapsibleCard icon="circle-up" title="Updates" defaultCollapsed>
       <div class="field">
         <div class="ftop">
           <label>Epo {s !== null ? `v${s.current}` : ''}</label>

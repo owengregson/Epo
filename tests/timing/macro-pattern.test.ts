@@ -2,8 +2,7 @@ import type { CircadianProfile } from '@/timing/circadian';
 import { intensityAt } from '@/timing/circadian';
 import { NOISE } from '@/timing/config';
 import { boundarySeedKey, cadenceFactor, jitterBoundary } from '@/timing/noise';
-import { jittered } from '@/timing/primitives';
-import { sample } from '@/timing/primitives';
+import { jittered, sample } from '@/timing/primitives';
 import {
   SessionPlanner,
   type SessionPlannerConfig,

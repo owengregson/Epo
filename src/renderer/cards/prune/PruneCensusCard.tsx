@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useCountUp } from '@/renderer/hooks/useCountUp';
 import { commas, ratio, relTime } from '@/renderer/lib/format';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
@@ -34,7 +33,7 @@ export function PruneCensusCard({
   scanning,
   visibleCount,
   whitelistCount,
-}: PruneCensusCardProps): h.JSX.Element {
+}: PruneCensusCardProps): JSX.Element {
   const isScanning = scanning || prune?.state === 'scanning';
   const census = prune?.census ?? null;
 
@@ -87,7 +86,7 @@ export function PruneCensusCard({
   const pct = (n: number): string => `width:${((n / (seg?.total ?? 1)) * 100).toFixed(2)}%`;
 
   return (
-    <Card raised index={0}>
+    <Card raised>
       <CardHeader
         icon="chart-pie"
         aux={isScanning ? 'live' : census !== null ? `Scanned ${relTime(census.at)}` : undefined}

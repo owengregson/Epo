@@ -14,7 +14,6 @@
  * not creation-time state, because cadences read live settings values.
  */
 
-import type { Clock } from '../governors/clock';
 import * as log from '../utils/logger';
 import { NOISE } from './config';
 import { cadenceFactor } from './noise';
@@ -38,11 +37,12 @@ interface ActiveLoop {
 }
 
 export class ScheduleManager {
-  private readonly clock: Clock;
   private readonly loops = new Map<string, ActiveLoop>();
 
-  constructor(deps: { clock: Clock }) {
-    this.clock = deps.clock;
+  constructor(deps: { clock?: unknown } = {}) {
+    // Deps are accepted for wiring compatibility; the manager owns no clock —
+    // every cadence is evaluated against the caller's `now`.
+    void deps;
   }
 
   every(
@@ -132,7 +132,7 @@ export class ScheduleManager {
           cfg.jitter.setFactor(factor);
           log.debug('schedule: cadence factor redrawn', { key, factor });
         }
-        log.debug('schedule: cadence run recorded', { key, at: now, recordedAt: this.clock.now() });
+        log.debug('schedule: cadence run recorded', { key, at: now });
       },
       lastRunAt: cfg.getLastRunAt,
     };

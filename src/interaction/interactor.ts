@@ -1,35 +1,46 @@
+import { ActionAbortedError, AdapterStaleError, TabUnresponsiveError } from '@/adapter/errors';
 import type { InputDriver } from '@/interaction/input-driver';
 import {
+  containPoint,
   type ElementRect,
+  intersectRect,
+  movementPlan,
   type Point,
-  pathBetween,
   pressDurationMs,
   type Rng,
-  stepDelays,
   targetPoint,
-  travelDurationMs,
   uniform,
   wheelPlan,
 } from '@/interaction/motion-profile';
+import { sleep as defaultSleep, type SleepFn } from '@/timing/primitives';
 
 export type { ElementRect, Point } from '@/interaction/motion-profile';
 
-const defaultSleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+export interface ClickGuard {
+  validate(): Promise<boolean>;
+  dispose(): Promise<void>;
+}
 
 export interface InteractorDeps {
   driver: InputDriver;
   rng?: Rng;
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: SleepFn;
+  abortSignal?: () => AbortSignal | undefined;
+  contextVersion?: () => unknown;
+  canClick?: (target: ElementRect, point: Point) => Promise<boolean>;
+  prepareClick?: (target: ElementRect, point: Point) => Promise<ClickGuard>;
+  viewport?: () => Promise<ElementRect>;
 }
 
 export class Interactor {
   private readonly driver: InputDriver;
   private readonly rng: Rng;
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sleep: SleepFn;
+  private tail: Promise<void> = Promise.resolve();
   private pos: Point;
+  private boundedStart = false;
 
-  constructor(deps: InteractorDeps) {
+  constructor(private readonly deps: InteractorDeps) {
     this.driver = deps.driver;
     this.rng = deps.rng ?? Math.random;
     this.sleep = deps.sleep ?? defaultSleep;
@@ -44,50 +55,123 @@ export class Interactor {
   }
 
   async moveTo(x: number, y: number, targetWidthPx = 32): Promise<void> {
+    return this.gesture(async (guard, signal) => {
+      const bounds = await this.viewport(guard);
+      await this.move(x, y, targetWidthPx, guard, signal, bounds);
+    });
+  }
+
+  private async move(x: number, y: number, targetWidthPx: number, guard: () => void, signal?: AbortSignal, bounds?: ElementRect): Promise<void> {
     const to: Point = { x, y };
-    const path = pathBetween(this.pos, to, this.rng);
-    const distance = Math.hypot(x - this.pos.x, y - this.pos.y);
-    const totalMs = travelDurationMs(distance, targetWidthPx, this.rng);
-    const delays = stepDelays(totalMs, Math.max(1, path.length - 1), this.rng);
+    const { points: path, delaysMs: delays } = movementPlan(this.pos, to, targetWidthPx, this.rng, { bounds });
 
     for (let i = 1; i < path.length; i++) {
-      await this.sleep(delays[i - 1] ?? delays[delays.length - 1] ?? 8);
-      this.driver.mouseMove(path[i].x, path[i].y);
+      await this.sleep(delays[i - 1], signal);
+      guard();
+      await this.driver.mouseMove(path[i].x, path[i].y);
+      this.pos = { ...path[i] };
     }
     this.pos = to;
   }
 
   async click(target: ElementRect): Promise<void> {
-    const point = targetPoint(target, this.rng);
-    await this.moveTo(point.x, point.y, Math.min(target.width, target.height));
-    await this.sleep(Math.round(uniform(this.rng, 30, 120)));
-    this.driver.mouseDown(this.pos.x, this.pos.y);
-    await this.sleep(pressDurationMs(this.rng));
-    this.driver.mouseUp(this.pos.x, this.pos.y);
+    return this.gesture(async (guard, signal) => {
+      const bounds = await this.viewport(guard);
+      const point = targetPoint(target, this.rng, bounds);
+      const visible = bounds ? intersectRect(target, bounds) : target;
+      if (!visible) throw new RangeError('Click target is outside the viewport');
+      const clickGuard = await this.deps.prepareClick?.(target, point);
+      try {
+        await this.move(point.x, point.y, Math.min(visible.width, visible.height), guard, signal, bounds);
+        await this.sleep(Math.round(uniform(this.rng, 30, 120)), signal);
+        guard();
+        if ((clickGuard && !(await clickGuard.validate()))
+          || (this.deps.canClick && !(await this.deps.canClick(target, point)))) {
+          throw new AdapterStaleError('input.click', 'control moved, disabled or covered');
+        }
+        guard();
+        const version = this.deps.contextVersion?.();
+        let accepted = false;
+        let failure: { error: unknown } | null = null;
+        try {
+          await this.driver.mouseDown(this.pos.x, this.pos.y);
+          accepted = true;
+          // Finish an accepted press even if Pause arrives during the short hold.
+          await this.sleep(pressDurationMs(this.rng), signal);
+        } catch (error) {
+          failure = { error };
+        }
+        if (version === this.deps.contextVersion?.()) {
+          try { await this.driver.mouseUp(this.pos.x, this.pos.y); }
+          catch (error) { failure ??= { error }; }
+        } else if (accepted) {
+          failure = { error: new TabUnresponsiveError('input:document-changed-during-press', 0, 'post-click') };
+        }
+        if (failure) throw failure.error;
+      } finally {
+        await clickGuard?.dispose();
+      }
+    });
   }
 
   async scroll(container: ElementRect, deltaPx: number, restPoint?: Point): Promise<void> {
+    return this.gesture((guard, signal) => this.scrollWithin(container, deltaPx, guard, signal, restPoint));
+  }
+
+  private async scrollWithin(container: ElementRect, deltaPx: number, guard: () => void, signal?: AbortSignal, restPoint?: Point): Promise<void> {
     if (deltaPx === 0) return;
+    const ticks = wheelPlan(deltaPx, this.rng);
+    const bounds = await this.viewport(guard);
+    const visible = bounds ? intersectRect(container, bounds) : container;
+    if (!visible) throw new RangeError('Scroll container is outside the viewport');
+    container = visible;
     if (restPoint !== undefined) {
-      await this.moveTo(restPoint.x, restPoint.y, Math.min(container.width, container.height));
+      if (!this.inside(restPoint, container)) throw new RangeError('Scroll rest point is outside its container');
+      await this.move(restPoint.x, restPoint.y, Math.min(container.width, container.height), guard, signal, bounds);
     } else if (!this.inside(this.pos, container)) {
       const entry = targetPoint(container, this.rng);
-      await this.moveTo(entry.x, entry.y, Math.min(container.width, container.height));
+      await this.move(entry.x, entry.y, Math.min(container.width, container.height), guard, signal, bounds);
     }
-    for (const tick of wheelPlan(deltaPx, this.rng)) {
-      this.driver.wheel(this.pos.x, this.pos.y, tick.deltaPx);
-      await this.sleep(tick.pauseMs);
-      if (this.rng() < 0.15) {
+    for (const tick of ticks) {
+      guard();
+      await this.driver.wheel(this.pos.x, this.pos.y, tick.deltaPx);
+      await this.sleep(tick.pauseMs, signal);
+      guard();
+      if (restPoint === undefined && this.rng() < 0.15) {
         const drifted: Point = {
           x: this.pos.x + Math.round(uniform(this.rng, -3, 3)),
           y: this.pos.y + Math.round(uniform(this.rng, -3, 3)),
         };
         if (this.inside(drifted, container)) {
+          await this.driver.mouseMove(drifted.x, drifted.y);
           this.pos = drifted;
-          this.driver.mouseMove(drifted.x, drifted.y);
         }
       }
     }
+  }
+
+  private async viewport(guard: () => void): Promise<ElementRect | undefined> {
+    const bounds = await this.deps.viewport?.();
+    guard();
+    this.pos = bounds && !this.boundedStart ? targetPoint(bounds, this.rng) : containPoint(this.pos, bounds);
+    if (bounds) this.boundedStart = true;
+    return bounds;
+  }
+
+  private gesture(run: (guard: () => void, signal?: AbortSignal) => Promise<void>): Promise<void> {
+    const signal = this.deps.abortSignal?.();
+    const version = this.deps.contextVersion?.();
+    const guard = (): void => {
+      if (signal?.aborted || version !== this.deps.contextVersion?.()) {
+        throw new ActionAbortedError('input.gesture');
+      }
+    };
+    const operation = this.tail.then(async () => {
+      guard();
+      await run(guard, signal);
+    });
+    this.tail = operation.catch(() => {});
+    return operation;
   }
 
   private inside(p: Point, rect: ElementRect): boolean {

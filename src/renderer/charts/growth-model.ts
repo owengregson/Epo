@@ -15,7 +15,7 @@
  * ≈ R·P·RR net/day. A deterministic wiggle models real follow/unfollow churn.
  */
 
-import { clamp } from '../lib/format';
+import { clamp } from '@/renderer/lib/format';
 
 /** Scenario bases: [cautious, expected, optimistic]. Exported for the
  *  Overview's realized-plus-projection overlay (growth-overlay.ts), which

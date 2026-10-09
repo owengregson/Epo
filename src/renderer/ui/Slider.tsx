@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 
 export interface SliderProps {
   id?: string;
@@ -32,7 +31,7 @@ export function Slider({
   ariaLabel,
   ticks,
   tickLabels,
-}: SliderProps): h.JSX.Element {
+}: SliderProps): JSX.Element {
   const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
   return (
     <Fragment>

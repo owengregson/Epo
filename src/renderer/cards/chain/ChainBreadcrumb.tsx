@@ -1,13 +1,12 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { useState } from 'preact/hooks';
+import { ChainNode } from '@/renderer/cards/chain/ChainNode';
 import { crumbTier } from '@/renderer/hooks/useTargetDetail';
 import { monogram, withAt } from '@/renderer/lib/format';
 import { Avatar } from '@/renderer/ui/Avatar';
 import { Badge } from '@/renderer/ui/Badge';
 import { Icon } from '@/renderer/ui/Icon';
 import type { ChainTargetView } from '@/types';
-import { ChainNode } from './ChainNode';
 
 export interface ChainBreadcrumbProps {
   chain: ChainTargetView[];
@@ -27,7 +26,7 @@ export interface ChainBreadcrumbProps {
  * alone; the detailed-but-not-current node carries the highlight ring plus a
  * plain "Viewing" badge, so the strip never contradicts the funnel's status.
  */
-export function ChainBreadcrumb({ chain, currentPk, viewingPk }: ChainBreadcrumbProps): h.JSX.Element {
+export function ChainBreadcrumb({ chain, currentPk, viewingPk }: ChainBreadcrumbProps): JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const canExpand = chain.length >= 2;
   const showTrail = canExpand && expanded;

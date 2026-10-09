@@ -1,46 +1,14 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-
 /**
  * The `growth:series` read envelope through a BUILT Foundation: the `days`
  * parameter reaches the store's parameterized series (window → series length),
  * omitted/invalid days fall back to the 14-day default, and the envelope
  * carries the followers-measurement baseline the renderer's honesty gates
  * (window "All", the momentum delta) read.
- *
- * Electron is mocked at module scope exactly as in foundation-chain-detail.
  */
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'epo-growth-read-'));
+import { builtFoundation, cleanupMainHarness, foundationStore } from '../kit/main-harness';
 
-jest.mock('electron', () => ({
-  app: { getPath: () => tmp },
-  session: {
-    fromPartition: () => ({
-      cookies: { get: async () => [{ name: 'ds_user_id', value: '4242' }] },
-      clearStorageData: async () => {},
-      clearCache: async () => {},
-    }),
-  },
-}));
-
-import type { InstagramTab } from '@/adapter/tab';
-import { Foundation } from '@/main/foundation-wiring';
-import type { KnowledgeStore } from '@/store/knowledge-store';
-import { setLevel } from '@/utils/logger';
-
-beforeAll(() => setLevel('error'));
-afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
-
-const fakeTab = {
-  show: () => {},
-  hide: () => {},
-  goto: async () => {},
-  currentUrl: () => 'https://www.instagram.com/',
-  evaluate: async () => '/myself/',
-  onResponse: () => () => {},
-} as unknown as InstagramTab;
+afterAll(cleanupMainHarness);
 
 /** `k` days before now, same time of day (Date arithmetic — DST-safe). */
 function daysAgo(k: number): number {
@@ -50,9 +18,8 @@ function daysAgo(k: number): number {
 }
 
 test('growth:series read: days parameter, default, and baseline envelope', async () => {
-  const f = new Foundation({ tab: fakeTab });
-  expect(await f.ensureBuilt()).toBe(true);
-  const store = (f as unknown as { graph: { store: KnowledgeStore } }).graph.store;
+  const { foundation: f } = await builtFoundation();
+  const store = foundationStore(f);
 
   // Measurement began 20 days ago; gains landed 10 and 3 days ago.
   const baselineAt = daysAgo(20);

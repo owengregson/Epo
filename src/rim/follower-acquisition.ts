@@ -22,7 +22,7 @@
  *     were observed (`maxNewPks`) — a refill fetches the two-or-so pages it
  *     needs, not a census.
  *  5. FALLBACK, not replacement: when the direct walk cannot fetch at all
- *     (`fetch-failed`), the old dialog-scroll scrape
+ *     (`fetch-failed`), the dialog-scroll scrape
  *     ({@link FollowersPageReader}) runs instead — same degradation contract
  *     as the prune scan's census path. A `shape-mismatch` walk does NOT fall
  *     back (the dialog parses through the same drifted extractor); it — like
@@ -30,12 +30,13 @@
  *     so callers can tell a failed read from genuine audience exhaustion.
  *
  * Edges (`follower → target (follows)`) are written as each observation
- * arrives — the pk is known before the first page, so no back-fill pass is
- * needed on the direct path. The dialog fallback keeps the R1 URL-derived-pk
- * back-fill and the R4 cursor persistence.
+ * arrives on BOTH paths (docs/PRINCIPLES.md §1): the direct walk knows the pk
+ * before the first page, and the dialog fallback is handed it the moment the
+ * first list URL names it. Each path persists its own resume cursor.
  */
 
-import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
+import { fetchJson } from '@/adapter/fetch-json';
+import { SURFACE } from '@/adapter/ig-surface';
 import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { type Clock, SystemClock } from '@/governors/clock';
@@ -332,7 +333,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     }
 
     // (5) Fallback: the dialog-scroll scrape (also the no-walker wiring path).
-    return this.acquireViaDialog(targetUsername);
+    return this.acquireViaDialog(targetUsername, targetPk);
   }
 
   /**
@@ -358,25 +359,16 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
    */
   private async resolvePkViaProfile(targetUsername: string): Promise<string | null> {
     if (this.tab === undefined || this.reader === undefined) return null;
-    let raw: unknown;
-    try {
-      raw = await this.tab.evaluate<unknown>(SURFACE.profileInfoScript(targetUsername));
-    } catch (e) {
+    const res = await fetchJson(this.tab, SURFACE.profileInfoScript(targetUsername));
+    if (!res.ok) {
       logger.warn('rim.acquisition: pk-resolve fetch failed', {
         targetUsername,
-        error: String(e),
+        kind: res.kind,
+        ...res.detail,
       });
       return null;
     }
-    const env = asFetchEnvelope(raw);
-    if (env === null || !env.ok) {
-      logger.warn('rim.acquisition: pk-resolve non-ok response', {
-        targetUsername,
-        status: env?.status ?? null,
-      });
-      return null;
-    }
-    const obs = this.reader.parseProfileInfo(env.json, this.clock.now());
+    const obs = this.reader.parseProfileInfo(res.json, this.clock.now());
     if (obs === null) {
       logger.warn('rim.acquisition: pk-resolve unparseable profile body', { targetUsername });
       return null;
@@ -386,23 +378,36 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
   }
 
   /**
-   * The pre-rework dialog-scroll scrape, now the fallback path. Folded review
-   * fixes retained:
-   *  - R1: follower→target edges use the pk `FollowersPageReader` derived from
-   *        the followers-list URL, back-filled uniformly after the scrape.
-   *  - R4: the final resume cursor is persisted per target via `setScrapeCursor`.
+   * The dialog-scroll scrape — the fallback path when the direct walk cannot
+   * fetch. `knownPk` is the target's pk when `acquire` already resolved it.
+   *
+   * Facts stream (§1): both the account row AND its follower→target edge are
+   * written the moment the row arrives. When the pk was not known up front the
+   * reader hands it over as soon as the first list URL names it — before that
+   * page's rows parse — so an aborted scrape never loses an edge it paid for.
+   * The final resume cursor is persisted per target via `setScrapeCursor`.
    *
    * The scrape's own end reason is mapped into the acquire taxonomy and
    * returned — a dialog that failed to open ('open-failed'), hit a wall, or
    * drifted must surface as a FAILURE, never as an `observed: 0` that reads
    * like genuine audience exhaustion.
    */
-  private async acquireViaDialog(targetUsername: string): Promise<AcquireResult> {
+  private async acquireViaDialog(
+    targetUsername: string,
+    knownPk: string | null,
+  ): Promise<AcquireResult> {
+    let edgePk = knownPk;
     const result = await this.pageReader.collect({
       targetUsername,
-      // Each observed account is written to the store as it arrives.
+      onTargetPk: (pk) => {
+        edgePk = pk;
+      },
       onObservation: (obs) => {
         this.store.observe(obs);
+        // The target's OWN profile-info observation carries no edge.
+        if (edgePk !== null && obs.accountPk !== edgePk) {
+          this.store.observeEdge(obs.accountPk, edgePk, 'follows', true, this.clock.now());
+        }
       },
       sentinel: this.sentinel,
       maxRounds: this.cfg.maxRounds,
@@ -415,16 +420,14 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     });
 
     const now = this.clock.now();
+    const pk = result.targetPk ?? edgePk;
 
-    if (result.targetPk !== null) {
-      for (const followerPk of result.observedPks) {
-        this.store.observeEdge(followerPk, result.targetPk, 'follows', true, now);
-      }
+    if (pk !== null) {
       // The dialog scrape always starts at the HEAD, so its cursor is shallower
       // than any deep resume point a prior direct walk persisted — never let the
       // fallback regress a target's saved position. Write only when none exists.
-      if (this.store.getScrapeCursor(result.targetPk) === null) {
-        this.store.setScrapeCursor(result.targetPk, result.cursor, now);
+      if (this.store.getScrapeCursor(pk) === null) {
+        this.store.setScrapeCursor(pk, result.cursor, now);
       }
     } else {
       logger.warn('rim.acquisition: target pk never resolved; edges/cursor not written', {
@@ -437,10 +440,10 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     logger.info('rim.acquisition: dialog scrape done', {
       targetUsername,
       observed: result.observedPks.length,
-      targetPk: result.targetPk,
+      targetPk: pk,
       reason: result.endReason,
       endReason,
     });
-    return { observed: result.observedPks.length, targetPk: result.targetPk, endReason };
+    return { observed: result.observedPks.length, targetPk: pk, endReason };
   }
 }

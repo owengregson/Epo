@@ -1,9 +1,9 @@
 import {
   GraphLayout,
-  NodeGrid,
-  NODE_SPACING,
   NODE_R_MAX,
   NODE_R_MIN,
+  NODE_SPACING,
+  NodeGrid,
   nodeRadius,
   slotOffset,
 } from '@/renderer/graph/layout';

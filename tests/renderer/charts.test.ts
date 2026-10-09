@@ -1,5 +1,5 @@
-import { computeProjection, projNet, pnoise } from '@/renderer/charts/growth-model';
 import { smoothPath } from '@/renderer/charts/catmull-rom';
+import { computeProjection, pnoise, projNet } from '@/renderer/charts/growth-model';
 
 describe('growth-model', () => {
   const base = {

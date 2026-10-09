@@ -1,5 +1,4 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { commas, monogram, pctInt, withAt } from '@/renderer/lib/format';
 import { Avatar } from '@/renderer/ui/Avatar';
 import { Badge } from '@/renderer/ui/Badge';
@@ -45,11 +44,11 @@ function statusText(props: ChainNodeProps): string {
  * One node in the expanded lineage trail, plus the `.chain-link` connector that
  * follows it. Every node — the seed included — carries the same yield subline
  * (follow-back rate · followers scanned · status): the seed is a working
- * target like any other, and its numbers move during walks (§2). The observed
+ * target like any other, and its numbers move during walks (docs/PRINCIPLES.md §2). The observed
  * follower count is labeled "scanned", never "pool" — it is what the walk has
  * seen, not the audience size.
  */
-export function ChainNode(props: ChainNodeProps): h.JSX.Element {
+export function ChainNode(props: ChainNodeProps): JSX.Element {
   const seed = props.source === 'seed' || props.chainIndex === 0;
 
   return (

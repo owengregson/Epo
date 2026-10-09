@@ -1,32 +1,24 @@
 /**
  * LiveTestHarness — the engine of the live action smoke-test.
  *
- * It attaches to a live, logged-in `InstagramTab` and drives EVERY real action
- * the app performs — acquire → enrich → score/plan → follow → follow-back check →
- * unfollow → sentinel — against real Instagram, then prints a PASS/FAIL report.
- * It reuses the exact production rim/adapter/store (no reimplementation); this
- * file is only the glue + reporting on top of them.
- *
- * SAFETY (this runs on the user's REAL account — it must never look like a burst):
- *  - Every real Instagram operation is separated by a jittered, jittered delay
- *    (reads/profile-fetches ~4–9s; the follow→unfollow gap ~30–75s).
- *  - Counts are TINY and bounded: acquire scrolls at most a few pages, enrich
- *    touches at most 5 profiles, and there is EXACTLY one follow + one unfollow.
- *    STOPS and reports — it never bypasses the safety net.
- *  - The Sentinel is checked immediately BEFORE the follow and BEFORE the unfollow;
- *    any non-`ok` result ABORTS the sequence right there (no more clicks/navigation).
- *  - No silent `catch {}`: every caught error is logged and surfaces as a FAIL.
+ * Reuses the production rim/adapter/store and prints a PASS/FAIL report.
+ * Reads are paced; acquireMaxRounds bounds both direct pages and fallback
+ * scroll rounds, and enrichCap bounds profile reads. Follow/unfollow require
+ * a configured test target and non-dry mode. Sentinel checks before each
+ * account action can abort the sequence. Errors surface as failed steps.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app, session } from 'electron';
+import { fetchJson } from '@/adapter/fetch-json';
 import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
-import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
+import { SURFACE } from '@/adapter/ig-surface';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { IG_PARTITION, type InstagramTab } from '@/adapter/tab';
+import { createTabInteractor } from '@/adapter/tab-interactor';
 import { Scanner } from '@/engine/scanner';
 import { type ScorerConfig, scoreCandidate } from '@/engine/scorer';
 import { SystemClock } from '@/governors/clock';
@@ -340,7 +332,7 @@ export class LiveTestHarness {
         try {
           followUserPk = await this.resolveUserPk(graph.reader, followUser);
           if (!followUserPk) {
-            this.record('6. Follow-back check', 'FAIL', `could not resolve pk for @${followUser} (web_profile_info)`);
+            this.record('6. Follow-back check', 'FAIL', `could not resolve pk for @${followUser} (profile read)`);
           } else {
             await this.pacedDelay();
             const show = await this.fetchFriendshipShow(graph.reader, followUserPk);
@@ -467,7 +459,12 @@ export class LiveTestHarness {
     });
 
     const reader = new Reader();
-    const adapter = new InstagramAdapter(this.tab);
+    // Production parity: the Actor clicks/scrolls through native input events,
+    // exactly as `foundation-wiring.ts` composes it. Without this the smoke
+    // test would exercise an input path production never takes — and a CDP
+    // input regression would pass it.
+    const interactor = createTabInteractor(this.tab);
+    const adapter = new InstagramAdapter(this.tab, { interactor });
 
     // Reads/scrolls are paced (a single jittered wait, bounded by maxRounds).
     const pageReader = new FollowersPageReader({
@@ -489,6 +486,7 @@ export class LiveTestHarness {
       ownPk,
       cfg: {
         ...ACQUISITION_DEFAULTS,
+        maxPages: this.cfg.acquireMaxRounds,
         maxRounds: this.cfg.acquireMaxRounds,
         noNewStop: 2,
       },
@@ -519,6 +517,7 @@ export class LiveTestHarness {
       ownPk,
       ownUsername: ownUsername ?? '(unknown)',
       acquireMaxRounds: this.cfg.acquireMaxRounds,
+      acquireMaxPages: this.cfg.acquireMaxRounds,
       enrichCap: this.cfg.enrichCap,
       dryRun: this.cfg.dryRun,
     });
@@ -592,6 +591,7 @@ export class LiveTestHarness {
    */
   private async resolveOwnUsername(): Promise<string | undefined> {
     return resolveUsernameFromTab(this.tab, {
+      interactor: createTabInteractor(this.tab),
       attempts: SCHEDULER.USERNAME_RESOLVE_ATTEMPTS,
       retryMs: SCHEDULER.USERNAME_RESOLVE_RETRY_MS,
     });
@@ -601,25 +601,19 @@ export class LiveTestHarness {
   // Live JSON fetch helpers (same session, x-ig-app-id header)
   // -------------------------------------------------------------------------
 
-  /** Resolve a username → pk via `web_profile_info`, parsed by the real Reader. */
+  /** Resolve a username → pk via the profile read, parsed by the real Reader. */
   private async resolveUserPk(reader: Reader, username: string): Promise<string | null> {
-    try {
-      const raw = await this.tab.evaluate<unknown>(SURFACE.profileInfoScript(username));
-      const env = asFetchEnvelope(raw);
-      if (env === null || !env.ok) {
-        logger.warn('livetest.resolveUserPk: non-ok profile response', {
-          username,
-          status: env?.status,
-          contentType: env?.contentType,
-        });
-        return null;
-      }
-      const obs = reader.parseProfileInfo(env.json, Date.now());
-      return obs ? obs.accountPk : null;
-    } catch (e) {
-      logger.error('livetest.resolveUserPk: failed', { username, error: String(e) });
+    const res = await fetchJson(this.tab, SURFACE.profileInfoScript(username));
+    if (!res.ok) {
+      logger.warn('livetest.resolveUserPk: profile fetch failed', {
+        username,
+        kind: res.kind,
+        ...res.detail,
+      });
       return null;
     }
+    const obs = reader.parseProfileInfo(res.json, Date.now());
+    return obs ? obs.accountPk : null;
   }
 
   /** Fetch `friendships/show/<pk>` and parse it via the real Reader. */
@@ -627,16 +621,15 @@ export class LiveTestHarness {
     reader: Reader,
     pk: string,
   ): Promise<{ parsed: boolean; following: boolean; followedBy: boolean }> {
-    const raw = await this.tab.evaluate<unknown>(SURFACE.friendshipShowScript(pk));
-    const env = asFetchEnvelope(raw);
-    const body = env?.ok ? (env.json as Record<string, unknown> | null) : null;
-    const parsed =
+    const fetched = await fetchJson(this.tab, SURFACE.friendshipShowScript(pk));
+    const body = fetched.ok ? (fetched.json as Record<string, unknown> | null) : null;
+    const looksLikeShow =
       body !== null &&
       typeof body === 'object' &&
       ('following' in body || 'followed_by' in body || body.status === 'ok');
     const res = reader.parseFriendshipShow(body, Date.now(), pk);
     return {
-      parsed: parsed && res !== null,
+      parsed: looksLikeShow && res !== null,
       following: res?.following ?? false,
       followedBy: res?.followedBy ?? false,
     };

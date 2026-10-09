@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 
 export interface ChipOption<T extends string> {
   value: T;
@@ -19,7 +18,7 @@ export function Chips<T extends string>({
   value,
   onChange,
   ariaLabel,
-}: ChipsProps<T>): h.JSX.Element {
+}: ChipsProps<T>): JSX.Element {
   return (
     <div class="chips num" role="group" aria-label={ariaLabel}>
       {options.map((o) => {
