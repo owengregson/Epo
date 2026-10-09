@@ -17,7 +17,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { Actor } from '@/adapter/actor';
-import { fetchJson } from '@/adapter/fetch-json';
 import { SURFACE } from '@/adapter/ig-surface';
 import type { InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
@@ -186,51 +185,6 @@ export class CaptureHarness {
         error: String(e),
       });
     }
-  }
-
-  /**
-   * Persist a parsed body captured DIRECTLY (not via the passive observer) and
-   * record it in the manifest. Used by {@link captureProfileShapes} for the
-   * shapes that Instagram will not fire on its own (the profile read via the
-   * page's own session, and the single `friendships/show/<pk>/` endpoint).
-   * Deterministic captures always write (they bypass MAX_SAVED_PER_CLASS).
-   */
-  private saveRaw(
-    classification: Classification,
-    parsed: unknown,
-    url: string,
-    status: number,
-  ): string | null {
-    const seq = ++this.seq;
-    const name = `${String(seq).padStart(4, '0')}-${classification}.json`;
-    let file: string | null = null;
-    try {
-      writeFileSync(
-        path.join(this.rawDir, name),
-        JSON.stringify(parsed, null, 2),
-        'utf8',
-      );
-      file = path.join('raw', name);
-      this.savedPerClass.set(
-        classification,
-        (this.savedPerClass.get(classification) ?? 0) + 1,
-      );
-      logger.info('capture.saved body (direct)', { classification, file, url });
-    } catch (e) {
-      logger.error('capture.write body failed (direct)', {
-        url,
-        error: String(e),
-      });
-    }
-    this.manifest.push({
-      seq,
-      url,
-      status,
-      classification,
-      file,
-      at: Date.now(),
-    });
-    return file;
   }
 
   // -------------------------------------------------------------------------
@@ -405,17 +359,21 @@ export class CaptureHarness {
   }
 
   /**
-   * Deterministically capture the three shapes the passive-only flow misses for
-   * each sample username: (1) the profile read (follower/following COUNTS),
-   * (2) the profile HEADER DOM (where the Follow/Following/Unfollow button
-   * lives), and (3) the single `friendships/show/<pk>/` shape (returns BOTH
-   * `following` and `followed_by`, unlike show_many). Every step is best-effort:
-   * a failure is logged and the flow continues to the next sample.
+   * Capture what the passive flow alone misses for each sample username: the
+   * profile header DOM (where the Follow/Following/Unfollow button lives). The
+   * NAVIGATION is the profile read — Instagram's own client fires its GraphQL
+   * profile query (counts, bio, and `friendship_status` in BOTH directions),
+   * which passive capture saves. Epo composes no profile request since
+   * 2026-10-08 (`/users/<pk>/info/` and `friendships/show/` reads retired with
+   * it). Every step is best-effort: a failure is logged and the flow continues.
    */
   async captureProfileShapes(samples: string[]): Promise<void> {
     for (const u of samples) {
       try {
-        await this.captureOneProfileShape(u);
+        await this.setStatus(`Capturing profile shape for @${u}…`);
+        await this.tab.goto(SURFACE.profileUrl(u));
+        await sleep(HARNESS.CAPTURE_NAV_SETTLE_MS);
+        await this.snapshotHeader(u);
       } catch (e) {
         logger.error('capture.captureProfileShapes: sample failed', {
           username: u,
@@ -423,69 +381,6 @@ export class CaptureHarness {
         });
       }
       await sleep(HARNESS.CAPTURE_SHORT_SETTLE_MS);
-    }
-  }
-
-  private async captureOneProfileShape(u: string): Promise<void> {
-    await this.setStatus(`Capturing profile shape for @${u}…`);
-
-    // (1) The profile read through the SURFACE's own fetch script (the page's
-    //     session + app-id header) — a username→pk hop, then
-    //     `/users/<pk>/info/`. A failure is fine: the profile NAVIGATION in
-    //     step (2) makes Instagram fire its own count queries, which passive
-    //     capture saves regardless.
-    let pk: string | null = null;
-    const profile = await fetchJson(this.tab, SURFACE.profileInfoScript(u));
-    if (profile.ok) {
-      const data = profile.json as Record<string, unknown> | null;
-      const user = extractProfileUser(data);
-      if (user) {
-        // The manifest key is the URL the body came from, and that URL is keyed
-        // by pk — so it can only be built once the body has been read.
-        pk = extractPk(user);
-        const key = pk === null ? CAPTURE_PATTERNS.topsearchKey(u) : CAPTURE_PATTERNS.profileInfoKey(pk);
-        this.saveRaw('profile-info', data, key, profile.status);
-      } else {
-        logger.warn('capture.captureProfileShapes: profile body had no user', { username: u });
-      }
-    } else {
-      logger.warn('capture.captureProfileShapes: profile fetch failed', {
-        username: u,
-        kind: profile.kind,
-        ...profile.detail,
-      });
-    }
-
-    // (2) Navigate to the profile so Instagram fires its own profile/count
-    //     queries (passively captured), then snapshot the header DOM.
-    try {
-      await this.tab.goto(SURFACE.profileUrl(u));
-      await sleep(HARNESS.CAPTURE_NAV_SETTLE_MS);
-      await this.snapshotHeader(u);
-    } catch (e) {
-      logger.warn('capture.captureProfileShapes: profile navigation failed', {
-        username: u,
-        error: String(e),
-      });
-    }
-
-    // (3) Single friendships/show/<pk>/ — the only shape with `followed_by`.
-    if (pk) {
-      const res = await fetchJson(this.tab, SURFACE.friendshipShowScript(pk));
-      const show = res.ok ? (res.json as Record<string, unknown> | null) : null;
-      if (show && ('following' in show || 'followed_by' in show || show.status === 'ok')) {
-        this.saveRaw('friendship-show', show, CAPTURE_PATTERNS.friendshipShowKey(pk), res.status);
-      } else {
-        logger.warn(
-          'capture.captureProfileShapes: friendships/show had no relationship fields',
-          { username: u, pk, kind: res.ok ? 'ok' : res.kind },
-        );
-      }
-    } else {
-      logger.warn(
-        'capture.captureProfileShapes: no pk resolved; skipping friendships/show',
-        { username: u },
-      );
     }
   }
 
@@ -639,35 +534,4 @@ export class CaptureHarness {
       logger.error('capture.write draft notes failed', { error: String(e) });
     }
   }
-}
-
-/** Promise-based delay helper (no foreground blocking). */
-
-/** Narrow an unknown value to a plain object, else null. */
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return v !== null && typeof v === 'object'
-    ? (v as Record<string, unknown>)
-    : null;
-}
-
-/**
- * Pull the `user` object out of a profile body. `/users/<pk>/info/` exposes
- * `{ user }` at the top level; the observed GraphQL profile query wraps it as
- * `{ data: { user } }`.
- */
-function extractProfileUser(body: unknown): Record<string, unknown> | null {
-  const root = asRecord(body);
-  if (!root) return null;
-  const nested = asRecord(root.data);
-  return (nested && asRecord(nested.user)) ?? asRecord(root.user);
-}
-
-/** Extract the numeric pk (as a string) from a user object, if present. */
-function extractPk(user: Record<string, unknown>): string | null {
-  for (const key of ['id', 'pk', 'pk_id']) {
-    const v = user[key];
-    if (typeof v === 'string' && v.length > 0) return v;
-    if (typeof v === 'number') return String(v);
-  }
-  return null;
 }

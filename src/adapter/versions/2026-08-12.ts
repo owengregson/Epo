@@ -99,62 +99,6 @@ const envelopeFetchScript = (urlExpr: string): string =>
   })
   .catch(function (err) { return { ok: false, status: 0, contentType: '', textHead: String(err).slice(0, 256) }; })`;
 
-/**
- * A profile read, as ONE in-page script resolving to a single
- * {@link FetchEnvelope} — so every caller keeps the shape it had when
- * `web_profile_info` answered a username directly.
- *
- * It is two hops because the surviving endpoint is keyed by pk:
- *
- *   1. `topsearch` resolves the username → pk. Only an EXACT (case-insensitive)
- *      username match counts; a fuzzy search hit would attribute another
- *      account's counts to this one.
- *   2. `/users/<pk>/info/` returns the profile.
- *
- * A wall on either hop surfaces as that hop's own envelope, so the recovery
- * ladder sees the real status. "No such username" is reported as a synthetic
- * 404 with a JSON content type — `classifyEnvelope` reads that as `gone`
- * (definitively absent), exactly as the 404 the second hop returns for a
- * deleted pk, and never as the HTML/rate family.
- */
-const profileReadScript = (username: string): string => {
-  const name = JSON.stringify(username);
-  const p = JSON_PATHS.topsearch;
-  return `(async function () {
-  var wanted = ${name}.toLowerCase();
-  var headers = { 'x-ig-app-id': '${IG_APP_ID}' };
-  var pk = null;
-  try {
-    var r = await fetch('${PATHS.topsearch}' + encodeURIComponent(${name}), {
-      headers: headers, credentials: 'include', signal: AbortSignal.timeout(20000),
-    });
-    var ct = '';
-    try { ct = (r.headers && r.headers.get('content-type')) || ''; } catch (e) { ct = ''; }
-    if (!r.ok || ct.toLowerCase().indexOf('json') === -1) {
-      var wall = await r.text();
-      return { ok: false, status: r.status, contentType: ct, finalUrl: r.url, textHead: String(wall).slice(0, 256) };
-    }
-    var body = await r.json();
-    var rows = body && body['${p.users}'];
-    if (!Array.isArray(rows)) {
-      // Unreadable search result: DRIFT, never the "gone" 404 (which is permanent).
-      return { ok: false, status: r.status, contentType: ct, finalUrl: r.url, textHead: 'topsearch: no users container' };
-    }
-    for (var i = 0; i < rows.length; i++) {
-      var u = rows[i] && rows[i]['${p.user}'];
-      var nm = u && u['${p.username}'];
-      if (typeof nm === 'string' && nm.toLowerCase() === wanted) { pk = String(u['${p.pk}']); break; }
-    }
-  } catch (e) {
-    return { ok: false, status: 0, contentType: '', textHead: String(e).slice(0, 256) };
-  }
-  if (pk === null) {
-    return { ok: false, status: 404, contentType: 'application/json', textHead: 'no account matches that username' };
-  }
-  return ${envelopeFetchScript(`'${PATHS.usersPrefix}' + encodeURIComponent(pk) + '${PATHS.profileInfoSuffix}'`)};
-})()`;
-};
-
 // ---------------------------------------------------------------------------
 // In-page CALLS. Every DOM mechanic lives in `src/adapter/page/*.ts` (real
 // TypeScript: type-checked, linted, DOM-tested) and is bundled into
@@ -301,6 +245,10 @@ function extractProfileRequestedByViewer(body: unknown): boolean | null {
   return profileViewerFlag(body, JSON_PATHS.profileUser.requestedByViewer);
 }
 
+function extractProfileFollowsViewer(body: unknown): boolean | null {
+  return profileViewerFlag(body, JSON_PATHS.profileUser.followsViewer);
+}
+
 function extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch {
   if (!isRecord(body)) return SHAPE_MISMATCH;
 
@@ -341,11 +289,6 @@ function extractFriendshipShow(body: unknown, pk: string): FriendshipShowResult 
     outgoingRequest: body[p.outgoingRequest] === true,
     isPrivate: asBool(body[p.isPrivate]),
   };
-}
-
-function extractCurrentUsername(body: unknown): string | null {
-  const username = getPath(body, JSON_PATHS.currentUser.username);
-  return typeof username === 'string' && username.length > 0 ? username : null;
 }
 
 /**
@@ -467,22 +410,15 @@ export const SURFACE_2026_08_12: IgSurface = {
   extractProfileRequestedByViewer,
   extractProfileInfo,
   extractProfileFollowedByViewer,
+  extractProfileFollowsViewer,
   extractShowMany,
   extractFriendshipShow,
-  extractCurrentUsername,
   extractActivityFeed,
 
   matchMutation,
   extractMutationVerdict,
   mutationRefusalSignatures: MUTATION_REFUSAL_SIGNATURES,
 
-  profileInfoScript: profileReadScript,
-  currentUserScript: (): string =>
-    envelopeFetchScript(`'${PATHS.currentUser}'`),
-  friendshipShowScript: (pk: string): string =>
-    envelopeFetchScript(
-      `'${PATHS.friendshipShow}' + encodeURIComponent(${JSON.stringify(pk)}) + '/'`,
-    ),
   // FOLLOWING is read in a FIXED order: Instagram re-ranks the default order on
   // every request (each page carries a fresh `follow_ranking_token`), so offset
   // paging repeated 405 of 3,447 rows and never returned 404 accounts (live
@@ -518,6 +454,7 @@ export const SURFACE_2026_08_12: IgSurface = {
     control('action-button', { op }),
   locateConfirmUnfollowScript: (): string => control('unfollow-confirm'),
   locateFollowersStatScript: (): string => control('followers-stat'),
+  locateProfileUnavailableScript: (): string => control('profile-unavailable'),
   locateFollowingStatScript: (): string => control('following-stat'),
   locateProfileLinkScript: (): string => control('profile-link'),
   locateNotificationsLinkScript: (): string => control('notifications-link'),

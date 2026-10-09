@@ -47,6 +47,9 @@ import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
 import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
 import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
+import { ProfileObserver } from '@/rim/profile-observer';
+import { TabProfileVisitor } from '@/rim/profile-visit';
+import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import {
   installRelationshipReconciler,
   RelationshipReconciler,
@@ -83,8 +86,10 @@ export interface BuiltGraph {
   actor: Actor;
   /** Disposer for the passive relationship reconciler. */
   relationshipReconcilerUnsub: () => void;
-  /** Disposer for the always-on profile-info observer (header counts → store). */
+  /** Disposer for the always-on profile observer (every profile body → store). */
   profileInfoUnsub: () => void;
+  /** Reads a profile by VISITING it — the seed check's one read. */
+  profiles: ProfileVisitor;
   ownPk: string;
   /** Our own username at build time, or `undefined` when it could not be resolved. */
   ownUsername: string | undefined;
@@ -198,26 +203,18 @@ export function buildGraph(
   );
 
   // Always-on profile observer: ANY profile the tab loads (the startup landing
-  // on our own page, dialog navigations, seed checks) answers a profile request
-  // carrying follower/following counts. Store them
-  // all — our OWN header counts size the scan progress bars and back the
-  // census coverage guard, and other profiles enrich candidate scoring for
-  // free. Passive parse of already-captured traffic; never issues requests.
-  const profileInfoUnsub = d.tab.onResponse((resp) => {
-    const kind = reader.profileKindOf(resp);
-    if (kind === null) return;
-    // The GraphQL profile body is served as `text/javascript`, not JSON — the
-    // mime gate has to accept it or every passively-harvested count is dropped.
-    if (resp.status >= 400 || !reader.parseableBody(resp.mimeType)) return;
-    resp
-      .getBody()
-      .then((body) => {
-        const obs = reader.parseProfileInfo(body, clock.now(), kind);
-        if (obs) store.observe(obs);
-      })
-      .catch((e: unknown) => {
-        logger.warn('foundation: profile-info observe failed', { error: String(e) });
-      });
+  // on our own page, dialog navigations, visits) is parsed once and stored —
+  // our OWN header counts size the scan progress bars and back the census
+  // coverage guard, and every other profile enriches candidate scoring. It is
+  // also how a profile is READ since 2026-10-08: the visitor navigates and the
+  // observer hands it the page's own profile body (no request is composed).
+  const profileObserver = new ProfileObserver({ tab: d.tab, reader, store, clock });
+  const profileInfoUnsub = profileObserver.start();
+  const profiles = new TabProfileVisitor({
+    tab: d.tab,
+    observer: profileObserver,
+    sentinel,
+    abortSignal: driverSignal,
   });
 
   const pageReader = new FollowersPageReader({
@@ -239,14 +236,13 @@ export function buildGraph(
 
   // Growth acquisition pages the friendships API directly (cursor-resumed,
   // demand-bounded via the walker); the dialog-scroll pageReader is its
-  // fallback, and tab+reader serve the one-off seed pk-resolution fetch.
+  // fallback, and the profile visitor serves the one-off seed pk resolution.
   const acquisition = new AdapterBackedAcquisition({
     pageReader,
     store,
     sentinel,
     walker: listWalker,
-    tab: d.tab,
-    reader,
+    visitor: profiles,
     ownPk,
   });
   const churnActions = new AdapterBackedChurnActions({
@@ -277,8 +273,7 @@ export function buildGraph(
   // internally. Constructed before the chain pieces because the fallback
   // target source also enriches a bounded sample before ranking.
   const enricher = new AdapterBackedProfileEnricher({
-    tab: d.tab,
-    reader,
+    visitor: profiles,
     store,
     sentinel,
     clock,
@@ -513,6 +508,7 @@ export function buildGraph(
     actor,
     relationshipReconcilerUnsub,
     profileInfoUnsub,
+    profiles,
     ownPk,
     ownUsername,
     clock,

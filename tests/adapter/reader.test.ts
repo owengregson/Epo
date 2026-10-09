@@ -280,29 +280,38 @@ describe('Reader.parseProfileInfo', () => {
   });
 });
 
-describe('Reader.profileFollowedByViewer', () => {
+describe('Reader.profileViewer', () => {
   const gql = (friendship: unknown): unknown => ({
     data: { user: { pk: '1', friendship_status: friendship } },
   });
 
-  test('true when the viewer already follows the account (private followers visible)', () => {
-    expect(r.profileFollowedByViewer(gql({ following: true }), 'profile-graphql')).toBe(true);
+  test('all three directions from the GraphQL body (private followers visible when following)', () => {
+    expect(r.profileViewer(gql({ following: true, outgoing_request: false, followed_by: true }))).toEqual({
+      following: true,
+      requested: false,
+      followsUs: true,
+    });
   });
 
-  test('false when the viewer does not follow', () => {
-    expect(r.profileFollowedByViewer(gql({ following: false }), 'profile-graphql')).toBe(false);
+  test('a pending request to a private account reads as requested, not following', () => {
+    expect(r.profileViewer(gql({ following: false, outgoing_request: true }))).toMatchObject({
+      following: false,
+      requested: true,
+    });
   });
 
-  test('the FETCHED profile body carries no viewer flag — unknown, never false', () => {
-    // `/users/<pk>/info/` has no `friendship_status`; the seed check reads
-    // `friendships/show/<pk>/` instead of inferring "we do not follow them".
-    expect(r.profileFollowedByViewer(profileInfo1)).toBeNull();
+  test('the `/users/<pk>/info/` body carries no viewer flag — unknown, never false', () => {
+    expect(r.profileViewer(profileInfo1, 'profile-info')).toEqual({
+      following: null,
+      requested: null,
+      followsUs: null,
+    });
   });
 
   test('null when the flag or user is absent', () => {
-    expect(r.profileFollowedByViewer(gql({}), 'profile-graphql')).toBeNull();
-    expect(r.profileFollowedByViewer({ data: {} }, 'profile-graphql')).toBeNull();
-    expect(r.profileFollowedByViewer({})).toBeNull();
+    expect(r.profileViewer(gql({})).following).toBeNull();
+    expect(r.profileViewer({ data: {} }).following).toBeNull();
+    expect(r.profileViewer({}).following).toBeNull();
   });
 });
 

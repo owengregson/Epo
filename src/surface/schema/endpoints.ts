@@ -221,18 +221,6 @@ export const ProfileGraphqlBody = z
 export type ProfileGraphqlBody = z.infer<typeof ProfileGraphqlBody>;
 
 /**
- * `topsearch` — the username → pk hop. Only the `users` container is
- * load-bearing; each entry is parsed row by row so one malformed hit cannot
- * reject the lookup.
- */
-export const TopsearchBody = z
-  .object({
-    users: z.array(z.unknown()),
-  })
-  .loose();
-export type TopsearchBody = z.infer<typeof TopsearchBody>;
-
-/**
  * The news inbox. At least one of the story containers must be an array —
  * an empty feed is a VALID "no recent follows" result, a body carrying neither
  * container is drift.
@@ -247,13 +235,6 @@ export const ActivityFeedBody = z
     error: 'no story container (`new_stories` / `old_stories`) present',
   });
 export type ActivityFeedBody = z.infer<typeof ActivityFeedBody>;
-
-/** The logged-in account (`accounts/current_user/`). */
-export const CurrentUserBody = z
-  .object({
-    user: z.object({ username: pii(z.string(), 'handle') }).loose(),
-  })
-  .loose();
 
 /** The mutation (follow / unfollow) verdict body, REST form. */
 export const MutationBody = z
@@ -294,5 +275,4 @@ export const ROW_SCHEMAS = {
   'profile-user': ProfileUser,
   'activity-story': ActivityStory,
   mutation: MutationBody,
-  'current-user': CurrentUserBody,
 } as const;

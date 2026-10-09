@@ -4,6 +4,7 @@ import { FakeClock } from '@/governors/clock';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
+import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeActor, FakeSentinel, FakeTab, followersBody, followersUrl, mkResp } from '../kit/fakes';
 
@@ -24,25 +25,34 @@ const okEnv = (body: unknown): unknown => ({
   json: body,
 });
 
-/** A `/users/<pk>/info/` body carrying the target's own pk + counts. */
-const profileBody = (pk: string, username: string): unknown => ({
-  user: {
-    pk: Number(pk),
-    id: pk,
-    username,
-    follower_count: 500,
-    following_count: 480,
-    mutual_followers_count: 4,
-    is_private: false,
-    is_verified: false,
-  },
-});
+/**
+ * Stands in for a profile VISIT plus the ProfileObserver behind it: writes
+ * what the page's own profile body would (the target's pk and counts) — the
+ * observer's write lands before the visit resolves — then answers. Unscripted
+ * usernames answer `unanswered`.
+ */
+class StubVisitor implements ProfileVisitor {
+  visited: string[] = [];
+  constructor(private readonly pages: Record<string, string> = { target: '999' }) {}
+  async visit(username: string): Promise<ProfileVisit> {
+    this.visited.push(username);
+    const pk = this.pages[username];
+    if (pk === undefined) return { ok: false, kind: 'unanswered', detail: {} };
+    const obs = {
+      accountPk: pk,
+      observedAt: 1,
+      source: 'profile' as const,
+      fields: { username, followers: 500, following: 480, mutuals: 4 },
+    };
+    store.observe(obs);
+    return { ok: true, obs, viewer: { following: null, requested: null, followsUs: null } };
+  }
+}
 
 describe('direct API walk (the request-efficient path)', () => {
   test('resolves pk via one profile fetch, pages the API directly, writes edges + cursor', async () => {
     const tab = new FakeTab();
     tab.onEvaluate = (script) => {
-      if (script.includes('topsearch')) return okEnv(profileBody('999', 'target'));
       // Two followers pages, then the API says the list is done. The built
       // script embeds the cursor as encodeURIComponent("C1"), so match on "C1".
       if (script.includes('"C1"')) return okEnv(followersBody(['c', 'd'], null, false));
@@ -50,13 +60,13 @@ describe('direct API walk (the request-efficient path)', () => {
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
     });
 
@@ -71,7 +81,7 @@ describe('direct API walk (the request-efficient path)', () => {
       expect(edge).not.toBeNull();
       expect(edge!.status).toBe('active');
     }
-    // The target's own counts were enriched for free by the resolve fetch.
+    // The target's own counts were enriched for free by the resolve visit.
     expect(store.getAccount('999')!.followers).toBe(500);
     expect(store.getAccount('999')!.mutuals).toBe(4);
     // A completed list leaves no resume cursor.
@@ -91,21 +101,21 @@ describe('direct API walk (the request-efficient path)', () => {
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
     });
 
     const result = await acquisition.acquire('target');
 
     expect(result.targetPk).toBe('999');
-    // No profile fetch (pk was already known) — only list-page scripts.
-    expect(seenUrls.every((s) => !s.includes('topsearch'))).toBe(true);
+    // No profile visit (pk was already known) — only list-page scripts.
+    expect(visitor.visited).toEqual([]);
     // The first (and only) fetched page carried the resume cursor (embedded as
     // encodeURIComponent("C1")).
     expect(seenUrls[0]).toContain('max_id');
@@ -126,13 +136,13 @@ describe('direct API walk (the request-efficient path)', () => {
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
       cfg: { targetNewPks: 5, maxPages: 100, maxCoverageFraction: 0.5, maxRounds: 5, noNewStop: 2 },
     });
@@ -166,13 +176,13 @@ describe('direct API walk (the request-efficient path)', () => {
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
       cfg: { targetNewPks: 250, maxPages: 100, maxCoverageFraction: 0.5, maxRounds: 5, noNewStop: 2 },
     });
@@ -204,13 +214,13 @@ describe('direct API walk (the request-efficient path)', () => {
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const actor = new FakeActor();
     const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
     });
 
@@ -232,14 +242,14 @@ describe('direct API walk (the request-efficient path)', () => {
     tab.onEvaluate = () => okEnv(followersBody(['a', 'b'], 'C1', true));
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       // Pre-check ok, page 1 ok, page 2's top-of-page check trips.
       sentinel: new FakeSentinel(['ok', 'ok', 'challenge']) as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
     });
 
@@ -267,13 +277,13 @@ describe('direct API walk (the request-efficient path)', () => {
       scrollWaitMs: 1,
       sleep: async () => {},
     });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
     });
 

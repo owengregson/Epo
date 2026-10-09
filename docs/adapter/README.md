@@ -34,7 +34,8 @@ window. Log into Instagram in that window; capture starts once the
 `sessionid` cookie is present.
 
 - **Target account:** by default the harness captures **your own** account
-  (detected via `accounts/current_user`). To capture a specific account instead:
+  (read from the page itself — the nav profile link; `accounts/current_user`
+  is no longer asked, it answers HTML since 2026-10). To capture a specific account instead:
 
   ```bash
   EPO_CAPTURE_TARGET=<username> npm run capture

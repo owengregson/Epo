@@ -256,6 +256,13 @@ export interface ShowManyEntry {
   isPrivate?: boolean;
 }
 
+/** A profile body's viewer-side flags (`friendship_status`); `null` where the body is silent. */
+export interface ProfileViewer {
+  following: boolean | null;
+  requested: boolean | null;
+  followsUs: boolean | null;
+}
+
 /** The single-relationship shape — both directions known. */
 export interface FriendshipShowResult {
   pk: string;
@@ -395,6 +402,8 @@ export interface IgSurface {
   extractProfileFollowedByViewer(body: unknown): boolean | null;
   /** Whether the viewer has a PENDING follow request to this profile; `null` when absent. */
   extractProfileRequestedByViewer(body: unknown): boolean | null;
+  /** Whether this profile follows the viewer (`followed_by`); `null` when absent. */
+  extractProfileFollowsViewer(body: unknown): boolean | null;
   /** Parse the batched relationship map. `SHAPE_MISMATCH` on unexpected shape. */
   extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch;
   /**
@@ -402,8 +411,6 @@ export interface IgSurface {
    * unexpected shape — so "no relationship" and "unparsed" stay distinguishable.
    */
   extractFriendshipShow(body: unknown, pk: string): FriendshipShowResult | ShapeMismatch;
-  /** The logged-in username from a `current_user` body, or `null`. */
-  extractCurrentUsername(body: unknown): string | null;
   /**
    * Parse the activity-feed (news inbox) body into the "started following you"
    * events it carries. `SHAPE_MISMATCH` when the body is present but carries
@@ -429,9 +436,8 @@ export interface IgSurface {
   mutationRefusalSignatures: readonly BlockSignature[];
 
   // --- In-page FETCH scripts (each resolves to a FetchEnvelope) -----------
-  profileInfoScript(username: string): string;
-  currentUserScript(): string;
-  friendshipShowScript(pk: string): string;
+  // Only the list pages: Instagram's own client calls the same endpoint.
+  // Profiles are VISITED, never fetched (`rim/profile-visit.ts`, 2026-10-08).
   /**
    * Fetch ONE page of a friendships list (`followers` or `following`) straight
    * from the paginated API — the same endpoint the list dialog paginates, but
@@ -466,6 +472,8 @@ export interface IgSurface {
   locateActionButtonScript(op: 'follow' | 'unfollow'): string;
   locateConfirmUnfollowScript(): string;
   locateFollowersStatScript(): string;
+  /** The page a missing / hidden profile renders (presence only, never pressed). */
+  locateProfileUnavailableScript(): string;
   locateFollowingStatScript(): string;
   locateScrollContainerScript(): string;
   /** The nav profile-avatar link's rect — the Interactor clicks it to land on our profile. */

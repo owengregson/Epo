@@ -12,10 +12,16 @@
  * changes, add a sibling directory and re-point `src/surface/index.ts`.
  *
  * AMENDED 2026-09-18: the profile read was re-verified live after Instagram
- * retired `/api/v1/users/web_profile_info/` (see `URLS.profileInfo`). Only that
- * endpoint moved — followers-list, following-list, friendship-show,
- * news/inbox and friendships/pending were all re-probed on the same session
- * and still answer their captured shapes.
+ * retired `/api/v1/users/web_profile_info/` (see `URLS.profileInfo`).
+ *
+ * AMENDED 2026-10-08 (`npm run probe`, phases traffic/endpoints/drawer/visit):
+ * `/users/<pk>/info/` now answers HTTP 429 with an empty body and
+ * `accounts/current_user/` a 200 HTML page at `/` — Epo composes NEITHER any
+ * more; a profile is read by VISITING it (the page's own GraphQL body, see
+ * `PROFILE_GRAPHQL_FRIENDLY_NAME`). The news inbox is now a POST. The nav rail
+ * re-renders on hover (settle-then-press, `src/adapter/settle-press.ts`). The
+ * list endpoints, show_many, friendships/pending and topsearch still answer
+ * their captured shapes.
  */
 
 /** Capture provenance — bump when these notes are re-verified against live IG. */
@@ -74,6 +80,11 @@ export const URLS = {
    * healthy on the same session. Instagram's own web client stopped calling it
    * (it reads profiles through `/api/graphql`, see {@link profileGraphql}), so
    * this is a retirement, not a rate wall. Verified live 2026-09-18.
+   *
+   * WALLED TOO 2026-10-08: this replacement answers HTTP 429 with an EMPTY body
+   * (since ~2026-09-20) while topsearch and the list endpoints answer JSON on
+   * the same session — and the web client never calls it either. Kept as an
+   * observe-only route; Epo no longer requests it (profiles are visited).
    */
   profileInfo: /\/api\/v1\/users\/\d+\/info\//,
   profileInfoPk: /\/api\/v1\/users\/(\d+)\/info\//,
@@ -81,27 +92,22 @@ export const URLS = {
    * POST /api/graphql with `x-fb-friendly-name: PolarisProfilePageContentQuery`
    * — what Instagram's OWN client fires when it opens a profile. Epo never
    * composes this request (it needs a rotating `doc_id` plus scraped
-   * `fb_dtsg`/`lsd` tokens); it is OBSERVED so ordinary profile navigation
-   * keeps streaming counts into the graph (docs/PRINCIPLES.md §1).
+   * `fb_dtsg`/`lsd` tokens); it is OBSERVED, and since 2026-10-08 it is THE
+   * profile read: a profile is visited and this body read (`rim/profile-visit.ts`).
    */
   profileGraphql: /\/api\/graphql\/?(?:[?#]|$)/,
-  /** GET /api/v1/web/search/topsearch/?query=<u> — username → pk resolution. */
-  topsearch: /\/api\/v1\/web\/search\/topsearch\//,
-  /** GET /api/v1/news/inbox/ — activity feed (new-follower events). */
+  /** POST /api/v1/news/inbox/ (a GET until 2026-10) — activity feed (new-follower events). */
   activityFeed: /\/api\/v1\/news\/inbox\//,
   /** GET /api/v1/friendships/pending/ — incoming follow requests; list shape + `friend_requests`. */
   friendRequests: /\/api\/v1\/friendships\/pending\//,
 } as const;
 
-/** Fetch paths built in page context — the ONLY place a request URL is composed. */
+/**
+ * Fetch paths built in page context — the ONLY place a request URL is composed.
+ * Since 2026-10-08 the list pages are the only reads Epo composes (Instagram's
+ * own client calls the same endpoint); profiles are visited, never fetched.
+ */
 export const PATHS = {
-  /** A profile read is `${usersPrefix}<pk>${profileInfoSuffix}`. */
-  usersPrefix: '/api/v1/users/',
-  profileInfoSuffix: '/info/',
-  /** Username → pk, the first hop of a profile read (see `URLS.profileInfo`). */
-  topsearch: '/api/v1/web/search/topsearch/?context=blended&query=',
-  currentUser: '/api/v1/accounts/current_user/',
-  friendshipShow: '/api/v1/friendships/show/',
   friendshipsList: '/api/v1/friendships/',
 } as const;
 
@@ -131,6 +137,9 @@ export const BODY_MIME_PARSEABLE = /json|javascript/i;
 //     → { data: { <op>: { friendship_status: {…} } }, status: "ok" }. The path is matched
 //     loosely: GraphQL moved `/graphql/query` → `/api/graphql` (2026-09) and a matcher
 //     pinned to the old path left EVERY click unobserved. The friendly name is the identity.
+//     Live 2026-10-08 (one follow+unfollow of @instagram): `usePolarisFollowMutation` /
+//     `usePolarisUnfollowMutation` on `/api/graphql`, answering `xdt_create_friendship` /
+//     `xdt_destroy_friendship` — both observed, both verdicts `ok`.
 // A THROTTLED action (no dialog, the button just snaps back) answers HTTP 400 with
 //   { message: "feedback_required", spam: true, feedback_title: "Try Again Later",
 //     feedback_message: "We restrict certain activity…", status: "fail" }
@@ -218,13 +227,6 @@ export const JSON_PATHS = {
     info: 'user',
     graphql: 'data.user',
   },
-  /** The username → pk hop. `users[].user`, matched on an exact username. */
-  topsearch: {
-    users: 'users',
-    user: 'user',
-    pk: 'pk',
-    username: 'username',
-  },
   friendshipShow: {
     following: 'following',
     followedBy: 'followed_by',
@@ -236,9 +238,6 @@ export const JSON_PATHS = {
     following: 'following',
     isPrivate: 'is_private',
     outgoingRequest: 'outgoing_request',
-  },
-  currentUser: {
-    username: 'user.username',
   },
   activityFeed: {
     storySections: ['new_stories', 'old_stories'] as readonly string[],
@@ -288,6 +287,11 @@ export const SELECTORS = {
   confirmRequestText: /^\s*confirm\s*$/i,
   /** The "Follows" category filter chip inside the notifications drawer. */
   followsFilterText: /^\s*follows\s*$/i,
+  /**
+   * A profile that does not exist (or is hidden from us): a `<span>` in `main`,
+   * and the page's client fetches no profile (live 2026-10-08).
+   */
+  profileUnavailableText: /^\s*sorry, this page isn['’]t available/i,
   /** The drawer's close (X) control, by accessible name. */
   drawerCloseLabelText: /^\s*close\s*$/i,
   /** The nav avatar image, by its alt-text shape. */
@@ -411,12 +415,6 @@ export const CAPTURE_PATTERNS = {
     `${IG_ORIGIN}/${username}/${which}/`,
   /** The modal container the harness snapshots (`outerHTML`). */
   dialogSelector: SELECTORS.dialog,
-  /** Manifest keys for the two fetches the harness drives itself. */
-  topsearchKey: (username: string): string =>
-    `${PATHS.topsearch}${encodeURIComponent(username)}`,
-  profileInfoKey: (pk: string): string =>
-    `${PATHS.usersPrefix}${pk}${PATHS.profileInfoSuffix}`,
-  friendshipShowKey: (pk: string): string => `${PATHS.friendshipShow}${pk}/`,
   /** Any GraphQL path — many shapes; profile/timeline queries land here. */
   graphql: '/graphql',
   /** A POSTed operation worth saving even when the mutation table does not know it. */

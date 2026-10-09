@@ -44,7 +44,7 @@ const FORM_KEEP = /^(?:doc_id|fb_api_req_friendly_name|fb_api_caller_class|varia
 /** Only API traffic — page documents, static assets and logging are noise here. */
 const API_PATH = /^\/(?:api\/|graphql|ajax\/(?!bz|bulk-route))/;
 
-export function shapeOf(v: unknown, depth = 0): unknown {
+function shapeOf(v: unknown, depth = 0): unknown {
   if (Array.isArray(v)) return v.length === 0 ? [] : [`len ${v.length}`, shapeOf(v[0], depth + 1)];
   if (v !== null && typeof v === 'object') {
     if (depth >= 6) return '{…}';
@@ -54,7 +54,7 @@ export function shapeOf(v: unknown, depth = 0): unknown {
 }
 
 /** A body as JSON: plain, `for (;;);`-guarded, or newline-delimited (GraphQL @defer). */
-export function parseBody(text: string): unknown {
+function parseBody(text: string): unknown {
   const t = text.replace(/^for \(;;\);/, '').trim();
   try {
     return JSON.parse(t);

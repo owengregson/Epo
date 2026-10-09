@@ -1,81 +1,38 @@
-import { SURFACE } from '@/adapter/ig-surface';
-import { Reader } from '@/adapter/reader';
+/**
+ * AdapterBackedProfileEnricher — enrichment by VISITING profiles.
+ *
+ * Since 2026-10-08 a profile is read by opening it (`rim/profile-visit.ts`):
+ * the page's own GraphQL body carries the counts and the ProfileObserver
+ * writes it to the store. The enricher owns the PASS — sentinel gating,
+ * pacing, the wall streak, the permanent `gone` marker, progress — and is
+ * tested here against a scripted visitor. The store write is the observer's,
+ * tested in `profile-visit.test.ts`.
+ */
 import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
-import type { RimTab } from '@/rim/types';
+import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { RECOVERY } from '@/timing/config';
-import type { ResponseHandler, Unsubscribe } from '@/types';
 import { setLevel } from '@/utils/logger';
 import { FakeSentinel } from '../kit/fakes';
 
 beforeAll(() => setLevel('error'));
 
-/** The `/users/<pk>/info/` body shape the Reader parses (`user.*`). */
-const profileBody = (
-  id: string,
-  username: string,
-  followers: number,
-  following: number,
-): unknown => ({
-  user: {
-    pk: Number(id),
-    id,
-    username,
-    follower_count: followers,
-    following_count: following,
-    is_private: false,
-    is_verified: false,
-  },
+const ok = (pk: string, username: string): ProfileVisit => ({
+  ok: true,
+  obs: { accountPk: pk, observedAt: 1, source: 'profile', fields: { username, followers: 10, following: 10 } },
+  viewer: { following: false, requested: false, followsUs: false },
 });
+const fail = (kind: 'gone' | 'walled' | 'unanswered' | 'tab'): ProfileVisit => ({ ok: false, kind, detail: {} });
 
-/**
- * A fake port-tab whose `evaluate` resolves the FetchEnvelope the surface's
- * in-page fetch script yields, wrapping the scripted profile body
- * chosen by matching the username the enricher embedded in the fetch script.
- * `wallFor` simulates an HTML/rate-limit wall: a typed non-ok envelope (the
- * in-page script never rejects on a non-JSON body).
- */
-class EnrichTab implements RimTab {
-  evalCalls: string[] = [];
-  bodies: Record<string, unknown> = {};
-  throwFor = new Set<string>();
-  wallFor = new Set<string>();
-  url = 'https://www.instagram.com/';
-
-  async goto(u: string): Promise<void> {
-    this.url = u;
-  }
-  onResponse(_handler: ResponseHandler): Unsubscribe {
-    return () => {};
-  }
-  currentUrl(): string {
-    return this.url;
-  }
-  async evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T> {
-    const s = String(fnOrString);
-    this.evalCalls.push(s);
-    const users = [...Object.keys(this.bodies), ...this.wallFor];
-    const user = users.find((u) => s.includes(JSON.stringify(u)));
-    if (user !== undefined && this.throwFor.has(user)) {
-      throw new Error(`fetch failed for ${user}`);
-    }
-    if (user !== undefined && this.wallFor.has(user)) {
-      return {
-        ok: false,
-        status: 429,
-        contentType: 'text/html; charset=utf-8',
-        textHead: '<!DOCTYPE html><html lang="en"> ... Please wait a few minutes',
-      } as T;
-    }
-    if (user === undefined) return undefined as T;
-    return {
-      ok: true,
-      status: 200,
-      contentType: 'application/json; charset=utf-8',
-      json: this.bodies[user],
-    } as T;
+/** A visitor answering a scripted outcome per username (`unanswered` when unscripted). */
+class ScriptedVisitor implements ProfileVisitor {
+  visited: string[] = [];
+  outcomes: Record<string, ProfileVisit> = {};
+  async visit(username: string): Promise<ProfileVisit> {
+    this.visited.push(username);
+    return this.outcomes[username] ?? fail('unanswered');
   }
 }
 
@@ -88,244 +45,141 @@ beforeEach(() => {
 });
 afterEach(() => store.close());
 
-interface Built {
-  enricher: AdapterBackedProfileEnricher;
-  tab: EnrichTab;
-  sentinel: FakeSentinel;
-  activity: Array<{ kind: string; label: string; count?: number; total?: number } | null>;
-}
+type Report = { kind: string; label: string; count?: number; total?: number } | null;
 
-const build = (opts?: {
-  sentinel?: FakeSentinel;
-  batchCap?: number;
-}): Built => {
-  const tab = new EnrichTab();
-  const sentinel = opts?.sentinel ?? new FakeSentinel();
-  const activity: Array<{
-    kind: string;
-    label: string;
-    count?: number;
-    total?: number;
-  } | null> = [];
+const build = (opts?: { sentinel?: FakeSentinel; batchCap?: number; sleep?: (ms: number) => Promise<void> }) => {
+  const visitor = new ScriptedVisitor();
+  const activity: Report[] = [];
   const enricher = new AdapterBackedProfileEnricher({
-    tab,
-    reader: new Reader(),
+    visitor,
     store,
-    sentinel: sentinel as unknown as Sentinel,
+    sentinel: (opts?.sentinel ?? new FakeSentinel()) as unknown as Sentinel,
     clock,
     batchCap: opts?.batchCap,
-    sleep: noSleep,
-    reporter: {
-      report: (info) => activity.push(info),
-      clear: () => activity.push(null),
-    },
+    sleep: opts?.sleep ?? noSleep,
+    reporter: { report: (info) => activity.push(info), clear: () => activity.push(null) },
   });
-  return { enricher, tab, sentinel, activity };
+  return { enricher, visitor, activity };
 };
 
+test('visits each username and counts the profiles that answered', async () => {
+  const { enricher, visitor } = build();
+  visitor.outcomes = { alice: ok('101', 'alice'), bob: ok('102', 'bob') };
+
+  expect(await enricher.enrich(['alice', 'bob'])).toBe(2);
+  expect(visitor.visited).toEqual(['alice', 'bob']);
+});
+
 test('paces even when the sentinel blocks, so a persistent block cannot spin', async () => {
-  const tab = new EnrichTab();
-  const sentinel = new FakeSentinel([], 'challenge'); // every check is non-ok
   const sleeps: number[] = [];
-  const enricher = new AdapterBackedProfileEnricher({
-    tab,
-    reader: new Reader(),
-    store,
-    sentinel: sentinel as unknown as Sentinel,
-    clock,
-    sleep: async (ms: number) => {
+  const { enricher, visitor } = build({
+    sentinel: new FakeSentinel([], 'challenge'),
+    sleep: async (ms) => {
       sleeps.push(ms);
     },
   });
 
-  const n = await enricher.enrich(['a', 'b', 'c']);
-
-  expect(n).toBe(0); // nothing enriched (all blocked)
-  expect(tab.evalCalls).toEqual([]); // never even fetched — blocked before evaluate
-  expect(sleeps.length).toBe(2); // paced after the 1st and 2nd (no wait after the last)
+  expect(await enricher.enrich(['a', 'b', 'c'])).toBe(0);
+  expect(visitor.visited).toEqual([]); // blocked before any page load
+  expect(sleeps).toHaveLength(2); // after the 1st and 2nd, none after the last
 });
 
-test('enriches each username: fetches the profile, parses, and store.observe writes counts', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 1200, 300),
-    bob: profileBody('102', 'bob', 50, 75),
+test('a non-ok sentinel skips that username and visits the rest', async () => {
+  const { enricher, visitor } = build({ sentinel: new FakeSentinel(['challenge']) });
+  visitor.outcomes = { alice: ok('101', 'alice'), bob: ok('102', 'bob') };
+
+  expect(await enricher.enrich(['alice', 'bob'])).toBe(1);
+  expect(visitor.visited).toEqual(['bob']);
+});
+
+test('`gone` marks the account permanently un-enrichable; `unanswered` does NOT', async () => {
+  const { enricher, visitor } = build();
+  for (const [pk, username] of [
+    ['77', 'gone_forever'],
+    ['88', 'blank_page'],
+  ]) {
+    store.observe({ accountPk: pk, observedAt: 1, source: 'followers-list', fields: { username } });
+  }
+  visitor.outcomes = { gone_forever: fail('gone') };
+
+  expect(await enricher.enrich(['gone_forever', 'blank_page'])).toBe(0);
+  expect(store.getAccount('77')?.enrichFailedAt).toBeDefined(); // the page says: not available
+  expect(store.getAccount('88')?.enrichFailedAt).toBeUndefined(); // ambiguous → retryable
+});
+
+test('a WALL ends the pass: consecutive walled visits stop the batch instead of draining it', async () => {
+  const { enricher, visitor } = build();
+  const names = Array.from({ length: 12 }, (_, i) => `walled${i}`);
+  for (const n of names) visitor.outcomes[n] = fail('walled');
+
+  expect(await enricher.enrich(names)).toBe(0);
+  expect(visitor.visited).toHaveLength(RECOVERY.BLOCKED_STREAK_ENTRY);
+});
+
+test('pages that never answer count toward the wall streak too', async () => {
+  const { enricher, visitor } = build();
+  const names = Array.from({ length: 12 }, (_, i) => `blank${i}`); // unscripted → unanswered
+
+  expect(await enricher.enrich(names)).toBe(0);
+  expect(visitor.visited).toHaveLength(RECOVERY.BLOCKED_STREAK_ENTRY);
+});
+
+test('an isolated walled visit does not end the pass', async () => {
+  const { enricher, visitor } = build();
+  visitor.outcomes = {
+    w1: fail('walled'),
+    ok1: ok('11', 'ok1'),
+    w2: fail('walled'),
+    ok2: ok('12', 'ok2'),
   };
 
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(2);
-  const a = store.getAccount('101');
-  expect(a?.username).toBe('alice');
-  expect(a?.followers).toBe(1200);
-  expect(a?.following).toBe(300);
-  expect(a?.enrichment).toBe('profiled');
-  expect(store.getAccount('102')?.followers).toBe(50);
+  expect(await enricher.enrich(['w1', 'ok1', 'w2', 'ok2'])).toBe(2);
 });
 
-test('the fetch script resolves the username then reads that pk\'s profile, app-id header and all', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = { alice: profileBody('101', 'alice', 10, 10) };
+test('a tab that cannot navigate ends the pass at once (retrying cannot revive it)', async () => {
+  const { enricher, visitor } = build();
+  visitor.outcomes = { a: fail('tab'), b: ok('2', 'b') };
 
-  await enricher.enrich(['alice']);
-
-  expect(tab.evalCalls).toHaveLength(1);
-  const script = tab.evalCalls[0];
-  // Hop 1 resolves the username, hop 2 reads `/users/<pk>/info/` — the pk is
-  // only known at runtime, so the script carries the prefix and the suffix.
-  expect(script).toContain('/api/v1/web/search/topsearch/');
-  expect(script).toContain('/api/v1/users/');
-  expect(script).toContain("'/info/'");
-  expect(script).toContain(`'x-ig-app-id': '${SURFACE.appId}'`);
-  expect(script).toContain("credentials: 'include'");
-  expect(script).toContain('encodeURIComponent("alice")');
+  expect(await enricher.enrich(['a', 'b'])).toBe(0);
+  expect(visitor.visited).toEqual(['a']);
 });
 
-test('a non-ok sentinel skips that username and returns the count of the rest', async () => {
-  // First username sees a challenge (skip); the rest fall through to `ok`.
-  const { enricher, tab } = build({ sentinel: new FakeSentinel(['challenge']) });
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 10, 10),
-    bob: profileBody('102', 'bob', 20, 20),
-  };
+test('respects batchCap: only the first N usernames are visited', async () => {
+  const { enricher, visitor } = build({ batchCap: 1 });
+  visitor.outcomes = { alice: ok('101', 'alice'), bob: ok('102', 'bob') };
 
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1); // alice skipped, bob enriched
-  expect(store.getAccount('101')).toBeNull();
-  expect(store.getAccount('102')?.followers).toBe(20);
+  expect(await enricher.enrich(['alice', 'bob'])).toBe(1);
+  expect(visitor.visited).toEqual(['alice']);
 });
 
-test('a malformed/unparseable body is skipped and the pass continues', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = {
-    alice: { data: { user: null } }, // no user → parseProfileInfo returns null
-    bob: profileBody('102', 'bob', 20, 20),
-  };
-
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1);
-  expect(store.getAccount('102')?.followers).toBe(20);
-});
-
-test('an HTML/rate-limit wall is a typed skip (non-ok envelope), never a throw', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = { bob: profileBody('102', 'bob', 20, 20) };
-  tab.wallFor.add('alice'); // alice gets a 429 text/html interstitial
-
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1); // alice skipped on the envelope, bob still enriched
-  expect(store.getAccount('101')).toBeNull();
-  expect(store.getAccount('102')?.followers).toBe(20);
-});
-
-test('a fetch/evaluate rejection is logged-and-skipped, not fatal to the pass', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 10, 10),
-    bob: profileBody('102', 'bob', 20, 20),
-  };
-  tab.throwFor.add('alice');
-
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1); // alice threw, bob still enriched
-  expect(store.getAccount('101')).toBeNull();
-  expect(store.getAccount('102')?.followers).toBe(20);
-});
-
-test('respects batchCap: only the first N usernames are attempted', async () => {
-  const { enricher, tab } = build({ batchCap: 1 });
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 10, 10),
-    bob: profileBody('102', 'bob', 20, 20),
-  };
-
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1);
-  expect(tab.evalCalls).toHaveLength(1);
-  expect(store.getAccount('102')).toBeNull();
-});
-
-test('an aborted driver signal ends the pass between usernames (nothing fetched)', async () => {
-  const tab = new EnrichTab();
+test('an aborted driver signal ends the pass between usernames (nothing visited)', async () => {
+  const visitor = new ScriptedVisitor();
   const ac = new AbortController();
   ac.abort();
   const enricher = new AdapterBackedProfileEnricher({
-    tab,
-    reader: new Reader(),
+    visitor,
     store,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     clock,
     sleep: noSleep,
     abortSignal: () => ac.signal,
   });
-  tab.bodies = { alice: profileBody('101', 'alice', 10, 10) };
 
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(0);
-  expect(tab.evalCalls).toEqual([]); // stop means stop: no fetch at all
+  expect(await enricher.enrich(['alice', 'bob'])).toBe(0);
+  expect(visitor.visited).toEqual([]);
 });
 
 test('reports determinate progress for the veil, advancing on SKIPS too, then clears', async () => {
-  // 'bob' has no scripted body → it is skipped; progress must still advance,
-  // otherwise the overlay bar stalls whenever a profile is unavailable.
-  const { enricher, tab, activity } = build();
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 1200, 300),
-    carol: profileBody('103', 'carol', 900, 800),
-  };
+  const { enricher, visitor, activity } = build();
+  visitor.outcomes = { alice: ok('101', 'alice'), carol: ok('103', 'carol') };
 
   await enricher.enrich(['alice', 'bob', 'carol']);
 
-  const reports = activity.filter(Boolean) as Array<{
-    kind: string;
-    label: string;
-    count?: number;
-    total?: number;
-  }>;
-  expect(reports.every((r) => r.kind === 'api' && r.label === 'Reading profiles')).toBe(true);
-  // A real denominator (the batch size) → the overlay draws a true bar.
+  const reports = activity.filter(Boolean) as Array<Exclude<Report, null>>;
+  expect(reports.every((r) => r.kind === 'page' && r.label === 'Visiting profiles')).toBe(true);
   expect(reports.every((r) => r.total === 3)).toBe(true);
-  // One report per username STARTED, including the skipped one.
   expect(reports.map((r) => r.count)).toEqual([0, 1, 2]);
-  expect(activity[activity.length - 1]).toBeNull(); // cleared at the end
-});
-
-test('a 404 marks the account permanently un-enrichable; a 200 soft-block does NOT', async () => {
-  const { enricher, tab } = build();
-  // Both accounts are already known in the store (from a followers page).
-  for (const [pk, username] of [
-    ['77', 'gone_forever'],
-    ['88', 'soft_blocked'],
-  ]) {
-    store.observe({ accountPk: pk, observedAt: 1, source: 'followers-list', fields: { username } });
-  }
-  // gone_forever → definitive 404; soft_blocked → 2xx body with no data.user
-  // (a challenge-wall shape), which is AMBIGUOUS and must not mark.
-  tab.bodies.gone_forever = undefined;
-  tab.evaluate = async <T,>(fnOrString: string | (() => T | Promise<T>)): Promise<T> => {
-    const s = String(fnOrString);
-    if (s.includes(JSON.stringify('gone_forever'))) {
-      return { ok: false, status: 404, contentType: 'application/json', textHead: '{}' } as T;
-    }
-    return {
-      ok: true,
-      status: 200,
-      contentType: 'application/json',
-      json: { status: 'fail', spam: true },
-    } as T;
-  };
-
-  const enriched = await enricher.enrich(['gone_forever', 'soft_blocked']);
-
-  expect(enriched).toBe(0);
-  expect(store.getAccount('77')?.enrichFailedAt).toBeDefined(); // 404 → permanent
-  expect(store.getAccount('88')?.enrichFailedAt).toBeUndefined(); // wall → retryable
+  expect(activity[activity.length - 1]).toBeNull();
 });
 
 test('a later successful stats observation heals the enrich-failed marker', async () => {
@@ -334,25 +188,4 @@ test('a later successful stats observation heals the enrich-failed marker', asyn
   expect(store.getAccount('77')?.enrichFailedAt).toBe(2);
   store.observe({ accountPk: '77', observedAt: 3, source: 'profile', fields: { followers: 10, following: 5 } });
   expect(store.getAccount('77')?.enrichFailedAt).toBeUndefined();
-});
-
-test('a rate WALL ends the pass: consecutive walled reads stop the batch instead of draining it', async () => {
-  // Live shape: a pass of 20 usernames × 2 hops kept firing into a read wall,
-  // four passes per refill, before anything upstream counted a walled cycle.
-  const { enricher, tab } = build();
-  const names = Array.from({ length: 12 }, (_, i) => `walled${i}`);
-  for (const n of names) tab.wallFor.add(n);
-
-  expect(await enricher.enrich(names)).toBe(0);
-  expect(tab.evalCalls).toHaveLength(RECOVERY.BLOCKED_STREAK_ENTRY);
-});
-
-test('an isolated walled read does not end the pass', async () => {
-  const { enricher, tab } = build();
-  tab.wallFor.add('w1');
-  tab.bodies.ok1 = profileBody('11', 'ok1', 100, 100);
-  tab.wallFor.add('w2');
-  tab.bodies.ok2 = profileBody('12', 'ok2', 100, 100);
-
-  expect(await enricher.enrich(['w1', 'ok1', 'w2', 'ok2'])).toBe(2);
 });

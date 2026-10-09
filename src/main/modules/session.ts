@@ -124,7 +124,7 @@ export class GraphSession {
     if (live !== null && live.ownUsername !== undefined) return true;
     // A DEGRADED graph (username unresolved) is still a built graph. Recovery
     // is retried on a BACKOFF, never on every call: the attempt navigates the
-    // tab and fetches `current_user` up to 4 times (~23 s), and 16 routine IPC
+    // tab and retries the page reads up to 4 times (~23 s), and 16 routine IPC
     // reads used to re-trigger it each — a loop the rate governor never saw.
     if (live !== null) {
       const sinceLastAttempt = Date.now() - this.usernameRetryAt;

@@ -54,8 +54,9 @@ describe('the URLs the surface BUILDS are the URLs it ROUTES', () => {
   const cases: Array<[string, string]> = [
     ['followers-list', `${PATHS.friendshipsList}12345/followers/?count=50`],
     ['following-list', `${PATHS.friendshipsList}12345/following/?count=50`],
-    ['friendship-show', `${PATHS.friendshipShow}12345/`],
-    ['profile-info', `${PATHS.usersPrefix}12345${PATHS.profileInfoSuffix}`],
+    // Observed only since 2026-10-08 (Epo no longer composes either).
+    ['friendship-show', '/api/v1/friendships/show/12345/'],
+    ['profile-info', '/api/v1/users/12345/info/'],
     ['show-many', '/api/v1/friendships/show_many/'],
     ['activity-feed', '/api/v1/news/inbox/'],
     ['friend-requests', '/api/v1/friendships/pending/'],
@@ -78,7 +79,7 @@ describe('the URLs the surface BUILDS are the URLs it ROUTES', () => {
     expect(SURFACE.extractIds('followers-list', `${PATHS.friendshipsList}999/followers/`)).toEqual({
       targetPk: '999',
     });
-    expect(SURFACE.extractIds('friendship-show', `${PATHS.friendshipShow}999/`)).toEqual({
+    expect(SURFACE.extractIds('friendship-show', '/api/v1/friendships/show/999/')).toEqual({
       pk: '999',
     });
   });

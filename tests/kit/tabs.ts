@@ -157,12 +157,17 @@ export class CannedTab implements Navigable {
   }
 }
 
-/** A recording {@link ActorInteractor}: every click/scroll is captured, none dispatched. */
+/** A recording {@link ActorInteractor}: every hover/click/scroll is captured, none dispatched. */
 export class FakeInteractor implements ActorInteractor {
+  hovers: LocatedRect[] = [];
   clicks: LocatedRect[] = [];
   scrolls: { container: LocatedRect; deltaPx: number; restPoint?: { x: number; y: number } }[] = [];
   /** Fired after each click, so a test can emit the mutation response "from the page". */
   onClick: (() => void) | null = null;
+
+  async hover(target: LocatedRect): Promise<void> {
+    this.hovers.push(target);
+  }
 
   async click(target: LocatedRect): Promise<void> {
     this.clicks.push(target);

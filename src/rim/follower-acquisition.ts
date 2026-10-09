@@ -7,7 +7,7 @@
  *
  *  1. RESOLVE, don't scrape: the target pk comes from the store when we have
  *     ever seen the username; only a never-seen target (the seed's first
- *     contact) costs ONE profile-info fetch — which doubles as the target's
+ *     contact) costs ONE profile visit — which doubles as the target's
  *     enrichment (counts, mutuals, privacy) for free.
  *  2. DIRECT API paging: with the pk known, the followers list is paged
  *     straight off the paginated friendships API at full page size (~50/page)
@@ -35,14 +35,12 @@
  * first list URL names it. Each path persists its own resume cursor.
  */
 
-import { fetchJson } from '@/adapter/fetch-json';
-import { SURFACE } from '@/adapter/ig-surface';
-import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { ListPageWalker } from '@/rim/list-page-walker';
-import type { FollowerAcquisition, RimTab } from '@/rim/types';
+import type { ProfileVisitor } from '@/rim/profile-visit-port';
+import type { FollowerAcquisition } from '@/rim/types';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
 import * as logger from '@/utils/logger';
@@ -214,9 +212,8 @@ export interface AcquisitionDeps {
    * dialog-scroll `pageReader` carries the scrape as before.
    */
   walker?: ListPageWalker;
-  /** Tab + reader for the one-off pk-resolution profile fetch (seed bootstrap). */
-  tab?: RimTab;
-  reader?: Reader;
+  /** The one-off pk-resolution profile VISIT on first contact (seed bootstrap). */
+  visitor?: ProfileVisitor;
   /** Our own account pk (unused for edges here; reserved for symmetry with the rim). */
   ownPk?: string;
   clock?: Clock;
@@ -228,8 +225,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
   private readonly store: KnowledgeStore;
   private readonly sentinel: Sentinel;
   private readonly walker?: ListPageWalker;
-  private readonly tab?: RimTab;
-  private readonly reader?: Reader;
+  private readonly visitor?: ProfileVisitor;
   private readonly clock: Clock;
   private readonly cfg: AcquisitionConfig;
 
@@ -238,8 +234,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     this.store = deps.store;
     this.sentinel = deps.sentinel;
     this.walker = deps.walker;
-    this.tab = deps.tab;
-    this.reader = deps.reader;
+    this.visitor = deps.visitor;
     this.clock = deps.clock ?? new SystemClock();
     this.cfg = deps.cfg ?? ACQUISITION_DEFAULTS;
   }
@@ -254,9 +249,9 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
       return { observed: 0, targetPk: null, endReason: 'sentinel-blocked' };
     }
 
-    // (1) Resolve the pk without a request when possible; one profile-info
-    // fetch (which is also the target's enrichment, giving the follower count
-    // the coverage cap needs) only on first contact.
+    // (1) Resolve the pk without a request when possible; one profile visit
+    // (which is also the target's enrichment, giving the follower count the
+    // coverage cap needs) only on first contact.
     let targetPk = this.store.pkByUsername(targetUsername);
     if (targetPk === null) targetPk = await this.resolvePkViaProfile(targetUsername);
 
@@ -351,30 +346,21 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
   }
 
   /**
-   * One profile-info fetch to resolve a never-seen username to its pk. The
-   * parsed observation is stored, so this doubles as the target's own
-   * enrichment (follower/following counts, mutuals, privacy). Returns `null` —
-   * with a warn, never a throw — when the fetch/parse fails; the dialog
-   * fallback then derives the pk from the followers-list URL as before.
+   * One profile VISIT to resolve a never-seen username to its pk. The page's
+   * own profile body is written to the store by the ProfileObserver before the
+   * visit resolves, so this doubles as the target's enrichment (counts,
+   * mutuals, privacy) and the coverage cap reads it next. Returns `null` — with
+   * a warn, never a throw — when the visit fails; the dialog fallback then
+   * derives the pk from the followers-list URL as before.
    */
   private async resolvePkViaProfile(targetUsername: string): Promise<string | null> {
-    if (this.tab === undefined || this.reader === undefined) return null;
-    const res = await fetchJson(this.tab, SURFACE.profileInfoScript(targetUsername));
-    if (!res.ok) {
-      logger.warn('rim.acquisition: pk-resolve fetch failed', {
-        targetUsername,
-        kind: res.kind,
-        ...res.detail,
-      });
+    if (this.visitor === undefined) return null;
+    const visit = await this.visitor.visit(targetUsername);
+    if (!visit.ok) {
+      logger.warn('rim.acquisition: pk-resolve visit failed', { kind: visit.kind, ...visit.detail });
       return null;
     }
-    const obs = this.reader.parseProfileInfo(res.json, this.clock.now());
-    if (obs === null) {
-      logger.warn('rim.acquisition: pk-resolve unparseable profile body', { targetUsername });
-      return null;
-    }
-    this.store.observe(obs);
-    return obs.accountPk;
+    return visit.obs.accountPk;
   }
 
   /**

@@ -615,7 +615,7 @@ export const SCHEDULER = {
   USERNAME_RESOLVE_ATTEMPTS: BOUNDS.SCHEDULER.USERNAME_RESOLVE_ATTEMPTS,
   /**
    * Backoff between username-recovery attempts once a graph is built DEGRADED:
-   * each attempt costs real tab navigations + `current_user` fetches, so it
+   * each attempt costs real tab navigations and page reads, so it
    * must never run on every routine IPC read.
    */
   USERNAME_REBUILD_BACKOFF_MS: BOUNDS.SCHEDULER.USERNAME_REBUILD_BACKOFF_MS,

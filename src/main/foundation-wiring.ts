@@ -24,12 +24,11 @@ import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { fetchJson } from '@/adapter/fetch-json';
+import { TabUnresponsiveError } from '@/adapter/errors';
 import {
   resolveOwnUsername as resolveUsernameFromTab,
   usernameFromProfileUrl,
 } from '@/adapter/identity';
-import { isShapeMismatch, SURFACE } from '@/adapter/ig-surface';
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
@@ -430,8 +429,15 @@ export class Foundation {
         try {
           clicked = await graph.actor.clickOwnProfileLink();
         } catch (e) {
-          logger.warn('foundation: profile landing click failed', { error: String(e) });
-          return;
+          // The rail link navigates IN-PAGE: the route change can start before
+          // the release is acknowledged, which the input queue reports as
+          // post-click UNCERTAINTY (live 2026-10-08). The URL decides, as for
+          // any click; every other failure ends the landing.
+          if (!(e instanceof TabUnresponsiveError && e.phase === 'post-click')) {
+            logger.warn('foundation: profile landing click failed', { error: String(e) });
+            return;
+          }
+          clicked = true;
         }
         if (clicked) {
           for (let i = 0; i < ADAPTER.NAV_SETTLE_ROUNDS; i++) {
@@ -1650,12 +1656,11 @@ export class Foundation {
 
   /**
    * One-shot read-only precheck of a seed username: whether it exists and whether
-   * its followers list is visible (public). Uses the surface's envelope-returning
-   * profile-info fetch through the shared tab, sentinel-gated. Never
-   * throws across IPC.
+   * its followers list is visible (public, or private and followed). One profile
+   * VISIT through the shared tab, sentinel-gated. Never throws across IPC.
    */
   async checkSeed(username: string): Promise<SeedCheck> {
-    // Veil: the seed check is a real in-page API fetch — requesting counts.
+    // Veil: the seed check is a real profile visit — reading counts.
     return this.trackManualOp(() =>
       this.activity.with('seed-check', () => this.checkSeedHeld(username)),
     );
@@ -1678,49 +1683,25 @@ export class Foundation {
       if ((await graph.sentinel.check()) !== 'ok') {
         return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'blocked' };
       }
-      // One classified in-page fetch (see `fetchJson`): a wall/rate-limit/
-      // logged-out page is a TYPED outcome here — never a raw HTML throw.
-      const fetched = await fetchJson(this.tab, SURFACE.profileInfoScript(clean));
-      if (!fetched.ok) {
-        // An auth wall means our session, not the seed; a rate wall / HTML page
-        // on an API URL is IG blocking; a JSON 404 is a genuinely missing user.
+      // One profile VISIT (`rim/profile-visit.ts`): the page's own client reads
+      // the profile and the observer has stored it — FACTS STREAM (PRINCIPLES
+      // §1) — by the time this resolves, adopted seed or not.
+      const visit = await graph.profiles.visit(clean);
+      if (!visit.ok) {
+        // A wall is IG blocking; `gone` is the page saying the profile is not
+        // available; a page that never answered is unknown, never "not found".
         const reason =
-          fetched.wall === 'logged-out'
-            ? 'logged-out'
-            : fetched.kind === 'rate-limited' || fetched.kind === 'auth'
-              ? 'blocked'
-              : fetched.kind === 'gone'
-                ? 'not-found'
-                : 'error';
-        logger.warn('foundation.checkSeed: profile fetch failed', {
-          username: clean,
-          kind: fetched.kind,
-          status: fetched.status,
-          reason,
-          ...fetched.detail,
-        });
+          visit.kind === 'walled' ? 'blocked' : visit.kind === 'gone' ? 'not-found' : 'error';
+        logger.warn('foundation.checkSeed: profile visit failed', { kind: visit.kind, reason, ...visit.detail });
         return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason };
       }
-
-      const obs = SURFACE.extractProfileInfo(fetched.json, graph.clock.now());
-      if (isShapeMismatch(obs)) {
-        // Valid JSON but not the shape we know — surface drift, not an error state.
-        logger.warn('foundation.checkSeed: unexpected profile body shape', { username: clean });
-        return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'error' };
-      }
-      if (obs === null) {
-        return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'not-found' };
-      }
-      // FACTS STREAM (docs/PRINCIPLES.md §1): this check paid for a real
-      // profile read — keep it. The counts/flags become an accounts row the
-      // scorer and target sources can use, whether or not the seed is adopted.
-      graph.store.observe(obs);
-      const isPrivate = obs.fields.isPrivate === true;
-      // A private account's followers are viewable iff we already follow it.
-      // `/users/<pk>/info/` carries no viewer-side flag (the retired
-      // `web_profile_info` bundled one), so a PRIVATE seed costs one extra
-      // relationship read. A public seed never pays it.
-      const followersVisible = isPrivate ? await this.viewerFollows(obs.accountPk) : true;
+      const isPrivate = visit.obs.fields.isPrivate === true;
+      // A private account's followers are viewable iff we follow it. The
+      // profile body carries the viewer-side flags, so a private seed no longer
+      // costs a `friendships/show` read (same rule as before: follow or request).
+      const followersVisible = isPrivate
+        ? visit.viewer.following === true || visit.viewer.requested === true
+        : true;
       return {
         ok: true,
         exists: true,
@@ -1733,33 +1714,6 @@ export class Foundation {
       logger.error('foundation.checkSeed: failed', { username, error: String(e) });
       return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'error' };
     }
-  }
-
-  /**
-   * Whether WE follow `pk`, read from `friendships/show/<pk>/`.
-   *
-   * Only the seed check needs this, and only for a PRIVATE profile: the profile
-   * body itself no longer carries the viewer-side flag. A fetch that fails
-   * answers `false` — "cannot confirm we follow them" is the conservative
-   * reading, and it surfaces as `private` rather than as a claim that the
-   * followers are readable.
-   */
-  private async viewerFollows(pk: string): Promise<boolean> {
-    const rel = await fetchJson(this.tab, SURFACE.friendshipShowScript(pk));
-    if (!rel.ok) {
-      logger.warn('foundation.checkSeed: relationship read failed', {
-        pk,
-        kind: rel.kind,
-        ...rel.detail,
-      });
-      return false;
-    }
-    const parsed = SURFACE.extractFriendshipShow(rel.json, pk);
-    if (isShapeMismatch(parsed)) {
-      logger.warn('foundation.checkSeed: unexpected relationship body shape', { pk });
-      return false;
-    }
-    return parsed.following || parsed.outgoingRequest;
   }
 
   /**

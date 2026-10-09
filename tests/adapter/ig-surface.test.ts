@@ -97,13 +97,21 @@ describe('SURFACE envelope fetch scripts are abort-bounded', () => {
     // The literal is inlined in the versions file (page scripts cannot
     // import); this pins it to the registry value so the two never drift.
     const scripts = [
-      SURFACE.profileInfoScript('someone'),
-      SURFACE.currentUserScript(),
-      SURFACE.friendshipShowScript('17841400000'),
       SURFACE.listPageScript('17841400000', 'followers', null),
+      SURFACE.listPageScript('17841400000', 'following', 'C1'),
+      SURFACE.listPageScript('17841400000', 'following', '50', true),
     ];
     for (const script of scripts) {
       expect(script).toContain(`AbortSignal.timeout(${TAB.FETCH_ABORT_MS})`);
+    }
+  });
+
+  test('the walled reads are never composed again (live 2026-10-08)', () => {
+    // `/users/<pk>/info/` answers 429, `current_user` a 200 HTML page at `/`;
+    // profiles are VISITED (`rim/profile-visit.ts`). The list pages — which
+    // Instagram's own client calls too — are the only reads Epo composes.
+    for (const gone of ['profileInfoScript', 'currentUserScript', 'friendshipShowScript']) {
+      expect(gone in SURFACE).toBe(false);
     }
   });
 });

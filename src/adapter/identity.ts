@@ -1,12 +1,13 @@
 /**
  * Resolve the logged-in user's OWN username — robustly.
  *
- * The private `current_user` JSON endpoint is unreliable in the embedded tab
- * (it answers "useragent mismatch" in practice), which was a long-standing cause
- * of the username never resolving. The reliable signal is the profile itself:
- * the nav profile-avatar link's `href` IS `/<username>/`, and navigating to our
- * own profile lands the URL on the profile path. We lead with those and keep
- * the JSON endpoint only as a last resort.
+ * The reliable signal is the profile itself: the nav profile-avatar link's
+ * `href` IS `/<username>/`, and navigating to our own profile lands the URL on
+ * the profile path. The private `current_user` JSON endpoint used to be the
+ * last resort; Instagram retired it for the web (live 2026-10-08 it answers a
+ * 200 HTML page redirected to `/`), so it is no longer asked at all — a dead
+ * request that only ever returned a wall, which the envelope classifier reads
+ * as a rate limit.
  *
  * This file is version-agnostic: every in-page script and every piece of
  * Instagram DOM/URL knowledge (profile-path shape, avatar alt format, reserved
@@ -15,8 +16,8 @@
 
 import type { ActorInteractor } from '@/adapter/actor';
 import { ActionAbortedError, AdapterStaleError, TabUnavailableError, TabUnresponsiveError } from '@/adapter/errors';
-import { fetchJson } from '@/adapter/fetch-json';
-import { type LocateRectResult, SURFACE } from '@/adapter/ig-surface';
+import { type LocatedRect, type LocateRectResult, SURFACE } from '@/adapter/ig-surface';
+import { settleAndPress } from '@/adapter/settle-press';
 import type { Navigable } from '@/adapter/tab-ports';
 import { ADAPTER } from '@/timing/config';
 import { pauseBeforePageRetry } from '@/timing/page-pacing';
@@ -32,7 +33,7 @@ export interface IdentityOptions {
   signal?: AbortSignal;
   rng?: Rng;
   /** Production supplies the guarded CDP interactor even before the graph exists. */
-  interactor?: Pick<ActorInteractor, 'click'>;
+  interactor?: Pick<ActorInteractor, 'click' | 'hover'>;
 }
 
 /**
@@ -57,17 +58,27 @@ async function tryEvaluate<T>(tab: IdentityTab, script: string, label: string): 
   }
 }
 
+/** A located rect a press can land on: finite and not degenerate. */
+const pressable = (rect: LocatedRect | undefined): rect is LocatedRect =>
+  rect !== undefined && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+  && rect.width >= 2 && rect.height >= 2;
+
+/** The nav rail re-renders as the cursor arrives: settle, locate again, press. */
 async function clickProfile(tab: IdentityTab, opts: IdentityOptions): Promise<boolean> {
-  if (!opts.interactor || opts.signal?.aborted) return false;
-  const located = await tryEvaluate<LocateRectResult>(tab, SURFACE.locateProfileLinkScript(), 'locate-profile');
-  if (opts.signal?.aborted) return false;
-  const rect = located?.found ? located.rect : undefined;
-  if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
-    || rect.width < 2 || rect.height < 2) return false;
+  const interactor = opts.interactor;
+  if (!interactor || opts.signal?.aborted) return false;
+  const locate = (): Promise<LocateRectResult | null> =>
+    opts.signal?.aborted
+      ? Promise.resolve(null)
+      : tryEvaluate<LocateRectResult>(tab, SURFACE.locateProfileLinkScript(), 'locate-profile');
   try {
-    await opts.interactor.click(rect);
-    return true;
+    const first = await locate();
+    if (opts.signal?.aborted) return false;
+    return (await settleAndPress(interactor, first, locate, pressable)) !== null;
   } catch (error) {
+    // The link navigates in-page; a route change racing the release's ACK is
+    // post-click UNCERTAINTY, not failure — the caller verifies by the URL.
+    if (error instanceof TabUnresponsiveError && error.phase === 'post-click') return true;
     if (!(error instanceof AdapterStaleError)) throw error;
     logger.debug('identity: profile control changed before click', { error: String(error) });
     return false;
@@ -80,9 +91,8 @@ async function clickProfile(tab: IdentityTab, opts: IdentityOptions): Promise<bo
  * Strategy order (most to least reliable, non-destructive first):
  *   1. nav profile-link href → `/<username>/`  (no navigation)
  *   2. the avatar's alt text (parsed by the surface's alt-format knowledge)
-   *   3. guarded native click of the profile link → read the resulting profile URL
- *   4. `current_user` JSON endpoint (last resort; envelope-checked, never throws
- *      on an HTML/error body)
+   *   3. guarded native settle-then-press of the profile link → read the
+ *      resulting profile URL
  *
  * The whole thing is retried a few times so a not-yet-hydrated page recovers.
  */
@@ -148,22 +158,6 @@ export async function resolveOwnUsername(
           return fromUrl;
         }
       }
-    }
-
-    // 4) last resort: the private JSON endpoint. An HTML/error body is a typed
-    //    miss, never a throw; a dead tab aborts the whole resolution.
-    const res = await fetchJson(tab, SURFACE.currentUserScript());
-    if (!res.ok) {
-      if (res.kind === 'tab-unavailable') throw new TabUnavailableError('identity');
-      logger.warn('identity: current_user endpoint answered non-JSON/non-ok', {
-        kind: res.kind,
-        ...res.detail,
-      });
-    }
-    const fromApi = res.ok ? SURFACE.extractCurrentUsername(res.json) : null;
-    if (fromApi && SURFACE.usernameFromProfileUrl(`/${fromApi}/`)) {
-      logger.info('identity: resolved via current_user', { username: fromApi });
-      return fromApi;
     }
 
     if (attempt < attempts - 1) await pauseBeforePageRetry(retryMs, opts.signal, opts.rng);

@@ -34,6 +34,7 @@ import type {
 } from '@/adapter/ig-surface';
 import { SURFACE } from '@/adapter/ig-surface';
 import { MutationWatch } from '@/adapter/mutation-watch';
+import { settleAndPress } from '@/adapter/settle-press';
 import type { PageTab } from '@/adapter/tab-ports';
 import { SURFACE_METER, type SurfaceMetric } from '@/surface/meter';
 import { ADAPTER } from '@/timing/config';
@@ -63,6 +64,8 @@ export type AdapterTab = PageTab;
  * trust-dependent and the SPA ignores it for several controls.
  */
 export interface ActorInteractor {
+  /** Rest the cursor on `target` without pressing (settle-then-press, `settle-press.ts`). */
+  hover(target: LocatedRect): Promise<void>;
   click(target: LocatedRect): Promise<void>;
   /**
    * Scroll `container` by `deltaPx`. `restPoint` (optional) is a hover-safe spot
@@ -422,10 +425,9 @@ export class Actor {
    * happened — the caller confirms the navigation by watching the URL.
    */
   async clickOwnProfileLink(): Promise<boolean> {
-    const res = await this.tab.evaluate<LocateRectResult>(SURFACE.locateProfileLinkScript());
-    if (!res?.found || !Actor.rectUsable(res.rect)) return false;
-    await this.interactor.click(res.rect);
-    return true;
+    const locate = (): Promise<LocateRectResult> =>
+      this.tab.evaluate<LocateRectResult>(SURFACE.locateProfileLinkScript());
+    return (await this.settleAndPress(await locate(), locate)) !== null;
   }
 
   /**
@@ -439,14 +441,14 @@ export class Actor {
    * layouts (e.g. an interstitial).
    */
   async clickNotifications(): Promise<boolean> {
+    const locate = (): Promise<LocateRectResult> =>
+      this.tab.evaluate<LocateRectResult>(SURFACE.locateNotificationsLinkScript());
     const res = await this.waitFor<LocateRectResult>(
       'actor.clickNotifications',
-      () => this.tab.evaluate<LocateRectResult>(SURFACE.locateNotificationsLinkScript()),
+      locate,
       (r) => Boolean(r?.found && Actor.rectUsable(r.rect)),
     );
-    if (!res?.found || !Actor.rectUsable(res.rect)) return false;
-    await this.interactor.click(res.rect);
-    return true;
+    return (await this.settleAndPress(res, locate)) !== null;
   }
 
   /**
@@ -456,12 +458,9 @@ export class Actor {
    * type anyway, so this is a UI-consistency nicety, never load-bearing.
    */
   async clickNotificationsFollowsFilter(): Promise<boolean> {
-    const res = await this.tab.evaluate<LocateRectResult>(
-      SURFACE.locateNotificationsFollowsFilterScript(),
-    );
-    if (!res?.found || !Actor.rectUsable(res.rect)) return false;
-    await this.interactor.click(res.rect);
-    return true;
+    const locate = (): Promise<LocateRectResult> =>
+      this.tab.evaluate<LocateRectResult>(SURFACE.locateNotificationsFollowsFilterScript());
+    return (await this.settleAndPress(await locate(), locate)) !== null;
   }
 
   /**
@@ -470,12 +469,9 @@ export class Actor {
    * close control is found (the caller falls back to toggling the bell).
    */
   async clickNotificationsClose(): Promise<boolean> {
-    const res = await this.tab.evaluate<LocateRectResult>(
-      SURFACE.locateNotificationsCloseScript(),
-    );
-    if (!res?.found || !Actor.rectUsable(res.rect)) return false;
-    await this.interactor.click(res.rect);
-    return true;
+    const locate = (): Promise<LocateRectResult> =>
+      this.tab.evaluate<LocateRectResult>(SURFACE.locateNotificationsCloseScript());
+    return (await this.settleAndPress(await locate(), locate)) !== null;
   }
 
   /**
@@ -507,14 +503,14 @@ export class Actor {
    * account / nothing pending / drift) — a soft skip, never stale.
    */
   async clickFollowRequestsEntry(): Promise<boolean> {
+    const locate = (): Promise<LocateRectResult> =>
+      this.tab.evaluate<LocateRectResult>(SURFACE.locateFollowRequestsEntryScript());
     const res = await this.waitFor<LocateRectResult>(
       'actor.clickFollowRequestsEntry',
-      () => this.tab.evaluate<LocateRectResult>(SURFACE.locateFollowRequestsEntryScript()),
+      locate,
       (r) => Boolean(r?.found && Actor.rectUsable(r.rect)),
     );
-    if (!res?.found || !Actor.rectUsable(res.rect)) return false;
-    await this.interactor.click(res.rect);
-    return true;
+    return (await this.settleAndPress(res, locate)) !== null;
   }
 
   /**
@@ -529,21 +525,20 @@ export class Actor {
     username: string | null;
     remaining: number;
   }> {
+    const locate = (): Promise<LocateConfirmRequestResult> =>
+      this.tab.evaluate<LocateConfirmRequestResult>(SURFACE.locateConfirmFollowRequestScript());
     const res = await this.waitFor<LocateConfirmRequestResult>(
       'actor.confirmNextFollowRequest',
-      () => this.tab.evaluate<LocateConfirmRequestResult>(
-        SURFACE.locateConfirmFollowRequestScript(),
-      ),
+      locate,
       (r) => Boolean(r?.found && Actor.rectUsable(r.rect)),
     );
-    if (!res?.found || !Actor.rectUsable(res.rect)) {
-      return { clicked: false, username: null, remaining: 0 };
-    }
-    await this.interactor.click(res.rect);
+    // The row REPORTED is the row PRESSED: the one located after the hover.
+    const pressed = await this.settleAndPress(res, locate);
+    if (pressed === null) return { clicked: false, username: null, remaining: 0 };
     return {
       clicked: true,
-      username: res.username ?? null,
-      remaining: res.remaining ?? 1,
+      username: pressed.username ?? null,
+      remaining: pressed.remaining ?? 1,
     };
   }
 
@@ -665,6 +660,14 @@ export class Actor {
       safePoint: res.safePoint ?? null,
     });
     return true;
+  }
+
+  /** Settle-then-press a rail/drawer control (see `settle-press.ts`). */
+  private settleAndPress<T extends { found: boolean; rect?: LocatedRect }>(
+    located: T | null,
+    locate: () => Promise<T>,
+  ): Promise<T | null> {
+    return settleAndPress(this.interactor, located, locate, Actor.rectUsable);
   }
 
   /**

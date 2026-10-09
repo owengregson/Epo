@@ -18,10 +18,13 @@ import { Sentinel } from '@/adapter/sentinel';
 import type { InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { classifyRequest } from '@/capture/classify';
+import { SystemClock } from '@/governors/clock';
 import { awaitLogin, bootstrapApp, ensureInstagramOrigin, openToolWindow } from '@/main/bootstrap';
 import { electronIgSession } from '@/main/services/ig-session';
 import { SOLO_PHASES } from '@/probe/phases';
 import { ListPageWalker } from '@/rim/list-page-walker';
+import { ProfileObserver } from '@/rim/profile-observer';
+import { TabProfileVisitor } from '@/rim/profile-visit';
 import { sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
@@ -39,7 +42,6 @@ interface Health {
   ownUsername: string | null;
   header: { following: number | null; followers: number | null } | null;
   profileRead: string;
-  currentUser?: unknown;
 }
 
 async function health(tab: InstagramTab): Promise<Health> {
@@ -52,20 +54,20 @@ async function health(tab: InstagramTab): Promise<Health> {
   const ownPk = await electronIgSession().readCookie('ds_user_id');
   const out: Health = { sentinel, ownPk, ownUsername: null, header: null, profileRead: 'skipped' };
   if (sentinel !== 'ok' || ownPk === null) return out;
-  // Production's resolver (DOM strategies first, `current_user` last) — and its
-  // own diagnosis of each step, which is the evidence when one has drifted.
+  // Production's resolver (page-only strategies) and its diagnosis of each step.
   out.ownUsername = (await resolveOwnUsername(tab, { interactor: createTabInteractor(tab) })) ?? null;
-  const who = await fetchJson(tab, SURFACE.currentUserScript());
-  out.currentUser = who.ok ? { ok: true, keys: Object.keys((who.json ?? {}) as object) } : who;
   if (out.ownUsername === null) return { ...out, profileRead: 'no-username' };
-  const profile = await fetchJson(tab, SURFACE.profileInfoScript(out.ownUsername));
-  if (!profile.ok) return { ...out, profileRead: profile.kind };
-  const obs = new Reader().parseProfileInfo(profile.json, Date.now());
-  return {
-    ...out,
-    profileRead: obs === null ? 'unparsed' : 'ok',
-    header: { following: obs?.fields.following ?? null, followers: obs?.fields.followers ?? null },
-  };
+  // Production's profile read: a VISIT. The probe's observer writes nowhere.
+  const observer = new ProfileObserver({ tab, reader: new Reader(), store: { observe: () => {} }, clock: new SystemClock() });
+  const stop = observer.start();
+  try {
+    const visit = await new TabProfileVisitor({ tab, observer, sentinel: new Sentinel(tab) }).visit(out.ownUsername);
+    if (!visit.ok) return { ...out, profileRead: visit.kind };
+    const f = visit.obs.fields;
+    return { ...out, profileRead: 'ok', header: { following: f.following ?? null, followers: f.followers ?? null } };
+  } finally {
+    stop();
+  }
 }
 
 /** One list-page request as the walker made it, and what came back. */
@@ -237,8 +239,10 @@ async function followOnce(tab: InstagramTab): Promise<void> {
   const outcome: Record<string, unknown> = { target: TARGET };
   try {
     outcome.follow = await settle(() => actor.follow(TARGET));
-    // Only undo a follow that actually landed; never press twice on a refusal.
-    if ((outcome.follow as { ok?: boolean }).ok === true) {
+    // Only undo a follow THIS probe pressed — an already-followed target answers
+    // ok without a click, and unfollowing it would remove the owner's own follow.
+    const f = outcome.follow as { ok?: boolean; value?: { clicked?: boolean } };
+    if (f.ok === true && f.value?.clicked === true) {
       await sleep(FOLLOW_HOLD_MS);
       outcome.unfollow = await settle(() => actor.unfollow(TARGET));
     }

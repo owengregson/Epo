@@ -3,7 +3,7 @@
   "allow": [
     {
       "file": "src/main/foundation-wiring.ts",
-      "lines": 1987
+      "lines": 1934
     },
     {
       "file": "src/engine/prune-engine.ts",
@@ -19,31 +19,23 @@
     },
     {
       "file": "src/adapter/actor.ts",
-      "lines": 831
-    },
-    {
-      "file": "src/livetest/steps.ts",
-      "lines": 758
+      "lines": 830
     },
     {
       "file": "src/renderer/graph/world.ts",
       "lines": 745
     },
     {
+      "file": "src/livetest/steps.ts",
+      "lines": 731
+    },
+    {
       "file": "src/store/knowledge-store.ts",
       "lines": 686
     },
     {
-      "file": "src/capture/capture-harness.ts",
-      "lines": 683
-    },
-    {
       "file": "src/adapter/tab.ts",
       "lines": 666
-    },
-    {
-      "file": "src/adapter/versions/2026-08-12.ts",
-      "lines": 621
     },
     {
       "file": "src/engine/churn-scheduler.ts",
@@ -55,15 +47,19 @@
     },
     {
       "file": "src/adapter/ig-surface.ts",
-      "lines": 557
+      "lines": 547
     },
     {
-      "file": "src/main/services/graph-builder.ts",
+      "file": "src/capture/capture-harness.ts",
       "lines": 537
     },
     {
-      "file": "src/surface/versions/2026-08-12/surface.ts",
-      "lines": 524
+      "file": "src/main/services/graph-builder.ts",
+      "lines": 527
+    },
+    {
+      "file": "src/adapter/versions/2026-08-12.ts",
+      "lines": 491
     },
     {
       "file": "src/adapter/reader.ts",
@@ -74,16 +70,16 @@
       "lines": 466
     },
     {
-      "file": "src/rim/follower-acquisition.ts",
-      "lines": 449
-    },
-    {
       "file": "src/engine/target-pipeline.ts",
       "lines": 441
     },
     {
+      "file": "src/rim/follower-acquisition.ts",
+      "lines": 435
+    },
+    {
       "file": "src/surface/versions/2026-08-12/literals.ts",
-      "lines": 433
+      "lines": 431
     },
     {
       "file": "src/types.ts",
@@ -96,6 +92,10 @@
     {
       "file": "src/main/foundation-reads.ts",
       "lines": 410
+    },
+    {
+      "file": "src/surface/versions/2026-08-12/surface.ts",
+      "lines": 393
     },
     {
       "file": "src/rim/follow-notifications.ts",

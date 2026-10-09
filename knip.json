@@ -6,6 +6,7 @@
     "src/capture/capture-main.ts",
     "src/livetest/livetest-main.ts",
     "src/inspect/inspect-main.ts",
+    "src/probe/probe-main.ts",
     "src/renderer/index.tsx",
     "src/adapter/page/index.ts",
     "src/tools/readme/render-live-charts.ts",

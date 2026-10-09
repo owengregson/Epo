@@ -38,6 +38,7 @@ import type {
   FollowEvent,
   FollowersListResult,
   FriendshipShowResult,
+  ProfileViewer,
   ShowManyEntry,
 } from '@/adapter/ig-surface';
 
@@ -221,13 +222,16 @@ export class Reader {
   }
 
   /**
-   * Whether the logged-in viewer already follows this profile, read from the
-   * profile-info body. This is what decides whether a PRIVATE account's
-   * followers are visible to us — we can read the followers of anyone we
-   * follow. Returns `null` when the flag is absent.
+   * Viewer-side flags from the GraphQL body's `friendship_status` (`/users/<pk>/info/`
+   * has none; `null` when absent). `following` makes a PRIVATE account's followers readable.
    */
-  profileFollowedByViewer(body: unknown, kind: ProfileKind = 'profile-info'): boolean | null {
-    return SURFACE.extractProfileFollowedByViewer(this.coerce(body, kind));
+  profileViewer(body: unknown, kind: ProfileKind = 'profile-graphql'): ProfileViewer {
+    const json = this.coerce(body, kind);
+    return {
+      following: SURFACE.extractProfileFollowedByViewer(json),
+      requested: SURFACE.extractProfileRequestedByViewer(json),
+      followsUs: SURFACE.extractProfileFollowsViewer(json),
+    };
   }
 
   /**
@@ -390,13 +394,10 @@ export class Reader {
       }
       case 'profile-graphql': {
         const obs = this.parseProfileInfo(body, at, 'profile-graphql');
-        const followed = this.profileFollowedByViewer(body, 'profile-graphql');
-        const requested = SURFACE.extractProfileRequestedByViewer(
-          this.coerce(body, 'profile-graphql'),
-        );
+        const viewer = this.profileViewer(body, 'profile-graphql');
         // Emit only when BOTH the pk and the viewer-side flag are present.
-        if (obs === null || followed === null) return [];
-        return [{ pk: obs.accountPk, weFollow: followed || requested === true }];
+        if (obs === null || viewer.following === null) return [];
+        return [{ pk: obs.accountPk, weFollow: viewer.following || viewer.requested === true }];
       }
       default:
         return [];
@@ -420,7 +421,6 @@ export class Reader {
       return undefined;
     }
   }
-
 
   // -------------------------------------------------------------------------
   // Shadow parse (PHASE 1 of the surface migration)

@@ -10,6 +10,7 @@ import {
 } from '@/interaction/input-driver';
 import { Interactor } from '@/interaction/interactor';
 import { type ElementRect, PRESS_MAX_MS, PRESS_MIN_MS } from '@/interaction/motion-profile';
+import { MOTION } from '@/kernel/motion-policy';
 
 const mulberry32 = (seed: number) => (): number => {
   seed = (seed + 0x6d2b79f5) | 0;
@@ -126,6 +127,21 @@ describe('Interactor.moveTo', () => {
     const moves = driver.events.filter((e) => e.kind === 'move').length;
     expect(sleeps.length).toBeGreaterThanOrEqual(moves);
     for (const ms of sleeps) expect(ms).toBeGreaterThan(0);
+  });
+});
+
+describe('Interactor.hover', () => {
+  test('travels into the hitbox, then dwells in the settle band — and never presses', async () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const { h, driver, sleeps } = build(seed);
+      await h.hover(TARGET);
+      expect(driver.events.every((e) => e.kind === 'move')).toBe(true);
+      expect(inside(h.position(), TARGET)).toBe(true);
+      // The final pause is the settle dwell: the page reacts before any re-locate.
+      const dwell = sleeps[sleeps.length - 1];
+      expect(dwell).toBeGreaterThanOrEqual(MOTION.hoverSettleMs[0]);
+      expect(dwell).toBeLessThanOrEqual(MOTION.hoverSettleMs[1]);
+    }
   });
 });
 

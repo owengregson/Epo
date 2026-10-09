@@ -1,5 +1,52 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-10-08 (dead endpoints — live probes, profile reads by VISIT, settle-then-press) —**
+> Symptom: no observation of any kind since ~2026-09-20. Diagnosed with live,
+> account-safe probes (`npm run probe`; the owner asked that nothing risk
+> flagging the account, so the passive `traffic` phase came first — it records
+> only what Instagram's OWN client requests — and every composed read was asked
+> ONCE, stopping at the first wall). Findings: `GET /api/v1/users/<pk>/info/`
+> answers **429 with an empty body** and `accounts/current_user/` a **200 HTML
+> page redirected to `/`** (the envelope classifier read that as a rate
+> limit); the web client calls neither. `topsearch`, followers/following,
+> show_many and friendships/pending answer JSON; the news inbox is now a
+> **POST**. A two-request header experiment ruled out a request-contract
+> change (Epo's `x-ig-app-id`-only request = the client's full header set).
+> Separately, the nav rail is now a hover-expanding icon rail that
+> **re-renders its nodes when the cursor arrives**, so the click guard refused
+> every rail press — the notifications drawer never opened (follow-back
+> detection + follow-request handling blind). FIXES (ADR 0307): profiles are
+> **visited** — `rim/profile-visit.ts` (`TabProfileVisitor`) navigates and
+> `rim/profile-observer.ts` (`ProfileObserver`, now the single always-on
+> profile reader that replaced graph-builder's inline harvester) hands it the
+> page's own `PolarisProfilePageContentQuery` body after writing it to the
+> store; outcomes `ok | gone | walled | unanswered | tab`; `gone` = the page's
+> "Sorry, this page isn't available" (`profile-unavailable` control, a span in
+> `main`; document is 200, no profile query fires). Enricher, acquisition pk
+> resolution, seed check (private-seed visibility now from the body's
+> `friendship_status`, no `friendships/show`), livetest, capture and the probe
+> all read profiles this way. `profileInfoScript` / `currentUserScript` /
+> `friendshipShowScript` and the topsearch/current_user literals are deleted
+> (a test pins it) — Epo now composes ONLY the list-page reads. Rail and
+> drawer controls use `settleAndPress` (`adapter/settle-press.ts`: hover with
+> `MOTION.hoverSettleMs`, locate again, press). The own-profile rail link
+> navigates same-document, which the input queue reports as post-click
+> uncertainty — the landing and identity now verify it by URL. The identity
+> resolver no longer asks `current_user`. Surface: activity feed declared
+> POST; mutation notes updated; `CONTROLS` split into
+> `versions/2026-08-12/controls.ts` (surface.ts 532 → 393). Verified live
+> (`EPO_PROBE=verify`): own + followed profile `ok` with counts/flags,
+> nonexistent `gone`, drawer open/Follows/requests/close, POST inbox parsed
+> (55/100 follow events), pending parsed (9, none confirmed); one follow +
+> unfollow of @instagram: `usePolarisFollowMutation` /
+> `usePolarisUnfollowMutation` observed and arbitrated `ok`. Probe kept:
+> `traffic` (start here next time) and `verify`; the one-off diagnosis phases
+> were removed (evidence lives in ADR 0307). Behaviour notes: a profile read
+> is now a page load (slower passes); the enricher's wall streak also counts
+> visits that never answer; a tab that cannot navigate ends the pass.
+> Suite: 1869 tests; `npm run check` green; boundaries 0 error / 132 warn
+> (was 133). Checkpoint before the change: `refs/backups/pre-endpoint-fix-2026-10-09`.
+
 > **2026-09-18 (Instagram retired `web_profile_info` — profile read rebuilt) —**
 > Symptom: every seed check failed with `kind: rate-limited, status: 429`, and
 > the tab logged `body was not valid JSON … Unexpected token '<'`. Not a rate

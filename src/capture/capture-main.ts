@@ -12,7 +12,7 @@
  *   2. Navigate to instagram.com; ask the user to log in.
  *   3. Poll the `persist:ig` session cookie until `sessionid` is present.
  *   4. Resolve the capture target: EPO_CAPTURE_TARGET, else the logged-in
- *      user's own username (via accounts/current_user).
+ *      user's own username (read from the page — `@/adapter/identity`).
  *   5. Run the harness capture flow; keep passive capture running.
  *   6. On window close: write manifest + draft notes, print a summary, quit.
  */
@@ -159,7 +159,7 @@ async function run(): Promise<void> {
       logger.info('capture.resolved own username', { ownUsername });
     } else {
       logger.warn(
-        'capture: own username not detected (accounts/current_user unavailable); profile-shape capture will still run',
+        'capture: own username not detected from the page; profile-shape capture will still run',
       );
     }
   }

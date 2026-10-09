@@ -11,9 +11,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app, session } from 'electron';
-import { fetchJson } from '@/adapter/fetch-json';
 import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
-import { SURFACE } from '@/adapter/ig-surface';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
@@ -28,6 +26,9 @@ import { ACQUISITION_DEFAULTS, AdapterBackedAcquisition } from '@/rim/follower-a
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
+import { ProfileObserver } from '@/rim/profile-observer';
+import { TabProfileVisitor } from '@/rim/profile-visit';
+import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { FollowerAcquisition } from '@/rim/types';
 import {
   DEFAULT_SETTINGS,
@@ -105,6 +106,8 @@ interface Graph {
   sentinel: Sentinel;
   acquisition: FollowerAcquisition;
   enricher: AdapterBackedProfileEnricher;
+  /** Profiles are read by VISITING them (production parity, 2026-10-08). */
+  profiles: ProfileVisitor;
   churnActions: AdapterBackedChurnActions;
   scanner: Scanner;
   scorerCfg: ScorerConfig;
@@ -118,6 +121,8 @@ export class LiveTestHarness {
   private readonly results: StepResult[] = [];
 
   private store: KnowledgeStore | null = null;
+  /** Disposer for the graph's always-on profile observer. */
+  private profileUnsub: (() => void) | null = null;
 
   private aborted = false;
   private abortReason = '';
@@ -174,7 +179,6 @@ export class LiveTestHarness {
 
     // Carried across steps.
     let targetPk: string | null = null;
-    let followUserPk: string | null = null;
     let didFollowClick = false;
     let followClickAt = 0;
 
@@ -330,17 +334,11 @@ export class LiveTestHarness {
         await this.setStatus(`Checking follow-back state for @${followUser}…`);
         await this.pacedDelay();
         try {
-          followUserPk = await this.resolveUserPk(graph.reader, followUser);
-          if (!followUserPk) {
-            this.record('6. Follow-back check', 'FAIL', `could not resolve pk for @${followUser} (profile read)`);
+          const rel = await this.relationship(graph, followUser);
+          if (rel === null) {
+            this.record('6. Follow-back check', 'FAIL', `profile visit did not read @${followUser}`);
           } else {
-            await this.pacedDelay();
-            const show = await this.fetchFriendshipShow(graph.reader, followUserPk);
-            if (!show.parsed) {
-              this.record('6. Follow-back check', 'FAIL', `friendships/show did not parse for pk ${followUserPk}`);
-            } else {
-              this.record('6. Follow-back check', 'PASS', `following=${show.following} followed_by=${show.followedBy}`);
-            }
+            this.record('6. Follow-back check', 'PASS', `following=${rel.following} followed_by=${rel.followsUs}`);
           }
         } catch (e) {
           logger.error('livetest: follow-back check threw', { error: String(e) });
@@ -382,13 +380,11 @@ export class LiveTestHarness {
               if (outcome.status === 'ok') {
                 this.realActions += 1;
                 let post = '';
-                if (followUserPk) {
-                  try {
-                    const s = await this.fetchFriendshipShow(graph.reader, followUserPk);
-                    post = ` following=${s.following}`;
-                  } catch (e) {
-                    logger.warn('livetest: post-unfollow friendship-show failed', { error: String(e) });
-                  }
+                try {
+                  const rel = await this.relationship(graph, followUser);
+                  if (rel !== null) post = ` following=${rel.following}`;
+                } catch (e) {
+                  logger.warn('livetest: post-unfollow profile visit failed', { error: String(e) });
                 }
                 this.record('7. Unfollow', 'PASS', `outcome=ok (restored to Follow)${post}`);
               } else if (outcome.status === 'simulated') {
@@ -424,6 +420,8 @@ export class LiveTestHarness {
 
   /** Close the temp store. Idempotent. */
   dispose(): void {
+    this.profileUnsub?.();
+    this.profileUnsub = null;
     if (this.store) {
       try {
         this.store.close();
@@ -474,6 +472,12 @@ export class LiveTestHarness {
       scrollWaitMs: jittered(this.cfg.opDelayMinMs, this.cfg.opDelayMaxMs),
     });
 
+    // Production parity: a profile is read by visiting it; the observer stores
+    // every profile body the tab loads and hands each visit its own.
+    const observer = new ProfileObserver({ tab: this.tab, reader, store, clock });
+    this.profileUnsub = observer.start();
+    const profiles = new TabProfileVisitor({ tab: this.tab, observer, sentinel: adapter.sentinel });
+
     // Production parity: the direct cursor-resumed walk first, dialog fallback.
     const listWalker = new ListPageWalker({ tab: this.tab, reader });
     const acquisition = new AdapterBackedAcquisition({
@@ -481,8 +485,7 @@ export class LiveTestHarness {
       store,
       sentinel: adapter.sentinel,
       walker: listWalker,
-      tab: this.tab,
-      reader,
+      visitor: profiles,
       ownPk,
       cfg: {
         ...ACQUISITION_DEFAULTS,
@@ -493,13 +496,12 @@ export class LiveTestHarness {
     });
 
     const enricher = new AdapterBackedProfileEnricher({
-      tab: this.tab,
-      reader,
+      visitor: profiles,
       store,
       sentinel: adapter.sentinel,
       batchCap: this.cfg.enrichCap,
       paceMs: this.cfg.enrichPaceMinMs,
-      // Jittered inter-fetch pace (~3–5s), overriding the enricher's fixed pace.
+      // Jittered inter-visit pace (~3–5s), overriding the enricher's fixed pace.
       sleep: () => sleep(jittered(this.cfg.enrichPaceMinMs, this.cfg.enrichPaceMaxMs)),
     });
 
@@ -522,7 +524,7 @@ export class LiveTestHarness {
       dryRun: this.cfg.dryRun,
     });
 
-    return { store, reader, sentinel: adapter.sentinel, acquisition, enricher, churnActions, scanner, scorerCfg, rate };
+    return { store, reader, sentinel: adapter.sentinel, acquisition, enricher, profiles, churnActions, scanner, scorerCfg, rate };
   }
 
   // -------------------------------------------------------------------------
@@ -585,8 +587,8 @@ export class LiveTestHarness {
   }
 
   /**
-   * Own username, resolved robustly: the nav profile-link href / profile
-   * navigation (reliable), with `current_user` only as a last resort — see
+   * Own username, resolved robustly from the page itself — the nav
+   * profile-link href, the avatar alt, a profile navigation — see
    * `@/adapter/identity`.
    */
   private async resolveOwnUsername(): Promise<string | undefined> {
@@ -598,41 +600,20 @@ export class LiveTestHarness {
   }
 
   // -------------------------------------------------------------------------
-  // Live JSON fetch helpers (same session, x-ig-app-id header)
+  // Live profile reads — a VISIT, exactly as production reads a profile
   // -------------------------------------------------------------------------
 
-  /** Resolve a username → pk via the profile read, parsed by the real Reader. */
-  private async resolveUserPk(reader: Reader, username: string): Promise<string | null> {
-    const res = await fetchJson(this.tab, SURFACE.profileInfoScript(username));
-    if (!res.ok) {
-      logger.warn('livetest.resolveUserPk: profile fetch failed', {
-        username,
-        kind: res.kind,
-        ...res.detail,
-      });
+  /** Both relationship directions, from the visited profile's own body; `null` when unread. */
+  private async relationship(
+    graph: Graph,
+    username: string,
+  ): Promise<{ following: boolean | null; followsUs: boolean | null } | null> {
+    const visit = await graph.profiles.visit(username);
+    if (!visit.ok) {
+      logger.warn('livetest.relationship: profile visit failed', { kind: visit.kind, ...visit.detail });
       return null;
     }
-    const obs = reader.parseProfileInfo(res.json, Date.now());
-    return obs ? obs.accountPk : null;
-  }
-
-  /** Fetch `friendships/show/<pk>` and parse it via the real Reader. */
-  private async fetchFriendshipShow(
-    reader: Reader,
-    pk: string,
-  ): Promise<{ parsed: boolean; following: boolean; followedBy: boolean }> {
-    const fetched = await fetchJson(this.tab, SURFACE.friendshipShowScript(pk));
-    const body = fetched.ok ? (fetched.json as Record<string, unknown> | null) : null;
-    const looksLikeShow =
-      body !== null &&
-      typeof body === 'object' &&
-      ('following' in body || 'followed_by' in body || body.status === 'ok');
-    const res = reader.parseFriendshipShow(body, Date.now(), pk);
-    return {
-      parsed: looksLikeShow && res !== null,
-      following: res?.following ?? false,
-      followedBy: res?.followedBy ?? false,
-    };
+    return { following: visit.viewer.following, followsUs: visit.viewer.followsUs };
   }
 
   // -------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import {
   uniform,
   wheelPlan,
 } from '@/interaction/motion-profile';
+import { MOTION } from '@/kernel/motion-policy';
 import { sleep as defaultSleep, type SleepFn } from '@/timing/primitives';
 
 export type { ElementRect, Point } from '@/interaction/motion-profile';
@@ -72,6 +73,25 @@ export class Interactor {
       this.pos = { ...path[i] };
     }
     this.pos = to;
+  }
+
+  /**
+   * Rest the cursor on `target` and let the page react — no press. Instagram
+   * re-renders some controls as the cursor arrives (the nav rail) or restyles
+   * them on hover (drawer controls), so a press planned on the rect located
+   * BEFORE travel targets a node that is gone; the caller locates the control
+   * again after this resolves and presses what is there now.
+   */
+  async hover(target: ElementRect): Promise<void> {
+    return this.gesture(async (guard, signal) => {
+      const bounds = await this.viewport(guard);
+      const visible = bounds ? intersectRect(target, bounds) : target;
+      if (!visible) throw new RangeError('Hover target is outside the viewport');
+      const point = targetPoint(visible, this.rng, bounds);
+      await this.move(point.x, point.y, Math.min(visible.width, visible.height), guard, signal, bounds);
+      await this.sleep(Math.round(uniform(this.rng, MOTION.hoverSettleMs[0], MOTION.hoverSettleMs[1])), signal);
+      guard();
+    });
   }
 
   async click(target: ElementRect): Promise<void> {

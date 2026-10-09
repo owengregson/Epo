@@ -45,6 +45,14 @@ export const MOTION = {
   travelBoundaryInsetFactor: 1.18,
   travelRejectionAttempts: 12,
   minTargetWidthPx: 4,
+  /**
+   * The dwell after the cursor ARRIVES on a hover-reactive control and before it
+   * is located again to be pressed. Live 2026-10-08: Instagram's nav rail
+   * re-renders its nodes by the time the cursor arrives (stable from the first
+   * 2 ms sample through 2.5 s), and the drawer's close control scales
+   * 16 → 16.8 px over ~200 ms — so the floor clears that transition.
+   */
+  hoverSettleMs: [250, 600],
   pressMs: [40, 120],
   pressMedianMs: 70,
   pressSigma: 0.24,

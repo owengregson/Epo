@@ -26,7 +26,7 @@ import * as logger from '@/utils/logger';
 const settle = (): Promise<void> => sleep(5000 + Math.random() * 3000);
 
 /** The Actor's controls, read in place (each is a local DOM query). */
-export async function domCheck(tab: InstagramTab, names: string[]): Promise<Record<string, unknown>> {
+async function domCheck(tab: InstagramTab, names: string[]): Promise<Record<string, unknown>> {
   const scripts: Record<string, () => string> = {
     'followers-stat': () => SURFACE.locateFollowersStatScript(),
     'following-stat': () => SURFACE.locateFollowingStatScript(),
