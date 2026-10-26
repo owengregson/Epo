@@ -30,21 +30,21 @@
   "dependencies": {
     "@fortawesome/fontawesome-free": "^7.3.1",
     "better-sqlite3": "^13.0.3",
-    "electron-updater": "^6.8.9",
+    "electron-updater": "^6.8.11",
     "preact": "^10.29.8"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.10",
-    "@electron/rebuild": "^4.2.0",
-    "@swc/core": "^1.16.1",
+    "@biomejs/biome": "^2.6.2",
+    "@electron/rebuild": "^4.2.1",
+    "@swc/core": "^1.16.20",
     "@swc/jest": "^0.2.39",
     "@types/better-sqlite3": "^9.6.0",
     "@types/jest": "^30.0.0",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.5",
     "electron": "^43.4.1",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
-    "jest": "^30.4.2",
+    "jest": "^30.5.2",
     "typescript": "^7.0.2"
   },
   "license": "MIT"
