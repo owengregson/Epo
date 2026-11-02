@@ -53,6 +53,17 @@ export const MOTION = {
    * 16 → 16.8 px over ~200 ms — so the floor clears that transition.
    */
   hoverSettleMs: [250, 600],
+  /**
+   * The rest between two profile VISITS, whoever asks (enrichment, relationship
+   * checks, effect reconciliation, acquisition, seed checks): a clamped
+   * log-normal draw measured from the END of the previous visit. A visit is a
+   * page load a person makes, and a person looks at a profile before opening
+   * the next — ten back to back in ~25 s (live 2026-11-02) is the rhythm no
+   * person browses at. Choices, not a measured population.
+   */
+  profileDwellMedianMs: 9_000,
+  profileDwellSigma: 0.45,
+  profileDwellMs: [5_000, 30_000],
   pressMs: [40, 120],
   pressMedianMs: 70,
   pressSigma: 0.24,

@@ -552,10 +552,9 @@ export class Engine {
         if (result.outcome === 'aborted') return 'aborted';
         this.actionDelayDeadline = this.deps.store.getActionDelayDeadline();
         if (result.outcome === 'halt') return this.halt({ kind: 'reconciliation-failed' });
-        if (result.outcome === 'wait') {
-          await this.engineWait('engine:reconcile-backoff', result.delayMs);
-          return 'idle';
-        }
+        if (result.outcome === 'progress') this.noteProgress('relationships-reconciling'); // no park: the visitor paces reads
+        if (result.outcome === 'wait') await this.engineWait('engine:reconcile-backoff', result.delayMs);
+        if (result.outcome !== 'complete') return 'idle';
         const at = this.deps.clock.now();
         this.sweepCadence.markRun(at);
         this.deps.churn.advanceTimers(at);

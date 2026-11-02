@@ -11,9 +11,12 @@ import { ActionAbortedError, TabUnavailableError } from '@/adapter/errors';
 import type { SentinelStatus } from '@/adapter/ig-surface';
 import { Reader } from '@/adapter/reader';
 import { FakeClock } from '@/governors/clock';
+import { MOTION } from '@/kernel/motion-policy';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import { KnowledgeStore } from '@/store/knowledge-store';
+import { clamp, logNormal } from '@/timing/distributions';
+import { sample } from '@/timing/primitives';
 import { setLevel } from '@/utils/logger';
 import { marker, NetworkTab } from '../kit/tabs';
 
@@ -177,5 +180,69 @@ describe('the observer alone (passive harvest, PRINCIPLES §1)', () => {
     serve(tab, profileBody('43', 'late'));
     await new Promise((r) => setTimeout(r, 0));
     expect(store.getAccount('43')).toBeNull();
+  });
+});
+
+describe('visits are paced like a person browsing (live 2026-11-02: ten back to back in ~25 s)', () => {
+  const paced = (now: () => number, waits: number[], rng = () => 0.5, abortSignal?: () => AbortSignal | undefined) => {
+    const tab = new PageTab();
+    tab.on(marker('"control":"profile-unavailable"'), () => ({ found: false }));
+    const observer = new ProfileObserver({ tab, reader: new Reader(), store, clock: new FakeClock(1_000) });
+    observer.start();
+    for (const name of ['a', 'b', 'c']) {
+      tab.pages[`https://www.instagram.com/${name}/`] = () => serve(tab, profileBody(name, name));
+    }
+    const visitor = new TabProfileVisitor({
+      tab, observer, sentinel: { check: async () => 'ok' }, waitMs: 20, pollMs: 1, abortSignal, now, rng,
+      sleep: async (ms) => { waits.push(ms); },
+    });
+    return visitor;
+  };
+
+  test('the first visit waits nothing; the next rests the drawn dwell from the END of the last', async () => {
+    let t = 50_000;
+    const waits: number[] = [];
+    const visitor = paced(() => t, waits);
+    await visitor.visit('a');
+    expect(waits).toEqual([]);
+    t += 2_000; // two seconds already spent since that visit ended
+    await visitor.visit('b');
+    expect(waits).toHaveLength(1);
+    // The policy's own draw (same rng), less the 2 s already elapsed.
+    const [min, max] = MOTION.profileDwellMs;
+    const drawn = sample(clamp(logNormal(MOTION.profileDwellMedianMs, MOTION.profileDwellSigma), min, max), () => 0.5);
+    expect(waits[0]).toBe(drawn - 2_000);
+  });
+
+  test('every dwell stays inside the policy bounds, whatever the draw', async () => {
+    for (const r of [0.0001, 0.2, 0.8, 0.9999]) {
+      const t = 0;
+      const waits: number[] = [];
+      const visitor = paced(() => t, waits, () => r);
+      await visitor.visit('a');
+      await visitor.visit('b');
+      expect(waits[0]).toBeGreaterThanOrEqual(MOTION.profileDwellMs[0]);
+      expect(waits[0]).toBeLessThanOrEqual(MOTION.profileDwellMs[1]);
+    }
+  });
+
+  test('a visit long after the last one waits nothing', async () => {
+    let t = 0;
+    const waits: number[] = [];
+    const visitor = paced(() => t, waits);
+    await visitor.visit('a');
+    t += MOTION.profileDwellMs[1] + 1;
+    await visitor.visit('b');
+    expect(waits).toEqual([]);
+  });
+
+  test('a stop during the dwell ends the visit before any navigation', async () => {
+    let t = 0;
+    const ac = new AbortController();
+    const waits: number[] = [];
+    const visitor = paced(() => t, waits, () => 0.5, () => ac.signal);
+    await visitor.visit('a');
+    ac.abort();
+    await expect(visitor.visit('b')).rejects.toBeInstanceOf(ActionAbortedError);
   });
 });

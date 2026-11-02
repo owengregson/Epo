@@ -51,6 +51,8 @@ export class FollowbackWatcher {
   private readonly followers?: FollowbackCensus;
   private readonly relationships?: FollowbackRelationships;
   private readonly signal?: () => AbortSignal | undefined;
+  /** The last check ended mid-sequence: the feed was read when the sequence began. */
+  private continuing = false;
 
   constructor(deps: FollowbackDeps) {
     this.store = deps.store;
@@ -96,6 +98,8 @@ export class FollowbackWatcher {
    */
   async check(opts: { requireFresh?: boolean; freshSinceAt?: number } = {}): Promise<FollowbackCheckResult> {
     const detected: string[] = [];
+    const continuing = this.continuing;
+    this.continuing = false;
     const token = this.signal?.();
     const stopped = (): boolean => Boolean(token?.aborted || token !== this.signal?.());
     const startedAt = this.clock.now();
@@ -144,9 +148,12 @@ export class FollowbackWatcher {
     const pending = currentCohort().filter(canDetect);
     if (!opts.requireFresh && pending.length === 0 && unresolved() === 0) return result('complete');
 
-    let read: Awaited<ReturnType<FollowbackNotifications['fetchRecent']>>;
+    // A batch sequence that made progress continues with targeted reads only:
+    // reopening the drawer before every batch of ten (live 2026-11-02) read the
+    // same feed every ~45 s.
+    let read: Awaited<ReturnType<FollowbackNotifications['fetchRecent']>> = { ok: true, events: [], accepted: [] };
     try {
-      read = await this.notifications.fetchRecent({ acceptRequests: this.cfg.autoAcceptRequests });
+      if (!continuing) read = await this.notifications.fetchRecent({ acceptRequests: this.cfg.autoAcceptRequests });
     } catch (e) {
       warn('followback: notifications read threw', { error: String(e) });
       return result(detected.length > 0 ? 'partial' : 'failed');
@@ -205,7 +212,11 @@ export class FollowbackWatcher {
       consumeCurrent();
       if (unresolved() > 0) {
         if (batch.outcome === 'read-budget') return { ...result('partial'), deferred: 'read-budget', retryAt: batch.retryAt };
-        if (batch.outcome === 'progress') return { ...result('partial'), deferred: 'reconciliation-progress', retryAt: this.clock.now() + 30_000 };
+        if (batch.outcome === 'progress') {
+          // The shared profile visitor paces every read: continue at once.
+          this.continuing = true;
+          return { ...result('partial'), deferred: 'reconciliation-progress', retryAt: this.clock.now() };
+        }
         return result('failed');
       }
     }

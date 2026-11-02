@@ -135,3 +135,23 @@ saw "no activity-feed response after click", and the engine parked under
   follow-backs"), so a failed follow-back read is never reported as an
   enrichment wall.
 - `projectors.ts` was split out of the version document (line budget).
+
+## Amendment — 2026-11-02 (later): profile visits are paced like browsing
+
+A live "checking relationships after N days away" run visited ten profiles
+back to back (~25 s), parked ~30 s, reopened the notifications drawer, and
+repeated — a burst-then-stop rhythm no person browses at, and one that drains
+the 24-a-day notification allowance in under twenty minutes.
+
+- **The shared visitor paces every visit.** `TabProfileVisitor` rests a
+  clamped log-normal dwell (`MOTION.profileDwell*`: median 9 s, σ 0.45,
+  5–30 s) measured from the END of the previous visit, before navigating. One
+  visitor serves enrichment, relationship checks, effect reconciliation,
+  acquisition and the seed check, so no caller can burst. A Stop ends the
+  dwell at once.
+- **Reconciliation progress continues instead of parking.** A batch that
+  observed something returns `progress`; the engine takes the next step at
+  once (the visitor supplies the spacing), so batches of ten no longer show
+  as bursts separated by holds.
+- **A continuation batch does not reopen the drawer** — the feed was read
+  when the sequence began.

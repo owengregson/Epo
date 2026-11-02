@@ -1,5 +1,19 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-02 (later — relationship checks burst through profiles) —** During
+> "checking relationships after N days away" the follow-back reconciliation
+> visited ten profiles back to back with no gap, parked ~30 s, reopened the
+> notifications drawer and repeated (owner: "going so fast through the profiles
+> it could get flagged … do it more human like"). FIXES (ADR 0307 amended):
+> the ONE shared `TabProfileVisitor` rests a log-normal dwell (median 9 s,
+> 5–30 s, `MOTION.profileDwell*`) since the previous visit ended — every caller
+> is paced, none can burst; a reconciliation batch that made progress
+> continues at the next step instead of parking (`ReconciliationRunner` →
+> `progress`); a continuation batch skips the feed it already read. Verified
+> live: consecutive profile navigations ~9–11 s apart. Note: the 10-21 read
+> budget still caps reconciliation at 80 profile / 24 notification reads per
+> rolling day — a large cohort pauses there by design.
+
 > **2026-11-02 (the notifications drawer moved to GraphQL; its close X is half-covered) —**
 > Symptom (`npm run start`): `rim.follow-notifications: no activity-feed response
 > after click`, then `engine: holding {reason: enrich-backoff}`. One cause, found

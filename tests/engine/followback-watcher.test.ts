@@ -221,3 +221,26 @@ test('an accepted request with an unresolved pk is warned and skipped (no phanto
   expect(detected).toEqual([]);
   expect(store.getFollowRecord('S')!.state).toBe('pending_followback');
 });
+
+test('a batch sequence that made progress continues with targeted reads — the drawer is not reopened', async () => {
+  // Live 2026-11-02: every batch of ten relationship reads reopened the
+  // notifications drawer first (a feed read every ~45 s).
+  for (const pk of ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']) {
+    store.upsertFollowRecord(rec({ accountPk: pk }));
+    store.observe({ accountPk: pk, observedAt: 1, source: 'followers-list', fields: { username: `u${pk}` } });
+  }
+  const src = new FakeNotifications({ ok: true, events: [] });
+  const read = async () => ({ ok: true as const, followsUs: false, observedAt: clock.now() });
+  const w = new FollowbackWatcher({ store, clock, ownPk: OWN, notifications: src, relationships: { read } });
+
+  const first = await w.check({ requireFresh: true, freshSinceAt: NOW });
+  expect(first).toMatchObject({ deferred: 'reconciliation-progress' });
+  expect(src.calls).toBe(1);
+
+  const second = await w.check({ requireFresh: true, freshSinceAt: NOW });
+  expect(second.outcome).toBe('complete');
+  expect(src.calls).toBe(1); // the feed was read when the sequence began
+
+  await w.check({ requireFresh: true, freshSinceAt: NOW });
+  expect(src.calls).toBe(2); // a NEW sequence reads the feed again
+});
