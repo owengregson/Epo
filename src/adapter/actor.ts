@@ -35,12 +35,13 @@ import type {
 import { SURFACE } from '@/adapter/ig-surface';
 import { MutationWatch } from '@/adapter/mutation-watch';
 import { settleAndPress } from '@/adapter/settle-press';
-import type { PageTab } from '@/adapter/tab-ports';
 import { SURFACE_METER, type SurfaceMetric } from '@/surface/meter';
 import { ADAPTER } from '@/timing/config';
 import { sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 import { ok, type Result } from '@/utils/result';
+import { prepareAction } from './action-admission';
+import type { ActorInteractor, ActorOptions, AdapterTab } from './actor-types';
 
 /** Minimum wheel distance (px) for a list-scroll step — a shorter nudge can fail
  *  to trigger the next page load on tall viewports. One home for BOTH scroll
@@ -48,52 +49,7 @@ import { ok, type Result } from '@/utils/result';
  *  stay local to each path's dialog geometry. */
 const MIN_SCROLL_STEP_PX = 600;
 
-/**
- * The tab slice the Actor drives (see `tab-ports.ts`): navigate, evaluate,
- * read the URL — and, when the tab carries the seam, observe the mutation
- * response so the server's own verdict arbitrates a click rather than the
- * header button's optimistic flip.
- */
-export type AdapterTab = PageTab;
-
-/**
- * The input port the Actor drives (`src/interaction/Interactor` satisfies it
- * structurally). Element LOCATING happens in-page — the surface's locate
- * scripts return bounding rects — and every click/scroll is then performed
- * with native input events. Required: an in-page `.click()` is focus- and
- * trust-dependent and the SPA ignores it for several controls.
- */
-export interface ActorInteractor {
-  /** Rest the cursor on `target` without pressing (settle-then-press, `settle-press.ts`). */
-  hover(target: LocatedRect): Promise<void>;
-  click(target: LocatedRect): Promise<void>;
-  /**
-   * Scroll `container` by `deltaPx`. `restPoint` (optional) is a hover-safe spot
-   * inside the container the cursor rests on while wheeling, so the burst never
-   * lands on a username/avatar that would open a hover card and eat the wheel.
-   */
-  scroll(container: LocatedRect, deltaPx: number, restPoint?: { x: number; y: number }): Promise<void>;
-}
-
-/** Tuning for the (real-browser) wait loops. Tests override with tiny values. */
-export interface ActorOptions {
-  /** Poll interval while waiting for the dialog / confirm control. */
-  pollIntervalMs?: number;
-  /** Total time to wait before declaring a control absent. */
-  pollTimeoutMs?: number;
-  /** How long after an action click to wait for its mutation response. */
-  mutationTimeoutMs?: number;
-  /** The input engine every click/scroll goes through (see {@link ActorInteractor}). */
-  interactor: ActorInteractor;
-  /**
-   * Provider of the ACTIVE driver's abort signal (the engine/prune run token),
-   * polled per wait iteration — a `stop()` interrupts an in-flight DOM poll
-   * instead of sitting out its timeout. Absent → waits always run to term.
-   */
-  abortSignal?: () => AbortSignal | undefined;
-  /** Live activity readout for the veil; defaults to a no-op. */
-  reporter?: ActivityReporter;
-}
+export type { ActorInteractor, ActorOptions, AdapterTab } from './actor-types';
 
 /** The mutation an Actor operation fires — the Verdict's `op` field. */
 const watchKind = (op: string): 'follow' | 'unfollow' =>
@@ -135,9 +91,13 @@ export class Actor {
   private readonly interactor: ActorInteractor;
   private readonly abortSignal?: () => AbortSignal | undefined;
   private readonly reporter: ActivityReporter;
+  private readonly prepareProfile?: ActorOptions['prepareProfile'];
+  private readonly beforeMutation?: ActorOptions['beforeMutation'];
 
   constructor(tab: AdapterTab, opts: ActorOptions) {
     this.tab = tab;
+    this.prepareProfile = opts.prepareProfile;
+    this.beforeMutation = opts.beforeMutation;
     this.pollIntervalMs = opts.pollIntervalMs ?? ADAPTER.POLL_INTERVAL_MS;
     this.pollTimeoutMs = opts.pollTimeoutMs ?? ADAPTER.POLL_TIMEOUT_MS;
     this.mutationTimeoutMs = opts.mutationTimeoutMs ?? ADAPTER.MUTATION_RESPONSE_TIMEOUT_MS;
@@ -153,22 +113,24 @@ export class Actor {
    * reported as `clicked: false` so callers can reconcile the external follow.
    * Throws {@link AdapterStaleError} when the header button is absent.
    */
-  async follow(username: string): Promise<Result<{ clicked: boolean }>> {
+  async follow(username: string, expectedPk?: string, onDispatch?: () => void): Promise<Result<{ clicked: boolean }>> {
     this.reporter.report({ kind: 'page', label: `Following @${username}` });
     try {
-      return await this.followInner(username);
+      return await this.followInner(username, expectedPk, onDispatch);
     } finally {
       this.reporter.clear();
     }
   }
 
-  private async followInner(username: string): Promise<Result<{ clicked: boolean }>> {
-    await this.tab.goto(SURFACE.profileUrl(username));
+  private async followInner(username: string, expectedPk?: string, onDispatch?: () => void): Promise<Result<{ clicked: boolean }>> {
+    const dispatch = await prepareAction({ tab: this.tab, abortSignal: this.abortSignal,
+      prepareProfile: this.prepareProfile, beforeMutation: this.beforeMutation },
+      'follow', username, expectedPk, onDispatch);
     // The network arbiter is armed BEFORE the click: the mutation response
     // can land within the same tick as the optimistic DOM flip.
     const watch = new MutationWatch('follow', 'actor.follow', this.tab);
     try {
-      return await this.followDriven(username, watch);
+      return await this.followDriven(username, watch, dispatch);
     } finally {
       watch.dispose();
     }
@@ -177,13 +139,14 @@ export class Actor {
   private async followDriven(
     username: string,
     watch: MutationWatch,
+    dispatch: () => Promise<void>,
   ): Promise<Result<{ clicked: boolean }>> {
     // The SPA is still hydrating when `goto` resolves, so the action button is
     // not guaranteed to be in the DOM on the first probe — `waitFor` retries
     // the lookup until the control appears or the timeout elapses.
     const res = await this.waitFor<FindButtonResult>(
       'actor.follow',
-      () => this.findAndAct('follow'),
+      () => this.findAndAct('follow', dispatch),
       (r) => Boolean(r?.found),
       // `goto` resolve → first successful control locate: the honest definition
       // of "hydration", and the prior behind POLL_TIMEOUT_MS.
@@ -227,23 +190,25 @@ export class Actor {
    * {@link AdapterStaleError} when the header button is absent, or when the
    * confirm control never appears after opening the menu.
    */
-  async unfollow(username: string): Promise<Result<{ clicked: boolean }>> {
+  async unfollow(username: string, expectedPk?: string, onDispatch?: () => void): Promise<Result<{ clicked: boolean }>> {
     this.reporter.report({ kind: 'page', label: `Unfollowing @${username}` });
     try {
-      return await this.unfollowInner(username);
+      return await this.unfollowInner(username, expectedPk, onDispatch);
     } finally {
       this.reporter.clear();
     }
   }
 
-  private async unfollowInner(username: string): Promise<Result<{ clicked: boolean }>> {
-    await this.tab.goto(SURFACE.profileUrl(username));
+  private async unfollowInner(username: string, expectedPk?: string, onDispatch?: () => void): Promise<Result<{ clicked: boolean }>> {
+    const dispatch = await prepareAction({ tab: this.tab, abortSignal: this.abortSignal,
+      prepareProfile: this.prepareProfile, beforeMutation: this.beforeMutation },
+      'unfollow', username, expectedPk, onDispatch);
     // The network arbiter is armed before any click: the unfollow mutation
     // fires on the CONFIRM click (inline for a cancelled request), and its
     // response can land within the same tick as the optimistic DOM flip.
     const watch = new MutationWatch('unfollow', 'actor.unfollow', this.tab);
     try {
-      return await this.unfollowDriven(username, watch);
+      return await this.unfollowDriven(username, watch, dispatch);
     } finally {
       watch.dispose();
     }
@@ -252,12 +217,13 @@ export class Actor {
   private async unfollowDriven(
     username: string,
     watch: MutationWatch,
+    dispatch: () => Promise<void>,
   ): Promise<Result<{ clicked: boolean }>> {
     // Retry the initial lookup through `waitFor` — hydration may not have
     // placed the action button in the DOM when `goto` resolves.
     const res = await this.waitFor<FindButtonResult>(
       'actor.unfollow',
-      () => this.findAndAct('unfollow'),
+      () => this.findAndAct('unfollow', dispatch),
       (r) => Boolean(r?.found),
       'hydration',
     );
@@ -269,7 +235,7 @@ export class Actor {
     if (res.needsConfirm) {
       let confirmed = await this.waitFor<ConfirmResult>(
         'actor.unfollow',
-        () => this.confirmUnfollow(),
+        () => this.confirmUnfollow(dispatch),
         (r) => Boolean(r?.confirmed),
       );
       if (!confirmed) {
@@ -285,12 +251,12 @@ export class Actor {
         // the menu and retry the confirm search. When the first click actually
         // landed (button now reads Follow), findAndAct clicks nothing and the
         // post-state verification below is the arbiter — never a re-follow.
-        const reopened = await this.findAndAct('unfollow');
+        const reopened = await this.findAndAct('unfollow', dispatch);
         if (reopened.found && reopened.clicked && reopened.needsConfirm) {
           logger.warn('actor.unfollow: confirm control absent, reopened the menu to retry');
           confirmed = await this.waitFor<ConfirmResult>(
             'actor.unfollow',
-            () => this.confirmUnfollow(),
+            () => this.confirmUnfollow(dispatch),
             (r) => Boolean(r?.confirmed),
           );
         }
@@ -520,7 +486,7 @@ export class Actor {
    * time. `clicked: false` when none remain (or the panel/drift) — the caller
    * verifies progress across successive calls via username/remaining.
    */
-  async confirmNextFollowRequest(): Promise<{
+  async confirmNextFollowRequest(onDispatch?: (username: string | null) => void | Promise<void>): Promise<{
     clicked: boolean;
     username: string | null;
     remaining: number;
@@ -533,7 +499,21 @@ export class Actor {
       (r) => Boolean(r?.found && Actor.rectUsable(r.rect)),
     );
     // The row REPORTED is the row PRESSED: the one located after the hover.
-    const pressed = await this.settleAndPress(res, locate);
+    let settledUsername: string | null = null;
+    const guarded = {
+      hover: (rect: LocatedRect) => this.interactor.hover(rect),
+      click: async (rect: LocatedRect) => {
+        if (this.abortSignal?.()?.aborted) throw new ActionAbortedError('actor.accept-request');
+        await onDispatch?.(settledUsername);
+        if (this.abortSignal?.()?.aborted) throw new ActionAbortedError('actor.accept-request');
+        await this.interactor.click(rect);
+      },
+    };
+    const pressed = await settleAndPress(guarded, res, async () => {
+      const row = await locate();
+      settledUsername = row?.username ?? null;
+      return row;
+    }, Actor.rectUsable);
     if (pressed === null) return { clicked: false, username: null, remaining: 0 };
     return {
       clicked: true,
@@ -572,7 +552,7 @@ export class Actor {
    * anchor and reports the button's state, rect, and whether `op` would press
    * it; the Interactor performs the press.
    */
-  private async findAndAct(op: 'follow' | 'unfollow'): Promise<FindButtonResult> {
+  private async findAndAct(op: 'follow' | 'unfollow', dispatch: () => Promise<void>): Promise<FindButtonResult> {
     const res = await this.tab.evaluate<LocateActionResult>(
       SURFACE.locateActionButtonScript(op),
     );
@@ -582,7 +562,10 @@ export class Actor {
     // pressed at a garbage point and "verified" as a success.
     if (res.wouldClick && !Actor.rectUsable(res.rect)) return { found: false };
     const clicked = Boolean(res.wouldClick && res.rect);
-    if (clicked && res.rect) await this.interactor.click(res.rect);
+    if (clicked && res.rect) {
+      if (op === 'follow' || res.state === 'requested' || !res.needsConfirm) await dispatch();
+      await this.interactor.click(res.rect);
+    }
     return {
       found: true,
       state: res.state ?? 'unknown',
@@ -595,7 +578,7 @@ export class Actor {
    * One unfollow-confirm attempt, settle-then-press: the menu scales in over ~100 ms
    * (live 2026-10-09), so the press uses the rect located after the hover, never mid-animation.
    */
-  private async confirmUnfollow(): Promise<ConfirmResult> {
+  private async confirmUnfollow(dispatch: () => Promise<void>): Promise<ConfirmResult> {
     const locate = (): Promise<LocateRectResult> =>
       this.tab.evaluate<LocateRectResult>(SURFACE.locateConfirmUnfollowScript());
     const res = await locate();
@@ -604,7 +587,11 @@ export class Actor {
       // the control: warn, so a persistent fallback reads as early drift.
       logger.warn('actor.confirmUnfollow: primary locate missed, recovered via deep text scan');
     }
-    return { confirmed: (await this.settleAndPress(res, locate)) !== null };
+    const guarded = {
+      hover: (rect: LocatedRect) => this.interactor.hover(rect),
+      click: async (rect: LocatedRect) => { await dispatch(); await this.interactor.click(rect); },
+    };
+    return { confirmed: (await settleAndPress(guarded, res, locate, Actor.rectUsable)) !== null };
   }
 
   /** One stat-control click attempt: locate the clickable ancestor, press its rect. */

@@ -31,10 +31,11 @@ const ORIGIN_SETTLE_MS = 2_000;
  * arrives, but Instagram's SPA cannot hydrate pages or advance its UI state
  * machine in that state, so every action times out. With these switches (plus
  * `backgroundThrottling: false` on the tab, set in `tab.ts`) ordinary background
- * states survive. Electron 44 macOS additionally needs the frame limiter off:
- * after hidden navigation, compositor ACKs otherwise take ~1 s EACH despite
- * live timers. The local probe measured ~60 fps and <=37 ms ACKs with this fix.
- * See docs/qa/background-runtime-2026-09-21.md for scope and power tradeoffs.
+ * states survive. Electron 44 macOS also needs a renderer-local workaround
+ * for hidden-navigation input ACKs (see tab.ts). Never disable frame limiting
+ * here: the global switch also disables GPU vsync, making the dashboard and
+ * veil produce thousands of frames per second and stall sidebar transitions.
+ * See docs/qa/render-pacing-2026-10-21.md for the measured scope of the fix.
  *
  * MUST run before `app.whenReady()`. Every entry point applies them — a tool
  * harness that drifted from production behaviour would capture misleading DOM.
@@ -43,7 +44,6 @@ export function applyBackgroundSurvivalSwitches(): void {
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
   app.commandLine.appendSwitch('disable-background-timer-throttling');
   app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-  if (process.platform === 'darwin') app.commandLine.appendSwitch('disable-frame-rate-limit');
 }
 
 /**

@@ -2,11 +2,14 @@ import * as logger from '../utils/logger';
 import { Chronos } from './chronos';
 import type { SqliteDriver } from './driver/driver';
 import { openDatabase } from './driver/index';
+import type { KnowledgeStoreOptions, PruneCensusRecord } from './knowledge-types';
 import { runMigrations } from './migrations';
+import { MutationPulse } from './mutation-pulse';
 import { AccountRepo } from './repos/accounts';
 import { AnalyticsRepo, type GrowthPoint, type TargetYield } from './repos/analytics';
 import { type CensusAuthority, CensusRepo, type ReconcileOutcome } from './repos/census';
 import { CursorRepo } from './repos/cursors';
+import { EffectIntentRepo } from './repos/effect-intents';
 import { FollowRecordRepo, type HealResult } from './repos/follow-records';
 import { LedgerRepo } from './repos/ledgers';
 import { MetaRepo } from './repos/meta';
@@ -19,50 +22,21 @@ import type {
   AccountState,
   Edge,
   EdgeType,
+  EffectChannel,
+  EffectIntent,
+  EffectSettlement,
   FollowbackTiming,
   FollowRecord,
   FollowState,
   GraphSourceRows,
+  MutationAction,
   Observation,
   PruneScanSnapshot,
   Target,
   TargetFunnelRead,
 } from './types';
 
-/**
- * The last COMPLETE prune census: the settled counts of the most recent scan
- * that verifiably walked both lists to the end, plus the scraped basis every
- * derived composition figure rests on. Persisted in the meta table (see
- * {@link KnowledgeStore.savePruneCensus}) so it survives relaunch, and only
- * ever replaced by the NEXT complete scan — an aborted or failed scan and a
- * run that consumes the candidate rows all leave it standing.
- */
-export interface PruneCensusRecord {
-  /** Epoch ms the census-completing scan finished. */
-  at: number;
-  /** Display counts: scraped list + ghost buffer = the numbers Instagram's
-   *  own profile header shows (see the GHOST BUFFER note in prune-engine). */
-  following: number;
-  followers: number;
-  /** The walked lists' true sizes — what the list API actually returned. The
-   *  gap to `following`/`followers` is deactivated/unavailable accounts the
-   *  header still counts but the list never resolves ("unresolvable"). */
-  scrapedFollowing: number;
-  scrapedFollowers: number;
-  /** Scraped follows of ours with no reciprocal follower row (self excluded). */
-  notFollowingBack: number;
-  /** Of those, the raw prune census: growth-managed accounts and chain targets
-   *  excluded, whitelist NOT applied (the runnable set derives from it live). */
-  candidates: number;
-}
-
-/** Ambient dependencies a store may take instead of reaching for globals. */
-export interface KnowledgeStoreOptions {
-  /** Wall clock; defaults to `Date.now`. */
-  now?: () => number;
-  /** Uniform [0,1) source; defaults to `Math.random`. */
-  rng?: () => number;
-}
+export type { KnowledgeStoreOptions, PruneCensusRecord } from './knowledge-types';
 
 /**
  * The sole boundary to the SQLite knowledge graph — the only place outside
@@ -84,6 +58,7 @@ export class KnowledgeStore {
   private readonly meta: MetaRepo;
   /** The two append-only action ledgers (`action_ledger`, `prune_ledger`). */
   private readonly ledgers: LedgerRepo;
+  private readonly effects: EffectIntentRepo;
   /** The durable prune-scan snapshot and its unvisited candidate set. */
   private readonly pruneScan: PruneScanRepo;
   /** Per-target followers-list resume cursors. */
@@ -131,8 +106,9 @@ export class KnowledgeStore {
     this.targets = new TargetRepo(this.db, changed);
     this.records = new FollowRecordRepo(this.db, changed);
     this.accounts = new AccountRepo(this.db, changed);
-    this.accounts.pruneAppendOnlyLogs();
     this.relationships = new RelationshipRepo(this.db, changed, this.meta);
+    this.effects = new EffectIntentRepo(this.db, { records: this.records, relationships: this.relationships, ledgers: this.ledgers, changed });
+    this.pruneRetainedLogs();
     this.analytics = new AnalyticsRepo(this.db, () => this.relationships.baselineAt());
     this.chronos = new Chronos(this.db, { now: this.now });
     this.spans = new SpanSink(this.db, { now: this.now, rng: this.rng });
@@ -150,32 +126,11 @@ export class KnowledgeStore {
 
   // --- Mutation notifications (docs/PRINCIPLES.md §2 — the UI mirrors the graph) ----
 
-  private readonly mutationListeners = new Set<() => void>();
+  private readonly mutationPulse = new MutationPulse();
 
-  /**
-   * Subscribe to "the graph changed" pulses: fired synchronously after every
-   * public write (facts stream in per row, so this fires per row during scans/
-   * sweeps — subscribers MUST throttle). This is what lets status projections
-   * push while an operation is still running instead of when it ends. Returns
-   * a disposer.
-   */
-  onMutation(listener: () => void): () => void {
-    this.mutationListeners.add(listener);
-    return () => {
-      this.mutationListeners.delete(listener);
-    };
-  }
-
-  /** Notify subscribers; a throwing listener is logged, never re-thrown into a write. */
-  private changed(): void {
-    for (const listener of [...this.mutationListeners]) {
-      try {
-        listener();
-      } catch (e) {
-        logger.error('store.onMutation listener threw', { error: String(e) });
-      }
-    }
-  }
+  /** Subscribe to committed graph changes; listeners must throttle their projections. */
+  onMutation(listener: () => void): () => void { return this.mutationPulse.subscribe(listener); }
+  private changed(): void { this.mutationPulse.changed(); }
 
   // --- Accounts and edges (via AccountRepo / RelationshipRepo) --------------------
 
@@ -330,6 +285,45 @@ export class KnowledgeStore {
   upsertFollowRecord(rec: FollowRecord): void {
     this.records.upsert(rec);
   }
+
+  beginEffectIntent(input: {
+    accountPk: string; username: string; action: MutationAction; channel: EffectChannel; at: number;
+  }): EffectIntent {
+    const intent = this.effects.begin(input);
+    this.changed();
+    return intent;
+  }
+
+  getEffectIntent(id: string): EffectIntent | null { return this.effects.get(id); }
+  pendingEffectIntents(): EffectIntent[] { return this.effects.pending(); }
+  markEffectDispatched(id: string, at: number): void {
+    this.effects.mark(id, 'dispatched', at);
+    this.changed();
+  }
+  markEffectUncertain(id: string, at: number): void {
+    this.effects.mark(id, 'uncertain', at);
+    this.changed();
+  }
+
+  /** No observer sees half a committed action; a failed write rolls back every component. */
+  settleEffectIntent(id: string, outcome: EffectSettlement): boolean {
+    return this.mutationPulse.atomic(() => this.effects.settle(id, outcome));
+  }
+
+  additionalMutationCountSince(since: number): number {
+    return this.effects.additionalCountSince(since);
+  }
+
+  getLifecycleState(): string | null { return this.meta.get('lifecycleState'); }
+  setLifecycleState(raw: string | null): void { this.meta.set('lifecycleState', raw); }
+  getLifecycleHealthState(): string | null { return this.meta.get('lifecycleHealthState'); }
+  setLifecycleHealthState(raw: string | null): void { this.meta.set('lifecycleHealthState', raw); }
+  getSourceFrontierState(): string | null { return this.meta.get('sourceFrontierState'); }
+  setSourceFrontierState(raw: string | null): void { this.meta.set('sourceFrontierState', raw); }
+  getReadBudgetState(): string | null { return this.meta.get('readBudgetState'); }
+  setReadBudgetState(raw: string | null): void { this.meta.set('readBudgetState', raw); }
+
+  pruneRetainedLogs(): void { this.accounts.pruneAppendOnlyLogs(); this.effects.pruneSettled(Date.now()); }
 
   getFollowRecord(accountPk: string): FollowRecord | null {
     return this.records.get(accountPk);
@@ -679,6 +673,12 @@ export class KnowledgeStore {
   getScrapeCursor(targetPk: string): string | null {
     return this.cursors.get(targetPk);
   }
+
+  getScrapeCursorState(targetPk: string): { cursor: string | null; updatedAt: number } | null {
+    return this.cursors.state(targetPk);
+  }
+
+  clearScrapeCursor(targetPk: string): void { this.cursors.clear(targetPk); }
 
   close(): void {
     this.db.close();

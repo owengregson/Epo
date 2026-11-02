@@ -41,6 +41,8 @@ export class TabLease {
    * run, cleared when the run's promise settles.
    */
   private driver: TabOwner | null = null;
+  private generation = 0;
+  private readonly borrowedGrowth = new Set<GrowthBorrower>();
 
   /** Borrowers that paused a RUNNING growth loop and therefore owe a resume. */
   private readonly owedResume = new Set<GrowthBorrower>();
@@ -61,14 +63,19 @@ export class TabLease {
     return this.driver;
   }
 
+  owns(owner: TabOwner, generation: number): boolean {
+    return this.driver === owner && this.generation === generation;
+  }
+
   /** Take the token. The caller has already checked that the tab is free. */
-  claim(owner: TabOwner): void {
+  claim(owner: TabOwner): number {
     this.driver = owner;
+    return ++this.generation;
   }
 
   /** Drop the token IFF `owner` still holds it (a stale run may not steal it). */
-  release(owner: TabOwner): void {
-    if (this.driver === owner) this.driver = null;
+  release(owner: TabOwner, generation?: number): void {
+    if (this.driver === owner && (generation === undefined || generation === this.generation)) this.driver = null;
   }
 
   // --- Growth hand-off -------------------------------------------------------
@@ -92,6 +99,7 @@ export class TabLease {
     if (engine === null) return false;
     const state = engine.status().state;
     if (state === 'idle' || state === 'halted') return true; // tab already free
+    this.borrowedGrowth.add(borrower);
     this.pauseGrowthFor(borrower, engine);
     const parked = await engine.awaitParked(parkTimeoutMs);
     if (!parked) {
@@ -120,9 +128,13 @@ export class TabLease {
    * undo a user's own pause, and never resume a torn-down graph). Idempotent.
    */
   returnToGrowth(borrower: GrowthBorrower, engine: LeaseGrowthEngine | null): void {
-    if (!this.owedResume.delete(borrower)) return;
+    const owed = this.owedResume.delete(borrower);
+    const borrowed = this.borrowedGrowth.delete(borrower);
+    if (!owed && !borrowed) return;
     if (engine === null) return;
     if (engine.status().state !== 'paused') return;
+    this.claim('growth');
+    if (!owed) return;
     logger.info('tab-lease: resuming growth engine after hand-off', { borrower });
     engine.resume();
   }
@@ -130,6 +142,7 @@ export class TabLease {
   /** Forget every owed resume — the graph they referred to is gone. */
   forgetHandoffs(): void {
     this.owedResume.clear();
+    this.borrowedGrowth.clear();
   }
 
   // --- Tour hold -------------------------------------------------------------

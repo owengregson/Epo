@@ -62,7 +62,7 @@ export function useTransportControls(
     }
     const ok = await confirm({
       title: 'Cancel the session?',
-      body: 'Stops the engine between actions. Today’s action count is kept; pacing resumes where it left off.',
+      body: 'Stops this run and cancels automatic resumption. Today’s action count is kept. Press Start to run again.',
       confirm: 'Stop engine',
       dismiss: 'Keep running',
       danger: true,

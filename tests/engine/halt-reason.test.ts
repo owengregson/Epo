@@ -27,6 +27,9 @@ describe('haltReasonKey', () => {
 
   test('every other reason serializes to its bare kind', () => {
     const cases: Array<[HaltReason, string]> = [
+      [{ kind: 'runtime-error' }, 'runtime-error'],
+      [{ kind: 'identity-changed' }, 'identity-changed'],
+      [{ kind: 'reconciliation-failed' }, 'reconciliation-failed'],
       [{ kind: 'chain-exhausted' }, 'chain-exhausted'],
       [{ kind: 'recovery-exhausted' }, 'recovery-exhausted'],
       [{ kind: 'adapter-drift' }, 'adapter-drift'],
@@ -45,8 +48,8 @@ describe('haltReasonKey', () => {
   test('the enumeration covers every reason and every key is distinct', () => {
     const keys = ALL_HALT_REASONS.map(haltReasonKey);
     expect(new Set(keys).size).toBe(keys.length);
-    // 11 bare kinds + one per sentinel status.
-    expect(ALL_HALT_REASONS.length).toBe(15);
+    // 14 bare kinds + one per sentinel status.
+    expect(ALL_HALT_REASONS.length).toBe(18);
     for (const key of keys) expect(key).not.toBe('');
   });
 });

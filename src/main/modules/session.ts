@@ -53,6 +53,8 @@ export interface GraphSessionDeps {
   tourHeld(): boolean;
   /** Await in-flight manual ops (bounded) before the store closes. */
   drainManualOps(): Promise<void>;
+  /** Identity changes revoke the old run before any new graph can be admitted. */
+  onIdentityChanged?(): void;
 }
 
 /** The lazy build, the identity cache and the ordered teardown, behind one object. */
@@ -119,6 +121,18 @@ export class GraphSession {
     // no degraded-username recovery. A built graph keeps serving reads; a
     // missing one waits for the hold to release (see setTourHold).
     if (this.deps.tourHeld()) return this.current() !== null;
+    // Revalidate passive identity even for a healthy, fully-built graph. Coalesce
+    // the whole operation so a cookie switch cannot race two graph teardowns.
+    if (this.buildPromise !== null) return this.buildPromise;
+    this.buildPromise = this.ensureIdentityAndBuild().finally(() => {
+      this.buildPromise = null;
+    });
+    return this.buildPromise;
+  }
+
+  private async ensureIdentityAndBuild(): Promise<boolean> {
+    const ownPk = await this.resolveOwnPk();
+    if (ownPk === null || this.disposingFlag || this.tearingDownFlag) return false;
     // Fully built (with a real username): nothing more to do.
     const live = this.current();
     if (live !== null && live.ownUsername !== undefined) return true;
@@ -131,12 +145,7 @@ export class GraphSession {
       if (sinceLastAttempt < SCHEDULER.USERNAME_REBUILD_BACKOFF_MS) return true;
       this.usernameRetryAt = Date.now();
     }
-    // Coalesce concurrent builds/retries onto a single in-flight promise (f6).
-    if (this.buildPromise !== null) return this.buildPromise;
-    this.buildPromise = this.buildOrRetry().finally(() => {
-      this.buildPromise = null;
-    });
-    return this.buildPromise;
+    return this.deps.withBuildHold(() => this.buildResolved(ownPk));
   }
 
   /**
@@ -147,19 +156,6 @@ export class GraphSession {
   async builtGraph(): Promise<BuiltGraph | null> {
     if (!(await this.ensureBuilt())) return null;
     return this.current();
-  }
-
-  /**
-   * The memoized body of {@link ensureBuilt}: resolves `ownPk` (required) and
-   * `ownUsername` (best-effort, retried — R5).
-   */
-  private async buildOrRetry(): Promise<boolean> {
-    // The pk resolve is passive (a cookie read) — no hold, so pre-login status
-    // polls never flash the veil over the login screen. Everything PAST it
-    // navigates the tab, so it runs under a `build` hold.
-    const ownPk = await this.resolveOwnPk();
-    if (ownPk === null) return false;
-    return this.deps.withBuildHold(() => this.buildResolved(ownPk));
   }
 
   /** The tab-driving tail of {@link buildOrRetry} (runs under the `build` hold). */
@@ -216,6 +212,7 @@ export class GraphSession {
         from: this.ownPkCache,
         to: value,
       });
+      this.deps.onIdentityChanged?.();
       await this.teardown();
     }
     this.ownPkCache = value;

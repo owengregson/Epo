@@ -1,0 +1,109 @@
+
+import type { ActivityReporter } from '@/adapter/activity-reporter';
+import type { Actor } from '@/adapter/actor';
+import type { Sentinel } from '@/adapter/sentinel';
+import type { InstagramTab } from '@/adapter/tab';
+import type { ChainController, } from '@/engine/chain-controller';
+import type { ChurnScheduler } from '@/engine/churn-scheduler';
+import type {
+  Engine,
+  EngineStatus,
+} from '@/engine/engine';
+import type { FollowbackWatcher } from '@/engine/followback-watcher';
+import type {
+  PruneEngine,
+  PruneStatus,
+} from '@/engine/prune-engine';
+import type { Scanner } from '@/engine/scanner';
+import type { SystemClock } from '@/governors/clock';
+import type { RateGovernor } from '@/governors/rate-governor';
+import type { CursorObserver } from '@/interaction/input-driver';
+import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import type { ProfileVisitor } from '@/rim/profile-visit-port';
+import type { FollowerAcquisition } from '@/rim/types';
+import type {
+  Settings,
+} from '@/settings/settings';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { DelayManager } from '@/timing/delay-manager';
+import type { ScheduleManager } from '@/timing/schedule-manager';
+import type { SessionPlanner } from '@/timing/session-planner';
+
+/** The lazily-built dependency graph, cached once `ownPk` is resolvable. */
+export interface BuiltGraph {
+  prepareMutation(): Promise<boolean>;
+  resolveIdentity(username: string): Promise<string | null>;
+  noteMutation(): void;
+  store: KnowledgeStore;
+  engine: Engine;
+  acquisition: FollowerAcquisition;
+  churnActions: AdapterBackedChurnActions;
+  /** The adapter's actor — kept for the paced own-profile landing click. */
+  actor: Actor;
+  /** Disposer for the passive relationship reconciler. */
+  relationshipReconcilerUnsub: () => void;
+  /** Disposer for the always-on profile observer (every profile body → store). */
+  profileInfoUnsub: () => void;
+  /** Reads a profile by VISITING it — the seed check's one read. */
+  profiles: ProfileVisitor;
+  ownPk: string;
+  /** Our own username at build time, or `undefined` when it could not be resolved. */
+  ownUsername: string | undefined;
+  /** The single clock the graph shares — used to timestamp manual-op ledger rows. */
+  clock: SystemClock;
+  /** The ONE wait owner both engines share. */
+  delays: DelayManager;
+  /** The shared block-detection sentinel — gates manual one-shot fetches (seed check). */
+  sentinel: Sentinel;
+  /**
+   * The loop promise returned by the most recent `engine.start()`, kept so
+   * `dispose()` can await the loop's exit before closing the store. Null until
+   * the engine is first started.
+   */
+  enginePromise: Promise<void> | null;
+  /** The auto-prune routine — mutually exclusive with the engine. */
+  pruneEngine: PruneEngine;
+  /**
+   * The run promise of the most recent `pruneEngine.run()`, kept so `dispose()`
+   * can await its exit before closing the store. Null until first started.
+   */
+  prunePromise: Promise<void> | null;
+  /** Live component handles kept so runtime Settings changes can reload configs. */
+  rate: RateGovernor;
+  churn: ChurnScheduler;
+  scanner: Scanner;
+  followback: FollowbackWatcher;
+  chain: ChainController;
+  /** The organic pacing planner, present only when `Settings.pacingModel === 'organic'`. */
+  pacing: SessionPlanner | undefined;
+}
+
+/** Everything {@link buildGraph} needs from the composition root. */
+export interface GraphBuildDeps {
+  recoverTab?(reason: string): Promise<void>;
+  validateIdentity?(): Promise<boolean>;
+  onProgress?(phase: string): void;
+  tab: InstagramTab;
+  /** Directory holding the knowledge DB (and the settings file beside it). */
+  userDataDir: string;
+  /** File name of the knowledge DB inside {@link GraphBuildDeps.userDataDir}. */
+  dbFile: string;
+  /** Live phase readout tap (the veil); a no-op reporter when main wires none. */
+  reporter: ActivityReporter;
+  /** Optional tap on the Interactor's synthetic cursor. */
+  cursorObserver?: CursorObserver;
+  /** The Foundation's one ScheduleManager (the follow-back sweep cadence rides it). */
+  scheduler: ScheduleManager;
+  /** The settings snapshot the graph is constructed from. */
+  settings: Settings;
+  /** Re-read of the live settings (the persisted cadence getters call this). */
+  resolveSettings(): Settings;
+  /** Persist a settings patch (cadence timestamps, `pruneLastRunAt`). */
+  updateSettings(partial: Partial<Settings>): void;
+  /** The ACTIVE driver's run token; adapter/rim waits link to it so stop() interrupts. */
+  driverSignal(): AbortSignal | undefined;
+  onStatus(status: EngineStatus): void;
+  onPruneStatus(status: PruneStatus): void;
+  onHalt(reason: string): void;
+}
+

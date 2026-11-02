@@ -16,8 +16,9 @@ import type { Settings } from '../settings/settings';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { ENGINE as ENGINE_TIMING, RECOVERY as RECOVERY_TIMING } from '../timing/config';
 import * as log from '../utils/logger';
-import { acquireFailureVerdict, unenrichedUsernames } from './decisions';
+import { unenrichedUsernames } from './decisions';
 import type { EngineWait } from './engine-waits';
+import { EXPLORATION_POLICY } from './exploration-policy';
 import type { HaltReason } from './halt-reason';
 import {
   ACQUIRE_DRAIN_REASONS,
@@ -28,18 +29,17 @@ import {
   type StepResult,
 } from './ports';
 import type { FailureKind } from './recovery';
+import type { SourceFrontier, SourceVisitEndReason } from './source-frontier';
+import { acquisitionFailureBackoff, reviveRecentExhausted } from './target-recovery';
 
 /** At most this many candidate usernames are enriched per pass. */
-export const ENRICH_BATCH_SIZE = 20;
+export const ENRICH_BATCH_SIZE = EXPLORATION_POLICY.profilesPerSlice;
 
 /**
- * At most this many enrichment passes per refill cycle. Once exhausted, the
- * cycle plans with whatever counts it has; a plan that enqueues nothing then
- * marks the target exhausted — enrichment can never spin on a dry target.
- * Sized with {@link ENRICH_BATCH_SIZE} so a cycle profiles up to ~80 candidates
- * before its final plan, and the Scanner picks from a real pool.
+ * One bounded profile slice before planning. Empty plans defer a visit; only
+ * verified list evidence can conclude that the audience ended.
  */
-export const MAX_ENRICH_PASSES_PER_CYCLE = 4;
+export const MAX_ENRICH_PASSES_PER_CYCLE = 1;
 
 /**
  * Acquisition is skipped while the raw not-yet-acted-on pool already holds this
@@ -54,6 +54,7 @@ export interface TargetPipelineDeps {
   clock: Clock;
   acquisition: EngineAcquisition;
   scanner: EngineScanner;
+  frontier?: SourceFrontier;
   enricher: EngineEnricher;
   /** Live settings — read through, so a runtime save takes effect immediately. */
   settings(): Settings;
@@ -92,6 +93,7 @@ export class TargetPipeline {
   private walledCycles = 0;
   /** Targets already granted their ONE dead-end re-verify this run. */
   private readonly revivedTargets = new Set<string>();
+  private readDeferredUntil = 0;
 
   constructor(deps: TargetPipelineDeps) {
     this.deps = deps;
@@ -100,6 +102,22 @@ export class TargetPipeline {
   /** Whether the current target's pool is spent with drain evidence. */
   isExhausted(): boolean {
     return this.exhausted;
+  }
+
+  /** Budget rotation remains distinct from evidence that a list ended. */
+  rotationReason(): SourceVisitEndReason | null {
+    if (this.current === null) return null;
+    if (this.exhausted) return this.lastAcquireEnd === null ? 'low-yield'
+      : this.lastAcquireEnd === 'coverage-cap' ? 'coverage-policy' : 'verified-ended';
+    return this.deps.frontier?.rotationReason(this.current.pk) ?? null;
+  }
+
+  refillAvailableAt(): number { return this.readDeferredUntil; }
+
+  private deferReads(retryAt: number | undefined): 'idle' {
+    this.readDeferredUntil = retryAt ?? this.deps.clock.now() + EXPLORATION_POLICY.lowYieldRevisitMs;
+    log.info('engine: optional reads deferred by durable budget', { resumesAt: this.readDeferredUntil });
+    return 'idle';
   }
 
   /** A manual start re-earns every exhausted target its ONE re-verify. */
@@ -125,6 +143,21 @@ export class TargetPipeline {
    * chain), if any. Free — no IG traffic. Returns whether a target was adopted.
    */
   adoptActiveTargetFromStore(): boolean {
+    const resume = this.deps.frontier?.snapshot().currentTargetPk;
+    if (resume && this.deps.store.getTarget(resume)) {
+      this.adoptTarget(resume);
+      return true;
+    }
+    if (this.deps.frontier !== undefined) {
+      const ready = this.deps.frontier.next();
+      if (ready === null) return false;
+      const existing = this.deps.store.getTarget(ready.pk);
+      if (existing === null) this.deps.store.addTarget({ accountPk: ready.pk, source: ready.source,
+        status: 'active', chainIndex: this.deps.store.nextChainIndex() });
+      else if (existing.status === 'exhausted') this.deps.store.setTargetStatus(ready.pk, 'active');
+      this.adoptTarget(ready.pk);
+      return true;
+    }
     const active = this.deps.store.listTargets().filter((t) => t.status === 'active');
     if (active.length === 0) return false;
     const front = active.reduce((best, t) => {
@@ -144,10 +177,20 @@ export class TargetPipeline {
    * cannot be resolved (there is nothing safe to do without a target).
    */
   async bootstrapSeedTarget(): Promise<StepResult> {
+    if (this.deps.frontier !== undefined && this.deps.frontier.snapshot().sources.length > 0) {
+      const resumeAt = this.deps.frontier.nextResumeAt() ?? this.deps.clock.now() + EXPLORATION_POLICY.lowYieldRevisitMs;
+      await this.deps.wait('engine:idle', Math.min(ENGINE_TIMING.IDLE_MS, Math.max(1, resumeAt - this.deps.clock.now())));
+      return 'idle';
+    }
     const seed = this.deps.settings().seed.trim();
     if (seed === '') return this.deps.halt({ kind: 'seed-missing' });
 
     const acquired = await this.deps.acquisition.acquire(seed);
+    if (acquired.endReason === 'read-budget') {
+      this.deferReads('retryAt' in acquired && typeof acquired.retryAt === 'number' ? acquired.retryAt : undefined);
+      await this.deps.wait('engine:idle', ENGINE_TIMING.IDLE_MS);
+      return 'idle';
+    }
     const targetPk = acquired.targetPk;
     if (targetPk === null) return this.deps.halt({ kind: 'seed-unresolved' });
 
@@ -178,6 +221,7 @@ export class TargetPipeline {
       pk: targetPk,
       username: this.deps.store.getAccount(targetPk)?.username ?? seed,
     };
+    this.deps.frontier?.beginVisit(targetPk, 'seed');
     // Only a GENUINELY completed read consumes the first cycle's acquisition
     // (and records latch evidence) — a failed seed read (a rate wall at first
     // contact) leaves step 7 free to retry instead of planning an empty pool
@@ -204,6 +248,7 @@ export class TargetPipeline {
   /** Make `pk` the current target and reset the refill-cycle guards for it. */
   adoptTarget(pk: string): void {
     this.current = { pk, username: this.deps.store.getAccount(pk)?.username ?? null };
+    this.deps.frontier?.beginVisit(pk, this.deps.store.getTarget(pk)?.source ?? 'discovered');
     this.acquiredThisCycle = false;
     this.enrichPassesThisCycle = 0;
     this.enrichedThisCycle = 0;
@@ -213,55 +258,20 @@ export class TargetPipeline {
     this.exhausted = false;
   }
 
-  /**
-   * The chain dead-end self-heal — the REVERSAL path for evidence-stamped
-   * exhaustion: pick the most recently exhausted target whose `exhaustedAt`
-   * stamp is younger than {@link RECOVERY_TIMING.EXHAUSTED_REVERIFY_WINDOW_MS}
-   * and not yet re-verified this run, return it to 'active' in the store, and
-   * hand it back for re-adoption — the next refill cycle retries its
-   * acquisition ONCE. A re-exhaustion re-stamps it and the per-run set blocks
-   * a second revive, so a genuinely dry chain still reaches the terminal
-   * `chain-exhausted` halt. Deliberate retirements (no stamp —
-   * restart-from-seed) are never revived. Null when nothing qualifies.
-   */
+  /** Legacy targets get one evidence-based recheck per run. */
   reviveRecentExhausted(): string | null {
-    const now = this.deps.clock.now();
-    const cutoff = now - RECOVERY_TIMING.EXHAUSTED_REVERIFY_WINDOW_MS;
-    for (const t of this.deps.store.exhaustedTargetsSince(cutoff)) {
-      if (this.revivedTargets.has(t.accountPk)) continue;
-      this.revivedTargets.add(t.accountPk);
-      this.deps.store.setTargetStatus(t.accountPk, 'active');
-      log.warn('engine: chain dead-end — re-verifying recently exhausted target', {
-        pk: t.accountPk,
-        exhaustedAt: t.exhaustedAt ?? null,
-        windowMs: RECOVERY_TIMING.EXHAUSTED_REVERIFY_WINDOW_MS,
-      });
-      return t.accountPk;
-    }
-    return null;
+    return reviveRecentExhausted(this.deps, this.revivedTargets);
   }
 
   /**
-   * Step 7's body — ONE bounded slice of the refill cycle per firing:
-   *
-   *  1. `acquisition.acquire` at most ONCE per cycle (a target whose username is
-   *     unknown cannot be scraped; the guard is set anyway so the cycle terminates).
-   *  2. Candidates the followers-list left count-less (`enrichment !== 'profiled'`)
-   *     get an enrichment pass: up to {@link ENRICH_BATCH_SIZE} usernames, at most
-   *     {@link MAX_ENRICH_PASSES_PER_CYCLE} passes per cycle → return; the NEXT
-   *     firing sees their counts and plans.
-   *  3. Otherwise the cycle closes with a plan. A plan that enqueues candidates
-   *     RESETS the guards (real progress, a later refill may run a new cycle); a
-   *     plan that enqueues nothing latches `targetExhausted` — planning was final,
-   *     step 7 stops firing, and step 9 (chain advance) becomes reachable.
-   *
-   * Livelock-proof by construction: a cycle spends at most 1 acquisition + K
-   * enrichment passes of IG traffic, and only demonstrated progress (queued > 0)
-   * can open another cycle. Every path that issued IG traffic ends with the
-   * short jittered pacing pause, so no branch hammers back-to-back.
+   * One bounded refill slice: acquire when stored prospects are insufficient,
+   * enrich at most one profile batch, then plan on the next firing. The frontier
+   * defers unproductive visits; only observed drain evidence closes the source.
+   * Read-budget refusal records a deadline without blocking existing actions.
    */
   async refillPool(current: CurrentTarget, token: AbortController): Promise<StepResult> {
     let issuedTraffic = false;
+    this.deps.scanner.reconsiderTarget?.(current.pk, this.deps.clock.now());
 
     // (1) At most one acquisition per cycle — and NONE when the store already
     // holds several plans' worth of raw not-yet-acted-on followers for this
@@ -271,7 +281,8 @@ export class TargetPipeline {
     // starved selection and queued whatever ratios the last shallow batch had.
     if (!this.acquiredThisCycle) {
       const rawPool = this.deps.store.candidatePksForTarget(current.pk).length;
-      if (rawPool >= this.deps.settings().dailyPlanSize * ACQUIRE_SKIP_POOL_FACTOR) {
+      const planCapacity = Math.min(this.deps.settings().dailyPlanSize, EXPLORATION_POLICY.queuedPerSource);
+      if (rawPool >= planCapacity * ACQUIRE_SKIP_POOL_FACTOR) {
         this.acquiredThisCycle = true;
         log.info('engine: raw pool sufficient, skipping acquisition', {
           pk: current.pk,
@@ -282,7 +293,11 @@ export class TargetPipeline {
         log.warn('engine: cannot acquire, target username unknown', { pk: current.pk });
       } else {
         const acquired = await this.deps.acquisition.acquire(current.username);
+        this.deps.frontier?.noteAcquisition(current.pk, acquired.observed,
+          'globallyNew' in acquired && typeof acquired.globallyNew === 'number' ? acquired.globallyNew : 0);
         issuedTraffic = true;
+        if (acquired.endReason === 'read-budget') return this.deferReads(
+          'retryAt' in acquired && typeof acquired.retryAt === 'number' ? acquired.retryAt : undefined);
         if (isAcquireFailure(acquired.endReason)) {
           // A FAILED read yields no evidence about the audience: the cycle's
           // acquisition opportunity stays UNCONSUMED (the retry after the
@@ -297,13 +312,19 @@ export class TargetPipeline {
     }
 
     // (2) Select up to a batch of candidate usernames still lacking counts.
-    const usernames = unenrichedUsernames(this.deps.store, current.pk, ENRICH_BATCH_SIZE);
+    const usernames = unenrichedUsernames(this.deps.store, current.pk, ENRICH_BATCH_SIZE, this.deps.clock.now());
 
     // (3) Enrich them (bounded per cycle); the next firing scores what came back.
     if (usernames.length > 0 && this.enrichPassesThisCycle < MAX_ENRICH_PASSES_PER_CYCLE) {
       this.enrichPassesThisCycle += 1;
       const enriched = await this.deps.enricher.enrich(usernames);
+      this.deps.frontier?.noteEnrichment(current.pk, usernames.length);
       this.enrichedThisCycle += enriched;
+      const resumeAt = this.deps.enricher.budgetResumeAt?.();
+      if (resumeAt !== undefined && resumeAt !== null) {
+        this.enrichPassesThisCycle = 0;
+        return this.deferReads(resumeAt);
+      }
       issuedTraffic = true;
       log.info('engine: enriched candidates', {
         target: current.pk,
@@ -317,6 +338,7 @@ export class TargetPipeline {
 
     // (4) Plan — final for this cycle when it enqueues nothing.
     const plan = this.deps.scanner.planTarget(current.pk);
+    this.deps.frontier?.notePlan(current.pk, plan.queued.length);
     if (plan.queued.length > 0) {
       this.acquiredThisCycle = false;
       this.enrichPassesThisCycle = 0;
@@ -327,7 +349,7 @@ export class TargetPipeline {
       this.enrichedThisCycle = 0;
       this.walledCycles = 0; // real progress — the read side is not walled
       this.sliceReopens = 0; // real progress — the list is still yielding
-    } else if (unenrichedUsernames(this.deps.store, current.pk, 1).length > 0) {
+    } else if (unenrichedUsernames(this.deps.store, current.pk, 1, this.deps.clock.now()).length > 0) {
       // NOT exhaustion: candidates remain that were never successfully
       // enriched. Two very different situations land here:
       //  - enrichment IS delivering but everything scored so far was rejected
@@ -381,6 +403,12 @@ export class TargetPipeline {
         await this.deps.wait('engine:enrich-backoff', ENGINE_TIMING.ENRICH_BACKOFF_MS);
         return 'idle';
       }
+    } else if (this.lastAcquireEnd === null && current.username !== null) {
+      // A local pool rejected by the scorer is not evidence about unread pages.
+      // The next cycle must acquire before it can declare the source drained.
+      this.acquiredThisCycle = false;
+      this.enrichPassesThisCycle = 0;
+      this.enrichedThisCycle = 0;
     } else {
       // POSITIVE evidence only: nothing plannable remains locally AND the
       // latest acquire either VERIFIED the list's end ('no-more-pages') or
@@ -399,43 +427,9 @@ export class TargetPipeline {
     return 'acquired';
   }
 
-  /**
-   * The refill path's response to a FAILED acquire ('shape-mismatch' /
-   * 'fetch-failed' / 'sentinel-blocked' / 'stopped' / 'dialog-failed'): no
-   * trustworthy evidence was read, so nothing latches and the cycle's
-   * acquisition slot stays open for the retry. Failed reads share the
-   * walled-cycle ladder with starved enrichment — the first entries take the
-   * long enrich-backoff park (a rate wall must not spin the refill loop at
-   * pacing speed); the {@link RECOVERY_TIMING.WALLED_CYCLES_ENTRY}-th in a row
-   * enters the recovery ladder, carrying drift evidence when the read itself
-   * reported shape drift.
-   */
-  private async acquireFailedBackoff(
-    current: CurrentTarget,
-    endReason: AcquireEndReason,
-    token: AbortController,
-  ): Promise<StepResult> {
-    const verdict = acquireFailureVerdict(
-      this.walledCycles,
-      endReason,
-      RECOVERY_TIMING.WALLED_CYCLES_ENTRY,
-    );
-    if (verdict.action === 'recover') {
-      this.walledCycles = 0;
-      log.warn('engine: acquisition failing repeatedly — entering recovery', {
-        target: current.pk,
-        endReason,
-      });
-      return this.deps.recover(token, verdict.kind);
-    }
-    this.walledCycles = verdict.walledCycles;
-    log.warn('engine: acquire failed — backing off (cycle slot kept, target NOT exhausted)', {
-      target: current.pk,
-      endReason,
-      walledCycles: this.walledCycles,
-    });
-    await this.deps.wait('engine:enrich-backoff', ENGINE_TIMING.ENRICH_BACKOFF_MS);
-    return 'idle';
+  private async acquireFailedBackoff(current: CurrentTarget, endReason: AcquireEndReason, token: AbortController): Promise<StepResult> {
+    const result = await acquisitionFailureBackoff(this.deps, current.pk, endReason, token, this.walledCycles);
+    this.walledCycles = result.walledCycles;
+    return result.step;
   }
-
 }

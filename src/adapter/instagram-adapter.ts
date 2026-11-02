@@ -18,6 +18,8 @@ import { Sentinel } from '@/adapter/sentinel';
 
 /** Adapter construction options. */
 export interface InstagramAdapterOptions {
+  prepareProfile?: (username: string, expectedPk: string, action: 'follow' | 'unfollow') => Promise<void>;
+  beforeMutation?: () => Promise<void>;
   /**
    * Input engine: every Actor click/scroll is dispatched as native input
    * events through it (see `src/interaction/`). Required — there is no in-page
@@ -40,6 +42,8 @@ export class InstagramAdapter {
 
   constructor(tab: AdapterTab, opts: InstagramAdapterOptions) {
     this.actor = new Actor(tab, {
+      prepareProfile: opts.prepareProfile,
+      beforeMutation: opts.beforeMutation,
       interactor: opts.interactor,
       abortSignal: opts.abortSignal,
       reporter: opts.reporter,

@@ -49,7 +49,7 @@ function EpoMark(): JSX.Element {
 }
 
 /** Everything the header cannot derive: the in-flight control and the handlers. */
-export type HeaderProps = Omit<TransportProps, 'state' | 'driver' | 'pruneScanning'>;
+export type HeaderProps = Omit<TransportProps, 'state' | 'driver' | 'pruneScanning' | 'intentActive'>;
 
 /**
  * The console header: the brand mark (whose hairline ring breathes while the
@@ -77,6 +77,7 @@ export function Header(props: HeaderProps): JSX.Element {
         state={transport.state}
         driver={transport.driver}
         pruneScanning={transport.pruneScanning}
+        intentActive={transport.intentActive}
         {...props}
       />
     </div>

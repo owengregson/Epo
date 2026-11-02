@@ -17,6 +17,7 @@
 import {
   ActionAbortedError,
   ActionBlockedError,
+  ActionDeferredError,
   ActionRateLimitedError,
   AdapterStaleError,
   TabUnavailableError,
@@ -24,11 +25,13 @@ import {
 } from '@/adapter/errors';
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import type { ChurnActionOutcome, ChurnActions } from '@/engine/churn-scheduler';
+import { normalizeMutationOutcome } from '@/engine/mutation-outcome';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import * as logger from '@/utils/logger';
 
 export interface ChurnActionsDeps {
+  validateIdentity?: () => Promise<boolean>;
   adapter: InstagramAdapter;
   store: KnowledgeStore;
   /** Our own account pk; when set, its `accounts` endpoint is ensured once. */
@@ -45,9 +48,11 @@ export class AdapterBackedChurnActions implements ChurnActions {
   private dryRun: boolean;
   private readonly clock: Clock;
   private selfEnsured = false;
+  private readonly validateIdentity?: () => Promise<boolean>;
 
   constructor(deps: ChurnActionsDeps) {
     this.adapter = deps.adapter;
+    this.validateIdentity = deps.validateIdentity;
     this.store = deps.store;
     this.ownPk = deps.ownPk;
     this.dryRun = deps.dryRun;
@@ -59,19 +64,22 @@ export class AdapterBackedChurnActions implements ChurnActions {
     this.dryRun = dryRun;
   }
 
-  follow(username: string): Promise<ChurnActionOutcome> {
-    return this.act(username, 'follow');
+  follow(username: string, expectedPk?: string, onDispatch?: () => void): Promise<ChurnActionOutcome> {
+    return this.act(username, 'follow', expectedPk, onDispatch);
   }
 
-  unfollow(username: string): Promise<ChurnActionOutcome> {
-    return this.act(username, 'unfollow');
+  unfollow(username: string, expectedPk?: string, onDispatch?: () => void): Promise<ChurnActionOutcome> {
+    return this.act(username, 'unfollow', expectedPk, onDispatch);
   }
 
   private async act(
     username: string,
     action: 'follow' | 'unfollow',
+    expectedPk?: string,
+    onDispatch?: () => void,
   ): Promise<ChurnActionOutcome> {
     this.ensureSelfObserved();
+    if (this.validateIdentity && !(await this.validateIdentity())) return { status: 'blocked' };
 
     // Order: sentinel → (dry-run) → click. A block BEFORE the click is not a
     // failure — the scheduler leaves the record untouched to retry later.
@@ -93,19 +101,26 @@ export class AdapterBackedChurnActions implements ChurnActions {
       return { status: 'simulated' };
     }
 
+    let dispatched = false;
+    const dispatch = (): void => { onDispatch?.(); dispatched = true; };
     try {
       const result =
         action === 'follow'
-          ? await this.adapter.actor.follow(username)
-          : await this.adapter.actor.unfollow(username);
+          ? await this.adapter.actor.follow(username, expectedPk, dispatch)
+          : await this.adapter.actor.unfollow(username, expectedPk, dispatch);
       // The Actor already verified the post-click state; trust its Result.
       // An ok WITHOUT a click means the button was already in the
       // target state — an external actor owns the relationship. Surface it as
       // `alreadyInState` so the scheduler reconciles instead of claiming it.
       return result.ok
         ? { status: 'ok', alreadyInState: !result.value.clicked }
-        : { status: 'failed' };
+        : normalizeMutationOutcome({ status: 'failed' }, dispatched);
     } catch (e) {
+      if (dispatched && !(e instanceof ActionRateLimitedError)) {
+        logger.warn('rim.churn-actions: dispatched action has no verified result', { username, action, error: String(e) });
+        return { status: 'blocked', cause: 'tab-unhealthy', unverifiedClick: true };
+      }
+      if (e instanceof ActionDeferredError) return { status: 'blocked', cause: 'local-policy' };
       if (e instanceof ActionAbortedError) {
         // A user stop/pause interrupted the wait — NOT a failure and NOT
         // selector drift. 'blocked' leaves the record completely untouched

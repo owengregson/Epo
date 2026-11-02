@@ -101,6 +101,21 @@ test('a failed Actor Result is reported as failed', async () => {
   expect(actor.followCalls).toEqual(['bob']);
 });
 
+test.each(['failed', 'thrown', 'drift'] as const)('a %s result after dispatch reports uncertainty, never a retryable failure', async (failure) => {
+  const { actions, actor } = build({});
+  actor.follow = async (_username: string, _pk?: string, dispatched?: () => void) => {
+    dispatched?.();
+    if (failure === 'thrown') throw new Error('lost acknowledgement');
+    if (failure === 'drift') throw new AdapterStaleError('actor.follow', 'post-state');
+    return err('post-click state not confirmed');
+  };
+  const dispatched = jest.fn();
+  expect(await actions.follow('bob', 'pk', dispatched)).toMatchObject({
+    status: 'blocked', cause: 'tab-unhealthy', unverifiedClick: true,
+  });
+  expect(dispatched).toHaveBeenCalledTimes(1);
+});
+
 test('a thrown Actor error is caught and reported as failed', async () => {
   const { actions, actor } = build({});
   actor.followThrows = true;

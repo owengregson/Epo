@@ -16,6 +16,10 @@
  * command — the record must be left completely untouched so it retries when
  * the engine next runs.
  */
+export class ActionDeferredError extends Error {
+  constructor(readonly reason: string) { super(reason); this.name = 'ActionDeferredError'; }
+}
+
 export class ActionAbortedError extends Error {
   /** The adapter operation that was interrupted, e.g. `actor.follow`. */
   readonly component: string;

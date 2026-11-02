@@ -33,8 +33,9 @@ export class RelationshipRepo {
         `INSERT INTO edges (src_pk, dst_pk, type, first_seen_at, last_confirmed_at, status)
          VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(src_pk, dst_pk, type) DO UPDATE SET
-           last_confirmed_at = excluded.last_confirmed_at,
-           status = excluded.status,
+           last_confirmed_at = MAX(edges.last_confirmed_at, excluded.last_confirmed_at),
+           status = CASE WHEN excluded.last_confirmed_at >= edges.last_confirmed_at
+             THEN excluded.status ELSE edges.status END,
            first_seen_at = MIN(edges.first_seen_at, excluded.first_seen_at)`,
       )
       .run(srcPk, dstPk, type, at, at, active ? 'active' : 'removed');
@@ -151,6 +152,14 @@ export class RelationshipRepo {
    */
   observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number): void {
     this.ensureBaseline(at);
+    const current = this.getEdge(srcPk, ownPk, 'follows');
+    if (current !== null && current.lastConfirmedAt >= at) {
+      // A delayed historical event can improve history, never current membership.
+      this.db.prepare(`UPDATE edges SET first_seen_at = MIN(first_seen_at, ?)
+        WHERE src_pk = ? AND dst_pk = ? AND type = 'follows'`).run(at, srcPk, ownPk);
+      this.changed();
+      return;
+    }
     this.observeEdge(srcPk, ownPk, 'follows', true, at);
   }
 

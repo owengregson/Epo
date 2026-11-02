@@ -8,6 +8,7 @@
  * without an interposed paced delay.
  */
 
+import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import {
   ENGINE_IDLE_MS,
   ENRICH_BATCH_SIZE,
@@ -1337,6 +1338,8 @@ describe('Engine — organic pacing model', () => {
 // --- Woven prune feed (organic model) ---------------------------------------------
 
 class FakeFeed implements EngineUnfollowFeed {
+  details: ChurnActionOutcome | null = null;
+  lastActionOutcome(): ChurnActionOutcome | null { return this.details; }
   candidates: Array<{ pk: string; username: string }> = [];
   cap = false;
   executed: Array<{ pk: string; username: string }> = [];
@@ -1357,6 +1360,17 @@ class FakeFeed implements EngineUnfollowFeed {
 }
 
 describe('Engine — woven prune feed', () => {
+  test('a woven server refusal enters the same account-wide recovery as growth', async () => {
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    feed.outcome = 'blocked';
+    feed.details = { status: 'blocked', cause: 'rate-limited' };
+    const h = makeHarness({ pacing: new FakePacing(T0), unfollowFeed: feed });
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(h.engine.status().recovery?.phase).toBe('probing');
+    expect(h.churn.executed).toEqual([]);
+    expect(feed.candidates).toHaveLength(1);
+  });
   test('weaves a prune unfollow when no lifecycle action is due, paced by the planner', async () => {
     const pacing = new FakePacing(T0);
     pacing.gapMs = 4 * 60_000;

@@ -1,0 +1,112 @@
+import type { Clock } from '../governors/clock';
+import type { RateGovernor } from '../governors/rate-governor';
+import type { KnowledgeStore } from '../store/knowledge-store';
+import type { FollowRecord, FollowState } from '../store/types';
+import { MS_PER_DAY } from '../timing/units';
+
+/**
+ * The discriminated outcome of a single follow/unfollow attempt:
+ *
+ * - `'ok'`        — the click was performed and the Actor verified the transition.
+ * - `'failed'`    — a click was attempted but did not confirm (retry/abandon).
+ * - `'blocked'`   — Sentinel non-`ok` BEFORE any click; the
+ *                   record is left completely untouched so it retries when the
+ *                   window clears. A block is NOT a failure.
+ * - `'simulated'` — dry-run: no click happened. The lifecycle STATE still advances
+ *                   (so dry-run exercises the machine) but no real edge/ledger row
+ *                   is written, so dry-run never pollutes yield/overlap.
+ */
+export type ChurnActionOutcome = {
+  status: 'ok' | 'failed' | 'blocked' | 'simulated';
+  /** True when `ok` but no click happened — the button was already in the target
+   *  state, so an external actor is responsible for the relationship. */
+  alreadyInState?: boolean;
+  /**
+   * Why a non-ok outcome happened, when the cause is classifiable:
+   *  - `'tab-unhealthy'` — the TAB stalled or its webContents was unavailable
+   *    (status `'blocked'`: record-neutral — never a retry, never a fail row;
+   *    the recovery ladder routes it to tab recovery, not the wait ladder).
+   *  - `'drift'` — an `AdapterStaleError`: the expected control is gone
+   *    (status `'failed'`; feeds the ladder's drift-evidence tally).
+   *  - `'rate-limited'` — Instagram's SERVER refused the mutation as
+   *    throttling (`feedback_required` / 429 in the response; status
+   *    `'blocked'`: record-neutral, but DEFINITIVE — the engines back off at
+   *    once instead of proving a blocked streak against the wall).
+   * Absent when the cause is unknown or ordinary.
+   */
+  cause?: 'tab-unhealthy' | 'drift' | 'rate-limited' | 'local-policy';
+  /**
+   * True when a tab failure landed AFTER the click was dispatched but BEFORE
+   * post-state verification — the action may have LANDED on Instagram. The
+   * scheduler keeps a durable uncertain intent for read-only reconciliation.
+   * A later observed state does not prove the historical action was ours.
+   */
+  unverifiedClick?: boolean;
+};
+
+/**
+ * The only Instagram-touching surface the scheduler needs. The real implementation
+ * wraps Actor + Sentinel; tests pass a fake that records calls and
+ * returns a configurable outcome. Both methods resolve (never reject) with a
+ * {@link ChurnActionOutcome} so an outcome is a value, not a thrown exception — but
+ * the scheduler still guards against rejections defensively (no silent catches;
+ * failures are logged).
+ */
+export interface ChurnActions {
+  follow(username: string, expectedPk?: string, onDispatch?: () => void): Promise<ChurnActionOutcome>;
+  unfollow(username: string, expectedPk?: string, onDispatch?: () => void): Promise<ChurnActionOutcome>;
+}
+
+/**
+ * Lifecycle timers + retry cap for the churn state machine. All tunable in
+ * Settings. NB: the post-follow-back HOLD is not here — `holdUntil` is stamped by the
+ * FollowbackWatcher (its `holdAfterFollowbackMs`); the scheduler only honors the stamp.
+ */
+export interface ChurnConfig {
+  /** How long to wait for a follow-back before reclaiming the slot (default 4 days). */
+  maxWaitForFollowbackMs: number;
+  /** Failed follow/unfollow attempts tolerated before a record is abandoned (default 3). */
+  maxRetries: number;
+  /**
+   * The bio keep-list (Settings `pruneBioFilterWords`): an account that
+   * FOLLOWS US BACK and whose bio contains any of these words/phrases
+   * (case-insensitive substring — see prune-bio-filter.ts) is never rotated
+   * out or unfollowed; it stays a kept mutual. Deliberately scoped to
+   * follow-backs only: a non-follower is pruned regardless of bio (both the
+   * one-shot prune run and the woven trickle feed).
+   */
+  bioKeepWords: string[];
+  relationshipFreshMs?: number;
+}
+
+/** Design defaults. */
+export const CHURN_DEFAULTS: ChurnConfig = {
+  maxWaitForFollowbackMs: 4 * MS_PER_DAY,
+  maxRetries: 3,
+  bioKeepWords: [],
+};
+
+/** What one verb does to a record and the graph when its action verifies. */
+export interface VerbSpec {
+  /** The follows-edge polarity a verified action leaves behind. */
+  edge: boolean;
+  /** The lifecycle state a verified action lands in. */
+  next: FollowState;
+  /** Whether the transition stamps `followedAt`. */
+  stampsFollowedAt: boolean;
+  /** Whether an EXTERNAL already-in-state result also closes the record. */
+  closeOnExternal: boolean;
+}
+
+/** Injected collaborators — no browser, no globals, so the scheduler is unit-testable. */
+export interface ChurnDeps {
+  store: KnowledgeStore;
+  clock: Clock;
+  rate: RateGovernor;
+  actions: ChurnActions;
+  /** Our own account `pk`; when set, follow/unfollow are recorded as directed edges. */
+  ownPk?: string;
+  cfg?: ChurnConfig;
+  pickQueued?: (records: FollowRecord[]) => FollowRecord | null;
+  validateFollow?: (rec: FollowRecord, now: number) => Promise<boolean> | boolean;
+}

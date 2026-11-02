@@ -24,6 +24,7 @@ import {
 } from '@/adapter/activity-reporter';
 import type { Sentinel } from '@/adapter/sentinel';
 import { type Clock, SystemClock } from '@/governors/clock';
+import type { ReadBudget } from '@/governors/read-budget';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RECOVERY, RIM } from '@/timing/config';
@@ -39,9 +40,12 @@ const DEFAULT_BATCH_CAP = 25;
  */
 export interface ProfileEnricher {
   enrich(usernames: string[]): Promise<number>;
+  budgetResumeAt?(): number | null;
 }
 
 export interface ProfileEnricherDeps {
+  onProgress?: (phase: string) => void;
+  readBudget?: ReadBudget;
   /** Reads a profile by opening it; the observer behind it writes the store. */
   visitor: ProfileVisitor;
   /** For the permanent `gone` marker only — the counts are the observer's write. */
@@ -64,6 +68,9 @@ export interface ProfileEnricherDeps {
 }
 
 export class AdapterBackedProfileEnricher implements ProfileEnricher {
+  private readonly onProgress?: (phase: string) => void;
+  private readonly readBudget?: ReadBudget;
+  private readResumeAt: number | null = null;
   private readonly visitor: ProfileVisitor;
   private readonly store: Pick<KnowledgeStore, 'markEnrichmentFailed'>;
   private readonly sentinel: Sentinel;
@@ -75,6 +82,8 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
   private readonly reporter: ActivityReporter;
 
   constructor(deps: ProfileEnricherDeps) {
+    this.onProgress = deps.onProgress;
+    this.readBudget = deps.readBudget;
     this.visitor = deps.visitor;
     this.store = deps.store;
     this.sentinel = deps.sentinel;
@@ -87,6 +96,7 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
   }
 
   async enrich(usernames: string[]): Promise<number> {
+    this.readResumeAt = null;
     const batch = usernames.slice(0, this.batchCap);
     let enriched = 0;
     // Enrichment visits profile pages — a 'page' phase. The batch size is an
@@ -127,6 +137,11 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         continue;
       }
 
+      const permit = this.readBudget?.consume('profile');
+      if (permit !== undefined && !permit.allowed) {
+        this.readResumeAt = permit.resumeAt;
+        break;
+      }
       const visit = await this.visitor.visit(username);
       if (!visit.ok) {
         // `gone` is the page itself saying the profile is not available
@@ -154,6 +169,7 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
       }
       walledInARow = 0;
       enriched += 1;
+      this.onProgress?.('profile-enriched');
       logger.debug('rim.profile-enricher: enriched', { username, pk: visit.obs.accountPk });
 
       await this.pace(i, batch.length);
@@ -167,6 +183,8 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
     });
     return enriched;
   }
+
+  budgetResumeAt(): number | null { return this.readResumeAt; }
 
   /**
    * Pacing between visits; no wait after the final username. Each wait is a

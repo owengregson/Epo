@@ -23,6 +23,9 @@ import { registerEpoIpc } from '@/main/ipc';
 import type { OverlayVeil } from '@/main/overlay/veil-view';
 import { RuntimePower } from '@/main/runtime-power';
 import { electronIgSession } from '@/main/services/ig-session';
+import { RuntimeCoordinator } from '@/main/services/runtime-coordinator';
+import { RuntimeLog } from '@/main/services/runtime-log';
+import { terminateFailedStartup } from '@/main/services/startup-failure';
 import { createAppShell } from '@/main/window/shell';
 import type { LogEntry, LogLevel } from '@/types';
 import * as logger from '@/utils/logger';
@@ -42,6 +45,8 @@ let connectivityMonitor: ConnectivityMonitor | null = null;
 /** The composed module graph (`src/main/app.ts`) — disposed on quit. */
 let composedApp: App | null = null;
 let runtimePower: RuntimePower | null = null;
+let runtimeLog: RuntimeLog | null = null;
+let shuttingDown = false;
 
 /** Where the main window's persisted geometry lives (a settings-file sibling). */
 function windowStateFile(): string {
@@ -49,7 +54,8 @@ function windowStateFile(): string {
 }
 
 async function createWindow(): Promise<void> {
-  const shell = createAppShell({ windowStateFile: windowStateFile() });
+  const shell = createAppShell({ windowStateFile: windowStateFile(),
+    onDashboardBlocked: (reason) => foundation?.stopForIncident(reason) });
   const { win, tab, veil } = shell;
   mainWindow = win;
   instagramTab = tab;
@@ -146,18 +152,15 @@ async function createWindow(): Promise<void> {
     setStage: shell.setStage,
   });
 
-  // Default page: rest on the user's OWN profile, not the home feed. The
-  // Foundation waits for the logged-in graph, then the Interactor moves the
-  // simulated cursor to the nav avatar link and clicks it (under the veil's
-  // activity machine). A logged-out tab quietly stays on the login page.
-  void found.landOnOwnProfile();
-
   // --- Connectivity monitor (offline-hold for the engine loop) -------------
   const connectivity = new ConnectivityMonitor((online) => {
     foundation?.setConnectivity(online);
   });
   connectivityMonitor = connectivity;
   connectivity.start();
+
+  await found.restoreRuntimeIntent();
+  void found.landOnOwnProfile();
 
   // Opt-in scheduled auto-prune: fires a prune run when the user's
   // `pruneScheduleDays` cadence is due and it is safe (tab free, active hours).
@@ -197,8 +200,10 @@ const isPrimaryInstance = ensureSingleInstance(() => {
   mainWindow.focus();
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!isPrimaryInstance) return;
+  runtimeLog = new RuntimeLog(path.join(app.getPath('userData'), 'logs'));
+  logger.setDurableSink((level, message, meta) => runtimeLog?.write(level, message, meta));
   setDevDockIcon();
   // Protect main-process pacing and durable wake schedules while the display
   // sleeps. Forced system sleep still needs the ordered Foundation recovery.
@@ -209,15 +214,28 @@ app.whenReady().then(() => {
     resume: async () => foundation?.resumeFromSleep(),
   });
   runtimePower.start();
-  void createWindow().catch((e: unknown) => {
-    logger.error('main: window composition failed', { error: String(e) });
-  });
+  await createWindow();
 
   // NB: no `activate` → createWindow() handler. `window-all-closed` always
   // quits (below), so a live app never has a null window to re-create — and
   // re-running createWindow() would re-register live IPC handlers (a throw)
   // and construct a second Foundation/InstagramTab over the first.
-});
+}).catch((error: unknown) => terminateFailedStartup(error, {
+  claim: () => {
+    if (shuttingDown) return false;
+    shuttingDown = true;
+    return true;
+  },
+  block: (failure) => {
+    if (foundation !== null) foundation.stopForIncident('startup-failed');
+    else new RuntimeCoordinator(path.join(app.getPath('userData'), 'epo-runtime.json'))
+      .block('startup-failed', String(failure));
+  },
+  dispose: disposeApplication,
+  closeLog: closeRuntimeLog,
+  report: (phase, failure) => logger.error(`main: ${phase}`, { error: String(failure) }),
+  exit: (code) => app.exit(code),
+}));
 
 // Closing the window closes the whole app — including the engine loop, the
 // knowledge store, and the persistent Instagram session — on every platform.
@@ -225,56 +243,55 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
+// Terminal exits are deliberate user stops, not crashes eligible for automatic replay.
+process.on('SIGINT', () => app.quit());
+process.on('SIGTERM', () => app.quit());
+
 // Graceful shutdown: stop the engine, await its loop, close the store, then the
 // tab + veil, and only then exit. `before-quit` is preventable, so we defer the
 // exit until dispose settles (guarded against re-entry).
-let shuttingDown = false;
 app.on('before-quit', (event) => {
+  event.preventDefault();
   if (shuttingDown) return;
   shuttingDown = true;
-  event.preventDefault();
   runtimePower?.stopWatching();
+  foundation?.shutdownRuntime();
 
   // NB: we deliberately do NOT remove the IPC handlers here. The renderer's
   // in-flight polling invokes (chain:list / growth:series) can still drain after
   // the window closes; leaving the handlers registered lets them resolve to safe
   // empties (Foundation is `disposing`, so no rebuild) instead of logging
   // "No handler registered". Everything is freed when the process exits below.
-  const finish = (): void => {
-    _disposeIpc = null;
-    connectivityMonitor?.stop();
-    connectivityMonitor = null;
-    instagramTab?.dispose();
-    instagramTab = null;
-    overlayVeil?.dispose();
-    overlayVeil = null;
-    runtimePower?.dispose();
-    runtimePower = null;
-    app.exit(0);
+  void disposeApplication().finally(() => closeRuntimeLog().finally(() => app.exit(0)));
+});
+
+/** Shared ordered cleanup, including partially composed startup resources. */
+async function disposeApplication(): Promise<void> {
+  const run = async (label: string, release: () => void | Promise<void>): Promise<void> => {
+    try { await release(); }
+    catch (error) { logger.error(`main: ${label} dispose failed`, { error: String(error) }); }
   };
-
-  // The module graph releases in the exact reverse of the order it started
-  // (the kernel's guarantee, so nothing here maintains a teardown list).
-  const composed = composedApp;
-  composedApp = null;
-  const disposeModules = (): Promise<void> =>
-    composed === null
-      ? Promise.resolve()
-      : composed
-          .dispose()
-          .catch((e: unknown) =>
-            logger.error('main: module dispose failed', { error: String(e) }),
-          );
-
+  runtimePower?.stopWatching();
+  connectivityMonitor?.stop();
+  connectivityMonitor = null;
   const found = foundation;
   foundation = null;
-  if (found) {
-    found
-      .dispose()
-      .catch((e: unknown) => logger.error('main: foundation dispose failed', { error: String(e) }))
-      .then(disposeModules)
-      .finally(finish);
-  } else {
-    void disposeModules().finally(finish);
-  }
-});
+  const composed = composedApp;
+  composedApp = null;
+  await run('foundation', () => found?.dispose());
+  await run('modules', () => composed?.dispose());
+  _disposeIpc = null;
+  await run('tab', () => instagramTab?.dispose());
+  instagramTab = null;
+  await run('veil', () => overlayVeil?.dispose());
+  overlayVeil = null;
+  await run('power', () => runtimePower?.dispose());
+  runtimePower = null;
+}
+
+function closeRuntimeLog(): Promise<void> {
+  const log = runtimeLog;
+  runtimeLog = null;
+  logger.setDurableSink(null);
+  return log?.close() ?? Promise.resolve();
+}

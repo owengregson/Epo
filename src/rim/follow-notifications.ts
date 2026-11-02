@@ -30,11 +30,13 @@ import type { Actor } from '@/adapter/actor';
 import type { LocateConfirmRequestResult } from '@/adapter/ig-surface';
 import type { FollowEvent, Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
+import type { ReadBudget } from '@/governors/read-budget';
 import type { RimTab } from '@/rim/types';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
 import { sample, sleep, uniform } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
+import { acceptRequests as acceptPendingRequests } from './request-acceptance';
 
 export type { FollowEvent } from '@/adapter/reader';
 
@@ -51,6 +53,8 @@ export interface FollowNotificationsResult {
   events: FollowEvent[];
   accepted: AcceptedFollowRequest[];
   reason?: string;
+  retryAt?: number;
+  pendingRequestPks?: string[];
 }
 
 /** The port the follow-back watcher consumes (tests inject a scripted fake). */
@@ -66,7 +70,7 @@ export interface NotificationsActor {
   clickNotificationsClose(): Promise<boolean>;
   scrollNotificationsList(): Promise<boolean>;
   clickFollowRequestsEntry(): Promise<boolean>;
-  confirmNextFollowRequest(): Promise<{
+  confirmNextFollowRequest(onDispatch?: (username: string | null) => void | Promise<void>): Promise<{
     clicked: boolean;
     username: string | null;
     remaining: number;
@@ -76,6 +80,10 @@ export interface NotificationsActor {
 }
 
 export interface FollowNotificationsDeps {
+  readBudget?: ReadBudget;
+  ownPk?: string;
+  canAccept?: () => Promise<boolean>;
+  onAccepted?: () => void;
   tab: RimTab;
   actor: NotificationsActor | Actor;
   reader: Reader;
@@ -95,6 +103,10 @@ export interface FollowNotificationsDeps {
 }
 
 export class AdapterBackedFollowNotifications implements FollowNotificationsSource {
+  private readonly readBudget?: ReadBudget;
+  private readonly ownPk?: string;
+  private readonly canAccept?: () => Promise<boolean>;
+  private readonly onAccepted?: () => void;
   private readonly tab: RimTab;
   private readonly actor: NotificationsActor;
   private readonly reader: Reader;
@@ -107,6 +119,10 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
   private readonly reporter: ActivityReporter;
 
   constructor(deps: FollowNotificationsDeps) {
+    this.readBudget = deps.readBudget;
+    this.ownPk = deps.ownPk;
+    this.canAccept = deps.canAccept;
+    this.onAccepted = deps.onAccepted;
     this.tab = deps.tab;
     this.actor = deps.actor;
     this.reader = deps.reader;
@@ -120,6 +136,10 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
   }
 
   async fetchRecent(opts?: { acceptRequests?: boolean }): Promise<FollowNotificationsResult> {
+    const permit = this.readBudget?.consume('notification', 'reconciliation');
+    if (permit && !permit.allowed) {
+      return { ok: false, events: [], accepted: [], reason: 'read-budget', retryAt: permit.resumeAt ?? undefined };
+    }
     const status = await this.sentinel.check();
     if (status !== 'ok') {
       logger.warn('rim.follow-notifications: sentinel non-ok, skipping check', { status });
@@ -267,7 +287,9 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
         const entered = await this.actor.clickFollowRequestsEntry();
         if (entered) {
           await this.awaitCaptured(() => captured.pendingPks !== null, pendingReads, signal);
-          await this.acceptLoop(captured.pendingPks ?? new Map(), accepted, signal);
+          await acceptPendingRequests({ actor: this.actor, store: this.store, ownPk: this.ownPk,
+            canAccept: this.canAccept, onAccepted: this.onAccepted, acceptVerifyMs: this.acceptVerifyMs,
+            sleep: this.sleep }, captured.pendingPks ?? new Map(), accepted, signal);
         } else {
           logger.debug('rim.follow-notifications: no Follow requests entry (nothing pending)');
         }
@@ -277,7 +299,10 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
         events: events.length,
         accepted: accepted.length,
       });
-      return { ok: true, events, accepted };
+      const acceptedPks = new Set(accepted.map((r) => r.pk));
+      const pendingRequestPks = [...(captured.pendingPks?.values() ?? [])].filter((pk) => !acceptedPks.has(pk));
+      return { ok: true, events, accepted, pendingRequestPks,
+        retryAt: this.store?.getActionDelayDeadline() ?? undefined };
     } finally {
       unsubscribe();
       // Leave the drawer through its own X control — so the tab is
@@ -311,66 +336,5 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     }
   }
 
-  /**
-   * Accept pending requests through the REAL Confirm buttons: bounded per
-   * check, paced between clicks, and each accept VERIFIED — the head row must
-   * visibly change (username/count) before it counts and the loop continues.
-   * A click that doesn't register stops the loop (page problem, retry next
-   * check) instead of hammering the same button.
-   */
-  private async acceptLoop(
-    pendingPks: Map<string, string>,
-    accepted: AcceptedFollowRequest[],
-    signal: AbortSignal | undefined,
-  ): Promise<void> {
-    for (let i = 0; i < RIM.REQUEST_ACCEPT_CAP; i++) {
-      if (signal?.aborted) return;
-      const before = await this.actor.probeFollowRequestHead();
-      if (!before.found) return; // no rows left (or panel gone)
 
-      const click = await this.actor.confirmNextFollowRequest();
-      if (!click.clicked) return;
-
-      // Verify the click consumed its row before counting it.
-      let progressed = false;
-      const deadline = Date.now() + this.acceptVerifyMs;
-      for (;;) {
-        const after = await this.actor.probeFollowRequestHead();
-        if (
-          !after.found ||
-          (after.remaining ?? 0) < (before.remaining ?? 1) ||
-          (after.username != null && before.username != null && after.username !== before.username)
-        ) {
-          progressed = true;
-          break;
-        }
-        if (Date.now() >= deadline) break;
-        await this.sleep(RIM.ACCEPT_VERIFY_POLL_MS, signal);
-      }
-      if (!progressed) {
-        logger.warn('rim.follow-notifications: accept click did not register, stopping loop', {
-          username: click.username,
-        });
-        return;
-      }
-
-      const username = click.username ?? before.username ?? null;
-      if (username === null) {
-        logger.warn('rim.follow-notifications: accepted a request but the row had no username');
-      } else {
-        const pk =
-          pendingPks.get(username.toLowerCase()) ?? this.store?.pkByUsername(username) ?? null;
-        accepted.push({ pk, username });
-        logger.info('rim.follow-notifications: accepted follow request', { username, pk });
-      }
-
-      await this.sleep(
-        sample(uniform(RIM.ACCEPT_PACE_MIN_MS, RIM.ACCEPT_PACE_MAX_MS)),
-        signal,
-      );
-    }
-    logger.info('rim.follow-notifications: accept cap reached, remainder next check', {
-      cap: RIM.REQUEST_ACCEPT_CAP,
-    });
-  }
 }

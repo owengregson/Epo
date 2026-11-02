@@ -20,6 +20,7 @@ import type { KnowledgeStore } from '../store/knowledge-store';
 import { PATTERN } from '../timing/config';
 import { MS_PER_HOUR } from '../timing/units';
 import { queuedCountFor } from './decisions';
+import { EXPLORATION_POLICY } from './exploration-policy';
 import type { FactSources, FeedCandidate } from './facts';
 import type {
   CurrentTarget,
@@ -30,6 +31,7 @@ import type {
   SweepCadence,
 } from './ports';
 import type { RecoveryPhase } from './recovery';
+import type { SourceVisitEndReason } from './source-frontier';
 
 /** The recovery-ladder slice the fact sources read (RecoverySupervisor satisfies it). */
 export interface FactRecovery {
@@ -70,6 +72,10 @@ export interface EngineFactDeps {
   rng(): number;
   /** The cold consecutive-failure threshold the ladder enters at. */
   actionsFailingHalt: number;
+  yieldRefill?(): boolean;
+  rotationReason?(): SourceVisitEndReason | null;
+  requiresReconciliation?(now: number): boolean;
+  refillAvailableAt?(): number;
 }
 
 export function buildEngineFactSources(d: EngineFactDeps): FactSources {
@@ -163,8 +169,11 @@ export function buildEngineFactSources(d: EngineFactDeps): FactSources {
         const target = (await read('target')).current;
         return {
           queuedForTarget: target === null ? 0 : queuedCountFor(store, target.pk),
-          lowWaterCandidates: d.settings().lowWaterCandidates,
+          lowWaterCandidates: Math.min(d.settings().lowWaterCandidates, EXPLORATION_POLICY.queuedPerSource),
           targetExhausted: d.targets.isExhausted(),
+          yieldToAction: d.yieldRefill?.() ?? false,
+          rotationReason: d.rotationReason?.() ?? null,
+          refillAvailableAt: d.refillAvailableAt?.() ?? 0,
         };
       },
     },
@@ -175,6 +184,7 @@ export function buildEngineFactSources(d: EngineFactDeps): FactSources {
         const { now } = await read('clock');
         return {
           sweepDue: d.sweepCadence.isDue(now, d.settings().followbackSweepHours * MS_PER_HOUR),
+          reconcile: d.requiresReconciliation?.(now) ?? false,
           // SEAM (wave B): `chronos.due(now)` fills this before the first tick.
           overdue: [],
         };

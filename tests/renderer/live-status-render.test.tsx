@@ -32,6 +32,36 @@ const card = (status: Parameters<typeof idleStatus>[0]): JSX.Element => (
 );
 
 describe('LiveStatusCard — hero postures', () => {
+  const runtime = (over: Partial<NonNullable<ReturnType<typeof idleStatus>['runtime']>> = {}) => ({
+    desired: 'running' as const, phase: 'ready' as const, blockedReason: null,
+    lastProgressAt: Date.now() - 120_000, progressPhase: 'relationships-reconciled', incidents: [], ...over,
+  });
+
+  it('device recovery takes precedence over a stale action countdown', () => {
+    render(card({ state: 'idle', nextActionAt: Date.now() + 30_000, runtime: runtime({ phase: 'recovering' }) }));
+    screen.getByText('Recovering');
+    screen.getByText(/Last progress .*relationships reconciled/);
+    expect(screen.queryByText('until next action')).toBeNull();
+  });
+
+  it('a persistent device block stays visible even when the engine is idle', () => {
+    render(card({ state: 'idle', runtime: runtime({ blockedReason: 'account-changed' }) }));
+    screen.getByText('Needs attention');
+    expect(screen.getByRole('alert').textContent).toMatch(/signed-in account changed/);
+  });
+
+  it('return reconciliation and consecutive failures are visible without implying actions resumed', () => {
+    render(card({ state: 'running', runtime: runtime(),
+      reentry: { v: 1, phase: 'reconcile', reason: 'absence', absentMs: 7 * 86_400_000,
+        lastActiveAt: null, lastReconciledAt: null, reconciliationStartedAt: Date.now(), probationActions: 0, nextProbationActionAt: null, timezoneOffset: 0 },
+      health: { version: 1, consecutiveErrors: 2, lastError: 'profile read timed out',
+        lastErrorAt: Date.now(), lastProgressAt: null, progressPhase: null },
+    }));
+    screen.getByText('Refreshing');
+    screen.getByText(/7d 0h away/);
+    screen.getByText(/2 consecutive step failures.*profile read timed out/);
+  });
+
   it('running with a pending deadline counts down to the next action', () => {
     const now = Date.now();
     render(card({ state: 'running', lastActionAt: now - 60_000, nextActionAt: now + 120_000 }));

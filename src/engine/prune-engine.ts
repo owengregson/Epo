@@ -18,8 +18,7 @@
  */
 
 import type { SentinelStatus } from '../adapter/sentinel';
-import type { Clock } from '../governors/clock';
-import type { KnowledgeStore, PruneCensusRecord } from '../store/knowledge-store';
+import type { PruneCensusRecord } from '../store/knowledge-store';
 import { actionGap } from '../timing/action-gap';
 import { PRUNE } from '../timing/config';
 import { DelayManager, type WaitResult } from '../timing/delay-manager';
@@ -27,7 +26,6 @@ import { mulberry32, type WaitClass } from '../timing/noise';
 import {
   type DelayPolicy,
   type Rng,
-  type SleepFn,
   sample,
   scaled,
   sleep as timingSleep,
@@ -39,6 +37,7 @@ import { censusAuthority } from './census-authority';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import { pruneCycleStart, pruneDailyPlan } from './decisions';
 import { type HaltReason, haltReasonKey } from './halt-reason';
+import { journaledMutation } from './journaled-mutation';
 import { decidePruneCandidate } from './prune-candidate';
 import { filterPruneCandidates } from './prune-whitelist';
 
@@ -55,246 +54,9 @@ export function pruneDue(scheduleDays: number, lastRunAt: number | null, now: nu
   return now - lastRunAt >= scheduleDays * MS_PER_DAY;
 }
 
-// ---------------------------------------------------------------------------------
-// Ports: the narrow, structural slices of each collaborator the PruneEngine needs.
-// The real components (AdapterBackedOwnFollowingSource, AdapterBackedChurnActions,
-// RequestBudget, Sentinel) satisfy these by structural subtyping; tests inject
-// plain fakes without touching the concrete classes.
-// ---------------------------------------------------------------------------------
+import type { PruneCandidate, PruneConfig, PruneEngineDeps, PruneScanEstimates, PruneScanFetch, PruneScanOpts, PruneState, PruneStatus } from './prune-types';
 
-/**
- * Options the PruneEngine threads into each scan source's scrape so a SCAN is
- * both interruptible and rate-limit-safe: `shouldStop` is re-checked between
- * scroll rounds (`stop()` flips it true), and the pacing bounds make every
- * inter-round wait a fresh jittered draw instead of a fixed cadence.
- */
-export interface PruneScanOpts {
-  shouldStop?: () => boolean;
-  scrollMinMs?: number;
-  scrollMaxMs?: number;
-  /**
-   * Live-progress callback (additive): the source relays the scrape's CUMULATIVE
-   * observed count as pages land, so the scan's counts can update mid-scrape
-   * instead of only when a whole-list walk resolves.
-   */
-  onProgress?: (observedCount: number) => void;
-}
-
-/**
- * One full-list scrape's result. `complete` is the walk's OWN verdict on
- * whether the API genuinely reported (and verified) end-of-list — the field the
- * old `Promise<string[]>` ports silently discarded, which let a truncated
- * followers walk (sentinel trip, throttle stagnation, runaway bound) masquerade
- * as a full census and convert real followers into unfollow candidates.
- */
-export interface PruneScanFetch {
-  pks: string[];
-  complete: boolean;
-  /** Why the underlying walk/scrape ended (diagnostic; drives stop-vs-fail). */
-  reason: string;
-}
-
-/** The own-following source's single verb: one bounded full-list scrape. */
-export interface PruneOwnFollowing {
-  fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch>;
-}
-
-/** The own-followers scan port (mirrors {@link PruneOwnFollowing}): one bounded
- *  full-list scrape — NOT the growth follow-back watcher's paged sweep, so the
- *  followers phase of a prune scan is interruptible and paced the same way. */
-export interface PruneOwnFollowers {
-  fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch>;
-}
-
-/** The one Instagram action prune performs (shared rim `ChurnActions` slice). */
-export interface PruneChurnActions {
-  unfollow(username: string): Promise<ChurnActionOutcome>;
-}
-
-/** The Sentinel slice: classify the tab before each action. */
-export interface PruneSentinel {
-  check(): Promise<SentinelStatus>;
-}
-
-// ---------------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------------
-
-export type PruneState = 'idle' | 'scanning' | 'running' | 'paused' | 'done' | 'halted';
-
-/** One prunable account: we follow it, it does not follow us back. */
-export interface PruneCandidate {
-  pk: string;
-  username: string | null;
-}
-
-/** Status projection over the last scan/run + the durable prune ledger. */
-export interface PruneStatus {
-  state: PruneState;
-  /** Accounts we follow, as of the last scan (0 before the first scan). */
-  following: number;
-  /** Accounts following us, as of the last scan. */
-  followers: number;
-  /** Candidates the last scan yielded (after whitelist/self exclusion). */
-  candidates: number;
-  /**
-   * Whether a FRESH, complete scan is cached and ready for a 2-step run:
-   * a manual Run consumes exactly this reviewed candidate set instead of walking
-   * the lists again. Expires after {@link PRUNE_SCAN_FRESH_MS} and is cleared once
-   * consumed — so the UI's Run button locks until a fresh scan exists. Whitelist
-   * edits do NOT clear it: the cached census is raw, and the actionable set is
-   * re-derived against the live whitelist.
-   */
-  scanReady: boolean;
-  /**
-   * Epoch ms of the last COMPLETE census (persisted; survives restarts AND a
-   * run consuming the candidate set — display must keep saying when the
-   * numbers were taken); null only when no scan has ever completed.
-   */
-  scanAt: number | null;
-  /** Real (verified, non-dry-run) unfollows performed this run. */
-  unfollowed: number;
-  /** Candidates not yet visited by the current/last run. */
-  remaining: number;
-  /** Prune-ledger rows this active-hours cycle (ok + fail + simulated). */
-  dailyDone: number;
-  dailyLimit: number;
-  /** Epoch ms of the last COMPLETED run; null when never completed. */
-  lastRunAt: number | null;
-  lastSentinel: SentinelStatus | null;
-  /**
-   * Why the run halted (`'rate-limited'`, `'actions-failing'`,
-   * `'blocked-repeatedly'`, `'sentinel:<status>'`); null outside `halted`.
-   * Optional so the pre-build projection (composed outside this engine) can
-   * omit it.
-   */
-  haltReason?: string | null;
-  /** Deadline (epoch ms) of the in-flight inter-unfollow delay, else null. */
-  nextActionAt: number | null;
-  /**
-   * Username of the candidate an active run will act on next — the countdown's
-   * subject, so the overview hero can say WHAT fires next during a prune.
-   * Null outside an active run, when the run is exhausted, or when the next
-   * candidate has no known username. Optional so the pre-build projection
-   * (composed outside this engine) can omit it.
-   */
-  upNext?: string | null;
-  /** Which list the LIVE scan is currently walking; null outside a scan. */
-  scanPhase: 'following' | 'followers' | null;
-  /**
-   * BOTH expected list sizes from our own profile header, projected for the
-   * whole scan (null outside one; each half null when unknown). ESTIMATES for
-   * progress display only — header counts run ahead of the real lists
-   * (deactivated-account ghosts), so the UI treats them as a soft denominator
-   * and rides its bar to 100% on the real settled totals at completion. Both
-   * are exposed (not just the live phase's) so the bar can render one
-   * continuous fill across the phase hand-off instead of resetting.
-   */
-  scanEstimates: PruneScanEstimates | null;
-  /**
-   * LIVE relationship counts from the graph AS IT STANDS (docs/PRINCIPLES.md
-   * §2): scan sources stream every row's edge, so these tick mid-scan —
-   * `notFollowingBack` moves while the walk is still running instead of
-   * appearing when it ends.
-   */
-  graph: { following: number; followers: number; notFollowingBack: number };
-  /**
-   * The last COMPLETE census (durable): the settled whole-list counts of the
-   * most recent finished scan plus the scraped basis the composition bar
-   * derives from. Unlike the runnable-set lifecycle (`scanReady`/`remaining`),
-   * this survives aborted scans, consumed runs, and relaunches — null only
-   * when no scan has ever completed. Optional so the pre-build projection
-   * (composed outside this engine) can omit it.
-   */
-  census?: PruneCensusRecord | null;
-  /**
-   * RAW census rows no run has visited yet (whitelist NOT applied) — the
-   * durable remaining set's size. With `census.candidates` and `remaining`
-   * this lets the display split the census candidates into prunable /
-   * whitelist-protected / already-handled without loading the rows. Optional
-   * for the same pre-build reason as `census`.
-   */
-  rawRemaining?: number;
-}
-
-/** Header-count list-size estimates projected while a scan is live. */
-export interface PruneScanEstimates {
-  following: number | null;
-  followers: number | null;
-}
-
-/** Settings-derived knobs (see `toPruneConfig` in `settings/settings.ts`). */
-export interface PruneConfig {
-  dailyLimit: number;
-  /** Usernames (case-insensitive) or pks never pruned. */
-  whitelist: string[];
-  minDelayMs: number;
-  maxDelayMs: number;
-  jitterPercent: number;
-  /** SCAN pacing: each inter-scroll wait is a fresh jittered draw in [min,max] ms. */
-  scanMinMs: number;
-  scanMaxMs: number;
-}
-
-/** Everything the PruneEngine composes, already constructed. */
-export interface PruneEngineDeps {
-  store: KnowledgeStore;
-  clock: Clock;
-  /** Our own account pk — always excluded from the candidate set. */
-  ownPk: string;
-  ownFollowing: PruneOwnFollowing;
-  /** The whole-list own-followers scan port (see {@link PruneOwnFollowers}). */
-  ownFollowers: PruneOwnFollowers;
-  churnActions: PruneChurnActions;
-  sentinel: PruneSentinel;
-  cfg: PruneConfig;
-  /** Injected sleep; defaults to a real interruptible setTimeout. */
-  sleep?: SleepFn;
-  /** Injectable randomness for the paced delay (deterministic tests). */
-  rng?: () => number;
-  /**
-   * The shared wait owner. When absent the PruneEngine constructs a private one
-   * over its own clock/sleep/rng — existing tests that inject `sleep` keep
-   * working. The composition root injects the ONE DelayManager it shares with
-   * the growth engine (keys namespaced `prune:` / `engine:`).
-   */
-  delays?: DelayManager;
-  /** Seed for `lastRunAt` (from persisted Settings); null when never run. */
-  lastRunAt?: number | null;
-  /**
-   * Per-install noise entropy (store meta `install_entropy`) seeding the
-   * DEDICATED timing-noise rng — same contract as the growth engine's
-   * (`EngineDeps.installEntropy`). Absent (tests) → 0.
-   */
-  installEntropy?: number;
-  /** Called with a fresh status projection after every step and state change. */
-  onStatus?: (s: PruneStatus) => void;
-  /** Called exactly once per COMPLETED run so the root can persist lastRunAt. */
-  onRunComplete?: (at: number) => void;
-  /**
-   * Active refresh of our OWN header counts into the store (one profile-info
-   * fetch), awaited at scan start before the estimates are read. Passive
-   * observation alone is unreliable — an SPA profile navigation may never
-   * issue a profile read — and without stored counts the scan has no
-   * progress estimates and an inert census coverage guard. Best effort: a
-   * rejection is logged and the scan proceeds without estimates.
-   */
-  refreshOwnStats?: () => Promise<void>;
-  /**
-   * Active-hours gate, re-checked between unfollows: a run started in the
-   * evening must STOP at the window's edge instead of rolling past local
-   * midnight — where the daily count re-zeroes, which would let one "one-shot"
-   * run spend 2x the daily cap. Absent = no hours gate (tests).
-   */
-  withinActiveHours?: () => boolean;
-  /**
-   * The start of the CURRENT active-hours cycle (RateGovernor.cycleStartMs) —
-   * the prune daily cap counts from here, same boundary as the growth budget,
-   * so an overnight window's post-midnight tail spends the cycle it belongs to.
-   * Absent = local-midnight fallback (tests / no governor).
-   */
-  cycleStartMs?: (now: number) => number;
-}
+export type { PruneCandidate, PruneChurnActions, PruneConfig, PruneEngineDeps, PruneOwnFollowers, PruneOwnFollowing, PruneScanEstimates, PruneScanFetch, PruneScanOpts, PruneSentinel, PruneState, PruneStatus } from './prune-types';
 
 /** Brief park after a blocked action before continuing. */
 export const PRUNE_PARK_MS = PRUNE.PARK_MS;
@@ -434,6 +196,8 @@ export class PruneEngine {
   private feedConsecutiveBlocked = 0;
   /** Once true, `nextCandidate` returns null (growth keeps running); reset on a new scan. */
   private feedHalted = false;
+  private lastOutcome: ChurnActionOutcome | null = null;
+  lastActionOutcome(): ChurnActionOutcome | null { return this.lastOutcome ? { ...this.lastOutcome } : null; }
 
   constructor(deps: PruneEngineDeps) {
     this.deps = deps;
@@ -756,8 +520,8 @@ export class PruneEngine {
           continue;
         }
 
-        const outcome = await this.deps.churnActions.unfollow(verdict.username);
-        const now = this.deps.clock.now();
+        const outcome = await this.journaledUnfollow(cand.pk, verdict.username);
+        const _now = this.deps.clock.now();
         if (outcome.status === 'blocked') {
           if (outcome.cause === 'rate-limited') {
             // Instagram's own response refused the unfollow as throttling —
@@ -770,7 +534,7 @@ export class PruneEngine {
           // Sentinel closed inside the rim before any click: the account was
           // NEVER acted on, so it is NOT visited — park briefly and retry the
           // SAME candidate. Persistently blocked → halt loud rather than spin.
-          consecutiveBlocked += 1;
+          if (outcome.cause !== 'local-policy') consecutiveBlocked += 1;
           if (consecutiveBlocked >= PRUNE_CONSECUTIVE_BLOCK_HALT) {
             handBackRemainder();
             this.halt({ kind: 'blocked-repeatedly' });
@@ -791,18 +555,17 @@ export class PruneEngine {
         switch (outcome.status) {
           case 'ok':
             // Verified transition: heal our own-follow edge and record the prune.
-            this.deps.store.reconcileOwnFollow(cand.pk, false, now);
-            this.deps.store.recordPruneAction(cand.pk, 'ok', now);
-            this.unfollowedThisRun += 1;
+            if (!outcome.alreadyInState) {
+              this.unfollowedThisRun += 1;
+              this.deps.onMutation?.();
+            }
             consecutiveFailed = 0;
             break;
           case 'simulated':
             // Dry-run: the ledger records intent (and gates the cap); no edge.
-            this.deps.store.recordPruneAction(cand.pk, 'simulated', now);
             consecutiveFailed = 0;
             break;
           case 'failed':
-            this.deps.store.recordPruneAction(cand.pk, 'fail', now);
             consecutiveFailed += 1;
             if (consecutiveFailed >= PRUNE_CONSECUTIVE_FAIL_HALT) {
               handBackRemainder();
@@ -1048,14 +811,15 @@ export class PruneEngine {
    * the candidate, and tracks the feed's own fail/block breakers. `blocked`
    * leaves the candidate runnable. Returns the outcome for the caller's pacing.
    */
-  async executeUnfollow(cand: PruneCandidate, now: number): Promise<ChurnActionOutcome['status']> {
-    if (cand.username === null) return 'failed';
-    const outcome = await this.deps.churnActions.unfollow(cand.username);
+  async executeUnfollow(cand: PruneCandidate, _now: number): Promise<ChurnActionOutcome['status']> {
+    this.lastOutcome = null;
+    if (cand.username === null) { this.lastOutcome = { status: 'failed' }; return 'failed'; }
+    const outcome = await this.journaledUnfollow(cand.pk, cand.username);
+    this.lastOutcome = { ...outcome };
     if (outcome.status === 'blocked') {
-      this.feedConsecutiveBlocked += 1;
+      if (outcome.cause !== 'local-policy') this.feedConsecutiveBlocked += 1;
       if (outcome.cause === 'rate-limited') {
-        // A definitive server refusal: suspend the feed at once (growth keeps
-        // its own ladder) — the candidate stays runnable for the next scan.
+        // Preserve the cause for the growth driver's ACCOUNT-wide recovery ladder.
         this.feedHalted = true;
         log.warn('prune: woven unfollow refused as rate-limited, suspending feed until next scan');
       } else if (this.feedConsecutiveBlocked >= PRUNE_CONSECUTIVE_BLOCK_HALT) {
@@ -1070,17 +834,13 @@ export class PruneEngine {
     this.visitCandidate(cand);
     switch (outcome.status) {
       case 'ok':
-        this.deps.store.reconcileOwnFollow(cand.pk, false, now);
-        this.deps.store.recordPruneAction(cand.pk, 'ok', now);
-        this.unfollowedThisRun += 1;
+        if (!outcome.alreadyInState) this.unfollowedThisRun += 1;
         this.feedConsecutiveFailed = 0;
         break;
       case 'simulated':
-        this.deps.store.recordPruneAction(cand.pk, 'simulated', now);
         this.feedConsecutiveFailed = 0;
         break;
       case 'failed':
-        this.deps.store.recordPruneAction(cand.pk, 'fail', now);
         this.feedConsecutiveFailed += 1;
         if (this.feedConsecutiveFailed >= PRUNE_CONSECUTIVE_FAIL_HALT) {
           this.feedHalted = true;
@@ -1093,6 +853,12 @@ export class PruneEngine {
   }
 
   /** Remove `cand` from the pending census (by pk) if present. */
+  private journaledUnfollow(accountPk: string, username: string): Promise<ChurnActionOutcome> {
+    return journaledMutation({ store: this.deps.store, clock: this.deps.clock,
+      ownPk: this.deps.ownPk, actions: this.deps.churnActions, action: 'unfollow',
+      accountPk, username, channel: 'prune' });
+  }
+
   private dropFromPending(cand: PruneCandidate): void {
     if (this.pendingCandidates === null) return;
     const i = this.pendingCandidates.findIndex((c) => c.pk === cand.pk);
@@ -1146,15 +912,15 @@ export class PruneEngine {
     // The estimates below need our OWN header counts, and passively overhearing
     // them is unreliable (an SPA profile navigation may never issue
     // the profile endpoint) — so a scan BEGINS with one active profile fetch
-    // for our own account. Best effort: a failed refresh degrades to a
-    // bar-less scan (and an inert coverage guard), never a failed scan.
+    // for our own account. A failed required refresh cannot authorize a census.
     if (this.deps.refreshOwnStats) {
       try {
         await this.deps.refreshOwnStats();
       } catch (e) {
-        log.warn('prune: own-stats refresh failed, scanning without estimates', {
+        log.warn('prune: own-stats refresh failed, preserving previous census', {
           error: String(e),
         });
+        throw e;
       }
     }
 

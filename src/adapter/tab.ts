@@ -132,12 +132,11 @@ export class InstagramTab {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        // Background-run survival (measured, 2026-08-14 input lab): without
-        // this, a blurred/occluded/hidden/minimized window stops the page's
-        // rAF entirely and clamps its timers ~15× — Instagram's SPA then
-        // cannot hydrate or advance its UI, and every action times out even
-        // though CDP input arrives. Together with the app-level switches in
-        // `bootstrap.ts` this keeps the rendering/input paths active too.
+        // Keep timers/input alive when hidden. On macOS the renderer needs a
+        // local frame source after hidden navigation (otherwise CDP ACKs take
+        // ~1 s). Scope that switch HERE: setting it on app.commandLine also
+        // disables shared GPU vsync and uncaps the dashboard/veil, causing lag.
+        additionalArguments: process.platform === 'darwin' ? ['--disable-frame-rate-limit'] : [],
         backgroundThrottling: false,
       },
     });

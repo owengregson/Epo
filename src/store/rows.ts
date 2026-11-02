@@ -60,6 +60,11 @@ export interface FollowRecordRow {
   score: number | null;
   abandoned_at: number | null;
   healed_at: number | null;
+  reconciled_at: number | null;
+  followback_observed_at: number | null;
+  unfollow_reason: string | null;
+  queued_at: number | null;
+  decision_version: string | null;
 }
 
 export interface TargetRow {
@@ -119,4 +124,9 @@ export const rowToFollowRecord = (row: FollowRecordRow): FollowRecord => ({
   score: numOrUndef(row.score),
   abandonedAt: numOrUndef(row.abandoned_at),
   healedAt: numOrUndef(row.healed_at),
+  reconciledAt: numOrUndef(row.reconciled_at),
+  followbackObservedAt: numOrUndef(row.followback_observed_at),
+  unfollowReason: strOrUndef(row.unfollow_reason) as FollowRecord['unfollowReason'],
+  queuedAt: numOrUndef(row.queued_at),
+  decisionVersion: strOrUndef(row.decision_version),
 });

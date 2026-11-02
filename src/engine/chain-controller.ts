@@ -1,6 +1,8 @@
 import { type Clock, SystemClock } from '../governors/clock';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { info } from '../utils/logger';
+import { EXPLORATION_POLICY } from './exploration-policy';
+import type { SourceFrontier, SourceVisitEndReason } from './source-frontier';
 
 /**
  * A popular hub surfaced within the current target's audience, with its projected
@@ -10,22 +12,20 @@ export interface DiscoveredTarget {
   pk: string;
   projectedFollowBackRate: number;
   poolSize: number;
+  /** Zero means unknown, not demonstrated poor quality. */
+  matureSamples?: number;
+  overlap?: number | null;
 }
 
 /**
  * Finds candidate next-targets ("popular people") emerging from the poached network
  * of `currentTargetPk` (§3.5, step 2).
  *
- * NOTE: The real implementation is a FUTURE ENHANCEMENT. Genuinely discovering a
- * popular hub within a poached network means observing the *followings* of the
- * target's followers and ranking by local in-degree + follower-overlap — a fuzzy,
- * live-data-driven query that needs more design and real network data to build well.
- * It is therefore deliberately left as an INJECTED interface: the Chain Controller's
- * promotion/fallback logic is fully unit-testable with a scripted fake, and the live
- * discoverer can be dropped in later without touching this file.
+ * The live implementation ranks already observed sources using mature outcomes
+ * and audience overlap; the interface keeps selection independently testable.
  */
 export interface TargetDiscovery {
-  discover(currentTargetPk: string): Promise<DiscoveredTarget[]>;
+  discover(currentTargetPk: string, gates?: ChainConfig): Promise<DiscoveredTarget[]>;
 }
 
 /**
@@ -34,7 +34,8 @@ export interface TargetDiscovery {
  * the chain never dead-ends. Injected; the real impl reads via a browser tab + Reader.
  */
 export interface OwnFollowersTargetSource {
-  pick(): Promise<string | null>;
+  pick(minPoolSize?: number): Promise<string | null>;
+  candidates?(minPoolSize?: number): Promise<string[]>;
 }
 
 /** Minimum-yield gate for promoting a discovered target (§3.5). Exposed in Settings. */
@@ -51,6 +52,7 @@ export interface AdvanceResult {
   nextTargetPk: string | null;
   source: 'discovered' | 'own_followers' | 'none';
   reason: string;
+  retryAt?: number;
 }
 
 interface ChainDeps {
@@ -62,6 +64,7 @@ interface ChainDeps {
   /** Time source for the exhaustion evidence stamp; defaults to wall-clock. */
   clock?: Clock;
   cfg?: ChainConfig;
+  frontier?: SourceFrontier;
 }
 
 /**
@@ -77,6 +80,7 @@ export class ChainController {
   private readonly ownFollowers: OwnFollowersTargetSource;
   private readonly clock: Clock;
   private cfg: ChainConfig;
+  private readonly frontier?: SourceFrontier;
 
   /** Swap the live config in place (used when Settings are updated at runtime). */
   applyConfig(cfg: ChainConfig): void {
@@ -90,6 +94,7 @@ export class ChainController {
     this.ownFollowers = deps.ownFollowers;
     this.clock = deps.clock ?? new SystemClock();
     this.cfg = deps.cfg ?? CHAIN_DEFAULTS;
+    this.frontier = deps.frontier;
   }
 
   /**
@@ -100,17 +105,18 @@ export class ChainController {
    *  3. Otherwise fall back to our own followers.
    *  4. Otherwise report that no target is available.
    */
-  async advance(currentTargetPk: string): Promise<AdvanceResult> {
+  async advance(currentTargetPk: string, reason: SourceVisitEndReason = 'verified-ended'): Promise<AdvanceResult> {
+    if (this.frontier !== undefined) return this.advanceFrontier(this.frontier, currentTargetPk, reason);
     // 1. The current target is poached out — EVIDENCE-stamped (`exhaustedAt`),
     //    so the verdict stays reversible: the engine's chain dead-end self-heal
     //    re-verifies recently stamped targets instead of halting terminally.
     this.store.setTargetStatus(currentTargetPk, 'exhausted', this.clock.now());
 
     // 2. Discover candidate next-targets and pick the best that clears the gate.
-    const found = await this.discovery.discover(currentTargetPk);
+    const found = await this.discovery.discover(currentTargetPk, this.cfg);
     const qualifying = found.filter(
       (d) =>
-        d.projectedFollowBackRate >= this.cfg.minFollowBackRate &&
+        (d.matureSamples === 0 || d.projectedFollowBackRate >= this.cfg.minFollowBackRate) &&
         d.poolSize >= this.cfg.minPoolSize,
     );
     const best = qualifying.reduce<DiscoveredTarget | null>(
@@ -140,7 +146,7 @@ export class ChainController {
     }
 
     // 3. Fallback: pick the next target from our own followers so the chain never dead-ends.
-    const pk = await this.ownFollowers.pick();
+    const pk = await this.ownFollowers.pick(this.cfg.minPoolSize);
     if (pk) {
       const chainIndex = this.store.nextChainIndex();
       this.store.addTarget({
@@ -168,5 +174,39 @@ export class ChainController {
       discovered: found.length,
     });
     return { nextTargetPk: null, source: 'none', reason: 'no-target-available' };
+  }
+
+  private async advanceFrontier(frontier: SourceFrontier, currentPk: string, reason: SourceVisitEndReason): Promise<AdvanceResult> {
+    frontier.endVisit(currentPk, reason);
+    // A spent visit is not an exhausted source. Keep all queued/pending obligations.
+    if (reason === 'verified-ended' && this.store.getTarget(currentPk)?.status !== 'exhausted') {
+      this.store.setTargetStatus(currentPk, 'exhausted', this.clock.now());
+    }
+
+    const found = await this.discovery.discover(currentPk, this.cfg);
+    for (const candidate of found) {
+      if (candidate.poolSize < this.cfg.minPoolSize) continue;
+      if (candidate.matureSamples !== 0 && candidate.projectedFollowBackRate < this.cfg.minFollowBackRate) continue;
+      frontier.offer(candidate.pk, 'discovered');
+    }
+    // A fallback is a second source of alternatives, not a choice made only once a chain dies.
+    if (frontier.snapshot().sources.filter((s) => s.status === 'ready' || s.status === 'working').length < 3) {
+      const own = this.ownFollowers.candidates ? await this.ownFollowers.candidates(this.cfg.minPoolSize) : [await this.ownFollowers.pick(this.cfg.minPoolSize)];
+      for (const pk of own) if (pk !== null) frontier.offer(pk, 'own_followers');
+    }
+    const next = frontier.next(currentPk) ?? frontier.next();
+    if (next === null) {
+      return { nextTargetPk: null, source: 'none', reason: 'sources-deferred',
+        retryAt: frontier.nextResumeAt() ?? this.clock.now() + EXPLORATION_POLICY.lowYieldRevisitMs };
+    }
+    const previous = this.store.getTarget(next.pk);
+    this.store.addTarget({ accountPk: next.pk, source: next.source, status: 'active',
+      chainIndex: previous?.chainIndex ?? this.store.nextChainIndex() });
+    if (next.source === 'discovered') this.store.setRole(next.pk, 'retained_target');
+    // Acquisition reads the cursor's age and validates stale visits from the head.
+    frontier.beginVisit(next.pk, next.source);
+    info('chain: selected source visit', { from: currentPk, to: next.pk, reason, source: next.source });
+    return { nextTargetPk: next.pk, source: next.source === 'seed' ? 'discovered' : next.source,
+      reason: next.pk === currentPk ? 'only-viable-source' : reason };
   }
 }

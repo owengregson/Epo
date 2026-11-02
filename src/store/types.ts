@@ -94,6 +94,14 @@ export interface FollowRecord {
   holdUntil?: number;
   unfollowDueAt?: number;
   retryCount: number;
+  /** Fresh membership observation used to authorize a lifecycle decision. */
+  reconciledAt?: number;
+  /** Observation time is separate from the historically known event time. */
+  followbackObservedAt?: number;
+  /** Why this cleanup was scheduled; elapsed time alone is not a negative observation. */
+  unfollowReason?: 'no-followback' | 'hold-expired';
+  queuedAt?: number;
+  decisionVersion?: string;
   /**
    * The Scorer's composite score at enqueue time (higher = better). Drives the
    * follow ORDER (`nextDue`) and the queue-list DISPLAY order, so the best
@@ -116,6 +124,33 @@ export interface FollowRecord {
    * healed again, even if it is later re-abandoned inside another window.
    */
   healedAt?: number;
+}
+
+export type MutationAction = 'follow' | 'unfollow' | 'accept-request';
+export type EffectChannel = 'growth' | 'prune' | 'manual' | 'accept-request';
+export type EffectState = 'prepared' | 'dispatched' | 'uncertain' | 'settled';
+export type EffectResult = 'ok' | 'fail' | 'simulated' | 'external' | 'cancelled';
+
+/** Durable write-ahead intent. A lost acknowledgement remains explicitly uncertain. */
+export interface EffectIntent {
+  id: string;
+  accountPk: string;
+  username: string;
+  action: MutationAction;
+  channel: EffectChannel;
+  state: EffectState;
+  createdAt: number;
+  dispatchedAt: number | null;
+  settledAt: number | null;
+  result: EffectResult | null;
+}
+
+export interface EffectSettlement {
+  at: number;
+  result: EffectResult;
+  record?: FollowRecord;
+  edge?: { srcPk: string; dstPk: string; active: boolean; observedAt?: number };
+  ledger?: 'growth' | 'prune' | 'none';
 }
 
 // --- Graph-view source rows -------------------------------------------------

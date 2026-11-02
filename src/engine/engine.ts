@@ -3,16 +3,8 @@
  * Chain Controller, Follow-back Watcher) and the rim ports into one safe, paced,
  * interruptible running system.
  *
- * The Engine is the ONLY place that owns wall-clock time: every wait goes through
- * one interruptible gate, and every Instagram action is separated from the next by
- * a paced delay. One iteration performs at most ONE major thing, in the order the
- * rule table declares — see `docs/adr/0205-one-action-per-iteration.md` (the
- * contract) and `docs/adr/0902-rules-are-pure-decisions-over-facts.md` (the
- * mechanism): `rules.ts` decides, PURELY, over a `Facts` snapshot this file
- * gathers once per tick, and the executor below performs the single verdict.
- *
- * Everything is injected (ports, clock, sleep), so the runtime is unit-testable
- * with fakes: no browser, no wall-clock, no real timers.
+ * One interruptible wait owner and one rule verdict per iteration (ADRs 0205/0902).
+ * Ports, clock and sleep are injected so lifecycle transitions can be simulated.
  */
 
 import type { SentinelStatus } from '../adapter/sentinel';
@@ -32,7 +24,6 @@ import {
   uniform,
   withTimeout,
 } from '../timing/primitives';
-import { startOfLocalDay } from '../timing/units';
 import { WaitRunner } from '../timing/wait-runner';
 import * as log from '../utils/logger';
 import { absurd } from './absurd';
@@ -57,9 +48,12 @@ import type {
   StepResult,
   SweepCadence,
 } from './ports';
+import { ReconciliationRunner } from './reconciliation-runner';
 import { type FailureKind, type RecoveryIncident, RecoverySupervisor } from './recovery';
 import { healIncidentWindow } from './recovery-healer';
 import { decideProgram, type EffectRef, type RuleVerdict } from './rules';
+import { RuntimeHealth } from './runtime-health';
+import { projectEngineStatus, projectRecovery } from './status-projection';
 import { TargetPipeline } from './target-pipeline';
 
 // The canonical interruptible sleep lives in timing/primitives — nothing in the
@@ -103,6 +97,9 @@ type ActionOutcome =
   | { kind?: undefined; step: StepResult };
 
 export class Engine {
+  private readonly health: RuntimeHealth;
+  private refillSinceAction = false;
+  private readonly reconciliation: ReconciliationRunner;
   private readonly deps: EngineDeps;
   /** The ONE wait gate: every Engine wait is a named `engine:*` entry here. */
   private readonly waits: WaitRunner<EngineWaitKey, EngineParkReason>;
@@ -203,6 +200,8 @@ export class Engine {
 
   constructor(deps: EngineDeps) {
     this.deps = deps;
+    this.reconciliation = new ReconciliationRunner(deps);
+    this.health = new RuntimeHealth(deps.store);
     const delays = deps.delays;
     this.installEntropy = deps.installEntropy;
     this.noiseRng = mulberry32(((this.installEntropy >>> 0) ^ (deps.clock.now() & 0xffffffff)) >>> 0);
@@ -259,6 +258,7 @@ export class Engine {
       rng: deps.rng,
     });
     this.targets = new TargetPipeline({
+      frontier: deps.frontier,
       store: deps.store,
       clock: deps.clock,
       acquisition: deps.acquisition,
@@ -300,6 +300,7 @@ export class Engine {
   async start(): Promise<void> {
     if (this.engineState === 'running' || this.engineState === 'paused') return;
     this.runAbort = new AbortController();
+    this.deps.reentry?.prepare(this.deps.clock.now());
     const token = this.runAbort; // this run's generation token
     this.engineState = 'running';
     // User ack: a manual Start from a RECOVERY halt clears the persisted ladder
@@ -431,37 +432,9 @@ export class Engine {
   }
 
   status(): EngineStatus {
-    const { store, rate, clock } = this.deps;
-    const chainIndex =
-      this.targets.current === null
-        ? null
-        : (store.getTarget(this.targets.current.pk)?.chainIndex ?? null);
-    const startOfToday = startOfLocalDay(clock.now());
-    const pnow = clock.now();
-    const pacing = this.pacing
-      ? {
-          sessionOpen: this.pacing.isSessionOpen(pnow),
-          sessionEndsAt: this.pacing.sessionEndsAt(pnow),
-          nextSessionAt: this.pacing.isSessionOpen(pnow)
-            ? null
-            : this.pacing.nextSessionStartAt(pnow),
-          sessionsToday: this.pacing.sessionsToday(pnow),
-          dailyTarget: this.pacing.dailyTarget(pnow),
-        }
-      : null;
     return {
+      ...projectEngineStatus(this.deps, this.targets.current, this.pacing, this.health),
       state: this.engineState,
-      currentTargetPk: this.targets.current?.pk ?? null,
-      currentTargetUsername: this.targets.current?.username ?? null,
-      chainIndex,
-      actionsToday: rate.actionsToday(),
-      remainingToday: rate.remainingToday(),
-      plannedToday: rate.plannedToday(),
-      atHardCeiling: rate.atHardCeiling(),
-      queued: store.followRecordsByState('queued').length,
-      pendingFollowback: store.followRecordsByState('pending_followback').length,
-      followedBackHeld: store.followRecordsByState('followed_back').length,
-      unfollowDue: store.followRecordsByState('unfollow_queued').length,
       lastStep: this.lastStep,
       lastSentinel: this.lastSentinel,
       lastActionAt: this.lastActionAt,
@@ -473,34 +446,10 @@ export class Engine {
         this.waits.nextDeadline('engine:action-delay') ?? this.actionDelayDeadline,
       parkedUntil: this.park?.until ?? null,
       parkReason: this.park?.reason ?? null,
-      netToday: store.netFollowersSince(startOfToday),
       online: this.online,
       haltReason: this.engineState === 'halted' ? this.haltReason : null,
-      recovery: this.recoveryProjection(),
-      pacing,
+      recovery: projectRecovery(this.recovery),
     };
-  }
-
-  /** The ladder's status slice (see {@link EngineStatus.recovery}). */
-  private recoveryProjection(): EngineStatus['recovery'] {
-    const phase = this.recovery.phase();
-    if (phase === 'holding') {
-      return {
-        phase: 'holding',
-        attempt: this.recovery.attemptNow(),
-        maxAttempts: this.recovery.maxAttempts(),
-        resumeAt: this.recovery.holdDeadline(),
-      };
-    }
-    if (phase === 'probing') {
-      return {
-        phase: 'probing',
-        attempt: this.recovery.attemptNow(),
-        maxAttempts: this.recovery.maxAttempts(),
-        resumeAt: null,
-      };
-    }
-    return null;
   }
 
   // --- The loop body ---------------------------------------------------------------
@@ -512,24 +461,25 @@ export class Engine {
    * structurally impossible. Emits `onStatus` afterwards, whatever the branch.
    */
   async stepOnce(): Promise<StepResult> {
-    // The step body carries its OWN generation token: a stop()+start() around a
-    // non-signal-linked await (churn.execute / the woven unfollow) must not let
-    // the stale step resume against the NEW runAbort, re-drive pacing, or
-    // overwrite the new run's durable deadline.
+    // A stale step cannot overwrite the new run's durable state after stop/start.
     const token = this.runAbort;
     this.stepToken = token;
     let result: StepResult;
     try {
       this.facts.beginTick();
       result = await this.runProgram(token);
+      if (!this.superseded(token)) this.health.responsive();
     } catch (err) {
-      // Per-step resilience: a transient rejection (a flaky `evaluate`, a
-      // navigation race — including the bare `sentinel.check()` itself) must not
-      // drop the whole loop. Halting is reserved for a VERIFIED block, which the
-      // Sentinel reports as a non-'ok' status, never as a rejection.
-      log.warn('engine: step failed transiently, treating as idle', { error: String(err) });
-      await this.engineWait('engine:transient-backoff', ENGINE_IDLE_MS);
-      result = 'idle';
+      if (this.superseded(token)) return 'aborted';
+      let terminal = true;
+      try { terminal = this.health.failure(err, this.deps.clock.now()); }
+      catch (storageError) { log.error('engine: cannot persist runtime failure', { error: String(storageError) }); }
+      log.error('engine: step failed', { error: String(err), terminal });
+      if (terminal) result = this.halt({ kind: 'runtime-error' });
+      else {
+        await this.engineWait('engine:transient-backoff', ENGINE_IDLE_MS);
+        result = 'idle';
+      }
     }
     this.lastStep = result;
     this.emitStatus();
@@ -585,6 +535,11 @@ export class Engine {
 
   /** The ONE effect a run verdict asks for (ADR 0205: at most one per iteration). */
   private async runEffect(effect: EffectRef, token: AbortController): Promise<StepResult> {
+    if (effect.id !== 'idle' && effect.id !== 'serve-recovery-hold' && this.deps.validateIdentity) {
+      const valid = await this.deps.validateIdentity();
+      if (this.superseded(token)) return 'aborted';
+      if (!valid) return this.halt({ kind: 'identity-changed' });
+    }
     switch (effect.id) {
       case 'serve-recovery-hold':
         return this.serveRecoveryHold(token);
@@ -592,13 +547,27 @@ export class Engine {
         return this.enterRecovery(token, effect.kind);
       case 'bootstrap-seed-target':
         return this.targets.bootstrapSeedTarget();
-      case 'sweep-followback':
-        await this.deps.followback.check();
-        this.sweepCadence.markRun(effect.now);
+      case 'sweep-followback': {
+        const result = await this.reconciliation.run(effect.now, () => this.superseded(token));
+        if (result.outcome === 'aborted') return 'aborted';
+        this.actionDelayDeadline = this.deps.store.getActionDelayDeadline();
+        if (result.outcome === 'halt') return this.halt({ kind: 'reconciliation-failed' });
+        if (result.outcome === 'wait') {
+          await this.engineWait('engine:enrich-backoff', result.delayMs);
+          return 'idle';
+        }
+        const at = this.deps.clock.now();
+        this.sweepCadence.markRun(at);
+        this.deps.churn.advanceTimers(at);
+        this.noteProgress('relationships-reconciled');
         await this.pacingSleep();
         return 'swept-followback';
-      case 'refill-pool':
-        return this.targets.refillPool(effect.target, token);
+      }
+      case 'refill-pool': {
+        this.refillSinceAction = true;
+        const result = await this.targets.refillPool(effect.target, token);
+        return result;
+      }
       case 'churn-action':
         return this.performAction(effect.now, token, (actAt) =>
           this.actChurn(effect.record, actAt, token),
@@ -631,6 +600,10 @@ export class Engine {
       targets: this.targets,
       sweepCadence: this.sweepCadence,
       actionsFailingHalt: ACTIONS_FAILING_HALT,
+      yieldRefill: () => this.refillSinceAction,
+      rotationReason: () => this.deps.frontier ? this.targets.rotationReason() : null,
+      requiresReconciliation: (now) => this.deps.reentry?.requiresReconciliation(now) ?? false,
+      refillAvailableAt: () => this.targets.refillAvailableAt(),
       settings: () => this.settings,
       aborted: () => this.superseded(this.stepToken),
       halted: () => this.engineState === 'halted',
@@ -652,6 +625,11 @@ export class Engine {
     token: AbortController,
     act: (actAt: number) => Promise<ActionOutcome>,
   ): Promise<StepResult> {
+    const probationUntil = this.deps.reentry?.mutationWaitUntil(now);
+    if (probationUntil !== null && probationUntil !== undefined) {
+      await this.engineWait('engine:action-delay', probationUntil - now);
+      return 'idle';
+    }
     // Pay down an OWED remainder first (armed by a previous action whose delay a
     // pause/offline aborted). Interruptible: a fresh pause during the remainder
     // leaves the deadline armed and parks without acting.
@@ -667,6 +645,7 @@ export class Engine {
     }
 
     const actAt = this.deps.clock.now();
+    this.refillSinceAction = false;
     const outcome = await act(actAt);
     if (outcome.kind === undefined) return outcome.step;
 
@@ -674,7 +653,8 @@ export class Engine {
     // Arm the delay deadline BEFORE waiting: if a pause/stop/quit lands during
     // the action (or the wait), the persisted deadline survives so the next
     // resume — or app launch — serves the remainder.
-    this.setActionDeadline(actAt + this.pacer.noteAction(actAt, outcome.kind));
+    this.setActionDeadline(Math.max(this.deps.store.getActionDelayDeadline() ?? 0,
+      actAt + this.pacer.noteAction(actAt, outcome.kind)));
     if (this.stateNow() !== 'paused' && !this.superseded(token)) {
       const remaining = (this.actionDelayDeadline ?? 0) - this.deps.clock.now();
       const res = await this.engineWait('engine:action-delay', remaining);
@@ -693,12 +673,16 @@ export class Engine {
     // A stop()+start() landed during the await: the new generation owns pacing
     // now — bail before recording, arming, or serving anything.
     if (this.superseded(token)) return { step: 'aborted' };
+    const detail = this.unfollowFeed.lastActionOutcome?.();
     if (status === 'blocked') {
-      // The rim closed before any click: the candidate was NOT consumed. Park
-      // briefly and retry it next step — a persistently blocked feed suppresses
-      // itself, so growth keeps going rather than the whole engine halting.
+      if (detail?.cause === 'rate-limited') return { step: await this.enterRecovery(token, 'rate-limited') };
+      // The journal retains unresolved effects; no failed attempt consumes the candidate.
       await this.engineWait('engine:prune-park', PRUNE_TIMING.PARK_MS);
       return { step: 'idle' };
+    }
+    if (status === 'ok' && !detail?.alreadyInState) {
+      this.deps.reentry?.noteAction(actAt);
+      this.noteProgress('mutation-verified');
     }
     return { kind: 'unfollow' };
   }
@@ -715,6 +699,10 @@ export class Engine {
     if (this.superseded(token)) return { step: 'aborted' };
 
     if (outcome === 'blocked') {
+      if (this.deps.churn.lastBlockedCause() === 'local-policy') {
+        await this.engineWait('engine:idle', ENGINE_IDLE_MS);
+        return { step: 'idle' };
+      }
       // Nothing was clicked and the record is untouched. Re-driving the SAME
       // record at full pace hammers the wall invisibly — park briefly instead,
       // and ladder up once the streak (or IG's own verdict) proves a wall.
@@ -744,9 +732,13 @@ export class Engine {
       const kind: FailureKind = drift >= failed ? 'drift' : 'rate-limited';
       return { step: await this.enterRecovery(token, kind) };
     }
-    if (outcome === 'ok' || outcome === 'simulated') {
-      // A verified success IS the probe's verdict: the ladder clears — and the
-      // closed incident window heals what it systemically burned.
+    if ((outcome === 'ok' && !this.deps.churn.lastActionOutcome?.()?.alreadyInState) || outcome === 'simulated') {
+      this.noteProgress(outcome === 'ok' ? 'mutation-verified' : 'simulation-completed');
+      if (outcome === 'ok') {
+        this.deps.reentry?.noteAction(actAt);
+        if (rec.state === 'queued') this.deps.frontier?.noteFollow(rec.targetPk, actAt);
+      }
+      // Only a verified new mutation clears the recovery incident.
       const incident = this.recovery.noteRecovered();
       if (incident !== null) this.healIncidentWindow(incident);
     }
@@ -760,9 +752,10 @@ export class Engine {
    * latched on fresh drain evidence, so it can never revive itself.
    */
   private async advanceChain(current: CurrentTarget): Promise<StepResult> {
-    const advance = await this.deps.chain.advance(current.pk);
+    const advance = await this.deps.chain.advance(current.pk, this.targets.rotationReason() ?? undefined);
     if (advance.nextTargetPk !== null) {
       this.targets.adoptTarget(advance.nextTargetPk);
+      this.noteProgress('source-rotated');
       log.info('engine: advanced chain', {
         from: current.pk,
         to: advance.nextTargetPk,
@@ -776,6 +769,10 @@ export class Engine {
         await this.pacingSleep();
       }
       return 'advanced-chain';
+    }
+    if (advance.retryAt !== undefined) {
+      await this.engineWait('engine:idle', Math.min(ENGINE_IDLE_MS, Math.max(1, advance.retryAt - this.deps.clock.now())));
+      return 'idle';
     }
     this.targets.markRevived(current.pk);
     const revived = this.targets.reviveRecentExhausted();
@@ -919,11 +916,7 @@ export class Engine {
     const diag = this.deps.tabDiag;
     if (diag === undefined) return;
     log.warn('engine: recovering tab (diagnosis failed the canary)');
-    try {
-      await diag.recoverTab();
-    } catch (e) {
-      log.error('engine: tab recovery failed', { error: String(e) });
-    }
+    await diag.recoverTab();
     try {
       this.lastSentinel = await this.deps.sentinel.check();
       log.info('engine: post-recovery sentinel', { status: this.lastSentinel });
@@ -979,6 +972,13 @@ export class Engine {
 
   private emitStatus(): void {
     this.deps.onStatus?.(this.status());
+  }
+
+  private noteProgress(phase: string): void {
+    const now = this.deps.clock.now();
+    this.health.progress(phase, now);
+    this.deps.reentry?.noteProgress(now);
+    this.deps.onProgress?.(phase);
   }
 
   // --- Waits --------------------------------------------------------------------------

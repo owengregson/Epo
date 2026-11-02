@@ -1,7 +1,7 @@
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
-import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
+import { ACQUISITION_DEFAULTS, AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
@@ -68,6 +68,7 @@ describe('direct API walk (the request-efficient path)', () => {
       walker,
       visitor,
       clock,
+      cfg: { ...ACQUISITION_DEFAULTS, maxPages: 3 },
     });
 
     const result = await acquisition.acquire('target');
@@ -114,7 +115,7 @@ describe('direct API walk (the request-efficient path)', () => {
     const result = await acquisition.acquire('target');
 
     expect(result.targetPk).toBe('999');
-    // No profile visit (pk was already known) — only list-page scripts.
+    // The known fresh source resumes without an unnecessary profile navigation.
     expect(visitor.visited).toEqual([]);
     // The first (and only) fetched page carried the resume cursor (embedded as
     // encodeURIComponent("C1")).
@@ -227,7 +228,7 @@ describe('direct API walk (the request-efficient path)', () => {
     const result = await acquisition.acquire('target');
 
     // Rows before the drift are kept; the end reason is the failure it is.
-    expect(result).toEqual({ observed: 2, targetPk: '999', endReason: 'shape-mismatch' });
+    expect(result).toEqual({ observed: 2, targetPk: '999', endReason: 'shape-mismatch', globallyNew: 2 });
     // The dialog fallback was NOT attempted — it parses through the same
     // drifted extractor and would only fabricate a second empty read.
     expect(actor.openCalls).toBe(0);

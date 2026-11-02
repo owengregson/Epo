@@ -1,6 +1,5 @@
 /**
  * Shared cross-cutting types for Epo v3.
- *
  * This module is the single source of truth for the IPC contract between the
  * main process and the renderer, plus the network-observation shape that the
  * embedded Instagram tab emits and the Adapter Reader (Task 7) consumes.
@@ -122,6 +121,7 @@ export interface ActionResult {
  * defaults and `loggedIn` is false.
  */
 export interface EpoStatus extends EngineStatus {
+  runtime?: import('./runtime-status').RuntimeStatus;
   /** True once the persisted IG session has a `ds_user_id` cookie. */
   loggedIn: boolean;
   /**

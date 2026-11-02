@@ -91,6 +91,25 @@ export const FOLLOW_RECORDS = table('follow_records', {
   score: col.optReal(),
   abandoned_at: col.optInt(),
   healed_at: col.optInt(),
+  reconciled_at: col.optInt(),
+  followback_observed_at: col.optInt(),
+  unfollow_reason: col.optText(),
+  queued_at: col.optInt(),
+  decision_version: col.optText(),
+});
+
+export const EFFECT_INTENTS = table('effect_intents', {
+  id: col.text().key(),
+  account_pk: col.text(),
+  username: col.text(),
+  action: col.text(),
+  channel: col.text(),
+  state: col.text(),
+  created_at: col.int(),
+  dispatched_at: col.optInt(),
+  settled_at: col.optInt(),
+  result: col.optText(),
+  ledger: col.optText(),
 });
 
 /** Nodes of the chain. Yield stats are computed on demand, never stored. */
@@ -216,6 +235,7 @@ export const TABLES: readonly TableDef[] = [
   META,
   TIMERS,
   SPANS,
+  EFFECT_INTENTS,
 ];
 
 /**

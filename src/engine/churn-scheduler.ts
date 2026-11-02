@@ -1,114 +1,15 @@
 import type { Clock } from '../governors/clock';
 import type { RateGovernor } from '../governors/rate-governor';
 import type { KnowledgeStore } from '../store/knowledge-store';
-import { compareByScoreDesc, type FollowRecord, type FollowState } from '../store/types';
+import { compareByScoreDesc, type EffectIntent, type FollowRecord } from '../store/types';
 import { MS_PER_DAY } from '../timing/units';
 import * as log from '../utils/logger';
+import { CHURN_DEFAULTS, type ChurnActionOutcome, type ChurnActions, type ChurnConfig, type ChurnDeps, type VerbSpec } from './churn-types';
+import { normalizeMutationOutcome } from './mutation-outcome';
 import { bioMatchesFilter } from './prune-bio-filter';
 
-/**
- * The discriminated outcome of a single follow/unfollow attempt:
- *
- * - `'ok'`        — the click was performed and the Actor verified the transition.
- * - `'failed'`    — a click was attempted but did not confirm (retry/abandon).
- * - `'blocked'`   — Sentinel non-`ok` BEFORE any click; the
- *                   record is left completely untouched so it retries when the
- *                   window clears. A block is NOT a failure.
- * - `'simulated'` — dry-run: no click happened. The lifecycle STATE still advances
- *                   (so dry-run exercises the machine) but no real edge/ledger row
- *                   is written, so dry-run never pollutes yield/overlap.
- */
-export type ChurnActionOutcome = {
-  status: 'ok' | 'failed' | 'blocked' | 'simulated';
-  /** True when `ok` but no click happened — the button was already in the target
-   *  state, so an external actor is responsible for the relationship. */
-  alreadyInState?: boolean;
-  /**
-   * Why a non-ok outcome happened, when the cause is classifiable:
-   *  - `'tab-unhealthy'` — the TAB stalled or its webContents was unavailable
-   *    (status `'blocked'`: record-neutral — never a retry, never a fail row;
-   *    the recovery ladder routes it to tab recovery, not the wait ladder).
-   *  - `'drift'` — an `AdapterStaleError`: the expected control is gone
-   *    (status `'failed'`; feeds the ladder's drift-evidence tally).
-   *  - `'rate-limited'` — Instagram's SERVER refused the mutation as
-   *    throttling (`feedback_required` / 429 in the response; status
-   *    `'blocked'`: record-neutral, but DEFINITIVE — the engines back off at
-   *    once instead of proving a blocked streak against the wall).
-   * Absent when the cause is unknown or ordinary.
-   */
-  cause?: 'tab-unhealthy' | 'drift' | 'rate-limited';
-  /**
-   * True when a tab failure landed AFTER the click was dispatched but BEFORE
-   * post-state verification — the action may have LANDED on Instagram. The
-   * scheduler marks the record so the next attempt's already-in-state pre-check
-   * resolves ownership (a landed click is recorded as OURS, never re-clicked).
-   */
-  unverifiedClick?: boolean;
-};
-
-/**
- * The only Instagram-touching surface the scheduler needs. The real implementation
- * wraps Actor + Sentinel; tests pass a fake that records calls and
- * returns a configurable outcome. Both methods resolve (never reject) with a
- * {@link ChurnActionOutcome} so an outcome is a value, not a thrown exception — but
- * the scheduler still guards against rejections defensively (no silent catches;
- * failures are logged).
- */
-export interface ChurnActions {
-  follow(username: string): Promise<ChurnActionOutcome>;
-  unfollow(username: string): Promise<ChurnActionOutcome>;
-}
-
-/**
- * Lifecycle timers + retry cap for the churn state machine. All tunable in
- * Settings. NB: the post-follow-back HOLD is not here — `holdUntil` is stamped by the
- * FollowbackWatcher (its `holdAfterFollowbackMs`); the scheduler only honors the stamp.
- */
-export interface ChurnConfig {
-  /** How long to wait for a follow-back before reclaiming the slot (default 4 days). */
-  maxWaitForFollowbackMs: number;
-  /** Failed follow/unfollow attempts tolerated before a record is abandoned (default 3). */
-  maxRetries: number;
-  /**
-   * The bio keep-list (Settings `pruneBioFilterWords`): an account that
-   * FOLLOWS US BACK and whose bio contains any of these words/phrases
-   * (case-insensitive substring — see prune-bio-filter.ts) is never rotated
-   * out or unfollowed; it stays a kept mutual. Deliberately scoped to
-   * follow-backs only: a non-follower is pruned regardless of bio (both the
-   * one-shot prune run and the woven trickle feed).
-   */
-  bioKeepWords: string[];
-}
-
-/** Design defaults. */
-export const CHURN_DEFAULTS: ChurnConfig = {
-  maxWaitForFollowbackMs: 4 * MS_PER_DAY,
-  maxRetries: 3,
-  bioKeepWords: [],
-};
-
-/** What one verb does to a record and the graph when its action verifies. */
-interface VerbSpec {
-  /** The follows-edge polarity a verified action leaves behind. */
-  edge: boolean;
-  /** The lifecycle state a verified action lands in. */
-  next: FollowState;
-  /** Whether the transition stamps `followedAt`. */
-  stampsFollowedAt: boolean;
-  /** Whether an EXTERNAL already-in-state result also closes the record. */
-  closeOnExternal: boolean;
-}
-
-/** Injected collaborators — no browser, no globals, so the scheduler is unit-testable. */
-export interface ChurnDeps {
-  store: KnowledgeStore;
-  clock: Clock;
-  rate: RateGovernor;
-  actions: ChurnActions;
-  /** Our own account `pk`; when set, follow/unfollow are recorded as directed edges. */
-  ownPk?: string;
-  cfg?: ChurnConfig;
-}
+export type { ChurnActionOutcome, ChurnActions, ChurnConfig, ChurnDeps } from './churn-types';
+export { CHURN_DEFAULTS } from './churn-types';
 
 /**
  * Drives every `FollowRecord` through the churn lifecycle:
@@ -149,6 +50,9 @@ export class ChurnScheduler {
   private readonly actions: ChurnActions;
   private readonly ownPk?: string;
   private cfg: ChurnConfig;
+  private readonly pickQueued?: ChurnDeps['pickQueued'];
+  private readonly validateFollow?: ChurnDeps['validateFollow'];
+  private consecutiveCleanup = 0;
   /**
    * Consecutive `'failed'` action outcomes ACROSS records — the engine's
    * systemic-breakage signal. A single dead/renamed account produces at most
@@ -184,15 +88,8 @@ export class ChurnScheduler {
    * which ladders up at once) from a streak it still has to prove.
    */
   private lastBlockCause: ChurnActionOutcome['cause'] | null = null;
-  /**
-   * Records whose last attempt ended in a POST-CLICK tab failure: the click was
-   * dispatched but never verified, so it may have LANDED. On the next attempt an
-   * already-in-state result for a MARKED record is our landed click, not an
-   * external actor's. In-memory by design — losing it across a relaunch degrades
-   * to the safe reconcile. See `docs/adr/0206-unverified-click-arbitration.md`.
-   */
-  private readonly unverifiedClicks = new Map<string, 'follow' | 'unfollow'>();
-
+  private lastOutcome: ChurnActionOutcome | null = null;
+  lastActionOutcome(): ChurnActionOutcome | null { return this.lastOutcome ? { ...this.lastOutcome } : null; }
   /** Swap the live config in place (used when Settings are updated at runtime). */
   applyConfig(cfg: ChurnConfig): void {
     this.cfg = cfg;
@@ -227,6 +124,8 @@ export class ChurnScheduler {
     this.actions = deps.actions;
     this.ownPk = deps.ownPk;
     this.cfg = deps.cfg ?? CHURN_DEFAULTS;
+    this.pickQueued = deps.pickQueued;
+    this.validateFollow = deps.validateFollow;
   }
 
   /**
@@ -242,9 +141,16 @@ export class ChurnScheduler {
   advanceTimers(now: number = this.clock.now()): void {
     // No follow-back within the max wait → reclaim the slot.
     for (const rec of this.store.followRecordsByState('pending_followback')) {
+      if (this.isRetained(rec.accountPk)) continue;
       if (rec.followedAt === undefined) continue;
       if (now - rec.followedAt >= this.cfg.maxWaitForFollowbackMs) {
-        this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: now });
+        const deadline = rec.followedAt + this.cfg.maxWaitForFollowbackMs;
+        if (this.ownPk !== undefined) {
+          const edge = this.store.getEdge(rec.accountPk, this.ownPk, 'follows');
+          if (edge?.status !== 'removed' || edge.lastConfirmedAt < deadline
+            || !this.fresh(rec, now)) continue;
+        }
+        this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: deadline, unfollowReason: 'no-followback' });
         log.info('churn: no follow-back within max wait, queuing unfollow', {
           pk: rec.accountPk,
         });
@@ -255,13 +161,25 @@ export class ChurnScheduler {
     // (no state is rewritten), so editing the keep-words — or the follower
     // unfollowing us — takes effect on the next pass.
     for (const rec of this.store.followRecordsByState('followed_back')) {
+      if (this.isRetained(rec.accountPk) || !this.fresh(rec, now)) continue;
       if (rec.holdUntil === undefined) continue;
       if (now >= rec.holdUntil) {
         if (this.bioKeepsFollower(rec.accountPk)) continue;
-        this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: now });
+        this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: rec.holdUntil, unfollowReason: 'hold-expired' });
         log.info('churn: hold elapsed, queuing unfollow', { pk: rec.accountPk });
       }
     }
+  }
+
+  private fresh(rec: FollowRecord, now: number): boolean {
+    if (this.ownPk === undefined) return true;
+    return rec.reconciledAt !== undefined && rec.reconciledAt <= now
+      && now - rec.reconciledAt <= (this.cfg.relationshipFreshMs ?? MS_PER_DAY);
+  }
+
+  private isRetained(pk: string): boolean {
+    return this.store.getTarget(pk)?.status === 'retained'
+      || this.store.getAccount(pk)?.role === 'retained_target';
   }
 
   /**
@@ -294,10 +212,11 @@ export class ChurnScheduler {
    * gates before calling) and does NOT act.
    */
   nextDue(now: number = this.clock.now()): FollowRecord | null {
-    void now; // parity with the other methods; no time-based filtering here.
-
-    const unfollows = this.store.followRecordsByState('unfollow_queued');
-    if (unfollows.length > 0) {
+    const queued = this.store.followRecordsByState('queued').filter((r) => r.score !== 0);
+    const chosenFollow = this.pickQueued ? this.pickQueued(queued) : queued.sort(compareByScoreDesc)[0] ?? null;
+    const unfollows = this.store.followRecordsByState('unfollow_queued')
+      .filter((r) => !this.isRetained(r.accountPk) && this.fresh(r, now));
+    if (unfollows.length > 0 && (this.consecutiveCleanup < 2 || chosenFollow === null)) {
       return unfollows.sort((a, b) => {
         const da = a.unfollowDueAt ?? 0;
         const db = b.unfollowDueAt ?? 0;
@@ -306,12 +225,7 @@ export class ChurnScheduler {
       })[0];
     }
 
-    const queued = this.store.followRecordsByState('queued');
-    if (queued.length > 0) {
-      return queued.sort(compareByScoreDesc)[0];
-    }
-
-    return null;
+    return chosenFollow;
   }
 
   /**
@@ -333,6 +247,7 @@ export class ChurnScheduler {
     rec: FollowRecord,
     now: number = this.clock.now(),
   ): Promise<ChurnActionOutcome['status'] | 'noop'> {
+    this.lastOutcome = null;
     if (rec.state === 'queued') {
       return this.executeFollow(rec, now);
     }
@@ -392,6 +307,10 @@ export class ChurnScheduler {
     rec: FollowRecord,
     now: number,
   ): Promise<ChurnActionOutcome['status'] | 'noop'> {
+    if (this.validateFollow && !(await this.validateFollow(rec, now))) {
+      this.store.upsertFollowRecord({ ...rec, score: 0 });
+      return 'noop';
+    }
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
       // MUST make progress: `nextDue` is a pure ranking with no memory, so a
@@ -401,7 +320,7 @@ export class ChurnScheduler {
       this.retryOrAbandon(rec, 'follow', now);
       return 'noop';
     }
-    return this.applyOutcome(rec, 'follow', username, await this.attempt('follow', rec, username), now);
+    return this.performAttempt(rec, 'follow', username, now);
   }
 
   /**
@@ -414,6 +333,7 @@ export class ChurnScheduler {
     rec: FollowRecord,
     now: number,
   ): Promise<ChurnActionOutcome['status'] | 'noop'> {
+    if (this.isRetained(rec.accountPk) || !this.fresh(rec, now)) return 'noop';
     if (this.bioKeepsFollower(rec.accountPk)) {
       // The hold stamp is kept (or set due-now), so the sweep's own gate
       // re-decides each pass: remove the keep-word later and rotation resumes.
@@ -434,13 +354,23 @@ export class ChurnScheduler {
       this.retryOrAbandon(rec, 'unfollow', now);
       return 'noop';
     }
-    return this.applyOutcome(
-      rec,
-      'unfollow',
-      username,
-      await this.attempt('unfollow', rec, username),
-      now,
-    );
+    return this.performAttempt(rec, 'unfollow', username, now);
+  }
+
+  private async performAttempt(
+    rec: FollowRecord, verb: 'follow' | 'unfollow', username: string, now: number,
+  ): Promise<ChurnActionOutcome['status']> {
+    const intent = this.store.beginEffectIntent({
+      accountPk: rec.accountPk, username, action: verb, channel: 'growth', at: now,
+    });
+    if (intent.state === 'dispatched' || intent.state === 'uncertain') {
+      // Only fresh, read-only recovery may settle an unknown previous mutation.
+      this.lastOutcome = { status: 'blocked', cause: 'local-policy', unverifiedClick: true };
+      this.lastBlockCause = 'local-policy';
+      return 'blocked';
+    }
+    const outcome = await this.attempt(verb, rec, username, intent);
+    return this.applyOutcome(rec, verb, username, outcome, this.clock.now(), intent);
   }
 
   /** Perform the click. The port resolves rather than rejects; a rejection is
@@ -449,15 +379,21 @@ export class ChurnScheduler {
     verb: 'follow' | 'unfollow',
     rec: FollowRecord,
     username: string,
+    intent: EffectIntent,
   ): Promise<ChurnActionOutcome> {
     try {
-      return await this.actions[verb](username);
+      return await this.actions[verb](username, rec.accountPk, () => {
+        this.store.markEffectDispatched(intent.id, this.clock.now());
+      });
     } catch (err) {
       log.error(`churn: ${verb} action threw`, {
         pk: rec.accountPk,
         username,
         error: String(err),
       });
+      if (this.store.getEffectIntent(intent.id)?.state === 'dispatched') {
+        return { status: 'blocked', cause: 'tab-unhealthy', unverifiedClick: true };
+      }
       return { status: 'failed' };
     }
   }
@@ -467,13 +403,11 @@ export class ChurnScheduler {
    *
    *  - `'blocked'`   — nothing was clicked: the record is left completely
    *                    untouched (no ledger, no retry) and the streak feeds the
-   *                    ladder. A post-click tab stall additionally MARKS the
-   *                    record, so the next attempt's already-in-state pre-check
-   *                    can claim the landed click as ours.
+   *                    ladder. An unverified dispatched write stays uncertain
+   *                    until read-only reconciliation resolves current state.
    *  - `'ok'`        — ledger row + lifecycle transition + directed edge. When
-   *                    the click was skipped (`alreadyInState`) the marker
-   *                    decides: OUR landed click is recorded as ours; anything
-   *                    else is an external actor's, reconciled per verb.
+   *                    the click was skipped (`alreadyInState`) the relationship
+   *                    is external, without claiming a new action or its timing.
    *  - `'simulated'` — dry-run: the lifecycle advances, no edge, no ledger row.
    *  - `'failed'`    — ledger `fail` + retry/abandon.
    */
@@ -483,20 +417,27 @@ export class ChurnScheduler {
     username: string,
     outcome: ChurnActionOutcome,
     now: number,
+    intent: EffectIntent,
   ): ChurnActionOutcome['status'] {
+    outcome = normalizeMutationOutcome(outcome, this.store.getEffectIntent(intent.id)?.state === 'dispatched');
+    this.lastOutcome = { ...outcome };
     const spec = ChurnScheduler.VERBS[verb];
     const pk = rec.accountPk;
 
     switch (outcome.status) {
       case 'blocked':
-        this.consecutiveBlocked += 1;
+        if (outcome.cause !== 'local-policy') this.consecutiveBlocked += 1;
         this.lastBlockCause = outcome.cause ?? null;
         if (outcome.unverifiedClick === true) {
-          this.unverifiedClicks.set(pk, verb);
+          this.store.markEffectUncertain(intent.id, now);
           log.warn(`churn: ${verb} click dispatched but unverified (tab stall), will re-observe`, {
             pk,
             username,
           });
+        } else {
+          const dispatched = this.store.getEffectIntent(intent.id)?.state === 'dispatched';
+          if (dispatched) this.store.markEffectUncertain(intent.id, now);
+          else this.store.settleEffectIntent(intent.id, { at: now, result: 'cancelled' });
         }
         log.info(`churn: ${verb} blocked, leaving record untouched`, {
           pk,
@@ -507,33 +448,29 @@ export class ChurnScheduler {
 
       case 'ok': {
         this.clearStreaksOnVerified();
-        const ourLandedClick = this.unverifiedClicks.get(pk) === verb;
-        this.unverifiedClicks.delete(pk);
-        if (outcome.alreadyInState === true && !ourLandedClick) {
-          this.store.reconcileOwnFollow(pk, spec.edge, now);
-          if (spec.closeOnExternal) {
-            this.store.upsertFollowRecord({ ...rec, state: spec.next });
-          }
+        if (outcome.alreadyInState === true) {
+          this.store.settleEffectIntent(intent.id, {
+            at: now, result: 'external',
+            record: { ...rec, state: spec.closeOnExternal ? spec.next : 'external' },
+            edge: this.ownPk === undefined ? undefined : { srcPk: this.ownPk, dstPk: pk, active: spec.edge },
+          });
+          if (!spec.closeOnExternal) this.store.setRole(pk, 'skipped');
           log.info(`churn: ${verb} found already in the target state (external), reconciled`, {
             pk,
             username,
           });
           return 'ok';
         }
-        this.commit(rec, verb, spec, now);
-        log.info(
-          ourLandedClick
-            ? `churn: unverified ${verb} confirmed landed, recorded as ours`
-            : `churn: ${verb} performed`,
-          { pk, username },
-        );
+        this.commit(rec, verb, spec, now, intent);
+        log.info(`churn: ${verb} performed`, { pk, username });
         return 'ok';
       }
 
       case 'simulated':
         this.clearStreaksOnVerified();
-        this.unverifiedClicks.delete(pk);
-        this.store.upsertFollowRecord(this.transition(rec, spec, now));
+        this.store.settleEffectIntent(intent.id, {
+          at: now, result: 'simulated', record: this.transition(rec, spec, now),
+        });
         log.info(`churn: dry-run ${verb} simulated, state advanced (no edge/ledger)`, {
           pk,
           username,
@@ -541,14 +478,12 @@ export class ChurnScheduler {
         return 'simulated';
 
       case 'failed':
-        // A definitive failed click also settles an earlier unverified one: had
-        // it landed, this attempt would have read already-in-state instead.
-        this.unverifiedClicks.delete(pk);
         this.consecutiveFailures += 1;
         this.lastBlockCause = null;
         if (outcome.cause === 'drift') this.consecutiveDriftFailures += 1;
-        this.store.recordAction(pk, verb, 'fail', now);
-        this.retryOrAbandon(rec, verb, now);
+        this.store.settleEffectIntent(intent.id, {
+          at: now, result: 'fail', ledger: 'growth', record: this.retryRecord(rec, now),
+        });
         return 'failed';
     }
   }
@@ -559,12 +494,13 @@ export class ChurnScheduler {
     verb: 'follow' | 'unfollow',
     spec: VerbSpec,
     now: number,
+    intent: EffectIntent,
   ): void {
-    this.store.recordAction(rec.accountPk, verb, 'ok', now);
-    this.store.upsertFollowRecord(this.transition(rec, spec, now));
-    if (this.ownPk !== undefined) {
-      this.store.observeEdge(this.ownPk, rec.accountPk, 'follows', spec.edge, now);
-    }
+    this.store.settleEffectIntent(intent.id, {
+      at: now, result: 'ok', ledger: 'growth', record: this.transition(rec, spec, now),
+      edge: this.ownPk === undefined ? undefined : { srcPk: this.ownPk, dstPk: rec.accountPk, active: spec.edge },
+    });
+    this.consecutiveCleanup = verb === 'unfollow' ? this.consecutiveCleanup + 1 : 0;
   }
 
   /** The record as the verb's verified/simulated transition leaves it. */
@@ -605,5 +541,12 @@ export class ChurnScheduler {
         retryCount,
       });
     }
+  }
+
+  private retryRecord(rec: FollowRecord, now: number): FollowRecord {
+    const retryCount = rec.retryCount + 1;
+    return retryCount > this.cfg.maxRetries
+      ? { ...rec, state: 'abandoned', retryCount, abandonedAt: now }
+      : { ...rec, retryCount };
   }
 }

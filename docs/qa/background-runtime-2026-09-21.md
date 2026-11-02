@@ -1,5 +1,10 @@
 # Background runtime QC — 2026-09-21
 
+> Update (2026-10-21): the global `disable-frame-rate-limit` workaround below
+> caused dashboard stutter and is now confined to the Instagram renderer.
+> See [the rendering investigation](render-pacing-2026-10-21.md). These
+> historical measurements are not instructions to restore the global switch.
+
 The executable fixture is `scripts/background-probe.mjs`. It bundles the actual
 `InstagramTab`, `createTabInteractor`, WindMouse implementation, CDP transport,
 click guards, startup switches, and `RuntimePower` from this checkout. It uses

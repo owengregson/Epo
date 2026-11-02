@@ -12,6 +12,8 @@ export interface TransportModel {
   driver: TransportDriver;
   /** Prune is walking lists — no between-action boundary, so Pause locks. */
   pruneScanning: boolean;
+  /** A durable run request can still be cancelled while its loop is stopped. */
+  intentActive?: boolean;
 }
 
 /**
@@ -25,6 +27,7 @@ export interface TransportModel {
 export function transportModel(
   engine: EngineState | undefined,
   prune: PruneState | undefined,
+  runtime?: EpoStatus['runtime'],
 ): TransportModel {
   if (prune === 'scanning' || prune === 'running' || prune === 'paused') {
     return {
@@ -33,7 +36,8 @@ export function transportModel(
       pruneScanning: prune === 'scanning',
     };
   }
-  return { state: engine ?? 'idle', driver: 'growth', pruneScanning: false };
+  return { state: engine ?? 'idle', driver: 'growth', pruneScanning: false,
+    ...(runtime && runtime.desired !== 'stopped' ? { intentActive: true } : {}) };
 }
 
 /** Whole-hour → "08:00". */

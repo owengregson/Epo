@@ -40,12 +40,13 @@ export const logSignal = signal<LogLine[]>([]);
  */
 let lastTransport: TransportModel = { state: 'idle', driver: 'growth', pruneScanning: false };
 export const transportSignal: ReadonlySignal<TransportModel> = computed(() => {
-  const next = transportModel(statusSignal.value?.state, pruneSignal.value?.state);
+  const next = transportModel(statusSignal.value?.state, pruneSignal.value?.state, statusSignal.value?.runtime);
   const prev = lastTransport;
   if (
     next.state === prev.state &&
     next.driver === prev.driver &&
-    next.pruneScanning === prev.pruneScanning
+    next.pruneScanning === prev.pruneScanning &&
+    next.intentActive === prev.intentActive
   ) {
     return prev;
   }

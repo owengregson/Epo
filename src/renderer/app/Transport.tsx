@@ -9,6 +9,7 @@ export interface TransportProps {
   driver: TransportDriver;
   /** Prune is walking lists — no between-action boundary, so Pause locks. */
   pruneScanning: boolean;
+  intentActive?: boolean;
   /** Name of the in-flight control ('start' | 'pauseResume' | 'stop'), or null. */
   pending: string | null;
   onStart(): void;
@@ -27,6 +28,7 @@ export function Transport({
   state,
   driver,
   pruneScanning,
+  intentActive = false,
   pending,
   onStart,
   onPauseResume,
@@ -80,7 +82,7 @@ export function Transport({
         id="btnStop"
         type="button"
         title={prune ? 'Stop the prune' : 'Cancel the session'}
-        disabled={!(running || paused) || busy}
+        disabled={!(running || paused || intentActive) || busy}
         onClick={onCancel}
       >
         <Icon name={cancelSpin ? 'spinner' : 'xmark'} spin={cancelSpin} />

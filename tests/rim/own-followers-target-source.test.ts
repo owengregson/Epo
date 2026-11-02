@@ -21,7 +21,7 @@ const addFollower = (pk: string, followers: number): void => {
 test('picks the follower with the highest known follower count', async () => {
   addFollower('a', 100);
   addFollower('b', 500);
-  addFollower('c', 200);
+  addFollower('c', 400);
 
   expect(await source().pick()).toBe('b');
 });
@@ -29,7 +29,7 @@ test('picks the follower with the highest known follower count', async () => {
 test('skips followers that are already chain targets', async () => {
   addFollower('a', 100);
   addFollower('b', 500); // best by count, but already a target
-  addFollower('c', 200);
+  addFollower('c', 400);
   store.addTarget({ accountPk: 'b', source: 'own_followers', status: 'active', chainIndex: 0 });
 
   expect(await source().pick()).toBe('c');

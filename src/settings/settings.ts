@@ -503,8 +503,7 @@ export function toChurnConfig(s: Settings): ChurnConfig {
   return {
     maxWaitForFollowbackMs: s.maxWaitForFollowbackDays * MS_PER_DAY,
     maxRetries: s.maxRetries,
-    // The bio keep-list lives with churn (not prune): it protects mutuals
-    // from the hold-elapsed rotation, while prune ignores bios entirely.
+    // Churn preserves mutuals matching the bio keep-list.
     bioKeepWords: s.pruneBioFilterWords,
   };
 }
@@ -525,6 +524,7 @@ export function toRateGovernorConfig(s: Settings): RateGovernorConfig {
 /** Project the Follow-back Watcher's config out of Settings (days → ms). */
 export function toFollowbackConfig(s: Settings): FollowbackConfig {
   return {
+    maxWaitForFollowbackMs: s.maxWaitForFollowbackDays * MS_PER_DAY,
     holdAfterFollowbackMs: s.holdAfterFollowbackDays * MS_PER_DAY,
     autoAcceptRequests: s.autoAcceptFollowRequests,
   };

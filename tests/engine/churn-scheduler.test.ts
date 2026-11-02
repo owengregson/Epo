@@ -1,5 +1,8 @@
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import { makeChurnHarness as makeHarness, rec, T0 } from '../kit/engine-harness';
+import { rec as baseRecord, makeChurnHarness as makeHarness, T0 } from '../kit/engine-harness';
+
+// Existing action tests operate on a freshly reconciled cohort; stale-cohort cases are explicit below.
+const rec = (over: Parameters<typeof baseRecord>[0]) => baseRecord({ reconciledAt: T0, ...over });
 
 const OWN = 'me';
 
@@ -132,7 +135,7 @@ test('advanceTimers applies timeouts and holds with ZERO calls to actions', asyn
   expect(store.getFollowRecord('p')!.state).toBe('unfollow_queued');
   expect(store.getFollowRecord('p')!.unfollowDueAt).toBe(T0 + 1000);
   expect(store.getFollowRecord('h')!.state).toBe('unfollow_queued');
-  expect(store.getFollowRecord('h')!.unfollowDueAt).toBe(T0 + 1000);
+  expect(store.getFollowRecord('h')!.unfollowDueAt).toBe(T0 + 500);
   // No Instagram traffic whatsoever from the timer step.
   expect(actions.followCalls).toEqual([]);
   expect(actions.unfollowCalls).toEqual([]);
@@ -514,56 +517,30 @@ test('a tab-unhealthy blocked outcome is record-NEUTRAL: no retry burned, no fai
 
 // --- Amendment C: post-click tab failure → re-observe before re-claiming -----------
 
-test('amendment C: an unverified post-click follow is claimed as OURS on the next already-in-state attempt', async () => {
+test('an uncertain dispatched follow stays durable and cannot be replayed before reconciliation', async () => {
   const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
-  store.setOwnPk(OWN);
   seedUsername(store, 'uv', 'useruv');
-  store.upsertFollowRecord(rec({ accountPk: 'uv', state: 'queued' }));
-
-  // Attempt 1: the click was dispatched, then the tab stalled before verification.
+  store.upsertFollowRecord(rec({ accountPk: 'uv' }));
   actions.followStatus = 'blocked';
-  actions.followCause = 'tab-unhealthy';
   actions.followUnverifiedClick = true;
-  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('blocked');
-  expect(store.getFollowRecord('uv')!.state).toBe('queued'); // untouched
-  expect(store.actionCountSince(0)).toBe(0);
-
-  // Attempt 2: the pre-check reads already-following — that is OUR landed click.
+  await sched.execute(sched.nextDue()!);
+  expect(store.pendingEffectIntents()).toHaveLength(1);
+  expect(store.pendingEffectIntents()[0].state).toBe('uncertain');
+  expect(store.additionalMutationCountSince(0)).toBe(1);
   actions.followStatus = undefined;
-  actions.followCause = undefined;
   actions.followUnverifiedClick = undefined;
   actions.followAlreadyInState = true;
-  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('ok');
-
-  const got = store.getFollowRecord('uv')!;
-  expect(got.state).toBe('pending_followback'); // recorded as ours, NOT external
-  expect(got.followedAt).toBe(T0);
-  expect(store.actionCountSince(0)).toBe(1); // the ledger row was written
-  expect(store.getEdge(OWN, 'uv', 'follows')?.status).toBe('active');
-});
-
-test('amendment C: an unverified post-click unfollow is claimed as OURS when already-not-following', async () => {
-  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
-  store.setOwnPk(OWN);
-  seedUsername(store, 'uw', 'useruw');
-  store.observeEdge(OWN, 'uw', 'follows', true, T0);
-  store.upsertFollowRecord(rec({ accountPk: 'uw', state: 'unfollow_queued', unfollowDueAt: T0 }));
-
-  actions.unfollowStatus = 'blocked';
-  actions.unfollowCause = 'tab-unhealthy';
-  actions.unfollowUnverifiedClick = true;
-  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('blocked');
-  expect(store.getFollowRecord('uw')!.state).toBe('unfollow_queued'); // untouched
-
-  actions.unfollowStatus = undefined;
-  actions.unfollowCause = undefined;
-  actions.unfollowUnverifiedClick = undefined;
-  actions.unfollowAlreadyInState = true;
-  await expect(sched.execute(sched.nextDue(clock.now())!, clock.now())).resolves.toBe('ok');
-
-  expect(store.getFollowRecord('uw')!.state).toBe('unfollowed');
-  expect(store.actionCountSince(0)).toBe(1); // ours: ledger row written
-  expect(store.getEdge(OWN, 'uw', 'follows')?.status).toBe('removed');
+  await expect(sched.execute(sched.nextDue()!)).resolves.toBe('blocked');
+  expect(actions.followCalls).toHaveLength(1);
+  expect(store.getFollowRecord('uv')!.state).toBe('queued');
+  // Fresh read-only recovery settles ownership, without inventing an exact success time.
+  store.settleEffectIntent(store.pendingEffectIntents()[0].id, {
+    at: clock.now(), result: 'external', record: { ...store.getFollowRecord('uv')!, state: 'external' },
+    edge: { srcPk: OWN, dstPk: 'uv', active: true },
+  });
+  expect(store.pendingEffectIntents()).toHaveLength(0);
+  expect(store.actionCountSince(0)).toBe(0);
+  expect(store.additionalMutationCountSince(0)).toBe(1);
 });
 
 test('amendment C: WITHOUT the marker, already-in-state stays the external leave-alone (no ledger)', async () => {
@@ -579,29 +556,18 @@ test('amendment C: WITHOUT the marker, already-in-state stays the external leave
   expect(store.actionCountSince(0)).toBe(0);
 });
 
-test('amendment C: a definitive FAILED attempt clears the marker (the click did not land)', async () => {
-  const { store, clock, actions, sched } = makeHarness({ ownPk: OWN });
-  store.setOwnPk(OWN);
+test('uncertain writes reserve budget and never become a new failed attempt without observation', async () => {
+  const { store, actions, sched } = makeHarness({ ownPk: OWN });
   seedUsername(store, 'fm', 'userfm');
-  store.upsertFollowRecord(rec({ accountPk: 'fm', state: 'queued' }));
-
+  store.upsertFollowRecord(rec({ accountPk: 'fm' }));
   actions.followStatus = 'blocked';
-  actions.followCause = 'tab-unhealthy';
   actions.followUnverifiedClick = true;
-  await sched.execute(sched.nextDue(clock.now())!, clock.now());
-
-  // A later verified FAILURE proves the earlier click never landed.
+  await sched.execute(sched.nextDue()!);
   actions.followStatus = 'failed';
-  actions.followCause = undefined;
-  actions.followUnverifiedClick = undefined;
-  await sched.execute(sched.nextDue(clock.now())!, clock.now());
-
-  // A subsequent already-in-state is external again (the marker is gone).
-  actions.followStatus = undefined;
-  actions.followAlreadyInState = true;
-  await sched.execute(sched.nextDue(clock.now())!, clock.now());
-  expect(store.getFollowRecord('fm')!.state).toBe('external');
-  expect(store.actionCountSince(0)).toBe(1); // only the failed attempt's row
+  await sched.execute(sched.nextDue()!);
+  expect(actions.followCalls).toHaveLength(1);
+  expect(store.getFollowRecord('fm')!.retryCount).toBe(0);
+  expect(store.additionalMutationCountSince(0)).toBe(1);
 });
 
 // --- The bio keep-list: mutuals whose bio matches are never rotated out ------------

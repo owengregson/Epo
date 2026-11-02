@@ -12,6 +12,8 @@
  */
 
 import type { OwnFollowersTargetSource } from '@/engine/chain-controller';
+import { EXPLORATION_POLICY } from '@/engine/exploration-policy';
+import { type Clock, SystemClock } from '@/governors/clock';
 import type { ProfileEnricher } from '@/rim/profile-enricher';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { EnrichmentLevel } from '@/store/types';
@@ -40,30 +42,41 @@ export interface OwnFollowersTargetSourceDeps {
    * enrichment pass here is cheap relative to picking a dead-end target.
    */
   enricher?: ProfileEnricher;
+  clock?: Clock;
+  minPoolSize?: number;
 }
 
 export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTargetSource {
   private readonly store: KnowledgeStore;
   private readonly ownPk: string;
   private readonly enricher?: ProfileEnricher;
+  private readonly clock: Clock;
+  private readonly minPoolSize: number;
 
   constructor(deps: OwnFollowersTargetSourceDeps) {
     this.store = deps.store;
     this.ownPk = deps.ownPk;
     this.enricher = deps.enricher;
+    this.clock = deps.clock ?? new SystemClock();
+    this.minPoolSize = deps.minPoolSize ?? 300;
   }
 
-  async pick(): Promise<string | null> {
+  async pick(minPoolSize?: number): Promise<string | null> {
+    return (await this.candidates(minPoolSize))[0] ?? null;
+  }
+
+  async candidates(minPoolSize: number = this.minPoolSize): Promise<string[]> {
     let candidates = this.eligibleFollowers();
 
     // No candidate carries a follower count → the ranking below would be a
     // pk-order coin flip. Enrich a bounded sample first (real IG traffic, but
     // a chain advance happens once per exhausted target).
-    if (this.enricher && !candidates.some((c) => c.followers !== undefined)) {
+    if (this.enricher && !candidates.some((c) => c.followers !== undefined && c.followers >= minPoolSize)) {
       const usernames: string[] = [];
       for (const c of candidates) {
         if (usernames.length >= PICK_ENRICH_CAP) break;
-        if (c.username === undefined || c.enrichFailedAt !== undefined) continue;
+        if (c.followers !== undefined || c.username === undefined || (c.enrichFailedAt !== undefined &&
+          this.clock.now() - c.enrichFailedAt < EXPLORATION_POLICY.enrichmentRetryMs)) continue;
         usernames.push(c.username);
       }
       if (usernames.length > 0) {
@@ -75,35 +88,10 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
       }
     }
 
-    let best: { pk: string; followers: number; enrichmentRank: number } | null = null;
-    for (const account of candidates) {
-      const pk = account.pk;
-      const followerCount = account.followers ?? -1;
-      const enrichmentRank = ENRICHMENT_RANK[account.enrichment];
-
-      if (
-        best === null ||
-        followerCount > best.followers ||
-        (followerCount === best.followers && enrichmentRank > best.enrichmentRank) ||
-        (followerCount === best.followers &&
-          enrichmentRank === best.enrichmentRank &&
-          pk < best.pk)
-      ) {
-        best = { pk, followers: followerCount, enrichmentRank };
-      }
-    }
-
-    if (best === null) {
-      logger.info('rim.own-followers-target-source: no eligible follower to promote', {
-        ownPk: this.ownPk,
-      });
-      return null;
-    }
-    logger.info('rim.own-followers-target-source: picked fallback target', {
-      pk: best.pk,
-      followers: best.followers,
-    });
-    return best.pk;
+    candidates = candidates.filter((c) => c.username !== undefined && c.followers !== undefined && c.followers >= minPoolSize);
+    candidates.sort((a, b) => (b.followers ?? -1) - (a.followers ?? -1) ||
+      ENRICHMENT_RANK[b.enrichment] - ENRICHMENT_RANK[a.enrichment] || a.pk.localeCompare(b.pk));
+    return candidates.slice(0, EXPLORATION_POLICY.maxSources).map((c) => c.pk);
   }
 
   /** Own followers not already promoted into the chain, as account states. */
@@ -119,6 +107,8 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
     for (const pk of this.store.followersOf(this.ownPk)) {
       if (targets.has(pk)) continue; // already promoted into the chain
       const account = this.store.getAccount(pk);
+      if (pk === this.ownPk) continue;
+      if (account?.isPrivate === true && this.store.getEdge(this.ownPk, pk, 'follows')?.status !== 'active') continue;
       out.push({
         pk,
         username: account?.username,

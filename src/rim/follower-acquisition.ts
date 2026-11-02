@@ -36,7 +36,9 @@
  */
 
 import type { Sentinel } from '@/adapter/sentinel';
+import { EXPLORATION_POLICY } from '@/engine/exploration-policy';
 import { type Clock, SystemClock } from '@/governors/clock';
+import type { ReadBudget } from '@/governors/read-budget';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { ListPageWalker } from '@/rim/list-page-walker';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
@@ -77,133 +79,25 @@ export interface AcquisitionConfig {
 }
 
 export const ACQUISITION_DEFAULTS: AcquisitionConfig = {
-  // ~5 API pages at the 50-row page size. Deep on purpose: candidate QUALITY is
-  // selection from a big pool — a shallow batch forces the Scanner to queue
-  // whatever ratios it got, while ~250 raw prospects let the enrichment+scoring
-  // pass keep only the best. Same cursor-paged endpoint the prune census uses;
-  // still a fraction of one prune scan's request volume.
-  targetNewPks: 250,
-  maxPages: 12,
+  // A source visit starts with two pages; durable read and visit budgets bound
+  // repeated slices. Stored unscored candidates are reused before further reads.
+  targetNewPks: EXPLORATION_POLICY.rowsPerSlice,
+  maxPages: EXPLORATION_POLICY.pagesPerSlice,
   maxCoverageFraction: 0.5,
-  maxRounds: RIM.ACQUIRE_MAX_ROUNDS,
+  maxRounds: EXPLORATION_POLICY.pagesPerSlice,
   noNewStop: RIM.ACQUIRE_NO_NEW_STOP,
   scrollMinMs: RIM.ACQUIRE_SCROLL_MIN_MS,
   scrollMaxMs: RIM.ACQUIRE_SCROLL_MAX_MS,
 };
 
-/**
- * Why an acquire ended — split by TRUTH VALUE, not by scrape path.
- *
- * Genuine outcomes (the scrape ran and its result is trustworthy evidence
- * about the target's audience):
- *  - 'no-more-pages':     the walk VERIFIED the end of the target's list.
- *  - 'target-reached':    this refill's new-pk demand was met.
- *  - 'coverage-cap':      the audience coverage cap is already spent (no fetch).
- *  - 'no-new-for-caller': consecutive pages held only rows the store already has.
- *  - 'page-budget':       the per-acquire page/round budget was spent (the
- *                         resume cursor is persisted; the next refill continues).
- *  - 'stagnant':          the list stopped yielding new rows before a verified
- *                         end (the dialog's natural drain; duplicate windows on
- *                         the direct walk).
- *
- * Failures (the scrape could NOT trustworthily read the list — `observed: 0`
- * with one of these is NOT audience-exhaustion evidence and must never feed
- * the irreversible exhaustion cascade):
- *  - 'shape-mismatch':    the list page no longer parses (IG shape drift).
- *  - 'fetch-failed':      repeated fetch failures (throttle/network/walls).
- *  - 'sentinel-blocked':  the account was blocked before or during the scrape.
- *  - 'stopped':           a cooperative stop ended the walk mid-list.
- *  - 'dialog-failed':     the dialog fallback could not open/read the list.
- */
-export type AcquireEndReason =
-  | 'no-more-pages'
-  | 'target-reached'
-  | 'coverage-cap'
-  | 'no-new-for-caller'
-  | 'page-budget'
-  | 'stagnant'
-  | 'shape-mismatch'
-  | 'fetch-failed'
-  | 'sentinel-blocked'
-  | 'stopped'
-  | 'dialog-failed';
+export type { AcquireEndReason, AcquireResult } from './acquisition-result';
+export { ACQUIRE_FAILURE_REASONS, isAcquireFailure } from './acquisition-result';
 
-/** The failure half of {@link AcquireEndReason} (see the taxonomy above). */
-export const ACQUIRE_FAILURE_REASONS: ReadonlySet<AcquireEndReason> = new Set([
-  'shape-mismatch',
-  'fetch-failed',
-  'sentinel-blocked',
-  'stopped',
-  'dialog-failed',
-]);
-
-/** Whether an acquire's end reason means the read FAILED (vs a genuine outcome). */
-export function isAcquireFailure(reason: AcquireEndReason): boolean {
-  return ACQUIRE_FAILURE_REASONS.has(reason);
-}
-
-/**
- * What one acquire yields. Additive over the `FollowerAcquisition` port's
- * `{observed, targetPk}` shape (which this satisfies structurally): the
- * `endReason` says WHY the acquire ended, so callers can tell a genuine
- * completion from a failed read instead of treating every `observed: 0` as
- * exhaustion. Existing port-typed callers are unaffected.
- */
-export interface AcquireResult {
-  observed: number;
-  targetPk: string | null;
-  endReason: AcquireEndReason;
-}
-
-/** Map a {@link ListPageWalker} end reason into the acquire taxonomy. */
-function reasonFromWalk(reason: string): AcquireEndReason {
-  switch (reason) {
-    case 'no-more-pages':
-      return 'no-more-pages';
-    case 'target-reached':
-      return 'target-reached';
-    case 'no-new-for-caller':
-      return 'no-new-for-caller';
-    case 'max-pages':
-      return 'page-budget';
-    case 'stagnant':
-      return 'stagnant';
-    case 'shape-mismatch':
-      return 'shape-mismatch';
-    case 'stop-requested':
-      return 'stopped';
-    case 'fetch-failed':
-      return 'fetch-failed';
-    default:
-      // 'sentinel:*' and anything a future walker adds: never let an unmapped
-      // reason read as a genuine outcome — default to the failure family.
-      return reason.startsWith('sentinel:') ? 'sentinel-blocked' : 'fetch-failed';
-  }
-}
-
-/** Map a dialog-scrape (`FollowersPageReader.collect`) end reason likewise. */
-function reasonFromDialog(endReason: string): AcquireEndReason {
-  switch (endReason) {
-    case 'no-more-pages':
-      return 'no-more-pages';
-    case 'stagnant':
-      return 'stagnant';
-    case 'max-rounds':
-      return 'page-budget';
-    case 'stop-requested':
-      return 'stopped';
-    case 'shape-mismatch':
-      return 'shape-mismatch';
-    case 'blocked-response':
-      return 'fetch-failed';
-    case 'open-failed':
-      return 'dialog-failed';
-    default:
-      return endReason.startsWith('sentinel:') ? 'sentinel-blocked' : 'dialog-failed';
-  }
-}
+import { type AcquireResult, reasonFromDialog, reasonFromWalk } from './acquisition-result';
 
 export interface AcquisitionDeps {
+  onProgress?: (phase: string) => void;
+  readBudget?: ReadBudget;
   pageReader: FollowersPageReader;
   store: KnowledgeStore;
   sentinel: Sentinel;
@@ -221,6 +115,9 @@ export interface AcquisitionDeps {
 }
 
 export class AdapterBackedAcquisition implements FollowerAcquisition {
+  private readonly onProgress?: (phase: string) => void;
+  private readonly readBudget?: ReadBudget;
+  private readResumeAt: number | null = null;
   private readonly pageReader: FollowersPageReader;
   private readonly store: KnowledgeStore;
   private readonly sentinel: Sentinel;
@@ -230,6 +127,8 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
   private readonly cfg: AcquisitionConfig;
 
   constructor(deps: AcquisitionDeps) {
+    this.onProgress = deps.onProgress;
+    this.readBudget = deps.readBudget;
     this.pageReader = deps.pageReader;
     this.store = deps.store;
     this.sentinel = deps.sentinel;
@@ -240,6 +139,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
   }
 
   async acquire(targetUsername: string): Promise<AcquireResult> {
+    this.readResumeAt = null;
     // Pre-check: bail before issuing anything if the account is already
     // blocked. A FAILURE reason, not a completion — an acquire that never ran
     // must not read as "this audience yielded nothing".
@@ -254,16 +154,31 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     // coverage cap needs) only on first contact.
     let targetPk = this.store.pkByUsername(targetUsername);
     if (targetPk === null) targetPk = await this.resolvePkViaProfile(targetUsername);
+    if (this.readResumeAt !== null) return { observed: 0, targetPk, endReason: 'read-budget', retryAt: this.readResumeAt };
+    // Counts/privacy used for source decisions must not remain frozen across absences.
+    if (targetPk !== null && this.visitor !== undefined) {
+      const account = this.store.getAccount(targetPk);
+      const observedAt = account?.statsObservedAt;
+      if (observedAt !== undefined && this.clock.now() - observedAt >= EXPLORATION_POLICY.profileFreshMs) {
+        const permit = this.readBudget?.consume('profile');
+        if (permit !== undefined && !permit.allowed) return { observed: 0, targetPk, endReason: 'read-budget', retryAt: permit.resumeAt ?? undefined };
+        const visit = await this.visitor.visit(targetUsername);
+        if (!visit.ok) return { observed: 0, targetPk, endReason: 'fetch-failed' };
+        this.onProgress?.('source-profile-refreshed');
+      }
+    }
 
     // (2)+(3)+(4) The direct cursor-resumed, demand-bounded walk.
     if (targetPk !== null && this.walker !== undefined) {
       const pk = targetPk;
+      const cursorState = this.store.getScrapeCursorState(pk);
+      const refreshDue = cursorState !== null && this.clock.now() - cursorState.updatedAt >= EXPLORATION_POLICY.endedRevisitMs;
 
       // Coverage cap: never scrape past `maxCoverageFraction` of the target's
       // audience across all acquires. `budget` is what remains of that cap after
       // the followers we already observed; <= 0 means we have taken our share, so
       // yield nothing and let the engine advance the chain.
-      const budget = this.coverageBudget(pk);
+      const budget = refreshDue ? null : this.coverageBudget(pk);
       if (budget !== null && budget <= 0) {
         logger.info('rim.acquisition: coverage cap reached, not scraping further', {
           targetUsername,
@@ -277,10 +192,12 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
       const maxNewPks =
         budget === null ? this.cfg.targetNewPks : Math.min(this.cfg.targetNewPks, budget);
 
-      const startCursor = this.store.getScrapeCursor(pk);
+      const startCursor = refreshDue ? null : this.store.getScrapeCursor(pk);
+      let globallyNew = 0;
       const walk = await this.walker.walkAll({
         pk,
         which: 'followers',
+        readPurpose: 'exploration',
         startCursor,
         maxNewPks,
         maxPages: this.cfg.maxPages,
@@ -290,6 +207,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
         // and re-reading a fully-walked head stops after a few known-only pages.
         isKnown: (followerPk) => this.store.getEdge(followerPk, pk, 'follows') !== null,
         onObservation: (obs) => {
+          if (this.store.getAccount(obs.accountPk) === null) globallyNew += 1;
           this.store.observe(obs);
           // The pk is known up front — the follower→target edge is written the
           // moment the row arrives (no back-fill pass on this path).
@@ -301,7 +219,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
         // Everything except a fetch failure keeps its resume cursor: the rows
         // observed up to the stop point are real, and the next walk resumes
         // exactly there (after a shape-mismatch, once the adapter is updated).
-        this.store.setScrapeCursor(pk, walk.cursor, this.clock.now());
+        if (walk.pages > 0) this.store.setScrapeCursor(pk, walk.cursor, this.clock.now());
         const endReason = reasonFromWalk(walk.reason);
         logger.info('rim.acquisition: direct walk done', {
           targetUsername,
@@ -318,7 +236,8 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
         // drifted extractor, so the fallback would burn a whole dialog scrape
         // to fabricate a second empty read. Sentinel/stop ends return as the
         // failures they are; genuine outcomes return as completions.
-        return { observed: walk.pks.length, targetPk: pk, endReason };
+        return { observed: walk.pks.length, targetPk: pk, endReason, globallyNew,
+          ...(walk.retryAt === undefined ? {} : { retryAt: walk.retryAt }) };
       }
       logger.warn('rim.acquisition: direct walk failed, falling back to dialog scrape', {
         targetUsername,
@@ -355,11 +274,17 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
    */
   private async resolvePkViaProfile(targetUsername: string): Promise<string | null> {
     if (this.visitor === undefined) return null;
+    const permit = this.readBudget?.consume('profile');
+    if (permit !== undefined && !permit.allowed) {
+      this.readResumeAt = permit.resumeAt;
+      return null;
+    }
     const visit = await this.visitor.visit(targetUsername);
     if (!visit.ok) {
       logger.warn('rim.acquisition: pk-resolve visit failed', { kind: visit.kind, ...visit.detail });
       return null;
     }
+    this.onProgress?.('source-profile-resolved');
     return visit.obs.accountPk;
   }
 
@@ -385,6 +310,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     let edgePk = knownPk;
     const result = await this.pageReader.collect({
       targetUsername,
+      readPurpose: 'exploration',
       onTargetPk: (pk) => {
         edgePk = pk;
       },
@@ -430,6 +356,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
       reason: result.endReason,
       endReason,
     });
-    return { observed: result.observedPks.length, targetPk: pk, endReason };
+    return { observed: result.observedPks.length, targetPk: pk, endReason,
+      ...(result.retryAt === undefined ? {} : { retryAt: result.retryAt }) };
   }
 }

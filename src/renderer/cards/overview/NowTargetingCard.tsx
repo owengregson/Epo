@@ -1,4 +1,5 @@
 import { Fragment, type JSX } from 'preact';
+import { frontierCaption } from '@/renderer/cards/overview/runtime-copy';
 import { useChainList } from '@/renderer/hooks/useChainList';
 import { commas, monogram, pctInt, withAt } from '@/renderer/lib/format';
 import { Avatar } from '@/renderer/ui/Avatar';
@@ -36,6 +37,7 @@ export function NowTargetingCard({ status }: NowTargetingCardProps): JSX.Element
   const hop = status?.chainIndex ?? null;
   const target = pk !== null ? (chain.find((t) => t.accountPk === pk) ?? null) : null;
   const y = target?.yield ?? null;
+  const portfolio = frontierCaption(status, chain, Date.now());
 
   return (
     <Card raised>
@@ -44,7 +46,7 @@ export function NowTargetingCard({ status }: NowTargetingCardProps): JSX.Element
       </CardHeader>
       <CardBody>
         {username === null ? (
-          <div class="hint">No target yet — set a seed and press Start.</div>
+          <div class="hint">{status?.frontier?.sources.length ? 'Waiting for the next source visit.' : 'No target yet — set a seed and press Start.'}</div>
         ) : (
           <Fragment>
             <div class="target-row">
@@ -75,6 +77,7 @@ export function NowTargetingCard({ status }: NowTargetingCardProps): JSX.Element
             </div>
           </Fragment>
         )}
+        {portfolio.map((line) => <div class="hint" key={line}>{line}</div>)}
       </CardBody>
     </Card>
   );

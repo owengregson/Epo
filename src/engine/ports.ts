@@ -10,6 +10,7 @@
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
+import type { EffectReconciliationResult } from '../rim/effect-reconciliation';
 import type { AcquireEndReason } from '../rim/follower-acquisition';
 import type { Settings } from '../settings/settings';
 import type { KnowledgeStore } from '../store/knowledge-store';
@@ -17,8 +18,10 @@ import type { FollowRecord } from '../store/types';
 import type { DelayManager } from '../timing/delay-manager';
 import type { AdvanceResult } from './chain-controller';
 import type { ChurnActionOutcome } from './churn-scheduler';
-import type { EngineParkReason } from './engine-waits';
+import type { ReentrySupervisor } from './reentry';
 import type { ScanPlan } from './scanner';
+import type { SourceFrontier, SourceVisitEndReason } from './source-frontier';
+import type { EngineStatus } from './status';
 
 /** What a single loop iteration did — exactly one of these per `stepOnce()`. */
 export type StepResult =
@@ -51,6 +54,7 @@ export interface SweepCadence {
 
 /** The Churn Scheduler's split API: timers / pick one / execute one. */
 export interface EngineChurn {
+  lastActionOutcome?(): ChurnActionOutcome | null;
   advanceTimers(now: number): void;
   nextDue(now: number): FollowRecord | null;
   /**
@@ -97,6 +101,7 @@ export interface EngineTabDiagnostics {
 
 /** The Scanner's planning surface: rank + enqueue one target's candidates. */
 export interface EngineScanner {
+  reconsiderTarget?(targetPk: string, now?: number): void;
   planTarget(targetPk: string): ScanPlan;
   /**
    * Backfill scores for queued records that predate score persistence, so the
@@ -108,7 +113,7 @@ export interface EngineScanner {
 
 /** The Chain Controller's single verb: advance past an exhausted target. */
 export interface EngineChain {
-  advance(currentTargetPk: string): Promise<AdvanceResult>;
+  advance(currentTargetPk: string, reason?: SourceVisitEndReason): Promise<AdvanceResult>;
 }
 
 /**
@@ -122,7 +127,7 @@ export interface EngineChain {
 export interface EngineAcquisition {
   acquire(
     targetUsername: string,
-  ): Promise<{ observed: number; targetPk: string | null; endReason: AcquireEndReason }>;
+  ): Promise<{ observed: number; targetPk: string | null; endReason: AcquireEndReason; retryAt?: number; globallyNew?: number }>;
 }
 
 /**
@@ -142,7 +147,13 @@ export const ACQUIRE_DRAIN_REASONS: ReadonlySet<AcquireEndReason> = new Set([
 
 /** The Follow-back Watcher's single verb: one request-bounded sweep. */
 export interface EngineFollowback {
-  check(): Promise<{ detected: string[] }>;
+  check(opts?: { requireFresh?: boolean; freshSinceAt?: number }): Promise<{
+    detected: string[];
+    outcome?: 'complete' | 'partial' | 'failed';
+    deferred?: 'read-budget' | 'pending-requests' | 'reconciliation-progress';
+    retryAt?: number;
+    reconciledAt?: number | null;
+  }>;
 }
 
 /**
@@ -152,6 +163,7 @@ export interface EngineFollowback {
  * is sentinel-gated and paced internally; tests inject a fake.
  */
 export interface EngineEnricher {
+  budgetResumeAt?(): number | null;
   enrich(usernames: string[]): Promise<number>;
 }
 
@@ -206,6 +218,7 @@ export interface EnginePacing {
  * edge reconcile and returns the outcome.
  */
 export interface EngineUnfollowFeed {
+  lastActionOutcome?(): ChurnActionOutcome | null;
   nextCandidate(now: number): { pk: string; username: string } | null;
   executeUnfollow(
     cand: { pk: string; username: string },
@@ -219,66 +232,15 @@ export interface EngineSentinel {
   check(): Promise<SentinelStatus>;
 }
 
-/** Status projection over the store + governors + Engine state. */
-export interface EngineStatus {
-  state: EngineState;
-  currentTargetPk: string | null;
-  currentTargetUsername: string | null;
-  chainIndex: number | null;
-  actionsToday: number;
-  remainingToday: number;
-  /** Today's planned volume (the fluctuating per-cycle stop, under the rate). */
-  plannedToday: number;
-  atHardCeiling: boolean;
-  queued: number;
-  pendingFollowback: number;
-  followedBackHeld: number;
-  unfollowDue: number;
-  lastStep: StepResult | null;
-  lastSentinel: SentinelStatus | null;
-  lastActionAt: number | null;
-  sessionStartedAt: number | null;
-  /** Deadline (epoch ms) of the in-flight paced action delay, else null. */
-  nextActionAt: number | null;
-  /**
-   * Deadline (epoch ms) of the in-flight LONG park (outside active hours,
-   * today's plan done, between sessions, velocity hold, enrich backoff).
-   * Registered — and pushed — the moment the park starts, BEFORE it is
-   * awaited, and null once the wait resolves. Optional only because the
-   * pre-build status literal predates it; the Engine always sets it.
-   */
-  parkedUntil?: number | null;
-  /** Why the engine is parked while `parkedUntil` is set; null otherwise. */
-  parkReason?: EngineParkReason | null;
-  netToday: number;
-  /** Whether the connectivity monitor last reported the internet reachable. */
-  online: boolean;
-  /** Why the engine halted (`sentinel:*`, `chain-exhausted`, `recovery-exhausted`,
-   *  …) while `state` is `'halted'`; null otherwise. */
-  haltReason: string | null;
-  /**
-   * The recovery ladder's live posture: `holding` while a long backoff is
-   * armed (`resumeAt` is its absolute deadline), `probing` while the next real
-   * actions decide whether the wall lifted. Null when the ladder is inactive.
-   */
-  recovery: {
-    phase: 'holding' | 'probing';
-    attempt: number;
-    maxAttempts: number;
-    resumeAt: number | null;
-  } | null;
-  /** Organic-pacing session status (null in legacy mode). */
-  pacing: {
-    sessionOpen: boolean;
-    sessionEndsAt: number | null;
-    nextSessionAt: number | null;
-    sessionsToday: number;
-    dailyTarget: number;
-  } | null;
-}
+export type { EngineStatus } from './status';
 
 /** Everything the Engine composes, already constructed (composition root's job). */
 export interface EngineDeps {
+  frontier?: SourceFrontier;
+  reentry?: ReentrySupervisor;
+  validateIdentity?: () => Promise<boolean>;
+  onProgress?: (phase: string) => void;
+  reconcileEffects?: () => Promise<boolean | EffectReconciliationResult>;
   store: KnowledgeStore;
   clock: Clock;
   rate: EngineRate;

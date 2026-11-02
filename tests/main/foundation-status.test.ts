@@ -28,6 +28,7 @@ describe('Foundation status (not built)', () => {
     const s = await f.status();
 
     expect(s).toEqual({
+      runtime: expect.objectContaining({ desired: 'stopped', phase: 'ready', blockedReason: null }),
       state: 'idle',
       currentTargetPk: null,
       currentTargetUsername: null,

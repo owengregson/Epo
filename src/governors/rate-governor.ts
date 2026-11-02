@@ -70,7 +70,8 @@ export class RateGovernor {
    */
   actionsToday(): number {
     const since = this.cycleStartMs();
-    return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since);
+    return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since)
+      + this.store.additionalMutationCountSince(since);
   }
 
   /**
@@ -97,7 +98,8 @@ export class RateGovernor {
    */
   actionsInLastHour(now: number = this.clock.now()): number {
     const since = now - MS_PER_HOUR;
-    return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since);
+    return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since)
+      + this.store.additionalMutationCountSince(since);
   }
 
   /**

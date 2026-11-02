@@ -1,0 +1,77 @@
+import type { Sentinel } from '@/adapter/sentinel';
+import type { ReadPurpose } from '@/governors/read-budget';
+import type { Observation } from '@/store/types';
+
+export interface WalkArgs {
+  readPurpose?: ReadPurpose;
+  /** Whose list to page (the prune scan passes our OWN pk). */
+  pk: string;
+  which: 'followers' | 'following';
+  /**
+   * Called for every parsed user, with the page's resume cursor.
+   *
+   * CONTRACT (docs/PRINCIPLES.md §1 — facts stream): implementations MUST
+   * write each observation through to the store as it arrives — a walk that
+   * stops early (sentinel, stagnation, user stop) keeps every row it saw. The
+   * returned pk list carries completeness verdicts, not the facts themselves.
+   */
+  onObservation: (obs: Observation, cursor: string | null) => void;
+  /** Cumulative observed-pk count, reported once per page that grew the set. */
+  onProgress?: (observedCount: number) => void;
+  sentinel: Sentinel;
+  /** Per-page pacing bounds; defaults to `RIM.LIST_WALK_PAGE_{MIN,MAX}_MS`. */
+  pageMinMs?: number;
+  pageMaxMs?: number;
+  /** Cooperative abort, checked at the top of every page. */
+  shouldStop?: () => boolean;
+  /** Runaway page bound; defaults to `RIM.LIST_WALK_MAX_PAGES`. */
+  maxPages?: number;
+  /**
+   * Resume cursor from a PREVIOUS walk of this list (the persisted
+   * `next_max_id`): the walk starts paging there instead of at the head, so
+   * successive bounded walks never re-fetch pages already consumed. `null`/
+   * absent starts at the head (a fresh walk).
+   */
+  startCursor?: string | null;
+  /**
+   * Demand-driven stop: end the walk (reason `target-reached`) once this many
+   * NEW pks have been observed. Growth acquisition fetches only the pages
+   * a refill actually needs instead of a whole-list census. Absent = unbounded
+   * (the census walks: prune scan, own-followers).
+   */
+  maxNewPks?: number;
+  /**
+   * Caller-level newness for the demand budget: rows the CALLER already holds
+   * (e.g. an edge in the store from a prior walk) do not count toward
+   * `maxNewPks` — without this, overlapping windows spent the whole coverage
+   * budget re-counting rows already held. Checked BEFORE `onObservation` runs
+   * for the row. Also enables the known-density early stop: several
+   * consecutive pages of only-already-known rows end the walk (reason
+   * `no-new-for-caller`) instead of paging a fully-walked list to its end.
+   */
+  isKnown?: (pk: string) => boolean;
+}
+
+export interface WalkResult {
+  retryAt?: number;
+  pks: string[];
+  pages: number;
+  /** True ONLY when the API reported no further pages — a genuine full walk. */
+  complete: boolean;
+  /** True when the past-the-end probe came back empty of new rows (complete walks only). */
+  endConfirmed: boolean;
+  /**
+   * Why the walk ended. Genuine completion: 'no-more-pages'. Demand stops:
+   * 'target-reached' | 'no-new-for-caller'. Bounds: 'max-pages' | 'stagnant'.
+   * Failures (`complete` always false): 'shape-mismatch' (the page no longer
+   * parses — IG shape drift), 'fetch-failed', 'stop-requested', 'sentinel:*'.
+   */
+  reason: string;
+  /**
+   * Where a LATER walk should resume: the last parsed page's real `next_max_id`
+   * (never the synthesized end-probe cursor), or `null` when the list finished —
+   * persist this per target so successive walks pick up where this one stopped.
+   */
+  cursor: string | null;
+}
+

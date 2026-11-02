@@ -10,19 +10,13 @@
  */
 
 import * as path from 'node:path';
-import type { ActivityReporter } from '@/adapter/activity-reporter';
-import type { Actor } from '@/adapter/actor';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
-import type { Sentinel } from '@/adapter/sentinel';
-import type { InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { ChainController, type TargetDiscovery } from '@/engine/chain-controller';
 import { ChurnScheduler } from '@/engine/churn-scheduler';
 import {
   createEngine,
-  type Engine,
-  type EngineStatus,
   type EngineUnfollowFeed,
 } from '@/engine/engine';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
@@ -32,33 +26,34 @@ import {
   type PruneOwnFollowers,
   type PruneOwnFollowing,
   type PruneScanFetch,
-  type PruneStatus,
 } from '@/engine/prune-engine';
+import { ReentrySupervisor } from '@/engine/reentry';
 import { Scanner } from '@/engine/scanner';
+import { scoreCandidate } from '@/engine/scorer';
+import { SourceFrontier } from '@/engine/source-frontier';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
-import type { CursorObserver } from '@/interaction/input-driver';
+import { ReadBudget } from '@/governors/read-budget';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import { reconcileEffects } from '@/rim/effect-reconciliation';
 import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
+import { managedRelationships } from '@/rim/managed-relationships';
 import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
 import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
 import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
-import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import {
   installRelationshipReconciler,
   RelationshipReconciler,
 } from '@/rim/relationship-reconciler';
 import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
-import type { FollowerAcquisition } from '@/rim/types';
 import { patternCircadianProfile } from '@/settings/pattern-map';
 import {
-  type Settings,
   toChainConfig,
   toChurnConfig,
   toFollowbackConfig,
@@ -72,81 +67,13 @@ import { KnowledgeStore } from '@/store/knowledge-store';
 import { samplePhaseOffset } from '@/timing/circadian';
 import { CIRCADIAN } from '@/timing/config';
 import { DelayManager } from '@/timing/delay-manager';
-import type { ScheduleManager } from '@/timing/schedule-manager';
 import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
 import * as logger from '@/utils/logger';
+import { createMutationPolicy } from './mutation-policy';
 
-/** The lazily-built dependency graph, cached once `ownPk` is resolvable. */
-export interface BuiltGraph {
-  store: KnowledgeStore;
-  engine: Engine;
-  acquisition: FollowerAcquisition;
-  churnActions: AdapterBackedChurnActions;
-  /** The adapter's actor — kept for the paced own-profile landing click. */
-  actor: Actor;
-  /** Disposer for the passive relationship reconciler. */
-  relationshipReconcilerUnsub: () => void;
-  /** Disposer for the always-on profile observer (every profile body → store). */
-  profileInfoUnsub: () => void;
-  /** Reads a profile by VISITING it — the seed check's one read. */
-  profiles: ProfileVisitor;
-  ownPk: string;
-  /** Our own username at build time, or `undefined` when it could not be resolved. */
-  ownUsername: string | undefined;
-  /** The single clock the graph shares — used to timestamp manual-op ledger rows. */
-  clock: SystemClock;
-  /** The ONE wait owner both engines share. */
-  delays: DelayManager;
-  /** The shared block-detection sentinel — gates manual one-shot fetches (seed check). */
-  sentinel: Sentinel;
-  /**
-   * The loop promise returned by the most recent `engine.start()`, kept so
-   * `dispose()` can await the loop's exit before closing the store. Null until
-   * the engine is first started.
-   */
-  enginePromise: Promise<void> | null;
-  /** The auto-prune routine — mutually exclusive with the engine. */
-  pruneEngine: PruneEngine;
-  /**
-   * The run promise of the most recent `pruneEngine.run()`, kept so `dispose()`
-   * can await its exit before closing the store. Null until first started.
-   */
-  prunePromise: Promise<void> | null;
-  /** Live component handles kept so runtime Settings changes can reload configs. */
-  rate: RateGovernor;
-  churn: ChurnScheduler;
-  scanner: Scanner;
-  followback: FollowbackWatcher;
-  chain: ChainController;
-  /** The organic pacing planner, present only when `Settings.pacingModel === 'organic'`. */
-  pacing: SessionPlanner | undefined;
-}
+export type { BuiltGraph, GraphBuildDeps } from './graph-types';
 
-/** Everything {@link buildGraph} needs from the composition root. */
-export interface GraphBuildDeps {
-  tab: InstagramTab;
-  /** Directory holding the knowledge DB (and the settings file beside it). */
-  userDataDir: string;
-  /** File name of the knowledge DB inside {@link GraphBuildDeps.userDataDir}. */
-  dbFile: string;
-  /** Live phase readout tap (the veil); a no-op reporter when main wires none. */
-  reporter: ActivityReporter;
-  /** Optional tap on the Interactor's synthetic cursor. */
-  cursorObserver?: CursorObserver;
-  /** The Foundation's one ScheduleManager (the follow-back sweep cadence rides it). */
-  scheduler: ScheduleManager;
-  /** The settings snapshot the graph is constructed from. */
-  settings: Settings;
-  /** Re-read of the live settings (the persisted cadence getters call this). */
-  resolveSettings(): Settings;
-  /** Persist a settings patch (cadence timestamps, `pruneLastRunAt`). */
-  updateSettings(partial: Partial<Settings>): void;
-  /** The ACTIVE driver's run token; adapter/rim waits link to it so stop() interrupts. */
-  driverSignal(): AbortSignal | undefined;
-  onStatus(status: EngineStatus): void;
-  onPruneStatus(status: PruneStatus): void;
-  onHalt(reason: string): void;
-}
+import type { BuiltGraph, GraphBuildDeps } from './graph-types';
 
 export function buildGraph(
   ownPk: string,
@@ -158,6 +85,9 @@ export function buildGraph(
   // both anchor on our own pk.
   store.setOwnPk(ownPk);
   const clock = new SystemClock();
+  const frontier = new SourceFrontier({ store, clock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
+  const reentry = new ReentrySupervisor({ store, clock });
+  const readBudget = new ReadBudget({ store, clock });
   // The shared wait owner: growth and prune wait through ONE DelayManager
   // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
   // from a single registry.
@@ -178,12 +108,18 @@ export function buildGraph(
     observer: d.cursorObserver,
   });
 
+  const policy = createMutationPolicy({ store, ownPk, ownUsername, clock, rate, reentry, readBudget,
+    profiles: () => profiles, followback: () => followback, settings: d.resolveSettings,
+    signal: driverSignal, validateIdentity: d.validateIdentity, onProgress: d.onProgress });
+
   // The adapter owns the single Actor + Sentinel instances the whole rim shares;
   // the Reader is pure and held directly.
   const adapter = new InstagramAdapter(d.tab, {
     interactor,
     abortSignal: driverSignal,
     reporter: d.reporter,
+    beforeMutation: policy.beforeMutation,
+    prepareProfile: policy.prepareProfile,
   });
   // Log ONCE, at build, which Instagram surface capture this graph runs against.
   logger.info('foundation: instagram adapter surface', {
@@ -218,6 +154,8 @@ export function buildGraph(
   });
 
   const pageReader = new FollowersPageReader({
+    onProgress: d.onProgress,
+    readBudget,
     tab: d.tab,
     reader,
     actor,
@@ -228,6 +166,8 @@ export function buildGraph(
   // full page size (~4× the dialog's scroll batches). The sources fall back
   // to the dialog-scroll pageReader when the direct walk cannot fetch.
   const listWalker = new ListPageWalker({
+    onProgress: d.onProgress,
+    readBudget,
     tab: d.tab,
     reader,
     abortSignal: driverSignal,
@@ -238,6 +178,8 @@ export function buildGraph(
   // demand-bounded via the walker); the dialog-scroll pageReader is its
   // fallback, and the profile visitor serves the one-off seed pk resolution.
   const acquisition = new AdapterBackedAcquisition({
+    onProgress: d.onProgress,
+    readBudget,
     pageReader,
     store,
     sentinel,
@@ -246,6 +188,7 @@ export function buildGraph(
     ownPk,
   });
   const churnActions = new AdapterBackedChurnActions({
+    validateIdentity: d.validateIdentity,
     adapter,
     store,
     ownPk,
@@ -273,6 +216,8 @@ export function buildGraph(
   // internally. Constructed before the chain pieces because the fallback
   // target source also enriches a bounded sample before ranking.
   const enricher = new AdapterBackedProfileEnricher({
+    onProgress: d.onProgress,
+    readBudget,
     visitor: profiles,
     store,
     sentinel,
@@ -288,9 +233,16 @@ export function buildGraph(
     store,
     ownPk,
     enricher,
+    clock,
+    minPoolSize: settings.minPoolSize,
   });
 
   const churn = new ChurnScheduler({
+    pickQueued: (records) => frontier.pickQueued(records),
+    validateFollow: (record) => {
+      const account = store.getAccount(record.accountPk);
+      return account !== null && scoreCandidate(account, toScorerConfig(d.resolveSettings())).eligible;
+    },
     store,
     clock,
     rate,
@@ -298,12 +250,8 @@ export function buildGraph(
     ownPk,
     cfg: toChurnConfig(settings),
   });
-  // Reload catch-up: apply the timer-driven transitions (follow-back window /
-  // hold expiries) that elapsed while the app was closed, BEFORE the first
-  // status is projected. Store-only and idempotent — without this, records
-  // whose windows lapsed offline sit in their old stages (and the queues UI
-  // under-reports "due") until the engine's first step runs.
-  churn.advanceTimers(clock.now());
+  // Expiry is eligibility for reconciliation, not evidence of a missing follow-back.
+  reentry.prepare(clock.now());
   const scanner = new Scanner({
     store,
     scorerCfg: toScorerConfig(settings),
@@ -313,6 +261,10 @@ export function buildGraph(
   // one observed news-inbox response) — cheap enough for the hourly default
   // cadence. Sentinel-gated; a stop() interrupts the response wait.
   const followNotifications = new AdapterBackedFollowNotifications({
+    readBudget,
+    ownPk,
+    canAccept: policy.canAccept,
+    onAccepted: policy.onAccepted,
     tab: d.tab,
     actor: adapter.actor,
     reader,
@@ -322,18 +274,32 @@ export function buildGraph(
     reporter: d.reporter,
   });
   const followback = new FollowbackWatcher({
+    signal: driverSignal,
+    relationships: managedRelationships({ clock, readBudget, profiles, signal: driverSignal,
+      validateIdentity: d.validateIdentity, onProgress: d.onProgress }),
     store,
     clock,
     ownPk,
     notifications: followNotifications,
+    followers: liveOwnFollowers && ownUsername ? {
+      fetchAllPks: async () => {
+        const refreshed = await policy.refreshOwnStats();
+        if (!refreshed.ok) return { pks: [], complete: false, reason: refreshed.reason, retryAt: refreshed.retryAt };
+        return liveOwnFollowers.fetchAllPks();
+      },
+    } : undefined,
     cfg: toFollowbackConfig(settings),
   });
 
   // Live discovery over the already-harvested graph: propose the biggest
   // enriched PUBLIC hubs inside the exhausted target's audience, projected at
   // that target's realized follow-back rate — zero extra requests.
-  const discovery: TargetDiscovery = new StoreBackedTargetDiscovery({ store, ownPk });
+  const discovery: TargetDiscovery = new StoreBackedTargetDiscovery({
+    store, ownPk, clock,
+    outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000,
+  });
   const chain = new ChainController({
+    frontier,
     store,
     ownPk,
     discovery,
@@ -392,6 +358,7 @@ export function buildGraph(
   // (only ever CALLED at run time, long after both are constructed).
   let pruneEngineRef: PruneEngine | undefined;
   const unfollowFeed: EngineUnfollowFeed = {
+    lastActionOutcome: () => pruneEngineRef?.lastActionOutcome() ?? null,
     nextCandidate: (now) => pruneEngineRef?.nextCandidate(now) ?? null,
     executeUnfollow: (cand, now) => (pruneEngineRef as PruneEngine).executeUnfollow(cand, now),
     atDailyCap: (now) => pruneEngineRef?.atDailyCap(now) ?? true,
@@ -402,6 +369,11 @@ export function buildGraph(
   const installEntropy = store.installEntropy();
 
   const engine = createEngine({
+    frontier,
+    reentry,
+    validateIdentity: d.validateIdentity,
+    onProgress: d.onProgress,
+    reconcileEffects: () => reconcileEffects({ store, profiles, ownPk, clock, readBudget, signal: driverSignal }),
     store,
     clock,
     rate,
@@ -429,7 +401,8 @@ export function buildGraph(
           ? d.tab.checkHealth()
           : Promise.resolve({ healthy: true }),
       recoverTab: (): Promise<void> =>
-        typeof d.tab.recoverTab === 'function' ? d.tab.recoverTab() : Promise.resolve(),
+        d.recoverTab ? d.recoverTab('engine-diagnosis')
+          : typeof d.tab.recoverTab === 'function' ? d.tab.recoverTab() : Promise.resolve(),
     },
     onStatus: (s) => d.onStatus(s),
     onHalt: (reason) => d.onHalt(reason),
@@ -461,7 +434,12 @@ export function buildGraph(
     : unresolvedUsernameSource('prune scan');
   const pruneOwnFollowers: PruneOwnFollowers =
     liveOwnFollowers ?? unresolvedUsernameSource('prune followers scan');
+  const noteMutation = (): void => {
+    reentry.noteAction(clock.now());
+    d.onProgress?.('mutation-verified');
+  };
   const pruneEngine = createPruneEngine({
+    onMutation: noteMutation,
     store,
     clock,
     ownPk,
@@ -493,7 +471,8 @@ export function buildGraph(
     // the profile endpoint).
     refreshOwnStats: ownUsername
       ? async (): Promise<void> => {
-          await enricher.enrich([ownUsername]);
+          const refreshed = await policy.refreshOwnStats();
+          if (!refreshed.ok) throw new Error(`Fresh own profile required: ${refreshed.reason}`);
         }
       : undefined,
   });
@@ -501,6 +480,9 @@ export function buildGraph(
   pruneEngineRef = pruneEngine;
 
   return {
+    prepareMutation: policy.prepareMutation,
+    resolveIdentity: policy.resolveIdentity,
+    noteMutation,
     store,
     engine,
     acquisition,

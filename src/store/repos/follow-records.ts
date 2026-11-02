@@ -32,10 +32,12 @@ export class FollowRecordRepo {
         .prepare(
           `INSERT INTO follow_records (
              account_pk, target_pk, state, followed_at, followed_back_at,
-             hold_until, unfollow_due_at, retry_count, score, abandoned_at, healed_at
+             hold_until, unfollow_due_at, retry_count, score, abandoned_at, healed_at,
+             reconciled_at, followback_observed_at, unfollow_reason, queued_at, decision_version
            ) VALUES (
              @account_pk, @target_pk, @state, @followed_at, @followed_back_at,
-             @hold_until, @unfollow_due_at, @retry_count, @score, @abandoned_at, @healed_at
+             @hold_until, @unfollow_due_at, @retry_count, @score, @abandoned_at, @healed_at,
+             @reconciled_at, @followback_observed_at, @unfollow_reason, @queued_at, @decision_version
            )
            ON CONFLICT(account_pk) DO UPDATE SET
              target_pk = excluded.target_pk,
@@ -51,7 +53,12 @@ export class FollowRecordRepo {
              -- (by the healer) and never cleared — the never-heal-twice marker.
              score = COALESCE(excluded.score, follow_records.score),
              abandoned_at = COALESCE(excluded.abandoned_at, follow_records.abandoned_at),
-             healed_at = COALESCE(excluded.healed_at, follow_records.healed_at)`,
+             healed_at = COALESCE(excluded.healed_at, follow_records.healed_at),
+             reconciled_at = excluded.reconciled_at,
+             followback_observed_at = excluded.followback_observed_at,
+             unfollow_reason = excluded.unfollow_reason,
+             queued_at = COALESCE(excluded.queued_at, follow_records.queued_at),
+             decision_version = excluded.decision_version`,
         )
         .run({
           account_pk: r.accountPk,
@@ -65,6 +72,11 @@ export class FollowRecordRepo {
           score: orNull(r.score),
           abandoned_at: orNull(r.abandonedAt),
           healed_at: orNull(r.healedAt),
+          reconciled_at: orNull(r.reconciledAt),
+          followback_observed_at: orNull(r.followbackObservedAt),
+          unfollow_reason: orNull(r.unfollowReason),
+          queued_at: orNull(r.queuedAt),
+          decision_version: orNull(r.decisionVersion),
         });
     });
     this.changed();
@@ -159,7 +171,7 @@ export class FollowRecordRepo {
     const inWindow = `fr.state = 'abandoned'
       AND fr.healed_at IS NULL
       AND ${abandonedAtSignal} BETWEEN @start AND @end`;
-    const targetWorkable = `(fr.target_pk IS NULL OR EXISTS (
+    const targetWorkable = `(fr.followed_at IS NOT NULL OR fr.target_pk IS NULL OR EXISTS (
       SELECT 1 FROM targets t
       WHERE t.account_pk = fr.target_pk AND t.status = 'active'))`;
 

@@ -8,6 +8,7 @@ import {
   parkHeadline,
   recoveryHoldCaption,
 } from '@/renderer/cards/overview/live-status-copy';
+import { progressCaption, runtimeHold } from '@/renderer/cards/overview/runtime-copy';
 import { useCountdown, useHoldCountdown } from '@/renderer/hooks/useCountdown';
 import { useNow } from '@/renderer/hooks/useNow';
 import { useQueue } from '@/renderer/hooks/useQueue';
@@ -44,7 +45,7 @@ export function LiveStatusCard({ status, prune, settings }: LiveStatusCardProps)
 
   // ONE 1 Hz clock for the whole card — countdown, session uptime, and the
   // last-action age all read the same tick (holds when paused/idle).
-  const now = useNow(1000, running || pruneRunning);
+  const now = useNow(1000, running || pruneRunning || status?.runtime?.desired === 'running');
   const cd = useCountdown(
     pruneDrives
       ? { running: pruneRunning, nextActionAt: prune?.nextActionAt ?? null, lastActionAt: null }
@@ -102,6 +103,8 @@ export function LiveStatusCard({ status, prune, settings }: LiveStatusCardProps)
   const lastActionAt = status?.lastActionAt ?? null;
   const lastActText = lastActionAt != null ? `${durationHm(Math.max(0, now - lastActionAt))} ago` : '—';
   const lastSub = lastStepSummary(lastStep, lastSentinel);
+  const deviceHold = runtimeHold(status, pruneDrives);
+  const progress = progressCaption(status, now);
 
   return (
     <Card raised>
@@ -115,11 +118,18 @@ export function LiveStatusCard({ status, prune, settings }: LiveStatusCardProps)
             and a live countdown chip fed by the engine's real park deadline. */}
         <div class="hero-next">
           <RadialRing
-            frac={offlineHold ? 0 : parkHold ? hold.frac : cd.frac}
-            glyph={offlineHold ? 'wifi' : parkHold ? parkGlyph(parkHold.reason) : 'bolt'}
+            frac={deviceHold || offlineHold ? 0 : parkHold ? hold.frac : cd.frac}
+            glyph={deviceHold ? 'hourglass-half' : offlineHold ? 'wifi' : parkHold ? parkGlyph(parkHold.reason) : 'bolt'}
           />
           <div class="hn-main">
-            {offlineHold ? (
+            {deviceHold ? (
+              <Fragment>
+                <div class="hn-count">{deviceHold.headline}</div>
+                <div class={deviceHold.alert ? 'hn-cap alarm' : 'hn-cap'} role={deviceHold.alert ? 'alert' : undefined}>
+                  {deviceHold.caption}
+                </div>
+              </Fragment>
+            ) : offlineHold ? (
               <Fragment>
                 <div class="hn-count">Offline</div>
                 <div class="hn-cap">waiting for connection</div>
@@ -140,19 +150,26 @@ export function LiveStatusCard({ status, prune, settings }: LiveStatusCardProps)
               </Fragment>
             )}
           </div>
-          {offlineHold ? (
+          {deviceHold ? null : offlineHold ? (
             <span class="rchip">Reconnecting…</span>
           ) : parkHold ? (
             <span class="rchip num">{holdChipText(parkHold.until, now, hold.remainingSec)}</span>
           ) : null}
         </div>
+        {progress ? <div class="hint">{progress}</div> : null}
+        {status?.reentry?.phase === 'probation' ? (
+          <div class="hint">Returning gradually · {status.reentry.probationActions} actions completed since the session check.</div>
+        ) : null}
+        {(status?.health?.consecutiveErrors ?? 0) > 0 ? (
+          <div class="hint alarm">{status?.health?.consecutiveErrors} consecutive step failures · {status?.health?.lastError?.slice(0, 180)}</div>
+        ) : null}
         {offline && !offlineHold ? <div class="hint">Offline — no internet connection detected.</div> : null}
         {recovery?.phase === 'probing' && running ? (
           <div class="hint">
             Testing the waters — attempt {recovery.attempt} of {recovery.maxAttempts}.
           </div>
         ) : null}
-        {status?.state === 'halted' && status.haltReason != null ? (
+        {!deviceHold?.alert && status?.state === 'halted' && status.haltReason != null ? (
           <div class="hint alarm" role="alert">
             {haltText(status.haltReason)}
           </div>

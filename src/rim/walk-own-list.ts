@@ -73,7 +73,8 @@ export async function walkOwnList(args: WalkOwnListArgs): Promise<PruneScanFetch
     // a failure to FETCH falls back; a shape mismatch would drift identically
     // through the dialog path.
     if (walk.reason !== 'fetch-failed') {
-      return { pks: walk.pks, complete: walk.complete, reason: walk.reason };
+      return { pks: walk.pks, complete: walk.complete, reason: walk.reason,
+        ...(walk.retryAt === undefined ? {} : { retryAt: walk.retryAt }) };
     }
     logger.warn(`${label}: direct page walk failed, falling back to dialog`, {
       pages: walk.pages,
@@ -102,5 +103,6 @@ export async function walkOwnList(args: WalkOwnListArgs): Promise<PruneScanFetch
     pks: result.observedPks,
     complete: result.endReason === 'no-more-pages',
     reason: result.endReason,
+    ...(result.retryAt === undefined ? {} : { retryAt: result.retryAt }),
   };
 }

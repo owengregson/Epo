@@ -21,10 +21,9 @@ import {
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
 import type { Reader } from '@/adapter/reader';
-import type { Sentinel } from '@/adapter/sentinel';
 import { type Clock, SystemClock } from '@/governors/clock';
+import type { ReadBudget } from '@/governors/read-budget';
 import type { RimTab } from '@/rim/types';
-import type { Observation } from '@/store/types';
 import { RIM } from '@/timing/config';
 import { noisify } from '@/timing/noise';
 import { sample, sleep, uniform } from '@/timing/primitives';
@@ -40,6 +39,8 @@ export interface FollowersActor {
 
 /** Construction dependencies. `clock`/`scrollWaitMs` are optional (tests shrink them). */
 export interface FollowersPageReaderDeps {
+  onProgress?: (phase: string) => void;
+  readBudget?: ReadBudget;
   tab: RimTab;
   reader: Reader;
   actor: FollowersActor;
@@ -60,92 +61,13 @@ export interface FollowersPageReaderDeps {
   reporter?: ActivityReporter;
 }
 
-/** One scrape run's parameters. */
-export interface CollectArgs {
-  targetUsername: string;
-  /**
-   * Which profile-stat dialog to open and which paginated endpoint to parse:
-   * the target's FOLLOWERS (default) or its FOLLOWING list. Both dialogs share
-   * the same modal, scroll container, and page body shape — only the stat
-   * clicked and the endpoint URL differ (Phase 5 auto-prune reads `following`).
-   */
-  dialog?: 'followers' | 'following';
-  /**
-   * Called for every parsed user (followers-list) and for the target's profile
-   * (profile-info enrichment). The caller decides store writes / edges; the
-   * cursor of the page the observation came from is passed for convenience
-   * (`null` for profile-info).
-   *
-   * CONTRACT (docs/PRINCIPLES.md §1 — facts stream): implementations MUST
-   * write each observation through to the store as it arrives, never collect
-   * it for an end-of-walk flush — a truncated/aborted collect must keep every
-   * row it saw. The returned `observedPks` array exists for completeness
-   * verdicts and counts, not as the carrier of facts.
-   */
-  onObservation: (obs: Observation, cursor: string | null) => void;
-  /**
-   * Invoked ONCE with the target's pk the moment it is derived from a list
-   * page's URL — which happens BEFORE that page's rows are parsed. Lets a
-   * caller write per-row relationship edges as rows arrive (§1) instead of
-   * back-filling them once the scrape ends.
-   */
-  onTargetPk?: (pk: string) => void;
-  /**
-   * Live-progress callback (optional, additive): invoked with the CUMULATIVE
-   * observed-pk count whenever a parsed page GROWS the observed set (per page,
-   * not per user — a page is the natural batch). Lets callers surface counts
-   * mid-scrape instead of only when `collect` resolves.
-   */
-  onProgress?: (observedCount: number) => void;
-  sentinel: Sentinel;
-  /** Hard cap on scroll rounds so a scrape is always bounded. */
-  maxRounds: number;
-  /** Stop after this many consecutive rounds that yield no new pks. */
-  noNewStop: number;
-  /**
-   * Jittered pacing for the prune SCAN (Phase 5): when BOTH bounds are set, every
-   * wait — the initial post-open wait and each inter-round wait — is a FRESH
-   * uniform draw in `[scrollMinMs, scrollMaxMs]` ms (clamped so max ≥ min), so no
-   * two scroll rounds fire on a fixed cadence. When either is unset the fixed
-   * `scrollWaitMs` applies (the growth scrape path, unchanged).
-   */
-  scrollMinMs?: number;
-  scrollMaxMs?: number;
-  /**
-   * Cooperative abort: checked before the initial post-open wait and at the TOP
-   * of each scroll round; a `true` breaks the loop. Pages already captured are
-   * still drained and returned (a stop never loses parsed data).
-   */
-  shouldStop?: () => boolean;
-  /**
-   * When true, a dialog that fails to OPEN rethrows (after teardown) instead of
-   * resolving with an empty result. The prune scan sets this: an unopened list
-   * must read as "scan failed", never as "the list is empty" — an empty
-   * followers read would otherwise mark every followed account a candidate.
-   * Growth callers keep the default (false): a target whose dialog won't open
-   * degrades to a no-yield scrape and the chain moves on.
-   */
-  throwOnOpenFailure?: boolean;
-}
+export type { CollectArgs, CollectResult } from './followers-page-types';
 
-/** What a scrape yields back to its caller. */
-export interface CollectResult {
-  observedPks: string[];
-  targetPk: string | null;
-  cursor: string | null;
-  /**
-   * Why the scroll loop ended ('no-more-pages', 'stagnant', 'max-rounds',
-   * 'stop-requested', 'sentinel:*', 'blocked-response', 'shape-mismatch',
-   * 'open-failed'). 'shape-mismatch' means a captured list page no longer
-   * parses (IG shape drift) — it overrides the natural end reasons so a
-   * drifted page can never read as a drained list. Callers that need a FULL
-   * census (prune) must treat anything but a natural drain as an incomplete
-   * list, never as "this is everything".
-   */
-  endReason: string;
-}
+import type { CollectArgs, CollectResult } from './followers-page-types';
 
 export class FollowersPageReader {
+  private readonly onProgress?: (phase: string) => void;
+  private readonly readBudget?: ReadBudget;
   private readonly tab: RimTab;
   private readonly reader: Reader;
   private readonly actor: FollowersActor;
@@ -157,6 +79,8 @@ export class FollowersPageReader {
   private readonly reporter: ActivityReporter;
 
   constructor(deps: FollowersPageReaderDeps) {
+    this.onProgress = deps.onProgress;
+    this.readBudget = deps.readBudget;
     this.tab = deps.tab;
     this.reader = deps.reader;
     this.actor = deps.actor;
@@ -170,6 +94,12 @@ export class FollowersPageReader {
 
   async collect(args: CollectArgs): Promise<CollectResult> {
     const { targetUsername, onObservation, sentinel, maxRounds, noNewStop } = args;
+    const purpose = args.readPurpose ?? 'reconciliation';
+    const readyAt = Math.max(this.readBudget?.availability('profile', purpose).resumeAt ?? 0,
+      this.readBudget?.availability('list-page', purpose).resumeAt ?? 0);
+    if (readyAt > 0) return { observedPks: [], targetPk: null, cursor: null, endReason: 'read-budget', retryAt: readyAt };
+    this.readBudget?.consume('profile', purpose);
+    this.readBudget?.consume('list-page', purpose);
     const dialog = args.dialog ?? 'followers';
     // The caller's cooperative stop, folded with the ACTIVE driver's abort
     // signal — either ends the scrape at the next check.
@@ -210,6 +140,13 @@ export class FollowersPageReader {
     const page = { hasMore: true };
     // Append-only so R5's drain can detect growth by length; never spliced.
     const pending: Promise<void>[] = [];
+    let validatedPages = 0;
+    let reportedPages = 0;
+    const noteReadProgress = (): void => {
+      if (validatedPages <= reportedPages) return;
+      reportedPages = validatedPages;
+      this.onProgress?.('dialog-page-ingested');
+    };
 
     // A blocked/rate-limited page (429, or an HTML wall on an API URL) means the
     // scrape should stop rather than parse blind; the scroll loop checks this.
@@ -277,6 +214,7 @@ export class FollowersPageReader {
               observed.add(obs.accountPk);
               onObservation(obs, parsed.cursor);
             }
+            validatedPages += 1;
             // Live progress: report the cumulative count once per page that
             // actually grew the set (a stagnant/duplicate page stays silent).
             if (observed.size > sizeBefore) {
@@ -297,6 +235,7 @@ export class FollowersPageReader {
     // diagnosable from a normal (info-level) log instead of silent.
     let endReason = 'max-rounds';
     let roundsRun = 0;
+    let retryAt: number | undefined;
     // An open-dialog failure captured for the (opt-in) rethrow AFTER teardown:
     // the interceptor must unsubscribe and the pending parses drain first.
     let openFailure: unknown = null;
@@ -319,6 +258,7 @@ export class FollowersPageReader {
       // never need a scroll at all. Skipped when a stop is already requested (the
       // loop's own top-of-round check then breaks immediately).
       if (!shouldStop()) await this.sleepFn(nextWaitMs(), this.abortSignal?.());
+      noteReadProgress();
 
       let stagnantRounds = 0;
       for (let round = 0; round < maxRounds; round++) {
@@ -353,8 +293,15 @@ export class FollowersPageReader {
           break;
         }
         const before = observed.size;
+        const permit = this.readBudget?.consume('list-page', purpose);
+        if (permit !== undefined && !permit.allowed) {
+          endReason = 'read-budget';
+          retryAt = permit.resumeAt ?? undefined;
+          break;
+        }
         await this.actor.scrollFollowers();
         await this.sleepFn(nextWaitMs(), this.abortSignal?.());
+        noteReadProgress();
 
         if (observed.size === before) {
           stagnantRounds += 1;
@@ -413,6 +360,7 @@ export class FollowersPageReader {
     // list — rethrown only after the interceptor is torn down and drained.
     if (openFailure !== null && args.throwOnOpenFailure === true) throw openFailure;
 
-    return { observedPks: [...observed], targetPk, cursor, endReason };
+    return { observedPks: [...observed], targetPk, cursor, endReason,
+      ...(retryAt === undefined ? {} : { retryAt }) };
   }
 }

@@ -23,6 +23,10 @@ export const META_KEYS = {
   followersCensusAt: 'followers_census_at',
   /** Last COMPLETE prune census; JSON `PruneCensusRecord`. */
   pruneLastCensus: 'prune_last_census',
+  lifecycleState: 'lifecycle_state',
+  sourceFrontierState: 'source_frontier_state',
+  lifecycleHealthState: 'lifecycle_health_state',
+  readBudgetState: 'read_budget_state',
 } as const;
 
 export type MetaKey = keyof typeof META_KEYS;

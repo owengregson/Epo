@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { arch, release } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { app, BaseWindow, powerMonitor, powerSaveBlocker, session, WebContentsView } from 'electron';
+import { app, BaseWindow, powerMonitor, powerSaveBlocker, screen, session, WebContentsView } from 'electron';
 import { IG_PARTITION, InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { applyBackgroundSurvivalSwitches } from '@/main/bootstrap';
@@ -143,6 +143,30 @@ app.whenReady().then(async () => {
   await coveredGuard.dispose();
   await tab.evaluate("document.querySelector('#probe-cover').remove()");
   console.log(JSON.stringify({ clickGuards }));
+  // Liveness alone missed the global frame-limit regression: input survived,
+  // but the dashboard could render thousands of frames/s and starve the GPU.
+  // Exercise a changing DOM surface as well as the background tab's rAF loop.
+  const dashboardFrames = await dashboard.webContents.executeJavaScript(`new Promise(resolve => {
+    let frames = 0;
+    const start = performance.now();
+    const tick = now => {
+      frames++;
+      document.body.style.opacity = String(0.9 + 0.1 * Math.sin(now / 1000));
+      if (now - start < 1500) requestAnimationFrame(tick);
+      else {
+        document.body.style.opacity = '';
+        resolve({ frames, elapsedMs: now - start, fps: frames * 1000 / (now - start) });
+      }
+    };
+    requestAnimationFrame(tick);
+  })`) as { frames: number; elapsedMs: number; fps: number };
+  const refreshHz = screen.getDisplayMatching(win.getBounds()).displayFrequency;
+  const maximumFps = (refreshHz > 0 ? Math.max(60, refreshHz) : 240) * 1.25;
+  const dashboardPacing = {
+    ...dashboardFrames, refreshHz, maximumFps,
+    passed: dashboardFrames.fps >= 10 && dashboardFrames.fps <= maximumFps,
+  };
+  console.log(JSON.stringify({ dashboardPacing }));
   const scenario = async (name: string, change: () => void | Promise<void>, duration = 1800): Promise<void> => {
     if (selected.size > 0 && !selected.has(name)) return;
     await change();
@@ -235,7 +259,7 @@ app.whenReady().then(async () => {
   await tab.recoverTab();
   await scenario('hidden-after-recovery', () => {});
   if (soakMs > 0) await scenario('hidden-long-soak', () => {}, soakMs);
-  const passed = results.length > 0 && results.every((row) => row.passed === true) &&
+  const passed = dashboardPacing.passed && results.length > 0 && results.every((row) => row.passed === true) &&
     Object.values(clickGuards).every(Boolean) && unhealthy.length === 0;
   const report = {
     measuredAt: new Date().toISOString(), passed,
@@ -245,7 +269,7 @@ app.whenReady().then(async () => {
     isolation: { temporaryProfile: true, network: 'loopback only', productionTabAndDriver: true },
     configuration: { only, soakMs,
       frameRateLimitDisabled: app.commandLine.hasSwitch('disable-frame-rate-limit') },
-    identity, clickGuards, results, unhealthy,
+    identity, clickGuards, dashboardPacing, results, unhealthy,
     limitations: ['No forced OS sleep, lid close, display-off, network outage, Windows or Linux measurement.',
       'Local fixture verifies page progress and input transport; it does not validate Instagram behavior or detection.'],
   };

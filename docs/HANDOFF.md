@@ -1,5 +1,7 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-10-21 (autonomous lifecycle architecture) —** Durable run intent and bounded device/process recovery; account-isolated graphs; journaled growth/prune/manual/request mutations; shared admission and read budgets; resumable source frontier; evidence-based return reconciliation and probation. See [ADR 0210](adr/0210-runtime-intent-and-device-recovery.md), [ADR 0211](adr/0211-resumable-source-frontier-and-read-budgets.md), [ADR 0212](adr/0212-journaled-mutations-and-return-reconciliation.md), and the [validation record](qa/lifecycle-2026-10-21.md). This supersedes the old deferred discovery/cursor/manual-identity notes below. Existing user changes and the verified rendering-lag fix are preserved. The running production account was not restarted or exercised by the lifecycle implementation.
+
 > **2026-10-09 (prune unfollow refused: the unfollow menu animates) —** A live
 > prune stopped on its first candidate: `adapter stale … control moved, disabled
 > or covered` with the cursor resting on the menu's Unfollow row. Measured

@@ -61,12 +61,14 @@ test('a pending follow seen in the notifications feed transitions to followed_ba
   expect(detected).toEqual(['A']);
   const a = store.getFollowRecord('A')!;
   expect(a.state).toBe('followed_back');
-  expect(a.followedBackAt).toBe(NOW);
+  expect(a.followedBackAt).toBeUndefined();
+  expect(a.followbackObservedAt).toBe(NOW);
   expect(a.holdUntil).toBe(NOW + FOLLOWBACK_DEFAULTS.holdAfterFollowbackMs);
 
-  // Their follow-of-us edge is recorded active (X's too — free data).
-  expect(store.getEdge('A', OWN, 'follows')!.status).toBe('active');
-  expect(store.getEdge('X', OWN, 'follows')!.status).toBe('active');
+  // Undated history does not fabricate a current membership observation.
+  expect(store.getEdge('A', OWN, 'follows')).toBeNull();
+  expect(store.getEdge('X', OWN, 'follows')).toBeNull();
+  expect(a.reconciledAt).toBeUndefined();
 
   // B remains pending.
   expect(store.getFollowRecord('B')!.state).toBe('pending_followback');
@@ -119,17 +121,18 @@ test('an event that PREDATES our follow anchors the hold at our follow, never be
   await watcher(src).check();
 
   const a = store.getFollowRecord('A')!;
-  expect(a.followedBackAt).toBe(followedAt);
+  expect(a.followedBackAt).toBe(eventAt);
   expect(a.holdUntil).toBe(followedAt + FOLLOWBACK_DEFAULTS.holdAfterFollowbackMs);
 });
 
-test('a FUTURE/garbage feed timestamp is clamped to now', async () => {
+test('a FUTURE/garbage feed timestamp has unknown event time and observed time now', async () => {
   store.upsertFollowRecord(rec({ accountPk: 'A' }));
 
   const src = new FakeNotifications({ ok: true, events: [follow('A', NOW + 999_999)] });
   await watcher(src).check();
 
-  expect(store.getFollowRecord('A')!.followedBackAt).toBe(NOW);
+  expect(store.getFollowRecord('A')!.followedBackAt).toBeUndefined();
+  expect(store.getFollowRecord('A')!.followbackObservedAt).toBe(NOW);
 });
 
 test('a failed notifications read changes NOTHING (pending stays pending)', async () => {
@@ -143,7 +146,7 @@ test('a failed notifications read changes NOTHING (pending stays pending)', asyn
   expect(store.getEdge('A', OWN, 'follows')).toBeNull();
 });
 
-test('a fetchRecent rejection propagates (no silent catch) and leaves records untouched', async () => {
+test('a fetchRecent rejection is an explicit failed reconciliation and leaves records untouched', async () => {
   store.upsertFollowRecord(rec({ accountPk: 'A' }));
 
   const boom: FollowbackNotifications = {
@@ -151,7 +154,7 @@ test('a fetchRecent rejection propagates (no silent catch) and leaves records un
       throw new Error('tab gone');
     },
   };
-  await expect(watcher(boom).check()).rejects.toThrow('tab gone');
+  await expect(watcher(boom).check()).resolves.toMatchObject({ outcome: 'failed', reconciledAt: null });
   expect(store.getFollowRecord('A')!.state).toBe('pending_followback');
 });
 

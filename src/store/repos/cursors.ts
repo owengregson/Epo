@@ -34,4 +34,14 @@ export class CursorRepo {
       .get(targetPk) as { cursor: string | null } | undefined;
     return row ? row.cursor : null;
   }
+
+  state(targetPk: string): { cursor: string | null; updatedAt: number } | null {
+    const row = this.db.prepare('SELECT cursor, updated_at FROM scrape_cursors WHERE target_pk = ?')
+      .get(targetPk) as { cursor: string | null; updated_at: number } | undefined;
+    return row ? { cursor: row.cursor, updatedAt: row.updated_at } : null;
+  }
+
+  clear(targetPk: string): void {
+    this.db.prepare('DELETE FROM scrape_cursors WHERE target_pk = ?').run(targetPk);
+  }
 }

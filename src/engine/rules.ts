@@ -24,6 +24,7 @@ import { pickAction } from './decisions';
 import type { EngineWaitKey } from './engine-waits';
 import type { FactKey, Facts, FeedCandidate, Mode, RunCtx } from './facts';
 import type { HaltReason } from './halt-reason';
+import { reconcileRule, rotateRule, targetRule } from './lifecycle-rules';
 import { pacingVerdict } from './pacers';
 import type { CurrentTarget, StepResult } from './ports';
 import type { FailureKind } from './recovery';
@@ -82,6 +83,8 @@ export type RuleId =
   | 'pacing'
   | 'target'
   | 'followback'
+  | 'reconcile'
+  | 'rotate'
   | 'refill'
   | 'action'
   | 'chain'
@@ -170,18 +173,6 @@ const pacingRule = defineRule({
   },
 });
 
-/**
- * Adopting an existing active target is free (the fact source did it);
- * bootstrapping the seed costs the step — it IS an acquisition.
- */
-const targetRule = defineRule({
-  id: 'target',
-  modes: ['growth'],
-  needs: ['target'],
-  decide: (f) =>
-    f.target.current === null ? { do: 'run', effect: { id: 'bootstrap-seed-target' } } : null,
-});
-
 /** The follow-back sweep on its slow, persisted cadence (IG traffic → paced). */
 const followbackRule = defineRule({
   id: 'followback',
@@ -200,12 +191,14 @@ const followbackRule = defineRule({
 const refillRule = defineRule({
   id: 'refill',
   modes: ['growth'],
-  needs: ['target', 'queue'],
+  needs: ['target', 'queue', 'action', 'clock'],
   decide: (f) => {
     const target = f.target.current;
     // Defensive: the target rule bootstraps rather than falling through, so a
     // null here would mean the table was reordered wrong.
-    if (target === null) return { do: 'halt', reason: { kind: 'no-current-target' } };
+    if (target === null) return null;
+    if ((f.queue.refillAvailableAt ?? 0) > f.clock.now) return null;
+    if (f.queue.rotationReason || (f.queue.yieldToAction && (f.action.due !== null || f.action.pruneCandidate !== null))) return null;
     return f.queue.queuedForTarget < f.queue.lowWaterCandidates && !f.queue.targetExhausted
       ? { do: 'run', effect: { id: 'refill-pool', target } }
       : null;
@@ -237,7 +230,7 @@ const chainRule = defineRule({
   needs: ['target', 'queue'],
   decide: (f) => {
     const target = f.target.current;
-    if (target === null) return { do: 'halt', reason: { kind: 'no-current-target' } };
+    if (target === null) return null;
     return f.queue.queuedForTarget === 0 && f.queue.targetExhausted
       ? { do: 'run', effect: { id: 'advance-chain', target } }
       : null;
@@ -259,9 +252,11 @@ const idleRule = defineRule({
 export const PROGRAM = {
   safety: [abortedRule, sentinelAuthRule, recoveryHoldRule, sentinelBlockedRule],
   growth: [
+    reconcileRule,
     pacingRule,
     targetRule,
     followbackRule,
+    rotateRule,
     refillRule,
     actionRule,
     chainRule,

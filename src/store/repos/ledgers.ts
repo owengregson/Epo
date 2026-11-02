@@ -1,4 +1,5 @@
 import type { SqliteDriver } from '../driver/driver';
+import type { MutationAction } from '../types';
 
 /**
  * The two append-only action ledgers: `action_ledger` (the growth engine's
@@ -20,7 +21,7 @@ export class LedgerRepo {
 
   recordAction(
     accountPk: string,
-    action: 'follow' | 'unfollow',
+    action: MutationAction,
     result: 'ok' | 'fail',
     at: number,
   ): void {

@@ -9,6 +9,7 @@ import type { AcquireEndReason } from '../rim/follower-acquisition';
 import type { AccountState, FollowRecord, FollowState } from '../store/types';
 import { cyclePlan } from '../timing/cycle-plan';
 import { startOfLocalDay } from '../timing/units';
+import { EXPLORATION_POLICY } from './exploration-policy';
 import type { FailureKind } from './recovery';
 
 /** The read-only store slice these decisions consult. */
@@ -26,21 +27,24 @@ export function queuedCountFor(store: DecisionStore, targetPk: string): number {
 /**
  * Up to `cap` usernames from the target's raw pool that still lack counts and
  * are worth an enrichment fetch: not yet `profiled`, username known, and not
- * marked permanently un-enrichable (`enrichFailedAt` — a deleted/suspended
- * account must never head-of-line-block every pass of every cycle).
+ * outside the failed-enrichment cooldown. Changed profiles and old failures
+ * become eligible for a bounded retry after the freshness window.
  */
 export function unenrichedUsernames(
   store: DecisionStore,
   targetPk: string,
   cap: number,
+  now: number = 0,
 ): string[] {
   const usernames: string[] = [];
   for (const pk of store.candidatePksForTarget(targetPk)) {
     if (usernames.length >= cap) break;
     const acc = store.getAccount(pk);
-    if (acc === null || acc.enrichment === 'profiled') continue;
+    if (acc === null) continue;
+    if (acc.enrichment === 'profiled' &&
+      (now === 0 || acc.statsObservedAt === undefined || now - acc.statsObservedAt < EXPLORATION_POLICY.profileFreshMs)) continue;
     if (acc.username === undefined) continue;
-    if (acc.enrichFailedAt !== undefined) continue;
+    if (acc.enrichFailedAt !== undefined && now - acc.enrichFailedAt < EXPLORATION_POLICY.enrichmentRetryMs) continue;
     usernames.push(acc.username);
   }
   return usernames;

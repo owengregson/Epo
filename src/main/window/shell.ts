@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import { BaseWindow, screen, WebContentsView } from 'electron';
 import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
 import { OverlayVeil } from '@/main/overlay/veil-view';
+import { DashboardRecovery } from '@/main/services/dashboard-recovery';
 import {
   loadWindowState,
   MIN_WINDOW,
@@ -55,6 +56,7 @@ export interface AppShell {
 export interface AppShellOptions {
   /** Where the window's persisted geometry file lives. */
   windowStateFile: string;
+  onDashboardBlocked?(reason: string): void;
 }
 
 export function createAppShell(opts: AppShellOptions): AppShell {
@@ -117,12 +119,23 @@ export function createAppShell(opts: AppShellOptions): AppShell {
   // Bottom layer, full window: the page renders the console column PLUS the
   // stage area (the stage bar and, in graph mode, the graph canvas).
   win.contentView.addChildView(dash);
-  void dash.webContents.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  const dashboardFile = path.join(__dirname, '..', 'renderer', 'index.html');
+  const dashboard = new DashboardRecovery({
+    load: () => dash.webContents.loadFile(dashboardFile),
+    available: () => !win.isDestroyed() && !dash.webContents.isDestroyed(),
+    blocked: (reason) => opts.onDashboardBlocked?.(reason),
+  });
+  dash.webContents.on('render-process-gone', (_event, details) => {
+    dashboard.failed(details.reason);
+  });
+  dash.webContents.on('unresponsive', () => dashboard.failed('unresponsive'));
+  win.on('closed', () => dashboard.stop());
+  dashboard.load();
 
   // --- Embedded Instagram tab (right) ---------------------------------------
   const tab = new InstagramTab();
   tab.attach(win);
-  void tab.goto(IG_HOME_URL);
+  void tab.goto(IG_HOME_URL).catch((error: unknown) => logger.warn('shell: initial tab load failed', { error: String(error) }));
 
   // --- Activity veil (stacked above the tab) --------------------------------
   const veil = new OverlayVeil();

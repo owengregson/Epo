@@ -23,6 +23,14 @@ const btn = (id: string): HTMLButtonElement =>
   document.getElementById(id) as HTMLButtonElement;
 
 describe('Transport — enablement follows the unified state', () => {
+  it('can cancel a durable run intent while the stopped loop is recovering', () => {
+    const onCancel = jest.fn();
+    render(<Transport {...props({ state: 'idle', intentActive: true, onCancel })} />);
+    expect(btn('btnStop').disabled).toBe(false);
+    fireEvent.click(btn('btnStop'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it('idle: only Start is live', () => {
     render(<Transport {...props()} />);
     expect(btn('btnStart').disabled).toBe(false);

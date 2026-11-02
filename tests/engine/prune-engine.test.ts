@@ -125,7 +125,7 @@ describe('PruneEngine.scan', () => {
     expect(phases).toContainEqual(['following', { following: 20, followers: 30 }]);
   });
 
-  test('a rejecting own-stats refresh degrades to a bar-less scan, never a failed one', async () => {
+  test('a rejecting own-stats refresh preserves relationship evidence and never starts a census', async () => {
     const h = build({
       following: [OWN_PK, '1'],
       followers: ['9'],
@@ -134,16 +134,12 @@ describe('PruneEngine.scan', () => {
       },
     });
 
-    const result = await h.engine.scan();
-
-    expect(result.following).toBe(2);
-    // Every phase-carrying projection has empty (null-halved) estimates — the
-    // scan ran to completion without them, and never surfaced the rejection.
-    const phased = h.statuses.filter((s) => s.scanPhase !== null);
-    expect(phased.length).toBeGreaterThan(0);
-    for (const s of phased) {
-      expect(s.scanEstimates).toEqual({ following: null, followers: null });
-    }
+    h.store.observeEdge('existing', OWN_PK, 'follows', true, T0 - 1);
+    await expect(h.engine.scan()).rejects.toThrow('tab gone');
+    expect(h.ownFollowing.calls).toBe(0);
+    expect(h.ownFollowers.calls).toBe(0);
+    expect(h.store.getEdge('existing', OWN_PK, 'follows')).toMatchObject({ status: 'active', lastConfirmedAt: T0 - 1 });
+    expect(h.store.getPruneCensus()).toBeNull();
     expect(h.engine.status().state).toBe('idle');
   });
 
@@ -1135,8 +1131,20 @@ describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {
     const c = h.engine.nextCandidate(h.clock.now()) as { pk: string; username: string };
     h.churn.outcomes.set(c.username, { status: 'blocked', cause: 'rate-limited' });
     expect(await h.engine.executeUnfollow(c, h.clock.now())).toBe('blocked');
+    expect(h.engine.lastActionOutcome()).toMatchObject({ status: 'blocked', cause: 'rate-limited' });
     expect(h.engine.nextCandidate(h.clock.now())).toBeNull(); // suspended on the first refusal
     expect(h.store.getPruneScan()?.remaining.map((x) => x.pk)).toContain(c.pk); // not consumed
+  });
+
+  test('an already-absent woven candidate is reconciled without claiming a new mutation', async () => {
+    const h = build({ following: ['a'], followers: [] });
+    await h.engine.scan();
+    const c = h.engine.nextCandidate(h.clock.now()) as { pk: string; username: string };
+    h.churn.outcomes.set(c.username, { status: 'ok', alreadyInState: true });
+    expect(await h.engine.executeUnfollow(c, h.clock.now())).toBe('ok');
+    expect(h.engine.lastActionOutcome()).toMatchObject({ status: 'ok', alreadyInState: true });
+    expect(h.engine.status().unfollowed).toBe(0);
+    expect(h.store.pruneCountSince(0)).toBe(0);
   });
 
   test('consecutive failures suspend the feed (growth is unaffected)', async () => {

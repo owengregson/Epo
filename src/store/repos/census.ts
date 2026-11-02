@@ -50,8 +50,13 @@ export class CensusRepo {
   reconcileOwnFollow(ownPk: string, pk: string, weFollow: boolean, at: number): ReconcileOutcome {
     if (pk === ownPk) return 'noop'; // never reconcile self
 
+    const prior = this.relationships.getEdge(ownPk, pk, 'follows');
+    if (prior !== null && at < prior.lastConfirmedAt) return 'noop';
+
     // Record the observed truth first — the edge is the ground state either way.
     this.relationships.observeEdge(ownPk, pk, 'follows', weFollow, at);
+    // The lifecycle follows the monotonic current projection, not a rejected stale input.
+    weFollow = this.relationships.getEdge(ownPk, pk, 'follows')?.status === 'active';
 
     const rec = this.records.get(pk);
     if (rec === null) return 'edge-only';

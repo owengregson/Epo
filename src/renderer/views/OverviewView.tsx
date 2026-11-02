@@ -36,6 +36,11 @@ export function OverviewView(props: OverviewViewProps): JSX.Element {
     status?.haltReason ?? '',
     status != null && !status.online,
     status?.recovery?.phase ?? '',
+    status?.runtime?.phase ?? '',
+    status?.runtime?.blockedReason ?? '',
+    status?.reentry?.phase ?? '',
+    (status?.health?.consecutiveErrors ?? 0) > 0,
+    status?.runtime?.lastProgressAt != null || status?.health?.lastProgressAt != null,
     prune?.state ?? '',
   ].join('|');
   usePeekFit('view-overview', heroShape);

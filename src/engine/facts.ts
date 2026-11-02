@@ -25,6 +25,7 @@ import type { FollowRecord } from '../store/types';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import type { CurrentTarget } from './ports';
 import type { RecoveryPhase } from './recovery';
+import type { SourceVisitEndReason } from './source-frontier';
 
 /** Which rule subset the conductor is running. Prune is a MODE, not an engine. */
 export type Mode = 'growth' | 'prune-scan' | 'prune-run';
@@ -97,6 +98,9 @@ export interface QueueFacts {
   queuedForTarget: number;
   lowWaterCandidates: number;
   targetExhausted: boolean;
+  yieldToAction?: boolean;
+  rotationReason?: SourceVisitEndReason | null;
+  refillAvailableAt?: number;
 }
 
 /** A cadence that came due (persisted; §3 — evaluated at startup, not one interval later). */
@@ -108,6 +112,7 @@ export interface OverdueCadence {
 /** Due-by-timestamp work. */
 export interface CadenceFacts {
   sweepDue: boolean;
+  reconcile?: boolean;
   /**
    * Cadences whose deadline has passed. SEAM (wave B): fed by `chronos.due(now)`
    * before the first tick, so work that came due while the app was closed runs
