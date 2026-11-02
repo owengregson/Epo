@@ -10,6 +10,10 @@
  * travel precisely so a replacement never inherits the press — refused every
  * rail press, and the notifications drawer never opened.
  *
+ * The unfollow menu has the same effect by a different route: it scales in over
+ * ~100 ms (live 2026-10-09), so a confirm row found mid-animation shrinks under
+ * the travelling cursor.
+ *
  * So: rest the cursor on the control, let the page react, locate it AGAIN, and
  * press what is there now. The guard still protects the short final travel.
  */

@@ -591,20 +591,20 @@ export class Actor {
     };
   }
 
-  /** One unfollow-confirm attempt: locate the control, press its rect. */
+  /**
+   * One unfollow-confirm attempt, settle-then-press: the menu scales in over ~100 ms
+   * (live 2026-10-09), so the press uses the rect located after the hover, never mid-animation.
+   */
   private async confirmUnfollow(): Promise<ConfirmResult> {
-    const res = await this.tab.evaluate<LocateRectResult>(
-      SURFACE.locateConfirmUnfollowScript(),
-    );
-    if (!res?.found || !Actor.rectUsable(res.rect)) return { confirmed: false };
-    if (res.fallback) {
-      // The control was on screen but the role-marked search went blind — the
-      // self-recovery text scan found it. Succeeds now; warn so a persistent
-      // fallback reads as early drift in the primary anchors.
+    const locate = (): Promise<LocateRectResult> =>
+      this.tab.evaluate<LocateRectResult>(SURFACE.locateConfirmUnfollowScript());
+    const res = await locate();
+    if (res?.found && res.fallback) {
+      // The role-marked search went blind and the self-recovery text scan found
+      // the control: warn, so a persistent fallback reads as early drift.
       logger.warn('actor.confirmUnfollow: primary locate missed, recovered via deep text scan');
     }
-    await this.interactor.click(res.rect);
-    return { confirmed: true };
+    return { confirmed: (await this.settleAndPress(res, locate)) !== null };
   }
 
   /** One stat-control click attempt: locate the clickable ancestor, press its rect. */

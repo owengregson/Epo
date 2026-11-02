@@ -6,6 +6,7 @@
 
 import type { InstagramTab } from '@/adapter/tab';
 import { traffic } from '@/probe/traffic';
+import { unfollowHoverProbe } from '@/probe/unfollow-hover';
 import { verifyProbe } from '@/probe/verify';
 
 export const SOLO_PHASES: Record<string, (tab: InstagramTab, out: string) => Promise<void>> = {
@@ -17,4 +18,9 @@ export const SOLO_PHASES: Record<string, (tab: InstagramTab, out: string) => Pro
   traffic,
   /** Read-only end-to-end check of the production read + drawer paths. */
   verify: verifyProbe,
+  /**
+   * Geometry of the unfollow controls — under the cursor, during hydration, and
+   * while the menu opens. Opens the menu, never confirms (`EPO_PROBE_TARGET`).
+   */
+  'unfollow-hover': unfollowHoverProbe,
 };

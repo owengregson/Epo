@@ -63,9 +63,14 @@ blind.
    (`src/adapter/settle-press.ts`) rests the cursor on the control
    (`Interactor.hover`, dwell `MOTION.hoverSettleMs`), locates it AGAIN and
    presses the settled rect. The guard still protects the short final travel.
-   Applied to the rail (notifications, own-profile link) and the drawer
-   (Follows filter, Follow-requests entry, Confirm, close). Profile-header
-   controls are unchanged — they measured stable.
+   Applied to the rail (notifications, own-profile link), the drawer
+   (Follows filter, Follow-requests entry, Confirm, close) and — amended
+   2026-10-09 — the unfollow menu's confirm: the menu SCALES IN over ~100 ms
+   (the row is first found at 672×64.8, settles at 560×54), so the 250 ms
+   poll could pin a mid-animation rect and the guard refused the press as
+   "control moved" (a live prune failed on its first candidate). The header
+   action button needs none of this: measured stable under hover AND from its
+   first appearance during hydration (`EPO_PROBE=unfollow-hover`).
 4. **In-page navigation clicks re-observe.** The rail's own-profile link
    navigates same-document; the route change can start before the release is
    acknowledged, which the input queue reports as post-click uncertainty

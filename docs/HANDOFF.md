@@ -1,5 +1,16 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-10-09 (prune unfollow refused: the unfollow menu animates) —** A live
+> prune stopped on its first candidate: `adapter stale … control moved, disabled
+> or covered` with the cursor resting on the menu's Unfollow row. Measured
+> (`EPO_PROBE=unfollow-hover`, opens the menu, never confirms): the header
+> button is stable (hover and hydration), but the menu SCALES IN over ~100 ms —
+> the confirm row is first found at 672×64.8 and settles at 560×54. The 250 ms
+> poll pinned a mid-animation rect and the click guard correctly refused the
+> press after the row shrank under the cursor. Fix: `confirmUnfollow` uses
+> `settleAndPress` (ADR 0307 amended). Intermittent before (a poll landing
+> after the animation pressed fine — why the @instagram check passed).
+
 > **2026-10-08 (dead endpoints — live probes, profile reads by VISIT, settle-then-press) —**
 > Symptom: no observation of any kind since ~2026-09-20. Diagnosed with live,
 > account-safe probes (`npm run probe`; the owner asked that nothing risk

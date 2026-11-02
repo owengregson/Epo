@@ -82,3 +82,33 @@ describe('rail and drawer controls: hover, locate again, press the settled rect'
     expect(h.clicks).toEqual([EXPANDED]);
   });
 });
+
+describe('the unfollow menu animates open: its confirm is pressed once it has settled', () => {
+  // Live 2026-10-09 (`EPO_PROBE=unfollow-hover`): the menu scales in over
+  // ~100 ms — the confirm row is first found at 672×64.8, then shrinks to its
+  // final 560×54. The 250 ms poll caught it mid-animation, the guard pinned
+  // that rect, and the cursor arrived over a smaller row: "control moved".
+  const HEADER: LocatedRect = { x: 360, y: 212, width: 324, height: 44 };
+  const OPENING: LocatedRect = { x: 364, y: 518.9, width: 672, height: 64.8 };
+  const SETTLED: LocatedRect = { x: 420, y: 501.5, width: 560, height: 54 };
+
+  test('unfollow presses the header, then the confirm rect located AFTER the hover', async () => {
+    const tab = new ScriptedTab();
+    const h = new FakeInteractor();
+    tab.on(marker('"control":"action-button"'), () =>
+      tab.evaluated[tab.evaluated.length - 1].includes('__epoPage.probe({')
+        ? { found: true, state: 'follow' }
+        : { found: true, state: 'following', wouldClick: true, needsConfirm: true, rect: HEADER },
+    );
+    tab.on(marker('"control":"unfollow-confirm"'), (): LocateRectResult => ({
+      found: true,
+      rect: h.hovers.length === 0 ? OPENING : SETTLED,
+    }));
+
+    const result = await build(tab, h).unfollow('someone');
+
+    expect(result.ok).toBe(true);
+    expect(h.hovers).toEqual([OPENING]);
+    expect(h.clicks).toEqual([HEADER, SETTLED]);
+  });
+});
