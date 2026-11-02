@@ -6,6 +6,7 @@
 import {
   holdChipText,
   parkCaption,
+  parkGlyph,
   parkHeadline,
   recoveryHoldCaption,
   stepLabel,
@@ -62,6 +63,14 @@ describe('park hold copy — plain reason + real resume time', () => {
     expect(
       parkCaption('enrich-backoff', t('2026-08-12T14:32:00'), t('2026-08-12T14:22:00'), 12, 40),
     ).toBe('after fetch trouble · retrying 14:32');
+  });
+
+  it('reconcile-backoff: names the follow-back read, not enrichment (live 2026-11-02)', () => {
+    expect(parkHeadline('reconcile-backoff')).toBe('Backing off');
+    expect(parkGlyph('reconcile-backoff')).toBe('arrows-rotate');
+    expect(
+      parkCaption('reconcile-backoff', t('2026-08-12T14:32:00'), t('2026-08-12T14:22:00'), 12, 40),
+    ).toBe("couldn't read follow-backs · retrying 14:32");
   });
 });
 

@@ -14,6 +14,7 @@
 
 import { writeFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { webContents } from 'electron';
 import { Actor } from '@/adapter/actor';
 import { resolveOwnUsername } from '@/adapter/identity';
 import { SURFACE } from '@/adapter/ig-surface';
@@ -22,6 +23,7 @@ import { Sentinel } from '@/adapter/sentinel';
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { SystemClock } from '@/governors/clock';
+import { TrafficRecorder } from '@/probe/recorder';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import { sleep } from '@/timing/primitives';
@@ -55,10 +57,16 @@ export async function verifyProbe(tab: InstagramTab, out: string): Promise<void>
   const interactor = createTabInteractor(tab);
   const actor = new Actor(tab, { interactor });
   const visitor = new TabProfileVisitor({ tab, observer, sentinel: new Sentinel(tab) });
+  // Every API exchange the page's own client makes, per step (evidence when a read goes quiet).
+  const wc = webContents.getAllWebContents().find((c) => c.getURL().includes('instagram.com'));
+  const rec = wc === undefined ? null : new TrafficRecorder(wc, out);
+  rec?.start();
   const step = async (name: string, fn: () => Promise<unknown>): Promise<void> => {
     logger.info('probe.verify step', { step: name });
+    rec?.setStep(name);
     result[name] = await fn().catch((e: unknown) => ({ threw: String(e) }));
     await settle();
+    writeFileSync(path.join(out, `${name}.png`), await tab.captureScreenshot());
   };
   const summary = (v: Awaited<ReturnType<typeof visitor.visit>>): unknown =>
     v.ok
@@ -85,6 +93,8 @@ export async function verifyProbe(tab: InstagramTab, out: string): Promise<void>
   } finally {
     stopDrawer();
     stopObserver();
+    rec?.stop();
+    writeFileSync(path.join(out, 'traffic.json'), JSON.stringify(rec?.exchanges ?? [], null, 2), 'utf8');
     result.drawerBodies = drawer;
     writeFileSync(path.join(out, 'verify.json'), JSON.stringify(result, null, 2), 'utf8');
   }

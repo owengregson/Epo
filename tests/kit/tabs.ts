@@ -161,6 +161,8 @@ export class CannedTab implements Navigable {
 export class FakeInteractor implements ActorInteractor {
   hovers: LocatedRect[] = [];
   clicks: LocatedRect[] = [];
+  /** The `aim` each click carried (`undefined` when the whole rect was pressable). */
+  aims: Array<LocatedRect | undefined> = [];
   scrolls: { container: LocatedRect; deltaPx: number; restPoint?: { x: number; y: number } }[] = [];
   /** Fired after each click, so a test can emit the mutation response "from the page". */
   onClick: (() => void) | null = null;
@@ -169,8 +171,9 @@ export class FakeInteractor implements ActorInteractor {
     this.hovers.push(target);
   }
 
-  async click(target: LocatedRect): Promise<void> {
+  async click(target: LocatedRect, aim?: LocatedRect): Promise<void> {
     this.clicks.push(target);
+    this.aims.push(aim);
     this.onClick?.();
   }
 

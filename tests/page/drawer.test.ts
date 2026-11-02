@@ -65,6 +65,40 @@ describe('locateLabeled: icon controls with no text', () => {
   });
 });
 
+describe('locateLabeled: the AIM is the part of the control that is actually exposed', () => {
+  // Live 2026-11-02: the drawer's header overlaps the lower half of its 16×16
+  // close X. The click guard rightly refuses a press that would land on the
+  // header, so the locate reports where a press CAN land.
+  const CLOSE: LabeledCfg = { ...NOTIFICATIONS, rx: rx(/^\s*close\s*$/i), scopes: ['body'] };
+  const X = { x: 428, y: 16, width: 16, height: 16 };
+  const realHitTest = document.elementFromPoint;
+  afterEach(() => {
+    document.elementFromPoint = realHitTest;
+  });
+  const drawer = (): void => {
+    mount('<div><div role="button" id="x" aria-label="Close"><svg></svg></div><div id="header"></div></div>');
+    box(el('x'), X);
+  };
+
+  test('a half-covered control aims at its exposed half', () => {
+    drawer();
+    document.elementFromPoint = (_x: number, y: number) => (y < 24 ? el('x') : el('header'));
+    expect(locateLabeled(CLOSE)).toEqual({ found: true, rect: X, aim: { x: 428, y: 16, width: 16, height: 8 } });
+  });
+
+  test('a fully exposed control carries no aim (the whole rect is pressable)', () => {
+    drawer();
+    document.elementFromPoint = () => el('x').querySelector('svg');
+    expect(locateLabeled(CLOSE)).toEqual({ found: true, rect: X });
+  });
+
+  test('a fully covered control carries no aim either — the guard refuses it, loudly', () => {
+    drawer();
+    document.elementFromPoint = () => el('header');
+    expect(locateLabeled(CLOSE)).toEqual({ found: true, rect: X });
+  });
+});
+
 describe('locateTextEntry: the smallest element whose own text matches', () => {
   test('the entry label wins over every ancestor containing it', () => {
     mount(`

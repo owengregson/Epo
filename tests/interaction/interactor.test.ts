@@ -130,6 +130,32 @@ describe('Interactor.moveTo', () => {
   });
 });
 
+describe('Interactor.click with an aim (part of the control is covered)', () => {
+  // Live 2026-11-02: the drawer header covers the lower half of the close X.
+  const X: ElementRect = { x: 428, y: 16, width: 16, height: 16 };
+  const EXPOSED: ElementRect = { x: 428, y: 16, width: 16, height: 8 };
+
+  test('the press lands inside the aim; the guard still identifies the control by its full rect', async () => {
+    for (let seed = 1; seed < 15; seed++) {
+      const driver = new RecordingDriver();
+      const guarded: Array<{ target: ElementRect; point: { x: number; y: number } }> = [];
+      const h = new Interactor({
+        driver,
+        rng: mulberry32(seed),
+        sleep: async () => {},
+        prepareClick: async (target, point) => {
+          guarded.push({ target, point });
+          return { validate: async () => true, dispose: async () => {} };
+        },
+      });
+      await h.click(X, EXPOSED);
+      const down = driver.events.find((e) => e.kind === 'down') as Extract<Recorded, { kind: 'down' }>;
+      expect(inside(down, EXPOSED)).toBe(true);
+      expect(guarded).toEqual([{ target: X, point: { x: down.x, y: down.y } }]);
+    }
+  });
+});
+
 describe('Interactor.hover', () => {
   test('travels into the hitbox, then dwells in the settle band — and never presses', async () => {
     for (const seed of [1, 2, 3, 4, 5]) {

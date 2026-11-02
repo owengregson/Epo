@@ -129,6 +129,7 @@ describe('noise — the class registries cover exactly the wait keys (ii)', () =
       'engine:session-park',
       'engine:velocity-park',
       'engine:enrich-backoff',
+      'engine:reconcile-backoff',
       'engine:prune-park',
       'engine:blocked-park',
       'engine:idle',
@@ -144,6 +145,7 @@ describe('noise — the class registries cover exactly the wait keys (ii)', () =
     expect(ENGINE_WAIT_CLASS['engine:active-hours-park']).toBe('daily-boundary');
     expect(ENGINE_WAIT_CLASS['engine:daily-ceiling-park']).toBe('daily-boundary');
     expect(ENGINE_WAIT_CLASS['engine:enrich-backoff']).toBe('retry-backoff');
+    expect(ENGINE_WAIT_CLASS['engine:reconcile-backoff']).toBe('retry-backoff');
     expect(ENGINE_WAIT_CLASS['engine:prune-park']).toBe('retry-backoff');
     expect(ENGINE_WAIT_CLASS['engine:blocked-park']).toBe('retry-backoff');
     expect(ENGINE_WAIT_CLASS['engine:idle']).toBe('local-beat');

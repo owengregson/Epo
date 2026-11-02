@@ -553,7 +553,7 @@ export class Engine {
         this.actionDelayDeadline = this.deps.store.getActionDelayDeadline();
         if (result.outcome === 'halt') return this.halt({ kind: 'reconciliation-failed' });
         if (result.outcome === 'wait') {
-          await this.engineWait('engine:enrich-backoff', result.delayMs);
+          await this.engineWait('engine:reconcile-backoff', result.delayMs);
           return 'idle';
         }
         const at = this.deps.clock.now();

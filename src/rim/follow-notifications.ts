@@ -171,7 +171,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     const seenEvents = new Set<string>();
     const pendingReads: Promise<void>[] = [];
     const unsubscribe = this.tab.onResponse((resp) => {
-      const kind = this.reader.matchEndpoint(resp.url);
+      const kind = this.reader.kindOf(resp); // URL + operation name: the drawer reads via GraphQL
       if (kind !== 'activity-feed' && kind !== 'friend-requests') return;
       if (kind === 'activity-feed') captured.sawInbox = true;
       pendingReads.push(

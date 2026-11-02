@@ -82,10 +82,11 @@ export class Interactor {
    * BEFORE travel targets a node that is gone; the caller locates the control
    * again after this resolves and presses what is there now.
    */
-  async hover(target: ElementRect): Promise<void> {
+  async hover(target: ElementRect, aim?: ElementRect): Promise<void> {
     return this.gesture(async (guard, signal) => {
       const bounds = await this.viewport(guard);
-      const visible = bounds ? intersectRect(target, bounds) : target;
+      const zone = (aim && intersectRect(aim, target)) ?? target;
+      const visible = bounds ? intersectRect(zone, bounds) : zone;
       if (!visible) throw new RangeError('Hover target is outside the viewport');
       const point = targetPoint(visible, this.rng, bounds);
       await this.move(point.x, point.y, Math.min(visible.width, visible.height), guard, signal, bounds);
@@ -94,11 +95,16 @@ export class Interactor {
     });
   }
 
-  async click(target: ElementRect): Promise<void> {
+  /**
+   * Press `target`. `aim` (a part of it) is where the point is chosen when the
+   * rest is covered; the guard still identifies the control by `target`.
+   */
+  async click(target: ElementRect, aim?: ElementRect): Promise<void> {
     return this.gesture(async (guard, signal) => {
       const bounds = await this.viewport(guard);
-      const point = targetPoint(target, this.rng, bounds);
-      const visible = bounds ? intersectRect(target, bounds) : target;
+      const zone = (aim && intersectRect(aim, target)) ?? target;
+      const point = targetPoint(zone, this.rng, bounds);
+      const visible = bounds ? intersectRect(zone, bounds) : zone;
       if (!visible) throw new RangeError('Click target is outside the viewport');
       const clickGuard = await this.deps.prepareClick?.(target, point);
       try {

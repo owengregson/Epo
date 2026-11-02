@@ -36,6 +36,42 @@ export const rectOf = (el: Element): Rect => {
   return { x: r.left, y: r.top, width: r.width, height: r.height };
 };
 
+/** Hit-test samples per axis when measuring how much of a control is exposed. */
+const AIM_GRID = 8;
+
+/**
+ * The part of `el`'s rect a press can actually reach: the bounding box of the
+ * sample cells whose hit test lands on `el` or inside it. Live 2026-11-02 the
+ * drawer's header overlapped the lower half of its close X, and the click guard
+ * (rightly) refused a press there — so the locate reports where one CAN land.
+ * `undefined` when every cell is exposed (aim at the whole rect), when none is
+ * (nothing to aim at: the guard refuses the press, loudly), or when the page
+ * cannot hit-test.
+ */
+export function exposedAim(el: Element, rect: Rect): Rect | undefined {
+  if (typeof document.elementFromPoint !== 'function') return undefined;
+  const cw = rect.width / AIM_GRID;
+  const ch = rect.height / AIM_GRID;
+  let x0 = Number.POSITIVE_INFINITY;
+  let y0 = Number.POSITIVE_INFINITY;
+  let x1 = Number.NEGATIVE_INFINITY;
+  let y1 = Number.NEGATIVE_INFINITY;
+  let hits = 0;
+  for (let i = 0; i < AIM_GRID; i++) {
+    for (let j = 0; j < AIM_GRID; j++) {
+      const top = document.elementFromPoint(rect.x + (i + 0.5) * cw, rect.y + (j + 0.5) * ch);
+      if (top === null || !el.contains(top)) continue;
+      hits += 1;
+      x0 = Math.min(x0, rect.x + i * cw);
+      y0 = Math.min(y0, rect.y + j * ch);
+      x1 = Math.max(x1, rect.x + (i + 1) * cw);
+      y1 = Math.max(y1, rect.y + (j + 1) * ch);
+    }
+  }
+  if (hits === 0 || hits === AIM_GRID * AIM_GRID) return undefined;
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
 /**
  * Whether a control is worth pressing: a non-degenerate rect with its centre
  * on-viewport, not hidden/collapsed/transparent.
@@ -119,6 +155,8 @@ export function largestScrollable(root: ParentNode): Element | null {
 export interface LocateRect {
   found: boolean;
   rect?: Rect;
+  /** The exposed part of `rect` when part of it is covered (see {@link exposedAim}). */
+  aim?: Rect;
   fallback?: boolean;
 }
 

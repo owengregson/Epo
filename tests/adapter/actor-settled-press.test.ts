@@ -112,3 +112,16 @@ describe('the unfollow menu animates open: its confirm is pressed once it has se
     expect(h.clicks).toEqual([HEADER, SETTLED]);
   });
 });
+
+test('the settled locate\'s AIM (its exposed part) is what the press is aimed at', async () => {
+  // Live 2026-11-02: the drawer header covers the lower half of the close X.
+  const tab = new ScriptedTab();
+  const h = new FakeInteractor();
+  const X: LocatedRect = { x: 428, y: 16, width: 16, height: 16 };
+  const EXPOSED: LocatedRect = { x: 428, y: 16, width: 16, height: 8 };
+  tab.on(marker('"control":"drawer-close"'), (): LocateRectResult => ({ found: true, rect: X, aim: EXPOSED }));
+
+  expect(await build(tab, h).clickNotificationsClose()).toBe(true);
+  expect(h.clicks).toEqual([X]);
+  expect(h.aims).toEqual([EXPOSED]);
+});

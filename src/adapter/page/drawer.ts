@@ -11,6 +11,7 @@
 
 import {
   clickableOf,
+  exposedAim,
   type LocateRect,
   mk,
   norm,
@@ -70,7 +71,9 @@ export function locateLabeled(cfg: LabeledCfg): LocateRect {
     for (const el of Array.from(scope.querySelectorAll(cfg.labeledSel))) {
       if (!rx.test(el.getAttribute('aria-label') || '')) continue;
       const near = el.closest(cfg.clickableSel) || el.parentElement || el;
-      return { found: true, rect: rectOf(near) };
+      const rect = rectOf(near);
+      const aim = exposedAim(near, rect);
+      return aim === undefined ? { found: true, rect } : { found: true, rect, aim };
     }
   }
   return { found: false };

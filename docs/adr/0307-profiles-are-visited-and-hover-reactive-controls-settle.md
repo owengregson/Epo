@@ -105,3 +105,33 @@ blind.
   arbitrated `ok`.
 - When an endpoint dies next, start with `EPO_PROBE=traffic`: it records what
   Instagram's own client calls, with zero composed requests.
+
+## Amendment — 2026-11-02: the drawer reads through GraphQL; aim at the exposed part
+
+Live (`EPO_PROBE=verify`, read-only): the notifications drawer's client no
+longer calls `news/inbox` or `friendships/pending`. It reads the SAME stories
+through `PolarisActivityFeedStoriesViewQuery` (`/api/graphql`,
+`data.xdt_activity_inbox`) and the SAME request rows through
+`PolarisActivityFeedFollowRequestsViewQuery` (`/graphql/query`,
+`data.xdt_friendships_pending_users.users.edges[].node`). Follow-back detection
+saw "no activity-feed response after click", and the engine parked under
+`enrich-backoff` — a mislabel: the reconciliation wait reused that key.
+
+- **Routing by operation name, one kind per datum.** Each kind gained a GraphQL
+  endpoint definition (URL + friendly name); its schema accepts either
+  container, the version document unwraps the GraphQL branch to the REST shape
+  (a zod `transform`), and the legacy extractors unwrap the same way
+  (`adapter/versions/2026-08-12.notifications.ts`). `follow-notifications`
+  routes by `kindOf` (URL + operation name), not URL alone. The REST forms stay
+  routed — the same kinds, either container.
+- **Aim at the exposed part.** The drawer's header now covers the lower half
+  of its 16×16 close X in every view; the click guard correctly refused a
+  press there. `locateLabeled` reports `aim` — the exposed sub-region, from an
+  8×8 hit-test grid (`exposedAim`) — and the Interactor chooses the point
+  inside it while the guard still identifies the control by its full rect.
+  Absent when the whole control is exposed, or none of it is (then the guard
+  refuses, loudly).
+- **The reconciliation wait parks as `reconcile-backoff`** ("couldn't read
+  follow-backs"), so a failed follow-back read is never reported as an
+  enrichment wall.
+- `projectors.ts` was split out of the version document (line budget).

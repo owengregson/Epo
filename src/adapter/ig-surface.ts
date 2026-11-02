@@ -292,6 +292,8 @@ export interface LocatedRect {
 export interface LocateRectResult {
   found: boolean;
   rect?: LocatedRect;
+  /** The exposed part of `rect` when part of it is covered — where a press can land. */
+  aim?: LocatedRect;
   /**
    * True when the control was found by a script's SELF-RECOVERY pass (a deep
    * text scan) after its primary role-marked search went blind — the control
@@ -478,10 +480,7 @@ export interface IgSurface {
   locateScrollContainerScript(): string;
   /** The nav profile-avatar link's rect — the Interactor clicks it to land on our profile. */
   locateProfileLinkScript(): string;
-  /**
-   * The nav notifications (bell/heart) control's rect — clicking it opens the
-   * activity drawer, which fires the news-inbox fetch the Reader observes.
-   */
+  /** The nav notifications control — opening the drawer fires the feed read the Reader observes. */
   locateNotificationsLinkScript(): string;
   /** The "Follows" category filter chip inside the open drawer. */
   locateNotificationsFollowsFilterScript(): string;

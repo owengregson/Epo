@@ -20,6 +20,7 @@ export type EngineWaitKey =
   | 'engine:session-park'
   | 'engine:velocity-park'
   | 'engine:enrich-backoff'
+  | 'engine:reconcile-backoff'
   | 'engine:prune-park'
   | 'engine:blocked-park'
   | 'engine:idle'
@@ -37,6 +38,7 @@ export const ENGINE_WAIT_CLASS = {
   'engine:active-hours-park': 'daily-boundary',
   'engine:daily-ceiling-park': 'daily-boundary',
   'engine:enrich-backoff': 'retry-backoff',
+  'engine:reconcile-backoff': 'retry-backoff',
   'engine:prune-park': 'retry-backoff',
   'engine:blocked-park': 'retry-backoff',
   'engine:idle': 'local-beat',
@@ -60,6 +62,8 @@ export type EngineParkReason =
   | 'session'
   | 'velocity'
   | 'enrich-backoff'
+  /** The follow-back reconciliation could not read its evidence (e.g. the notifications feed). */
+  | 'reconcile-backoff'
   | 'recovery';
 
 /**
@@ -74,6 +78,7 @@ const PARK_REASON_BY_KEY = new Map<EngineWaitKey, EngineParkReason>([
   ['engine:session-park', 'session'],
   ['engine:velocity-park', 'velocity'],
   ['engine:enrich-backoff', 'enrich-backoff'],
+  ['engine:reconcile-backoff', 'reconcile-backoff'],
   ['engine:recovery-hold', 'recovery'],
 ]);
 

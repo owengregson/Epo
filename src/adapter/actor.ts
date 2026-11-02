@@ -430,9 +430,9 @@ export class Actor {
   }
 
   /**
-   * Close the notifications drawer via its X control — the drawer's own way out, so
-   * the tab is genuinely neutral for whatever acts next. `false` when no
-   * close control is found (the caller falls back to toggling the bell).
+   * Close the notifications drawer via its X — pressed at its exposed `aim` (the header
+   * covers its lower half since 2026-11), leaving the tab neutral for whatever acts next.
+   * `false` when no close control is found (the caller falls back to toggling the bell).
    */
   async clickNotificationsClose(): Promise<boolean> {
     const locate = (): Promise<LocateRectResult> =>
@@ -650,7 +650,7 @@ export class Actor {
   }
 
   /** Settle-then-press a rail/drawer control (see `settle-press.ts`). */
-  private settleAndPress<T extends { found: boolean; rect?: LocatedRect }>(
+  private settleAndPress<T extends { found: boolean; rect?: LocatedRect; aim?: LocatedRect }>(
     located: T | null,
     locate: () => Promise<T>,
   ): Promise<T | null> {

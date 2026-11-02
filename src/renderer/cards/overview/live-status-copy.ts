@@ -65,6 +65,7 @@ export function parkHeadline(reason: ParkReason): string {
     case 'velocity':
       return 'Pacing';
     case 'enrich-backoff':
+    case 'reconcile-backoff':
     case 'recovery':
       return 'Backing off';
     default:
@@ -80,6 +81,7 @@ export function parkGlyph(reason: ParkReason): string {
     case 'velocity':
       return 'gauge-high';
     case 'enrich-backoff':
+    case 'reconcile-backoff':
     case 'recovery':
       return 'arrows-rotate';
     case 'session':
@@ -107,6 +109,8 @@ export function parkCaption(
       return `between sessions · next session ${at}`;
     case 'velocity':
       return `easing off this hour · resumes ${at}`;
+    case 'reconcile-backoff':
+      return `couldn't read follow-backs · retrying ${at}`;
     case 'recovery':
       // Fallback when the status carries no recovery detail (attempt numbers
       // live in `recoveryHoldCaption`, preferred by the card).

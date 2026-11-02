@@ -1,5 +1,30 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-02 (the notifications drawer moved to GraphQL; its close X is half-covered) —**
+> Symptom (`npm run start`): `rim.follow-notifications: no activity-feed response
+> after click`, then `engine: holding {reason: enrich-backoff}`. One cause, found
+> live with the read-only `EPO_PROBE=verify` (traffic recorder attached): the
+> drawer's client stopped calling `news/inbox` / `friendships/pending` and reads
+> the same stories / request rows through GraphQL
+> (`PolarisActivityFeedStoriesViewQuery` on `/api/graphql`,
+> `PolarisActivityFeedFollowRequestsViewQuery` on `/graphql/query`). The
+> `enrich-backoff` hold was the follow-back reconciliation's wait wearing the
+> enrichment key. FIXES (ADR 0307 amended): GraphQL endpoint definitions for
+> the `activity-feed` / `friend-requests` kinds, matched by operation name,
+> schemas accepting either container and unwrapping to the REST shape;
+> extractors unwrap (`adapter/versions/2026-08-12.notifications.ts`);
+> `follow-notifications` routes by URL + operation name; the reconciliation
+> wait parks as `reconcile-backoff` ("couldn't read follow-backs"). Found on
+> the way: the drawer's header now covers the lower half of the close X in
+> every view, so every drawer close was refused (the drawer stayed open until
+> the next navigation) — `locateLabeled` reports the exposed sub-region as
+> `aim` (8×8 hit-test grid) and the Interactor presses inside it. Verified
+> live: profiles read, drawer open → Follows → requests → close, feed 24/100
+> follow events, requests 5 rows (none confirmed), no shadow disagreement.
+> `surface.ts` split (`projectors.ts`) and left the line-budget list; the
+> literals (+19) and the adapter façade (+2) ceilings re-seeded — new IG facts
+> must live there.
+
 > **2026-10-21 (autonomous lifecycle architecture) —** Durable run intent and bounded device/process recovery; account-isolated graphs; journaled growth/prune/manual/request mutations; shared admission and read budgets; resumable source frontier; evidence-based return reconciliation and probation. See [ADR 0210](adr/0210-runtime-intent-and-device-recovery.md), [ADR 0211](adr/0211-resumable-source-frontier-and-read-budgets.md), [ADR 0212](adr/0212-journaled-mutations-and-return-reconciliation.md), and the [validation record](qa/lifecycle-2026-10-21.md). This supersedes the old deferred discovery/cursor/manual-identity notes below. Existing user changes and the verified rendering-lag fix are preserved. The running production account was not restarted or exercised by the lifecycle implementation.
 
 > **2026-10-09 (prune unfollow refused: the unfollow menu animates) —** A live

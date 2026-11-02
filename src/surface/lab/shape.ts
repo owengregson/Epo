@@ -256,18 +256,31 @@ const ProfileGraphqlScrub = z
   })
   .loose();
 
-const ActivityFeedScrub = z
+const ActivityStoriesScrub = z
   .object({
     new_stories: z.array(ActivityStory).optional(),
     old_stories: z.array(ActivityStory).optional(),
   })
   .loose();
+/** The REST inbox, or the drawer's GraphQL feed wrapping it (since 2026-11). */
+const ActivityFeedScrub = z.union([
+  z.object({ data: z.object({ xdt_activity_inbox: ActivityStoriesScrub }).loose() }).loose(),
+  ActivityStoriesScrub,
+]);
+/** `pending/`, or the GraphQL requests panel carrying the same rows as nodes (since 2026-11). */
+const FriendRequestsScrub = z.union([
+  z.object({ data: z.object({ xdt_friendships_pending_users: z.object({ users: z.object({
+    edges: z.array(z.object({ node: ListUserRow }).loose()),
+    page_info: z.object({ end_cursor: z.string().meta({ pii: 'cursor' }).nullish() }).loose().optional(),
+  }).loose() }).loose() }).loose() }).loose(),
+  ListPageScrub,
+]);
 
 /** The scrub shape for every endpoint kind. */
 export const SCRUB_SHAPES: Record<EndpointKind, z.ZodType> = {
   'followers-list': ListPageScrub,
   'following-list': ListPageScrub,
-  'friend-requests': ListPageScrub,
+  'friend-requests': FriendRequestsScrub,
   'show-many': ShowManyScrub,
   'friendship-show': FriendshipShowScrub,
   'profile-info': ProfileInfoScrub,

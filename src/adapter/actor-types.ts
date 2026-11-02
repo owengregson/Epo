@@ -19,8 +19,9 @@ export type AdapterTab = PageTab;
  */
 export interface ActorInteractor {
   /** Rest the cursor on `target` without pressing (settle-then-press, `settle-press.ts`). */
-  hover(target: LocatedRect): Promise<void>;
-  click(target: LocatedRect): Promise<void>;
+  hover(target: LocatedRect, aim?: LocatedRect): Promise<void>;
+  /** Press `target`; `aim` narrows where the point lands when part of it is covered. */
+  click(target: LocatedRect, aim?: LocatedRect): Promise<void>;
   /**
    * Scroll `container` by `deltaPx`. `restPoint` (optional) is a hover-safe spot
    * inside the container the cursor rests on while wheeling, so the burst never

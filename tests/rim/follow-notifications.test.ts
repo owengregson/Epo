@@ -326,3 +326,83 @@ test('an accept click that never consumes its row stops the loop (no hammering)'
   expect(res.ok).toBe(true);
   expect(res.accepted).toEqual([]); // never verified → never counted
 });
+
+// ---------------------------------------------------------------------------
+// Live 2026-11-02 (`EPO_PROBE=verify`): the drawer's own client stopped calling
+// `news/inbox` and `friendships/pending`. It reads the SAME stories and rows
+// through GraphQL — `PolarisActivityFeedStoriesViewQuery` on `/api/graphql`
+// (`data.xdt_activity_inbox`) and `PolarisActivityFeedFollowRequestsViewQuery`
+// on `/graphql/query` (`data.xdt_friendships_pending_users.users.edges[].node`).
+// Matched by URL alone they were invisible: "no activity-feed response after click".
+// ---------------------------------------------------------------------------
+
+const GRAPHQL_URL = 'https://www.instagram.com/api/graphql';
+const GRAPHQL_QUERY_URL = 'https://www.instagram.com/graphql/query';
+const op = (name: string): Record<string, string> => ({ 'x-fb-friendly-name': name });
+
+/** The GraphQL feed: the inbox body, wrapped. */
+const graphqlInbox = (newStories: unknown[], oldStories: unknown[]): unknown => ({
+  data: { xdt_activity_inbox: { new_stories: newStories, old_stories: oldStories } },
+  extensions: { is_final: true },
+});
+
+/** The GraphQL follow-requests panel: a connection of user nodes. */
+const graphqlPending = (rows: Array<{ pk: string; username: string }>): unknown => ({
+  data: {
+    xdt_friendships_pending_users: {
+      users: {
+        edges: rows.map((r) => ({ node: { pk: r.pk, id: r.pk, username: r.username }, cursor: null })),
+        page_info: { end_cursor: null, has_next_page: false },
+      },
+    },
+  },
+});
+
+test('GraphQL feed: the drawer query is observed by its operation name and parsed', async () => {
+  const { tab, actor, source } = build();
+  actor.onClick = () => {
+    if (actor.clicks === 1) {
+      tab.emit(mkResp(GRAPHQL_URL, graphqlInbox([], [followStory('111', 2_000), likeStory('9')]),
+        op('PolarisActivityFeedStoriesViewQuery')));
+    }
+  };
+
+  const res = await source.fetchRecent();
+
+  expect(res.ok).toBe(true);
+  expect(res.events).toEqual([{ pk: '111', username: 'u111', atMs: 2_000_000 }]);
+});
+
+test('GraphQL: an unrelated query on the same path is never read as the feed', async () => {
+  const { tab, actor, source } = build({ waitMs: 200 });
+  actor.onClick = () => {
+    if (actor.clicks === 1) {
+      tab.emit(mkResp(GRAPHQL_URL, graphqlInbox([], [followStory('111', 2_000)]),
+        op('PolarisSuggestedUserListQuery')));
+    }
+  };
+
+  expect(await source.fetchRecent()).toMatchObject({ ok: false, reason: 'no-response' });
+});
+
+test('GraphQL follow requests: the panel query resolves requester pks for the accepts', async () => {
+  const store = new KnowledgeStore(':memory:');
+  const { tab, actor, source } = build({ store });
+  actor.entryExists = true;
+  actor.requestQueue = ['req_a'];
+  actor.onClick = () => {
+    if (actor.clicks === 1) {
+      tab.emit(mkResp(GRAPHQL_URL, graphqlInbox([], []), op('PolarisActivityFeedStoriesViewQuery')));
+    }
+  };
+  actor.onEntryClick = () =>
+    tab.emit(mkResp(GRAPHQL_QUERY_URL, graphqlPending([{ pk: '901', username: 'req_a' }]),
+      op('PolarisActivityFeedFollowRequestsViewQuery')));
+
+  const res = await source.fetchRecent({ acceptRequests: true });
+
+  expect(res.ok).toBe(true);
+  expect(res.accepted).toEqual([{ pk: '901', username: 'req_a' }]);
+  expect(store.getAccount('901')?.username).toBe('req_a');
+  store.close();
+});

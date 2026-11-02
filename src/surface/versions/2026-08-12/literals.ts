@@ -22,6 +22,10 @@
  * re-renders on hover (settle-then-press, `src/adapter/settle-press.ts`). The
  * list endpoints, show_many, friendships/pending and topsearch still answer
  * their captured shapes.
+ *
+ * AMENDED 2026-11-02 (`EPO_PROBE=verify`): the notifications drawer's client
+ * moved its feed and its follow-requests panel to GraphQL (operations below);
+ * the stories and user rows inside are unchanged, only wrapped.
  */
 
 /** Capture provenance — bump when these notes are re-verified against live IG. */
@@ -96,10 +100,12 @@ export const URLS = {
    * profile read: a profile is visited and this body read (`rim/profile-visit.ts`).
    */
   profileGraphql: /\/api\/graphql\/?(?:[?#]|$)/,
-  /** POST /api/v1/news/inbox/ (a GET until 2026-10) — activity feed (new-follower events). */
+  /** POST /api/v1/news/inbox/ — the activity feed's REST form (the client's read until 2026-10). */
   activityFeed: /\/api\/v1\/news\/inbox\//,
-  /** GET /api/v1/friendships/pending/ — incoming follow requests; list shape + `friend_requests`. */
+  /** GET /api/v1/friendships/pending/ — follow requests' REST form (until 2026-10). */
   friendRequests: /\/api\/v1\/friendships\/pending\//,
+  /** Any GraphQL path the client posts to (`/api/graphql`, `/graphql/query`); routed by operation name. */
+  graphql: /\/graphql(?:[/?#]|$)/,
 } as const;
 
 /**
@@ -116,6 +122,10 @@ export const PATHS = {
  * Matched case-insensitively against the LOWER-CASED request headers the tab records.
  */
 export const PROFILE_GRAPHQL_FRIENDLY_NAME = /PolarisProfilePageContentQuery/i;
+
+/** The notifications drawer's reads since 2026-11: the feed, and the follow-requests panel. */
+export const ACTIVITY_FEED_GRAPHQL_FRIENDLY_NAME = /PolarisActivityFeedStoriesViewQuery/i;
+export const FOLLOW_REQUESTS_GRAPHQL_FRIENDLY_NAME = /PolarisActivityFeedFollowRequestsViewQuery/i;
 
 /**
  * Media types that carry a PARSEABLE body on an API URL.
@@ -221,6 +231,15 @@ export const JSON_PATHS = {
     followedByViewer: 'friendship_status.following',
     requestedByViewer: 'friendship_status.outgoing_request',
     followsViewer: 'friendship_status.followed_by',
+  },
+  /** The GraphQL feed nests the REST inbox body (stories unchanged) here. */
+  activityFeedGraphql: 'data.xdt_activity_inbox',
+  /** The GraphQL follow-requests panel: a connection of the list endpoints' user rows. */
+  followRequestsGraphql: {
+    edges: 'data.xdt_friendships_pending_users.users.edges',
+    node: 'node',
+    cursor: 'data.xdt_friendships_pending_users.users.page_info.end_cursor',
+    hasMore: 'data.xdt_friendships_pending_users.users.page_info.has_next_page',
   },
   /** Where each profile source puts that user record. */
   profileUserAt: {

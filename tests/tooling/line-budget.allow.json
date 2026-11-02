@@ -59,19 +59,19 @@
     },
     {
       "file": "src/adapter/versions/2026-08-12.ts",
-      "lines": 491
+      "lines": 493
     },
     {
       "file": "src/adapter/reader.ts",
       "lines": 485
     },
     {
-      "file": "src/engine/target-pipeline.ts",
-      "lines": 435
+      "file": "src/surface/versions/2026-08-12/literals.ts",
+      "lines": 450
     },
     {
-      "file": "src/surface/versions/2026-08-12/literals.ts",
-      "lines": 431
+      "file": "src/engine/target-pipeline.ts",
+      "lines": 435
     },
     {
       "file": "src/types.ts",
@@ -84,10 +84,6 @@
     {
       "file": "src/main/foundation-reads.ts",
       "lines": 410
-    },
-    {
-      "file": "src/surface/versions/2026-08-12/surface.ts",
-      "lines": 393
     },
     {
       "file": "src/rim/followers-page-reader.ts",

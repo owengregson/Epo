@@ -38,6 +38,7 @@ import {
   type ShapeMismatch,
 } from '@/adapter/parse-helpers';
 import { extractMutationVerdict, matchMutation } from '@/adapter/versions/2026-08-12.mutations';
+import { activityFeedRoot, followRequestsPage } from '@/adapter/versions/2026-08-12.notifications';
 import type { Observation } from '@/store/types';
 import {
   AVATAR_ALT_RE,
@@ -126,10 +127,11 @@ const probeControl = (id: string): string =>
 // ---------------------------------------------------------------------------
 
 function extractFollowersList(
-  body: unknown,
+  raw: unknown,
   at: number,
   source: 'followers-list' | 'following-list' | 'friend-requests' = 'followers-list',
 ): FollowersListResult | ShapeMismatch {
+  const body = source === 'friend-requests' ? followRequestsPage(raw) : raw;
   if (!isRecord(body)) return SHAPE_MISMATCH;
 
   const p = JSON_PATHS.followersList;
@@ -299,7 +301,8 @@ function extractFriendshipShow(body: unknown, pk: string): FriendshipShowResult 
  * expected story containers (drift / error body); empty sections are a valid
  * "no recent follows" result.
  */
-function extractActivityFeed(body: unknown): FollowEvent[] | ShapeMismatch {
+function extractActivityFeed(raw: unknown): FollowEvent[] | ShapeMismatch {
+  const body = activityFeedRoot(raw);
   if (!isRecord(body)) return SHAPE_MISMATCH;
   const p = JSON_PATHS.activityFeed;
 
@@ -458,8 +461,7 @@ export const SURFACE_2026_08_12: IgSurface = {
   locateFollowingStatScript: (): string => control('following-stat'),
   locateProfileLinkScript: (): string => control('profile-link'),
   locateNotificationsLinkScript: (): string => control('notifications-link'),
-  locateNotificationsFollowsFilterScript: (): string =>
-    control('notifications-follows-filter'),
+  locateNotificationsFollowsFilterScript: (): string => control('notifications-follows-filter'),
   locateNotificationsCloseScript: (): string => control('drawer-close'),
   locateNotificationsScrollScript: (): string => control('drawer-scroller'),
   locateFollowRequestsEntryScript: (): string => control('follow-requests-entry'),

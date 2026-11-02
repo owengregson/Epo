@@ -3,7 +3,8 @@
  *
  * Endpoints (match + response schema + `project()`), mutations, control
  * descriptors, signals and page sizes, as data. Every literal it uses comes
- * from `./literals.ts`; this file supplies only the STRUCTURE.
+ * from `./literals.ts`; the projectors live in `./projectors.ts` and the
+ * controls in `./controls.ts`; this file supplies only the STRUCTURE.
  *
  * `project()` is pure and synchronous by contract — that is what makes the
  * replay contract test (`tests/surface/replay.test.ts`) trivial and what keeps
@@ -12,35 +13,31 @@
  * completeness verdict, because completeness is the walker's to mint.
  */
 
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { Source } from '@/store/types';
 import {
-  ActivityFeedBody,
+  ActivityFeedGraphqlBody,
+  ActivityFeedStories,
+  FollowRequestsGraphqlBody,
   FriendshipShowBody,
   ListPageBody,
-  ListUserRow,
   ProfileGraphqlBody,
   ProfileInfoBody,
-  type ProfileUser,
   ShowManyBody,
-  ShowManyStatus,
 } from '@/surface/schema/endpoints';
 import {
   defineEndpoint,
-  emptyProjection,
   type MutationSpec,
-  type ProjectCtx,
-  type Projection,
-  type RowIssue,
   type Signal,
   type SurfaceDocument,
 } from '@/surface/schema/surface';
 import { CONTROLS } from '@/surface/versions/2026-08-12/controls';
 import {
+  ACTIVITY_FEED_GRAPHQL_FRIENDLY_NAME,
+  FOLLOW_REQUESTS_GRAPHQL_FRIENDLY_NAME,
   IG_APP_ID,
   IG_ORIGIN,
   IG_USER_AGENT,
-  JSON_PATHS,
   LIST_PAGE_COUNT,
   MUTATION_JSON,
   MUTATION_REFUSAL_SIGNATURES,
@@ -51,224 +48,14 @@ import {
   URLS,
   VERSION,
 } from '@/surface/versions/2026-08-12/literals';
-
-// ---------------------------------------------------------------------------
-// Row helpers — the ONLY place a projector reaches into a row
-// ---------------------------------------------------------------------------
-
-/** Coerce an observed pk (string on most endpoints, number on `pending/`) to a string. */
-const pkString = (v: string | number): string => String(v);
-
-/**
- * Parse one row through `schema`, recording a {@link RowIssue} instead of
- * rejecting the whole page. A single malformed row must not cost the other
- * rows' facts (§1) — but it must not vanish either, so it is COUNTED.
- */
-function parseRow<T>(
-  schema: z.ZodType<T>,
-  raw: unknown,
-  index: number,
-  issues: RowIssue[],
-): T | null {
-  const parsed = schema.safeParse(raw);
-  if (parsed.success) return parsed.data;
-  const first = parsed.error.issues[0];
-  issues.push({
-    index,
-    path: first?.path.map(String).join('.') || '(root)',
-    message: first?.message ?? 'row rejected',
-  });
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Projectors
-// ---------------------------------------------------------------------------
-
-/** One paginated friendships page → one observation per user row. */
-const projectListPage = (body: z.infer<typeof ListPageBody>, ctx: ProjectCtx): Projection => {
-  const out = emptyProjection();
-  body.users.forEach((raw, index) => {
-    const row = parseRow(ListUserRow, raw, index, out.rowIssues);
-    if (row === null) return;
-    out.facts.push({
-      accountPk: pkString(row.pk),
-      observedAt: ctx.at,
-      source: ctx.source,
-      fields: {
-        username: row.username,
-        isPrivate: row.is_private,
-        isVerified: row.is_verified,
-      },
-    });
-  });
-  const next = body.next_max_id;
-  // A cursor is a non-empty STRING. `null`/absent/'' all mean no next page —
-  // and a numeric cursor (seen on some captures) stringifies to one.
-  out.cursor = next === null || next === undefined || next === '' ? null : String(next);
-  // More-pages detection must survive whichever flag this response carries:
-  // `has_more`, the alternate `big_list`, or neither — a present cursor ALWAYS
-  // means another page exists. A false negative here truncates a whole scan.
-  out.hasMore = body.has_more === true || body.big_list === true || out.cursor !== null;
-  return out;
-};
-
-/** The batched relationship map → one relationship fact per pk. */
-const projectShowMany = (body: z.infer<typeof ShowManyBody>, _ctx: ProjectCtx): Projection => {
-  const out = emptyProjection();
-  Object.entries(body.friendship_statuses).forEach(([pk, raw], index) => {
-    const status = parseRow(ShowManyStatus, raw, index, out.rowIssues);
-    if (status === null) return;
-    out.relationships.push({
-      pk,
-      following: status.following === true,
-      // A pending request to a private account: `following` is false but the
-      // relationship is OURS — consumers must not read it as "not following".
-      outgoingRequest: status.outgoing_request === true,
-      // This shape carries NO followed-by direction. `null`, never `false`.
-      followedBy: null,
-      isPrivate: status.is_private,
-    });
-  });
-  return out;
-};
-
-/** The single-relationship shape → one relationship fact, both directions. */
-const projectFriendshipShow = (
-  body: z.infer<typeof FriendshipShowBody>,
-  ctx: ProjectCtx,
-): Projection => {
-  const out = emptyProjection();
-  out.relationships.push({
-    pk: ctx.pk ?? '',
-    following: body.following === true,
-    followedBy: body.followed_by === true,
-    outgoingRequest: body.outgoing_request === true,
-    isPrivate: body.is_private,
-  });
-  return out;
-};
-
-/**
- * One profile user record → one observation (+ the viewer relationship when the
- * source carries it). Shared by both profile endpoints: `/users/<pk>/info/` and
- * the observed GraphQL profile query answer the same field names under
- * different containers.
- *
- * A record carrying neither `pk` nor `id` is DRIFT, not a profile — it is
- * counted as a row issue and yields no fact, so a reshaped body can never
- * become an observation against an empty pk.
- */
-const projectProfileUser = (user: ProfileUser, ctx: ProjectCtx, out: Projection): void => {
-  // Instagram spells "no value" as `null` on these fields, and an Observation
-  // field spells it `undefined` — so every optional value is narrowed once,
-  // here, rather than each call site coping with three states.
-  const some = <T>(v: T | null | undefined): T | undefined => v ?? undefined;
-  const id = user.pk ?? user.id;
-  if (id === undefined || id === null) {
-    out.rowIssues.push({
-      index: 0,
-      path: 'pk',
-      message: 'profile user carries neither `pk` nor `id`',
-    });
-    return;
-  }
-  const pk = pkString(id);
-  out.absent = false;
-  out.facts.push({
-    accountPk: pk,
-    observedAt: ctx.at,
-    source: ctx.source,
-    fields: {
-      username: some(user.username),
-      followers: some(user.follower_count),
-      following: some(user.following_count),
-      mutuals: some(user.mutual_followers_count),
-      isPrivate: some(user.is_private),
-      isVerified: some(user.is_verified),
-      bio: some(user.biography),
-    },
-  });
-  // Viewer-side relationship: GraphQL profile bodies carry it, `/users/<pk>/
-  // info/` does not. Absent means UNKNOWN — never a fabricated `false`.
-  const fs = user.friendship_status;
-  if (fs !== null && fs !== undefined && typeof fs.following === 'boolean') {
-    out.relationships.push({
-      pk,
-      following: fs.following,
-      outgoingRequest: fs.outgoing_request === true,
-      followedBy: typeof fs.followed_by === 'boolean' ? fs.followed_by : null,
-      isPrivate: some(user.is_private),
-    });
-  }
-};
-
-/** `/users/<pk>/info/` → one profile observation, or "the profile is gone". */
-const projectProfileInfo = (body: z.infer<typeof ProfileInfoBody>, ctx: ProjectCtx): Projection => {
-  const out = emptyProjection();
-  if (body.user === null) {
-    // The `user` key exists and is empty: Instagram is saying the profile is
-    // gone. A body WITHOUT the key never reaches here — the schema rejects it,
-    // so a soft-block body can never be read as a deletion.
-    out.absent = true;
-    return out;
-  }
-  projectProfileUser(body.user, ctx, out);
-  return out;
-};
-
-/** The OBSERVED GraphQL profile body → the same projection, `data`-wrapped. */
-const projectProfileGraphql = (
-  body: z.infer<typeof ProfileGraphqlBody>,
-  ctx: ProjectCtx,
-): Projection => {
-  const out = emptyProjection();
-  const user = body.data.user;
-  if (user === null || user === undefined) {
-    out.absent = true;
-    return out;
-  }
-  projectProfileUser(user, ctx, out);
-  return out;
-};
-
-/**
- * The news inbox → the "started following you" events it carries. An entry
- * qualifies through EITHER signal — the numeric follow `story_type` or the text
- * matcher — so a drift in one does not blind the follow-back watcher.
- */
-const projectActivityFeed = (
-  body: z.infer<typeof ActivityFeedBody>,
-  _ctx: ProjectCtx,
-): Projection => {
-  const out = emptyProjection();
-  const p = JSON_PATHS.activityFeed;
-  let index = 0;
-  for (const section of [body.new_stories, body.old_stories]) {
-    if (!Array.isArray(section)) continue;
-    for (const entry of section) {
-      const i = index++;
-      const args = entry.args;
-      if (args === undefined) continue;
-      const isFollow =
-        entry.story_type === p.followStoryType ||
-        (typeof args.text === 'string' && p.followText.test(args.text));
-      if (!isFollow) continue;
-      if (args.profile_id === undefined) {
-        out.rowIssues.push({ index: i, path: 'args.profile_id', message: 'follow story with no pk' });
-        continue;
-      }
-      out.events.push({
-        pk: pkString(args.profile_id),
-        username: typeof args.profile_name === 'string' && args.profile_name !== ''
-          ? args.profile_name
-          : null,
-        atMs: typeof args.timestamp === 'number' ? Math.round(args.timestamp * 1000) : null,
-      });
-    }
-  }
-  return out;
-};
+import {
+  projectActivityFeed,
+  projectFriendshipShow,
+  projectListPage,
+  projectProfileGraphql,
+  projectProfileInfo,
+  projectShowMany,
+} from '@/surface/versions/2026-08-12/projectors';
 
 // ---------------------------------------------------------------------------
 // Signals
@@ -307,6 +94,28 @@ const MUTATIONS: readonly MutationSpec[] = [
 // ---------------------------------------------------------------------------
 // The document
 // ---------------------------------------------------------------------------
+
+/**
+ * The notifications drawer's reads, normalised. Since 2026-11 its client reads
+ * the feed and the follow-requests panel through GraphQL; the bodies wrap the
+ * very same stories and `pending/` rows, so each GraphQL branch is unwrapped to
+ * the REST shape here and the projectors are shared.
+ */
+const FeedBody = z.union([
+  ActivityFeedGraphqlBody.transform((b) => b.data.xdt_activity_inbox),
+  ActivityFeedStories,
+]);
+const RequestsBody = z.union([
+  FollowRequestsGraphqlBody.transform(({ data }) => {
+    const { edges, page_info: info } = data.xdt_friendships_pending_users.users;
+    return {
+      users: edges.map((e) => e.node),
+      next_max_id: info?.end_cursor ?? null,
+      has_more: info?.has_next_page === true,
+    };
+  }),
+  ListPageBody,
+]);
 
 const listEndpoint = (
   kind: 'followers-list' | 'following-list' | 'friend-requests',
@@ -378,11 +187,32 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
       kind: 'activity-feed',
       mode: 'observe',
       match: { method: 'POST', url: URLS.activityFeed },
-      response: ActivityFeedBody,
+      response: FeedBody,
       project: projectActivityFeed,
       source: 'activity-feed',
     }),
-    listEndpoint('friend-requests', URLS.friendRequests, undefined, 'friend-requests'),
+    // The notifications drawer's GraphQL reads (since 2026-11; live 2026-11-02):
+    // the same feed stories and request rows, matched by their operation names.
+    defineEndpoint({
+      kind: 'activity-feed',
+      mode: 'observe',
+      match: { method: 'POST', url: URLS.graphql, friendlyName: ACTIVITY_FEED_GRAPHQL_FRIENDLY_NAME },
+      response: FeedBody,
+      project: projectActivityFeed,
+      source: 'activity-feed',
+    }),
+    ...[URLS.friendRequests, URLS.graphql].map((url) =>
+      defineEndpoint({
+        kind: 'friend-requests',
+        mode: 'observe',
+        match: url === URLS.graphql
+          ? { method: 'POST', url, friendlyName: FOLLOW_REQUESTS_GRAPHQL_FRIENDLY_NAME }
+          : { method: 'GET', url },
+        response: RequestsBody,
+        project: projectListPage,
+        source: 'friend-requests',
+      }),
+    ),
   ],
   mutations: MUTATIONS,
   controls: CONTROLS,

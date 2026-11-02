@@ -116,6 +116,23 @@ export const ListPageBody = z
   .loose();
 export type ListPageBody = z.infer<typeof ListPageBody>;
 
+/** One page of the follow-requests panel's connection (GraphQL, since 2026-11). */
+const PendingConnection = z
+  .object({
+    edges: z.array(z.object({ node: z.unknown() }).loose()),
+    page_info: z
+      .object({ end_cursor: z.string().meta({ pii: 'cursor' }).nullish(), has_next_page: z.boolean().optional() })
+      .loose()
+      .optional(),
+  })
+  .loose();
+/** Follow requests via GraphQL: the SAME `pending/` user rows, as nodes (REST still accepted). */
+export const FollowRequestsGraphqlBody = z
+  .object({ data: z.object({ xdt_friendships_pending_users: z.object({ users: PendingConnection }).loose() }).loose() })
+  .loose();
+export const FriendRequestsBody = z.union([FollowRequestsGraphqlBody, ListPageBody]);
+export type FriendRequestsBody = z.infer<typeof FriendRequestsBody>;
+
 /** The batched relationship map. */
 export const ShowManyBody = z
   .object({
@@ -225,7 +242,7 @@ export type ProfileGraphqlBody = z.infer<typeof ProfileGraphqlBody>;
  * an empty feed is a VALID "no recent follows" result, a body carrying neither
  * container is drift.
  */
-export const ActivityFeedBody = z
+export const ActivityFeedStories = z
   .object({
     new_stories: z.array(ActivityStory).optional(),
     old_stories: z.array(ActivityStory).optional(),
@@ -234,6 +251,11 @@ export const ActivityFeedBody = z
   .refine((b) => Array.isArray(b.new_stories) || Array.isArray(b.old_stories), {
     error: 'no story container (`new_stories` / `old_stories`) present',
   });
+/** The drawer's GraphQL feed (since 2026-11) wraps the very same stories. */
+export const ActivityFeedGraphqlBody = z
+  .object({ data: z.object({ xdt_activity_inbox: ActivityFeedStories }).loose() })
+  .loose();
+export const ActivityFeedBody = z.union([ActivityFeedGraphqlBody, ActivityFeedStories]);
 export type ActivityFeedBody = z.infer<typeof ActivityFeedBody>;
 
 /** The mutation (follow / unfollow) verdict body, REST form. */
@@ -257,7 +279,7 @@ export type MutationBody = z.infer<typeof MutationBody>;
 export const RESPONSE_SCHEMAS = {
   'followers-list': ListPageBody,
   'following-list': ListPageBody,
-  'friend-requests': ListPageBody,
+  'friend-requests': FriendRequestsBody,
   'show-many': ShowManyBody,
   'friendship-show': FriendshipShowBody,
   'profile-info': ProfileInfoBody,
