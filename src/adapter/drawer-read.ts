@@ -10,6 +10,7 @@ import type { FollowEvent, Observation } from '@/adapter/surface-types';
 import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
 import { admits } from '@/surface/read/admission';
 import { gateObserved } from '@/surface/read/gate';
+import type { BodyInput } from '@/surface/read/types';
 import type { Tier } from '@/surface/schema/projection';
 import { decodeBody } from '@/surface/transport/decode';
 import { graphqlEnvelope } from '@/surface/transport/graphql';
@@ -25,7 +26,7 @@ export interface DrawerBody {
 }
 
 export interface DrawerReadCtx {
-  readonly reader: Pick<Reader, 'parseActivityFeedStrict' | 'parseRequestsStrict' | 'feedPendingPreview'>;
+  readonly reader: Pick<Reader, 'read' | 'parseRequestsStrict'>;
   /** The read's observation time (requester rows are stamped with it). */
   readonly now: number;
 }
@@ -43,6 +44,13 @@ export interface DrawerRead {
   readonly tier: Tier;
   readonly partial: boolean;
   readonly failure?: DrawerFailure;
+}
+
+/** A captured body as the read pipeline's input: text decodes there, a parsed object is already decoded. */
+function inputOf(resp: DrawerBody): BodyInput {
+  const gate = resp.status === undefined || resp.mime === undefined ? {} : { status: resp.status, mime: resp.mime };
+  return typeof resp.body === 'string' ? { text: resp.body, ...gate }
+    : { decoded: { ok: true, json: resp.body, format: 'json', payloads: 1, final: null }, ...gate };
 }
 
 /** Whether the observed gate names a wall (only when the capture recorded status and media type). */
@@ -65,15 +73,14 @@ export function readDrawerBody(resp: DrawerBody, ctx: DrawerReadCtx): DrawerRead
   const wall: DrawerFailure = resp.kind === 'activity-feed' ? 'feed-walled' : 'requests-walled';
   const failed = (failure: DrawerFailure): DrawerRead =>
     ({ events: null, pendingPreview: [], requests: none, tier: 'canonical', partial: false, failure });
-  if (gatedWall(resp)) return failed(wall);
   if (resp.kind === 'activity-feed') {
-    const events = ctx.reader.parseActivityFeedStrict(resp.body);
-    const envelope = envelopeOf(resp, events !== null);
-    if (envelope.kind === 'wall' || envelope.kind === 'error') return failed(wall);
-    if (events === null) return failed('shape-mismatch');
-    const partial = envelope.kind === 'data' && envelope.errors > 0;
-    return { events, pendingPreview: ctx.reader.feedPendingPreview(resp.body, ctx.now), requests: none, tier: 'canonical', partial };
+    const read = ctx.reader.read('activity-feed', inputOf(resp), { at: ctx.now });
+    if (!read.ok) return failed(read.kind === 'wall' ? wall : 'shape-mismatch');
+    // Follow events and the side list of requesters are additive: a partial read's still flow.
+    const p = read.projection;
+    return { events: p.events, pendingPreview: p.pendingPreview, requests: none, tier: read.tier, partial: read.partial };
   }
+  if (gatedWall(resp)) return failed(wall);
   const page = ctx.reader.parseRequestsStrict(resp.body, ctx.now);
   const envelope = envelopeOf(resp, page !== null);
   if (envelope.kind === 'wall' || envelope.kind === 'error') return failed(wall);

@@ -469,12 +469,17 @@ describe('SURFACE.listPageScript (direct list pagination)', () => {
 
 // --- activity feed (news inbox → follow-back events) --------------------------------
 
-describe('parseActivityFeed', () => {
+describe('Reader.read: the activity feed (the document drives it)', () => {
   const inbox = (newStories: unknown[], oldStories: unknown[]): unknown => ({
     counts: {},
     new_stories: newStories,
     old_stories: oldStories,
   });
+  const eventsOf = (body: unknown) => {
+    const read = typeof body === 'string' ? r.read('activity-feed', { text: body }, { at: AT }) : readAs(r, 'activity-feed', body, { at: AT });
+    return read.ok ? read.projection.events : null;
+  };
+  const T = AT / 1_000;
 
   test('routes the news-inbox URL to activity-feed', () => {
     expect(
@@ -488,7 +493,7 @@ describe('parseActivityFeed', () => {
         // Canonical: story_type 101 + text.
         {
           story_type: 101,
-          args: { profile_id: 11, profile_name: 'alpha', timestamp: 2.5, text: 'alpha started following you.' },
+          args: { profile_id: 11, profile_name: 'alpha', timestamp: T + 2.5, text: 'alpha started following you.' },
         },
         // Drifted story_type but recognizable text → still admitted.
         {
@@ -498,33 +503,40 @@ describe('parseActivityFeed', () => {
       ],
       [
         // Non-follow story → ignored.
-        { story_type: 60, args: { profile_id: 33, text: 'gamma liked your photo.', timestamp: 9 } },
+        { story_type: 60, args: { profile_id: 33, text: 'gamma liked your photo.', timestamp: T + 9 } },
         // Follow type with no text → still admitted (type signal alone).
-        { story_type: 101, args: { profile_id: 44, timestamp: 7 } },
+        { story_type: 101, args: { profile_id: 44, timestamp: T + 7 } },
       ],
     );
 
-    expect(r.parseActivityFeedStrict(body)).toEqual([
-      { pk: '11', username: 'alpha', atMs: 2500 },
+    expect(eventsOf(body)).toEqual([
+      { pk: '11', username: 'alpha', atMs: AT + 2_500 },
       { pk: '22', username: null, atMs: null },
-      { pk: '44', username: null, atMs: 7000 },
+      { pk: '44', username: null, atMs: AT + 7_000 },
+    ]);
+  });
+
+  test('an epoch outside the plausible range is an unknown time, never a wrong date (I9)', () => {
+    expect(eventsOf(inbox([{ story_type: 101, args: { profile_id: 11, timestamp: 2.5 } }], []))).toEqual([
+      { pk: '11', username: null, atMs: null },
     ]);
   });
 
   test('an empty feed parses to an empty list (valid: nobody followed recently)', () => {
-    expect(r.parseActivityFeedStrict(inbox([], []))).toEqual([]);
+    expect(eventsOf(inbox([], []))).toEqual([]);
   });
 
-  test('a body with NO story containers is shape drift → null (warned), never invented events', () => {
-    expect(r.parseActivityFeedStrict({ status: 'fail' })).toBeNull();
-    expect(r.parseActivityFeedStrict('not json at all {')).toBeNull();
+  test('a body with NO story containers is shape drift, never invented events', () => {
+    expect(eventsOf({ status: 'fail' })).toBeNull();
+    expect(eventsOf('not json at all {')).toBeNull();
   });
 
-  test('entries without a usable profile_id are skipped', () => {
+  test('entries without a usable profile_id are skipped (and counted)', () => {
     const body = inbox(
       [{ story_type: 101, args: { text: 'x started following you.' } }],
       [],
     );
-    expect(r.parseActivityFeedStrict(body)).toEqual([]);
+    expect(eventsOf(body)).toEqual([]);
+    expect(readAs(r, 'activity-feed', body, { at: AT })).toMatchObject({ ok: true, projection: { rowIssues: [{ index: 0 }] } });
   });
 });

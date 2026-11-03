@@ -177,23 +177,6 @@ export class Reader {
     return relationships.parseFriendshipShow(this.env, body, at, pk);
   }
 
-  /** The feed body's side list of pending requesters, row by row (never the complete set). */
-  feedPendingPreview(body: unknown, at: number): Observation[] {
-    return SURFACE.extractFeedPendingPreview(coerceBody(body, 'activity-feed'), at);
-  }
-
-  /** STRICT feed: the follow events, `[]` on a well-formed empty feed, `null` on drift. */
-  parseActivityFeedStrict(body: unknown, at = Date.now()): FollowEvent[] | null {
-    const json = coerceBody(body, 'activity-feed');
-    const result = SURFACE.extractActivityFeed(json);
-    shadowDocument(this.env, 'activity-feed', body, { at, source: 'activity-feed' }, json);
-    if (isShapeMismatch(result)) {
-      warnUnexpected('activity-feed', body);
-      return null;
-    }
-    return result;
-  }
-
   /** Whether this response's endpoint carries viewer-side relationship facts. */
   relationshipBearing(url: string, friendlyName?: string): boolean {
     return relationships.relationshipBearing(this, url, friendlyName);

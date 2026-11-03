@@ -19,12 +19,14 @@ const inboxBody = (newStories: unknown[], oldStories: unknown[]): unknown => ({
   old_stories: oldStories,
 });
 
+/** Story epochs sit in the plausible range the reader enforces (I9: [2010, now + 1 day]). */
+const EPOCH_S = 1_700_000_000;
 const followStory = (pk: string, atSec: number): unknown => ({
   story_type: 101,
   args: {
     profile_id: pk,
     profile_name: `u${pk}`,
-    timestamp: atSec,
+    timestamp: EPOCH_S + atSec,
     text: `u${pk} started following you.`,
   },
 });
@@ -128,8 +130,8 @@ test('clicks the bell, observes the inbox response, and returns the follow event
 
   expect(res.ok).toBe(true);
   expect(res.events).toEqual([
-    { pk: '111', username: 'u111', atMs: 2_000_000 },
-    { pk: '222', username: 'u222', atMs: 1_500_000 },
+    { pk: '111', username: 'u111', atMs: (EPOCH_S + 2_000) * 1_000 },
+    { pk: '222', username: 'u222', atMs: (EPOCH_S + 1_500) * 1_000 },
   ]);
   // The drawer is left via its X control — the bell is clicked only to open.
   expect(actor.clicks).toBe(1);
@@ -176,7 +178,7 @@ test('a drifted page mixed with a well-formed page still succeeds on the good pa
   const res = await source.fetchRecent();
 
   expect(res.ok).toBe(true);
-  expect(res.events).toEqual([{ pk: '111', username: 'u111', atMs: 2_000_000 }]);
+  expect(res.events).toEqual([{ pk: '111', username: 'u111', atMs: (EPOCH_S + 2_000) * 1_000 }]);
 });
 
 test('no response within the wait window is a TYPED failure, never an empty success', async () => {
@@ -371,7 +373,7 @@ test('GraphQL feed: the drawer query is observed by its operation name and parse
   const res = await source.fetchRecent();
 
   expect(res.ok).toBe(true);
-  expect(res.events).toEqual([{ pk: '111', username: 'u111', atMs: 2_000_000 }]);
+  expect(res.events).toEqual([{ pk: '111', username: 'u111', atMs: (EPOCH_S + 2_000) * 1_000 }]);
 });
 
 test('GraphQL: an unrelated query on the same path is never read as the feed', async () => {
