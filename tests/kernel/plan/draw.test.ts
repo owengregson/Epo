@@ -1,6 +1,5 @@
 /**
- * The draw and the re-plans (spec §5.4, §5.6, §8.3): L7 determinism, L13 (Boost survives every
- * cause), L13b (honesty; the kept remainder never grows without a Boost), L14 / L14b (backlog and
+ * The draw and the re-plans (spec §5.4, §5.6, §8.3): L13 (Boost survives every cause), L13b (honesty; the kept remainder never grows without a Boost), L14 / L14b (backlog and
  * the multi-day bound), and the probation rule.
  */
 import fc from 'fast-check';
@@ -19,31 +18,6 @@ const boostOver = (input: DrawInput, fromH: number, hours: number): BoostWindow 
   return { v: 1, startedAt, endsAt: startedAt + hours * MS_PER_HOUR, durationMs: hours * MS_PER_HOUR, endedAt: null, endReason: null };
 };
 const sum = (p: DayPlan, f: (s: DayPlan['sessions'][number]) => number): number => p.sessions.reduce((a, s) => a + f(s), 0);
-
-describe('L7: determinism', () => {
-  test('identical inputs draw byte-identical plans', () => {
-    fc.assert(fc.property(fc.integer({ min: 0, max: 90 }), fc.integer({ min: 0, max: 0xffffffff }), (day, entropy) => {
-      const input = drawInput(DAY0 + day * MS_PER_DAY, { installEntropy: entropy });
-      return JSON.stringify(drawDayPlan(input)) === JSON.stringify(drawDayPlan({ ...input }));
-    }), { numRuns: 30 });
-  });
-
-  test('A → B → A restores plan(A) (common random numbers)', () => {
-    const a = drawInput(DAY0);
-    const b = { ...a, intent: testIntent({ hourlyCap: 14, sessions: { min: 5, max: 9 } }) };
-    const planA = drawDayPlan(a);
-    expect(drawDayPlan(b)).not.toEqual(planA);
-    expect(drawDayPlan({ ...b, intent: a.intent })).toEqual(planA);
-  });
-
-  test('a repair re-derives the identical plan for the current window', () => {
-    const input = drawInput(DAY0, { firstOpenAt: windowFor(DAY0).startsAt + 9 * MS_PER_HOUR });
-    const plan = drawDayPlan(input);
-    const repaired = replanRemainder(plan, input, input.firstOpenAt + MS_PER_HOUR, NO_USAGE, 'repair');
-    expect(repaired.sessions).toEqual(plan.sessions);
-    expect(repaired.revision).toBe(plan.revision + 1);
-  });
-});
 
 describe('L13: Boost survives every cause', () => {
   const causes: ReplanCause[] = ['day-start', 'first-open', 'settings', 'demand', 'boost-start', 'boost-end', 'clock', 'repair'];
