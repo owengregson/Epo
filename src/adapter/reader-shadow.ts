@@ -3,41 +3,46 @@
  * body helpers every Reader parse shares (JSON coercion and the drift warning).
  */
 
-import type {
-  EndpointKind,
-  FollowEvent,
-  FollowersListResult,
-  FriendshipShowResult,
-  ShowManyEntry,
+import {
+  type EndpointKind,
+  type FollowEvent,
+  type FollowersListResult,
+  type FriendshipShowResult,
+  type ShowManyEntry,
+  SURFACE,
 } from '@/adapter/ig-surface';
 import type { ProjectCtx, Projection } from '@/surface/schema/surface';
 import { type ShadowCompare, shadowParse } from '@/surface/shadow';
+import { decodeBody } from '@/surface/transport/decode';
 import * as logger from '@/utils/logger';
 
 /** A projected profile fact; the legacy profile extractor yields the same shape. */
 type ProfileFact = Projection['facts'][number];
 
 /**
- * Accept either an already-parsed object or a raw JSON string (what
- * `TabResponse.getBody()` yields). A malformed string is logged (never
- * silently swallowed) and treated as no-match.
+ * Accept either an already-parsed object or the raw text `TabResponse.getBody()` yields, decoded
+ * through the declared transport (a JSON guard, streamed or multipart payloads). An undecodable
+ * body is logged and reads as no-match; so does a stream that says it is not final.
  */
 export function coerceBody(body: unknown, kind: EndpointKind): unknown {
   if (typeof body !== 'string') return body;
-  try {
-    return JSON.parse(body);
-  } catch (e) {
-    logger.warn('reader.parse: body was not valid JSON', {
-      kind,
-      error: String(e),
-    });
+  const decoded = decodeBody(body, SURFACE.transport);
+  if (!decoded.ok) {
+    logger.warn('reader.parse: body did not decode', { kind, reason: decoded.reason, head: decoded.head });
     return undefined;
   }
+  if (decoded.final === false) {
+    // A partial body may carry positive facts, but every read here can also claim an absence.
+    logger.warn('reader.parse: incomplete stream, not read', { kind, format: decoded.format });
+    return undefined;
+  }
+  return decoded.json;
 }
 
+/** Warn on a body no extractor recognized, naming the DECODED body's top-level keys (never values). */
 export function warnUnexpected(kind: EndpointKind, body: unknown): void {
-  const keys =
-    typeof body === 'object' && body !== null ? Object.keys(body as object) : [];
+  const json = typeof body === 'string' ? coerceBody(body, kind) : body;
+  const keys = typeof json === 'object' && json !== null ? Object.keys(json as object) : [];
   logger.warn('reader.parse: unexpected body shape', { kind, keys });
 }
 

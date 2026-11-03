@@ -50,3 +50,23 @@ export const SURFACE_BOUNDS = {
   /** Event times before 2010-01-01 UTC are a unit error, never a date (I9). */
   timeFloorMs: 1_262_304_000_000,
 } as const;
+
+/** Protocol facts the observed gate reads (HTTP status codes; geometry of the protocol, not tuning). */
+export const HTTP_STATUS = {
+  /** The first success status. */
+  okMin: 200,
+  /** The first status past the success range. */
+  okEnd: 300,
+  /** A request the server could not serve as asked (the list's past-the-limit refusal). */
+  badRequest: 400,
+  /** The session is not signed in. */
+  unauthorized: 401,
+  /** The session may not read this. */
+  forbidden: 403,
+  /** The resource does not exist. */
+  notFound: 404,
+  /** The server is limiting requests. */
+  tooManyRequests: 429,
+  /** The first server-error status. */
+  serverErrorMin: 500,
+} as const;

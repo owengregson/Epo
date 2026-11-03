@@ -67,6 +67,7 @@ export function extractFollowersList(
   raw: unknown,
   at: number,
   source: 'followers-list' | 'following-list' | 'friend-requests' = 'followers-list',
+  final: boolean | null = null,
 ): FollowersListResult | ShapeMismatch {
   const body = source === 'friend-requests' ? followRequestsPage(raw) : raw;
   if (!isRecord(body)) return SHAPE_MISMATCH;
@@ -77,7 +78,7 @@ export function extractFollowersList(
 
   // A present cursor ALWAYS means another page; without one, the declared more-flags decide,
   // and a flag set with no cursor is drift — never an end (spec §10.4).
-  const { continuation } = continuationOf(body, CONTINUATION, { final: null });
+  const { continuation } = continuationOf(body, CONTINUATION, { final });
   const cursor = continuation.kind === 'next' ? continuation.cursor : null;
   const quarantined = users.length - observations.length;
   return { observations, cursor, hasMore: continuation.kind !== 'end', continuation, quarantined };

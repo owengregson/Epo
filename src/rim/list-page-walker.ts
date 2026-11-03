@@ -190,10 +190,9 @@ export class ListPageWalker {
       pages += 1;
 
       const now = this.clock.now();
-      const parsed =
-        which === 'following'
-          ? this.reader.parseFollowingListStrict(res.json, now)
-          : this.reader.parseFollowersListStrict(res.json, now);
+      // A stream that is not final reads as drift: its rows count, its end never does.
+      const parsed = which === 'following' ? this.reader.parseFollowingListStrict(res.json, now, res.decoded.final)
+        : this.reader.parseFollowersListStrict(res.json, now, res.decoded.final);
       if (parsed === null) {
         // SHAPE DRIFT: the page fetched but no longer parses. It ends the walk INCOMPLETE;
         // a drifted page can never originate or confirm an end-of-list claim.

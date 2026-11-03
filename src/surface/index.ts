@@ -11,6 +11,7 @@
  * below, and run `tests/surface/replay.test.ts` against the corpus.
  */
 
+import { type ObservedRequest, type RouteMatch, routeObserved } from '@/surface/read/route';
 import type { EndpointKind } from '@/surface/schema/endpoints';
 import {
   type EndpointDef,
@@ -21,6 +22,7 @@ import {
 } from '@/surface/schema/surface';
 import { RESPONSE_SCHEMAS } from '@/surface/versions/2026-08-12/schemas';
 import { SURFACE_DOC_2026_08_12 } from '@/surface/versions/2026-08-12/surface';
+import { TRANSPORT } from '@/surface/versions/2026-08-12/transport-decl';
 
 /** The document the app is built against. */
 const ACTIVE: SurfaceDocument = SURFACE_DOC_2026_08_12;
@@ -63,23 +65,20 @@ export function surface(): SurfaceDocument {
   return loaded;
 }
 
-/** Route a response URL (and method) to the endpoint that handles it, or `null`. */
+/** Route an observed request through the one routing table (`read/route.ts`), or `null`. */
+export function routeOf(req: ObservedRequest, doc: SurfaceDocument = surface()): RouteMatch | null {
+  return routeObserved(req, { doc, transport: TRANSPORT });
+}
+
+/** Route a response URL (and the operation name it carried) to its endpoint definition, or `null`. */
 export function matchEndpoint(
   url: string,
   friendlyName?: string,
   doc: SurfaceDocument = surface(),
 ): EndpointDef | null {
-  for (const ep of doc.endpoints) {
-    if (!ep.match.url.test(url)) continue;
-    // An endpoint keyed on a GraphQL operation name matches only when the
-    // caller actually saw that name on the request. Skipping (rather than
-    // returning) lets a later entry claim the same URL.
-    if (ep.match.friendlyName !== undefined) {
-      if (friendlyName === undefined || !ep.match.friendlyName.test(friendlyName)) continue;
-    }
-    return ep;
-  }
-  return null;
+  const headers = friendlyName === undefined ? undefined : { [TRANSPORT.friendlyNameHeader]: friendlyName };
+  const route = routeOf({ url, requestHeaders: headers }, doc);
+  return route === null ? null : (doc.endpoints[route.defIndex] ?? null);
 }
 
 /** The endpoint definition for a kind, or `null`. */

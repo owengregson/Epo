@@ -70,7 +70,7 @@ export class Reader {
    * in a request header, and a URL-only match cannot see it.
    */
   kindOf(resp: { url: string; requestHeaders?: Record<string, string> }): EndpointKind | null {
-    return SURFACE.matchEndpoint(resp.url, SURFACE.friendlyName(resp.requestHeaders));
+    return SURFACE.route(resp)?.kind ?? null;
   }
 
   /** The GraphQL operation name a request carried, read off its headers. */
@@ -131,8 +131,8 @@ export class Reader {
    * claim, and downstream completeness verdicts (the prune census's
    * lost-follower marking, growth's exhaustion advance) would act on it.
    */
-  parseFollowersListStrict(body: unknown, at: number): FollowersListResult | null {
-    const result = SURFACE.extractFollowersList(coerceBody(body, 'followers-list'), at);
+  parseFollowersListStrict(body: unknown, at: number, final: boolean | null = null): FollowersListResult | null {
+    const result = SURFACE.extractFollowersList(coerceBody(body, 'followers-list'), at, 'followers-list', final);
     const legacy = isShapeMismatch(result) ? null : result;
     shadowRead('followers-list', body, at, 'followers-list', legacy === null,
       compareList(legacy));
@@ -150,12 +150,8 @@ export class Reader {
    * thin alias over the same extractor — kept separate so shape-drift warnings
    * name the endpoint that actually broke.
    */
-  parseFollowingListStrict(body: unknown, at: number): FollowersListResult | null {
-    const result = SURFACE.extractFollowersList(
-      coerceBody(body, 'following-list'),
-      at,
-      'following-list',
-    );
+  parseFollowingListStrict(body: unknown, at: number, final: boolean | null = null): FollowersListResult | null {
+    const result = SURFACE.extractFollowersList(coerceBody(body, 'following-list'), at, 'following-list', final);
     const legacy = isShapeMismatch(result) ? null : result;
     shadowRead('following-list', body, at, 'following-list', legacy === null,
       compareList(legacy));

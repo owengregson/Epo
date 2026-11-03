@@ -7,17 +7,19 @@ import type { BlockSignature, SentinelStatus } from '@/adapter/surface-types';
 
 /**
  * The uniform result EVERY in-page fetch script resolves to. In page context
- * the script checks `r.ok` and the content type and never lets `r.json()`
- * reject on an HTML/error body:
+ * the script checks `r.ok` and the content type and never parses the body:
  *
- *  - JSON 2xx              → `{ ok: true,  status, contentType, json }`
- *  - non-JSON / non-ok     → `{ ok: false, status, contentType, textHead }`
+ *  - parseable 2xx         → `{ ok: true,  status, contentType, text }` (decoded main-side)
+ *  - otherwise / non-ok    → `{ ok: false, status, contentType, textHead }`
  *  - network error / throw → `{ ok: false, status: 0, contentType: '', textHead: String(err) }`
  */
 export interface FetchEnvelope {
   ok: boolean;
   status: number;
   contentType: string;
+  /** The body text of a parseable 2xx (the composed scripts' form). */
+  text?: string;
+  /** An already-parsed body (an envelope built main-side). */
   json?: unknown;
   /** First 256 chars of a non-JSON body (or the error string). */
   textHead?: string;

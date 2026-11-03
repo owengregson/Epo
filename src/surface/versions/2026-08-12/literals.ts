@@ -84,7 +84,7 @@ export const URLS = {
    * app-id/csrf/www-claim/asbd set, Chrome 128 and Chrome 152 all get the same
    * page, while profile pages and every other endpoint in this file stay
    * healthy on the same session. Instagram's own web client stopped calling it
-   * (it reads profiles through `/api/graphql`, see {@link profileGraphql}), so
+   * (it reads profiles through `/api/graphql`, see {@link graphql}), so
    * this is a retirement, not a rate wall. Verified live 2026-09-18.
    *
    * WALLED TOO 2026-10-08: this replacement answers HTTP 429 with an EMPTY body
@@ -94,19 +94,15 @@ export const URLS = {
    */
   profileInfo: /\/api\/v1\/users\/\d+\/info\//,
   profileInfoPk: /\/api\/v1\/users\/(\d+)\/info\//,
-  /**
-   * POST /api/graphql with `x-fb-friendly-name: PolarisProfilePageContentQuery`
-   * — what Instagram's OWN client fires when it opens a profile. Epo never
-   * composes this request (it needs a rotating `doc_id` plus scraped
-   * `fb_dtsg`/`lsd` tokens); it is OBSERVED, and since 2026-10-08 it is THE
-   * profile read: a profile is visited and this body read (`rim/profile-visit.ts`).
-   */
-  profileGraphql: /\/api\/graphql\/?(?:[?#]|$)/,
   /** POST /api/v1/news/inbox/ — the activity feed's REST form (the client's read until 2026-10). */
   activityFeed: /\/api\/v1\/news\/inbox\//,
   /** GET /api/v1/friendships/pending/ — follow requests' REST form (until 2026-10). */
   friendRequests: /\/api\/v1\/friendships\/pending\//,
-  /** Any GraphQL path the client posts to (`/api/graphql`, `/graphql/query`); routed by operation name. */
+  /**
+   * Any GraphQL path the client posts to (`/api/graphql`, `/graphql/query`), routed by operation
+   * name. The profile query (`PolarisProfilePageContentQuery`, what Instagram's own client fires
+   * on a profile page) is OBSERVED here, never composed: a profile is visited and this body read.
+   */
   graphql: /\/graphql(?:[/?#]|$)/,
 } as const;
 
@@ -128,6 +124,8 @@ export const PROFILE_GRAPHQL_FRIENDLY_NAME = /PolarisProfilePageContentQuery/i;
 /** The notifications drawer's reads since 2026-11: the feed, and the follow-requests panel. */
 export const ACTIVITY_FEED_GRAPHQL_FRIENDLY_NAME = /PolarisActivityFeedStoriesViewQuery/i;
 export const FOLLOW_REQUESTS_GRAPHQL_FRIENDLY_NAME = /PolarisActivityFeedFollowRequestsViewQuery/i;
+/** The follow-requests panel's GraphQL root field (live 2026-11-02, every captured body). */
+export const FOLLOW_REQUESTS_ROOT_FIELDS: readonly string[] = ['xdt_friendships_pending_users'];
 
 /**
  * Media types that carry a PARSEABLE body on an API URL.
@@ -137,7 +135,7 @@ export const FOLLOW_REQUESTS_GRAPHQL_FRIENDLY_NAME = /PolarisActivityFeedFollowR
  * GraphQL profile body. Anything else on an API URL (notably `text/html`) is a
  * wall, not data.
  */
-export const BODY_MIME_PARSEABLE = /json|javascript/i;
+export const BODY_MIME_PARSEABLE = /json|javascript|multipart\/mixed/i;
 
 // ---------------------------------------------------------------------------
 // Relationship MUTATIONS — the requests the action button fires.

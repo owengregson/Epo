@@ -157,6 +157,8 @@ export const EndpointSchema = z.object({
   }),
   /** Provenance label for the observations this endpoint produces. */
   source: z.string().optional(),
+  /** GraphQL root fields that route a renamed operation here (a normalized step). */
+  rootFields: z.array(z.string().min(1)).optional(),
 });
 
 /** A relationship mutation the action button fires. */
@@ -205,6 +207,8 @@ export interface EndpointDef {
   project: (body: unknown, ctx: ProjectCtx) => Projection;
   /** Provenance label for the observations this endpoint produces. */
   source?: Source;
+  /** GraphQL root fields that route a renamed operation here (a normalized step). */
+  rootFields?: readonly string[];
 }
 
 /** Define one endpoint, narrowing `project`'s body to what `response` parses to. */
@@ -215,6 +219,7 @@ export function defineEndpoint<B>(def: {
   response: z.ZodType<B>;
   project: (body: B, ctx: ProjectCtx) => Projection;
   source?: Source;
+  rootFields?: readonly string[];
 }): EndpointDef {
   return {
     kind: def.kind,
@@ -223,6 +228,7 @@ export function defineEndpoint<B>(def: {
     response: def.response as z.ZodType,
     project: (body: unknown, ctx: ProjectCtx): Projection => def.project(body as B, ctx),
     source: def.source,
+    ...(def.rootFields === undefined ? {} : { rootFields: def.rootFields }),
   };
 }
 

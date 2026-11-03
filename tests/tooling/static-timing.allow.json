@@ -9,7 +9,6 @@
     {"key":"src/adapter/envelope.ts :: classifyEnvelopeWith :: if :: 404","class":"GEOM","reason":"an HTTP status code (protocol)"},
     {"key":"src/adapter/envelope.ts :: classifyEnvelopeWith :: if :: 429","class":"GEOM","reason":"an HTTP status code (protocol)"},
     {"key":"src/adapter/envelope.ts :: classifyEnvelopeWith :: if :: 500","class":"GEOM","reason":"an HTTP status code (protocol)"},
-    {"key":"src/adapter/fetch-json.ts :: fetchJson :: env.textHead.slice :: 80","class":"GEOM","reason":"an excerpt length for a log or diagnostic line"},
     {"key":"src/adapter/identity.ts :: pressable :: return :: 2","class":"GEOM","reason":"on-screen rect geometry: the 2 px usable threshold and centres (spec §17.8)","count":2},
     {"key":"src/adapter/mutation-classify.ts :: classifyMutationWith :: if :: 401","class":"GEOM","reason":"an HTTP status code (protocol)","count":2},
     {"key":"src/adapter/mutation-classify.ts :: classifyMutationWith :: if :: 403","class":"GEOM","reason":"an HTTP status code (protocol)","count":2},

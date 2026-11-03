@@ -78,11 +78,11 @@
       "lines": 340
     },
     {
-      "file": "src/rim/list-page-walker.ts",
-      "lines": 332
+      "file": "src/kernel/policy.ts",
+      "lines": 331
     },
     {
-      "file": "src/kernel/policy.ts",
+      "file": "src/rim/list-page-walker.ts",
       "lines": 331
     },
     {

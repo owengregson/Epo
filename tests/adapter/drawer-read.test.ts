@@ -63,6 +63,32 @@ describe('the follow-requests panel is read strictly', () => {
   });
 });
 
+describe('a wall is never drift (spec §10.5)', () => {
+  test('an HTTP wall on the requests panel is requests-walled; on the feed, feed-walled', () => {
+    const wall = { status: 429, mime: 'text/html', body: '<html>Please wait</html>' };
+    expect(readDrawerBody({ kind: 'friend-requests', ...wall }, ctx)).toMatchObject({
+      requests: { rows: [], pendingComplete: false }, failure: 'requests-walled' });
+    expect(readDrawerBody({ kind: 'activity-feed', ...wall }, ctx)).toMatchObject({ events: null, failure: 'feed-walled' });
+  });
+
+  test('a GraphQL throttle body, or errors with no data, wait like a wall', () => {
+    const throttled = { data: null, errors: [{ message: 'x', summary: 'Try Again Later' }] };
+    expect(requests(throttled).failure).toBe('requests-walled');
+    expect(readDrawerBody({ kind: 'activity-feed', body: { errors: [{ message: 'unknown' }] } }, ctx).failure).toBe('feed-walled');
+  });
+
+  test('errors beside a readable panel make it partial: rows flow, the set is never complete', () => {
+    const body = { ...connection([node('21')], { end_cursor: null, has_next_page: false }), errors: [{ message: 'partial' }] };
+    expect(requests(body)).toMatchObject({ partial: true, requests: { rows: [expect.anything()], pendingComplete: false } });
+    expect(requests(body).failure).toBeUndefined();
+  });
+
+  test('a guarded or streamed body string decodes before it is read', () => {
+    const text = `for (;;);${JSON.stringify(connection([node('21')], { end_cursor: null, has_next_page: false }))}`;
+    expect(requests(text).requests).toMatchObject({ pendingComplete: true });
+  });
+});
+
 describe('the feed', () => {
   const feed = (pending?: unknown) => ({
     data: {

@@ -35,6 +35,8 @@ import {
   extractShowMany,
 } from '@/adapter/versions/2026-08-12.extractors';
 import { extractMutationVerdict, matchMutation } from '@/adapter/versions/2026-08-12.mutations';
+import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
+import { routeObserved } from '@/surface/read/route';
 import { CONTINUATION } from '@/surface/versions/2026-08-12/continuation-decl';
 import {
   AVATAR_ALT_RE,
@@ -50,6 +52,8 @@ import {
   USERNAME_RE,
 } from '@/surface/versions/2026-08-12/literals';
 import { SURFACE_DOC_2026_08_12 as DOC } from '@/surface/versions/2026-08-12/surface';
+import { GRAPHQL, TRANSPORT } from '@/surface/versions/2026-08-12/transport-decl';
+import { TAB } from '@/timing/config';
 
 /** Everything routed below is read off the validated document, never re-typed. */
 const SIGNALS = (surface: 'url' | 'text' | 'refusal'): readonly BlockSignature[] =>
@@ -66,34 +70,28 @@ const MUTATION_REFUSAL_SIGNATURES = SIGNALS('refusal');
 // ---------------------------------------------------------------------------
 
 /**
- * Wrap a fetch of `urlExpr` (a JS expression evaluated in page context) so it
- * ALWAYS resolves to a `FetchEnvelope` — `r.json()` is only called on a JSON
- * 2xx, an HTML/error body yields `{ ok: false, ..., textHead }`, and a network
- * error yields `{ ok: false, status: 0, contentType: '', textHead }`. The
- * private API requires the `x-ig-app-id` header + session credentials.
- *
- * The fetch is abort-bounded so a never-responding endpoint settles as an
- * envelope failure instead of leaving the caller's evaluate pending. The
- * 20000 literal is inlined because page scripts cannot import — it mirrors
- * `TAB.FETCH_ABORT_MS` in `@/timing/config`; keep the two in sync.
+ * Wrap a fetch of `urlExpr` (a JS expression evaluated in page context) so it ALWAYS resolves to
+ * a `FetchEnvelope`: any 2xx with a parseable media type hands back its body TEXT (decoded once,
+ * main-side), anything else `{ ok: false, ..., textHead }`, a network error status 0. The request
+ * itself (URL, `x-ig-app-id` header, credentials) is unchanged; `abortMs` bounds the wait.
  */
-const envelopeFetchScript = (urlExpr: string): string =>
-  `fetch(${urlExpr}, { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include', signal: AbortSignal.timeout(20000) })
+const envelopeFetchScript = (abortMs: number, urlExpr: string): string =>
+  `fetch(${urlExpr}, { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include', signal: AbortSignal.timeout(${abortMs}) })
   .then(function (r) {
     var ct = '';
     try { ct = (r.headers && r.headers.get('content-type')) || ''; } catch (e) { ct = ''; }
     var fail = function (head) {
-      return { ok: false, status: r.status, contentType: ct, finalUrl: r.url, textHead: String(head).slice(0, 256) };
+      return { ok: false, status: r.status, contentType: ct, finalUrl: r.url, textHead: String(head).slice(0, ${SURFACE_BOUNDS.envelopeHeadChars}) };
     };
-    if (r.ok && ct.toLowerCase().indexOf('json') !== -1) {
-      return r.json().then(
-        function (j) { return { ok: true, status: r.status, contentType: ct, finalUrl: r.url, json: j }; },
+    if (r.ok && new RegExp(${JSON.stringify(BODY_MIME_PARSEABLE.source)}, ${JSON.stringify(BODY_MIME_PARSEABLE.flags)}).test(ct)) {
+      return r.text().then(
+        function (t) { return { ok: true, status: r.status, contentType: ct, finalUrl: r.url, text: t }; },
         function (err) { return fail(err); }
       );
     }
     return r.text().then(function (t) { return fail(t); }, function (err) { return fail(err); });
   })
-  .catch(function (err) { return { ok: false, status: 0, contentType: '', textHead: String(err).slice(0, 256) }; })`;
+  .catch(function (err) { return { ok: false, status: 0, contentType: '', textHead: String(err).slice(0, ${SURFACE_BOUNDS.envelopeHeadChars}) }; })`;
 
 // ---------------------------------------------------------------------------
 // In-page CALLS. Every DOM mechanic lives in `src/adapter/page/*.ts` (real
@@ -157,20 +155,15 @@ export const SURFACE_2026_08_12: IgSurface = {
   version: DOC.id,
 
   matchEndpoint(url: string, friendlyName?: string): EndpointKind | null {
-    for (const entry of DOC.endpoints) {
-      if (!entry.match.url.test(url)) continue;
-      // See `matchEndpoint` in `@/surface/index`: an endpoint identified by a
-      // GraphQL operation name needs that name to have been observed.
-      if (entry.match.friendlyName !== undefined) {
-        if (friendlyName === undefined || !entry.match.friendlyName.test(friendlyName)) continue;
-      }
-      return entry.kind;
-    }
-    return null;
+    const headers = friendlyName === undefined ? undefined : { [TRANSPORT.friendlyNameHeader]: friendlyName };
+    return routeObserved({ url, requestHeaders: headers }, { doc: DOC, transport: TRANSPORT })?.kind ?? null;
   },
+  route: (req) => routeObserved(req, { doc: DOC, transport: TRANSPORT }),
+  transport: TRANSPORT,
+  graphql: GRAPHQL,
 
   friendlyName(requestHeaders?: Record<string, string>): string | undefined {
-    return requestHeaders?.[GRAPHQL_FRIENDLY_NAME_HEADER];
+    return requestHeaders?.[TRANSPORT.friendlyNameHeader];
   },
 
   parseableMime: (mimeType: string): boolean => BODY_MIME_PARSEABLE.test(mimeType),
@@ -209,8 +202,8 @@ export const SURFACE_2026_08_12: IgSurface = {
   // 2026-09-20). The ordered form answers the WHOLE list and ignores `max_id` —
   // so the past-the-end probe asks in the plain form, where an offset past the
   // end is empty, instead of downloading the entire list again.
-  listPageScript: (pk, which, maxId, endProbe = false): string =>
-    envelopeFetchScript(
+  listPageScript: (pk, which, maxId, endProbe = false, abortMs = TAB.FETCH_ABORT_MS): string =>
+    envelopeFetchScript(abortMs,
       `'${PATHS.friendshipsList}' + encodeURIComponent(${JSON.stringify(pk)}) + '/${which}/?count=${LIST_PAGE_COUNT}${which === 'following' && !endProbe ? FOLLOWING_LIST_ORDER : ''}'` +
         (maxId === null
           ? ''

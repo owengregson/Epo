@@ -30,8 +30,11 @@ import type {
   ShowManyEntry,
   StaleComponent,
 } from '@/adapter/surface-types';
+import type { ObservedRequest, RouteMatch } from '@/surface/read/route';
 import type { EndpointKind } from '@/surface/schema/endpoints';
 import type { ProfilePresence } from '@/surface/schema/projection';
+import type { TransportDecl } from '@/surface/transport/decode';
+import type { GraphqlDecl } from '@/surface/transport/graphql';
 
 // The envelope, mutation and result types live in sibling modules that import
 // nothing from here; re-exported so every consumer keeps one import site.
@@ -105,6 +108,11 @@ export interface IgSurface {
    * supplied and matches.
    */
   matchEndpoint(url: string, friendlyName?: string): EndpointKind | null;
+  /** Route an observed request (URL plus its recorded headers) through the one routing table. */
+  route(req: ObservedRequest): RouteMatch | null;
+  /** The transport and GraphQL envelope keys every body is decoded and classified with. */
+  transport: TransportDecl;
+  graphql: GraphqlDecl;
 
   /**
    * The GraphQL operation name a request carried, read off its (lower-cased)
@@ -131,6 +139,7 @@ export interface IgSurface {
     body: unknown,
     at: number,
     source?: 'followers-list' | 'following-list' | 'friend-requests',
+    final?: boolean | null,
   ): FollowersListResult | ShapeMismatch;
   /**
    * Parse a profile-info body into a profile observation. `null` when the user
@@ -184,7 +193,7 @@ export interface IgSurface {
    * `maxId` is the previous page's resume cursor (`null` for the first page);
    * the body parses with {@link extractFollowersList}.
    */
-  listPageScript(pk: string, which: 'followers' | 'following', maxId: string | null, endProbe?: boolean): string;
+  listPageScript(pk: string, which: 'followers' | 'following', maxId: string | null, endProbe?: boolean, abortMs?: number): string;
   /**
    * A synthesized cursor pointing just PAST `rowsFetched` rows — used to probe one page beyond
    * a claimed end-of-list in an OFFSET cursor space. An opaque space is never probed this way
