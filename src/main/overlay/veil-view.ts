@@ -12,7 +12,7 @@
 
 import * as path from 'node:path';
 import { type BaseWindow, type Rectangle, WebContentsView } from 'electron';
-import type { ActivityInfo } from '@/adapter/activity-reporter';
+import { type ActivityInfo, toVeilInfo } from '@/shared/live-op';
 import * as logger from '@/utils/logger';
 
 /** Must match the veil page's opacity transition (`veil.html`). */
@@ -92,12 +92,13 @@ export class OverlayVeil {
    * composition root, so the chip distinguishes direct JSON-API work ("Reading
    * follower list") from real page driving ("Scrolling follower list").
    */
-  setActivity(info: ActivityInfo | null): void {
-    if (info === null) {
+  setActivity(activity: ActivityInfo | null): void {
+    if (activity === null) {
       this.lastActivity = null;
       this.run('window.__veilActivity && window.__veilActivity(null)');
       return;
     }
+    const info = toVeilInfo(activity);
     // Drop redundant pushes (the same phase re-reported with nothing changed).
     const key = `${info.kind}|${info.label}|${info.count ?? ''}|${info.total ?? ''}|${info.detail ?? ''}`;
     if (key === this.lastActivity) return;

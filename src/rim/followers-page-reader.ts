@@ -118,17 +118,13 @@ export class FollowersPageReader {
 
     // Live veil readout: unlike the direct API walk, this scrape DRIVES the page
     // (opens the modal and scrolls it), so it reads as a 'page' phase.
-    const activityLabel =
-      dialog === 'following' ? 'Scrolling following list' : 'Scrolling follower list';
     // No honest denominator here: the scroll scrape stops on stagnation/rounds,
     // not at a known count, so it reports NO total and the overlay shows an
     // indeterminate sweep rather than a fabricated percentage.
     const reportActivity = (count: number): void =>
       this.reporter.report({
         kind: 'page',
-        label: activityLabel,
-        count,
-        detail: `@${targetUsername}`,
+        op: { op: 'browse-list', list: dialog, of: targetUsername, done: count, total: null },
       });
     reportActivity(0);
 

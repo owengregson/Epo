@@ -114,13 +114,10 @@ export class ListPageWalker {
     // `maxNewPks` (when the caller set one) is a REAL denominator — the number
     // of accounts this run is walking toward — so the overlay can draw a true
     // determinate bar; an unbounded census reports no total (indeterminate).
-    const activityLabel = which === 'following' ? 'Reading following list' : 'Reading follower list';
     const reportActivity = (count: number): void =>
       this.reporter.report({
         kind: 'api',
-        label: activityLabel,
-        count,
-        total: args.maxNewPks,
+        op: { op: 'read-list', list: which, of: null, done: count, total: args.maxNewPks ?? null },
       });
     reportActivity(0);
 

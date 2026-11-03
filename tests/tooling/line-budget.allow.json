@@ -55,7 +55,7 @@
     },
     {
       "file": "src/rim/list-page-walker.ts",
-      "lines": 403
+      "lines": 400
     },
     {
       "file": "src/main/services/graph-builder.ts",
@@ -63,7 +63,7 @@
     },
     {
       "file": "src/rim/followers-page-reader.ts",
-      "lines": 366
+      "lines": 362
     },
     {
       "file": "src/rim/follower-acquisition.ts",

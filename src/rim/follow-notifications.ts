@@ -149,7 +149,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
       return { ok: false, events: [], accepted: [], reason: `sentinel:${status}` };
     }
 
-    this.reporter.report({ kind: 'page', label: 'Checking notifications' });
+    this.reporter.report({ kind: 'page', op: { op: 'check-notifications' } });
     try {
       return await this.fetchRecentHeld(opts?.acceptRequests === true);
     } finally {

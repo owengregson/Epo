@@ -12,6 +12,7 @@ import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
 import { ListPageWalker } from '@/rim/list-page-walker';
+import { toVeilInfo } from '@/shared/live-op';
 import { RIM } from '@/timing/config';
 import { nextRestStride } from '@/timing/noise';
 import { setLevel } from '@/utils/logger';
@@ -71,7 +72,7 @@ const harness = (envelopes: unknown[]): Harness => {
     },
     rng: () => 0.5,
     reporter: {
-      report: (info) => activity.push(info),
+      report: (info) => activity.push(toVeilInfo(info)),
       clear: () => activity.push(null),
     },
   });

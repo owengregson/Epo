@@ -12,6 +12,7 @@ import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
+import { toVeilInfo } from '@/shared/live-op';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { RECOVERY } from '@/timing/config';
 import { setLevel } from '@/utils/logger';
@@ -57,7 +58,7 @@ const build = (opts?: { sentinel?: FakeSentinel; batchCap?: number; sleep?: (ms:
     clock,
     batchCap: opts?.batchCap,
     sleep: opts?.sleep ?? noSleep,
-    reporter: { report: (info) => activity.push(info), clear: () => activity.push(null) },
+    reporter: { report: (info) => activity.push(toVeilInfo(info)), clear: () => activity.push(null) },
   });
   return { enricher, visitor, activity };
 };
