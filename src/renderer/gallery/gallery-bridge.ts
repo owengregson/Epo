@@ -6,6 +6,8 @@ import {
   GALLERY_QUEUE,
   GALLERY_SETTINGS,
 } from '@/renderer/gallery/fixtures';
+import { GALLERY_BASIS } from '@/renderer/gallery/fixtures-settings';
+import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
 import type { EpoBridge } from '@/types';
 
 /** One page of fixture rows, cut like main cuts a long lane. */
@@ -49,6 +51,14 @@ const RESPONSES: Record<string, unknown> = {
   pruneCandidates: [],
   checkSeed: { ok: true, exists: true, followersVisible: true, isPrivate: false },
   checkForUpdate: { state: 'idle', mode: 'notify', current: '0.0.0', version: null, percent: null, error: null },
+  // The Settings stage: no main process saves here, so every change answers honestly that nothing was saved.
+  settingsView: GALLERY_SETTINGS_VIEW,
+  settingsFacts: GALLERY_SETTINGS_FACTS,
+  settingsBasis: { kind: 'ok', rows: GALLERY_BASIS },
+  applySettings: { kind: 'not-saved', view: GALLERY_SETTINGS_VIEW, detail: 'the gallery has no main process to save to' },
+  previewSettings: { kind: 'unavailable' },
+  suggestAccounts: { kind: 'ok', rows: [] },
+  updateStatus: { state: 'unchecked', mode: 'notify', current: '3.1.1', version: null, percent: null, error: null, checkedAt: null },
 };
 
 /** Install the fixture bridge on `window.epo`. Idempotent. */
