@@ -54,10 +54,6 @@
       "lines": 504
     },
     {
-      "file": "src/surface/versions/2026-08-12/literals.ts",
-      "lines": 450
-    },
-    {
       "file": "src/engine/target-pipeline.ts",
       "lines": 435
     },
