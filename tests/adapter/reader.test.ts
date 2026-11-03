@@ -1,5 +1,6 @@
 import { isShapeMismatch, SHAPE_MISMATCH, SURFACE } from '@/adapter/ig-surface';
 import { Reader } from '@/adapter/reader';
+import type { SurfaceRead } from '@/surface/read/types';
 import followersLast from '../fixtures/adapter/followers-list-last.json';
 import followersPage1 from '../fixtures/adapter/followers-list-page1.json';
 import friendshipShowPrivate from '../fixtures/adapter/friendship-show-private.json';
@@ -8,6 +9,7 @@ import profileGraphql1 from '../fixtures/adapter/profile-graphql-1.json';
 import profileInfo1 from '../fixtures/adapter/profile-info-1.json';
 import profileInfo2 from '../fixtures/adapter/profile-info-2.json';
 import showMany from '../fixtures/adapter/show-many.json';
+import { PROFILE_QUERY, readAs } from '../kit/surface';
 
 const r = new Reader();
 const AT = 1_700_000_000_000;
@@ -210,14 +212,15 @@ describe('Reader.parseFollowersListStrict / parseFollowingListStrict', () => {
   });
 });
 
-describe('Reader.parseProfileInfo', () => {
+describe('Reader.read: the profile record (the document drives both containers)', () => {
+  const info = (body: unknown): SurfaceRead => readAs(r, 'profile-info', body, { at: AT });
+  const gql = (body: unknown): SurfaceRead => readAs(r, 'profile-graphql', body, { at: AT }, PROFILE_QUERY);
+  const fact = (read: SurfaceRead) => (read.ok ? read.projection.facts[0] : undefined);
+
   test('extracts pk, username, follower/following counts', () => {
-    const obs = r.parseProfileInfo(profileInfo1, AT);
-    expect(obs).not.toBeNull();
-    expect(obs!.accountPk).toBe('1000000003');
-    expect(obs!.observedAt).toBe(AT);
-    expect(obs!.source).toBe('profile');
-    expect(obs!.fields).toEqual({
+    const obs = fact(info(profileInfo1));
+    expect(obs).toMatchObject({ accountPk: '1000000003', observedAt: AT, source: 'profile' });
+    expect(obs?.fields).toEqual({
       username: 'user_005',
       followers: 561,
       following: 305,
@@ -228,77 +231,61 @@ describe('Reader.parseProfileInfo', () => {
     });
   });
 
-  test('extracts the biography so the prune bio filter has a fact to match on', () => {
+  test('extracts the biography so the protection rule has a fact to match on', () => {
     const body = { user: { pk: 9, username: 'x', biography: 'Dog mom 🐶 | photographer' } };
-    expect(r.parseProfileInfo(body, AT)!.fields.bio).toBe('Dog mom 🐶 | photographer');
+    expect(fact(info(body))?.fields.bio).toBe('Dog mom 🐶 | photographer');
   });
 
   test('second profile fixture: counts preserved for ratio math', () => {
-    const obs = r.parseProfileInfo(profileInfo2, AT);
-    expect(obs!.fields.followers).toBe(1194);
-    expect(obs!.fields.following).toBe(1131);
+    expect(fact(info(profileInfo2))?.fields).toMatchObject({ followers: 1194, following: 1131 });
   });
 
-  test('missing user -> null', () => {
-    expect(r.parseProfileInfo({ user: null }, AT)).toBeNull();
-    expect(r.parseProfileInfo({ data: {} }, AT, 'profile-graphql')).toBeNull();
+  test("an explicit null user is Instagram's own \"gone\"; a missing one is drift", () => {
+    expect(info({ user: null })).toMatchObject({ ok: true, projection: { absent: true, facts: [] } });
+    expect(gql({ data: {} })).toMatchObject({ ok: false, kind: 'mismatch' });
   });
 
   test('a body carrying NO user container at all is drift, not a deletion', () => {
-    // A soft-block body parses cleanly as JSON; reading it as "profile gone"
-    // would retire a live account (ADR 0303). `null` here means gone, so drift
-    // must not produce it silently — the Reader warns and yields null only
-    // after SHAPE_MISMATCH, never confusing the two upstream.
-    expect(SURFACE.extractProfileInfo({ status: 'fail' }, AT)).toBe(SHAPE_MISMATCH);
-    expect(SURFACE.extractProfileInfo({}, AT)).toBe(SHAPE_MISMATCH);
+    // A soft-block body parses cleanly as JSON; reading it as "profile gone" would retire a live account (ADR 0303).
+    expect(info({ status: 'fail' })).toMatchObject({ ok: false, kind: 'mismatch', keys: ['status'] });
+    expect(info({})).toMatchObject({ ok: false, kind: 'mismatch' });
   });
 
   test('both containers read: `user` (fetched) and `data.user` (observed)', () => {
-    const info = r.parseProfileInfo(profileInfo1, AT);
-    const gql = r.parseProfileInfo(profileGraphql1, AT, 'profile-graphql');
-    expect(info!.accountPk).toBe('1000000003');
-    expect(gql!.accountPk).toBe('1000000003');
-    expect(info!.fields.followers).toBe(561);
-    expect(gql!.fields.followers).toBe(561);
+    expect(fact(info(profileInfo1))).toMatchObject({ accountPk: '1000000003', fields: { followers: 561 } });
+    expect(fact(gql(profileGraphql1))).toMatchObject({ accountPk: '1000000003', fields: { followers: 561 } });
   });
 });
 
-describe('Reader.profileViewer', () => {
-  const gql = (friendship: unknown): unknown => ({
-    data: { user: { pk: '1', friendship_status: friendship } },
-  });
+describe('Reader.profileSeen: the viewer flags', () => {
+  const gql = (friendship: unknown): SurfaceRead =>
+    readAs(r, 'profile-graphql', { data: { user: { pk: '1', friendship_status: friendship } } }, { at: AT }, PROFILE_QUERY);
+  const viewerOf = (read: SurfaceRead) => r.profileSeen(read, null)?.viewer;
 
   test('every direction from the GraphQL body (private followers visible when following)', () => {
     const fs = { following: true, outgoing_request: false, followed_by: true, incoming_request: true };
-    expect(r.profileViewer(gql(fs))).toEqual({ following: true, requested: false, followsUs: true, incomingRequest: true });
+    expect(viewerOf(gql(fs))).toEqual({ following: true, requested: false, followsUs: true, incomingRequest: true });
   });
 
   test('each flag is read by presence: an absent key is null, never false', () => {
-    expect(r.profileViewer(gql({ following: false, followed_by: false }))).toEqual({
+    expect(viewerOf(gql({ following: false, followed_by: false }))).toEqual({
       following: false, requested: null, followsUs: false, incomingRequest: null,
     });
   });
 
   test('a pending request to a private account reads as requested, not following', () => {
-    expect(r.profileViewer(gql({ following: false, outgoing_request: true }))).toMatchObject({
-      following: false,
-      requested: true,
-    });
+    expect(viewerOf(gql({ following: false, outgoing_request: true }))).toMatchObject({ following: false, requested: true });
   });
 
   test('the `/users/<pk>/info/` body carries no viewer flag — unknown, never false', () => {
-    expect(r.profileViewer(profileInfo1, 'profile-info')).toEqual({
-      following: null,
-      requested: null,
-      followsUs: null,
-      incomingRequest: null,
+    expect(viewerOf(readAs(r, 'profile-info', profileInfo1, { at: AT }))).toEqual({
+      following: null, requested: null, followsUs: null, incomingRequest: null,
     });
   });
 
-  test('null when the flag or user is absent', () => {
-    expect(r.profileViewer(gql({})).following).toBeNull();
-    expect(r.profileViewer({ data: {} }).following).toBeNull();
-    expect(r.profileViewer({}).following).toBeNull();
+  test('every flag unknown when the relationship is empty; no profile at all when the user is', () => {
+    expect(viewerOf(gql({}))?.following).toBeNull();
+    expect(r.profileSeen(readAs(r, 'profile-graphql', { data: {} }, { at: AT }, PROFILE_QUERY), null)).toBeNull();
   });
 });
 
@@ -375,8 +362,6 @@ describe('Reader.parseFriendshipShow', () => {
 describe('Reader.relationshipFacts', () => {
   const SHOW_MANY_URL = 'https://i.instagram.com/api/v1/friendships/show_many/';
   const SHOW_URL = 'https://www.instagram.com/api/v1/friendships/show/999/';
-  const GRAPHQL_URL = 'https://www.instagram.com/api/graphql';
-  const GQL_NAME = 'PolarisProfilePageContentQuery';
   const PROFILE_URL = 'https://www.instagram.com/api/v1/users/1000000003/info/';
 
   test('show-many → one fact per entry, weFollow from following', () => {
@@ -405,7 +390,7 @@ describe('Reader.relationshipFacts', () => {
   });
 
   test('the observed GraphQL profile → fact from pk + friendship_status', () => {
-    expect(r.relationshipFacts(GRAPHQL_URL, profileGraphql1, AT, GQL_NAME)).toEqual([
+    expect(r.relationshipFacts(readAs(r, 'profile-graphql', profileGraphql1, { at: AT }, PROFILE_QUERY))).toEqual([
       { pk: '1000000003', weFollow: true },
     ]);
   });
@@ -414,14 +399,13 @@ describe('Reader.relationshipFacts', () => {
     // `/users/<pk>/info/` has no viewer side, so it is not relationship-bearing
     // at all — reading it as "we do not follow them" would retire live records.
     expect(r.relationshipBearing(PROFILE_URL)).toBe(false);
-    expect(r.relationshipFacts(PROFILE_URL, profileInfo1, AT)).toEqual([]);
+    expect(r.relationshipFacts(readAs(r, 'profile-info', profileInfo1, { at: AT }))).toEqual([]);
   });
 
   test('the GraphQL profile without a user or without the flag → []', () => {
-    expect(r.relationshipFacts(GRAPHQL_URL, { data: {} }, AT, GQL_NAME)).toEqual([]);
-    expect(
-      r.relationshipFacts(GRAPHQL_URL, { data: { user: { pk: '1', username: 'x' } } }, AT, GQL_NAME),
-    ).toEqual([]);
+    expect(r.relationshipFacts(readAs(r, 'profile-graphql', { data: {} }, { at: AT }, PROFILE_QUERY))).toEqual([]);
+    const flagless = { data: { user: { pk: '1', username: 'x' } } };
+    expect(r.relationshipFacts(readAs(r, 'profile-graphql', flagless, { at: AT }, PROFILE_QUERY))).toEqual([]);
   });
 
   test('accepts a raw JSON string body', () => {

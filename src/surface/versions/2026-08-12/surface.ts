@@ -161,9 +161,10 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
     }),
     listEndpoint('followers-list', URLS.followersList, URLS.followersListTargetPk, 'followers-list'),
     listEndpoint('following-list', URLS.followingList, URLS.followingListTargetPk, 'following-list'),
+    // The document drives both profile containers (flipped in order, spec §10.3); `/users/<pk>/info/` is retired.
     defineEndpoint({
       kind: 'profile-info',
-      mode: 'observe',
+      mode: 'enforce',
       match: { method: 'GET', url: URLS.profileInfo, ids: { pk: URLS.profileInfoPk } },
       response: ProfileRecord,
       project: projectProfileUser,
@@ -176,7 +177,7 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
     // page would route here and log drift.
     defineEndpoint({
       kind: 'profile-graphql',
-      mode: 'observe',
+      mode: 'enforce',
       match: {
         method: 'POST',
         url: URLS.graphql,

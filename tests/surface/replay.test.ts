@@ -53,9 +53,16 @@ describe('the surface document loads and validates', () => {
     for (const endpoint of doc.endpoints) {
       expect(typeof endpoint.project).toBe('function');
       expect(endpoint.response).toBeDefined();
-      // Nothing may be flipped to `enforce` while the shadow record is this thin.
-      expect(endpoint.mode).toBe('observe');
     }
+  });
+
+  test('endpoints flip to `enforce` whole and in the spec order (§10.3), never out of it', () => {
+    const order = [['profile-graphql', 'profile-info'], ['activity-feed'], ['friend-requests'], ['show-many', 'friendship-show'],
+      ['followers-list', 'following-list']];
+    const modes = order.map((kinds) => new Set(doc.endpoints.filter((e) => kinds.includes(e.kind)).map((e) => e.mode)));
+    for (const set of modes) expect(set.size).toBe(1);
+    const flipped = modes.map((set) => set.has('enforce'));
+    expect(flipped).toEqual([...flipped].sort((a, b) => Number(b) - Number(a)));
   });
 
   test('an `escape` control names the ADR that authorised it', () => {

@@ -165,11 +165,8 @@ export class FollowersPageReader {
       // URL is a rate-limit / block / login wall, not data. Warn and stop the
       // scrape.
       if (resp.status >= 400 || !this.reader.parseableBody(resp.mimeType)) {
-        logger.warn('rim.followers-page-reader: non-JSON/error response, halting scrape', {
-          url: resp.url,
-          status: resp.status,
-          mimeType: resp.mimeType,
-        });
+        logger.warn('rim.followers-page-reader: non-JSON/error response, halting scrape',
+          { url: resp.url, status: resp.status, mimeType: resp.mimeType });
         halted.hit = true;
         return;
       }
@@ -184,16 +181,23 @@ export class FollowersPageReader {
         if (targetPk !== null) args.onTargetPk?.(targetPk);
       }
 
+      const failed = (e: unknown): void => {
+        logger.warn('rim.followers-page-reader: body/parse failed', { url: resp.url, error: String(e) });
+      };
+      if (profileKind !== null) {
+        // The profile body is read once for every consumer (the observer stores it too); our own counts stay gated.
+        const read = this.reader.observed.read(resp, this.clock.now());
+        if (read !== null) pending.push(read.then(({ read: profile }) => {
+          const seen = this.reader.profileSeen(profile);
+          if (seen !== null) onObservation(seen.obs, null);
+        }).catch(failed));
+        return;
+      }
       pending.push(
         resp
           .getBody()
           .then((body) => {
             const now = this.clock.now();
-            if (profileKind !== null) {
-              const obs = this.reader.parseProfileInfo(body, now, profileKind);
-              if (obs) onObservation(obs, null);
-              return;
-            }
             const parsed =
               listKind === 'following-list'
                 ? this.reader.parseFollowingListStrict(body, now)
@@ -219,12 +223,7 @@ export class FollowersPageReader {
               reportActivity(observed.size);
             }
           })
-          .catch((e: unknown) => {
-            logger.warn('rim.followers-page-reader: body/parse failed', {
-              url: resp.url,
-              error: String(e),
-            });
-          }),
+          .catch(failed),
       );
     });
 

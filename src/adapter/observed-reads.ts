@@ -40,22 +40,24 @@ export class ObservedReads {
     private readonly opts: ObservedReadsOpts = {},
   ) {}
 
-  /** The response's read, shared by every caller; `null` when no definition routes it. */
-  read(resp: TabResponse): Promise<ObservedRead> | null {
+  /**
+   * The response's read, shared by every caller; `null` when no definition routes it. `at` stamps the
+   * read (the first caller's stamp wins; every production consumer shares one clock).
+   */
+  read(resp: TabResponse, at?: number): Promise<ObservedRead> | null {
     const known = this.memo.get(resp);
     if (known !== undefined) return known;
     const route = this.reader.route(resp);
     if (route === null) return null;
-    const pending = this.readRouted(resp, route);
+    const pending = this.readRouted(resp, route, at ?? (this.opts.now ?? Date.now)());
     this.memo.set(resp, pending);
     return pending;
   }
 
-  private async readRouted(resp: TabResponse, route: RouteMatch): Promise<ObservedRead> {
+  private async readRouted(resp: TabResponse, route: RouteMatch, at: number): Promise<ObservedRead> {
     const { env } = this.reader;
     const subject = env.doc.endpoints[route.defIndex]?.match.ids?.pk?.exec(resp.url)?.[1];
-    const ctx: ReadCtx = { at: (this.opts.now ?? Date.now)(), route, viewerPk: this.opts.viewerPk ?? null,
-      ...(subject === undefined ? {} : { pk: subject }) };
+    const ctx: ReadCtx = { at, route, viewerPk: this.opts.viewerPk ?? null, ...(subject === undefined ? {} : { pk: subject }) };
     const status = resp.status;
     const mime = resp.mimeType;
     // A wall, a 404 or a body that is not data answers before any body read.

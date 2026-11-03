@@ -17,12 +17,10 @@ import type { Observation } from '@/store/types';
 import { admits } from '@/surface/read/admission';
 import { defaultEnv, readBody } from '@/surface/read/read';
 import { mintObserved } from '@/surface/read/relationship';
-import type { ObservedRequest } from '@/surface/read/route';
+import { type ObservedRequest, routeObserved } from '@/surface/read/route';
 import type { BodyInput, ReadCtx, ReadEnv, RouteMatch, SurfaceRead } from '@/surface/read/types';
-import type { ProfilePresence } from '@/surface/schema/projection';
 import type { DriftSignal } from '@/surface/sink';
 import { type Decoded, decodeBody } from '@/surface/transport/decode';
-import { type GraphqlOutcome, graphqlEnvelope } from '@/surface/transport/graphql';
 
 export type { EndpointKind, FollowEvent, FollowersListResult, FriendshipShowResult, ShowManyEntry } from '@/adapter/ig-surface';
 
@@ -40,16 +38,19 @@ export class Reader {
   readonly env: ReadEnv;
   /** Every observed response read once, shared by every consumer of this Reader. */
   readonly observed: ObservedReads;
+  /** Our own pk, when the session names it: our own header counts are gated on it. */
+  readonly ownPk: string | null;
 
   /** `session` names whose session observes (I10) and the observation clock. */
   constructor(env: Partial<ReadEnv> = {}, session: ObservedReadsOpts = {}) {
     this.env = { ...defaultEnv(), ...env };
     this.observed = new ObservedReads(this, session);
+    this.ownPk = session.viewerPk ?? null;
   }
 
   /** Route an observed request through the one routing table, or `null`. */
   route(req: ObservedRequest): RouteMatch | null {
-    return SURFACE.route(req);
+    return routeObserved(req, { doc: this.env.doc, transport: this.env.doc.read.transport });
   }
 
   /** Route a response URL (and the operation name it carried) to its endpoint kind, or `null`. */
@@ -125,7 +126,7 @@ export class Reader {
    * A profile read as the visit sees it: the observation (our own counts dropped unless the read is
    * C0/C1 and complete), the viewer flags (withheld unless destructive-admitted), presence and tier.
    */
-  profileSeen(read: SurfaceRead, ownPk: string | null): ProfileSeen | null {
+  profileSeen(read: SurfaceRead, ownPk: string | null = this.ownPk): ProfileSeen | null {
     if (!read.ok) return null;
     const p = read.projection;
     const fact = p.facts[0];
@@ -164,43 +165,6 @@ export class Reader {
     shadowDocument(this.env, kind, body, { at, source: kind, final }, json);
     if (legacy === null) warnUnexpected(kind, body);
     return legacy;
-  }
-
-  /** A profile body's observation; `null` when the body has no user (`kind` names the container). */
-  parseProfileInfo(body: unknown, at: number, kind: ProfileKind = 'profile-info'): Observation | null {
-    const json = coerceBody(body, kind);
-    const result = SURFACE.extractProfileInfo(json, at);
-    shadowDocument(this.env, kind, body, { at, source: 'profile' }, json);
-    if (isShapeMismatch(result)) {
-      warnUnexpected(kind, body);
-      return null;
-    }
-    return result;
-  }
-
-  /** The GraphQL body's viewer flags, each by presence (`/users/<pk>/info/` has none). */
-  profileViewer(body: unknown, kind: ProfileKind = 'profile-graphql'): ProfileViewer {
-    return SURFACE.extractProfileViewer(coerceBody(body, kind));
-  }
-
-  /** Which decision-bearing fields a profile body carried (`viewerPk` names a null relationship's owner). */
-  profilePresence(body: unknown, kind: ProfileKind, viewerPk: string | null): ProfilePresence | null {
-    return SURFACE.extractProfilePresence(coerceBody(body, kind), viewerPk);
-  }
-
-  /** A profile body's GraphQL envelope (spec §10.5): a wall, errors to wait out, partial, or data. Never "gone". */
-  profileEnvelope(body: unknown, kind: ProfileKind): GraphqlOutcome {
-    const json = coerceBody(body, kind);
-    const read = (): boolean => {
-      const r = SURFACE.extractProfileInfo(json, 0);
-      return r !== null && !isShapeMismatch(r);
-    };
-    return graphqlEnvelope(json, read, SURFACE.graphql, SURFACE.mutationRefusalSignatures);
-  }
-
-  /** Whether the body is Instagram saying the profile is gone: its declared container present and null. */
-  profileAbsent(body: unknown, kind: ProfileKind): boolean {
-    return SURFACE.extractProfileInfo(coerceBody(body, kind), 0) === null;
   }
 
   /** Parse the batched relationship map (`reader-relationships.ts`). */

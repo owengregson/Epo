@@ -81,9 +81,9 @@ export function legacyComparable(kind: EndpointKind, json: unknown, ctx: { at: n
   }
 }
 
-/** A read the comparison stands on: canonical, complete, with every field read. */
-const clean = (read: SurfaceRead): boolean =>
-  read.ok && read.tier === 'canonical' && !read.partial && read.projection.fieldIssues.length === 0;
+/** A read the comparison stands on: canonical, complete, every field and row read (anything else differs by intent). */
+const clean = (read: SurfaceRead): boolean => read.ok && read.tier === 'canonical' && !read.partial
+  && read.projection.fieldIssues.length === 0 && read.projection.rowIssues.length === 0;
 
 /** Failures the legacy path never sees (it reads only the bodies the gate let through). */
 const gated = (read: SurfaceRead): boolean => !read.ok && (read.kind === 'wall' || read.kind === 'http-absent'

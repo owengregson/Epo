@@ -8,7 +8,6 @@ import {
   type EndpointKind,
   type FriendshipShowResult,
   isShapeMismatch,
-  type ProfileViewer,
   type ShowManyEntry,
   SURFACE,
 } from '@/adapter/ig-surface';
@@ -26,8 +25,6 @@ export interface RelationshipReader {
   extractPkFromUrl(url: string): string | null;
   parseShowMany(body: unknown, at: number): ShowManyEntry[];
   parseFriendshipShow(body: unknown, at: number, pk: string): FriendshipShowResult | null;
-  parseProfileInfo(body: unknown, at: number, kind: 'profile-graphql'): { accountPk: string } | null;
-  profileViewer(body: unknown, kind: 'profile-graphql'): ProfileViewer;
 }
 
 /** The batched relationship map (whether WE follow each pk; no followed-by direction). `[]` on no-match. */
@@ -68,9 +65,9 @@ export function relationshipBearing(reader: RelationshipReader, url: string, fri
 }
 
 /**
- * Relationship facts (whether WE own a follow or a pending request toward each pk), routed by
- * endpoint. Each flag is read by presence and a fact is minted only when `weFollow` is known
- * (spec §10.4). `[]` on endpoints without a viewer side.
+ * Relationship facts (whether WE own a follow or a pending request toward each pk) from the batched
+ * and single relationship bodies. Each flag is read by presence and a fact is minted only when
+ * `weFollow` is known (spec §10.4). The document drives the profile body (`Reader.relationshipFacts(read)`).
  */
 export function relationshipFacts(reader: RelationshipReader, url: string, body: unknown, at: number,
   friendlyName?: string): ObservedRelation[] {
@@ -81,13 +78,6 @@ export function relationshipFacts(reader: RelationshipReader, url: string, body:
       const pk = reader.extractPkFromUrl(url);
       const r = pk === null ? null : reader.parseFriendshipShow(body, at, pk);
       return r === null ? [] : mintObserved(LEGACY_READ, [r]); // unparsed ≠ "no relationship"
-    }
-    case 'profile-graphql': {
-      const obs = reader.parseProfileInfo(body, at, 'profile-graphql');
-      if (obs === null) return [];
-      const v = reader.profileViewer(body, 'profile-graphql');
-      return mintObserved(LEGACY_READ, [{ pk: obs.accountPk, following: v.following, outgoingRequest: v.requested,
-        followedBy: v.followsUs, incomingRequest: v.incomingRequest ?? null }]);
     }
     default:
       return [];

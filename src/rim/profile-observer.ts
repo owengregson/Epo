@@ -21,20 +21,13 @@
  */
 
 import { ActionAbortedError } from '@/adapter/errors';
-import { SURFACE } from '@/adapter/ig-surface';
-import type { ProfileKind, Reader } from '@/adapter/reader';
+import type { Reader } from '@/adapter/reader';
 import type { Observable } from '@/adapter/tab-ports';
 import type { Clock } from '@/governors/clock';
 import type { ProfileSeen } from '@/rim/profile-visit-port';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import type { Observation } from '@/store/types';
-import { admits } from '@/surface/read/admission';
-import { gateObserved } from '@/surface/read/gate';
-import type { WallFamily } from '@/surface/read/types';
-import type { Tier } from '@/surface/schema/projection';
+import type { SurfaceRead, WallFamily } from '@/surface/read/types';
 import type { DriftClass } from '@/surface/sink';
-import { decodeBody } from '@/surface/transport/decode';
-import type { GraphqlOutcome } from '@/surface/transport/graphql';
 import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 import type { TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
@@ -64,33 +57,24 @@ export interface ProfileObserverDeps {
   reader: Reader;
   store: Pick<KnowledgeStore, 'observe'>;
   clock: Clock;
-  /** Our own pk: names a null relationship's owner (I10) and gates our own header counts. */
+  /** Our own pk: our own header counts are kept only from a canonical or normalized, complete read. */
   ownPk?: string;
-}
-
-/**
- * Our own header counts are coverage evidence, a destructive input (spec §10.2): only a canonical
- * or normalized, complete read may carry them; any other read of our profile stores no counts.
- */
-export function admitOwnCounts(obs: Observation, read: { tier: Tier; partial: boolean }, ownPk: string | undefined): Observation {
-  if (obs.accountPk !== ownPk || admits('destructive', read)) return obs;
-  return { ...obs, fields: { ...obs.fields, followers: undefined, following: undefined, mutuals: undefined } };
 }
 
 type Listener = (event: ExpectationEvent) => void;
 
 /**
- * What a body that carries no profile tells an armed visit: a non-final stream is drift; a wall is a
- * wall; errors without the profile wait like one (spec §10.5); only a clean, complete body whose
- * container is explicitly null is "gone"; anything else is drift.
+ * What a read that names no profile tells an armed visit: a wall is a wall (errors without the profile
+ * wait like one, spec §10.5); only Instagram's explicit null in a clean, complete body is "gone"; a
+ * stream that is not final knows nothing yet; anything else is drift. A 404 or non-data answer is no news.
  */
-function noProfile(envelope: GraphqlOutcome, streaming: boolean, status: number, absent: () => boolean): ExpectationEvent {
-  if (streaming) return { kind: 'drift', cls: 'incomplete-stream' };
-  if (envelope.kind === 'wall') {
-    return { kind: 'wall', family: envelope.status === 'action-blocked' ? 'rate-limited' : 'auth', status };
+function noProfile(read: SurfaceRead): ExpectationEvent | null {
+  if (!read.ok) {
+    if (read.kind === 'wall') return { kind: 'wall', family: read.family, status: read.status };
+    return read.kind === 'http-absent' || read.kind === 'not-data' ? null : { kind: 'drift', cls: read.kind };
   }
-  if (envelope.kind === 'error') return { kind: 'wall', family: 'server-error', status };
-  return absent() ? { kind: 'absent' } : { kind: 'drift', cls: 'mismatch' };
+  if (read.projection.absent === true) return { kind: 'absent' };
+  return { kind: 'drift', cls: read.partial ? 'incomplete-stream' : 'row-issue' };
 }
 
 export class ProfileObserver {
@@ -154,48 +138,30 @@ export class ProfileObserver {
   }
 
   private onResponse(resp: TabResponse): void {
-    const kind = this.deps.reader.profileKindOf(resp);
-    if (kind === null) return;
-    // A wall is never drift: an HTTP or HTML wall answers the armed visit before any body read.
-    const gate = gateObserved(resp.status, resp.mimeType, SURFACE.transport.parseableMime);
-    if (gate.kind === 'wall') {
-      this.toArmed({ kind: 'wall', family: gate.family, status: resp.status });
-      return;
-    }
-    if (gate.kind !== 'data') return;
-    resp
-      .getBody()
-      .then((body) => this.read(body, kind, resp.status))
+    if (this.deps.reader.profileKindOf(resp) === null) return;
+    // One read per response, shared with every other consumer of the same body.
+    this.deps.reader.observed.read(resp, this.deps.clock.now())
+      ?.then(({ read }) => this.read(read))
       .catch((e: unknown) => {
         logger.warn('rim.profile-observer: profile body unreadable', { error: String(e) });
       });
   }
 
-  private read(body: string, kind: ProfileKind, status: number): void {
-    const { reader } = this.deps;
-    const decoded = decodeBody(body, SURFACE.transport);
-    const envelope = reader.profileEnvelope(body, kind);
-    const streaming = decoded.ok && decoded.final === false;
-    const errorOnly = envelope.kind === 'wall' || envelope.kind === 'error';
-    const parsed = streaming || errorOnly ? null : reader.parseProfileInfo(body, this.deps.clock.now(), kind);
-    const read = { tier: 'canonical', partial: envelope.kind === 'data' && envelope.errors > 0 } as const;
-    if (parsed === null) {
-      this.toArmed(noProfile(envelope, streaming, status, () => !read.partial && reader.profileAbsent(body, kind)));
+  private read(read: SurfaceRead): void {
+    const seen = this.deps.reader.profileSeen(read, this.deps.ownPk ?? null);
+    if (seen === null) {
+      const event = noProfile(read);
+      if (event !== null) this.toArmed(event);
       return;
     }
-    const presence = reader.profilePresence(body, kind, this.deps.ownPk ?? null) ?? undefined;
-    if (presence?.counts === 'partial' || presence?.counts === 'invalid') {
+    const counts = seen.presence?.counts;
+    if (counts === 'partial' || counts === 'invalid') {
       // A count pair that does not read is drift: the profile is stored without counts.
-      logger.warn('rim.profile-observer: profile counts unreadable, stored without them', { counts: presence.counts });
+      logger.warn('rim.profile-observer: profile counts unreadable, stored without them', { counts });
     }
-    const obs = admitOwnCounts(parsed, read, this.deps.ownPk);
-    this.deps.store.observe(obs);
-    const listeners = this.waiting.get(obs.fields.username?.toLowerCase() ?? '');
+    this.deps.store.observe(seen.obs);
+    const listeners = this.waiting.get(seen.obs.fields.username?.toLowerCase() ?? '');
     if (listeners === undefined) return;
-    // A partial read's relationship flags are withheld: positive facts flow, destructive ones wait.
-    const viewer = read.partial ? { following: null, requested: null, followsUs: null, incomingRequest: null }
-      : reader.profileViewer(body, kind);
-    const seen: ProfileSeen = { obs, viewer, presence, ...read };
     for (const listener of [...listeners]) listener({ kind: 'seen', seen });
   }
 }

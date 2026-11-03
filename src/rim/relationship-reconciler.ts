@@ -58,6 +58,18 @@ export class RelationshipReconciler {
    * WARN-and-skip — a missed observation, never an error state.
    */
   async ingest(resp: TabResponse): Promise<void> {
+    const at = this.clock.now();
+    if (this.reader.kindOf(resp) === 'profile-graphql') {
+      // The profile body is read once for every consumer; its facts are minted from that read.
+      const observed = this.reader.observed.read(resp, at);
+      if (observed === null) return;
+      try {
+        this.apply(this.reader.relationshipFacts((await observed).read), at);
+      } catch (e) {
+        logger.warn('rim.relationship-reconciler: profile body unavailable, skipping', { url: resp.url, error: String(e) });
+      }
+      return;
+    }
     let body: string;
     try {
       body = await resp.getBody();
@@ -69,7 +81,6 @@ export class RelationshipReconciler {
       return;
     }
     try {
-      const at = this.clock.now();
       this.apply(this.reader.relationshipFacts(resp.url, body, at, this.friendlyNameOf(resp)), at);
     } catch (e) {
       logger.warn('rim.relationship-reconciler: reconciliation failed', {
