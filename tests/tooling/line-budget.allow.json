@@ -38,10 +38,6 @@
       "lines": 646
     },
     {
-      "file": "src/settings/settings.ts",
-      "lines": 593
-    },
-    {
       "file": "src/engine/churn-scheduler.ts",
       "lines": 552
     },

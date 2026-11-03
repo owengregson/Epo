@@ -17,7 +17,7 @@ export type { ResponseHandler, TabResponse, Unsubscribe } from '@/shared/tab-res
 import type { EngineParkReason, EngineStatus } from '@/engine/engine';
 import type { PruneCandidate, PruneState, PruneStatus } from '@/engine/prune-engine';
 import type { BridgeInvokers, PushContract, PushMethod } from '@/ipc/contract';
-import type { Settings } from '@/settings/settings';
+import type { Settings } from '@/settings/v1/settings-v1-types';
 import type { FollowState, Target } from '@/store/types';
 
 // Re-export so the renderer can name the Engine's status shape from one place.
