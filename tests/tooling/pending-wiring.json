@@ -41,9 +41,9 @@
       "reason": "the activity feed's new rows arrive and file into place with it"
     },
     {
-      "module": "src/renderer/settings/change-queue.ts",
+      "module": "src/renderer/views/SettingsView.tsx",
       "stream": "SU",
-      "reason": "the Settings stage commit hook sends every change through it (wired with the stage shell)"
+      "reason": "deleted, not wired: the Settings stage replaced it; SU deletes the old settings UI in its last commit"
     }
   ]
 }
