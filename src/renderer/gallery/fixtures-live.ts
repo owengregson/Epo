@@ -107,6 +107,8 @@ export const LIVE_SCENARIOS: Scenario[] = [
   scenario('data-unavailable', 'Can’t open data', day({ boot: boot({ data: 'unavailable', dataProblem: 'locked' }) })),
   scenario('starting-up', 'Starting up', day({ boot: boot({ phase: 'starting' }) })),
   scenario('not-built', 'Loading numbers', day({ basis: 'not-built', plan: null, own: null, today: null })),
+  scenario('boot-slow-ig', 'Boot · Instagram loading', day({ boot: boot({ ig: 'placeholder', tab: 'loading' }) })),
+  scenario('boot-offline', 'Boot · offline', running({ online: false, nextActionAt: null, boot: boot({ ig: 'placeholder', tab: 'failed' }) })),
   scenario('pruning', 'Pruning', day({ state: 'idle' }), {}, basePrune({ state: 'running', unfollowed: 12, remaining: 28 })),
   scenario('prune-paused', 'Pruning paused', day({ state: 'idle' }), {}, basePrune({ state: 'paused', unfollowed: 12, remaining: 28 })),
   scenario('practice', 'Practice mode', running({ nextActionAt: NOW + 72_000 }), { practice: true }),

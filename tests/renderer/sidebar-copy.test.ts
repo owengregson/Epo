@@ -7,6 +7,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseSync } from '@swc/core';
+import { PLACEHOLDER, SPLASH } from '@/renderer/boot/boot-copy';
 import { BOOST_COPY } from '@/renderer/copy/boost';
 import { STOP_TOAST, UNDO } from '@/renderer/hooks/useTransportControls';
 import { UPDATE_TOAST } from '@/renderer/hooks/useUpdateToasts';
@@ -14,12 +15,13 @@ import { BOOST_NEEDS_PLAN, bandLine, buttonLabel, PAUSED_REASON, previewLine } f
 import { attentionCode, attentionSentence, SCHEDULES_WAIT, UNKNOWN_ATTENTION } from '@/renderer/sidebar/copy/attention-copy';
 import { explainText } from '@/renderer/sidebar/copy/explain-copy';
 import { FEED_EMPTY, rowFace, SOMEONE, sinceYouLeft } from '@/renderer/sidebar/copy/feed-copy';
-import { headlineOf, nextLineOf, PILL, PRIMARY_FACE, SECONDARY_LABEL, sentenceOf } from '@/renderer/sidebar/copy/posture-copy';
+import { headlineOf, nextLineOf, PILL, PRIMARY_FACE, RING_GLYPH, SECONDARY_LABEL, sentenceOf } from '@/renderer/sidebar/copy/posture-copy';
 import { COMMAND_FAILED, KNOWN_REFUSALS, refusalText } from '@/renderer/sidebar/copy/refusal-copy';
 import {
   approvalsNote, FEED_TITLE, FOOTER, freshPill, GET_STARTED, NO_PLAN, RESULTS, sessionTip, TODAY_TITLE, todayLines, todayNext,
   todaySummary,
 } from '@/renderer/sidebar/copy/zone-copy';
+import { BRAND_ICONS, ICONS } from '@/renderer/ui/icons';
 import { classifyBlock, KNOWN_BLOCK_KEYS } from '@/shared/attention';
 import type { BoostView } from '@/shared/boost';
 import type { FeedItem } from '@/shared/feed';
@@ -192,6 +194,7 @@ function everySentence(): string[] {
   out.push(...Object.values(SECONDARY_LABEL), ...Object.values(PILL), STOP_TOAST, UNDO);
   out.push(UPDATE_TOAST.ready('3.4.1'), UPDATE_TOAST.available('3.4.1'));
   for (const op of ops) out.push(liveOpText(op));
+  out.push(...Object.values(SPLASH), ...Object.values(PLACEHOLDER));
   return out.filter((s) => s !== '');
 }
 
@@ -243,6 +246,7 @@ const DECKS = [
   'src/renderer/sidebar/copy/refusal-copy.ts', 'src/renderer/sidebar/copy/explain-copy.ts',
   'src/renderer/sidebar/copy/feed-copy.ts', 'src/renderer/sidebar/copy/zone-copy.ts', 'src/renderer/sidebar/boost-copy.ts',
   'src/renderer/copy/boost.ts', 'src/shared/live-op.ts', 'src/renderer/hooks/useUpdateToasts.ts',
+  'src/renderer/boot/boot-copy.ts',
 ];
 
 /** An swc AST node, walked generically. */
@@ -280,6 +284,21 @@ function literals(source: string): string[] {
 }
 
 const deck = (file: string): string[] => literals(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+
+describe('every glyph the column draws exists (an unknown name renders an empty box)', () => {
+  it('the ring, the controls, the feed rows and the literal icons', () => {
+    const named = [
+      ...Object.values(RING_GLYPH), ...Object.values(PRIMARY_FACE).map((f) => f.icon), ...feedItems.map((i) => rowFace(i).glyph),
+      ...['sidebar', 'boot'].flatMap((dir) =>
+        fs.readdirSync(path.join(ROOT, 'src/renderer', dir), { recursive: true, encoding: 'utf8' })
+          .filter((f) => f.endsWith('.tsx'))
+          .flatMap((f) => [...fs.readFileSync(path.join(ROOT, 'src/renderer', dir, f), 'utf8').matchAll(/name="([a-z-]+)"/g)].map((m) => m[1] as string)),
+      ),
+    ];
+    const missing = [...new Set(named)].filter((n) => ICONS[n] === undefined && BRAND_ICONS[n] === undefined);
+    expect(missing).toEqual([]);
+  });
+});
 
 describe('law L-COPY in the decks themselves', () => {
   it('the scan reads copy inside typed objects and templates, and skips keys, types and imports', () => {
