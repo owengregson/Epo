@@ -21,8 +21,8 @@ function onRovingKey<T>(e: KeyboardEvent, items: readonly T[], selected: T | nul
 export interface CardChoice<T> {
   readonly value: T;
   readonly title: string;
-  /** A live number from the view ("About 44 a day"). */
-  readonly metric?: string;
+  /** A live number from the view ("About 44 a day"); it may roll when it changes. */
+  readonly metric?: ComponentChildren;
   readonly line?: string;
   readonly recommended?: boolean;
   /** Extra content above the title (the day-shape bars). */

@@ -94,7 +94,8 @@ describe('the Protection section', () => {
     expect(within(section()).getByText('Not seen yet — check the spelling')).toBeTruthy();
     expect(within(section()).getByText('Not a valid username')).toBeTruthy();
     expect(within(section()).getByText('96 people')).toBeTruthy();
-    expect(section().textContent).toMatch(/Protecting 214 of the 1,830 accounts/);
+    const box = section().querySelector('.set-summary-box') as HTMLElement;
+    expect([...box.querySelectorAll('.nt')].map((n) => n.getAttribute('aria-label'))).toEqual(['214', '1,830', '12', '96']);
   });
 
   it('shows "—" with a reason, never 0, until the store answers', async () => {

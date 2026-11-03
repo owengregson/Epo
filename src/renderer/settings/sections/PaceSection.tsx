@@ -13,6 +13,7 @@ import { expectHint } from '../ExpectPanel';
 import { ControlError } from '../fields/controls';
 import { fill } from '../format';
 import type { SectionProps, StageApi } from '../stage-api';
+import { Ticked } from '../Ticked';
 
 const KEY = 'pace:card';
 const CARD_IDS = Object.keys(PACE_CARDS) as PaceCardId[];
@@ -36,7 +37,9 @@ function Safety({ s }: { s: StageApi }): JSX.Element {
         <i style={`width:${share * 100}%`} />
         <b style={`left:${stop * 100}%`} />
       </div>
-      <p class="num">{fill(PACE_COPY.safety, { p: Math.round(t.shareOfLowWall * 100) })}</p>
+      <p class="num">
+        <Ticked template={PACE_COPY.safety} values={{ p: Math.round(t.shareOfLowWall * 100) }} />
+      </p>
     </div>
   );
 }
@@ -48,7 +51,9 @@ function CustomCard({ s }: { s: StageApi }): JSX.Element {
       <span class="radio-card__top">
         <span class="radio-card__title">{PACE_COPY.custom}</span>
       </span>
-      <span class="radio-card__metric num">{fill(PACE_COPY.metric, { n: s.view.typical.perDay.typical })}</span>
+      <span class="radio-card__metric num">
+        <Ticked template={PACE_COPY.metric} values={{ n: s.view.typical.perDay.typical }} />
+      </span>
       <span class="radio-card__line">
         {PACE_COPY.customLine}{' '}
         <button type="button" class="link-btn" onClick={() => s.openAdvanced('pace')}>
@@ -68,7 +73,7 @@ export function PaceSection({ s }: SectionProps): JSX.Element {
     return {
       value: id,
       title: PACE_COPY.cards[id].title,
-      metric: opt ? fill(PACE_COPY.metric, { n: opt.perDay.typical }) : undefined,
+      metric: opt ? <Ticked template={PACE_COPY.metric} values={{ n: opt.perDay.typical }} /> : undefined,
       line: PACE_COPY.cards[id].line,
       recommended: id === RECOMMENDED.pace,
     };
@@ -93,7 +98,7 @@ export function PaceSection({ s }: SectionProps): JSX.Element {
       <ControlError s={s} k={KEY} />
       <p class="set-sec__foot">{PACE_COPY.foot}</p>
       <p class="set-sec__line num">
-        {fill(PACE_COPY.range, { lo: view.typical.perDay.low, hi: view.typical.perDay.high })}
+        <Ticked template={PACE_COPY.range} values={{ lo: view.typical.perDay.low, hi: view.typical.perDay.high }} />
       </p>
       <Safety s={s} />
       {feas.kind === 'short' ? (

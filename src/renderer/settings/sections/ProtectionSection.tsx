@@ -7,22 +7,24 @@ import { PROTECTION_COPY } from '../copy/fields';
 import { Sub, SwitchRow } from '../fields/controls';
 import { PeopleList } from '../fields/PeopleList';
 import { WordChips } from '../fields/WordChips';
-import { fill } from '../format';
 import type { SectionProps, StageApi } from '../stage-api';
+import { Ticked } from '../Ticked';
 
 /** "Protecting 214 of the 1,830 accounts Epo has seen you follow · Kept so far: 12 · …" from the facts. */
 export function ProtectionSummary({ s }: { s: StageApi }): JSX.Element {
   const p = s.facts?.built ? s.facts.protection : null;
   const dash = PROTECTION_COPY.unknown;
-  const text = fill(PROTECTION_COPY.summary, {
+  const values = {
     p: p === null ? dash : p.protectedFollowing,
     f: p?.followingKnown ?? dash,
     k: p === null ? dash : p.kept.total,
     u: p === null ? dash : p.bioUnread,
-  });
+  };
   return (
     <div class="set-summary-box" role="status" aria-live="polite">
-      <p class="num">{text}</p>
+      <p class="num">
+        <Ticked template={PROTECTION_COPY.summary} values={values} />
+      </p>
       {p === null ? <p class="set-sec__hint">{PROTECTION_COPY.unknownWhy}</p> : null}
     </div>
   );

@@ -4,6 +4,7 @@ import { settingsTargetSignal, stageSignal, statusSignal, useShell } from '@/ren
 import { type SettingsCommit, useSettingsCommit } from '@/renderer/hooks/useSettingsCommit';
 import { useSettingsFacts } from '@/renderer/hooks/useSettingsFacts';
 import { useSettingsView } from '@/renderer/hooks/useSettingsView';
+import { staggerSections } from '@/renderer/lib/stagger';
 import type { SettingsOp } from '@/shared/settings-ops';
 import type { SectionId } from '@/shared/settings-params';
 import type { SettingsView } from '@/shared/settings-view';
@@ -50,6 +51,8 @@ function Stage({ view, c, updateStatus }: { view: SettingsView; c: SettingsCommi
   const sections = visibleSections(view, mode);
   const content = useRef<HTMLElement>(null);
   const active = useScrollSpy(content, sections);
+  // The sections arrive once, in order, the first time the page opens (spec §12.7 "arrive").
+  useEffect(() => staggerSections(content.current), []);
   const [pendingReveal, setPendingReveal] = useState<{ section: SectionId; row?: string } | null>(null);
 
   const send = useCallback(

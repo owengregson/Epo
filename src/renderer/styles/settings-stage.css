@@ -289,7 +289,7 @@
   margin-top: 4px;
   font-size: var(--fs-caption);
   font-weight: 500;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .set-grid {
@@ -322,7 +322,7 @@
 
 .set-rail button .icon {
   font-size: 15px;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .set-rail button.is-on {
@@ -339,7 +339,7 @@
   margin: 16px 12px 6px;
   font-size: var(--fs-caption);
   font-weight: 500;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .set-rail__dot {
@@ -391,7 +391,7 @@
 
 .set-expect__k {
   font-size: var(--fs-caption);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .set-expect__v {
@@ -439,7 +439,7 @@
 .set-expect__week small {
   font-size: var(--fs-micro);
   line-height: 14px;
-  color: var(--faint);
+  color: var(--muted);
   text-align: center;
 }
 
@@ -607,7 +607,7 @@
   padding-right: 50%;
   font-size: var(--fs-micro);
   line-height: 14px;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .set-daybars__axis small:last-child {
@@ -710,7 +710,7 @@
 .set-param__rec,
 .set-param__meta {
   font-size: var(--fs-caption);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .set-param__line {
@@ -801,7 +801,7 @@
   align-items: center;
   gap: 6px;
   font-size: var(--fs-caption);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .set-plan__day {
@@ -812,7 +812,7 @@
 
 .set-plan__day dt {
   font-size: var(--fs-caption);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .set-plan__day dd {
@@ -830,7 +830,7 @@
   padding: 6px 8px;
   font-size: var(--fs-caption);
   font-weight: 500;
-  color: var(--faint);
+  color: var(--muted);
   text-align: left;
   white-space: nowrap;
   border-bottom: 1px solid var(--border-strong);
@@ -1007,7 +1007,7 @@
   margin-top: 8px;
   font-size: var(--fs-micro);
   line-height: 16px;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .set-strip__axis span {
@@ -1109,7 +1109,7 @@
 }
 
 .save-status[data-tone="saving"] {
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .save-status[data-tone="failed"] {
@@ -1211,6 +1211,42 @@
   outline-offset: 2px;
 }
 
+/* A picked card settles into place and its check draws in, once per pick. */
+.radio-card.is-on {
+  animation: set-settle var(--dur-2) var(--ease-out);
+}
+
+.radio-card__sel .icon {
+  animation: set-pop var(--dur-3) var(--ease-out);
+}
+
+.set-switch i {
+  will-change: transform;
+}
+
+@keyframes set-settle {
+  from {
+    transform: scale(0.985);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes set-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 @keyframes set-crossfade {
   from {
     opacity: 0;
@@ -1231,8 +1267,16 @@
 
 @media (prefers-reduced-motion: reduce) {
   .save-status__line,
-  .is-found {
+  .is-found,
+  .radio-card.is-on,
+  .radio-card__sel .icon {
     animation: none;
+  }
+
+  .set-switch,
+  .set-switch i,
+  .radio-card {
+    transition: none;
   }
 }
 
