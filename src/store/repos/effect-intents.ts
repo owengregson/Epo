@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { SqliteDriver } from '../driver/driver';
-import type { EffectChannel, EffectIntent, EffectSettlement, MutationAction, MutationTally } from '../types';
+import type {
+  EffectChannel, EffectIntent, EffectSettlement, FollowRecord, MutationAction, MutationTally,
+} from '../types';
 import type { FollowRecordRepo } from './follow-records';
 import type { LedgerRepo } from './ledgers';
 import type { RelationshipRepo } from './relationships';
@@ -72,6 +74,46 @@ export class EffectIntentRepo {
   pending(): EffectIntent[] {
     return this.db.prepare("SELECT * FROM effect_intents WHERE state <> 'settled' ORDER BY created_at, id")
       .all<IntentRow>().map(decode);
+  }
+
+  /** Open intents due for their settlement read at `now` (no park, or a park served), the oldest first. */
+  due(now: number): EffectIntent[] {
+    return this.db.prepare(`SELECT * FROM effect_intents WHERE state IN ('dispatched','uncertain')
+      AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY created_at, id`).all<IntentRow>(now).map(decode);
+  }
+
+  /** Park an open intent after `attempts` readings, with its record's park in the same transaction. */
+  park(id: string, p: { attempts: number; nextAttemptAt: number }, record: FollowRecord | null): boolean {
+    const moved = this.db.transaction(() => {
+      const run = this.db.prepare(`UPDATE effect_intents SET attempts = ?, next_attempt_at = ?
+        WHERE id = ? AND state IN ('dispatched','uncertain')`).run(p.attempts, p.nextAttemptAt, id);
+      if (Number(run.changes) === 0) return false;
+      if (record !== null) this.deps.records.upsert(record);
+      return true;
+    });
+    if (moved) this.deps.changed();
+    return moved;
+  }
+
+  /** Every unsettled intent of one account, whatever its verb or channel. */
+  unsettledFor(pk: string): EffectIntent[] {
+    return this.db.prepare(`SELECT * FROM effect_intents WHERE account_pk = ? AND state <> 'settled'
+      ORDER BY created_at, id`).all<IntentRow>(pk).map(decode);
+  }
+
+  /** Unfollow intents created since `since` and cancelled with no dispatch: reviews that pressed nothing (spec §9.7). */
+  nonDispatchReviewsSince(since: number): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM effect_intents WHERE action = 'unfollow' AND state = 'settled'
+      AND result = 'cancelled' AND dispatched_at IS NULL AND created_at >= ?`).get<{ n: number }>(since) as { n: number }).n;
+  }
+
+  /** Settle the `prepared` intents created before `before` as cancelled: interrupted before any dispatch (spec §9.8). */
+  cancelInterruptedPrepared(before: number): number {
+    const run = this.db.prepare(`UPDATE effect_intents SET state = 'settled', settled_at = ?, result = 'cancelled',
+      ledger = 'none' WHERE state = 'prepared' AND created_at < ?`).run(before, before);
+    const n = Number(run.changes);
+    if (n > 0) this.deps.changed();
+    return n;
   }
 
   mark(id: string, state: 'dispatched' | 'uncertain', at: number): void {

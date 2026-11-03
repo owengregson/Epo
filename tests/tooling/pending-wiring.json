@@ -29,6 +29,11 @@
       "module": "src/surface/sink.ts",
       "stream": "PH",
       "reason": "surface-wiring.ts swaps the production sink in for NO_SINK and the read pipeline reports to it"
+    },
+    {
+      "module": "src/engine/journal.ts",
+      "stream": "UD",
+      "reason": "the rim's journal settlement and the per-account journal gate read it (UD-b step 9)"
     }
   ]
 }
