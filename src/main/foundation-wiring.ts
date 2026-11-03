@@ -283,7 +283,7 @@ export class Foundation {
       }, { unref: true });
       graph.engine.setOnline(this.lastOnline);
       this.projections.bind(graph.store, { status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot()) });
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock }) });
     });
     this.session.session.onClose(() => {
       this.scheduler.stop('store:retention');

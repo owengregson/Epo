@@ -102,7 +102,7 @@ export function buildGraph(
   });
   const actor = adapter.actor;
   const sentinel = adapter.sentinel;
-  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub } = wireSurface({ tab: d.tab, store, ownPk, clock });
+  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub } = wireSurface({ tab: d.tab, store, ownPk, clock, day: plan.dayClock });
   const profiles = new TabProfileVisitor({
     tab: d.tab,
     observer: profileObserver,

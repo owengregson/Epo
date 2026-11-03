@@ -43,6 +43,18 @@ test('a completed census re-plans the demand; a system resume re-reads the plan'
   await foundation.dispose();
 });
 
+test("the day-keyed consumers read the plan's boundary: the feed expires at the plan-day roll", async () => {
+  const { foundation } = newFoundation();
+  await foundation.ensureBuilt();
+  const graph = graphOf(foundation);
+  const source = (foundation as unknown as { projections: { source: { expiresAt?(): number | null } } }).projections.source;
+  const roll = graph.plan.dayClock.window(Date.now()).endsAt;
+  expect(source.expiresAt?.()).toBe(roll);
+  expect(roll).toBe(graph.plan.service.view().window.endsAt);
+  expect(graph.rate.dayStart()).toBe(graph.plan.service.view().window.startsAt);
+  await foundation.dispose();
+});
+
 test('a manual prune waits while a Boost window is open', async () => {
   const { foundation } = newFoundation();
   await foundation.ensureBuilt();
