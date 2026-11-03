@@ -16,9 +16,9 @@
       "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
     },
     {
-      "module": "src/settings/plan-math.ts",
+      "module": "src/main/modules/settings-transitional.ts",
       "stream": "SC",
-      "reason": "the composition root hands KERNEL_PLAN_MATH to the v2 settings service when SC wires it"
+      "reason": "deleted, not wired: production serves the v2 view; only tests/kit/render-bridge.ts (lead) still builds its view here, and SC or SU deletes the module once the bridge reads the v2 view"
     }
   ]
 }

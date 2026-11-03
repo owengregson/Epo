@@ -3,16 +3,20 @@
  * (a failed write changes nothing: no swap, no listener, no push); one push per success with rev + 1;
  * previews are pure; the transitional v1 window keeps today's readers and rethrows a failed save.
  */
-import { SettingsServiceV2 } from '@/main/modules/settings-service';
+import type { PlanPreviewPort } from '@/governors/plan-types';
+import type { PlanIntent } from '@/kernel/plan/types';
+import { SettingsService } from '@/main/modules/settings-service';
 import { SETTINGS_FILES as F } from '@/settings/persist';
+import { toPlanIntent } from '@/settings/plan-intent';
 import { DEFAULT_SETTINGS } from '@/settings/v1/settings-v1';
 import type { SettingsView } from '@/shared/settings-view';
+import { protectionVerdict } from '@/shared/unfollow-protection';
 import { FAKE_PLAN_MATH, memoryFs } from '../kit/settings';
 
 function service(files: Record<string, string> = {}, knowledgeDbExists = false) {
   const m = memoryFs(files);
   const pushed: SettingsView[] = [];
-  const svc = new SettingsServiceV2({ userDataDir: '/u', fs: m.fs, knowledgeDbExists: () => knowledgeDbExists,
+  const svc = new SettingsService({ userDataDir: '/u', fs: m.fs, knowledgeDbExists: () => knowledgeDbExists,
     math: FAKE_PLAN_MATH, now: () => 1_000, push: (v) => pushed.push(v) });
   return { svc, m, pushed };
 }
@@ -92,4 +96,58 @@ test('the transitional window: a v1 partial becomes keyed ops; a failed save ret
 test('a system-only op from the user is refused with a view', () => {
   const { svc } = service();
   expect(svc.apply([{ op: 'consume-bookkeeping' }], 'user')).toMatchObject({ kind: 'refused', reason: 'invalid', view: { rev: 0 } });
+});
+
+test('protection compiles with the new predicate: a bio word protects everyone, not only follow-backs', () => {
+  const { svc } = service();
+  svc.apply([{ op: 'word-add', texts: ['Café'] }], 'user');
+  expect(protectionVerdict({ pk: '7', username: 'stranger', bio: 'CAFE owner', isVerified: false }, svc.protection()))
+    .toEqual({ kind: 'protected', by: 'bio-word', match: 'cafe' });
+});
+
+test('capabilities start off; the preview port fills the week only with the plan capability, and can be withdrawn', () => {
+  const { svc } = service();
+  expect(svc.view().capabilities).toEqual({ plan: false, tempo: false, boost: false, protectionEverywhere: false });
+  const asked: [PlanIntent, number, number][] = [];
+  const port: PlanPreviewPort = { previewDays: (i, at, n) => { asked.push([i, at, n]); return []; } };
+  svc.setPlanPort(port);
+  expect([svc.planPort(), svc.view().typical.week]).toEqual([port, null]);
+  svc.setCapabilities({ plan: true });
+  expect(svc.view().typical.week).toEqual([]);
+  expect(asked).toEqual([[toPlanIntent(svc.effective()), 1_000, 7]]);
+  svc.setPlanPort(null);
+  expect([svc.planPort(), svc.view().typical.week]).toEqual([null, null]);
+});
+
+test('with the port, the save note says re-planned exactly when the plan intent moved', () => {
+  const { svc } = service();
+  svc.setPlanPort({ previewDays: () => [] });
+  svc.setCapabilities({ plan: true });
+  const shape = svc.apply([{ op: 'intent', key: 'dayShape', value: 'evening' }], 'user');
+  expect(shape.kind === 'saved' && shape.applies.map((a) => a.what)).toEqual(['replanned-today']);
+  const seed = svc.apply([{ op: 'seed', handle: 'friend' }], 'user');
+  expect(seed.kind === 'saved' && seed.applies).toEqual([]);
+});
+
+test("the legacy pacer's knobs ride in the document while it reads them; active hours move the quiet hours", async () => {
+  const { svc, m, pushed } = service();
+  await svc.updateSettings({ pacingModel: 'legacy', activeHoursStart: 8, activeHoursEnd: 8 });
+  expect(svc.resolveSettings()).toMatchObject({ pacingModel: 'legacy', activeHoursStart: 8, activeHoursEnd: 8 });
+  expect(svc.view().intent.quietHours).toEqual({ kind: 'none' });
+  expect(JSON.parse(m.data.get(F.v2) ?? '{}').legacyCarry).toMatchObject({ pacingModel: 'legacy', activeHoursEnd: 8 });
+  expect(pushed.length).toBe(2);
+});
+
+test('run stamps belong to the bound account: another account starts without them, unowned ones go to the first', async () => {
+  const { svc } = service();
+  const bind = (ownPk: string) => svc.bindStore({ ownPk, pkByUsername: () => null, username: () => null, onMutation: () => () => {} });
+  await svc.updateSettings({ sweepLastRunAt: 5 });
+  bind('A');
+  expect(svc.resolveSettings().sweepLastRunAt).toBe(5);
+  await svc.updateSettings({ pruneLastRunAt: 9 });
+  expect(svc.takeBookkeeping()).toMatchObject({ forPk: 'A', sweepLastRunAt: 5, pruneLastRunAt: 9 });
+  bind('B');
+  expect([svc.resolveSettings().sweepLastRunAt, svc.resolveSettings().pruneLastRunAt]).toEqual([null, null]);
+  bind('A');
+  expect(svc.resolveSettings().pruneLastRunAt).toBe(9);
 });

@@ -44,7 +44,7 @@ import { PruneControl } from '@/main/modules/prune-control';
 import { PruneSchedule } from '@/main/modules/prune-schedule';
 import { SeedCheckService } from '@/main/modules/seed-check';
 import { GraphSession } from '@/main/modules/session';
-import { SettingsService } from '@/main/modules/settings-service';
+import { SettingsService, settingsBinding } from '@/main/modules/settings-service';
 import { createStartup } from '@/main/modules/startup-steps';
 import { composeStatus, type StatusContributor } from '@/main/modules/status-compose';
 import { DriverSignal } from '@/main/services/driver-signal';
@@ -262,7 +262,8 @@ export class Foundation {
     this.reporter = deps.activityReporter ?? NOOP_ACTIVITY_REPORTER;
     this.requestConnectivityCheck = deps.requestConnectivityCheck;
     this.projections = new Projections({ push: deps.push });
-    this.settings = new SettingsService({ userDataDir: deps.userDataDir, graph: () => this.graph });
+    this.settings = new SettingsService({ userDataDir: deps.userDataDir, now: () => Date.now(), graph: () => this.graph,
+      knowledgeDbExists: () => fs.existsSync(path.join(deps.userDataDir, IG_DB_FILE)), push: (view) => deps.push?.('settings', view) });
     this.session = new GraphSession({
       igSession: deps.igSession,
       build: (ownPk, ownUsername) => this.build(ownPk, ownUsername),
@@ -270,7 +271,6 @@ export class Foundation {
       onIdentityChanged: () => {
         this.blockRuntime('account-changed');
         this.lease.forgetHandoffs();
-        void this.updateSettings({ sweepLastRunAt: null, pruneLastRunAt: null });
       },
     });
     // The kernel binding rule (ADR 1007): everything declared over the session
@@ -281,6 +281,7 @@ export class Foundation {
         if (this.graph === graph && !this.disposing) graph.store.pruneRetainedLogs();
       }, { unref: true });
       graph.engine.setOnline(this.lastOnline);
+      this.settings.bindStore(settingsBinding(graph));
       this.projections.bind(graph.store, {
         status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
         chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES,
@@ -293,6 +294,7 @@ export class Foundation {
       // Before ANYTHING else in the teardown: late writes from draining ops
       // must not schedule a push into a closing store.
       this.projections.unbind();
+      this.settings.bindStore(null);
       // A prune or tour hand-off in flight has nothing to resume once the
       // graph is gone.
       this.lease.forgetHandoffs();
@@ -503,7 +505,8 @@ export class Foundation {
         logger.error('foundation.restartFromSeed: loop rejected on stop', { error: String(e) });
       }
     }
-    await this.updateSettings({ seed: clean });
+    // A seed that did not save would restart the chain from the old one: refuse instead (the service logged why).
+    if (this.settings.apply([{ op: 'seed', handle: clean }], 'system').kind !== 'saved') return { ...this.builtStatus(), refusal: 'settings-not-saved' };
     if (!this.runtime.current(token) || !this.runtime.ready()) return { ...this.builtStatus(), refusal: 'runtime-intent-changed' };
     // Scrap the current session: every active target is retired ("Set aside when
     // you restarted"); queued records against them stop refilling.
@@ -1306,9 +1309,6 @@ export class Foundation {
 
   /** The persisted settings (loaded lazily and cached; defaults on any failure). */
   getSettings(): Promise<Settings> { return this.settings.getSettings(); }
-
-  /** Reset every setting to its default (see {@link SettingsService.resetSettings}). */
-  resetSettings(): Promise<Settings> { return this.settings.resetSettings(); }
 
   /**
    * Wipe everything EXCEPT settings: tear down the graph, delete the knowledge DB

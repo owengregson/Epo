@@ -5,7 +5,7 @@
  */
 import { riskRung, shareOfLowWall } from '@/kernel/derive-envelope';
 import { INTENT_KEYS, type IntentKey, PACE_CARDS, type PaceCardId } from '@/shared/settings-intent';
-import type { ChangeLine } from '@/shared/settings-ops';
+import type { ApplyNote, ChangeLine, OverrideConflict } from '@/shared/settings-ops';
 import { type ParamKey, RISK_LEVELS, type SectionId } from '@/shared/settings-params';
 import type {
   ParamView, PlanPreviewDay, ProvenanceStep, SettingsCapabilities, SettingsHealth, SettingsNotice, SettingsView,
@@ -17,7 +17,7 @@ import { ALL_PARAM_KEYS, PARAM_SPECS } from './params';
 import { type ParamSpec, sameValue } from './params-spec';
 import { toReadAllowance } from './read-allowance';
 import type { ResolvedParams } from './resolve';
-import { feasibilityOf, massOf, optionPreviews } from './view-options';
+import { feasibilityOfEffective, optionPreviews } from './view-options';
 
 export interface ViewInput {
   readonly doc: SettingsDocV2;
@@ -112,7 +112,7 @@ export function buildView(i: ViewInput): SettingsView {
       sessions: { min: e.sessionsPerDayMin, max: e.sessionsPerDayMax },
       shareOfLowWall: shareOfLowWall(automaticMax),
       risk: RISK_LEVELS[riskRung({ dailyVolume: e.dailyOperatingRate, hourlyCap: e.hourlyVelocityCap })],
-      feasibility: feasibilityOf(e.dailyOperatingRate, e.hourlyVelocityCap, massOf(doc.intent)),
+      feasibility: feasibilityOfEffective(e),
       week: capabilities.plan ? i.week : null,
     },
     params: ALL_PARAM_KEYS.filter((k) => shown(k, capabilities)).map((k) => paramView(k, i)),
@@ -158,4 +158,22 @@ export function previewChanges(before: SettingsDocV2, after: SettingsDocV2, rb: 
     lines.push({ key: 'prefs.practice', before: before.prefs.practice, after: after.prefs.practice, loosensUnfollows: before.prefs.practice });
   }
   return lines;
+}
+
+/** Overrides whose recommendation moved under them (rendered inline as "You set …; … would use …"). */
+export function overrideConflicts(before: ResolvedParams, after: ResolvedParams): OverrideConflict[] {
+  return ALL_PARAM_KEYS.flatMap((key) => {
+    const o = after[key].override;
+    return o === null || sameValue(before[key].recommended, after[key].recommended) ? []
+      : [{ key, yours: o.requested, recommendedBefore: before[key].recommended, recommendedNow: after[key].recommended }];
+  });
+}
+
+/** When the changed values take effect; `replanned` (the plan intent's fingerprint moved) wins when known. */
+export function applyNotes(before: ResolvedParams, after: ResolvedParams, plan: boolean, replanned: boolean | null): ApplyNote[] {
+  const when = new Set(ALL_PARAM_KEYS.filter((k) => !sameValue(before[k].value, after[k].value)).map((k) => PARAM_SPECS[k].applies));
+  const out: ApplyNote[] = [];
+  if (when.has('now')) out.push({ what: 'applies-now' });
+  if (replanned ?? when.has('replan')) out.push({ what: plan ? 'replanned-today' : 'from-tomorrow' });
+  return out;
 }

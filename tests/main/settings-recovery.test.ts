@@ -3,7 +3,7 @@
  * mode carried, writes no v2 after any user op and keeps unfollows paused; retry and start-over recover; a
  * deleted v2 with its backup present restores the backup under review, never a silent re-migration.
  */
-import { SettingsServiceV2 } from '@/main/modules/settings-service';
+import { SettingsService } from '@/main/modules/settings-service';
 import * as migrate from '@/settings/migrate-v1';
 import { SETTINGS_FILES as F } from '@/settings/persist';
 import { DEFAULT_SETTINGS } from '@/settings/v1/settings-v1';
@@ -20,7 +20,7 @@ const { persona: _persona, pattern: _pattern, ...NUMBERS } = DEFAULT_SETTINGS;
 const V1 = JSON.stringify({ ...NUMBERS, dryRun: true, pruneWhitelist: ['anna', 7], dailyOperatingRate: 61 });
 function service(files: Record<string, string>) {
   const m = memoryFs(files);
-  const svc = new SettingsServiceV2({ userDataDir: '/u', fs: m.fs, knowledgeDbExists: () => true, math: FAKE_PLAN_MATH,
+  const svc = new SettingsService({ userDataDir: '/u', fs: m.fs, knowledgeDbExists: () => true, math: FAKE_PLAN_MATH,
     now: () => 5_000, push: () => undefined });
   return { svc, m };
 }

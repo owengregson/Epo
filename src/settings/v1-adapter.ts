@@ -6,12 +6,14 @@
 import type { ParamValue, RatioCurve } from '@/shared/settings-model';
 import type { SettingsOp } from '@/shared/settings-ops';
 import type { ParamKey } from '@/shared/settings-params';
-import type { SettingsDocV2 } from './doc';
+import { DEFAULT_DOC, type LegacyCarry, type SettingsDocV2 } from './doc';
 import type { EffectiveSettings } from './effective';
+import { quietHoursOfActive } from './migrate-v1';
+import { migrateAccountList, migrateWordList } from './migrate-v1-lists';
 import { sameValue } from './params-spec';
 import { type PatternSettings, PERSONAS, type PersonaId } from './pattern-map';
 import type { ResolvedParams } from './resolve';
-import { DEFAULT_SETTINGS } from './v1/settings-v1';
+import { DEFAULT_SETTINGS, migrateLegacyPattern, sanitizeSettings } from './v1/settings-v1';
 import type { Settings } from './v1/settings-v1-types';
 
 /** The v1 run stamps the transitional engine readers still keep, carried in the migration record. */
@@ -60,14 +62,60 @@ const INTENT_OF = {
   activityLevel: 'activity', consistency: 'consistency', rhythm: 'rhythm', dayShape: 'dayShape', weeklyShape: 'weeklyShape',
   caution: 'caution', patience: 'patience',
 } as const;
-/** Knobs v2 derives or no longer has: an old renderer's write of them is dropped (and logged by the caller). */
-const DROPPED = new Set<keyof Settings>(['minDelayMinutes', 'maxDelayMinutes', 'jitterPercent', 'activeHoursStart',
-  'activeHoursEnd', 'pacingModel', 'gapMedianSeconds', 'gapFloorSeconds']);
+/** Reference-scale gaps v2 no longer has: an old renderer's write of them is dropped (and logged by the caller). */
+const DROPPED = new Set<keyof Settings>(['gapMedianSeconds', 'gapFloorSeconds']);
+/** The legacy pacer's knobs: carried in the document while that pacer still reads them (spec §6.10). */
+const CARRIED = ['pacingModel', 'minDelayMinutes', 'maxDelayMinutes', 'jitterPercent', 'activeHoursStart', 'activeHoursEnd'] as const;
 
 export interface V1Translation {
   readonly ops: readonly SettingsOp[];
   readonly dropped: readonly string[];
   readonly bookkeeping: Partial<V1Bookkeeping>;
+  /** The legacy pacer's knobs the partial changed. */
+  readonly carry: Partial<LegacyCarry>;
+}
+
+type OwnedStamps = V1Bookkeeping & { readonly forPk: string | null };
+
+/** The stamps of the account `ownPk` (unbound: any); unowned migration stamps belong to the first account bound. */
+export function stampsFor(bk: OwnedStamps | null, ownPk: string | null, firstPk: string | null): OwnedStamps | null {
+  if (bk === null || ownPk === null) return bk;
+  return (bk.forPk ?? firstPk) === ownPk ? bk : null;
+}
+
+/** The next document with a stamp patch recorded for `owner`; another account's stamps start over. */
+export function withStamps(doc: SettingsDocV2, patch: Partial<V1Bookkeeping>, owner: string | null, firstPk: string | null,
+  now: number): SettingsDocV2 {
+  const m = doc.migration ?? { at: now, fromV1: null, notes: [], bookkeeping: null };
+  const prior = stampsFor(m.bookkeeping, owner, firstPk);
+  const bookkeeping = { sweepLastRunAt: null, sweepIntervalFactor: null, pruneLastRunAt: null, ...prior, ...patch,
+    forPk: owner ?? m.bookkeeping?.forPk ?? null };
+  return { ...doc, rev: doc.rev + 1, migration: { ...m, bookkeeping } };
+}
+
+/** What a refused migration runs on (spec §6.10): v1's own numbers, its raw lists as protection, practice carried. */
+export function refusedState(raw: string, now: number):
+  { readonly kind: 'v1'; readonly v1: Settings; readonly doc: SettingsDocV2 } | { readonly kind: 'unreadable'; readonly error: string } {
+  let parsed: Partial<Settings>;
+  try {
+    parsed = JSON.parse(raw) as Partial<Settings>;
+  } catch (e) {
+    return { kind: 'unreadable', error: String(e) };
+  }
+  const v1 = sanitizeSettings(migrateLegacyPattern({ ...parsed }));
+  const protection = { ...DEFAULT_DOC.protection, accounts: migrateAccountList(parsed.pruneWhitelist, now).accounts,
+    words: migrateWordList(parsed.pruneBioFilterWords, now).words };
+  const doc: SettingsDocV2 = { ...DEFAULT_DOC, seed: v1.seed, protection, protectionState: 'needs-review',
+    prefs: { ...DEFAULT_DOC.prefs, practice: v1.dryRun, acceptRequests: v1.autoAcceptFollowRequests } };
+  return { kind: 'v1', v1, doc };
+}
+
+/** The carried knobs as the effective record holds them (frozen v1 defaults when the document has none). */
+export function carryOf(e: EffectiveSettings): LegacyCarry {
+  return {
+    pacingModel: e.pacingModel, minDelayMinutes: e.minDelayMinutes, maxDelayMinutes: e.maxDelayMinutes,
+    jitterPercent: e.jitterPercent, activeHoursStart: e.activeHoursStart, activeHoursEnd: e.activeHoursEnd,
+  };
 }
 
 /** Translate an old renderer's partial into keyed ops against the current state (unchanged keys emit nothing). */
@@ -142,6 +190,11 @@ export function opsFromV1Partial(partial: Partial<Settings>, current: Settings, 
   if ('sweepLastRunAt' in partial) bookkeeping.sweepLastRunAt = partial.sweepLastRunAt ?? null;
   if ('sweepIntervalFactor' in partial) bookkeeping.sweepIntervalFactor = partial.sweepIntervalFactor ?? null;
   if ('pruneLastRunAt' in partial) bookkeeping.pruneLastRunAt = partial.pruneLastRunAt ?? null;
+  const carry = Object.fromEntries(CARRIED.flatMap((k) => (changed(k) ? [[k, partial[k]]] : []))) as Partial<LegacyCarry>;
+  if (changed('activeHoursStart') || changed('activeHoursEnd')) {
+    const quiet = quietHoursOfActive(partial.activeHoursStart ?? current.activeHoursStart, partial.activeHoursEnd ?? current.activeHoursEnd);
+    ops.push({ op: 'intent', key: 'quietHours', value: quiet });
+  }
   for (const k of DROPPED) if (changed(k)) dropped.push(k);
-  return { ops, dropped, bookkeeping };
+  return { ops, dropped, bookkeeping, carry };
 }

@@ -1,7 +1,7 @@
 /**
  * The settings service (spec §6.6, §6.9, Appendix B.8): the one writer of epo-settings-v2.json. Reads or
  * migrates at construction, applies ops persist-first, recompiles protection and the view per revision,
- * tells its listeners and pushes the view. Production runs the transitional service until it is wired.
+ * tells its listeners and pushes the view after every persisted write.
  */
 import type { PlanPreviewPort } from '@/governors/plan-types';
 import type { BuiltGraph } from '@/main/services/graph-types';
@@ -9,40 +9,48 @@ import { migrationBasis, type PlanMath } from '@/settings/basis';
 import { DEFAULT_DOC, type SettingsDocV2 } from '@/settings/doc';
 import { type EffectiveSettings, effectiveFrom, effectiveFromV1 } from '@/settings/effective';
 import { migrateV1 } from '@/settings/migrate-v1';
-import { migrateAccountList, migrateWordList } from '@/settings/migrate-v1-lists';
 import { applyOps, type Touched } from '@/settings/ops';
-import { PARAM_SPECS } from '@/settings/params';
-import { sameValue } from '@/settings/params-spec';
-import { NODE_SETTINGS_FS, readSettings, SETTINGS_FILES, type SettingsFs, writeSettings } from '@/settings/persist';
+import { NODE_SETTINGS_FS, readSettings, SETTINGS_FILES, type SettingsFs, type WriteResult, writeSettings } from '@/settings/persist';
+import { KERNEL_PLAN_MATH } from '@/settings/plan-math';
+import { type SettingsPlanPreview, settingsPlanPreview } from '@/settings/plan-preview-port';
 import { type ResolvedParams, resolveParams } from '@/settings/resolve';
-import { migrateLegacyPattern, sanitizeSettings } from '@/settings/v1/settings-v1';
 import type { Settings } from '@/settings/v1/settings-v1-types';
-import { opsFromV1Partial, toV1Settings, type V1Bookkeeping } from '@/settings/v1-adapter';
-import { buildView, previewChanges } from '@/settings/view';
-import type { ApplyNote, OverrideConflict, SettingsOp, SettingsPreviewResult, SettingsSaveResult } from '@/shared/settings-ops';
-import type { ParamKey } from '@/shared/settings-params';
+import {
+  carryOf, opsFromV1Partial, refusedState, stampsFor, toV1Settings, type V1Bookkeeping, withStamps,
+} from '@/settings/v1-adapter';
+import { applyNotes, buildView, overrideConflicts, previewChanges } from '@/settings/view';
+import { WEEKDAYS } from '@/shared/settings-intent';
+import type { SettingsOp, SettingsPreviewResult, SettingsSaveResult } from '@/shared/settings-ops';
 import type { BasisResult, SettingsCapabilities, SettingsHealth, SettingsView } from '@/shared/settings-view';
 import { compileProtection, type ProtectionIndex } from '@/shared/unfollow-protection';
 import * as logger from '@/utils/logger';
-
 import { reloadChanged } from './settings-reload';
 
-export { SettingsService } from './settings-transitional';
-
 export interface SettingsChangeEvent {
-  readonly rev: number;
-  readonly prev: EffectiveSettings;
-  readonly next: EffectiveSettings;
-  readonly touched: ReadonlySet<Touched>;
-  readonly origin: 'user' | 'system' | 'migration';
+  readonly rev: number; readonly prev: EffectiveSettings; readonly next: EffectiveSettings;
+  readonly touched: ReadonlySet<Touched>; readonly origin: 'user' | 'system' | 'migration';
+}
+
+/** The open store, bound on graph OPEN and dropped on CLOSE (the kernel Session binding). */
+export interface SettingsStoreBinding {
+  readonly ownPk: string;
+  pkByUsername(username: string): string | null;
+  username(pk: string): string | null;
+  onMutation(fn: () => void): () => void;
+}
+
+/** A built graph's binding: its account owns the run stamps, its store links protected handles. */
+export function settingsBinding(graph: BuiltGraph): SettingsStoreBinding {
+  return { ownPk: graph.ownPk, pkByUsername: (u) => graph.store.pkByUsername(u),
+    username: (pk) => graph.store.getAccount(pk)?.username ?? null, onMutation: (fn) => graph.store.onMutation(fn) };
 }
 
 export interface SettingsServiceDeps {
   readonly userDataDir: string;
   readonly fs?: SettingsFs;
   knowledgeDbExists(): boolean;
-  /** The plan core's numbers (the effective gap, the day law, the retry limit). */
-  readonly math: PlanMath;
+  /** The plan core's numbers (the effective gap, the day law, the retry limit); the kernel's by default. */
+  readonly math?: PlanMath;
   now(): number;
   /** Sends the view to the renderer after every persisted write. */
   push(view: SettingsView): void;
@@ -56,19 +64,26 @@ interface Refused { readonly v1: Settings; readonly detail: string }
 type Opened = { doc: SettingsDocV2; health: SettingsHealth; refused: Refused | null };
 
 const OFF: SettingsCapabilities = { plan: false, tempo: false, boost: false, protectionEverywhere: false };
+const EVERYTHING = new Set<Touched>(['intent', 'overrides', 'seed', 'protection', 'prefs', 'app']);
 
-export class SettingsServiceV2 {
+export class SettingsService {
   private doc: SettingsDocV2;
   private health: SettingsHealth;
   private refused: Refused | null;
   private capabilities: SettingsCapabilities = OFF;
   private port: PlanPreviewPort | null = null;
+  private planPreview: SettingsPlanPreview | null = null;
+  private store: SettingsStoreBinding | null = null;
+  /** The first account bound in this process: the owner of run stamps a migration carried without one. */
+  private firstPk: string | null = null;
   private memo: { key: string; resolved: ResolvedParams; effective: EffectiveSettings; index: ProtectionIndex; view: SettingsView } | null = null;
   private readonly listeners = new Set<(e: SettingsChangeEvent) => void>();
   private readonly fs: SettingsFs;
+  private readonly math: PlanMath;
 
   constructor(private readonly d: SettingsServiceDeps) {
     this.fs = d.fs ?? NODE_SETTINGS_FS;
+    this.math = d.math ?? KERNEL_PLAN_MATH;
     const plan = readSettings(this.fs, d.userDataDir, { knowledgeDbExists: d.knowledgeDbExists(), now: d.now() });
     const opened: Opened = plan.kind === 'migrate' ? this.migrate(plan.raw, plan.mtimeMs, plan.health, plan.review)
       : { doc: reviewed(plan.kind === 'doc' ? plan.doc : DEFAULT_DOC, plan.review), health: plan.health, refused: null };
@@ -78,7 +93,7 @@ export class SettingsServiceV2 {
   /** Migrate a raw v1 file; a refusal keeps v1's own numbers, lists and practice mode in memory. */
   private migrate(raw: string, mtimeMs: number, health: SettingsHealth, review: boolean): Opened {
     const now = this.d.now();
-    const out = migrateV1(raw, { now, legacyAccountPk: null, mtimeMs, basis: migrationBasis(this.d.math),
+    const out = migrateV1(raw, { now, legacyAccountPk: null, mtimeMs, basis: migrationBasis(this.math),
       resolve: (doc) => this.resolveFor(doc) });
     if (out.kind === 'migrated') {
       const doc = reviewed(out.doc, review);
@@ -89,34 +104,28 @@ export class SettingsServiceV2 {
     }
     const detail = out.reasons.join(', ');
     logger.error('settings: the v1 migration was refused; running on the v1 settings as they were', { detail });
-    let parsed: Partial<Settings> = {};
-    try {
-      parsed = JSON.parse(raw) as Partial<Settings>;
-    } catch (e) {
-      logger.error('settings: the v1 file is not JSON; defaults under review', { error: String(e) });
+    const state = refusedState(raw, now);
+    if (state.kind === 'unreadable') {
+      logger.error('settings: the v1 file is not JSON; defaults under review', { error: state.error });
       return { doc: reviewed(DEFAULT_DOC, true), health: { kind: 'defaults-after-unreadable', quarantined: null }, refused: null };
     }
-    const v1 = sanitizeSettings(migrateLegacyPattern({ ...parsed }));
-    const protection = { ...DEFAULT_DOC.protection, accounts: migrateAccountList(parsed.pruneWhitelist, now).accounts,
-      words: migrateWordList(parsed.pruneBioFilterWords, now).words };
-    const doc: SettingsDocV2 = { ...DEFAULT_DOC, seed: v1.seed, protection, protectionState: 'needs-review',
-      prefs: { ...DEFAULT_DOC.prefs, practice: v1.dryRun, acceptRequests: v1.autoAcceptFollowRequests } };
-    return { doc, health: { kind: 'migration-refused', detail }, refused: { v1, detail } };
+    return { doc: state.doc, health: { kind: 'migration-refused', detail }, refused: { v1: state.v1, detail } };
   }
 
   private resolveFor(doc: SettingsDocV2): ResolvedParams {
-    return resolveParams({ intent: doc.intent, overrides: doc.overrides, plan: this.capabilities.plan, math: this.d.math });
+    return resolveParams({ intent: doc.intent, overrides: doc.overrides, plan: this.capabilities.plan, math: this.math });
   }
 
-  /** Everything derived from the document, computed once per revision, capabilities and health. */
+  /** Everything derived from the document, computed once per revision, capabilities, health and port. */
   private derived() {
     const key = JSON.stringify([this.doc.rev, this.capabilities, this.health, this.doc.app.mode, this.doc.app.dismissedNotices]);
     if (this.memo?.key !== key) {
       const resolved = this.resolveFor(this.doc);
       const effective = this.refused === null ? effectiveFrom(this.doc, resolved) : effectiveFromV1(this.refused.v1);
       const index = compileProtection(this.doc.protection, this.doc.protectionState, this.doc.rev);
-      const view = buildView({ doc: this.doc, health: this.health, capabilities: this.capabilities, resolved, effective,
-        math: this.d.math, week: null });
+      const week = this.capabilities.plan && this.planPreview !== null
+        ? this.planPreview.previewDays(effective, this.d.now(), WEEKDAYS.length) : null;
+      const view = buildView({ doc: this.doc, health: this.health, capabilities: this.capabilities, resolved, effective, math: this.math, week });
       this.memo = { key, resolved, effective, index, view };
     }
     return this.memo;
@@ -128,8 +137,20 @@ export class SettingsServiceV2 {
   app(): { readonly tourCompletedAt: number | null } { return { tourCompletedAt: this.doc.app.tourCompletedAt }; }
   basis(): BasisResult { return { kind: 'unavailable' }; }
   setCapabilities(patch: Partial<SettingsCapabilities>): void { this.capabilities = { ...this.capabilities, ...patch }; }
-  setPlanPort(port: PlanPreviewPort | null): void { this.port = port; }
   planPort(): PlanPreviewPort | null { return this.port; }
+
+  /** The plan wiring registers its preview port (null withdraws it); the `plan` flag stays its own to set. */
+  setPlanPort(port: PlanPreviewPort | null): void {
+    this.port = port;
+    this.planPreview = port === null ? null : settingsPlanPreview(port);
+    this.memo = null;
+  }
+
+  /** Graph OPEN binds the store (its account owns the run stamps); CLOSE passes null. */
+  bindStore(binding: SettingsStoreBinding | null): void {
+    this.store = binding;
+    this.firstPk ??= binding?.ownPk ?? null;
+  }
 
   onChange(fn: (e: SettingsChangeEvent) => void): () => void {
     this.listeners.add(fn);
@@ -147,34 +168,19 @@ export class SettingsServiceV2 {
     const r = applyOps(this.doc, ops, { origin, now: this.d.now(), migrationPending: this.refused !== null,
       recommended: (doc, key) => this.resolveFor(doc)[key].recommended });
     if (r.kind === 'refused') return { kind: 'refused', reason: r.reason, detail: r.detail, view: this.view() };
-    const prev = this.derived();
     if (this.refused !== null) {
       // While a migration is refused nothing is written: the mode switch lives in memory.
       this.doc = r.doc;
       return { kind: 'saved', view: this.view(), adjustments: r.adjustments, conflicts: [], applies: [], inverse: r.inverse };
     }
-    const next = { ...r.doc, rev: this.doc.rev + 1 };
-    const written = writeSettings(this.fs, this.d.userDataDir, next, { now: this.d.now(), fromV1Sha256: null });
+    const before = this.derived();
+    const written = this.commit({ ...r.doc, rev: this.doc.rev + 1 }, origin, r.touched);
     if (!written.ok) return { kind: 'not-saved', view: this.view(), detail: written.detail };
-    this.doc = next;
-    const now = this.derived();
-    const event: SettingsChangeEvent = { rev: next.rev, prev: prev.effective, next: now.effective, touched: r.touched, origin };
-    this.emit(event);
-    this.d.push(now.view);
-    return { kind: 'saved', view: now.view, adjustments: r.adjustments, conflicts: conflicts(prev.resolved, now.resolved),
-      applies: applies(prev.resolved, now.resolved, this.capabilities.plan), inverse: r.inverse };
-  }
-
-  private emit(event: SettingsChangeEvent): void {
-    const g = this.d.graph?.() ?? null;
-    if (g !== null) reloadChanged(g, toV1Settings(event.prev, this.doc, null), toV1Settings(event.next, this.doc, null));
-    for (const fn of this.listeners) {
-      try {
-        fn(event);
-      } catch (e) {
-        logger.error('settings: a change listener failed; the save stands', { error: String(e) });
-      }
-    }
+    const after = this.derived();
+    const replanned = this.planPreview === null ? null
+      : this.planPreview.fingerprint(before.effective) !== this.planPreview.fingerprint(after.effective);
+    return { kind: 'saved', view: after.view, adjustments: r.adjustments, conflicts: overrideConflicts(before.resolved, after.resolved),
+      applies: applyNotes(before.resolved, after.resolved, this.capabilities.plan, replanned), inverse: r.inverse };
   }
 
   /** What the ops would do: pure — nothing persists, nothing is pushed, the plan is not touched. */
@@ -185,21 +191,20 @@ export class SettingsServiceV2 {
     const before = this.derived();
     const resolved = this.resolveFor(r.doc);
     const effective = effectiveFrom(r.doc, resolved);
-    const view = buildView({ doc: r.doc, health: this.health, capabilities: this.capabilities, resolved, effective, math: this.d.math, week: null });
+    const view = buildView({ doc: r.doc, health: this.health, capabilities: this.capabilities, resolved, effective, math: this.math, week: null });
     return { kind: 'ok', view, changes: previewChanges(this.doc, r.doc, before.resolved, resolved),
-      conflicts: conflicts(before.resolved, resolved), adjustments: r.adjustments };
+      conflicts: overrideConflicts(before.resolved, resolved), adjustments: r.adjustments };
   }
 
   /** The recovery ops of a refused migration, and the deliberate re-migration (spec §6.6, §6.10). */
   private recover(action: 'retry' | 'start-from-recommended' | 'remigrate-from-v1'): SettingsSaveResult {
     const at = (f: string) => `${this.d.userDataDir}/${f}`;
+    if (action !== 'remigrate-from-v1' && this.refused === null) return { kind: 'refused', reason: 'invalid', detail: 'no migration is pending', view: this.view() };
     if (action === 'start-from-recommended') {
-      if (this.refused === null) return { kind: 'refused', reason: 'invalid', detail: 'no migration is pending', view: this.view() };
       const fresh: SettingsDocV2 = { ...DEFAULT_DOC, seed: this.doc.seed, protection: this.doc.protection,
         protectionState: 'needs-review', prefs: this.doc.prefs, rev: 1 };
       return this.reopen({ doc: fresh, health: { kind: 'ok' }, refused: null }, fresh);
     }
-    if (action === 'retry' && this.refused === null) return { kind: 'refused', reason: 'invalid', detail: 'no migration is pending', view: this.view() };
     let raw: string;
     try {
       raw = this.fs.readFile(at(SETTINGS_FILES.v1));
@@ -218,17 +223,41 @@ export class SettingsServiceV2 {
     const prev = this.effective();
     ({ doc: this.doc, health: this.health, refused: this.refused } = o);
     if (this.refused !== null) return { kind: 'refused', reason: 'migration-pending', detail: this.refused.detail, view: this.view() };
-    const event: SettingsChangeEvent = { rev: this.doc.rev, prev, next: this.effective(), origin: 'migration',
-      touched: new Set<Touched>(['intent', 'overrides', 'seed', 'protection', 'prefs', 'app']) };
-    this.emit(event);
-    this.d.push(this.view());
+    this.announce({ rev: this.doc.rev, prev, next: this.effective(), origin: 'migration', touched: EVERYTHING });
     return { kind: 'saved', view: this.view(), adjustments: [], conflicts: [], applies: [], inverse: [] };
+  }
+
+  /** Persist, then adopt the document, tell the listeners and push the view; a failed write changes nothing. */
+  private commit(next: SettingsDocV2, origin: SettingsChangeEvent['origin'], touched: ReadonlySet<Touched>): WriteResult {
+    const prev = this.effective();
+    const written = writeSettings(this.fs, this.d.userDataDir, next, { now: this.d.now(), fromV1Sha256: null });
+    if (!written.ok) {
+      logger.error('settings: the save failed; nothing changed', { detail: written.detail });
+      return written;
+    }
+    this.doc = next;
+    this.announce({ rev: next.rev, prev, next: this.effective(), touched, origin });
+    return written;
+  }
+
+  private announce(event: SettingsChangeEvent): void {
+    const g = this.d.graph?.() ?? null;
+    if (g !== null) reloadChanged(g, toV1Settings(event.prev, this.doc, null), toV1Settings(event.next, this.doc, null));
+    for (const fn of this.listeners) {
+      try {
+        fn(event);
+      } catch (e) {
+        logger.error('settings: a change listener failed; the save stands', { error: String(e) });
+      }
+    }
+    this.d.push(this.view());
   }
 
   // --- @transitional: the v1 window for today's renderer and engine readers (deleted with the old UI) ---
 
   resolveSettings(): Settings {
-    return this.refused?.v1 ?? toV1Settings(this.effective(), this.doc, this.takeBookkeeping());
+    const stamps = stampsFor(this.takeBookkeeping(), this.store?.ownPk ?? null, this.firstPk);
+    return this.refused?.v1 ?? toV1Settings(this.effective(), this.doc, stamps);
   }
 
   async getSettings(): Promise<Settings> { return this.resolveSettings(); }
@@ -242,6 +271,13 @@ export class SettingsServiceV2 {
       const r = this.apply(t.ops, 'user');
       if (r.kind !== 'saved') throw new Error(`settings not saved: ${r.kind === 'refused' ? r.reason : 'write failed'}: ${r.detail}`);
     }
+    if (Object.keys(t.carry).length > 0) {
+      if (this.refused !== null) throw new Error(`settings not saved: migration-pending: ${this.refused.detail}`);
+      // The legacy pacer still reads these until it is deleted: carried in the document, never an op.
+      const written = this.commit({ ...this.doc, rev: this.doc.rev + 1, legacyCarry: { ...carryOf(this.effective()), ...t.carry } },
+        'user', new Set<Touched>(['prefs']));
+      if (!written.ok) throw new Error(`settings not saved: write failed: ${written.detail}`);
+    }
     return this.resolveSettings();
   }
 
@@ -254,30 +290,11 @@ export class SettingsServiceV2 {
   /** The v1 run stamps today's sweep and scheduled prune keep, persisted with the migration record. */
   private recordBookkeeping(patch: Partial<V1Bookkeeping>): void {
     if (this.refused !== null) return;
-    const m = this.doc.migration ?? { at: this.d.now(), fromV1: null, notes: [], bookkeeping: null };
-    const bookkeeping = { forPk: null, sweepLastRunAt: null, sweepIntervalFactor: null, pruneLastRunAt: null, ...m.bookkeeping, ...patch };
-    const next = { ...this.doc, rev: this.doc.rev + 1, migration: { ...m, bookkeeping } };
-    if (writeSettings(this.fs, this.d.userDataDir, next, { now: this.d.now(), fromV1Sha256: null }).ok) this.doc = next;
+    const next = withStamps(this.doc, patch, this.store?.ownPk ?? null, this.firstPk, this.d.now());
+    const written = writeSettings(this.fs, this.d.userDataDir, next, { now: this.d.now(), fromV1Sha256: null });
+    if (written.ok) this.doc = next;
+    else logger.error('settings: the run stamps could not be saved', { detail: written.detail });
   }
 }
 
 const reviewed = (doc: SettingsDocV2, review: boolean): SettingsDocV2 => (review ? { ...doc, protectionState: 'needs-review' } : doc);
-
-/** Overrides whose recommendation moved under them (rendered inline as "You set … ; … would use …"). */
-function conflicts(before: ResolvedParams, after: ResolvedParams): OverrideConflict[] {
-  return (Object.keys(after) as ParamKey[]).flatMap((key) => {
-    const o = after[key].override;
-    return o === null || sameValue(before[key].recommended, after[key].recommended) ? []
-      : [{ key, yours: o.requested, recommendedBefore: before[key].recommended, recommendedNow: after[key].recommended }];
-  });
-}
-
-/** When the changed values take effect, for the save note. */
-function applies(before: ResolvedParams, after: ResolvedParams, plan: boolean): ApplyNote[] {
-  const when = new Set((Object.keys(after) as ParamKey[]).filter((k) => !sameValue(before[k].value, after[k].value))
-    .map((k) => PARAM_SPECS[k].applies));
-  const out: ApplyNote[] = [];
-  if (when.has('now')) out.push({ what: 'applies-now' });
-  if (when.has('replan')) out.push({ what: plan ? 'replanned-today' : 'from-tomorrow' });
-  return out;
-}

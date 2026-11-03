@@ -29,6 +29,12 @@ export function feasibilityOf(dailyVolume: number, hourlyCap: number, massHours:
     : { kind: 'short', reachablePerDay: f.reachablePerDay, binding: f.binding };
 }
 
+/** The feasibility of an effective record's volume over its own masked schedule. */
+export function feasibilityOfEffective(e: EffectiveSettings): Feasibility {
+  const mass = sessionMassMasked({ dayShape: e.pattern.dayShape, weeklyShape: e.pattern.weeklyShape }, e.quietHours, e.daysOff);
+  return feasibilityOf(e.dailyOperatingRate, e.hourlyVelocityCap, mass);
+}
+
 /** The masked session mass of an intent's schedule (quiet hours and days off at zero). */
 export function massOf(i: Intent): number {
   return sessionMassMasked({ dayShape: i.dayShape, weeklyShape: i.weeklyShape }, quietWindowOf(i.quietHours, i.dayShape), i.daysOff);

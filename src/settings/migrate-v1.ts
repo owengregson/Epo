@@ -51,15 +51,17 @@ const MINUTES_PER_HOUR = MS_PER_HOUR / MS_PER_MINUTE;
 
 const CURVE_KEYS = ['hardLow', 'bandLow', 'peakLow', 'peakHigh', 'bandHigh', 'hardHigh'] as const;
 
+/** v1's active hours as quiet hours: the default window is derived; [start, end) active is [end, start) quiet. */
+export function quietHoursOfActive(start: number, end: number): QuietHours {
+  if (start === DEFAULT_SETTINGS.activeHoursStart && end === DEFAULT_SETTINGS.activeHoursEnd) return { kind: 'derived' };
+  return start === end ? { kind: 'none' } : { kind: 'custom', startMinute: end * MINUTES_PER_HOUR, endMinute: start * MINUTES_PER_HOUR };
+}
+
 function quietHoursFrom(v1: Settings, notes: MigrationNote[]): QuietHours {
   const { activeHoursStart: start, activeHoursEnd: end } = v1;
-  if (start === DEFAULT_SETTINGS.activeHoursStart && end === DEFAULT_SETTINGS.activeHoursEnd) {
-    notes.push({ kind: 'quiet-hours-derived' });
-    return { kind: 'derived' };
-  }
-  notes.push({ kind: 'quiet-hours-from-active-hours', start, end });
-  // The active window [start, end) becomes the quiet window [end, start); an empty one has none.
-  return start === end ? { kind: 'none' } : { kind: 'custom', startMinute: end * MINUTES_PER_HOUR, endMinute: start * MINUTES_PER_HOUR };
+  const quiet = quietHoursOfActive(start, end);
+  notes.push(quiet.kind === 'derived' ? { kind: 'quiet-hours-derived' } : { kind: 'quiet-hours-from-active-hours', start, end });
+  return quiet;
 }
 
 function cleanupFrom(v1: Settings, notes: MigrationNote[]): CleanupLevel {
