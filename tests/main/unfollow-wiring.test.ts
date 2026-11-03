@@ -5,8 +5,8 @@
 import type { SourceFrontier } from '@/engine/source-frontier';
 import { FakeClock } from '@/governors/clock';
 import type { RateGovernor } from '@/governors/rate-governor';
-import type { GraphBuildDeps } from '@/main/services/graph-types';
-import { wireChurn, wireProtection } from '@/main/services/unfollow-wiring';
+import type { BuiltGraph, GraphBuildDeps } from '@/main/services/graph-types';
+import { unfollowWiringParts, wireChurn, wireProtection } from '@/main/services/unfollow-wiring';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { ProtectionSettings } from '@/shared/settings-model';
@@ -53,6 +53,31 @@ test('the churn runs on the settings index: a protected record is kept at select
   clock.advance(DEFAULT_SETTINGS.maxWaitForFollowbackDays * 86_400_000);
   churn.advanceTimers();
   expect(store.getFollowRecord('1')).toMatchObject({ state: 'kept', keptReason: 'bio-word' });
+});
+
+test('building the churn marks protection as wired on every path', () => {
+  const setCapabilities = jest.fn();
+  wireChurn({ ...deps(), protection: { index: () => compileProtection(rules, 'ready', rev), setCapabilities } } as GraphBuildDeps, {
+    frontier: { pickQueued: () => null } as unknown as SourceFrontier, store, clock: new FakeClock(T0), rate: {} as RateGovernor,
+    churnActions: new FakeActions() as unknown as AdapterBackedChurnActions, ownPk: 'me', settings: DEFAULT_SETTINGS,
+  });
+  expect(setCapabilities).toHaveBeenCalledWith({ protectionEverywhere: true });
+});
+
+test('the unfollowsPaused contributor names a paused index, and nothing before the graph exists', () => {
+  const [contributor] = unfollowWiringParts().statusContributors;
+  expect(contributor?.name).toBe('unfollowsPaused');
+  const graphWith = (state: 'ready' | 'needs-review' | 'unavailable') =>
+    ({ churn: { protectionState: () => state } }) as unknown as BuiltGraph;
+  expect(contributor?.contribute(graphWith('ready'), T0)).toEqual({ unfollowsPaused: null });
+  expect(contributor?.contribute(graphWith('needs-review'), T0)).toEqual({ unfollowsPaused: 'protection-needs-review' });
+  expect(contributor?.contribute(graphWith('unavailable'), T0)).toEqual({ unfollowsPaused: 'protection-unavailable' });
+  expect(contributor?.contribute(null, T0)).toEqual({});
+});
+
+test('the churn reports the live protection state', () => {
+  const churn = churnFor(new FakeClock(T0));
+  expect(churn.protectionState()).toBe('ready');
 });
 
 test('the graph-open pass releases a record no rule protects anymore', () => {

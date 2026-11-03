@@ -79,6 +79,9 @@ export class ChurnScheduler {
     this.reconciler?.sync(this.clock.now());
   }
 
+  /** The live protection state: anything but 'ready' pauses every automatic unfollow (spec §7.6). */
+  protectionState(): ProtectionIndex['state'] { return this.protection.index().state; }
+
   /** The three streak windows the recovery ladder reads, in one read. */
   streaks(): { failed: number; drift: number; blocked: number } {
     return {
@@ -201,11 +204,7 @@ export class ChurnScheduler {
     return 'noop';
   }
 
-  /**
-   * Thin convenience for callers that want a single lifecycle step without the Engine:
-   * advance timers, take at most ONE due record, and execute it. The three methods above
-   * are the real API; this never loops over all records.
-   */
+  /** One lifecycle step without the Engine: advance timers, then execute at most ONE due record. */
   async tick(): Promise<void> {
     const now = this.clock.now();
     this.advanceTimers(now);

@@ -19,6 +19,7 @@ import type { PlanDayClock } from '@/kernel/plan';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
 import { type Settings, toChurnConfig, toPruneConfig, toScorerConfig } from '@/settings/settings';
+import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { GraphBuildDeps, WiringParts } from './graph-types';
 import { createMutationPolicy } from './mutation-policy';
@@ -89,6 +90,7 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
   });
   // The graph-open pass: rules that changed, or a plan-day that rolled, while Epo was closed.
   reconciler.sync(clock.now());
+  d.protection.setCapabilities({ protectionEverywhere: true });
   return churn;
 }
 
@@ -120,7 +122,19 @@ export function pruneUnfollowDeps(
   };
 }
 
-/** The unfollow wiring's startup steps and status contributors (the unfollow-decisions stream fills them). */
+const PAUSED_FIELD = { 'needs-review': 'protection-needs-review', unavailable: 'protection-unavailable' } as const;
+
+/** The unfollow wiring's status contributor: why every automatic unfollow is paused, or null (spec §7.6). */
 export function unfollowWiringParts(): WiringParts {
-  return { startupSteps: [], statusContributors: [] };
+  return {
+    startupSteps: [],
+    statusContributors: [{
+      name: 'unfollowsPaused',
+      contribute: (graph): Partial<StatusFields> => {
+        if (graph === null) return {};
+        const state = graph.churn.protectionState();
+        return { unfollowsPaused: state === 'ready' ? null : PAUSED_FIELD[state] };
+      },
+    }],
+  };
 }

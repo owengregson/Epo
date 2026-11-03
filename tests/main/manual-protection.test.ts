@@ -10,6 +10,14 @@ import { cleanupMainHarness, newFoundation } from '../kit/main-harness';
 afterAll(cleanupMainHarness);
 const graphOf = (f: Foundation): BuiltGraph => (f as unknown as { session: { current(): BuiltGraph } }).session.current();
 
+test('a built graph reports protection wired on every path, and no paused unfollows', async () => {
+  const { foundation } = newFoundation();
+  await foundation.ensureBuilt();
+  expect(foundation.settings.view().capabilities.protectionEverywhere).toBe(true);
+  expect((await foundation.status()).unfollowsPaused).toBeNull();
+  await foundation.dispose();
+});
+
 test.each<ClickVerdict>([
   { kind: 'protected', by: 'account', match: '77' },
   { kind: 'protection-unknown', missing: 'bio' },

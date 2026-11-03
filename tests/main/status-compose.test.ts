@@ -54,7 +54,9 @@ test('the not-built status sets basis and nulls every optional status field', ()
 });
 
 test('every wiring module returns its startup steps and status contributors (none yet)', () => {
-  for (const parts of [planWiringParts(), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts()]) {
+  for (const parts of [planWiringParts(), reopenWiringParts(), surfaceWiringParts(), liveWiringParts()]) {
     expect(parts).toEqual({ startupSteps: [], statusContributors: [] });
   }
+  // The unfollow wiring returns its one contributor (tests/main/unfollow-wiring.test.ts).
+  expect(unfollowWiringParts().statusContributors.map((c) => c.name)).toEqual(['unfollowsPaused']);
 });
