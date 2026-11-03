@@ -6,5 +6,6 @@ export * from './circadian';
 export * from './gap';
 export * from './policy';
 export * from './seed';
+export * from './tempo';
 export type * from './types';
 export * from './volume';
