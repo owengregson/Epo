@@ -88,7 +88,7 @@ describe('ChangeQueue', () => {
     q.submit('intent:activity', [op('light')], 'light');
     await g.answer(saved(2, [op('moderate')]));
     expect(q.state().view?.rev).toBe(2);
-    expect(q.state().save).toEqual({ kind: 'saved', inverse: [op('moderate')], adjusted: 0 });
+    expect(q.state().save).toEqual({ kind: 'saved', key: 'intent:activity', inverse: [op('moderate')], adjusted: 0 });
     q.undo();
     expect(g.sent.at(-1)).toEqual([op('moderate')]);
   });

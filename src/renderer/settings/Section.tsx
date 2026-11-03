@@ -1,5 +1,6 @@
 import type { ComponentChildren, JSX } from 'preact';
 import type { SectionId } from '@/shared/settings-params';
+import { PROTECTION_COPY } from './copy/fields';
 import { SECTION_COPY, STAGE_COPY } from './copy/sections';
 import { fill } from './format';
 import { sectionDomId } from './sections';
@@ -19,6 +20,9 @@ function overriddenKeys(s: StageApi, section: SectionId) {
  */
 export function Section({ id, s, children }: { id: SectionId; s: StageApi; children?: ComponentChildren }): JSX.Element {
   const copy = SECTION_COPY[id];
+  // Until protection guards every path, its lead promises only what is true: pruning keeps them.
+  const question = id === 'protection' && !s.view.capabilities.protectionEverywhere
+    ? PROTECTION_COPY.leadPartial : 'question' in copy ? copy.question : undefined;
   const tuned = s.view.overrides.bySection[id] ?? 0;
   const reset = (): void => {
     const keys = overriddenKeys(s, id);
@@ -28,7 +32,7 @@ export function Section({ id, s, children }: { id: SectionId; s: StageApi; child
     <section class="set-sec" id={sectionDomId(id)} data-section={id} data-tour={TOUR_ANCHOR[id]} aria-labelledby={`${sectionDomId(id)}-h`}>
       <div class="set-sec__head">
         <h2 id={`${sectionDomId(id)}-h`}>{copy.title}</h2>
-        {'question' in copy ? <p>{copy.question}</p> : null}
+        {question === undefined ? null : <p>{question}</p>}
       </div>
       {s.mode === 'easy' && tuned > 0 ? (
         <p class="set-tuned">

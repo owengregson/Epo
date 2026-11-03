@@ -3,11 +3,21 @@
  * from `SettingsView.options`, and the confirm sheets. Prune is the user-facing word for cleanup.
  */
 import type {
-  ActivityLevel, AudienceFocus, AudienceSize, Caution, CleanupLevel, Consistency, DayShape, PaceCardId, Patience,
-  Rhythm, WeeklyShape,
+  ActivityLevel, AudienceFocus, AudienceSize, Caution, CleanupLevel, Consistency, DayShape, Intent, MutualPolicy,
+  PaceCardId, Rhythm, WeeklyShape,
 } from '@/shared/settings-intent';
 
+/** The choices a card marks "Recommended": the fresh document's intent (a test pins it to main's). */
+export const RECOMMENDED = {
+  pace: 'balanced',
+  intent: {
+    consistency: 'natural', dayShape: 'balanced', weeklyShape: 'realistic', rhythm: 'sessions', patience: 'normal',
+    mutuals: 'rotate', cleanup: 'off', audienceFocus: 'likely', audienceSize: 'everyday',
+  },
+} as const satisfies { pace: PaceCardId; intent: Partial<Intent> };
+
 export const PACE_COPY = {
+  label: 'Growth pace',
   cards: {
     gentle: { title: 'Gentle', line: 'Light and relaxed.' },
     balanced: { title: 'Balanced', line: 'Steady growth with room to spare.' },
@@ -18,7 +28,7 @@ export const PACE_COPY = {
   range: 'Most days land between {lo} and {hi}.',
   safety: 'Epo’s own work never uses more than {p}% of the lowest daily follow limit Instagram is known to apply.',
   custom: 'Your own mix',
-  customLine: 'About {n} a day. Set in Advanced.',
+  customLine: 'Set in Advanced.',
   feasibility: 'Your schedule is too short for this pace. Epo can fit about {n} a day into your active hours at a safe speed. Pick a slower pace, or shorten your quiet hours.',
   atLimitTitle: 'Run at the fullest pace?',
   atLimit: 'This runs at the low end of what Instagram is known to allow in a day. Some accounts get temporarily restricted at this pace. Continue?',
@@ -41,6 +51,7 @@ export const INTENT_ROW_COPY = {
 } as const;
 
 export const SCHEDULE_COPY = {
+  shapeLabel: 'Day shape',
   shapes: {
     balanced: 'Through the day', morning: 'Mornings', evening: 'Evenings', nightowl: 'Late nights', business: 'Work hours',
   } satisfies Readonly<Record<DayShape, string>>,
@@ -78,7 +89,8 @@ export const AUDIENCE_COPY = {
   focus: {
     likely: 'People likely to follow you back', wide: 'Reach more people (fewer follow back)',
   } satisfies Readonly<Record<AudienceFocus, string>>,
-  custom: 'Set in Advanced',
+  custom: 'Set in Advanced.',
+  review: 'Review',
   private: 'Give private accounts a small edge',
   preferHint: 'Epo favours accounts that follow about as many people as follow them, and private accounts. They follow back most often.',
   requests: 'Follow requests',
@@ -90,9 +102,9 @@ export const AUDIENCE_COPY = {
 
 export const UNFOLLOW_COPY = {
   wait: 'If someone doesn’t follow back, unfollow them after',
-  waits: { quick: '{n} days', normal: '{n} days', patient: '1 week' } satisfies Readonly<Record<Patience, string>>,
   mutuals: 'When someone follows you back',
-  rotate: 'Unfollow them after {hold} days. Most keep following you, and your following count stays low.',
+  mutualTitle: { rotate: 'Unfollow after a while', keep: 'Keep following' } satisfies Readonly<Record<MutualPolicy, string>>,
+  rotate: 'Unfollow them after {hold}. Most keep following you, and your following count stays low.',
   keep: 'Keep following them. Your following count grows over time.',
   own: 'People you followed yourself',
   ownHelp: 'Accounts Epo didn’t follow for you.',
@@ -115,7 +127,12 @@ export const APP_COPY = {
   practiceOffYes: 'Turn off',
   practiceOffNo: 'Keep practicing',
   replay: 'Replay the intro',
+  replayButton: 'Replay',
   reset: 'Reset to recommended',
+  resetButton: 'Review and reset',
+  resetLead: 'This changes:',
+  resetLoading: 'Working out what would change…',
+  resetNoPreview: 'Epo couldn’t work out what would change. You can still reset.',
   resetTitle: 'Reset to recommended?',
   resetBody: 'This changes: {lines}.',
   resetNothing: 'Everything already matches the recommendation.',
@@ -128,6 +145,7 @@ export const APP_COPY = {
   clearTitle: 'Clear all data and log out?',
   clearBody: 'This permanently removes Epo’s data about your account and signs you out of Instagram. Your settings and protection list are kept. This cannot be undone.',
   clearYes: 'Clear & log out',
+  clearFailed: 'Couldn’t clear the data. Try again in a moment.',
   startOver: 'Start over from the older version’s settings',
   startOverHelp: 'Replace these settings with the ones the older version of Epo saved.',
   startOverTitle: 'Start over from the older version’s settings?',

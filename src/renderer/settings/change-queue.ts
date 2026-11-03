@@ -11,7 +11,7 @@ import type { SettingsView } from '@/shared/settings-view';
 export type SaveState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'saving' }
-  | { readonly kind: 'saved'; readonly inverse: readonly SettingsOp[]; readonly adjusted: number }
+  | { readonly kind: 'saved'; readonly key: string; readonly inverse: readonly SettingsOp[]; readonly adjusted: number }
   | { readonly kind: 'failed'; readonly detail: string; readonly reason: 'not-saved' | 'refused' | 'unreachable' };
 
 export interface QueueState {
@@ -126,7 +126,7 @@ export class ChangeQueue {
       if (newest) this.overlay.delete(c.key);
       this.failed = null;
       this.conflicts = r.conflicts;
-      this.save = { kind: 'saved', inverse: r.inverse, adjusted: r.adjustments.length };
+      this.save = { kind: 'saved', key: c.key, inverse: r.inverse, adjusted: r.adjustments.length };
     } else {
       // Nothing changed in main: the control goes back to what the view says.
       if (newest) this.overlay.delete(c.key);

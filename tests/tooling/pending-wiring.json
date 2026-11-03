@@ -1,11 +1,6 @@
 {
   "pending": [
     {
-      "module": "src/renderer/copy/boost.ts",
-      "stream": "SB",
-      "reason": "the sidebar's one Boost control and the Settings Boost section read this copy deck"
-    },
-    {
       "module": "src/governors/plan-projection.ts",
       "stream": "PR",
       "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"

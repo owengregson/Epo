@@ -23,6 +23,11 @@ export function minuteLabel(minute: number): string {
   return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
+/** An hour of the day as the user's clock names it ("12 AM", "6 PM"). */
+export function hourLabel(hour: number): string {
+  return new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' });
+}
+
 /** An instant as a local time ("9:40 PM"). */
 export function timeLabel(at: number): string {
   return new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -39,6 +44,39 @@ export function waitLabel(seconds: number): string {
   const m = Math.floor(s / 60);
   const out = m === 0 ? `${s} s` : `${m} m ${s % 60} s`;
   return out.replace(/ /g, ' ');
+}
+
+/** A follower count as the seed line shows it: "940", "12.4k", "1.2M". */
+export function compact(n: number): string {
+  const steps: ReadonlyArray<[number, string]> = [[1_000_000, 'M'], [1_000, 'k']];
+  for (const [size, unit] of steps) {
+    if (n >= size) return `${trimZero((n / size).toFixed(1))}${unit}`;
+  }
+  return commas(n);
+}
+
+const trimZero = (t: string): string => t.replace(/\.0$/, '');
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+const WEEK_DAYS = 7;
+
+/** How long ago something was checked: "just now", "12 min ago", "3 h ago", "2 days ago", or its date. */
+export function agoLabel(at: number, now: number): string {
+  const ago = Math.max(0, now - at);
+  if (ago < MINUTE_MS) return 'just now';
+  if (ago < HOUR_MS) return `${Math.floor(ago / MINUTE_MS)} min ago`;
+  if (ago < DAY_MS) return `${Math.floor(ago / HOUR_MS)} h ago`;
+  const days = Math.floor(ago / DAY_MS);
+  if (days < WEEK_DAYS) return days === 1 ? '1 day ago' : `${days} days ago`;
+  return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** A number of days as a person says it: "2 days", "1 week", "2 weeks". */
+export function daysLabel(n: number): string {
+  if (n > 0 && n % WEEK_DAYS === 0) return n === WEEK_DAYS ? '1 week' : `${n / WEEK_DAYS} weeks`;
+  return n === 1 ? '1 day' : `${commas(n)} days`;
 }
 
 /** A count with its noun ("1 follow", "3 follows"). */

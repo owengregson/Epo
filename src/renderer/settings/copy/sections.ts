@@ -76,7 +76,7 @@ export const EXPECT_COPY = {
   today: 'Today',
   todayLine: 'About {n} actions in {s} sessions',
   todayNotBuilt: 'Not known yet — Epo plans today once it has opened your account.',
-  week: 'The next 7 days',
+  week: 'The week ahead',
   weekNotBuilt: 'The week ahead appears once Epo plans your days.',
   dayOff: '{day}: day off',
   dayLine: '{day}: about {n} actions',
