@@ -30,6 +30,14 @@ let live: SurfaceReporter | null = null;
 /** The report of the graph that is live now, or null before a graph is built or after it tore down. */
 export const liveSurfaceReporter = (): SurfaceReporter | null => live;
 
+/**
+ * The surface gate of the graph that owns `store`, resolved at each ask: a consumer built before
+ * `wireSurface` in the same graph (the click review, the plan mix) takes this and reads the real gate.
+ */
+export const surfaceGateOf = (store: KnowledgeStore): SurfaceGate => ({
+  paused: (activity) => reporters.get(store)?.gate.paused(activity) ?? false,
+});
+
 /** The readers one graph shares, the disposers of the two passive taps, and the surface sink. */
 export interface SurfaceWiring {
   reader: Reader;

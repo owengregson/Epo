@@ -13,7 +13,7 @@ import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
 import { createClickReview } from '@/main/services/click-review';
 import { createSurfaceHealthSink, type SurfaceHealthSinkDeps } from '@/main/services/surface-health-sink';
 import { createSurfaceReport } from '@/main/services/surface-report';
-import { liveSurfaceReporter } from '@/main/services/surface-wiring';
+import { liveSurfaceReporter, surfaceGateOf } from '@/main/services/surface-wiring';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
@@ -174,6 +174,9 @@ describe('the gate at the click and status.surface over a built graph', () => {
     expect(next?.areas.lists).toBe('paused');
     expect(next?.paused).toContain('cleanup');
     expect(next?.revision).toBeGreaterThan(first?.revision ?? Number.POSITIVE_INFINITY);
+    // A consumer built before the surface wiring resolves the same graph's gate at each ask.
+    expect(surfaceGateOf(foundationStore(f)).paused('cleanup')).toBe(true);
+    expect(surfaceGateOf(memoryStore()).paused('cleanup')).toBe(false);
     await f.dispose();
     expect(liveSurfaceReporter()).toBeNull();
   });
