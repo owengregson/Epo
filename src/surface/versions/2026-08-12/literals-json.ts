@@ -82,11 +82,21 @@ export const JSON_PATHS = {
     cursor: 'data.xdt_friendships_pending_users.users.page_info.end_cursor',
     hasMore: 'data.xdt_friendships_pending_users.users.page_info.has_next_page',
   },
+  /** The same connection as the read pipeline's container: its path, then edges, node, cursor and more-flag. */
+  followRequestsConnection: {
+    at: 'data.xdt_friendships_pending_users.users',
+    edges: 'edges',
+    node: 'node',
+    cursor: 'page_info.end_cursor',
+    hasNext: 'page_info.has_next_page',
+  },
   /** Where each profile source puts that user record. */
   profileUserAt: {
     info: 'user',
     graphql: 'data.user',
   },
+  /** Whose session read the GraphQL profile (I10: a null relationship is the viewer's own record). */
+  profileViewerAt: 'data.viewer.user',
   /** `friendships/show/<pk>/`: the relationship keys at the root, plus the privacy flag. */
   friendshipShow: {
     isPrivate: 'is_private',

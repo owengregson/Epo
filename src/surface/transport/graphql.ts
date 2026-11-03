@@ -4,12 +4,9 @@
  * beside the root make the read partial. Version-agnostic: the keys and signatures are injected.
  */
 
-/** A surface version's GraphQL envelope keys. */
-export interface GraphqlDecl {
-  readonly errorsKey: string;
-  readonly dataKey: string;
-  readonly errorTextKeys: readonly string[];
-}
+import type { GraphqlDecl } from '@/surface/schema/decls';
+
+export type { GraphqlDecl } from '@/surface/schema/decls';
 
 export type GraphqlOutcome =
   | { readonly kind: 'not-graphql' }

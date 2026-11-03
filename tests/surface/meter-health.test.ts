@@ -1,13 +1,12 @@
 /**
- * `SurfaceMeter` and `SurfaceHealth` — the two things wave B's derivations and
- * the Surface Health card read.
+ * `SurfaceMeter` — what wave B's derivations and the compatibility report read
+ * (per-read health is the sink's: `tests/surface/read-body.test.ts`).
  *
  * The guard rails are the point, not the percentiles: a meter that records
  * FAILED waits feeds every timeout into itself (slow → longer timeout → slower
  * detection → slower), which is why `time()` records only on resolve.
  */
 
-import { SurfaceHealth } from '@/surface/health';
 import { RESERVOIR, SURFACE_METRICS, SurfaceMeter } from '@/surface/meter';
 
 describe('SurfaceMeter', () => {
@@ -66,34 +65,5 @@ describe('SurfaceMeter', () => {
     ).rejects.toThrow('stale');
     // Successful samples only — the 8s failure never entered the reservoir.
     expect(meter.summary('hydration')).toMatchObject({ n: 1, p50: 120 });
-  });
-});
-
-describe('SurfaceHealth', () => {
-  test('counts parses, mismatches, novelty and disagreement per endpoint', () => {
-    const health = new SurfaceHealth('2026-08-12');
-    health.parsed('followers-list');
-    health.parsed('followers-list', { novelKeys: ['users[].groups'], rowIssues: 2 });
-    health.mismatch('show-many', 1_700);
-    health.disagreed('show-many');
-
-    const snap = health.snapshot();
-    expect(snap.surfaceId).toBe('2026-08-12');
-    const followers = snap.endpoints.find((e) => e.endpoint === 'followers-list');
-    expect(followers).toMatchObject({ parsed: 2, novel: 1, rowIssues: 2, mismatch: 0 });
-    expect(followers?.lastNovelKeys).toEqual(['users[].groups']);
-
-    const many = snap.endpoints.find((e) => e.endpoint === 'show-many');
-    expect(many).toMatchObject({ mismatch: 1, disagreed: 1, lastMismatchAt: 1_700 });
-    expect(snap.totals).toEqual({ parsed: 2, mismatch: 1, novel: 1, disagreed: 1 });
-  });
-
-  test('the snapshot is a COPY — a later tick cannot mutate one already taken', () => {
-    const health = new SurfaceHealth('x');
-    health.parsed('show-many');
-    const before = health.snapshot();
-    health.parsed('show-many');
-    expect(before.endpoints[0]?.parsed).toBe(1);
-    expect(health.snapshot().endpoints[0]?.parsed).toBe(2);
   });
 });

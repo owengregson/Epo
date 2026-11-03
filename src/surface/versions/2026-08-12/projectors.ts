@@ -1,232 +1,234 @@
 /**
  * The Instagram surface's PROJECTORS — capture 2026-08-12.
  *
- * Pure, synchronous `project()` functions, one per endpoint shape, plus the row
- * helpers they share. Split out of `./surface.ts` (2026-11-02) when the
- * notifications drawer's GraphQL reads joined the document; the document still
- * owns which endpoint uses which projector. Each projector emits ONE fact per
- * row so a consumer writes through as it iterates (PRINCIPLES §1), and never a
- * completeness verdict — completeness is the walker's to mint.
+ * Pure, synchronous `project()` functions, one per container shape. Each reads its record field by
+ * field through `read/fields.ts` (I1–I10): ids from allow-listed keys with agreement, counts as one
+ * pair, booleans and text by presence, relationships tri-state. A row that does not read is a counted
+ * row issue, a field that does not read a field issue; each projector emits ONE fact per row so a
+ * consumer writes through as it iterates (PRINCIPLES §1), and never a completeness verdict.
  */
 
-import type { z } from 'zod';
-import { readRelationship } from '@/surface/read/relationship';
-import { emptyProjection, type ProjectCtx, type Projection, type RowIssue } from '@/surface/schema/surface';
-import { JSON_PATHS } from '@/surface/versions/2026-08-12/literals';
+import type { Observation } from '@/store/types';
+import { continuationOf } from '@/surface/read/continuation';
 import {
-  type ActivityFeedStories,
-  type FriendshipShowBody,
-  type ListPageBody,
-  ListUserRow,
-  type ProfileGraphqlBody,
-  type ProfileInfoBody,
-  type ProfileUser,
-  type ShowManyBody,
-  ShowManyStatus,
+  idOf, jsonTypeOf, readBool, readCountPair, readEpochSeconds, readId, readRelationshipPresence, readTextPresence, valueAt,
+} from '@/surface/read/fields';
+import { readRelationship } from '@/surface/read/relationship';
+import type { FieldIssue, FollowEvent, NormalizeStep, Presence } from '@/surface/schema/projection';
+import { emptyProjection, type ProjectCtx, type Projection } from '@/surface/schema/surface';
+import { CONTINUATION } from '@/surface/versions/2026-08-12/continuation-decl';
+import { JSON_PATHS } from '@/surface/versions/2026-08-12/literals';
+import { RECOVERY_DECL } from '@/surface/versions/2026-08-12/recovery-decl';
+import type {
+  ActivityFeedStories, FriendshipShowBody, ListPageBody, ProfileRecord, ShowManyBody,
 } from '@/surface/versions/2026-08-12/schemas';
 
-/** The relationship keys, read by presence (spec §10.4). */
 const REL = JSON_PATHS.relationship;
+const ROW = JSON_PATHS.followersList;
+const PROFILE = JSON_PATHS.profileUser;
+const FEED = JSON_PATHS.activityFeed;
 
-// ---------------------------------------------------------------------------
-// Row helpers — the ONLY place a projector reaches into a row
-// ---------------------------------------------------------------------------
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** Coerce an observed pk (string on most endpoints, number on `pending/`) to a string. */
-const pkString = (v: string | number): string => String(v);
-
-/**
- * Parse one row through `schema`, recording a {@link RowIssue} instead of
- * rejecting the whole page. A single malformed row must not cost the other
- * rows' facts (§1) — but it must not vanish either, so it is COUNTED.
- */
-function parseRow<T>(
-  schema: z.ZodType<T>,
-  raw: unknown,
-  index: number,
-  issues: RowIssue[],
-): T | null {
-  const parsed = schema.safeParse(raw);
-  if (parsed.success) return parsed.data;
-  const first = parsed.error.issues[0];
-  issues.push({
-    index,
-    path: first?.path.map(String).join('.') || '(root)',
-    message: first?.message ?? 'row rejected',
-  });
-  return null;
+/** Record a normalized step once per (kind, pattern). */
+function noteStep(ctx: ProjectCtx, step: NormalizeStep): void {
+  if (ctx.steps === undefined || ctx.steps.some((s) => s.kind === step.kind && s.at === step.at)) return;
+  ctx.steps.push(step);
 }
 
-// ---------------------------------------------------------------------------
-// Projectors
-// ---------------------------------------------------------------------------
+/** A boolean field: its value, or `undefined` with an issue when present but not a boolean. */
+function flagOf(record: Record<string, unknown>, key: string, path: string, out: Projection): boolean | undefined {
+  const b = readBool(record, key);
+  if ('value' in b) return b.value;
+  if (b.presence === 'invalid') out.fieldIssues.push({ path, kind: 'invalid', got: jsonTypeOf(record[key]) });
+  return undefined;
+}
 
-/** One paginated friendships page → one observation per user row. */
-export const projectListPage = (body: z.infer<typeof ListPageBody>, ctx: ProjectCtx): Projection => {
+/** A text field ('' included): its value, or `undefined` with an issue when present but not text. */
+function textOf(record: Record<string, unknown>, key: string, path: string, out: Projection): string | undefined {
+  const v = record[key];
+  if (typeof v === 'string') return v;
+  if (readTextPresence(record, key) === 'invalid') out.fieldIssues.push({ path, kind: 'invalid', got: jsonTypeOf(v) });
+  return undefined;
+}
+
+/** One user row (I1, I2): an id from the allow-listed keys, its handle and flags; `null` when it does not read. */
+export function userRowOf(raw: unknown, index: number, rows: string, ctx: ProjectCtx, out: Projection,
+  source: Observation['source'] = ctx.source): Observation | null {
+  if (!isRecord(raw)) {
+    out.rowIssues.push({ index, path: '(row)', message: `the row is ${jsonTypeOf(raw)}` });
+    return null;
+  }
+  const id = readId(raw, RECOVERY_DECL);
+  if ('issue' in id) {
+    out.rowIssues.push({ index, path: id.issue.path, message: id.issue.kind });
+    return null;
+  }
+  if (id.step !== undefined) noteStep(ctx, { ...id.step, at: `${rows}[].${id.step.at}` });
+  return { accountPk: id.pk, observedAt: ctx.at, source, fields: {
+    username: textOf(raw, RECOVERY_DECL.handleKey, `${rows}[].${RECOVERY_DECL.handleKey}`, out),
+    isPrivate: flagOf(raw, ROW.isPrivate, `${rows}[].${ROW.isPrivate}`, out),
+    isVerified: flagOf(raw, ROW.isVerified, `${rows}[].${ROW.isVerified}`, out),
+  } };
+}
+
+/** One friendships page (the list endpoints, the requests panel) → one observation per row + its continuation. */
+export const projectListPage = (page: ListPageBody, ctx: ProjectCtx): Projection => {
   const out = emptyProjection();
-  body.users.forEach((raw, index) => {
-    const row = parseRow(ListUserRow, raw, index, out.rowIssues);
-    if (row === null) return;
-    out.facts.push({
-      accountPk: pkString(row.pk),
-      observedAt: ctx.at,
-      source: ctx.source,
-      fields: {
-        username: row.username,
-        isPrivate: row.is_private,
-        isVerified: row.is_verified,
-      },
-    });
+  page.users.forEach((raw, index) => {
+    const obs = userRowOf(raw, index, CONTINUATION.rowsKey, ctx, out);
+    if (obs !== null) out.facts.push(obs);
   });
-  const next = body.next_max_id;
-  // A cursor is a non-empty STRING. `null`/absent/'' all mean no next page —
-  // and a numeric cursor (seen on some captures) stringifies to one.
-  out.cursor = next === null || next === undefined || next === '' ? null : String(next);
-  // More-pages detection must survive whichever flag this response carries:
-  // `has_more`, the alternate `big_list`, or neither — a present cursor ALWAYS
-  // means another page exists. A false negative here truncates a whole scan.
-  out.hasMore = body.has_more === true || body.big_list === true || out.cursor !== null;
+  const { continuation, steps } = continuationOf(page, CONTINUATION, { final: ctx.final ?? null });
+  for (const step of steps) noteStep(ctx, step);
+  out.continuation = continuation;
+  out.cursor = continuation.kind === 'next' ? continuation.cursor : null;
+  out.hasMore = continuation.kind !== 'end';
+  // No cursor and no more-flag at all: an end without evidence, and the flag's absence is drift.
+  if (continuation.kind === 'end' && continuation.evidence === 'no-flags') {
+    out.fieldIssues.push({ path: CONTINUATION.moreFlags.join('|'), kind: 'expected-absent', got: 'absent' });
+  }
   return out;
 };
 
-/** The batched relationship map → one relationship fact per pk. */
-export const projectShowMany = (body: z.infer<typeof ShowManyBody>, _ctx: ProjectCtx): Projection => {
+/** The batched relationship map → one tri-state relationship fact per pk (this shape has no followed-by). */
+export const projectShowMany = (body: ShowManyBody, _ctx: ProjectCtx): Projection => {
   const out = emptyProjection();
-  Object.entries(body.friendship_statuses).forEach(([pk, raw], index) => {
-    const status = parseRow(ShowManyStatus, raw, index, out.rowIssues);
-    if (status === null) return;
-    // Every flag by presence; this shape carries NO followed-by direction (`null`, never `false`).
-    out.relationships.push({ ...readRelationship(status, REL, pk), followedBy: null, isPrivate: status.is_private });
-  });
-  return out;
-};
-
-/** The single-relationship shape → one relationship fact, both directions. */
-export const projectFriendshipShow = (
-  body: z.infer<typeof FriendshipShowBody>,
-  ctx: ProjectCtx,
-): Projection => {
-  const out = emptyProjection();
-  out.relationships.push({ ...readRelationship(body, REL, ctx.pk ?? ''), isPrivate: body.is_private });
-  return out;
-};
-
-/**
- * One profile user record → one observation (+ the viewer relationship when the
- * source carries it). Shared by both profile endpoints: `/users/<pk>/info/` and
- * the observed GraphQL profile query answer the same field names under
- * different containers.
- *
- * A record carrying neither `pk` nor `id` is DRIFT, not a profile — it is
- * counted as a row issue and yields no fact, so a reshaped body can never
- * become an observation against an empty pk.
- */
-const projectProfileUser = (user: ProfileUser, ctx: ProjectCtx, out: Projection): void => {
-  // Instagram spells "no value" as `null` on these fields, and an Observation
-  // field spells it `undefined` — so every optional value is narrowed once,
-  // here, rather than each call site coping with three states.
-  const some = <T>(v: T | null | undefined): T | undefined => v ?? undefined;
-  const id = user.pk ?? user.id;
-  if (id === undefined || id === null) {
-    out.rowIssues.push({
-      index: 0,
-      path: 'pk',
-      message: 'profile user carries neither `pk` nor `id`',
-    });
-    return;
-  }
-  const pk = pkString(id);
-  out.absent = false;
-  out.facts.push({
-    accountPk: pk,
-    observedAt: ctx.at,
-    source: ctx.source,
-    fields: {
-      username: some(user.username),
-      followers: some(user.follower_count),
-      following: some(user.following_count),
-      mutuals: some(user.mutual_followers_count),
-      isPrivate: some(user.is_private),
-      isVerified: some(user.is_verified),
-      bio: some(user.biography),
-    },
-  });
-  // Viewer-side relationship: GraphQL profile bodies carry it, `/users/<pk>/
-  // info/` does not. Absent means UNKNOWN — never a fabricated `false`.
-  const fs = user.friendship_status;
-  if (fs !== null && fs !== undefined) {
-    out.relationships.push({ ...readRelationship(fs, REL, pk), isPrivate: some(user.is_private) });
-  }
-};
-
-/** `/users/<pk>/info/` → one profile observation, or "the profile is gone". */
-export const projectProfileInfo = (body: z.infer<typeof ProfileInfoBody>, ctx: ProjectCtx): Projection => {
-  const out = emptyProjection();
-  if (body.user === null) {
-    // The `user` key exists and is empty: Instagram is saying the profile is
-    // gone. A body WITHOUT the key never reaches here — the schema rejects it,
-    // so a soft-block body can never be read as a deletion.
-    out.absent = true;
-    return out;
-  }
-  projectProfileUser(body.user, ctx, out);
-  return out;
-};
-
-/** The OBSERVED GraphQL profile body → the same projection, `data`-wrapped. */
-export const projectProfileGraphql = (
-  body: z.infer<typeof ProfileGraphqlBody>,
-  ctx: ProjectCtx,
-): Projection => {
-  const out = emptyProjection();
-  const user = body.data.user;
-  // Only an explicit null is Instagram saying "gone"; a missing `user` is drift (spec §10.4).
-  if (user === null) {
-    out.absent = true;
-    return out;
-  }
-  if (user === undefined) {
-    out.rowIssues.push({ index: 0, path: 'data.user', message: 'profile container carries no user' });
-    return out;
-  }
-  projectProfileUser(user, ctx, out);
-  return out;
-};
-
-/**
- * The news inbox → the "started following you" events it carries. An entry
- * qualifies through EITHER signal — the numeric follow `story_type` or the text
- * matcher — so a drift in one does not blind the follow-back watcher.
- */
-export const projectActivityFeed = (
-  body: z.infer<typeof ActivityFeedStories>,
-  _ctx: ProjectCtx,
-): Projection => {
-  const out = emptyProjection();
-  const p = JSON_PATHS.activityFeed;
-  let index = 0;
-  for (const section of [body.new_stories, body.old_stories]) {
-    if (!Array.isArray(section)) continue;
-    for (const entry of section) {
-      const i = index++;
-      const args = entry.args;
-      if (args === undefined) continue;
-      const isFollow =
-        entry.story_type === p.followStoryType ||
-        (typeof args.text === 'string' && p.followText.test(args.text));
-      if (!isFollow) continue;
-      if (args.profile_id === undefined) {
-        out.rowIssues.push({ index: i, path: 'args.profile_id', message: 'follow story with no pk' });
-        continue;
-      }
-      out.events.push({
-        pk: pkString(args.profile_id),
-        username: typeof args.profile_name === 'string' && args.profile_name !== ''
-          ? args.profile_name
-          : null,
-        atMs: typeof args.timestamp === 'number' ? Math.round(args.timestamp * 1000) : null,
-      });
+  Object.entries(body.friendship_statuses).forEach(([key, raw], index) => {
+    const pk = idOf(key);
+    if (pk === null || !isRecord(raw)) {
+      out.rowIssues.push({ index, path: pk === null ? '(key)' : '(row)', message: pk === null ? 'id-space' : 'not an object' });
+      return;
     }
+    const isPrivate = flagOf(raw, JSON_PATHS.showMany.isPrivate, `friendship_statuses.*.${JSON_PATHS.showMany.isPrivate}`, out);
+    out.relationships.push({ ...readRelationship(raw, REL, pk), followedBy: null, isPrivate });
+  });
+  return out;
+};
+
+/** The single-relationship shape → one relationship fact, both directions, for the URL's subject pk. */
+export const projectFriendshipShow = (body: FriendshipShowBody, ctx: ProjectCtx): Projection => {
+  const out = emptyProjection();
+  const pk = ctx.pk === undefined ? null : idOf(ctx.pk);
+  if (pk === null) {
+    out.rowIssues.push({ index: 0, path: 'pk', message: 'the request URL names no subject' });
+    return out;
+  }
+  const isPrivate = flagOf(body, JSON_PATHS.friendshipShow.isPrivate, JSON_PATHS.friendshipShow.isPrivate, out);
+  out.relationships.push({ ...readRelationship(body, REL, pk), isPrivate });
+  return out;
+};
+
+/** Whose session read the profile: the body's own viewer record, else the caller's (I10). */
+function viewerOf(ctx: ProjectCtx): string | null {
+  const viewer = valueAt(ctx.root, JSON_PATHS.profileViewerAt);
+  const id = isRecord(viewer) ? readId(viewer, RECOVERY_DECL) : null;
+  return id !== null && !('issue' in id) ? id.pk : (ctx.viewerPk ?? null);
+}
+
+const pairPresence = (pair: ReturnType<typeof readCountPair>): Presence =>
+  pair === null ? 'absent' : !('issue' in pair) ? 'read' : pair.issue.kind === 'counts-partial' ? 'partial' : 'invalid';
+
+/**
+ * One profile record → one observation, its presence, and the viewer relationship when the record
+ * carries one. Shared by both profile containers (`user`, `data.user`); a record with no readable id
+ * is a row issue and yields no fact, so a reshaped body never becomes an observation.
+ */
+export const projectProfileUser = (record: ProfileRecord, ctx: ProjectCtx): Projection => {
+  const out = emptyProjection();
+  const id = readId(record, RECOVERY_DECL);
+  if ('issue' in id) {
+    out.rowIssues.push({ index: 0, path: id.issue.path, message: id.issue.kind });
+    return out;
+  }
+  if (id.step !== undefined) noteStep(ctx, id.step);
+  const pair = readCountPair(record, RECOVERY_DECL.profileCountKeys);
+  const counts = pair === null || 'issue' in pair ? null : pair;
+  if (pair !== null && 'issue' in pair) out.fieldIssues.push(pair.issue);
+  for (const step of counts?.steps ?? []) noteStep(ctx, step);
+  const viewerPk = viewerOf(ctx);
+  const relationship = readRelationshipPresence(record, PROFILE.friendshipStatus, id.pk, viewerPk);
+  const fs = record[PROFILE.friendshipStatus];
+  const isPrivate = flagOf(record, PROFILE.isPrivate, PROFILE.isPrivate, out);
+  if (relationship === 'read' && isRecord(fs)) out.relationships.push({ ...readRelationship(fs, REL, id.pk), isPrivate });
+  const issue: FieldIssue['kind'] | null = relationship === 'null' ? 'unexpected-null' : relationship === 'invalid' ? 'invalid' : null;
+  if (issue !== null) out.fieldIssues.push({ path: PROFILE.friendshipStatus, kind: issue, got: jsonTypeOf(fs) });
+  const flagPresence = (key: string): Presence => {
+    const b = readBool(record, key);
+    return 'value' in b ? 'read' : b.presence;
+  };
+  out.presence = { counts: pairPresence(pair), bio: readTextPresence(record, PROFILE.biography),
+    isPrivate: flagPresence(PROFILE.isPrivate), isVerified: flagPresence(PROFILE.isVerified), relationship };
+  out.absent = false;
+  out.viewerPk = viewerPk;
+  out.facts.push({ accountPk: id.pk, observedAt: ctx.at, source: ctx.source, fields: {
+    username: textOf(record, RECOVERY_DECL.handleKey, RECOVERY_DECL.handleKey, out),
+    followers: counts?.followers, following: counts?.following, mutuals: counts?.mutuals,
+    isPrivate, isVerified: flagOf(record, PROFILE.isVerified, PROFILE.isVerified, out),
+    bio: textOf(record, PROFILE.biography, PROFILE.biography, out),
+  } });
+  return out;
+};
+
+/** A story's type as decimal text; a digit string is a retype step, any other kind none. */
+function storyTypeOf(raw: Record<string, unknown>, at: string, ctx: ProjectCtx): string | null {
+  const v = raw[FEED.storyType];
+  if (typeof v === 'number' && Number.isSafeInteger(v)) return String(v);
+  if (typeof v !== 'string' || !/^\d+$/.test(v)) return null;
+  noteStep(ctx, { kind: 'retype', at, detail: 'string' });
+  return v;
+}
+
+/** One story (I7, I9): a follow event when its type or text says so, its actor from the agreeing ids. */
+function storyEventOf(raw: unknown, index: number, section: string, ctx: ProjectCtx, out: Projection): FollowEvent | null {
+  if (!isRecord(raw)) {
+    out.rowIssues.push({ index, path: '(row)', message: `the story is ${jsonTypeOf(raw)}` });
+    return null;
+  }
+  const typeAt = `${section}[].${FEED.storyType}`;
+  const type = storyTypeOf(raw, typeAt, ctx);
+  if (type !== null && !RECOVERY_DECL.knownStoryTypes.includes(type)) {
+    out.fieldIssues.push({ path: typeAt, kind: 'enum-novel', got: jsonTypeOf(raw[FEED.storyType]) });
+  }
+  const text = valueAt(raw, `${FEED.args}.${FEED.text}`);
+  const follow = (type !== null && RECOVERY_DECL.followStoryTypes.includes(type)) || (typeof text === 'string' && RECOVERY_DECL.followText.test(text));
+  if (!follow) return null;
+  const actor = readId(raw, { idKeys: [RECOVERY_DECL.storyActorKey, ...RECOVERY_DECL.storyActorAliases], foreignIdKeys: [] });
+  if ('issue' in actor) {
+    out.rowIssues.push({ index, path: actor.issue.path, message: actor.issue.kind });
+    return null;
+  }
+  if (actor.step !== undefined) noteStep(ctx, { ...actor.step, at: `${section}[].${actor.step.at}` });
+  const name = valueAt(raw, `${FEED.args}.${FEED.profileName}`);
+  const stamp = valueAt(raw, `${FEED.args}.${FEED.timestamp}`);
+  const time = stamp === undefined || stamp === null ? null : readEpochSeconds(stamp, ctx.at, `${section}[].${FEED.args}.${FEED.timestamp}`);
+  if (time !== null && 'issue' in time) out.fieldIssues.push(time.issue);
+  return { pk: actor.pk, username: typeof name === 'string' && name !== '' ? name : null,
+    atMs: time !== null && 'ms' in time ? time.ms : null };
+}
+
+/**
+ * The news inbox → the "started following you" events it carries, story by story, plus (GraphQL
+ * only) the side list of pending requesters, read row by row as presence — never a complete set.
+ */
+export const projectActivityFeed = (inbox: ActivityFeedStories, ctx: ProjectCtx): Projection => {
+  const out = emptyProjection();
+  let index = 0;
+  for (const section of FEED.storySections) {
+    const stories = (inbox as Record<string, unknown>)[section];
+    if (!Array.isArray(stories)) continue;
+    for (const raw of stories) {
+      const event = storyEventOf(raw, index++, section, ctx, out);
+      if (event !== null) out.events.push(event);
+    }
+  }
+  const side = ctx.sideLists === undefined ? undefined : valueAt(ctx.root, ctx.sideLists.pendingPreview);
+  if (Array.isArray(side)) {
+    const preview = emptyProjection();
+    side.forEach((raw, i) => {
+      const obs = userRowOf(raw, i, CONTINUATION.rowsKey, ctx, preview, 'friend-requests');
+      if (obs !== null) out.pendingPreview.push(obs);
+    });
   }
   return out;
 };

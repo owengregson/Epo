@@ -5,15 +5,10 @@
 
 import type { ObservedRelation } from '@/shared/observed-relation';
 import { admits } from '@/surface/read/admission';
+import type { RelationshipKeys } from '@/surface/schema/decls';
 import type { RelationshipFact, Tier } from '@/surface/schema/projection';
 
-/** The declared relationship key names of a surface version. */
-export interface RelationshipKeys {
-  readonly following: string;
-  readonly outgoingRequest: string;
-  readonly followedBy: string;
-  readonly incomingRequest: string;
-}
+export type { RelationshipKeys } from '@/surface/schema/decls';
 
 const flag = (v: unknown): boolean | null => (typeof v === 'boolean' ? v : null);
 

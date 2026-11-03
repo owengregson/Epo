@@ -2,9 +2,13 @@
  * List continuation (spec §10.4): what a page says about the rest of the list, read in a fixed
  * rule order, and never "safe either way". Every real end page reads `end{flags-false}`, unvetoed.
  */
+import { routeOf } from '@/surface/index';
 import { continuationOf } from '@/surface/read/continuation';
+import { valueAt } from '@/surface/read/fields';
+import { readBody } from '@/surface/read/read';
+import { CONTAINERS } from '@/surface/versions/2026-08-12/containers';
 import { CONTINUATION } from '@/surface/versions/2026-08-12/continuation-decl';
-import { body, hasCorpus, manifest } from './corpus';
+import { body, bodyOf, CORPORA, hasCorpus, hasCorpusAt, manifest, manifestOf } from './corpus';
 
 const read = (page: Record<string, unknown>, final: boolean | null = null) =>
   continuationOf(page, CONTINUATION, { final });
@@ -84,4 +88,36 @@ describe('the committed corpus', () => {
     if (entry.expect.cursor !== null) expect(continuation).toEqual({ kind: 'next', cursor: entry.expect.cursor, form: expect.any(String) });
     else expect(continuation).toEqual({ kind: 'end', evidence: 'flags-false' });
   });
+});
+
+/** Every list-shaped body of both corpora, read the way production reads it (a connection through its container). */
+const everyListBody = [...CORPORA].filter(hasCorpusAt).flatMap((id) => manifestOf(id).bodies
+  .filter((b) => /^(followers|following)-list$|^friend-requests$/.test(b.endpoint))
+  .map((entry) => ({ id, entry, body: bodyOf(id, entry.file) })));
+
+describe('both corpora, through the read pipeline', () => {
+  test('carry list-shaped bodies of both kinds (REST pages and the requests connection)', () => {
+    expect(new Set(everyListBody.map((x) => x.id)).size).toBe(CORPORA.length);
+  });
+
+  test.each(everyListBody.map((x) => [`${x.id}/${x.entry.file}`, x] as const))('%s: an end page is flags-false, unvetoed',
+    (_n, { entry, body: page }) => {
+      const r = entry.route;
+      const route = r === undefined ? undefined
+        : routeOf({ url: r.path, method: r.method, requestHeaders: r.op === null ? {} : { 'x-fb-friendly-name': r.op } }) ?? undefined;
+      const read = readBody(entry.endpoint, { decoded: { ok: true, json: page, format: 'json', payloads: 1, final: null } },
+        { at: 0, ...(route === undefined ? {} : { route }) });
+      expect(read.ok).toBe(true);
+      if (!read.ok) return;
+      if (entry.expect.cursor !== null) expect(read.projection.continuation).toMatchObject({ kind: 'next' });
+      else expect(read.projection.continuation).toEqual({ kind: 'end', evidence: 'flags-false' });
+    });
+
+  test.each(everyListBody.filter((x) => x.id !== '2026-08-12').map((x) => [`${x.id}/${x.entry.file}`, x] as const))(
+    '%s: a connection page carries only its declared cursor and more-flag', (_n, { body: page }) => {
+      const conn = CONTAINERS.requestsGraphql[0];
+      const info = valueAt(valueAt(page, conn.at), conn.connection.cursor.split('.')[0] ?? '');
+      const declared = [conn.connection.cursor, conn.connection.hasNext].map((k) => k.split('.').pop());
+      expect(Object.keys(info as object).filter((k) => !declared.includes(k))).toEqual([]);
+    });
 });

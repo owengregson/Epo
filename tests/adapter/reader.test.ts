@@ -520,7 +520,7 @@ describe('parseActivityFeed', () => {
       ],
     );
 
-    expect(r.parseActivityFeed(body)).toEqual([
+    expect(r.parseActivityFeedStrict(body)).toEqual([
       { pk: '11', username: 'alpha', atMs: 2500 },
       { pk: '22', username: null, atMs: null },
       { pk: '44', username: null, atMs: 7000 },
@@ -528,12 +528,12 @@ describe('parseActivityFeed', () => {
   });
 
   test('an empty feed parses to an empty list (valid: nobody followed recently)', () => {
-    expect(r.parseActivityFeed(inbox([], []))).toEqual([]);
+    expect(r.parseActivityFeedStrict(inbox([], []))).toEqual([]);
   });
 
-  test('a body with NO story containers is shape drift → [] (warned), never invented events', () => {
-    expect(r.parseActivityFeed({ status: 'fail' })).toEqual([]);
-    expect(r.parseActivityFeed('not json at all {')).toEqual([]);
+  test('a body with NO story containers is shape drift → null (warned), never invented events', () => {
+    expect(r.parseActivityFeedStrict({ status: 'fail' })).toBeNull();
+    expect(r.parseActivityFeedStrict('not json at all {')).toBeNull();
   });
 
   test('entries without a usable profile_id are skipped', () => {
@@ -541,6 +541,6 @@ describe('parseActivityFeed', () => {
       [{ story_type: 101, args: { text: 'x started following you.' } }],
       [],
     );
-    expect(r.parseActivityFeed(body)).toEqual([]);
+    expect(r.parseActivityFeedStrict(body)).toEqual([]);
   });
 });

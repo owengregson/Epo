@@ -4,9 +4,11 @@
  * root fields (a normalized step). An unrouted response is `null`, never a guess.
  */
 
-import type { EndpointKind } from '@/surface/schema/endpoints';
+import type { RouteMatch } from '@/surface/read/types';
 import type { SurfaceDocument } from '@/surface/schema/surface';
 import type { TransportDecl } from '@/surface/transport/decode';
+
+export type { RouteMatch, RouteVia } from '@/surface/read/types';
 
 /** What the tab knows about the request behind a response. */
 export interface ObservedRequest {
@@ -15,17 +17,6 @@ export interface ObservedRequest {
   /** Lower-cased header names, as the tab records them. */
   readonly requestHeaders?: Record<string, string>;
   readonly requestBody?: string;
-}
-
-export type RouteVia = 'url' | 'header' | 'form' | 'root-field' | 'learned' | 'candidate';
-
-export interface RouteMatch {
-  readonly kind: EndpointKind;
-  /** The definition's index in the document. */
-  readonly defIndex: number;
-  readonly via: RouteVia;
-  /** The GraphQL operation name the request carried, if any. */
-  readonly op: string | null;
 }
 
 /** The GraphQL operation name a request carried (its header; the form only with request capture). */

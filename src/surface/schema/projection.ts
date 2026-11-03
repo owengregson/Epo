@@ -20,6 +20,16 @@ export interface FollowEvent {
 /** How a read was located (spec §10.2): the declared form, a declared alternate, or recovered. */
 export type Tier = 'canonical' | 'normalized' | 'recovered';
 
+/** A declared non-canonical form: framing, an alternate container, an alias key, a retype, a root-field route. */
+export type StepKind = 'framing' | 'alternate-container' | 'alias-key' | 'retype' | 'root-field-route';
+
+/** One normalized step: what fired, where (a path pattern, never a value), and a short detail. */
+export interface NormalizeStep {
+  readonly kind: StepKind;
+  readonly at: string;
+  readonly detail?: string;
+}
+
 /** A value's JSON type, `absent` when the key is missing (issues name types, never values). */
 export type JsonType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'null' | 'absent';
 export type FieldIssueKind = 'expected-absent' | 'unexpected-null' | 'invalid' | 'counts-partial' | 'id-conflict'
@@ -88,12 +98,21 @@ export interface Projection {
   facts: Observation[];
   relationships: RelationshipFact[];
   events: FollowEvent[];
-  /** Resume cursor for a paginated endpoint; `null` when there is no next page. */
+  /** Resume cursor for a paginated endpoint; `null` when there is no next page (from `continuation`). */
   cursor: string | null;
   hasMore: boolean;
+  /** What a list page says about the rest of the list; `null` on endpoints that are not lists. */
+  continuation: Continuation | null;
   /** `null` when this endpoint carries no "the profile is gone" answer. */
   absent: boolean | null;
   rowIssues: RowIssue[];
+  fieldIssues: FieldIssue[];
+  /** Profile endpoints only: which decision-bearing fields the record carried. */
+  presence: ProfilePresence | null;
+  /** The feed's side list of pending requesters (never the complete set). */
+  pendingPreview: Observation[];
+  /** Whose session read the profile (I10), when the body names it. */
+  viewerPk: string | null;
 }
 
 /** An empty projection — the shape every `project()` starts from. */
@@ -103,11 +122,16 @@ export const emptyProjection = (): Projection => ({
   events: [],
   cursor: null,
   hasMore: false,
+  continuation: null,
   absent: null,
   rowIssues: [],
+  fieldIssues: [],
+  presence: null,
+  pendingPreview: [],
+  viewerPk: null,
 });
 
-/** Context a projection needs that the body itself does not carry. */
+/** Context a projection needs that the record itself does not carry. */
 export interface ProjectCtx {
   /** Observation timestamp (epoch MS). */
   at: number;
@@ -115,4 +139,14 @@ export interface ProjectCtx {
   source: Source;
   /** The subject pk pulled out of the request URL, when the endpoint carries one. */
   pk?: string;
+  /** The decoded body the container was found in (side lists, the viewer). */
+  root?: unknown;
+  /** The stream's final flag: `false` makes a list page's continuation drift. */
+  final?: boolean | null;
+  /** Whose session made the read, when the caller knows it (I10's fallback to the body's viewer). */
+  viewerPk?: string | null;
+  /** The definition's side lists, relative to the body. */
+  sideLists?: { readonly pendingPreview: string };
+  /** Collects the normalized steps the record's fields fired. */
+  steps?: NormalizeStep[];
 }

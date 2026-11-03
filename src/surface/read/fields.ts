@@ -5,21 +5,10 @@
 
 import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
 import { MS_PER_DAY, MS_PER_SECOND } from '@/kernel/units';
-import type { NormalizeStep } from '@/surface/read/types';
-import type { FieldIssue, JsonType, Presence } from '@/surface/schema/projection';
+import type { CountKeys, IdDecl } from '@/surface/schema/decls';
+import type { FieldIssue, JsonType, NormalizeStep, Presence } from '@/surface/schema/projection';
 
-/** A version's id keys: the canonical key first, then its aliases; foreign ids are named so they never vote. */
-export interface IdDecl {
-  readonly idKeys: readonly string[];
-  readonly foreignIdKeys: readonly string[];
-}
-
-/** A version's profile count keys. */
-export interface CountKeys {
-  readonly followers: string;
-  readonly following: string;
-  readonly mutuals: string;
-}
+export type { CountKeys, IdDecl } from '@/surface/schema/decls';
 
 export function jsonTypeOf(v: unknown): JsonType {
   if (v === undefined) return 'absent';
@@ -32,12 +21,32 @@ export function jsonTypeOf(v: unknown): JsonType {
 /** I1: a decimal id string with no leading zero, up to twenty digits. */
 const DECIMAL_ID = /^[1-9]\d{0,19}$/;
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** The value at a dotted path ('' is the value itself); a digit segment indexes an array. */
+export function valueAt(root: unknown, path: string): unknown {
+  if (path === '') return root;
+  let at: unknown = root;
+  for (const seg of path.split('.')) {
+    if (Array.isArray(at) && /^\d+$/.test(seg)) at = at[Number(seg)];
+    else if (isRecord(at)) at = at[seg];
+    else return undefined;
+  }
+  return at;
+}
+
 type IdValue = { pk: string } | { kind: 'id-space' | 'unsafe-number' | 'invalid' };
 
 function canonicalId(v: unknown): IdValue {
   if (typeof v === 'string') return DECIMAL_ID.test(v) ? { pk: v } : { kind: 'id-space' };
   if (typeof v === 'number') return Number.isSafeInteger(v) && v > 0 ? { pk: String(v) } : { kind: 'unsafe-number' };
   return { kind: 'invalid' };
+}
+
+/** One value as an I1 id, or `null`. */
+export function idOf(v: unknown): string | null {
+  const id = canonicalId(v);
+  return 'pk' in id ? id.pk : null;
 }
 
 /**
@@ -47,15 +56,15 @@ function canonicalId(v: unknown): IdValue {
  */
 export function readId(record: Record<string, unknown>, decl: IdDecl): { pk: string; step?: NormalizeStep } | { issue: FieldIssue } {
   const [canonicalKey, ...aliases] = decl.idKeys;
-  const present = (key: string): boolean => record[key] !== undefined && record[key] !== null;
-  const canonical = present(canonicalKey) ? canonicalId(record[canonicalKey]) : null;
+  const present = (key: string): boolean => valueAt(record, key) !== undefined && valueAt(record, key) !== null;
+  const canonical = present(canonicalKey) ? canonicalId(valueAt(record, canonicalKey)) : null;
   if (canonical !== null && 'kind' in canonical) {
-    return { issue: { path: canonicalKey, kind: canonical.kind, got: jsonTypeOf(record[canonicalKey]) } };
+    return { issue: { path: canonicalKey, kind: canonical.kind, got: jsonTypeOf(valueAt(record, canonicalKey)) } };
   }
   let pk = canonical?.pk ?? null;
   let step: NormalizeStep | undefined;
   for (const key of aliases) {
-    const alias = present(key) ? canonicalId(record[key]) : null;
+    const alias = present(key) ? canonicalId(valueAt(record, key)) : null;
     if (alias === null || 'kind' in alias) continue;
     if (pk === null) {
       pk = alias.pk;
@@ -64,7 +73,7 @@ export function readId(record: Record<string, unknown>, decl: IdDecl): { pk: str
       return { issue: { path: key, kind: 'id-conflict' } };
     }
   }
-  if (pk === null) return { issue: { path: canonicalKey, kind: 'expected-absent', got: jsonTypeOf(record[canonicalKey]) } };
+  if (pk === null) return { issue: { path: canonicalKey, kind: 'expected-absent', got: jsonTypeOf(valueAt(record, canonicalKey)) } };
   return step === undefined ? { pk } : { pk, step };
 }
 

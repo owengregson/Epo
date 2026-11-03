@@ -15,10 +15,30 @@
 
 import { SURFACE } from '@/adapter/ig-surface';
 import { isShapeMismatch } from '@/adapter/parse-helpers';
-import { endpointOf, matchEndpoint, surface } from '@/surface/index';
+import { endpointOf, matchEndpoint, routeOf, surface } from '@/surface/index';
 import { readResponse } from '@/surface/parse';
+import { readBody } from '@/surface/read/read';
+import type { SurfaceRead } from '@/surface/read/types';
 import { PATHS } from '@/surface/versions/2026-08-12/literals';
-import { body, bodyOf, CORPORA, type CorpusId, hasCorpus, hasCorpusAt, manifest, manifestOf } from './corpus';
+import { type CorpusBody, writeManifest } from '@/surface-lab/scrub-fixtures';
+import { body, bodyOf, CORPORA, type CorpusId, corpusDir, hasCorpus, hasCorpusAt, manifest, manifestOf } from './corpus';
+
+/** What the read pipeline adds to a body's pins: tier, completeness, steps, continuation, field issues, presence. */
+const readPins = (read: SurfaceRead): Record<string, unknown> => {
+  if (!read.ok) return { failure: read.kind };
+  const p = read.projection;
+  const cont = p.continuation === null ? null : { ...p.continuation, ...(p.continuation.kind === 'next' ? { cursor: '(pinned)' } : {}) };
+  return { tier: read.tier, partial: read.partial, steps: read.steps.map((st) => `${st.kind}:${st.at}`), continuation: cont,
+    fieldIssues: p.fieldIssues.map((i) => `${i.kind}:${i.path}`).sort(), presence: p.presence, pendingPreview: p.pendingPreview.length };
+};
+
+/** One committed body read the way production reads it: decoded once, routed by its real path and operation. */
+const readEntry = (id: CorpusId, entry: CorpusBody, replayAt: number): SurfaceRead => {
+  const route = entry.route === undefined ? undefined
+    : routeOf({ url: entry.route.path, method: entry.route.method, requestHeaders: entry.route.op === null ? {} : { 'x-fb-friendly-name': entry.route.op } });
+  return readBody(entry.endpoint, { decoded: { ok: true, json: bodyOf(id, entry.file), format: 'json', payloads: 1, final: null } },
+    { at: replayAt, source: entry.source, pk: entry.pk, ...(route === null || route === undefined ? {} : { route }) });
+};
 
 const doc = surface();
 const corpus = hasCorpus() ? manifest() : null;
@@ -140,6 +160,15 @@ describe.each([...CORPORA].filter(hasCorpusAt))('every committed %s body replays
       expect(fact.source).toBe(entry.source);
     }
     expect([...result.novelKeys]).toEqual(entry.expect.novelKeys);
+  });
+
+  test.each(bodies.map((b) => [b.file, b] as const))('%s reads canonical, complete, every field read (pinned)', (_file, entry) => {
+    const read = readEntry(id, entry, corpusOf.replayAt);
+    const pins = readPins(read);
+    expect(pins).toMatchObject({ tier: 'canonical', partial: false, steps: [], fieldIssues: [] });
+    const { facts: _f, relationships: _r, events: _e, cursor: _c, hasMore: _h, absent: _a, rowIssues: _i, novelKeys: _n, ...pinned } =
+      entry.expect as CorpusBody['expect'] & Record<string, unknown>;
+    expect(pins).toEqual(pinned);
   });
 
   const routed = bodies.filter((b) => b.route !== undefined);
@@ -279,16 +308,32 @@ describe('drift never collapses to a fact (ADR 0303, now structural)', () => {
   });
 
   test('a malformed ROW is counted, not fatal — the other rows are facts already paid for', () => {
+    const rows = [...Array.from({ length: 10 }, (_, i) => ({ pk: String(i + 1), username: `user_a${i}` })), { nope: true }];
     const result = readResponse(
       listEndpoint as NonNullable<typeof listEndpoint>,
-      { users: [{ pk: '1', username: 'user_a1' }, { nope: true }], next_max_id: '50' },
+      { users: rows, next_max_id: '50' },
       { at: 0, source: 'followers-list' },
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.projection.facts).toHaveLength(1);
+    expect(result.projection.facts).toHaveLength(10);
     expect(result.projection.rowIssues).toEqual([
-      { index: 1, path: 'pk', message: expect.any(String) },
+      { index: 10, path: 'pk', message: expect.any(String) },
     ]);
+  });
+
+  test('a page whose rows MOSTLY fail is unreadable, never a short page (spec §10.3 row majority)', () => {
+    const result = readResponse(listEndpoint as NonNullable<typeof listEndpoint>,
+      { users: [{ pk: '1', username: 'user_a1' }, { nope: true }], next_max_id: '50' }, { at: 0, source: 'followers-list' });
+    expect(result).toEqual({ ok: false, issues: [{ path: '(body)', message: 'rows-unreadable' }] });
+  });
+});
+
+/** `EPO_REPIN=1 npx jest tests/surface/replay` re-pins every body's read fields from the current pipeline. */
+(process.env.EPO_REPIN === '1' ? describe : describe.skip)('re-pin the corpora (EPO_REPIN=1)', () => {
+  test.each([...CORPORA].filter(hasCorpusAt))('%s', (id) => {
+    const m = manifestOf(id);
+    const bodies = m.bodies.map((entry) => ({ ...entry, expect: { ...entry.expect, ...readPins(readEntry(id, entry, m.replayAt)) } }));
+    writeManifest(corpusDir(id), { ...m, bodies });
   });
 });

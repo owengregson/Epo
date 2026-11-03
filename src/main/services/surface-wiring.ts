@@ -62,9 +62,11 @@ export function wireSurface(d: {
   day: PlanDayClock;
 }): SurfaceWiring {
   const { store, ownPk, clock, day } = d;
-  const reader = new Reader();
   const surfaceId = surface().id;
   const sink = createSurfaceHealthSink({ store, surfaceId, day, clock, scrub: scrubSample });
+  // Every read reports to the production sink, which is also its hint book and identity oracle; the
+  // session names our own pk (I10) and the clock each observed response is read at.
+  const reader = new Reader({ sink, hints: sink, identity: sink }, { viewerPk: ownPk, now: () => clock.now() });
   const report = createSurfaceReport({ store, surfaceId, day, clock });
   reporters.set(store, report);
   live = report;
@@ -84,7 +86,7 @@ export function wireSurface(d: {
   // coverage guard, and every other profile enriches candidate scoring. It is
   // also how a profile is READ since 2026-10-08: the visitor navigates and the
   // observer hands it the page's own profile body (no request is composed).
-  const profileObserver = new ProfileObserver({ tab: d.tab, reader, store, clock });
+  const profileObserver = new ProfileObserver({ tab: d.tab, reader, store, clock, ownPk });
   const stopObserver = profileObserver.start();
   const profileInfoUnsub = (): void => {
     stopObserver();
