@@ -16,10 +16,21 @@ import {
   SCOPES,
   SELECTORS,
 } from '@/surface/versions/2026-08-12/literals';
+import { CONFIRM_LAYERS } from '@/surface/versions/2026-08-12/literals-dom';
 
 /** A RegExp serialized for the JSON trip into page context. */
 const rx = (r: RegExp): { source: string; flags: string } => ({ source: r.source, flags: r.flags });
 
+/** A confirm-layer row found by its text: a bare-div row holds at most this many children and this much text. */
+const CONFIRM_ROW = {
+  strategy: 'role-then-deep-text',
+  scopes: SCOPES.dialogs,
+  roleSel: ROLES.menuControl,
+  deepSel: ROLES.bareContainer,
+  clickableSel: ROLES.menuClickable,
+  maxChildren: 3,
+  maxTextLen: 40,
+} as const;
 
 /** The action button's anchor + state matchers. ORDER is load-bearing (ADR 0302). */
 const ACTION_BUTTON: ControlDescriptor = {
@@ -51,15 +62,18 @@ const stat = (which: 'followers' | 'following'): ControlDescriptor => ({
 
 export const CONTROLS: Record<string, ControlDescriptor> = {
   'action-button': ACTION_BUTTON,
+  // The confirm of each layer (ADR 0308): a dialog is the layer that also offers the companion.
   'unfollow-confirm': {
-    strategy: 'role-then-deep-text',
+    ...CONFIRM_ROW,
     rx: rx(SELECTORS.unfollowConfirmText),
-    scopes: SCOPES.drawer.slice(0, 2),
-    roleSel: ROLES.menuControl,
-    deepSel: ROLES.bareContainer,
-    clickableSel: ROLES.menuClickable,
-    maxChildren: 3,
-    maxTextLen: 40,
+    companionRx: rx(SELECTORS.confirmCancelText),
+    layers: CONFIRM_LAYERS,
+  },
+  // How a layer is left when the action did not land: its Cancel, in the dialog scopes only.
+  'unfollow-dialog-cancel': {
+    ...CONFIRM_ROW,
+    rx: rx(SELECTORS.confirmCancelText),
+    dialogsOnly: true,
   },
   'followers-stat': stat('followers'),
   'following-stat': stat('following'),

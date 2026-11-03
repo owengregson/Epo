@@ -10,10 +10,12 @@
  * role-marked query goes blind while the control sits plainly on screen).
  */
 
-import type { ConfirmCfg } from '@/adapter/page';
-import { locateConfirm } from '@/adapter/page';
+import type { ConfirmCfg, LayerCfg } from '@/adapter/page';
+import { confirmLayer, locateConfirm } from '@/adapter/page';
 import { surface } from '@/surface/index';
-import { mountSnapshot } from '../dom-kit';
+import { box, DEFAULT_BOX } from '../../kit/adapter-dom';
+import { domText } from '../corpus';
+import { hitTest, mountSnapshot } from '../dom-kit';
 
 /** The descriptor from the document — the config is data, not a test constant. */
 const CFG = surface().controls['unfollow-confirm'] as unknown as ConfirmCfg;
@@ -95,5 +97,91 @@ describe('the real menu whose row is a div[role=button], not a <button>', () => 
     expect(res).toMatchObject({ found: true, fallback: true });
     // The Actor warns on `fallback: true`: a persistent recovery is early drift.
     expect(res.rect?.width).toBeGreaterThan(2);
+  });
+});
+
+describe('two layers on the real captures (ADR 0308, spec §11.2 item 1)', () => {
+  const MENU_ROW = { x: 420, y: 501, width: 560, height: 54 };
+  const DIALOG_BUTTON = { x: 520, y: 300, width: 400, height: 48 };
+  const LATER: ConfirmCfg = { ...CFG, dialogsOnly: true };
+
+  /** Append a real snapshot as a new portal, laid out like the rest of the page. */
+  function appendSnapshot(file: string, html = domText(file)): Element {
+    document.body.insertAdjacentHTML('beforeend', html);
+    const added = document.body.lastElementChild as Element;
+    for (const el of [added, ...Array.from(added.querySelectorAll('*'))]) box(el, DEFAULT_BOX);
+    return added;
+  }
+
+  /** `top` covers the page: a point inside one of its controls lands there, anywhere else on its backdrop. */
+  function coveredBy(top: Element): void {
+    hitTest((x, y) => {
+      const under = Array.from(top.querySelectorAll('*')).filter((el) => {
+        const r = el.getBoundingClientRect();
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+      });
+      return under[under.length - 1] ?? top;
+    });
+  }
+
+  const rowOf = (root: ParentNode, tag: string): Element =>
+    Array.from(root.querySelectorAll(tag)).find((n) => /^\s*unfollow\b/i.test(n.textContent ?? '')) as Element;
+
+  afterEach(() => {
+    Reflect.deleteProperty(document, 'elementFromPoint');
+  });
+
+  test('the descriptor names the companion, the dialog scopes and the two layers', () => {
+    const d = surface().controls['unfollow-confirm'] as Record<string, unknown>;
+    expect(d.layers).toEqual(['menu', 'dialog']);
+    expect(d.scopes).toEqual(['[role="dialog"]', '[role="alertdialog"]']);
+    expect(d.companionRx).toBeDefined();
+  });
+
+  test('menu, then the dialog on top of it: the second locate is the dialog’s button, a new layer, never the menu row', () => {
+    mountSnapshot('dialog-02.html');
+    box(rowOf(document, '[role="button"]'), MENU_ROW);
+    const first = locateConfirm(CFG);
+    expect(first).toMatchObject({ found: true, rect: MENU_ROW, layer: 'menu' });
+
+    const dialog = appendSnapshot('dialog-01.html');
+    box(rowOf(dialog, 'button'), DIALOG_BUTTON);
+    coveredBy(dialog);
+    const second = locateConfirm(LATER);
+    expect(second).toMatchObject({ found: true, rect: DIALOG_BUTTON, layer: 'dialog', fallback: false });
+    expect(second.sig).not.toBe(first.sig);
+  });
+
+  test('with the dialog’s button not yet pressable, the covered menu row is never offered instead', () => {
+    mountSnapshot('dialog-02.html');
+    box(rowOf(document, '[role="button"]'), MENU_ROW);
+    const dialog = appendSnapshot('dialog-01.html');
+    box(rowOf(dialog, 'button'), { x: 0, y: 0, width: 0, height: 0 });
+    coveredBy(dialog);
+    expect(locateConfirm(LATER)).toEqual({ found: false });
+    expect(confirmLayer(CFG as LayerCfg)).toMatchObject({ present: true, layer: 'dialog', matches: true });
+  });
+
+  test('the Cancel control is found in the dialog only, and never the Unfollow beside it', () => {
+    const cancel = surface().controls['unfollow-dialog-cancel'] as unknown as ConfirmCfg;
+    mountSnapshot('dialog-02.html');
+    expect(locateConfirm(cancel)).toEqual({ found: false });
+    const dialog = appendSnapshot('dialog-01.html');
+    const button = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Cancel') as Element;
+    box(button, DIALOG_BUTTON);
+    expect(locateConfirm(cancel)).toMatchObject({ found: true, rect: DIALOG_BUTTON });
+  });
+
+  test('an unexpected two-button dialog on the menu: nothing to press, its control reported for the capture', () => {
+    mountSnapshot('dialog-02.html');
+    const restrict = domText('dialog-01.html')
+      .replace(/If you change your mind[^<]*/, 'Restrict @user_i12?')
+      .replace('>Unfollow</button>', '>Restrict</button>');
+    const dialog = appendSnapshot('dialog-01.html', restrict);
+    coveredBy(dialog);
+    expect(locateConfirm(LATER)).toEqual({ found: false });
+    expect(confirmLayer(CFG as LayerCfg)).toMatchObject({
+      present: true, layer: 'dialog', controls: 2, matches: false, structural: 'Restrict',
+    });
   });
 });

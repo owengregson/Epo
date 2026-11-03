@@ -15,7 +15,7 @@
 import { Actor } from '@/adapter/actor';
 import type { LocateConfirmRequestResult, LocatedRect, LocateRectResult } from '@/adapter/ig-surface';
 import { setLevel } from '@/utils/logger';
-import { FakeInteractor, marker, ScriptedTab } from '../kit/tabs';
+import { FakeInteractor, marker, pageCall, ScriptedTab } from '../kit/tabs';
 
 beforeAll(() => setLevel('error'));
 
@@ -100,9 +100,11 @@ describe('the unfollow menu animates open: its confirm is pressed once it has se
         ? { found: true, state: 'follow' }
         : { found: true, state: 'following', wouldClick: true, needsConfirm: true, rect: HEADER },
     );
-    tab.on(marker('"control":"unfollow-confirm"'), (): LocateRectResult => ({
+    // The menu reports its layer signature, so the flow never presses the same layer twice.
+    tab.on(pageCall('locateConfirm'), (): LocateRectResult & { sig: string } => ({
       found: true,
       rect: h.hovers.length === 0 ? OPENING : SETTLED,
+      sig: 'menu',
     }));
 
     const result = await build(tab, h).unfollow('someone');

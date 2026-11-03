@@ -18,16 +18,16 @@
       "lines": 968
     },
     {
-      "file": "src/adapter/actor.ts",
-      "lines": 759
-    },
-    {
       "file": "src/renderer/graph/world.ts",
       "lines": 745
     },
     {
       "file": "src/livetest/steps.ts",
       "lines": 727
+    },
+    {
+      "file": "src/adapter/actor.ts",
+      "lines": 655
     },
     {
       "file": "src/adapter/tab.ts",
