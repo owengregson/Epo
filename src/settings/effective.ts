@@ -111,7 +111,7 @@ const TEMPO_PREFIX = 'tempo.';
 export function effectiveFrom(doc: SettingsDocV2, r: ResolvedParams): EffectiveSettings {
   const n = (k: ParamKey): number => numberOf(r, k);
   const overridden = (k: ParamKey): number | null => (r[k].override === null ? null : n(k));
-  const { intent, prefs, protection, legacyCarry: carry } = doc;
+  const { intent, prefs, legacyCarry: carry } = doc;
   const pattern = patternOf(intent);
   const shape = derivePattern(pattern);
   const curve = r['audience.ratioCurve'].value as RatioCurve;
@@ -149,9 +149,6 @@ export function effectiveFrom(doc: SettingsDocV2, r: ResolvedParams): EffectiveS
     jitterPercent: carry?.jitterPercent ?? DEFAULT_SETTINGS.jitterPercent,
     activeHoursStart: carry?.activeHoursStart ?? DEFAULT_SETTINGS.activeHoursStart,
     activeHoursEnd: carry?.activeHoursEnd ?? DEFAULT_SETTINGS.activeHoursEnd,
-    // Today's whitelist matches a handle or an all-digit pk; a linked entry contributes both.
-    pruneWhitelist: protection.accounts.flatMap((a) => (a.pk !== null && a.pk !== a.username ? [a.username, a.pk] : [a.username])),
-    pruneBioFilterWords: protection.words.map((w) => w.text),
     followbackSweepHours: n('checks.everyHours'),
     pruneDailyLimit: n('unfollow.cleanupPerDay'), pruneScheduleDays: cleanupOn ? n('unfollow.censusEveryDays') : 0,
     pruneScanMinSeconds: DEFAULT_SETTINGS.pruneScanMinSeconds * scanFactor,
