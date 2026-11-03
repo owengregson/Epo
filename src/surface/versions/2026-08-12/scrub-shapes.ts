@@ -1,6 +1,6 @@
 /**
- * The scrub and novelty shapes of capture 2026-08-12: faithful twins of the
- * response schemas with typed row containers. Re-exported by `lab/shape.ts`.
+ * The scrub and novelty shapes of this capture: faithful twins of the response
+ * schemas with typed row containers. Re-exported by `lab/shape.ts`.
  */
 
 import { z } from 'zod';

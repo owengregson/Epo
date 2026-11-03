@@ -1,6 +1,6 @@
 /**
- * Instagram surface — capture 2026-08-12: the eight hand-written response
- * extractors the façade (`2026-08-12.ts`) assembles into `SURFACE`.
+ * This capture's eight hand-written response extractors, which the façade
+ * (`2026-08-12.ts`) assembles into `SURFACE`.
  */
 
 import {

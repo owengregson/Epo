@@ -1,6 +1,6 @@
 /**
- * Instagram literals — capture 2026-08-12: the DOM contact points (selectors,
- * roles, scopes) and the identity regexes. Re-exported by `literals.ts`.
+ * Instagram literals of this capture: the DOM contact points (selectors, roles,
+ * scopes) and the identity regexes. Re-exported by `literals.ts`.
  */
 
 // ---------------------------------------------------------------------------

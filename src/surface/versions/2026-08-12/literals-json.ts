@@ -1,6 +1,6 @@
 /**
- * Instagram literals — capture 2026-08-12: the JSON paths every read body is
- * parsed by and the mutation verdict keys. Re-exported by `literals.ts`.
+ * Instagram literals of this capture: the JSON paths every read body is parsed
+ * by and the mutation verdict keys. Re-exported by `literals.ts`.
  */
 
 /** Verdict keys of a mutation body (REST form; a GraphQL `data` child nests the same). */

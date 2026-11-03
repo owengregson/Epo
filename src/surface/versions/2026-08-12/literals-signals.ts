@@ -1,6 +1,6 @@
 /**
- * Instagram literals — capture 2026-08-12: the URL, body-text and mutation
- * refusal signatures. Re-exported by `literals.ts`.
+ * Instagram literals of this capture: the URL, body-text and mutation refusal
+ * signatures. Re-exported by `literals.ts`.
  */
 
 // ---------------------------------------------------------------------------
