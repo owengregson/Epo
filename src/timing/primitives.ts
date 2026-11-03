@@ -1,14 +1,19 @@
 /**
  * Timing primitives — the ONE home for sleep and delay-shape math.
  *
- * Pure and dependency-free (no Node, no Electron), so both the main process and
- * the renderer import from here. A delay is a `DelayPolicy`: fixed, uniform, or a
+ * No Electron; a draw with no rng handed in takes a launch stream from the
+ * entropy root (spec §20.4). A delay is a `DelayPolicy`: fixed, uniform, or a
  * tempo key's drawn policy (the plan's tempo, spec §5.11); the legacy pacer's
  * jittered band and its prune scaling retired with the cadence switch (§5.13).
  */
 
+import { launchStream } from '../utils/entropy';
+
 /** Injectable randomness — `Math.random`-shaped, deterministic in tests. */
 export type Rng = () => number;
+
+/** The stream a draw takes when its caller hands no rng. */
+const defaultDraws: Rng = launchStream('timing/sample');
 
 /**
  * An interruptible sleep signature: resolves after `ms` OR as soon as `signal`
@@ -40,7 +45,7 @@ export function uniform(minMs: number, maxMs: number): DelayPolicy {
 }
 
 /** Draw once from a policy — or pass a plain number through unchanged. */
-export function sample(policyOrMs: DelayPolicy | number, rng: Rng = Math.random): number {
+export function sample(policyOrMs: DelayPolicy | number, rng: Rng = defaultDraws): number {
   return typeof policyOrMs === 'number' ? policyOrMs : policyOrMs.sample(rng);
 }
 

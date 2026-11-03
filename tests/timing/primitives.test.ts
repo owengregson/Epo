@@ -34,6 +34,18 @@ describe('timing/primitives — DelayPolicy', () => {
     expect(sample(uniform(4000, 1000), seq(1))).toBe(4000); // max clamped to min
   });
 
+  test('with no rng handed in, sample draws from a launch stream, never Math.random', () => {
+    const random = jest.spyOn(Math, 'random');
+    try {
+      const draws = Array.from({ length: 50 }, () => sample(uniform(0, 1_000)));
+      expect(random).not.toHaveBeenCalled();
+      expect(new Set(draws).size).toBeGreaterThan(10);
+      for (const ms of draws) expect(ms).toBeLessThanOrEqual(1_000);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
   test("the legacy oracle keeps the retired pacer's formula exactly (base, then jitter)", () => {
     // base = 60_000 + 0.5*(120_000-60_000) = 90_000; jitter = 90_000*0.3*1 = 27_000
     expect(sample(legacyJittered(60_000, 120_000, 30), seq(0.5, 1))).toBe(117_000);
