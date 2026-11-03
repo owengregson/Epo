@@ -6,6 +6,7 @@
  * queue head parks and the next record proceeds.
  */
 import { prepareAction } from '@/adapter/action-admission';
+import { ActionDeferredError } from '@/adapter/errors';
 import { SURFACE } from '@/adapter/ig-surface';
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Engine } from '@/engine/engine';
@@ -91,7 +92,7 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
   const stepUntilPressed = async (n: number, maxSteps = 10): Promise<void> => {
     for (let step = 0; step < maxSteps && presses.length < n; step++) await engine.stepOnce();
   };
-  return { store, clock, reentry, visit, presses, engine, stepUntilPressed };
+  return { store, clock, reentry, visit, presses, engine, stepUntilPressed, policy, tab };
 }
 
 test('a due lifecycle unfollow executes end to end while the return phase, a failing sweep and a stuck write all persist', async () => {
@@ -107,6 +108,20 @@ test('a due lifecycle unfollow executes end to end while the return phase, a fai
   expect(r.reentry.requiresReconciliation(r.clock.now())).toBe(true);
   expect(r.store.getEffectIntent(stuck.id)).toMatchObject({ state: 'uncertain', attempts: 1 });
   expect(r.visit.mock.calls.map(([name]) => name)).toEqual(['xavier', 'alice']);
+});
+
+test('on proceed the dispatch closure admits once; a refusal there marks no dispatch, so nothing is pressed', async () => {
+  const r = rig({ alice: { pk: 'a', page: 'non-follower', record: true } });
+  r.store.setActionDelayDeadline(r.clock.now() + 60_000);
+  const onDispatch = jest.fn();
+  const dispatch = await prepareAction({ tab: r.tab as never, prepareProfile: r.policy.prepareProfile,
+    beforeMutation: r.policy.beforeMutation, abortSignal: () => undefined }, 'unfollow', 'alice', 'a', onDispatch);
+  expect(r.visit).toHaveBeenCalledWith('alice');
+  await expect(dispatch()).rejects.toBeInstanceOf(ActionDeferredError);
+  expect(onDispatch).not.toHaveBeenCalled();
+  r.store.setActionDelayDeadline(null);
+  await dispatch();
+  expect(onDispatch).toHaveBeenCalledTimes(1);
 });
 
 test('I5: a deleted account at the queue head parks to a new plan-day and the next record proceeds', async () => {
