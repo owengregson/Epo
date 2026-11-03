@@ -8,6 +8,7 @@ import type { BoostView } from './boost';
 import type { BootView } from './boot';
 import type { PlanProjection } from './plan-projection';
 import type { CatchUpView, JournalView, OwnCountsView, RequestsView, TodayCounts } from './reopen-view';
+import type { SurfaceSummary } from './surface-health';
 
 export interface StatusFields {
   /** Required: no count renders from a `not-built` status (law L-ZERO). */
@@ -21,6 +22,7 @@ export interface StatusFields {
   readonly today?: TodayCounts | null;
   readonly journal?: JournalView | null;
   readonly requests?: RequestsView | null;
+  readonly surface?: SurfaceSummary | null;
   readonly unfollowsPaused?: 'protection-needs-review' | 'protection-unavailable' | null;
   /** The unconfirmed-actions breaker's state. */
   readonly actionsUnconfirmed?: { readonly kind: 'follow' | 'unfollow'; readonly streak: number } | null;
@@ -39,6 +41,7 @@ export const NOT_BUILT_FIELDS = {
   today: null,
   journal: null,
   requests: null,
+  surface: null,
   unfollowsPaused: null,
   actionsUnconfirmed: null,
   resumeTarget: null,

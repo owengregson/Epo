@@ -63,6 +63,7 @@ describe('Foundation status (not built)', () => {
       today: null,
       journal: null,
       requests: null,
+      surface: null,
       unfollowsPaused: null,
       actionsUnconfirmed: null,
       resumeTarget: null,
