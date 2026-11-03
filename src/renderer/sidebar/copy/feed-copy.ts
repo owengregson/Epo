@@ -9,7 +9,7 @@ import type { FeedItem, Person } from '@/shared/feed';
 /** A piece of a sentence: plain text, or a person shown as a handle. */
 export type Part = string | { readonly person: Person };
 
-export type RowTone = 'live' | 'good' | 'idle' | 'hold' | 'calm';
+type RowTone = 'live' | 'good' | 'idle' | 'hold' | 'calm';
 
 export interface RowFace {
   readonly glyph: string;

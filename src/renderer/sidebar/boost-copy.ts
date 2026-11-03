@@ -17,9 +17,9 @@ export function fill(template: string, vars: Readonly<Record<string, string>> = 
 /** The deck has no line for a Boost that cannot run yet because today's plan is not wired. */
 export const BOOST_NEEDS_PLAN = 'Boost works once today’s plan is ready.';
 /** The paused band and the Now reason line split the deck's paused sentence (one line each). */
-export const PAUSED_BAND = 'Boost on until {time} · Epo is stopped';
+const PAUSED_BAND = 'Boost on until {time} · Epo is stopped';
 export const PAUSED_REASON = 'Press Start to use Boost.';
-export const DAY_OFF = 'Today is a day off; Boost starts at {time}.';
+const DAY_OFF = 'Today is a day off; Boost starts at {time}.';
 
 export function buttonLabel(hours: number | null, stopped: boolean): string {
   if (stopped) return BOOST_COPY.control.startAndRun;

@@ -33,7 +33,7 @@ export function sameLocalDay(a: number, b: number): boolean {
 }
 
 /** True when `t` falls on the local day after `now`'s. */
-export function isTomorrow(t: number, now: number): boolean {
+function isTomorrow(t: number, now: number): boolean {
   const next = new Date(now);
   next.setDate(next.getDate() + 1);
   return dayOf(t) === next.toDateString();

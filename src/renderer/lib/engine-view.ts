@@ -6,7 +6,7 @@ import type { Settings } from '@/types';
  */
 
 /** Whole-hour → "08:00". */
-export function hh(v: number): string {
+function hh(v: number): string {
   return `${String(v).padStart(2, '0')}:00`;
 }
 

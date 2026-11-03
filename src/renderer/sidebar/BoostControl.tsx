@@ -22,7 +22,7 @@ import { Icon } from '@/renderer/ui/Icon';
 type Preview = Res<'previewBoost'>;
 
 /** The hover card: open with its top edge in column coordinates, and the line it shows. */
-export const boostCardSignal = signal<{ readonly top: number; readonly line: string } | null>(null);
+const boostCardSignal = signal<{ readonly top: number; readonly line: string } | null>(null);
 
 /** Why the button waits, or null when one tap would do something. */
 function waitReason(preview: Preview): string | null {

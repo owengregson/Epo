@@ -29,7 +29,7 @@ export interface SidebarProps {
 }
 
 /** Epo has acted for this account: a run on record, or a settled follow or unfollow in the feed. */
-export const actedSignal = computed(() => {
+const actedSignal = computed(() => {
   const s = statusSignal.value;
   if (s?.lastActionAt != null || s?.state === 'running' || s?.state === 'paused') return true;
   return feedSignal.value?.items.some((i) => i.kind === 'followed' || i.kind === 'unfollowed') ?? false;

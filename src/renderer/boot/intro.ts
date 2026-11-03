@@ -10,7 +10,7 @@ import { EASE, EASE_OUT } from '@/renderer/lib/motion';
 import { play } from '@/renderer/lib/play';
 
 /** Moments of the intro, from its start: the splash hands over, Instagram may show, main hears the reveal. */
-export const INTRO = { HANDOFF_MS: DUR[4], LIVE_MS: DUR[4] + DUR[1], REVEALED_MS: DUR[5] } as const;
+const INTRO = { HANDOFF_MS: DUR[4], LIVE_MS: DUR[4] + DUR[1], REVEALED_MS: DUR[5] } as const;
 
 export interface IntroHooks {
   /** The splash is gone; the app is the page. */

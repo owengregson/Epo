@@ -29,7 +29,7 @@ function ceilHour(t: number): number {
 }
 
 /** The strip's span: whole hours from the first session (or now) to the last (or now). */
-export function stripSpan(sessions: readonly Session[], now: number): { start: number; end: number } {
+function stripSpan(sessions: readonly Session[], now: number): { start: number; end: number } {
   const first = sessions.reduce((m, s) => Math.min(m, s.startAt), now);
   const last = sessions.reduce((m, s) => Math.max(m, s.endAt), now);
   const start = floorHour(first);
@@ -37,7 +37,7 @@ export function stripSpan(sessions: readonly Session[], now: number): { start: n
 }
 
 /** Axis ticks on local hours: every hour on a short strip, every two or three on a longer one. */
-export function stripTicks(start: number, end: number): number[] {
+function stripTicks(start: number, end: number): number[] {
   const hours = (end - start) / HOUR_MS;
   const step = hours <= 6 ? 1 : hours <= 12 ? 2 : 3;
   const ticks: number[] = [];
