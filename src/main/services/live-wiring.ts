@@ -10,7 +10,7 @@ import { peekResumeTarget, type ResumeFrontier } from '@/engine/resume-target';
 import { SourceFrontier } from '@/engine/source-frontier';
 import type { PlanDayClock } from '@/kernel/plan';
 import { MS_PER_MINUTE } from '@/kernel/units';
-import { type FeedContext, keepShapedAt, shapeFeed } from '@/main/modules/feed-projection';
+import { type BoostWindowLite, type FeedContext, keepShapedAt, shapeFeed } from '@/main/modules/feed-projection';
 import type { FeedView } from '@/shared/feed';
 import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -120,7 +120,7 @@ export function liveSources(
   graph: LiveGraph,
   runtime: () => RuntimeIncidents,
   /** The plan's plan-day boundary: the feed's day groups and its expiry roll there (spec §4.4); the plan's census freshness. */
-  opts: { planDay: PlanDayClock; censusFreshMs: () => number; now?: () => number },
+  opts: { planDay: PlanDayClock; censusFreshMs: () => number; now?: () => number; boost?: (now: number) => BoostWindowLite | null },
 ): LiveSources {
   const { planDay } = opts;
   const now = opts.now ?? (() => Date.now());
@@ -136,9 +136,10 @@ export function liveSources(
   return {
     feed: () => {
       const { incidents } = runtime();
+      const t = now();
       shown = keepShapedAt(shown, shapeFeed(graph.store.feed, {
-        now: now(), ownPk: graph.ownPk, baselineAt: graph.store.followersBaselineAt(), planDay, incidents,
-        recoveryIncident: recovery(), awayFrom: lastShutdown(incidents),
+        now: t, ownPk: graph.ownPk, baselineAt: graph.store.followersBaselineAt(), planDay, incidents,
+        recoveryIncident: recovery(), awayFrom: lastShutdown(incidents), boost: opts.boost?.(t) ?? null,
       }));
       return shown;
     },

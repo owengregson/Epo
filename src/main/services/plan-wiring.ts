@@ -102,8 +102,8 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   });
   const triggers = control;
   host.settings.setPlanPort(service);
-  // The plan's tempo is in force: every key's site is enabled (the look-before-act dwell, the step pauses).
-  host.settings.setCapabilities({ plan: true, tempo: true });
+  // The plan's tempo is in force (every key's site enabled) and the Boost commands reach the plan.
+  host.settings.setCapabilities({ plan: true, tempo: true, boost: true });
   triggers.start();
   // The legacy planner's phase is migrated by the plan's first write; its snapshot is retired.
   if (store.getPlanState() !== null && store.getPacingState() !== null) store.setPacingState(null);
@@ -163,7 +163,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     dispose: () => {
       triggers.dispose();
       host.settings.setPlanPort(null);
-      host.settings.setCapabilities({ plan: false, tempo: false });
+      host.settings.setCapabilities({ plan: false, tempo: false, boost: false });
     },
   };
 }

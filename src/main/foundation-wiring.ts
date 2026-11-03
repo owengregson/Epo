@@ -31,12 +31,8 @@ import type { PruneStatus } from '@/engine/prune-engine';
 import { SystemClock } from '@/governors/clock';
 import type { CursorObserver } from '@/interaction/input-driver';
 import { referenceTempoSource } from '@/kernel/tempo';
-import {
-  shapeChainList,
-  shapeGraphSnapshot,
-  shapeQueueList,
-  shapeTargetDetail,
-} from '@/main/foundation-reads';
+import { shapeChainList, shapeGraphSnapshot, shapeQueueList, shapeTargetDetail } from '@/main/foundation-reads';
+import { boostControlOf, boostWindowOf } from '@/main/modules/boost-wiring';
 import type { BootSequencer } from '@/main/modules/boot-sequencer';
 import { notBuiltPruneStatus, notBuiltStatus } from '@/main/modules/not-built';
 import { Projections, type PushFn, UNWIRED_SOURCES } from '@/main/modules/projections';
@@ -215,6 +211,9 @@ export class Foundation {
   private readonly prune: PruneControl;
   readonly seed: SeedCheckService;
   readonly facts = settingsFactsSource(() => this.graph, () => this.settings, () => this.seed);
+  /** The Boost commands (spec §8.5): the open graph's plan, the run intent, a Start queued like a user Start. */
+  readonly boost = boostControlOf({ graph: () => this.graph, runtime: () => this.runtime, startEngine: () => this.startEngine(),
+    seed: () => this.settings.effective().seed });
   /** The boot sequence (spec §12.8) and its graph-independent `boot` / `account` status contributors. */
   private readonly boot: BootSequencer;
   private readonly bootFields: readonly StatusContributor[];
@@ -284,7 +283,7 @@ export class Foundation {
       graph.engine.setOnline(this.lastOnline);
       this.settings.bindStore(settingsBinding(graph));
       this.projections.bind(graph.store, { status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock, censusFreshMs: () => graph.plan.service.snapshot(Date.now()).intent.patienceWaitMs }), settingsFacts: () => this.facts.facts() });
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock, censusFreshMs: () => graph.plan.service.snapshot(Date.now()).intent.patienceWaitMs, boost: (t) => boostWindowOf(graph, t) }), settingsFacts: () => this.facts.facts() });
     });
     this.session.session.onClose(() => {
       this.scheduler.stop('store:retention');

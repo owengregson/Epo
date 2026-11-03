@@ -195,7 +195,7 @@ describe('the plan-backed tempo (spec §5.13 S2 item 9, §5.11)', () => {
     const s = store();
     const clock = planClock(T0);
     const plan = wire(s, clock, host);
-    expect(host.capabilities).toMatchObject({ plan: true, tempo: true });
+    expect(host.capabilities).toMatchObject({ plan: true, tempo: true, boost: true });
     for (const key of ['dwell.before-press', 'ui.step-pause', 'walk.rest-every'] as const) expect(plan.tempo.enabled(key)).toBe(true);
     const day = busyDay(plan.service, T0);
     const session = day.plan.sessions.find((x) => x.budget > 0);
@@ -203,6 +203,6 @@ describe('the plan-backed tempo (spec §5.13 S2 item 9, §5.11)', () => {
     clock.t = session.startAt;
     expect(plan.tempo.current()).toEqual(plan.service.view(clock.t).tempo);
     plan.dispose();
-    expect(host.capabilities).toMatchObject({ plan: false, tempo: false });
+    expect(host.capabilities).toMatchObject({ plan: false, tempo: false, boost: false });
   });
 });
