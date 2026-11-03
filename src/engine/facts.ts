@@ -21,6 +21,7 @@
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
+import type { ProtectionVerdict } from '../shared/unfollow-protection';
 import type { FollowRecord } from '../store/types';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import type { CurrentTarget } from './ports';
@@ -153,8 +154,8 @@ export interface PruneFacts {
   candidate: { pk: string; username: string | null } | null;
   /** Whether the LIVE graph says this account follows us right now. */
   followsUsNow: boolean;
-  /** The whitelist as it stands NOW — re-derived per candidate, never at scan time. */
-  whitelist: readonly string[];
+  /** The protection verdict over the stored facts NOW (P10, spec §7.1): never the raw list. */
+  protection: ProtectionVerdict;
   atDailyCap: boolean;
 }
 

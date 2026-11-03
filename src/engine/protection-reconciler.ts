@@ -11,7 +11,7 @@ import type { KnowledgeStore } from '../store/knowledge-store';
 import type { KeptMove } from '../store/repos/follow-records';
 import type { FollowRecord } from '../store/types';
 import * as log from '../utils/logger';
-import { type KeptStore, keptStampFor, releaseTarget, storedSubject } from './protection-gate';
+import { type KeptStore, keptStampFor, protectionKey, releaseTarget, storedSubject } from './protection-gate';
 import type { ProtectionPort } from './protection-port';
 
 export type ReapplyReason = 'rules' | 'day-roll';
@@ -27,14 +27,8 @@ export interface ProtectionReconcilerDeps {
   dayClock: PlanDayClock;
 }
 
-/** Everything the predicate reads from an index, as one comparable key. */
-function rulesKey(idx: ProtectionIndex): string {
-  return JSON.stringify([idx.state, [...idx.pks].sort(), [...idx.usernames].sort(), idx.words, idx.wordMatch, idx.keepVerified]);
-}
-
 export class ProtectionReconciler {
   private applied: { readonly rules: string; readonly day: string } | null = null;
-  private keyed: { readonly idx: ProtectionIndex; readonly key: string } | null = null;
 
   constructor(private readonly d: ProtectionReconcilerDeps) {}
 
@@ -54,18 +48,13 @@ export class ProtectionReconciler {
 
   /** Reapply when the rules or the plan-day changed since the last pass; the first pass is the graph's open. */
   sync(now: number): ReapplyResult | null {
-    const rules = this.rulesKeyOf(this.d.port.index());
+    const rules = protectionKey(this.d.port.index());
     const day = this.d.dayClock.dayKey(now);
     const last = this.applied;
     if (last !== null && last.rules === rules && last.day === day) return null;
     const result = this.reapply(last !== null && last.day === day ? 'rules' : 'day-roll');
     this.applied = { rules, day };
     return result;
-  }
-
-  private rulesKeyOf(idx: ProtectionIndex): string {
-    if (this.keyed === null || this.keyed.idx !== idx) this.keyed = { idx, key: rulesKey(idx) };
-    return this.keyed.key;
   }
 
   /** The move one kept record needs, or null when it stays as it is. */

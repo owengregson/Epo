@@ -11,7 +11,7 @@ import type { PruneEngineDeps } from '@/engine/prune-engine';
 import type { ReentrySupervisor } from '@/engine/reentry';
 import { scoreCandidate } from '@/engine/scorer';
 import type { SourceFrontier } from '@/engine/source-frontier';
-import type { Clock, SystemClock } from '@/governors/clock';
+import { type Clock, SystemClock } from '@/governors/clock';
 import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { RateGovernor } from '@/governors/rate-governor';
 import type { ReadBudget } from '@/governors/read-budget';
@@ -91,14 +91,15 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
   return churn;
 }
 
-/** The prune engine's unfollow-facing deps: its config (the whitelist), the run stamp, the own-stats refresh. */
+/** The prune engine's unfollow-facing deps: its config, protection, the run stamp, the own-stats refresh. */
 export function pruneUnfollowDeps(
   d: GraphBuildDeps,
   w: { settings: Settings; policy: MutationPolicy; ownUsername: string | undefined },
-): Pick<PruneEngineDeps, 'cfg' | 'onRunComplete' | 'refreshOwnStats'> {
+): Pick<PruneEngineDeps, 'cfg' | 'protection' | 'onRunComplete' | 'refreshOwnStats'> {
   const { settings, policy, ownUsername } = w;
   return {
     cfg: toPruneConfig(settings),
+    protection: wireProtection(d, new SystemClock()).port,
     // Persist the completed run's timestamp through the one settings save path
     // (also reloads live configs — harmless, and keeps one write path).
     onRunComplete: (at) => {

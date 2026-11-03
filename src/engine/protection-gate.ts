@@ -9,6 +9,7 @@ import {
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { AccountState, FollowRecord, KeptReason, Observation } from '../store/types';
 import type { ProtectionPort } from './protection-port';
+import { type AnnotatedCandidate, annotateCandidate, type PruneSubject } from './prune-candidate';
 
 export type { KeptReason } from '../store/types';
 
@@ -39,11 +40,42 @@ export function freshSubject(obs: Observation, visitedUsername: string): Protect
   return { pk: obs.accountPk, username: text(f.username) ?? visitedUsername, bio: text(f.bio), isVerified: flag(f.isVerified) };
 }
 
+const KEYS = new WeakMap<ProtectionIndex, string>();
+
+/** Everything the predicate reads from an index, as one comparable key (memoized per compiled index). */
+export function protectionKey(idx: ProtectionIndex): string {
+  let key = KEYS.get(idx);
+  if (key === undefined) {
+    key = JSON.stringify([idx.state, [...idx.pks].sort(), [...idx.usernames].sort(), idx.words, idx.wordMatch, idx.keepVerified]);
+    KEYS.set(idx, key);
+  }
+  return key;
+}
+
+/** The rules alone: what a list or a count shows while a pause stops the unfollows themselves. */
+export function ignoringPause(idx: ProtectionIndex): ProtectionIndex {
+  return idx.state === 'ready' ? idx : { ...idx, state: 'ready' };
+}
+
 /** The selection-time verdict over stored facts. */
 export function selectionVerdict(
   store: { getAccount(pk: string): AccountState | null }, pk: string, idx: ProtectionIndex,
 ): ProtectionVerdict {
   return protectionVerdict(storedSubject(store, pk), idx);
+}
+
+/** The census rows no rule protects: what a run acts on and the counts show (a pause stops runs, not counts). */
+export function unprotectedRows<T extends PruneSubject>(store: { getAccount(pk: string): AccountState | null },
+  idx: ProtectionIndex, rows: readonly T[]): T[] {
+  const rules = ignoringPause(idx);
+  return rows.filter((c) => selectionVerdict(store, c.pk, rules).kind !== 'protected');
+}
+
+/** The census rows annotated with their protection, rules alone (spec §7.8: "Show protected (N)"). */
+export function annotatedRows<T extends PruneSubject>(store: { getAccount(pk: string): AccountState | null },
+  idx: ProtectionIndex, rows: readonly T[]): AnnotatedCandidate<T>[] {
+  const rules = ignoringPause(idx);
+  return rows.map((c) => annotateCandidate(c, selectionVerdict(store, c.pk, rules)));
 }
 
 /** A rule match keeps for good (until the rules change); an unreadable fact is read again on the plan's back-off. */

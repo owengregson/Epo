@@ -15,6 +15,7 @@ import {
   OWN_PK,
   T0,
 } from '../kit/engine-harness';
+import { ProtectionRig } from '../kit/harness-journal';
 
 interface World {
   store: KnowledgeStore;
@@ -187,20 +188,23 @@ describe('PruneEngine persistence across restarts', () => {
     w.store.close();
   });
 
-  test('a whitelist change re-derives the counts and keeps the snapshot (no re-scan)', async () => {
+  test('a protection change re-derives the counts and keeps the snapshot (no re-scan)', async () => {
     const w = world([OWN_PK, '1', '2'], []);
-    const e = w.boot();
+    const rig = new ProtectionRig(w.clock);
+    const e = w.boot({ protection: rig.port });
     await e.scan();
     expect(e.status().candidates).toBe(2);
 
-    // Adding to the whitelist hides that candidate live; the RAW snapshot stays.
-    e.applyConfig({ ...CFG, whitelist: ['u1'] });
+    // Protecting one hides that candidate live on the next reload; the RAW snapshot stays.
+    rig.account('1', 'u1');
+    e.applyConfig(CFG);
     expect(e.status().candidates).toBe(1);
     expect(e.status().scanReady).toBe(true);
     expect(w.store.getPruneScan()).not.toBeNull();
 
-    // Removing them restores the candidate — still without another scan.
-    e.applyConfig({ ...CFG, whitelist: [] });
+    // Removing it restores the candidate — still without another scan.
+    rig.settings = { ...rig.settings, accounts: [] };
+    e.applyConfig(CFG);
     expect(e.status().candidates).toBe(2);
     w.store.close();
   });
@@ -268,13 +272,13 @@ describe('PruneEngine persistence across restarts', () => {
     w.store.close();
   });
 
-  test('a restart derives the restored counts against the CURRENT whitelist', async () => {
-    // Scan with an empty whitelist, then restart an engine whose settings now
-    // whitelist one of the two candidates: the raw persisted census re-derives.
+  test('a restart derives the restored counts against the CURRENT protection', async () => {
+    // Scan with nothing protected, then restart an engine whose settings now
+    // protect one of the two candidates: the raw persisted census re-derives.
     const w = world([OWN_PK, '1', '2'], []);
     await w.boot().scan();
 
-    const restarted = w.boot({ cfg: { ...CFG, whitelist: ['u1'] } });
+    const restarted = w.boot({ protection: new ProtectionRig(w.clock).account('1', 'u1').port });
     expect(restarted.status().remaining).toBe(1);
     expect(restarted.status().scanReady).toBe(true);
     await restarted.run();

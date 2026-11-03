@@ -4,6 +4,7 @@ import type { KnowledgeStore, PruneCensusRecord } from '../store/knowledge-store
 import type { DelayManager } from '../timing/delay-manager';
 import type { SleepFn } from '../timing/primitives';
 import type { ChurnActionOutcome } from './churn-scheduler';
+import type { ProtectionPort } from './protection-port';
 
 // ---------------------------------------------------------------------------------
 // Ports: the narrow, structural slices of each collaborator the PruneEngine needs.
@@ -201,6 +202,8 @@ export interface PruneEngineDeps {
   churnActions: PruneChurnActions;
   sentinel: PruneSentinel;
   cfg: PruneConfig;
+  /** The protection port (spec §7.4, P5–P7); a rig without it runs unconfigured (main always wires it). */
+  protection?: ProtectionPort;
   /** Injected sleep; defaults to a real interruptible setTimeout. */
   sleep?: SleepFn;
   /** Injectable randomness for the paced delay (deterministic tests). */

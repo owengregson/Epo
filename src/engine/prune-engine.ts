@@ -2,7 +2,7 @@
  * PruneEngine — the auto-prune routine, separate from growth.
  *
  * Walks the account's ENTIRE following + followers lists and unfollows every
- * account we follow that does NOT follow us back, except whitelisted accounts.
+ * account we follow that does NOT follow us back, except protected accounts.
  * One-shot per run (schedule fields live in Settings); it shares the ONE
  * Instagram tab + Sentinel with the growth engine and the
  * composition root keeps the two MUTUALLY EXCLUSIVE (never two drivers on the
@@ -35,11 +35,12 @@ import { censusAuthority } from './census-authority';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import { type HaltReason, haltReasonKey } from './halt-reason';
 import { journaledMutation } from './journaled-mutation';
-import { decidePruneCandidate } from './prune-candidate';
+import { annotatedRows, protectionKey, selectionVerdict, unprotectedRows } from './protection-gate';
+import { type ProtectionPort, unconfiguredProtection } from './protection-port';
+import { type AnnotatedCandidate, decidePruneCandidate } from './prune-candidate';
 import { nextFeedCandidate, type PruneFeedContext } from './prune-feed';
 import { PrunePacing } from './prune-pacing';
 import { assertFetchComplete, assertScanCoverage } from './prune-scan-guards';
-import { filterPruneCandidates } from './prune-whitelist';
 
 /**
  * Whether a scheduled prune run is due now. Pure and opt-in: `scheduleDays <= 0`
@@ -61,56 +62,31 @@ export type { PruneCandidate, PruneChurnActions, PruneConfig, PruneEngineDeps, P
 /** Brief park after a blocked action before continuing. */
 export const PRUNE_PARK_MS = PRUNE.PARK_MS;
 
-/**
- * Every DelayManager key the PruneEngine waits under — the closed set the
- * noise registry classifies (mirrors {@link ENGINE_WAIT_CLASS} in engine.ts).
- */
+/** Every DelayManager key the PruneEngine waits under: the closed set the noise registry classifies. */
 export type PruneWaitKey = 'prune:park' | 'prune:action-delay';
 
 /**
- * The per-key noise classification `pruneWait` applies: the blocked-action park
- * is a retry backoff (log-normal around its base, bounded), while the paced
- * inter-unfollow delay already draws its own jitter (`nextDelayMs`) and stays
- * exact. The `satisfies` makes an unclassified new key a tsc error.
+ * The noise class per key: the blocked-action park is a bounded retry backoff around its base; the
+ * paced inter-unfollow delay draws its own spread and stays exact. An unclassified key fails tsc.
  */
 export const PRUNE_WAIT_CLASS = {
   'prune:park': 'retry-backoff',
   'prune:action-delay': 'exact',
 } as const satisfies Record<PruneWaitKey, WaitClass>;
 
-/**
- * Consecutive FAILED unfollows that halt a prune run (`actions-failing`).
- * One account can legitimately fail (renamed/deactivated between scan and run);
- * several in a row mean Instagram is rejecting the mutations or the adapter is
- * broken — either way, continuing burns candidates at full pace.
- */
+/** Consecutive FAILED unfollows that halt a run (`actions-failing`): one can fail alone, several in a row is the machinery. */
 export const PRUNE_CONSECUTIVE_FAIL_HALT = 4;
 
-/**
- * Consecutive BLOCKED unfollows tolerated before halting/suspending — a block is
- * IG pushing back, so the tolerance is tighter than the fail breaker. One home
- * for the policy: the sequential run() halt and the woven feed's suspension
- * must trip at the same count.
- */
+/** Consecutive BLOCKED unfollows before the run halts and the woven feed suspends (one home, one count). */
 export const PRUNE_CONSECUTIVE_BLOCK_HALT = 3;
 
 // The paced inter-unfollow scale lives with the pacing; re-exported for its old consumers.
 export { PRUNE_DELAY_FACTOR } from './prune-pacing';
 
-/**
- * How long a completed scan's candidate set stays runnable for a 2-step run.
- * Within this window a manual Run consumes the reviewed candidates verbatim
- * (no second full-list walk); past it the cache is treated as stale and a Run
- * re-scans — so a scheduled run days later never acts on an old manual census.
- */
+/** How long a completed scan stays runnable verbatim for a 2-step run; past it a Run re-scans. */
 export const PRUNE_SCAN_FRESH_MS = PRUNE.SCAN_FRESH_MS;
 
-/**
- * Minimum spacing between LIVE mid-scan status emissions (~4/sec): each parsed
- * page fires a progress callback, and a large account walks hundreds of pages —
- * unthrottled, every page would push a full projection over IPC. Phase-final
- * emissions bypass the throttle so the settled numbers always land.
- */
+/** Minimum spacing between mid-scan status emissions; phase-final emissions bypass it so settled numbers land. */
 export const PRUNE_PROGRESS_EMIT_MS = 250;
 
 // ---------------------------------------------------------------------------------
@@ -154,10 +130,10 @@ export class PruneEngine {
   private lastSentinel: SentinelStatus | null = null;
   /**
    * The RAW candidate census from the last COMPLETE scan (following − followers
-   * − self − growth-managed, whitelist NOT applied), cached for a 2-step run
+   * − self − growth-managed, protection NOT applied), cached for a 2-step run
    * for a 2-step run. The actionable set is derived from it against the LIVE
-   * whitelist at consumption time, so whitelist edits take effect instantly —
-   * adding a user hides them, removing a user restores them — with no re-scan.
+   * protection at consumption time, so rule edits take effect instantly —
+   * adding a rule hides rows, removing one restores them — with no re-scan.
    * Cleared once consumed or when it ages out. Null means "no runnable scan —
    * Run is locked".
    */
@@ -194,10 +170,14 @@ export class PruneEngine {
   private readonly pacing: PrunePacing;
   /** The feed selection's view of this engine (see `prune-feed.ts`). */
   private readonly feed: PruneFeedContext;
+  /** The live protection (spec §7.4) and the rules key the actionable counts were derived for. */
+  private readonly protection: ProtectionPort;
+  private countedFor: string | null = null;
   lastActionOutcome(): ChurnActionOutcome | null { return this.lastOutcome ? { ...this.lastOutcome } : null; }
 
   constructor(deps: PruneEngineDeps) {
     this.deps = deps;
+    this.protection = deps.protection ?? unconfiguredProtection(deps.clock);
     const delays =
       deps.delays ??
       new DelayManager({ clock: deps.clock, rng: deps.rng, sleep: deps.sleep ?? timingSleep });
@@ -244,13 +224,9 @@ export class PruneEngine {
     if (snap !== null) {
       this.followingCount = snap.following;
       this.followersCount = snap.followers;
-      // The persisted remaining rows are the RAW unvisited census; what is
-      // actionable depends on the whitelist as it stands NOW, not at save time.
-      // Counts reflect what is actionable NOW: after a completed run the
-      // durable remaining rows are only the never-visited (e.g. whitelisted)
-      // ones, and inflating the display back to the pre-run census figure
-      // (`snap.candidateCount`) showed a stale "N to prune" after restart.
-      const actionable = filterPruneCandidates(snap.remaining, this.cfg.whitelist).length;
+      // The persisted rows are the RAW unvisited census; the counts show what is actionable under
+      // protection as it stands NOW (after a completed run only never-visited protected rows remain).
+      const actionable = this.actionable(snap.remaining).length;
       this.remaining = actionable;
       this.candidateCount = actionable;
       if (snap.remaining.length > 0) {
@@ -267,29 +243,39 @@ export class PruneEngine {
     }
   }
 
-  /**
-   * Swap the live config in place (used when Settings are updated at runtime).
-   * A WHITELIST change re-derives the actionable candidate counts from the RAW
-   * cached census — adding a user drops them from the runnable set on the spot,
-   * removing a user restores them (if the scan hasn't visited them) — WITHOUT
-   * invalidating the scan. The persisted snapshot is raw too, so nothing needs
-   * rewriting. A mid-run edit is honored per-candidate by the run loop.
-   */
+  /** Swap the live config in place (a settings reload); a protection change re-derives the counts. */
   applyConfig(cfg: PruneConfig): void {
-    const whitelistChanged =
-      this.cfg.whitelist.length !== cfg.whitelist.length ||
-      this.cfg.whitelist.some((w, i) => w !== cfg.whitelist[i]);
     this.cfg = cfg;
-    if (whitelistChanged && this.pendingCandidates !== null && !this.busy()) {
-      const actionable = filterPruneCandidates(this.pendingCandidates, cfg.whitelist).length;
-      this.candidateCount = actionable;
-      this.remaining = actionable;
-      log.info('prune: whitelist changed, candidate set re-derived', {
-        raw: this.pendingCandidates.length,
-        actionable,
-      });
-      this.emitStatus();
-    }
+    if (this.recount()) this.emitStatus();
+  }
+
+  /**
+   * A protection change re-derives the actionable counts from the RAW cached census without
+   * invalidating the scan (a new rule hides rows, a removed one restores unvisited rows); never
+   * mid-run, where each candidate is judged as it comes. True when the counts were re-derived.
+   */
+  private recount(): boolean {
+    if (this.pendingCandidates === null || this.busy()) return false;
+    if (protectionKey(this.protection.index()) === this.countedFor) return false;
+    const actionable = this.actionable(this.pendingCandidates).length;
+    this.candidateCount = actionable;
+    this.remaining = actionable;
+    log.info('prune: protection changed, candidate set re-derived', { raw: this.pendingCandidates.length, actionable });
+    return true;
+  }
+
+  /** The rows no rule protects now, stamping the rules key the counts derive from. */
+  private actionable(rows: PruneCandidate[]): PruneCandidate[] {
+    this.countedFor = protectionKey(this.protection.index());
+    return unprotectedRows(this.deps.store, this.protection.index(), rows);
+  }
+
+  /** The verdict over a candidate's stored facts as they stand now (selection, spec §7.4). */
+  private verdictOf(cand: PruneCandidate) { return selectionVerdict(this.deps.store, cand.pk, this.protection.index()); }
+
+  /** The census rows annotated with their protection (the candidates channel). */
+  candidateViews(rows: readonly PruneCandidate[]): AnnotatedCandidate<PruneCandidate>[] {
+    return annotatedRows(this.deps.store, this.protection.index(), rows);
   }
 
   /** One view of this engine for the feed selection; the accessors read live state. */
@@ -303,6 +289,7 @@ export class PruneEngine {
       hasFreshScan: () => this.hasFreshScan(),
       atDailyCap: (now) => this.atDailyCap(now),
       followsUsNow: (pk) => this.followsUsNow(pk),
+      protectionOf: (cand) => this.verdictOf(cand),
       visitCandidate: (cand) => this.visitCandidate(cand),
     };
   }
@@ -330,7 +317,7 @@ export class PruneEngine {
 
   /**
    * READ-ONLY scan: scrape our following + followers lists (bounded) and compute
-   * `candidates = following − followers − whitelist − ownPk`. NO unfollows.
+   * `candidates = following − followers − ownPk` (raw; protection applies later). NO unfollows.
    * Emits status `scanning` → `idle`. Throws when a scan/run is already active
    * (the composition root's driver token normally prevents that) or when a
    * scrape genuinely fails — callers surface a typed result across IPC.
@@ -355,7 +342,7 @@ export class PruneEngine {
       const result = await this.performScan();
       // Cache the RAW census for a subsequent 2-step run — but ONLY a complete
       // (non-aborted) scan; an interrupted scan yields no runnable candidate set.
-      // The run derives the actionable subset against the live whitelist.
+      // The run derives the actionable subset against the live protection.
       if (this.superseded(token)) {
         // The census this scan was building is void; the last COMPLETE one
         // (still durable — nothing was cleared up front) stays the runnable
@@ -406,9 +393,8 @@ export class PruneEngine {
     // still-fresh runnable set instead of dropping it.
     let scanAt: number | null = null;
     if (this.hasFreshScan()) {
-      // The cached census is RAW; what actually runs is the subset the LIVE
-      // whitelist allows — so an edit between Scan and Run is always honored.
-      candidates = filterPruneCandidates(this.pendingCandidates ?? [], this.cfg.whitelist);
+      // The cached census is RAW; what runs is the subset no rule protects NOW.
+      candidates = this.actionable(this.pendingCandidates ?? []);
       scanAt = this.pendingScanAt;
       this.pendingCandidates = null;
       this.pendingScanAt = null;
@@ -421,7 +407,7 @@ export class PruneEngine {
       this.setState('scanning');
       try {
         const scanned = await this.performScan();
-        candidates = filterPruneCandidates(scanned.candidates, this.cfg.whitelist);
+        candidates = this.actionable(scanned.candidates);
         scanAt = this.deps.clock.now();
         this.candidateCount = candidates.length;
         this.remaining = candidates.length;
@@ -448,7 +434,7 @@ export class PruneEngine {
     // truncated run keeps its unvisited remainder RUNNABLE (and does not stamp
     // lastRunAt) — "the daily cap tapped out" must not read as "the list is
     // clean", or the schedule resets and the next run re-walks both lists.
-    let truncated: 'cap' | 'active-hours' | null = null;
+    let truncated: 'cap' | 'active-hours' | 'protection-paused' | null = null;
     // EVERY early exit (user stop, sentinel halt, unexpected failure) hands the
     // unvisited remainder back as the runnable set, exactly like truncation —
     // the durable snapshot keeps the rows, but Run would gray out and the list
@@ -511,16 +497,17 @@ export class PruneEngine {
           return;
         }
 
-        // The three per-candidate correctness rules — a mid-run whitelist edit,
-        // the live-graph follows-us guard (PRINCIPLES §2), and the username
-        // requirement — live in ONE pure decision shared with the woven feed,
-        // so the two prune paths cannot drift apart. See `prune-candidate.ts`
-        // (which also documents why the bio keep-list is deliberately absent).
+        // Protection as it stands NOW, the live-graph follows-us guard and the username: ONE pure
+        // decision shared with the woven feed (`prune-candidate.ts`). A paused index stops the run.
         const verdict = decidePruneCandidate({
           candidate: cand,
-          whitelist: this.cfg.whitelist,
+          protection: this.verdictOf(cand),
           followsUsNow: this.followsUsNow(cand.pk),
         });
+        if (verdict.do === 'stop') {
+          truncated = verdict.reason;
+          break;
+        }
         if (verdict.do === 'skip') {
           const detail = { pk: cand.pk, reason: verdict.reason };
           if (verdict.reason === 'no-username') {
@@ -726,6 +713,7 @@ export class PruneEngine {
   }
 
   status(): PruneStatus {
+    this.recount();
     return {
       state: this.stateNow(),
       following: this.followingCount,
@@ -845,8 +833,8 @@ export class PruneEngine {
   /**
    * The shared scan body: full following scrape, full followers scrape, then the
    * pure set difference minus our own pk and growth-managed accounts. The result
-   * is the RAW census — the whitelist is NOT applied here; callers derive the
-   * actionable subset against the live whitelist (so edits react instantly).
+   * is the RAW census — protection is NOT applied here; callers derive the
+   * actionable subset against the live protection (so edits react instantly).
    * Usernames come from the store — the sources observed every parsed profile
    * there before this reads them back.
    *
@@ -997,10 +985,10 @@ export class PruneEngine {
     this.followingCount = displayFollowing;
     this.followersCount = displayFollowers;
 
-    // Status counts reflect what is ACTIONABLE under the current whitelist; the
-    // raw census is what gets cached/persisted, so later whitelist edits can
+    // Status counts reflect what is ACTIONABLE under the current protection; the
+    // raw census is what gets cached/persisted, so later rule edits can
     // both hide and restore candidates without another walk.
-    const actionable = filterPruneCandidates(candidates, this.cfg.whitelist).length;
+    const actionable = this.actionable(candidates).length;
     this.candidateCount = actionable;
     this.remaining = actionable;
     // Persist the completed scan so a restart restores it (counts + the raw
@@ -1090,7 +1078,7 @@ export class PruneEngine {
     }
     this.followingCount = snap.following;
     this.followersCount = snap.followers;
-    const actionable = filterPruneCandidates(snap.remaining, this.cfg.whitelist).length;
+    const actionable = this.actionable(snap.remaining).length;
     this.candidateCount = actionable;
     this.remaining = actionable;
     this.pendingCandidates = snap.remaining.length > 0 ? snap.remaining : null;

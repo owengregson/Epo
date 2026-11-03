@@ -29,7 +29,12 @@ import {
   type Rule,
   type RuleVerdict,
 } from '@/engine/rules';
+import type { ProtectionVerdict } from '@/shared/unfollow-protection';
 import type { FollowRecord } from '@/store/types';
+
+const CLEAR: ProtectionVerdict = { kind: 'clear' };
+const PROTECTED: ProtectionVerdict = { kind: 'protected', by: 'account', match: 'c1' };
+const PAUSED: ProtectionVerdict = { kind: 'paused', state: 'needs-review' };
 
 const GROWTH_ORDER = [
   'aborted',
@@ -109,7 +114,10 @@ const arbPrune: fc.Arbitrary<PruneFacts> = fc.record({
     { nil: null },
   ),
   followsUsNow: fc.boolean(),
-  whitelist: fc.constantFrom<readonly string[]>([], ['cand']),
+  protection: fc.constantFrom<ProtectionVerdict>(
+    { kind: 'clear' }, { kind: 'protected', by: 'account', match: 'c1' }, { kind: 'unknown', missing: 'bio' },
+    { kind: 'paused', state: 'needs-review' },
+  ),
   atDailyCap: fc.boolean(),
 });
 
@@ -424,14 +432,14 @@ describe('prune-run rules', () => {
         lastBlockedCause: null,
         failingEntryThreshold: 8,
       },
-      prune: { candidate: null, followsUsNow: false, whitelist: [], atDailyCap: false },
+      prune: { candidate: null, followsUsNow: false, protection: CLEAR, atDailyCap: false },
     } satisfies Facts),
     ...over,
   });
 
   test('the daily cap closes the mode before any candidate is considered', async () => {
     const claim = await decide(
-      base({ prune: { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, whitelist: [], atDailyCap: true } }),
+      base({ prune: { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, protection: CLEAR, atDailyCap: true } }),
       'prune-run',
     );
     expect(claim?.rule).toBe('prune-cap');
@@ -440,7 +448,7 @@ describe('prune-run rules', () => {
 
   test('an actionable candidate becomes the ONE unfollow effect', async () => {
     const claim = await decide(
-      base({ prune: { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, whitelist: [], atDailyCap: false } }),
+      base({ prune: { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, protection: CLEAR, atDailyCap: false } }),
       'prune-run',
     );
     expect(claim?.verdict).toEqual({
@@ -449,11 +457,12 @@ describe('prune-run rules', () => {
     });
   });
 
-  test('the live-graph guard and the whitelist both yield instead of acting', async () => {
+  test('P10: the live-graph guard, protection and a paused index all yield instead of acting', async () => {
     for (const prune of [
-      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: true, whitelist: [], atDailyCap: false },
-      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, whitelist: ['cand'], atDailyCap: false },
-      { candidate: { pk: 'c1', username: null }, followsUsNow: false, whitelist: [], atDailyCap: false },
+      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: true, protection: CLEAR, atDailyCap: false },
+      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, protection: PROTECTED, atDailyCap: false },
+      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, protection: PAUSED, atDailyCap: false },
+      { candidate: { pk: 'c1', username: null }, followsUsNow: false, protection: CLEAR, atDailyCap: false },
     ]) {
       expect((await decide(base({ prune }), 'prune-run'))?.verdict).toEqual({ do: 'yield' });
     }
