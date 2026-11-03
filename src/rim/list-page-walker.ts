@@ -166,7 +166,7 @@ export class ListPageWalker {
         logger.warn('rim.list-page-walker: sentinel non-ok, stopping walk', { pk, which, status });
         break;
       }
-      const permit = this.readBudget?.consume('list-page', args.readPurpose ?? 'reconciliation');
+      const permit = this.readBudget?.consume('list-page', args.readPurpose ?? 'reconciliation', 1, args.readUse);
       if (permit !== undefined && !permit.allowed) {
         reason = 'read-budget';
         retryAt = permit.resumeAt ?? undefined;
@@ -267,11 +267,9 @@ export class ListPageWalker {
       resumeCursor = parsed.cursor;
       this.onProgress?.('list-page-ingested');
       rows += parsed.observations.length;
-      lastPage = {
-        rows: parsed.observations.length,
-        hasMore: parsed.hasMore,
-        cursorPresent: parsed.cursor !== null,
-      };
+      lastPage = { rows: parsed.observations.length, hasMore: parsed.hasMore, cursorPresent: parsed.cursor !== null };
+      // The caller's stop, once this page's rows are written and before any pacing sleep.
+      if (args.stopAfterPage?.(parsed.observations) === true) { reason = 'caller-stop'; break; }
 
       const newThisPage = observed.size - sizeBefore;
       // The end-claim decision is pure (`list-walk-end.ts`); it is applied in

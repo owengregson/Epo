@@ -1,5 +1,6 @@
 import type { Sentinel } from '@/adapter/sentinel';
 import type { ReadPurpose } from '@/governors/read-budget';
+import type { ReadUse } from '@/kernel/plan/types';
 import type { Observation } from '@/store/types';
 
 export interface WalkArgs {
@@ -24,6 +25,10 @@ export interface WalkArgs {
   pageMaxMs?: number;
   /** Cooperative abort, checked at the top of every page. */
   shouldStop?: () => boolean;
+  /** True ends the walk (reason `caller-stop`) once this page's rows are written, before any pacing sleep. */
+  stopAfterPage?: (page: readonly Observation[]) => boolean;
+  /** What the walk's page reads are for: the `use` tag on each read debit. */
+  readUse?: ReadUse;
   /** Runaway page bound; defaults to `RIM.LIST_WALK_MAX_PAGES`. */
   maxPages?: number;
   /**

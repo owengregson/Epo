@@ -6,6 +6,9 @@
  * Layering: `src/kernel/**` imports nothing from the rest of `src/`.
  */
 
+/** What a read is for: the read allowance's `use` tag (the plan's read buckets). */
+export type ReadUse = 'verify' | 'reconcile' | 'explore' | 'check' | 'census' | 'catch-up';
+
 /** The rhythm/caution reference shape of the action gap at time-scale 1. */
 export interface GapShape {
   readonly medianMs: number;
