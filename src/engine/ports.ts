@@ -10,7 +10,6 @@
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
-import type { EffectReconciliationResult } from '../rim/effect-reconciliation';
 import type { AcquireEndReason } from '../rim/follower-acquisition';
 import type { Settings } from '../settings/settings';
 import type { KnowledgeStore } from '../store/knowledge-store';
@@ -204,7 +203,8 @@ export interface EngineDeps {
   reentry?: ReentrySupervisor;
   validateIdentity?: () => Promise<boolean>;
   onProgress?: (phase: string) => void;
-  reconcileEffects?: () => Promise<boolean | EffectReconciliationResult>;
+  /** The journal's step: settle the oldest due intent with one read (spec §9.8). */
+  settleJournal?: () => Promise<{ outcome: 'settled' | 'parked' | 'expired' | 'none' | 'aborted' | 'walled' }>;
   store: KnowledgeStore;
   clock: Clock;
   rate: EngineRate;

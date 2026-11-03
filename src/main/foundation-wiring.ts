@@ -26,7 +26,7 @@ import {
 } from '@/adapter/activity-reporter';
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import type { EngineStatus } from '@/engine/engine';
-import { journaledMutation } from '@/engine/journaled-mutation';
+import { journaledMutation, refusalReason } from '@/engine/journaled-mutation';
 import type { PruneCandidate, PruneStatus } from '@/engine/prune-engine';
 import { SystemClock } from '@/governors/clock';
 import type { CursorObserver } from '@/interaction/input-driver';
@@ -695,7 +695,7 @@ export class Foundation {
       if (outcome.status === 'ok' && !outcome.alreadyInState) graph.noteMutation();
       return outcome.status === 'ok' || outcome.status === 'simulated'
         ? { ok: true, username }
-        : { ok: false, username, reason: outcome.verdict?.kind ?? (outcome.status === 'blocked' ? 'blocked' : 'action-failed') };
+        : { ok: false, username, reason: refusalReason(outcome) };
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       logger.error('foundation.act: failed', { action, username, error: reason });

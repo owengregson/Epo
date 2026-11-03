@@ -1,12 +1,15 @@
 import type { Rule } from './rules';
 
-/** Knowledge recovery has its own read phase before admitting the daily action plan. */
-export const reconcileRule: Rule<'clock' | 'cadence'> = {
-  id: 'reconcile',
+/**
+ * One due journal intent settles per step (spec §9.8): after the safety prefix and pacing, so a
+ * settlement read happens only inside a session, and before the session's other work.
+ */
+export const journalRule: Rule<'clock' | 'cadence'> = {
+  id: 'journal',
   modes: ['growth'],
   needs: ['clock', 'cadence'],
-  decide: (f) => f.cadence.reconcile
-    ? { do: 'run', effect: { id: 'sweep-followback', now: f.clock.now } }
+  decide: (f) => f.cadence.journalDue
+    ? { do: 'run', effect: { id: 'settle-journal', now: f.clock.now } }
     : null,
 };
 
@@ -43,4 +46,3 @@ export const targetRule: Rule<'target' | 'action'> = {
     f.target.current === null && f.action.due === null && f.action.pruneCandidate === null
       ? { do: 'run', effect: { id: 'bootstrap-seed-target' } } : null,
 };
-

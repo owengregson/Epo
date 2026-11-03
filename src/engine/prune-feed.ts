@@ -4,6 +4,7 @@
  */
 
 import type { ProtectionVerdict } from '../shared/unfollow-protection';
+import { journalBlocks } from './journal';
 import type { EnginePacing } from './plan-port';
 import { decidePruneCandidate } from './prune-candidate';
 import type { PruneCandidate, PruneConfig, PruneEngineDeps } from './prune-types';
@@ -23,16 +24,22 @@ export interface PruneFeedContext {
 }
 
 /**
- * The next actionable unfollow, or null. Skips (consuming them) protected, followed-back-since and
- * no-username rows; null when the feed is halted, no fresh scan exists, the daily cap is hit, or
- * protection is paused (the feed yields to follows). The returned candidate is consumed on execute.
+ * The next actionable unfollow, or null (halted, no fresh scan, the cap hit, protection paused). Skips — consuming
+ * them — protected, followed-back and no-username rows; passes over, keeping them, accounts with an unsettled write.
  */
 export function nextFeedCandidate(f: PruneFeedContext, now: number): { pk: string; username: string } | null {
   if (f.feedHalted || !f.hasFreshScan() || f.atDailyCap(now)) return null;
   const pending = f.pendingCandidates;
   if (pending === null) return null;
-  while (pending.length > 0) {
-    const cand = pending[0];
+  const unsettled = f.deps.store.effectIntents.pending();
+  let i = 0;
+  while (i < pending.length) {
+    const cand = pending[i];
+    // No head-of-line (spec §9.8): the account waits for its journal, the feed moves on.
+    if (journalBlocks(cand.pk, unsettled)) {
+      i += 1;
+      continue;
+    }
     // The SAME pure decision the standalone run uses (`prune-candidate.ts`).
     const verdict = decidePruneCandidate({
       candidate: cand,
@@ -45,7 +52,7 @@ export function nextFeedCandidate(f: PruneFeedContext, now: number): { pk: strin
     // tracks the ACTIONABLE census (protected rows already excluded), so a
     // protected skip consumes the durable row WITHOUT spending an actionable
     // slot — decrementing here would zero the count while actionable candidates still exist.
-    pending.shift();
+    pending.splice(i, 1);
     if (verdict.reason === 'protected') {
       f.deps.store.consumePruneScanCandidate(cand.pk);
     } else {

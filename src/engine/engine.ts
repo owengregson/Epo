@@ -21,7 +21,7 @@ import { absurd } from './absurd';
 import { queuedCountFor } from './decisions';
 import { actChurn, actWovenUnfollow, type EngineActionContext, performAction } from './engine-actions';
 import { buildEngineFactSources } from './engine-facts';
-import { type EngineJournalContext, reconcileBeforeSweep } from './engine-journal-effects';
+import { type EngineJournalContext, followbackBeforeSweep, settleJournalStep } from './engine-journal-effects';
 import { completeFollowbackSweep, type EngineSweepContext } from './engine-sweep-effects';
 import {
   ENGINE_WAIT_CLASS,
@@ -44,7 +44,6 @@ import type {
   SweepCadence,
 } from './ports';
 import { selectWovenCandidate } from './prune-feed';
-import { ReconciliationRunner } from './reconciliation-runner';
 import { type FailureKind, type RecoveryIncident, RecoverySupervisor } from './recovery';
 import { healIncidentWindow } from './recovery-healer';
 import { decideProgram, type EffectRef, type RuleVerdict } from './rules';
@@ -92,7 +91,6 @@ type EngineEffectContext = EngineActionContext & EngineJournalContext & EngineSw
 export class Engine {
   private readonly health: RuntimeHealth;
   private refillSinceAction = false;
-  private readonly reconciliation: ReconciliationRunner;
   private readonly deps: EngineDeps & EngineTempo;
   /** The ONE wait gate: every Engine wait is a named `engine:*` entry here. */
   private readonly waits: WaitRunner<EngineWaitKey, EngineParkReason>;
@@ -196,7 +194,6 @@ export class Engine {
 
   constructor(deps: EngineDeps & EngineTempo) {
     this.deps = deps;
-    this.reconciliation = new ReconciliationRunner(deps);
     this.health = new RuntimeHealth(deps.store);
     const delays = deps.delays;
     this.installEntropy = deps.installEntropy;
@@ -280,7 +277,6 @@ export class Engine {
       pacer: this.pacer,
       unfollowFeed: this.unfollowFeed,
       actionsFailingHalt: ACTIONS_FAILING_HALT,
-      reconciliation: this.reconciliation,
       sweepCadence: this.sweepCadence,
       get actionDelayDeadline() { return engine.actionDelayDeadline; },
       set actionDelayDeadline(at) { engine.actionDelayDeadline = at; },
@@ -294,7 +290,6 @@ export class Engine {
       enterRecovery: (token, kind) => this.enterRecovery(token, kind),
       noteProgress: (phase) => this.noteProgress(phase),
       healIncidentWindow: (incident) => this.healIncidentWindow(incident),
-      halt: (reason) => this.halt(reason),
       pacingSleep: () => this.pacingSleep(),
     };
   }
@@ -573,8 +568,10 @@ export class Engine {
         return this.enterRecovery(token, effect.kind);
       case 'bootstrap-seed-target':
         return this.targets.bootstrapSeedTarget();
+      case 'settle-journal':
+        return settleJournalStep(this.ctx, token);
       case 'sweep-followback':
-        return (await reconcileBeforeSweep(this.ctx, effect.now, token)) ?? completeFollowbackSweep(this.ctx);
+        return (await followbackBeforeSweep(this.ctx, token)) ?? completeFollowbackSweep(this.ctx);
       case 'refill-pool': {
         this.refillSinceAction = true;
         const result = await this.targets.refillPool(effect.target, token);
@@ -613,7 +610,7 @@ export class Engine {
       actionsFailingHalt: ACTIONS_FAILING_HALT,
       yieldRefill: () => this.refillSinceAction,
       rotationReason: () => this.deps.frontier ? this.targets.rotationReason() : null,
-      requiresReconciliation: (now) => this.deps.reentry?.requiresReconciliation(now) ?? false,
+      settlesJournal: this.deps.settleJournal !== undefined,
       refillAvailableAt: () => this.targets.refillAvailableAt(),
       settings: () => this.settings,
       aborted: () => this.superseded(this.stepToken),

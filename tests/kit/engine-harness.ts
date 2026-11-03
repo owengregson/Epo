@@ -15,11 +15,7 @@
 
 import type { SentinelStatus } from '@/adapter/sentinel';
 import type { AdvanceResult } from '@/engine/chain-controller';
-import {
-  CHURN_DEFAULTS,
-  type ChurnConfig,
-  ChurnScheduler,
-} from '@/engine/churn-scheduler';
+import { type ChurnConfig, ChurnScheduler } from '@/engine/churn-scheduler';
 import {
   Engine,
   type EngineAcquisition,
@@ -52,6 +48,7 @@ import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { AccountFields, FollowRecord } from '@/store/types';
 import { DelayManager, type DelayManagerDeps } from '@/timing/delay-manager';
+import { DEFAULT_CONFIGS } from './configs';
 import { FakeActions, FakePruneActions, NO_UNFOLLOW_FEED } from './harness-journal';
 import { memorySweepCadence } from './harness-plan';
 import { FakeFollowback } from './harness-reopen';
@@ -612,7 +609,7 @@ export const makeChurnHarness = (opts?: {
     rate,
     actions,
     ownPk: opts?.ownPk,
-    cfg: { ...CHURN_DEFAULTS, ...opts?.cfg },
+    cfg: { ...DEFAULT_CONFIGS.churn, ...opts?.cfg },
   });
   return { store, clock, actions, sched };
 };

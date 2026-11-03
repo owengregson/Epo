@@ -1,7 +1,8 @@
-import { CHURN_DEFAULTS, ChurnScheduler } from '@/engine/churn-scheduler';
+import { ChurnScheduler } from '@/engine/churn-scheduler';
 import { Scanner } from '@/engine/scanner';
 import { FakeClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
+import { DEFAULT_CONFIGS } from '../kit/configs';
 import { openTestStore } from '../kit/store';
 
 test('E2E: Scanner ranking → persisted score → nextDue picks the best candidate', async () => {
@@ -34,7 +35,7 @@ test('E2E: Scanner ranking → persisted score → nextDue picks the best candid
       jitterPercent: 0, activeHoursStart: 0, activeHoursEnd: 24,
     }),
     actions: { follow: async () => ({ status: 'ok' as const }), unfollow: async () => ({ status: 'ok' as const }) },
-    cfg: CHURN_DEFAULTS,
+    cfg: DEFAULT_CONFIGS.churn,
   });
 
   expect(sched.nextDue(clock.now())!.accountPk).toBe('zzz');

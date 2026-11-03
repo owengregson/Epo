@@ -179,10 +179,11 @@ describe('projections from DEFAULT_SETTINGS', () => {
     });
   });
 
-  test('toChurnConfig converts days → ms (4 days → 345600000 ms); the hold belongs to followback', () => {
+  test('toChurnConfig converts days → ms (4 days → 345600000 ms); a click re-hold earns the follow-back hold', () => {
     // No bio list here: protection is the predicate's, on every path (spec §7); held mutuals rotate.
     expect(toChurnConfig({ ...DEFAULT_SETTINGS, pruneBioFilterWords: ['cafe'] })).toEqual({
       maxWaitForFollowbackMs: 345_600_000,
+      holdAfterFollowbackMs: toFollowbackConfig(DEFAULT_SETTINGS).holdAfterFollowbackMs,
       maxRetries: 3,
       rotateMutuals: true,
     });

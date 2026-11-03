@@ -3,12 +3,13 @@
  * P3 (the unfollow itself) and P4 (a healer requeue). Selection judges stored facts before any
  * evidence logic: protected → kept, paused → no unfollow while follows continue.
  */
-import { CHURN_DEFAULTS, type ChurnConfig, ChurnScheduler } from '@/engine/churn-scheduler';
+import { type ChurnConfig, ChurnScheduler } from '@/engine/churn-scheduler';
 import { FakeClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
 import type { ClickVerdict } from '@/shared/click-verdict';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
+import { DEFAULT_CONFIGS } from '../kit/configs';
 import { rec as baseRecord, FakeActions, kitStore, T0 } from '../kit/engine-harness';
 import { ProtectionRig } from '../kit/harness-journal';
 
@@ -25,7 +26,7 @@ function build(cfg: Partial<ChurnConfig> = {}) {
   const rig = new ProtectionRig(clock);
   const synced: number[] = [];
   const sched = new ChurnScheduler({ store, clock, rate, actions, ownPk: OWN,
-    cfg: { ...CHURN_DEFAULTS, maxWaitForFollowbackMs: WAIT, ...cfg }, protection: rig.port,
+    cfg: { ...DEFAULT_CONFIGS.churn, maxWaitForFollowbackMs: WAIT, ...cfg }, protection: rig.port,
     reconciler: { sync: (now) => { synced.push(now); } } });
   return { store, clock, actions, rig, sched, synced };
 }
@@ -201,6 +202,6 @@ test('the kept records are re-judged before every selection pass and on a settin
   const { clock, sched, synced } = build();
   sched.advanceTimers();
   clock.advance(7);
-  sched.applyConfig({ ...CHURN_DEFAULTS, maxWaitForFollowbackMs: WAIT });
+  sched.applyConfig({ ...DEFAULT_CONFIGS.churn, maxWaitForFollowbackMs: WAIT });
   expect(synced).toEqual([T0, T0 + 7]);
 });

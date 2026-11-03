@@ -5,6 +5,7 @@
 
 import { ChurnScheduler } from '@/engine/churn-scheduler';
 import type { FollowbackWatcher } from '@/engine/followback-watcher';
+import { accountJournalGate, planDaySlots } from '@/engine/journal';
 import { createProtectionPort, type ProtectionPort } from '@/engine/protection-port';
 import { ProtectionReconciler } from '@/engine/protection-reconciler';
 import type { PruneEngineDeps } from '@/engine/prune-engine';
@@ -17,7 +18,9 @@ import type { RateGovernor } from '@/governors/rate-governor';
 import type { ReadBudget } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import { settleNextIntent } from '@/rim/journal-settlement';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
+import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import { type Settings, toChurnConfig, toPruneConfig, toScorerConfig } from '@/settings/settings';
 import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -26,10 +29,14 @@ import { createMutationPolicy } from './mutation-policy';
 
 type MutationPolicy = ReturnType<typeof createMutationPolicy>;
 
+/** The one plan-day boundary of the unfollow wiring: local midnight until the plan's own clock is swapped in here. */
+function planDayClockOf(clock: Clock): PlanDayClock {
+  return calendarPlanDayClock({ now: () => clock.now() });
+}
+
 /** The protection port over the settings service's live index, on the one plan-day boundary (spec §4.4, §7). */
 export function wireProtection(d: Pick<GraphBuildDeps, 'protection'>, clock: Clock): { port: ProtectionPort; dayClock: PlanDayClock } {
-  // Local-midnight plan-days until the plan's own clock is swapped in here.
-  const dayClock = calendarPlanDayClock({ now: () => clock.now() });
+  const dayClock = planDayClockOf(clock);
   return { port: createProtectionPort({ index: () => d.protection.index(), clock, dayClock }), dayClock };
 }
 
@@ -49,12 +56,24 @@ export interface MutationPolicyWiring {
 /** The click-boundary policy every writer passes (identity, budget, current relationship). */
 export function wireMutationPolicy(d: GraphBuildDeps, w: MutationPolicyWiring): MutationPolicy {
   const { store, ownPk, ownUsername, clock, rate, reentry, readBudget } = w;
-  const driverSignal = d.driverSignal;
-  const policy = createMutationPolicy({ store, ownPk, ownUsername, clock, rate, reentry, readBudget,
+  const dayClock = planDayClockOf(clock);
+  return createMutationPolicy({ store, ownPk, ownUsername, clock, rate, reentry, readBudget,
     profiles: w.profiles, followback: w.followback, settings: d.resolveSettings,
     protection: () => d.protection.index(),
-    signal: driverSignal, validateIdentity: d.validateIdentity, onProgress: d.onProgress });
-  return policy;
+    // The per-account journal (spec §9.8): no global block; an account's own unsettled write blocks only it.
+    journal: accountJournalGate(() => store.pendingEffectIntents()),
+    parkSlots: () => planDaySlots(dayClock, clock.now()),
+    signal: d.driverSignal, validateIdentity: d.validateIdentity, onProgress: d.onProgress });
+}
+
+/** The engine's journal step: the oldest due intent settled with one read, on the plan-day slots (spec §9.8). */
+export function journalSettler(
+  d: Pick<GraphBuildDeps, 'resolveSettings' | 'driverSignal'>,
+  w: { store: KnowledgeStore; profiles: ProfileVisitor; ownPk: string; clock: Clock; readBudget: ReadBudget },
+): () => ReturnType<typeof settleNextIntent> {
+  const dayClock = planDayClockOf(w.clock);
+  return () => settleNextIntent({ ...w, slots: () => planDaySlots(dayClock, w.clock.now()),
+    maxRetries: () => d.resolveSettings().maxRetries, signal: d.driverSignal });
 }
 
 /** What the churn scheduler is built from (the graph's shared pieces). */
@@ -87,9 +106,12 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
     cfg: toChurnConfig(settings),
     protection: port,
     reconciler,
+    parkSlots: () => planDaySlots(dayClock, clock.now()),
   });
-  // The graph-open pass: rules that changed, or a plan-day that rolled, while Epo was closed.
+  // The graph-open pass: rules that changed, or a plan-day that rolled, while Epo was closed; and the writes an
+  // earlier run prepared but never dispatched, cancelled with no read (spec §9.8).
   reconciler.sync(clock.now());
+  store.effectIntents.cancelInterruptedPrepared(clock.now());
   d.protection.setCapabilities({ protectionEverywhere: true });
   return churn;
 }

@@ -530,7 +530,10 @@ test('an uncertain dispatched follow stays durable and cannot be replayed before
   actions.followStatus = undefined;
   actions.followUnverifiedClick = undefined;
   actions.followAlreadyInState = true;
-  await expect(sched.execute(sched.nextDue()!)).resolves.toBe('blocked');
+  // No head-of-line (spec §9.8): the blocked record is passed over, and a direct attempt is a journal deferral.
+  expect(sched.nextDue()).toBeNull();
+  await expect(sched.execute(store.getFollowRecord('uv')!)).resolves.toBe('blocked');
+  expect(sched.lastActionOutcome()?.verdict).toEqual({ kind: 'deferred', reason: 'journal', until: null });
   expect(actions.followCalls).toHaveLength(1);
   expect(store.getFollowRecord('uv')!.state).toBe('queued');
   // Fresh read-only recovery settles ownership, without inventing an exact success time.
@@ -564,7 +567,8 @@ test('uncertain writes reserve budget and never become a new failed attempt with
   actions.followUnverifiedClick = true;
   await sched.execute(sched.nextDue()!);
   actions.followStatus = 'failed';
-  await sched.execute(sched.nextDue()!);
+  expect(sched.nextDue()).toBeNull();
+  await sched.execute(store.getFollowRecord('fm')!);
   expect(actions.followCalls).toHaveLength(1);
   expect(store.getFollowRecord('fm')!.retryCount).toBe(0);
   expect(store.additionalMutationCountSince(0)).toBe(1);

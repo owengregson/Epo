@@ -34,7 +34,11 @@ export function toV1Settings(e: EffectiveSettings, doc: SettingsDocV2, bk: V1Boo
     sweepLastRunAt: bk?.sweepLastRunAt ?? null, sweepIntervalFactor: bk?.sweepIntervalFactor ?? DEFAULT_SETTINGS.sweepIntervalFactor,
     autoAcceptFollowRequests: e.autoAcceptFollowRequests, dailyPlanSize: e.dailyPlanSize,
     lowWaterCandidates: e.lowWaterCandidates, minFollowBackRate: e.minFollowBackRate, minPoolSize: e.minPoolSize,
-    dryRun: e.dryRun, pruneWhitelist: [...e.pruneWhitelist], pruneBioFilterWords: [...e.pruneBioFilterWords],
+    dryRun: e.dryRun,
+    // The lists come from the document (the effective record no longer carries them). Today's whitelist matches a
+    // handle or an all-digit pk; a linked entry contributes both.
+    pruneWhitelist: doc.protection.accounts.flatMap((a) => (a.pk !== null && a.pk !== a.username ? [a.username, a.pk] : [a.username])),
+    pruneBioFilterWords: doc.protection.words.map((w) => w.text),
     pruneDailyLimit: e.pruneDailyLimit, pruneScheduleDays: e.pruneScheduleDays, pruneLastRunAt: bk?.pruneLastRunAt ?? null,
     pruneScanMinSeconds: e.pruneScanMinSeconds, pruneScanMaxSeconds: e.pruneScanMaxSeconds, pacingModel: e.pacingModel,
     dailyVolumeVariancePct: e.dailyVolumeVariancePct, restDayChancePct: e.restDayChancePct,

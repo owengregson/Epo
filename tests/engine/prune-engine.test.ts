@@ -1047,6 +1047,19 @@ describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {
     expect(h.engine.nextCandidate(h.clock.now())).toBeNull(); // suspended after 3 blocks
   });
 
+  test('a candidate with its own unsettled write is passed over, kept, and offered once it settles', async () => {
+    const h = build({ following: ['a', 'b'], followers: [] });
+    await h.engine.scan();
+    const first = h.engine.nextCandidate(h.clock.now()) as { pk: string; username: string };
+    const intent = h.store.beginEffectIntent({ accountPk: first.pk, username: first.username, action: 'unfollow',
+      channel: 'manual', at: h.clock.now() });
+    h.store.markEffectUncertain(intent.id, h.clock.now());
+    expect(h.engine.nextCandidate(h.clock.now())?.pk).not.toBe(first.pk);
+    expect(h.store.getPruneScan()?.remaining.map((x) => x.pk)).toContain(first.pk);
+    h.store.settleEffectIntent(intent.id, { at: h.clock.now(), result: 'cancelled' });
+    expect(h.engine.nextCandidate(h.clock.now())?.pk).toBe(first.pk);
+  });
+
   test('a rate-limited woven unfollow suspends the feed at once (candidate kept)', async () => {
     const h = build({ following: ['a', 'b', 'c'], followers: [] });
     await h.engine.scan();

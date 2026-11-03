@@ -113,7 +113,8 @@ export interface OverdueCadence {
 /** Due-by-timestamp work. */
 export interface CadenceFacts {
   sweepDue: boolean;
-  reconcile?: boolean;
+  /** A journal intent is due for its settlement read (spec §9.8). */
+  journalDue?: boolean;
   /**
    * Cadences whose deadline has passed. SEAM (wave B): fed by `chronos.due(now)`
    * before the first tick, so work that came due while the app was closed runs

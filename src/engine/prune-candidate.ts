@@ -4,6 +4,7 @@
  * consumes: a protected skip spends no actionable slot; a followed-back or no-username skip visits.
  */
 
+import type { ClickVerdict } from '../shared/click-verdict';
 import type { ProtectedBy, ProtectionVerdict } from '../shared/unfollow-protection';
 
 /** A census row as both prune paths hold it. */
@@ -53,6 +54,27 @@ export type AnnotatedCandidate<T extends PruneSubject> = T & {
 /** Annotate one row with its protection verdict (spec §7.8: "Show protected (N)"). */
 export function annotateCandidate<T extends PruneSubject>(c: T, v: ProtectionVerdict): AnnotatedCandidate<T> {
   return { ...c, protectedBy: v.kind === 'protected' ? v.by : null, bioUnread: v.kind === 'unknown' && v.missing === 'bio' };
+}
+
+/** A run's answer to a refusal before the visit (spec §9.7): serve its instant, pass the candidate over, or end. */
+export type PruneDeferral =
+  | { readonly do: 'wait'; readonly until: number }
+  | { readonly do: 'pass' }
+  | { readonly do: 'end'; readonly reason: string };
+
+/** Refusals that clear by themselves at a known instant: served exactly, then the same candidate. */
+const WAIT_OUT: ReadonlySet<string> = new Set(['deadline', 'hourly-cap', 'probation']);
+/** Refusals no wait inside this run clears: the run ends with the reason, every unvisited candidate runnable. */
+const END_RUN: ReadonlySet<string> = new Set(['day-done', 'ceiling', 'read-budget', 'session-closed', 'surface-paused',
+  'kind-spent', 'deferred-by-boost', 'quiet-hours', 'day-off', 'unconfirmed']);
+
+/** How a run treats a refusal judged before the visit; null for any other outcome (the blocked park applies). */
+export function pruneDeferral(v: ClickVerdict | undefined): PruneDeferral | null {
+  if (v?.kind === 'protection-paused') return { do: 'end', reason: 'protection-paused' };
+  if (v?.kind !== 'deferred') return null;
+  if (v.reason === 'journal') return { do: 'pass' };
+  if (WAIT_OUT.has(v.reason) && v.until !== null) return { do: 'wait', until: v.until };
+  return END_RUN.has(v.reason) || WAIT_OUT.has(v.reason) ? { do: 'end', reason: v.reason } : null;
 }
 
 /**
