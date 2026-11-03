@@ -3,7 +3,7 @@
  * merge #18): the build hands the plan's day clock to the unfollow wiring (protection, the policy's and the
  * journal's park slots, churn and its reconciler, the prune's protection), the follow-back watcher, the
  * surface wiring and the live sources; the seed check reads the open graph's clock. The calendar clock
- * survives only as a default no production path takes. The resume target peeks through the engine's frontier.
+ * survives only as a default a unit kit needs. The resume target peeks through the engine's frontier.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -71,7 +71,7 @@ test("a built graph hands the plan's day clock to every day-keyed consumer", asy
     prune: handed(pruneUnfollowDeps)[1].dayClock,
     followback: handed(wireFollowback)[1].dayClock,
     surface: handed(wireSurface)[0].day,
-    live: handed(liveSources)[2]?.planDay,
+    live: handed(liveSources)[2].planDay,
   };
   expect(Object.entries(clocks).filter(([, clock]) => clock !== day).map(([consumer]) => consumer)).toEqual([]);
 });
@@ -93,7 +93,7 @@ test("the seed check's freshness counts in the open graph's plan-days", async ()
   expect(window).toHaveBeenCalled();
 });
 
-test('the calendar clock is left only as a default no production path takes', () => {
+test('the calendar clock is left only as a default a unit kit needs, and no production path takes', () => {
   const root = path.join(__dirname, '../../src');
   const users: string[] = [];
   const walk = (dir: string): void => {
@@ -110,8 +110,6 @@ test('the calendar clock is left only as a default no production path takes', ()
     'governors/plan-day-clock.ts', // the definition
     'governors/rate-governor.ts', // no plan: the unit kits and the livetest rig; plan-wiring passes the plan's
     'main/modules/seed-check.ts', // planDay absent: the settings-facts kit; the Foundation passes the open graph's
-    'main/services/live-wiring.ts', // planDay absent: no caller; the Foundation passes the graph's
     'main/services/prepare-mutation.ts', // parkSlots absent: the mutation-policy kit; unfollow-wiring passes them
-    'main/services/surface-wiring.ts', // day absent: no caller; the graph build passes the plan's
   ]);
 });
