@@ -16,6 +16,7 @@ import { app, nativeImage, powerMonitor, powerSaveBlocker } from 'electron';
 import { bootstrapApp, ensureSingleInstance } from '@/main/bootstrap';
 import { type LaunchHandles, launchWindow } from '@/main/launch';
 import { RuntimePower } from '@/main/runtime-power';
+import { applyNetworkBlock } from '@/main/services/ig-session';
 import { RuntimeCoordinator } from '@/main/services/runtime-coordinator';
 import { RuntimeLog } from '@/main/services/runtime-log';
 import { terminateFailedStartup } from '@/main/services/startup-failure';
@@ -79,6 +80,8 @@ app.whenReady().then(async () => {
     resume: async () => live.foundation?.resumeFromSleep(),
   });
   runtimePower.start();
+  // An isolated launch (EPO_BLOCK_NETWORK=1) takes the IG partition offline before any tab exists.
+  await applyNetworkBlock();
   await launchWindow({ handles: live });
 
   // NB: no `activate` → launchWindow() handler. `window-all-closed` always

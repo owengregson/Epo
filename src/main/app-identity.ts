@@ -27,10 +27,28 @@ import * as logger from '@/utils/logger';
  */
 const LEGACY_DB_FILE = 'epo.db';
 
-/** Set the app's name and move pre-rename dev data to its new home. */
-export function claimAppIdentity(): void {
+/** Set the app's name and move pre-rename dev data to its new home (skipped for an isolated profile). */
+export function claimAppIdentity(env: NodeJS.ProcessEnv = process.env): void {
+  const isolated = claimIsolatedProfile(env);
   app.setName('Epo');
-  migrateLegacyUserData();
+  if (isolated === null) migrateLegacyUserData();
+}
+
+/**
+ * The isolated-profile launch (`EPO_USER_DATA_DIR=<dir>`): store, settings, logs and
+ * the Instagram partition all live in `dir`, so the real `<appData>/Epo` is never
+ * opened. Claimed before the name, which would otherwise derive the default path.
+ */
+function claimIsolatedProfile(env: NodeJS.ProcessEnv): string | null {
+  const raw = env.EPO_USER_DATA_DIR?.trim();
+  if (!raw) return null;
+  const dir = path.resolve(raw);
+  fs.mkdirSync(dir, { recursive: true });
+  app.setPath('userData', dir);
+  // Partitions live under sessionData, which does not follow a userData override.
+  app.setPath('sessionData', dir);
+  logger.warn('app-identity: isolated profile in use', { userData: dir });
+  return dir;
 }
 
 /**

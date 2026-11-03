@@ -23,6 +23,21 @@ export interface IgSessionPort {
   clear(): Promise<void>;
 }
 
+/** An offline launch's proxy: TEST-NET-1 (RFC 5737), an address that is never routed. */
+const UNROUTABLE_PROXY = '192.0.2.1:9';
+
+/**
+ * Take the Instagram partition offline when the launch asks for it
+ * (`EPO_BLOCK_NETWORK=1`, the isolated profile). Call after ready and before
+ * any tab exists; true when the block is in place.
+ */
+export async function applyNetworkBlock(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  if (env.EPO_BLOCK_NETWORK !== '1') return false;
+  await session.fromPartition(IG_PARTITION).setProxy({ mode: 'fixed_servers', proxyRules: UNROUTABLE_PROXY });
+  logger.warn('ig-session: network blocked for this launch (EPO_BLOCK_NETWORK=1)');
+  return true;
+}
+
 /** The real, Electron-backed session port (main process only). */
 export function electronIgSession(): IgSessionPort {
   return {
