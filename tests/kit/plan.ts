@@ -16,7 +16,8 @@ import {
   weeklyWeights,
 } from '@/kernel/derive';
 import { EMPIRICAL } from '@/kernel/fundamentals';
-import type { CircadianShape, PlanDemand, PlanIntent } from '@/kernel/plan/types';
+import { planDayWindow, quietMinute } from '@/kernel/plan/circadian';
+import type { CircadianShape, DrawInput, PlanDayWindow, PlanDemand, PlanIntent } from '@/kernel/plan/types';
 import { POLICY, SCALES } from '@/kernel/policy';
 import { MS_PER_DAY, MS_PER_SECOND } from '@/kernel/units';
 
@@ -81,6 +82,28 @@ export function emptyDemand(over: Partial<PlanDemand> = {}): PlanDemand {
     acceptsRecent: 0,
     ownHeader: { followers: null, following: null },
     census: { lastCompleteAt: null, rowsPerPage: null },
+    ...over,
+  };
+}
+
+/** The plan-day window holding `at` for an intent at a phase (the intent's quiet minute). */
+export function windowFor(at: number, intent: PlanIntent = testIntent(), phase = 0): PlanDayWindow {
+  return planDayWindow(at, quietMinute(intent.shape, phase, intent.quietHours));
+}
+
+/** A draw input for the plan-day holding `at`: first opened at its start unless overridden. */
+export function drawInput(at: number, over: Partial<DrawInput> = {}): DrawInput {
+  const intent = over.intent ?? testIntent();
+  const window = over.window ?? windowFor(at, intent, over.phaseOffsetHours ?? 0);
+  return {
+    installEntropy: 0x5eed,
+    window,
+    intent,
+    demand: emptyDemand(),
+    phaseOffsetHours: 0,
+    firstOpenAt: window.startsAt,
+    boost: null,
+    runIntent: 'running',
     ...over,
   };
 }

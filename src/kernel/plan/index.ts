@@ -4,6 +4,7 @@
  */
 export * from './circadian';
 export * from './gap';
+export * from './layout';
 export * from './policy';
 export * from './seed';
 export * from './tempo';
