@@ -5,9 +5,10 @@ import {
   FollowbackWatcher,
 } from '@/engine/followback-watcher';
 import { FakeClock } from '@/governors/clock';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
 import { setLevel } from '@/utils/logger';
+import { openTestStore } from '../kit/store';
 
 beforeAll(() => setLevel('error'));
 
@@ -35,7 +36,7 @@ const follow = (pk: string, atMs: number | null = null): FollowbackEvent => ({
 let store: KnowledgeStore;
 let clock: FakeClock;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
   clock = new FakeClock(NOW);
 });
 afterEach(() => store.close());

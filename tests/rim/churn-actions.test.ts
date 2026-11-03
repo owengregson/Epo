@@ -8,9 +8,10 @@ import {
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { FakeClock } from '@/governors/clock';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { err, ok, type Result } from '@/utils/result';
 import { FakeSentinel } from '../kit/fakes';
+import { openTestStore } from '../kit/store';
 
 /** A fake action-actor recording calls and returning a scripted Result. */
 class FakeActionActor {
@@ -34,7 +35,7 @@ const clock = new FakeClock(3_000_000);
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 

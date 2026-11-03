@@ -37,7 +37,7 @@ function seedJournal(s: KnowledgeStore, t: number): void {
 }
 
 test('the plan-state key round-trips raw, and null clears it', () => {
-  withStore((s) => {
+  return withStore((s) => {
     expect(s.getPlanState()).toBeNull();
     s.setPlanState('{"v":1}');
     expect(s.getPlanState()).toBe('{"v":1}');
@@ -54,7 +54,7 @@ test('the new meta keys name their rows exactly once', () => {
 });
 
 test('tallySince over the ledger union equals the governor actionsToday on journal fixtures', () => {
-  withStore((s) => {
+  return withStore((s) => {
     const clock = new FakeClock(NOON);
     const g = new RateGovernor(s, clock, cfg);
     seedJournal(s, NOON);
@@ -66,7 +66,7 @@ test('tallySince over the ledger union equals the governor actionsToday on journ
 });
 
 test('recentMutationTimes lists the same writes, oldest first', () => {
-  withStore((s) => {
+  return withStore((s) => {
     seedJournal(s, NOON);
     const since = NOON - 3_600_000;
     const times = s.recentMutationTimes(since);
@@ -77,7 +77,7 @@ test('recentMutationTimes lists the same writes, oldest first', () => {
 });
 
 test('the facade exposes the journal, record and new repo skeletons as public fields', () => {
-  withStore((s) => {
+  return withStore((s) => {
     expect(s.followRecords).toBeDefined();
     expect(s.effectIntents).toBeDefined();
     expect([s.reopen, s.feed, s.surface, s.protectionFacts, s.growth].every(Boolean)).toBe(true);

@@ -6,16 +6,17 @@ import { matureYield } from '@/engine/source-quality';
 import { FakeClock } from '@/governors/clock';
 import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
 import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
 import { makeEngineHarness } from '../kit/engine-harness';
+import { openTestStore } from '../kit/store';
 
 let store: KnowledgeStore;
 const now = 20 * POLICY.endedRevisitMs;
 let clock: FakeClock;
 let frontier: SourceFrontier;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
   clock = new FakeClock(now);
   frontier = new SourceFrontier({ store, clock });
 });

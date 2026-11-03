@@ -1,20 +1,21 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { setLevel } from '@/utils/logger';
+import { openTestStore } from '../kit/store';
 
 beforeAll(() => setLevel('error'));
 const begin = (s: KnowledgeStore) => s.beginEffectIntent({ accountPk: 'a', username: 'alice', action: 'follow', channel: 'growth', at: 100 });
 
 test('dispatch survives close/reopen and atomic settlement is idempotent', () => {
   const dir = mkdtempSync(join(tmpdir(), 'epo-effects-'));
-  let s = new KnowledgeStore(join(dir, 'store.db'));
+  let s = openTestStore(join(dir, 'store.db'));
   try {
     const effect = begin(s);
     s.markEffectDispatched(effect.id, 120);
     s.close();
-    s = new KnowledgeStore(join(dir, 'store.db'));
+    s = openTestStore(join(dir, 'store.db'));
     expect(s.pendingEffectIntents()[0]).toMatchObject({ id: effect.id, state: 'dispatched', dispatchedAt: 120 });
     expect(s.additionalMutationCountSince(110)).toBe(1);
     const outcome = { at: 130, result: 'ok' as const, ledger: 'growth' as const,
@@ -33,7 +34,7 @@ test('dispatch survives close/reopen and atomic settlement is idempotent', () =>
 });
 
 test('a failure between record and edge write rolls back the entire settlement and emits nothing', () => {
-  const s = new KnowledgeStore(':memory:');
+  const s = openTestStore(':memory:');
   try {
     const effect = begin(s);
     s.markEffectDispatched(effect.id, 110);
@@ -50,7 +51,7 @@ test('a failure between record and edge write rolls back the entire settlement a
 });
 
 test('acceptance and uncertain reconciled effects each consume exactly one additional budget slot', () => {
-  const s = new KnowledgeStore(':memory:');
+  const s = openTestStore(':memory:');
   try {
     const accept = s.beginEffectIntent({ accountPk: 'r', username: 'requester', action: 'accept-request', channel: 'accept-request', at: 100 });
     s.markEffectDispatched(accept.id, 110);
@@ -64,7 +65,7 @@ test('acceptance and uncertain reconciled effects each consume exactly one addit
 });
 
 test('retention removes only old settled intent detail and preserves unresolved intents and outcome evidence', () => {
-  const s = new KnowledgeStore(':memory:');
+  const s = openTestStore(':memory:');
   const now = Date.now();
   const old = now - 100 * 86_400_000;
   try {

@@ -166,6 +166,19 @@ export interface EffectIntent {
   nextAttemptAt: number | null;
 }
 
+/**
+ * The kernel bounds the store applies by itself, injected through `KnowledgeStore`
+ * options (main passes the kernel's `STORE_POLICY`); the store never imports the kernel.
+ */
+export interface StorePolicy {
+  /** Observations, username history and settled intent detail older than this go at open. */
+  readonly retentionMs: number;
+  /** The span ring's size, inline-event cap, trim stride and default listing size. */
+  readonly spans: {
+    readonly ringRows: number; readonly inlineEvents: number; readonly trimEvery: number; readonly listLimit: number;
+  };
+}
+
 /** The write budget spent since a moment, by kind and by who asked for it. */
 export interface MutationTally {
   all: number; auto: number; manual: number; follow: number; unfollow: number; accept: number;

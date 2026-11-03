@@ -13,10 +13,11 @@ import { FakeClock } from '@/governors/clock';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
 import { toVeilInfo } from '@/shared/live-op';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RECOVERY } from '@/timing/config';
 import { setLevel } from '@/utils/logger';
 import { FakeSentinel } from '../kit/fakes';
+import { openTestStore } from '../kit/store';
 
 beforeAll(() => setLevel('error'));
 
@@ -42,7 +43,7 @@ const noSleep = async (): Promise<void> => {};
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 

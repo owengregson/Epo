@@ -2,10 +2,10 @@ import { CHURN_DEFAULTS, ChurnScheduler } from '@/engine/churn-scheduler';
 import { Scanner } from '@/engine/scanner';
 import { FakeClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import { openTestStore } from '../kit/store';
 
 test('E2E: Scanner ranking → persisted score → nextDue picks the best candidate', async () => {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   const clock = new FakeClock(1_000_000);
   store.setOwnPk('me');
 

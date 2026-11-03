@@ -7,13 +7,14 @@ import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeActor, FakeSentinel, FakeTab, followersBody } from '../kit/fakes';
 import { readLimits } from '../kit/read-limits';
+import { openTestStore } from '../kit/store';
 
 let store: KnowledgeStore;
 let clock: FakeClock;
-beforeEach(() => { store = new KnowledgeStore(':memory:'); clock = new FakeClock(1_000_000); });
+beforeEach(() => { store = openTestStore(':memory:'); clock = new FakeClock(1_000_000); });
 afterEach(() => store.close());
 
 test('read reservations survive a restart and expire only after their rolling window', () => {

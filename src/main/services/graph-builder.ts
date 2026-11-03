@@ -13,10 +13,7 @@ import * as path from 'node:path';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { ChainController, type TargetDiscovery } from '@/engine/chain-controller';
-import {
-  createEngine,
-  type EngineUnfollowFeed,
-} from '@/engine/engine';
+import { createEngine, type EngineUnfollowFeed } from '@/engine/engine';
 import {
   createPruneEngine,
   type PruneEngine,
@@ -28,6 +25,7 @@ import { Scanner } from '@/engine/scanner';
 import { SourceFrontier } from '@/engine/source-frontier';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
+import { STORE_POLICY } from '@/kernel/store-policy';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { reconcileEffects } from '@/rim/effect-reconciliation';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
@@ -65,7 +63,7 @@ export function buildGraph(
   ownUsername: string | undefined,
   d: GraphBuildDeps,
 ): BuiltGraph {
-  const store = new KnowledgeStore(path.join(d.userDataDir, d.dbFile));
+  const store = new KnowledgeStore(path.join(d.userDataDir, d.dbFile), { policy: STORE_POLICY });
   // The store's reconciliation sink + already-following candidate exclusion
   // both anchor on our own pk.
   store.setOwnPk(ownPk);

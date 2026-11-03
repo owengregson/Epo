@@ -14,10 +14,11 @@ import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { ReconciliationRunner } from '@/engine/reconciliation-runner';
 import { ReentrySupervisor } from '@/engine/reentry';
 import { FakeClock } from '@/governors/clock';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
 import { setLevel } from '@/utils/logger';
 import { makeEngineHarness } from '../kit/engine-harness';
+import { openTestStore } from '../kit/store';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -26,7 +27,7 @@ let store: KnowledgeStore;
 let clock: FakeClock;
 beforeEach(() => {
   setLevel('error');
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
   store.setOwnPk('me');
   clock = new FakeClock(START);
 });

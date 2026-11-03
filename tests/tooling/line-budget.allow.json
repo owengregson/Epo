@@ -27,7 +27,7 @@
     },
     {
       "file": "src/livetest/steps.ts",
-      "lines": 731
+      "lines": 727
     },
     {
       "file": "src/adapter/tab.ts",
@@ -59,7 +59,7 @@
     },
     {
       "file": "src/main/services/graph-builder.ts",
-      "lines": 372
+      "lines": 370
     },
     {
       "file": "src/rim/followers-page-reader.ts",

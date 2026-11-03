@@ -7,8 +7,9 @@ import { ReadBudget } from '@/governors/read-budget';
 import { createMutationPolicy } from '@/main/services/mutation-policy';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
 import { DEFAULT_SETTINGS, type Settings, toRateGovernorConfig } from '@/settings/settings';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { readLimits } from '../kit/read-limits';
+import { openTestStore } from '../kit/store';
 
 let store: KnowledgeStore;
 let clock: FakeClock;
@@ -22,7 +23,7 @@ let reciprocal: boolean | null;
 let visit: jest.Mock<Promise<ProfileVisit>, [string]>;
 
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
   store.setOwnPk('me');
   clock = new FakeClock(Date.UTC(2026, 9, 21, 12));
   settings = { ...DEFAULT_SETTINGS, dryRun: false, hourlyVelocityCap: 20,

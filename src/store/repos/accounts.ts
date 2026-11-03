@@ -64,13 +64,13 @@ export class AccountRepo {
   /**
    * Retention sweep, run once at open: the raw observation log and the username
    * history are append-only and nothing reads rows older than the projection
-   * they already fed, so a 90-day window keeps a large account's daily
-   * thousands of rows from growing without bound. Real wall clock on purpose —
-   * retention is an operational concern of THIS process, not of any injected
-   * test clock.
+   * they already fed, so the store policy's retention window keeps a large
+   * account's daily thousands of rows from growing without bound. Real wall
+   * clock on purpose — retention is an operational concern of THIS process,
+   * not of any injected test clock.
    */
-  pruneAppendOnlyLogs(): void {
-    const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
+  pruneAppendOnlyLogs(retentionMs: number): void {
+    const cutoff = Date.now() - retentionMs;
     this.db.prepare(`DELETE FROM observations WHERE observed_at < ?`).run(cutoff);
     this.db.prepare(`DELETE FROM username_history WHERE seen_at < ?`).run(cutoff);
   }

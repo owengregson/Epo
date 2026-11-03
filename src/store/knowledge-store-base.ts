@@ -26,7 +26,10 @@ import { SurfaceDriftRepo } from './repos/surface-drift';
 import { TargetRepo } from './repos/targets';
 import { assertSchema } from './schema/manifest';
 import { SpanSink } from './spans';
-import type { MutationTally } from './types';
+import type { MutationTally, StorePolicy } from './types';
+
+/** Opening a store: the ambient options plus the kernel bounds main injects. */
+export type StoreOpenOptions = KnowledgeStoreOptions & { readonly policy: StorePolicy };
 
 /** What every store needs before its first delegation; `KnowledgeStore` adds the reads and writes. */
 export class KnowledgeStoreBase {
@@ -72,10 +75,13 @@ export class KnowledgeStoreBase {
   protected readonly rng: () => number;
   /** Our own account pk, set at build time via {@link setOwnPk}; null until then. */
   protected ownPk: string | null = null;
+  /** The injected kernel bounds (retention, the span ring). */
+  protected readonly policy: StorePolicy;
 
-  constructor(dbPath: string, opts: KnowledgeStoreOptions = {}) {
+  constructor(dbPath: string, opts: StoreOpenOptions) {
     this.now = opts.now ?? Date.now;
     this.rng = opts.rng ?? Math.random;
+    this.policy = opts.policy;
     // The driver applies WAL + `synchronous = FULL` + `foreign_keys = ON`, then
     // proves them with a round-trip self-test — it throws rather than hand back
     // a database that quietly lost durability. `assertSchema` then checks every
@@ -104,7 +110,7 @@ export class KnowledgeStoreBase {
     this.surface = new SurfaceDriftRepo(this.db, this.meta, changed);
     this.protectionFacts = new ProtectionFactsRepo(this.db);
     this.chronos = new Chronos(this.db, { now: this.now });
-    this.spans = new SpanSink(this.db, { now: this.now, rng: this.rng });
+    this.spans = new SpanSink(this.db, { now: this.now, rng: this.rng, policy: this.policy.spans });
     this.census = new CensusRepo(this.db, this.accounts, this.followRecords, this.relationships, this.meta);
   }
 
@@ -137,7 +143,10 @@ export class KnowledgeStoreBase {
   onMutation(listener: () => void): () => void { return this.mutationPulse.subscribe(listener); }
   protected changed(): void { this.mutationPulse.changed(); }
 
-  pruneRetainedLogs(): void { this.accounts.pruneAppendOnlyLogs(); this.effectIntents.pruneSettled(Date.now()); }
+  pruneRetainedLogs(): void {
+    this.accounts.pruneAppendOnlyLogs(this.policy.retentionMs);
+    this.effectIntents.pruneSettled(Date.now(), this.policy.retentionMs);
+  }
 
   close(): void {
     this.db.close();

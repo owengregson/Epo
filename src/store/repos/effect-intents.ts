@@ -150,8 +150,8 @@ export class EffectIntentRepo {
   }
 
   /** Terminal intent detail is operational history; unresolved intent and outcome ledgers are durable. */
-  pruneSettled(now: number): void {
-    const cutoff = now - 90 * 24 * 60 * 60 * 1000;
+  pruneSettled(now: number, retentionMs: number): void {
+    const cutoff = now - retentionMs;
     this.db.prepare(`DELETE FROM effect_intents WHERE state = 'settled' AND settled_at < ?
       AND (dispatched_at IS NULL OR dispatched_at < ?)`).run(cutoff, cutoff);
   }
