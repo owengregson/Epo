@@ -24,25 +24,14 @@ import type { SettingsOp, SettingsPreviewResult, SettingsSaveResult } from '@/sh
 import type { BasisResult, SettingsCapabilities, SettingsHealth, SettingsView } from '@/shared/settings-view';
 import { compileProtection, type ProtectionIndex } from '@/shared/unfollow-protection';
 import * as logger from '@/utils/logger';
+import { ProtectionLinker, type SettingsStoreBinding } from './protection-linker';
 import { reloadChanged } from './settings-reload';
+
+export { type SettingsStoreBinding, settingsBinding } from './protection-linker';
 
 export interface SettingsChangeEvent {
   readonly rev: number; readonly prev: EffectiveSettings; readonly next: EffectiveSettings;
   readonly touched: ReadonlySet<Touched>; readonly origin: 'user' | 'system' | 'migration';
-}
-
-/** The open store, bound on graph OPEN and dropped on CLOSE (the kernel Session binding). */
-export interface SettingsStoreBinding {
-  readonly ownPk: string;
-  pkByUsername(username: string): string | null;
-  username(pk: string): string | null;
-  onMutation(fn: () => void): () => void;
-}
-
-/** A built graph's binding: its account owns the run stamps, its store links protected handles. */
-export function settingsBinding(graph: BuiltGraph): SettingsStoreBinding {
-  return { ownPk: graph.ownPk, pkByUsername: (u) => graph.store.pkByUsername(u),
-    username: (pk) => graph.store.getAccount(pk)?.username ?? null, onMutation: (fn) => graph.store.onMutation(fn) };
 }
 
 export interface SettingsServiceDeps {
@@ -80,6 +69,7 @@ export class SettingsService {
   private readonly listeners = new Set<(e: SettingsChangeEvent) => void>();
   private readonly fs: SettingsFs;
   private readonly math: PlanMath;
+  private readonly linker = new ProtectionLinker({ settings: this, now: () => this.d.now() });
 
   constructor(private readonly d: SettingsServiceDeps) {
     this.fs = d.fs ?? NODE_SETTINGS_FS;
@@ -150,6 +140,7 @@ export class SettingsService {
   bindStore(binding: SettingsStoreBinding | null): void {
     this.store = binding;
     this.firstPk ??= binding?.ownPk ?? null;
+    this.linker.bind(binding);
   }
 
   onChange(fn: (e: SettingsChangeEvent) => void): () => void {
