@@ -165,11 +165,8 @@ export class FollowersPageReader {
       // URL is a rate-limit / block / login wall, not data. Warn and stop the
       // scrape.
       if (resp.status >= 400 || !this.reader.parseableBody(resp.mimeType)) {
-        logger.warn('rim.followers-page-reader: non-JSON/error response, halting scrape', {
-          url: resp.url,
-          status: resp.status,
-          mimeType: resp.mimeType,
-        });
+        logger.warn('rim.followers-page-reader: non-JSON/error response, halting scrape',
+          { url: resp.url, status: resp.status, mimeType: resp.mimeType });
         halted.hit = true;
         return;
       }
@@ -184,48 +181,40 @@ export class FollowersPageReader {
         if (targetPk !== null) args.onTargetPk?.(targetPk);
       }
 
-      pending.push(
-        resp
-          .getBody()
-          .then((body) => {
-            const now = this.clock.now();
-            if (profileKind !== null) {
-              const obs = this.reader.parseProfileInfo(body, now, profileKind);
-              if (obs) onObservation(obs, null);
-              return;
-            }
-            const parsed =
-              listKind === 'following-list'
-                ? this.reader.parseFollowingListStrict(body, now)
-                : this.reader.parseFollowersListStrict(body, now);
-            if (parsed === null) {
-              // IG shape drift: stop the scrape (checked at the top of each
-              // round) instead of fabricating an empty, "finished" page.
-              drifted.hit = true;
-              return;
-            }
-            cursor = parsed.cursor;
-            page.hasMore = parsed.hasMore;
-            const sizeBefore = observed.size;
-            for (const obs of parsed.observations) {
-              observed.add(obs.accountPk);
-              onObservation(obs, parsed.cursor);
-            }
-            validatedPages += 1;
-            // Live progress: report the cumulative count once per page that
-            // actually grew the set (a stagnant/duplicate page stays silent).
-            if (observed.size > sizeBefore) {
-              args.onProgress?.(observed.size);
-              reportActivity(observed.size);
-            }
-          })
-          .catch((e: unknown) => {
-            logger.warn('rim.followers-page-reader: body/parse failed', {
-              url: resp.url,
-              error: String(e),
-            });
-          }),
-      );
+      const failed = (e: unknown): void => {
+        logger.warn('rim.followers-page-reader: body/parse failed', { url: resp.url, error: String(e) });
+      };
+      // Each body is read once for every consumer (the observer stores a profile too); our own counts stay gated.
+      const read = this.reader.observed.read(resp, this.clock.now());
+      if (read === null) return;
+      pending.push(read.then(({ read: body }) => {
+        if (profileKind !== null) {
+          const seen = this.reader.profileSeen(body);
+          if (seen !== null) onObservation(seen.obs, null);
+          return;
+        }
+        if (!body.ok) {
+          // IG shape drift: stop the scrape (checked at the top of each
+          // round) instead of fabricating an empty, "finished" page.
+          drifted.hit = true;
+          return;
+        }
+        const parsed = body.projection;
+        cursor = parsed.cursor;
+        page.hasMore = parsed.hasMore;
+        const sizeBefore = observed.size;
+        for (const obs of parsed.facts) {
+          observed.add(obs.accountPk);
+          onObservation(obs, parsed.cursor);
+        }
+        validatedPages += 1;
+        // Live progress: report the cumulative count once per page that
+        // actually grew the set (a stagnant/duplicate page stays silent).
+        if (observed.size > sizeBefore) {
+          args.onProgress?.(observed.size);
+          reportActivity(observed.size);
+        }
+      }).catch(failed));
     });
 
     // Why the scroll loop ended — logged at the end so a truncated scrape is

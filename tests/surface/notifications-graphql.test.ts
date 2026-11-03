@@ -79,7 +79,7 @@ describe('the shadow schema and the legacy extractor read the GraphQL bodies ide
   test('feed: one follow event, the like story ignored', () => {
     const legacy = SURFACE.extractActivityFeed(feed);
     expect(legacy).toEqual([{ pk: '11', username: 'user_011', atMs: 1_700_000_000_500 }]);
-    const read = readResponse(endpoint('activity-feed', FEED_OP), feed, { at: 1, source: 'activity-feed' });
+    const read = readResponse(endpoint('activity-feed', FEED_OP), feed, { at: 1_700_000_100_000, source: 'activity-feed' });
     expect(read.ok && read.projection.events).toEqual(legacy);
   });
 

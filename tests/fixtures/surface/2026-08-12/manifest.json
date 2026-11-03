@@ -30,7 +30,18 @@
           "users[].profile_pic_id",
           "users[].strong_id__",
           "users[].third_party_downloads_enabled"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": {
+          "kind": "next",
+          "cursor": "(pinned)",
+          "form": "offset"
+        },
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 0
       }
     },
     {
@@ -60,7 +71,17 @@
           "users[].profile_pic_id",
           "users[].strong_id__",
           "users[].third_party_downloads_enabled"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": {
+          "kind": "end",
+          "evidence": "flags-false"
+        },
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 0
       }
     },
     {
@@ -92,7 +113,18 @@
           "users[].profile_pic_id",
           "users[].strong_id__",
           "users[].third_party_downloads_enabled"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": {
+          "kind": "next",
+          "cursor": "(pinned)",
+          "form": "opaque"
+        },
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 0
       }
     },
     {
@@ -122,7 +154,18 @@
           "users[].profile_pic_id",
           "users[].strong_id__",
           "users[].third_party_downloads_enabled"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": {
+          "kind": "next",
+          "cursor": "(pinned)",
+          "form": "offset"
+        },
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 0
       }
     },
     {
@@ -149,7 +192,17 @@
           "users[].profile_pic_id",
           "users[].strong_id__",
           "users[].third_party_downloads_enabled"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": {
+          "kind": "end",
+          "evidence": "flags-false"
+        },
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 0
       }
     },
     {
@@ -182,7 +235,14 @@
           "is_viewer_unconnected",
           "muting",
           "subscribed"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": null,
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 0
       }
     },
     {
@@ -204,7 +264,14 @@
           "friendship_statuses.*.is_restricted",
           "friendship_statuses.*.text_post_app_pre_following",
           "status_code"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": null,
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 0
       }
     }
   ],

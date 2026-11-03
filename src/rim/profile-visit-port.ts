@@ -39,5 +39,6 @@ export type ProfileVisit =
 
 /** Reads a profile by VISITING it — composes no request. */
 export interface ProfileVisitor {
-  visit(username: string): Promise<ProfileVisit>;
+  /** `pk`, when the caller knows it, anchors a recovered read to the right account (spec §10.6). */
+  visit(username: string, opts?: { readonly pk?: string }): Promise<ProfileVisit>;
 }

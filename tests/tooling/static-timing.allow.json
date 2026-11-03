@@ -333,8 +333,6 @@
     {"key":"src/surface/meter.ts :: SurfaceMeter.summary :: percentile :: 0.5","class":"GEOM","reason":"quantile definitions (p50, p95), numeric"},
     {"key":"src/surface/meter.ts :: SurfaceMeter.summary :: percentile :: 0.95","class":"GEOM","reason":"quantile definitions (p50, p95), numeric"},
     {"key":"src/surface/schema/surface.ts :: SurfaceDocSchema :: z.int().min().max :: 200","class":"GEOM","reason":"a schema bound of the surface document (protocol)"},
-    {"key":"src/surface/shadow.ts :: shadowParse :: result.issues.slice :: 4","class":"GEOM","reason":"how many shadow issues one log line quotes (an excerpt length)"},
-    {"key":"src/surface/shadow.ts :: shadowParse :: result.novelKeys.slice :: 8","class":"GEOM","reason":"how many shadow issues one log line quotes (an excerpt length)"},
     {"key":"src/surface/versions/2026-08-12/controls.ts :: CONFIRM_ROW :: maxChildren :: 3","class":"GEOM","reason":"a fact of the versioned Instagram surface: ids, page sizes, locate bounds (spec §17.8)"},
     {"key":"src/surface/versions/2026-08-12/controls.ts :: CONFIRM_ROW :: maxTextLen :: 40","class":"GEOM","reason":"a fact of the versioned Instagram surface: ids, page sizes, locate bounds (spec §17.8)"},
     {"key":"src/surface/versions/2026-08-12/controls.ts :: CONTROLS :: confirm-follow-request.maxDepth :: 8","class":"GEOM","reason":"a fact of the versioned Instagram surface: ids, page sizes, locate bounds (spec §17.8)"},
