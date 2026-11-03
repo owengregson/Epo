@@ -26,10 +26,9 @@ const pruneCapRule: Rule = {
 };
 
 /**
- * The per-candidate decision, unchanged from both of today's copies — see
- * `prune-candidate.ts` for the three rules it enforces. A skip is a `yield`:
- * the executor consumes the row (whitelisted rows without spending an
- * actionable slot) and the next tick takes the following candidate.
+ * The per-candidate decision both prune paths share (`prune-candidate.ts`), over the protection
+ * verdict P10 receives (spec §7.1): a skip or a paused index is a `yield`, never an unfollow; the
+ * executor consumes a skipped row (a protected one without spending an actionable slot).
  */
 const pruneCandidateRule: Rule = {
   id: 'prune-candidate',
@@ -40,10 +39,10 @@ const pruneCandidateRule: Rule = {
     if (candidate === null) return { do: 'yield' };
     const verdict = decidePruneCandidate({
       candidate,
-      whitelist: f.prune.whitelist,
+      protection: f.prune.protection,
       followsUsNow: f.prune.followsUsNow,
     });
-    return verdict.do === 'skip'
+    return verdict.do !== 'unfollow'
       ? { do: 'yield' }
       : {
           do: 'run',

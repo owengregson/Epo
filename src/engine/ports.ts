@@ -187,7 +187,7 @@ export interface EngineUnfollowFeed {
   executeUnfollow(
     cand: { pk: string; username: string },
     now: number,
-  ): Promise<'ok' | 'failed' | 'simulated' | 'blocked'>;
+  ): Promise<'ok' | 'failed' | 'simulated' | 'blocked' | 'reviewed'>;
   atDailyCap(now: number): boolean;
 }
 

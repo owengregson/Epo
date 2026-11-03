@@ -1,12 +1,7 @@
 /**
- * Prune whitelist matching — the ONE definition of "is this candidate
- * protected?", shared by the PruneEngine (which derives the actionable set and
- * skips protected candidates mid-run) and the renderer (which derives the
- * visible candidate list from the raw scan census). Pure and dependency-free:
- * it lives in `src/shared` precisely so the renderer never imports the engine.
- *
- * A whitelist entry matches case-insensitively against a candidate's username
- * OR its pk.
+ * The v1 list semantics (the whitelist and the bio keep-list), kept only for the old Prune page
+ * and as the settings migration's oracle; every unfollow path reads the protection predicate
+ * (`unfollow-protection.ts`). Deleted with the v1 lists.
  */
 
 /** The slice of a prune candidate the whitelist test needs. */
@@ -35,4 +30,14 @@ export function filterPruneCandidates<T extends WhitelistSubject>(
   const set = pruneWhitelistSet(whitelist);
   if (set.size === 0) return candidates;
   return candidates.filter((c) => !isPruneWhitelisted(c, set));
+}
+
+/** The v1 bio keep-list match: a case-insensitive substring of the bio; blank words and an unseen bio never match. */
+export function bioMatchesFilter(bio: string | undefined, words: readonly string[]): boolean {
+  if (bio === undefined || bio === '') return false;
+  const haystack = bio.toLowerCase();
+  return words.some((w) => {
+    const needle = w.trim().toLowerCase();
+    return needle !== '' && haystack.includes(needle);
+  });
 }

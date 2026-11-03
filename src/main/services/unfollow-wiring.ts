@@ -1,25 +1,37 @@
 /**
- * The unfollow wiring: the mutation policy's deps, the churn scheduler and its
- * config, and the prune engine's config, completion stamp and own-stats refresh.
+ * The unfollow wiring: the protection port over the settings service's live index, the mutation
+ * policy's deps, the churn scheduler with its reconciler, and the prune engine's unfollow deps.
  */
 
 import { ChurnScheduler } from '@/engine/churn-scheduler';
 import type { FollowbackWatcher } from '@/engine/followback-watcher';
+import { createProtectionPort, type ProtectionPort } from '@/engine/protection-port';
+import { ProtectionReconciler } from '@/engine/protection-reconciler';
 import type { PruneEngineDeps } from '@/engine/prune-engine';
 import type { ReentrySupervisor } from '@/engine/reentry';
 import { scoreCandidate } from '@/engine/scorer';
 import type { SourceFrontier } from '@/engine/source-frontier';
-import type { SystemClock } from '@/governors/clock';
+import { type Clock, SystemClock } from '@/governors/clock';
+import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { RateGovernor } from '@/governors/rate-governor';
 import type { ReadBudget } from '@/governors/read-budget';
+import type { PlanDayClock } from '@/kernel/plan';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
 import { type Settings, toChurnConfig, toPruneConfig, toScorerConfig } from '@/settings/settings';
+import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { GraphBuildDeps, WiringParts } from './graph-types';
 import { createMutationPolicy } from './mutation-policy';
 
 type MutationPolicy = ReturnType<typeof createMutationPolicy>;
+
+/** The protection port over the settings service's live index, on the one plan-day boundary (spec §4.4, §7). */
+export function wireProtection(d: Pick<GraphBuildDeps, 'protection'>, clock: Clock): { port: ProtectionPort; dayClock: PlanDayClock } {
+  // Local-midnight plan-days until the plan's own clock is swapped in here.
+  const dayClock = calendarPlanDayClock({ now: () => clock.now() });
+  return { port: createProtectionPort({ index: () => d.protection.index(), clock, dayClock }), dayClock };
+}
 
 /** What the mutation policy is built from; the two later pieces are read through closures. */
 export interface MutationPolicyWiring {
@@ -40,6 +52,7 @@ export function wireMutationPolicy(d: GraphBuildDeps, w: MutationPolicyWiring): 
   const driverSignal = d.driverSignal;
   const policy = createMutationPolicy({ store, ownPk, ownUsername, clock, rate, reentry, readBudget,
     profiles: w.profiles, followback: w.followback, settings: d.resolveSettings,
+    protection: () => d.protection.index(),
     signal: driverSignal, validateIdentity: d.validateIdentity, onProgress: d.onProgress });
   return policy;
 }
@@ -55,9 +68,11 @@ export interface ChurnWiring {
   settings: Settings;
 }
 
-/** The churn scheduler with its config, the frontier's pick and the live eligibility check. */
+/** The churn scheduler with its config, the frontier's pick, the live eligibility check and protection. */
 export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
   const { frontier, store, clock, rate, churnActions, ownPk, settings } = w;
+  const { port, dayClock } = wireProtection(d, clock);
+  const reconciler = new ProtectionReconciler({ store, port, clock, dayClock });
   const churn = new ChurnScheduler({
     pickQueued: (records) => frontier.pickQueued(records),
     validateFollow: (record) => {
@@ -70,18 +85,24 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
     actions: churnActions,
     ownPk,
     cfg: toChurnConfig(settings),
+    protection: port,
+    reconciler,
   });
+  // The graph-open pass: rules that changed, or a plan-day that rolled, while Epo was closed.
+  reconciler.sync(clock.now());
+  d.protection.setCapabilities({ protectionEverywhere: true });
   return churn;
 }
 
-/** The prune engine's unfollow-facing deps: its config (the whitelist), the run stamp, the own-stats refresh. */
+/** The prune engine's unfollow-facing deps: its config, protection, the run stamp, the own-stats refresh. */
 export function pruneUnfollowDeps(
   d: GraphBuildDeps,
   w: { settings: Settings; policy: MutationPolicy; ownUsername: string | undefined },
-): Pick<PruneEngineDeps, 'cfg' | 'onRunComplete' | 'refreshOwnStats'> {
+): Pick<PruneEngineDeps, 'cfg' | 'protection' | 'onRunComplete' | 'refreshOwnStats'> {
   const { settings, policy, ownUsername } = w;
   return {
     cfg: toPruneConfig(settings),
+    protection: wireProtection(d, new SystemClock()).port,
     // Persist the completed run's timestamp through the one settings save path
     // (also reloads live configs — harmless, and keeps one write path).
     onRunComplete: (at) => {
@@ -101,7 +122,19 @@ export function pruneUnfollowDeps(
   };
 }
 
-/** The unfollow wiring's startup steps and status contributors (the unfollow-decisions stream fills them). */
+const PAUSED_FIELD = { 'needs-review': 'protection-needs-review', unavailable: 'protection-unavailable' } as const;
+
+/** The unfollow wiring's status contributor: why every automatic unfollow is paused, or null (spec §7.6). */
 export function unfollowWiringParts(): WiringParts {
-  return { startupSteps: [], statusContributors: [] };
+  return {
+    startupSteps: [],
+    statusContributors: [{
+      name: 'unfollowsPaused',
+      contribute: (graph): Partial<StatusFields> => {
+        if (graph === null) return {};
+        const state = graph.churn.protectionState();
+        return { unfollowsPaused: state === 'ready' ? null : PAUSED_FIELD[state] };
+      },
+    }],
+  };
 }

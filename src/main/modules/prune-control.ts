@@ -3,7 +3,8 @@
  * stop/pause/resume, and the tab hand-off with growth (one driver at a time).
  */
 
-import type { PruneCandidate, PruneStatus } from '@/engine/prune-engine';
+import type { PruneStatus } from '@/engine/prune-engine';
+import type { PruneCandidateView } from '@/ipc/contract';
 import type { BuiltGraph } from '@/main/services/graph-types';
 import type { RuntimeCoordinator } from '@/main/services/runtime-coordinator';
 import type { TabLease } from '@/main/services/tab-lease';
@@ -67,16 +68,15 @@ export class PruneControl {
   }
 
   /**
-   * The PERSISTED scan's not-yet-visited candidates (raw census — the renderer
-   * filters against the live whitelist), so the candidates list auto-populates
-   * from saved data on app launch instead of sitting empty until a fresh scan.
-   * Empty when not logged in or no snapshot exists. Never throws across IPC.
+   * The PERSISTED scan's not-yet-visited candidates (raw census), annotated with the rule that
+   * protects each (`protectedBy`) and an unjudged bio (`bioUnread`), so the list auto-populates
+   * from saved data on launch. Empty when not logged in or no snapshot exists. Never throws across IPC.
    */
-  async pruneCandidates(): Promise<PruneCandidate[]> {
+  async pruneCandidates(): Promise<PruneCandidateView[]> {
     const graph = await this.deps.builtGraph();
     if (graph === null) return [];
     try {
-      return graph.store.getPruneScan()?.remaining ?? [];
+      return graph.pruneEngine.candidateViews(graph.store.getPruneScan()?.remaining ?? []);
     } catch (e) {
       logger.error('foundation.pruneCandidates: failed', { error: String(e) });
       return [];

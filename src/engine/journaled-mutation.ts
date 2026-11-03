@@ -33,6 +33,11 @@ export async function journaledMutation<A extends 'follow' | 'unfollow'>(d: {
     else d.store.settleEffectIntent(intent.id, { at, result: 'cancelled' });
     return outcome;
   }
+  // The click review consumed the work before any press (spec §9.7): never dispatched, so cancelled.
+  if (outcome.status === 'reviewed') {
+    d.store.settleEffectIntent(intent.id, { at, result: 'cancelled' });
+    return outcome;
+  }
   const external = outcome.status === 'ok' && outcome.alreadyInState;
   d.store.settleEffectIntent(intent.id, {
     at, result: external ? 'external' : outcome.status === 'failed' ? 'fail' : outcome.status,

@@ -1,31 +1,10 @@
 /**
- * The per-candidate prune decision, as ONE pure function.
- *
- * The three correctness rules a prune must never lose live here, so the
- * standalone run loop and the woven growth feed cannot drift apart:
- *
- *  1. **Whitelist re-derivation.** The keep-list is applied at CONSUMPTION time,
- *     never at scan time, so an edit made between Scan and Run — or mid-run — is
- *     honoured for every candidate from that moment on.
- *  2. **The live-graph follows-us guard** (PRINCIPLES §2). The graph can know
- *     MORE than the census this run is draining: a notifications check or an
- *     accepted follow request records a follows-us edge AFTER the scan. We never
- *     unfollow someone the graph says follows us NOW. This is also what makes a
- *     longer scan-freshness window safe — staleness in the dangerous direction
- *     is caught here.
- *  3. **A stub row without a username is skipped**, never guessed at: the DOM
- *     unfollow needs a handle, and the row will have one after a later scan.
- *
- * Deliberately ABSENT: the bio keep-list. It protects only accounts that FOLLOW
- * US BACK (the churn scheduler's held-rotation gate); a prune candidate by
- * definition does not, so a bio never shields one.
- *
- * Pure: no store, no clock, no IG. The caller supplies the live readings and
- * owns what a skip CONSUMES — a whitelisted skip must not spend an actionable
- * slot, while a followed-back / no-username skip visits the row.
+ * The per-candidate prune decision as ONE pure function the run loop, the woven feed and the
+ * prune-run mode rule share (P5–P7, P10). The caller supplies the readings and owns what a skip
+ * consumes: a protected skip spends no actionable slot; a followed-back or no-username skip visits.
  */
 
-import { isPruneWhitelisted, pruneWhitelistSet } from './prune-whitelist';
+import type { ProtectedBy, ProtectionVerdict } from '../shared/unfollow-protection';
 
 /** A census row as both prune paths hold it. */
 export interface PruneSubject {
@@ -36,36 +15,44 @@ export interface PruneSubject {
 /** The live readings the decision needs; every one is supplied by the caller. */
 export interface PruneCandidateInput {
   candidate: PruneSubject;
-  /** The whitelist AS IT STANDS NOW (rule 1). */
-  whitelist: readonly string[];
+  /** The protection verdict over the stored facts as they stand NOW (rule 1). */
+  protection: ProtectionVerdict;
   /** What the LIVE graph says about `candidate → us` right now (rule 2). */
   followsUsNow: boolean;
 }
 
-export type PruneSkipReason = 'whitelisted' | 'followed-back' | 'no-username';
+export type PruneSkipReason = 'protected' | 'followed-back' | 'no-username';
 
-/**
- * What to do with one candidate. `unfollow` carries the username, so the caller
- * cannot reach the DOM action without one (rule 3 as a type, not a check).
- */
+/** `unfollow` carries the username (no handle, no DOM action); `stop` ends the run without consuming. */
 export type PruneCandidateVerdict =
   | { do: 'unfollow'; pk: string; username: string }
-  | { do: 'skip'; pk: string; reason: PruneSkipReason };
+  | { do: 'skip'; pk: string; reason: PruneSkipReason }
+  | { do: 'stop'; pk: string; reason: 'protection-paused' };
 
 /**
- * The decision, in the order both call sites have always used: whitelist, then
- * the live-graph guard, then the username requirement.
+ * In order: protection over the facts as they stand NOW (paused stops, protected skips, unknown goes
+ * on to the click), the live graph's follows-us edge (PRINCIPLES §2), then the username.
  */
 export function decidePruneCandidate(input: PruneCandidateInput): PruneCandidateVerdict {
-  const { candidate, followsUsNow } = input;
-  if (isPruneWhitelisted(candidate, pruneWhitelistSet([...input.whitelist]))) {
-    return { do: 'skip', pk: candidate.pk, reason: 'whitelisted' };
-  }
+  const { candidate, protection, followsUsNow } = input;
+  if (protection.kind === 'paused') return { do: 'stop', pk: candidate.pk, reason: 'protection-paused' };
+  if (protection.kind === 'protected') return { do: 'skip', pk: candidate.pk, reason: 'protected' };
   if (followsUsNow) return { do: 'skip', pk: candidate.pk, reason: 'followed-back' };
   if (candidate.username === null) {
     return { do: 'skip', pk: candidate.pk, reason: 'no-username' };
   }
   return { do: 'unfollow', pk: candidate.pk, username: candidate.username };
+}
+
+/** A census row as the candidates channel serves it: the rule that keeps it, and an unjudged bio. */
+export type AnnotatedCandidate<T extends PruneSubject> = T & {
+  readonly protectedBy: ProtectedBy | null;
+  readonly bioUnread: boolean;
+};
+
+/** Annotate one row with its protection verdict (spec §7.8: "Show protected (N)"). */
+export function annotateCandidate<T extends PruneSubject>(c: T, v: ProtectionVerdict): AnnotatedCandidate<T> {
+  return { ...c, protectedBy: v.kind === 'protected' ? v.by : null, bioUnread: v.kind === 'unknown' && v.missing === 'bio' };
 }
 
 /**

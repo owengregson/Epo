@@ -18,6 +18,8 @@ export interface ChurnPickDeps {
   pickQueued?: ChurnDeps['pickQueued'];
   /** Whether `pk` has a follow request in flight (the requester seam); false until wired. */
   hasActiveRequest(pk: string): boolean;
+  /** True while protection is paused for a review: no unfollow is offered, follows continue (spec §7.6). */
+  unfollowsPaused(): boolean;
 }
 
 /** Due unfollows: the earliest `unfollowDueAt` first, then `accountPk` (deterministic). */
@@ -65,7 +67,7 @@ export class ChurnPick {
     const queued = kind === 'unfollow' ? [] : this.store.followRecordsByState('queued').filter((r) => r.score !== 0);
     const chosenFollow = this.pickQueued ? this.pickQueued(queued) : queued.sort(compareByScoreDesc)[0] ?? null;
     if (kind === 'follow') return chosenFollow;
-    const unfollows = this.store.followRecordsByState('unfollow_queued')
+    const unfollows = this.deps.unfollowsPaused() ? [] : this.store.followRecordsByState('unfollow_queued')
       .filter((r) => !this.isRetained(r.accountPk) && this.fresh(r, now));
     if (unfollows.length > 0 && (kind === 'unfollow' || this.consecutiveCleanup < 2 || chosenFollow === null)) {
       return unfollows.sort(byUnfollowDue)[0];

@@ -695,7 +695,7 @@ export class Foundation {
       if (outcome.status === 'ok' && !outcome.alreadyInState) graph.noteMutation();
       return outcome.status === 'ok' || outcome.status === 'simulated'
         ? { ok: true, username }
-        : { ok: false, username, reason: outcome.status === 'blocked' ? 'blocked' : 'action-failed' };
+        : { ok: false, username, reason: outcome.verdict?.kind ?? (outcome.status === 'blocked' ? 'blocked' : 'action-failed') };
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       logger.error('foundation.act: failed', { action, username, error: reason });
@@ -1151,14 +1151,14 @@ export class Foundation {
 
   private graphBuildDeps(): GraphBuildDeps {
     return {
-      tab: this.tab,
-      userDataDir: this.userDataDir,
+      tab: this.tab, userDataDir: this.userDataDir,
       dbFile: IG_DB_FILE,
       reporter: this.reporter,
       cursorObserver: this.cursorObserver,
       scheduler: this.scheduler,
       settings: this.resolveSettings(),
       resolveSettings: () => this.resolveSettings(),
+      protection: { index: () => this.settings.protection(), setCapabilities: (p) => this.settings.setCapabilities(p) },
       updateSettings: (partial) => {
         void this.updateSettings(partial);
       },

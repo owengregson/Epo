@@ -5,6 +5,7 @@ import type { RateGovernor } from '@/governors/rate-governor';
 import type { ReadBudget } from '@/governors/read-budget';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { Settings } from '@/settings/settings';
+import type { ProtectionIndex } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { createClickReview } from './click-review';
 import { createMutationAdmission, type JournalGate } from './mutation-admission';
@@ -24,6 +25,7 @@ interface MutationPolicyDeps {
   profiles(): ProfileVisitor;
   followback(): FollowbackWatcher;
   settings(): Settings;
+  protection(): ProtectionIndex;
   signal(): AbortSignal | undefined;
   validateIdentity?(): Promise<boolean>;
   onProgress?(phase: string): void;

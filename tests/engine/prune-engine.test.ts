@@ -3,7 +3,7 @@
  *
  * Real `:memory:` KnowledgeStore beneath a FakeClock; the shared engine kit
  * supplies every live-edge port fake and the prune harness. Covers the
- * candidate set-diff (whitelist case-insensitive on username AND pk, self
+ * candidate set-diff (self
  * excluded), the prune-own daily cap, the dry-run path (simulated, no
  * reconcile), the ok path (reconcile + ledger), blocked (untouched + park), the
  * sentinel halt, and instant interruptibility via `stop()`.
@@ -13,7 +13,6 @@ import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import type { SleepFn } from '@/engine/engine';
 import {
   PRUNE_CONSECUTIVE_FAIL_HALT,
-  PRUNE_PARK_MS,
   PRUNE_PROGRESS_EMIT_MS,
   PRUNE_SCAN_FRESH_MS,
   PruneEngine,
@@ -22,7 +21,8 @@ import {
   type PruneStatus,
 } from '@/engine/prune-engine';
 import { FakeClock } from '@/governors/clock';
-import { NOISE } from '@/timing/config';
+import { referenceTempoSource } from '@/kernel/tempo';
+import { NOISE, PRUNE } from '@/timing/config';
 import { cyclePlan } from '@/timing/cycle-plan';
 import {
   makePruneHarness as build,
@@ -30,28 +30,28 @@ import {
   FakeListSource,
   FakePruneActions,
   FakeSentinel,
-  type PruneHarness as Harness,
+  kitStore,
   OWN_PK,
   T0,
 } from '../kit/engine-harness';
 import { openTestStore } from '../kit/store';
+import { recordingTempo } from '../kit/tempo';
 
 // --- scan() ------------------------------------------------------------------------
 
 describe('PruneEngine.scan', () => {
-  test('scan census is RAW (following − followers − self); whitelist derives the counts', async () => {
+  test('scan census is RAW (following − followers − self); protection derives the counts elsewhere', async () => {
     const h = build({
       following: [OWN_PK, '1', '2', '3', '4'],
       followers: ['2', '9'], // '2' follows back; '9' is a non-followed follower
-      cfg: { whitelist: ['U3', '4'] }, // 'U3' hits username u3 (ci); '4' hits the pk
     });
 
     const result = await h.engine.scan();
 
     expect(result.following).toBe(5);
     expect(result.followers).toBe(2);
-    // The census carries EVERY non-follower (whitelist NOT applied) so a later
-    // whitelist edit can hide or restore rows without a re-scan…
+    // The census carries EVERY non-follower (protection NOT applied) so a later
+    // rule edit can hide or restore rows without a re-scan (prune-protection.test.ts).
     expect(result.candidates).toEqual([
       { pk: '1', username: 'u1' },
       { pk: '3', username: 'u3' },
@@ -64,12 +64,10 @@ describe('PruneEngine.scan', () => {
     expect(h.statuses[0].state).toBe('scanning');
     expect(h.statuses[h.statuses.length - 1].state).toBe('idle');
     expect(h.engine.status().state).toBe('idle');
-    // …while the status counts reflect the ACTIONABLE subset (whitelist applied).
-    expect(h.engine.status().candidates).toBe(1);
-
-    // A run consumes only the actionable subset — whitelisted accounts survive.
+    // No rule configured: every census row is actionable, and a run consumes them all.
+    expect(h.engine.status().candidates).toBe(3);
     await h.engine.run();
-    expect(h.churn.unfollows).toEqual(['u1']);
+    expect(h.churn.unfollows).toEqual(['u1', 'u3', 'u4']);
     h.store.close();
   });
 
@@ -426,11 +424,12 @@ describe('PruneEngine.run', () => {
 
     expect(h.churn.unfollows).toEqual(['u1', 'u1', 'u2']); // retried, then moved on
     expect(h.store.pruneCountSince(0)).toBe(2); // both eventually reached the ledger
-    // The brief park (a retry backoff — jittered around PRUNE_PARK_MS, bounded),
+    // The brief park (a retry backoff jittered around the park.blocked base, bounded),
     // then u1's inter-action delay, then u2's (60s base ×1/3 = 20s, exact).
+    const park = referenceTempoSource().base('park.blocked');
     expect(h.sleeps.length).toBe(3);
-    expect(h.sleeps[0]).toBeGreaterThanOrEqual(PRUNE_PARK_MS * NOISE.BACKOFF_MIN_FACTOR);
-    expect(h.sleeps[0]).toBeLessThanOrEqual(PRUNE_PARK_MS * NOISE.BACKOFF_MAX_FACTOR);
+    expect(h.sleeps[0]).toBeGreaterThanOrEqual(park * NOISE.BACKOFF_MIN_FACTOR);
+    expect(h.sleeps[0]).toBeLessThanOrEqual(park * NOISE.BACKOFF_MAX_FACTOR);
     expect(h.sleeps.slice(1)).toEqual([24_500, 24_500]);
     expect(h.engine.status().state).toBe('done');
     h.store.close();
@@ -634,31 +633,6 @@ describe('PruneEngine — 2-step run (scan then consume)', () => {
     expect(h.ownFollowing.calls).toBe(2); // re-scanned rather than consuming stale
     h.store.close();
   });
-
-  test('a whitelist edit re-derives the cached scan live (no re-lock, no re-scan)', async () => {
-    const h = build({ following: [OWN_PK, '1', '2'], followers: [] });
-
-    await h.engine.scan();
-    expect(h.engine.status().scanReady).toBe(true);
-    expect(h.engine.status().candidates).toBe(2);
-
-    // Adding to the whitelist hides that candidate immediately — Run stays
-    // unlocked over the reduced set.
-    h.engine.applyConfig({ ...CFG, whitelist: ['u1'] });
-    expect(h.engine.status().scanReady).toBe(true);
-    expect(h.engine.status().candidates).toBe(1);
-    expect(h.engine.status().remaining).toBe(1);
-
-    // Removing them from the whitelist restores the candidate.
-    h.engine.applyConfig({ ...CFG, whitelist: [] });
-    expect(h.engine.status().candidates).toBe(2);
-
-    // The run honors the whitelist AS IT STANDS at run time.
-    h.engine.applyConfig({ ...CFG, whitelist: ['u2'] });
-    await h.engine.run();
-    expect(h.churn.unfollows).toEqual(['u1']);
-    h.store.close();
-  });
 });
 
 describe('PruneEngine — census enrichment + growth exclusion', () => {
@@ -838,39 +812,7 @@ describe('PruneEngine — daily cap counts from the active-hours cycle start', (
   });
 });
 
-describe('PruneEngine — bio words never shield a prune candidate', () => {
-  const bioObs = (h: Harness, pk: string, bio: string): void =>
-    h.store.observe({ accountPk: pk, observedAt: h.clock.now(), source: 'profile', fields: { bio } });
-
-  // The bio keep-list protects only accounts that FOLLOW US BACK (the churn
-  // scheduler's held-rotation gate). A prune candidate by definition does
-  // not, so a run unfollows them regardless of what their bio says.
-  test('a candidate whose bio matches a keep-word is still pruned', async () => {
-    const h = build({ following: [OWN_PK, '1', '2'], followers: [] });
-    bioObs(h, '1', 'Dog mom \u{1F436}');
-    bioObs(h, '2', 'photographer');
-
-    await h.engine.run();
-
-    expect(h.churn.unfollows).toEqual(['u1', 'u2']);
-    expect(h.store.pruneCountSince(0)).toBe(2);
-    h.store.close();
-  });
-
-  test('woven feed: a bio-matched non-follower is selected and unfollowed', async () => {
-    const h = build({ following: [OWN_PK, '1'], followers: [] });
-    bioObs(h, '1', 'dog walker');
-
-    await h.engine.scan();
-    const cand = h.engine.nextCandidate(h.clock.now());
-    expect(cand).toEqual({ pk: '1', username: 'u1' });
-
-    const status = await h.engine.executeUnfollow(cand!, h.clock.now());
-    expect(status).toBe('ok');
-    expect(h.churn.unfollows).toEqual(['u1']);
-    h.store.close();
-  });
-});
+// Bio words, people and verified accounts shield a prune candidate now (spec §7): see prune-protection.test.ts.
 
 describe('PruneEngine — per-cycle plan (fluctuates just under the daily limit)', () => {
   const CYCLE_START = T0 - 30 * 60_000;
@@ -919,7 +861,6 @@ describe('PruneEngine — last complete census', () => {
     const h = build({
       following: [OWN_PK, '1', '2', '3', '4'],
       followers: ['2'],
-      cfg: { whitelist: ['u4'] },
     });
     // '1' is growth-managed: excluded from the prune census but still a
     // scraped non-reciprocal follow — the census must carry both figures.
@@ -947,13 +888,12 @@ describe('PruneEngine — last complete census', () => {
       scrapedFollowing: 5, // what the list walk actually returned
       scrapedFollowers: 1,
       notFollowingBack: 3, // '1', '3', '4' (self and the follower excluded)
-      candidates: 2, // growth-managed '1' exempt; whitelist NOT applied
+      candidates: 2, // growth-managed '1' exempt; protection NOT applied
     });
     expect(s.scanAt).toBe(T0);
-    // The projection also carries the raw unvisited row count (whitelisted
-    // '4' included) next to the actionable count (whitelist applied).
+    // The projection carries the raw unvisited row count next to the actionable count (equal: no rule).
     expect(s.rawRemaining).toBe(2);
-    expect(s.candidates).toBe(1);
+    expect(s.candidates).toBe(2);
     h.store.close();
   });
 
@@ -1075,24 +1015,6 @@ describe('PruneEngine — last complete census', () => {
 });
 
 describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {
-  test('nextCandidate returns the first actionable candidate, skipping whitelisted ones', async () => {
-    const h = build({ following: ['a', 'b'], followers: [], cfg: { whitelist: ['ua'] } });
-    await h.engine.scan();
-    expect(h.engine.nextCandidate(h.clock.now())).toEqual({ pk: 'b', username: 'ub' });
-  });
-
-  test('a whitelisted skip does not decrement remaining (it was never in the actionable count)', async () => {
-    const h = build({ following: ['a', 'b'], followers: [], cfg: { whitelist: ['ua'] } });
-    await h.engine.scan();
-    // The actionable census is exactly [b]: the whitelisted a is excluded up front.
-    expect(h.engine.status().remaining).toBe(1);
-    // Walking the feed skips a permanently — but must not spend b's slot doing so.
-    expect(h.engine.nextCandidate(h.clock.now())).toEqual({ pk: 'b', username: 'ub' });
-    expect(h.engine.status().remaining).toBe(1);
-    // The skip is still durable: a is consumed from the snapshot's remaining set.
-    expect(h.store.getPruneScan()?.remaining.map((c) => c.pk)).not.toContain('a');
-  });
-
   test('atDailyCap and nextCandidate honor the prune daily cap', async () => {
     const h = build({ following: ['a', 'b', 'c'], followers: [], cfg: { dailyLimit: 2 } });
     await h.engine.scan();
@@ -1285,6 +1207,35 @@ describe('PruneEngine — pause/resume (unified transport)', () => {
     await run;
     expect(h.engine.status().upNext).toBeNull();
     h.store.close();
+  });
+});
+
+describe('PruneEngine — the blocked park reads the tempo (park.blocked, pace-up)', () => {
+  const blockedOnce = async (tempo: ReturnType<typeof recordingTempo>) => {
+    const store = kitStore();
+    store.setOwnPk(OWN_PK);
+    store.observe({ accountPk: '1', observedAt: T0, source: 'followers-list', fields: { username: 'u1' } });
+    const churn = new FakePruneActions();
+    let blocks = 1;
+    churn.unfollow = async (username: string): Promise<ChurnActionOutcome> => {
+      churn.unfollows.push(username);
+      return blocks-- > 0 ? { status: 'blocked' } : { status: 'ok' };
+    };
+    const engine = new PruneEngine({ store, clock: new FakeClock(T0), ownPk: OWN_PK, ownFollowing: new FakeListSource([OWN_PK, '1']),
+      ownFollowers: new FakeListSource([]), churnActions: churn, sentinel: new FakeSentinel(), cfg: CFG,
+      sleep: async () => {}, rng: () => 0.5, tempo });
+    await engine.run();
+    return churn.unfollows;
+  };
+
+  test('the park asks the injected tempo for its base, and the retry then goes ahead', async () => {
+    const tempo = recordingTempo();
+    expect(await blockedOnce(tempo)).toEqual(['u1', 'u1']);
+    expect(tempo.keys).toContain('park.blocked');
+  });
+
+  test('at the reference tempo the base is today\'s value (identity)', () => {
+    expect(referenceTempoSource().base('park.blocked')).toBe(PRUNE.PARK_MS);
   });
 });
 

@@ -1,6 +1,7 @@
 import {
   ActionBlockedError,
   ActionRateLimitedError,
+  ActionReviewedError,
   AdapterStaleError,
   TabUnavailableError,
   TabUnresponsiveError,
@@ -198,4 +199,14 @@ test('an unclassified throw stays a plain failed (no cause)', async () => {
   const r = await actions.follow('bob');
   expect(r.status).toBe('failed');
   expect(r.cause).toBeUndefined();
+});
+
+test('a click review that consumed the work maps to reviewed, carrying its verdict (spec §9.7)', async () => {
+  const { actions, actor } = build({});
+  const verdict = { kind: 'protected', by: 'bio-word', match: 'cafe' } as const;
+  actor.unfollow = async () => {
+    throw new ActionReviewedError(verdict);
+  };
+  // Neither a deferral (which retries the same work) nor a failure: the scheduler settles the record.
+  expect(await actions.unfollow('bob')).toEqual({ status: 'reviewed', verdict });
 });
