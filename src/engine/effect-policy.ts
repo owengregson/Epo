@@ -21,6 +21,8 @@
  * which moves to `src/kernel/schedule.ts`.
  */
 
+import { READ_RETRY_MS } from '../kernel/derive-read-retry';
+import { RUNTIME_POLICY } from '../kernel/runtime-policy';
 import type { Schedule } from './schedule';
 
 /** Every Instagram-facing effect the runtime dispatches today. */
@@ -71,11 +73,11 @@ export type EffectPolicy = PolicyBase &
     readonly retry: 'never';
   });
 
-/** One bounded read retry — reads may be repeated; mutations may not. */
+/** One bounded read retry — reads may be repeated; mutations may not. Its waits are the kernel's (D4). */
 const READ_RETRY: Schedule = {
   k: 'truncate',
-  n: 3,
-  inner: { k: 'exponential', base: 2_000, factor: 2, cap: 30_000 },
+  n: RUNTIME_POLICY.READ_RETRY_ATTEMPTS,
+  inner: { k: 'exponential', base: READ_RETRY_MS.base, factor: RUNTIME_POLICY.READ_RETRY_GROWTH, cap: READ_RETRY_MS.cap },
 };
 
 /**

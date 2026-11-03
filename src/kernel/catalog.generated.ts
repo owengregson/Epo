@@ -328,6 +328,8 @@ export const KERNEL_GUARDS: Readonly<Partial<Record<string, string>>> = {
   "RUNTIME_POLICY.IDLE_FLOOR_MS": "Two perception frames: an idle beat toward an event already due never spins a zero-delay loop.",
   "RUNTIME_POLICY.QUEUE_ROW_CAP": "Rows one queue tab returns; the rest are flagged truncated, never dropped silently.",
   "RUNTIME_POLICY.RUNWAY_RATE_WINDOW_DAYS": "Days of landed follows a target's runway pace averages (a week, so weekday shape evens out).",
+  "RUNTIME_POLICY.READ_RETRY_ATTEMPTS": "Retries one read gets: a repeated read fetches the same page (a mutation is never retried).",
+  "RUNTIME_POLICY.READ_RETRY_GROWTH": "Each read retry waits twice the one before it, up to the fetch deadline.",
   "SCRUB_POLICY.syntheticPkBase": "Guards: a synthetic id colliding with a real one; scrubbed ids count up from this reserved 12-digit base.",
   "SCRUB_POLICY.syntheticPkSpan": "Guards: the reserved id range reaching real ids; one scrubber mints fewer synthetic ids than this.",
   "SCRUB_POLICY.syntheticTimeBase": "Guards: a real time surviving a scrub; the earliest scrubbed time maps here, order and intervals kept.",
