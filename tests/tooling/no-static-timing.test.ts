@@ -113,6 +113,92 @@ describe('the scan reads its vocabulary from the kernel', () => {
   });
 });
 
+interface Entry {
+  key: string;
+  class: 'GEOM' | 'HARNESS' | 'PENDING';
+  stream?: string;
+  reason: string;
+  count?: number;
+  movedFrom?: string;
+}
+
+/** The generator's operations over a synthetic list (`new Map` counts stand in for a scan). */
+const ratchet = esm<Record<string, unknown>>(`
+  import * as g from './scripts/gen-static-timing-allow.mjs';
+  import { classify } from './scripts/static-timing-seed.mjs';
+  const entry = (key, more = {}) => ({ key, class: 'PENDING', stream: 'PR', reason: 'PR: a synthetic ratchet entry', ...more });
+  const counts = new Map([['a', 2], ['b', 1], ['c', 1]]);
+  const listed = [entry('a', { count: 3 }), entry('b'), entry('gone')];
+  const refuse = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+  const finding = (file, scope, context, text, kind = 'literal') => ({ key: [file, scope, context, text].join(' :: '), file, scope, context, text, kind });
+  const findings = [finding('src/probe/x.ts', 'f', 'sleep', '5000'), finding('src/engine/engine.ts', 'ACTIONS_FAILING_HALT', 'ACTIONS_FAILING_HALT', '8'),
+    finding('src/adapter/versions/v.ts', 'X', 'AbortSignal.timeout', '20000'), finding('src/engine/engine.ts', 'E', 'x', '9'), finding('src/engine/engine.ts', 'E', 'x', '9')];
+  const seeded = g.seed([entry('src/engine/engine.ts :: E :: x :: 9', { class: 'GEOM', stream: undefined, reason: 'kept as reviewed' })], findings);
+  process.stdout.write(JSON.stringify({
+    pruned: g.prune(listed, counts),
+    uncovered: g.uncovered(g.prune(listed, counts), counts),
+    moved: g.move(listed, 'b', 'c', counts),
+    moveRefusals: [refuse(() => g.move(listed, 'x', 'c', counts)), refuse(() => g.move(listed, 'b', 'a', counts)), refuse(() => g.move(listed, 'b', 'z', counts))],
+    against: g.refusalsAgainst([entry('a', { count: 2 }), entry('b', { count: 2 }), entry('new'), entry('c', { movedFrom: 'b' })], [entry('a', { count: 2 }), entry('b')]),
+    settled: g.settleMoves([entry('c', { movedFrom: 'b' }), entry('d', { movedFrom: 'b' })], [entry('c')]),
+    seeded, reseeded: g.seed(seeded, findings), serialized: g.serialize([entry('b'), entry('a', { count: 2 })]),
+    guarded: classify(finding('src/adapter/versions/v.ts', 'X', 'pollMs', '250')),
+  }));
+`);
+
+describe('the allow-list is a ratchet', () => {
+  test('prune drops what is gone and lowers counts; it never adds or raises', () => {
+    expect((ratchet.pruned as Entry[]).map((e) => [e.key, e.count])).toEqual([['a', 2], ['b', undefined]]);
+    expect(ratchet.uncovered).toEqual(['c (1 found, 0 listed)']);
+  });
+
+  test('--move re-keys an entry, keeps its class and reason, and remembers the origin', () => {
+    const moved = (ratchet.moved as Entry[]).find((e) => e.key === 'c');
+    expect(moved).toEqual({ key: 'c', class: 'PENDING', stream: 'PR', reason: 'PR: a synthetic ratchet entry', movedFrom: 'b' });
+    expect(ratchet.moveRefusals).toEqual([
+      '--move: nothing listed under x',
+      '--move: a is listed already',
+      '--move: z is not a current finding',
+    ]);
+  });
+
+  test('--against refuses a key or a count the ref does not list; a moved key answers to its origin', () => {
+    expect(ratchet.against).toEqual(['b: count 2 > 1 at the ref', 'new: not listed at the ref']);
+    expect((ratchet.settled as Entry[]).map((e) => [e.key, e.movedFrom])).toEqual([['c', undefined], ['d', 'b']]);
+  });
+
+  test('--seed keeps reviewed entries, classes the rest, and a second run changes nothing', () => {
+    const seeded = ratchet.seeded as Entry[];
+    expect(seeded.map((e) => [e.key.split(' :: ')[0], e.class, e.stream, e.count])).toEqual([
+      ['src/adapter/versions/v.ts', 'PENDING', 'PP', undefined],
+      ['src/engine/engine.ts', 'PENDING', 'PR', undefined],
+      ['src/engine/engine.ts', 'GEOM', undefined, 2],
+      ['src/probe/x.ts', 'HARNESS', undefined, undefined],
+    ]);
+    expect(ratchet.reseeded).toEqual(seeded);
+  });
+
+  test('a name that says time keeps a literal out of the generic GEOM families', () => {
+    expect(ratchet.guarded).toMatchObject({ class: 'PENDING', stream: 'PP' });
+  });
+
+  test('the generator refuses an unknown option and a half-given --move', () => {
+    const run = (...args: string[]) =>
+      spawnSync(process.execPath, ['scripts/gen-static-timing-allow.mjs', ...args, '--print'], { cwd: ROOT, encoding: 'utf8' });
+    const unknown = run('--grow');
+    expect([unknown.status, unknown.stderr.trim()]).toEqual([1, 'static-timing: unknown option(s): --grow']);
+    const half = run('--move', 'one-key');
+    expect([half.status, half.stderr.trim()]).toEqual([1, 'static-timing: --move takes 2 argument(s)']);
+  });
+
+  test('the file holds one entry per line, sorted by key', () => {
+    expect((ratchet.serialized as string).split('\n').slice(2, 4)).toEqual([
+      '    {"key":"a","class":"PENDING","stream":"PR","reason":"PR: a synthetic ratchet entry","count":2},',
+      '    {"key":"b","class":"PENDING","stream":"PR","reason":"PR: a synthetic ratchet entry"}',
+    ]);
+  });
+});
+
 describe('scope', () => {
   test('all of src but the kernel, the renderer and generated files', () => {
     expect(scan.files.filter((f) => !/^src\/.+[.]tsx?$/.test(f))).toEqual([]);
