@@ -1,8 +1,27 @@
 import * as logger from '../../utils/logger';
 import type { SqliteDriver } from '../driver/driver';
+import type { ChangeSource } from '../folds/growth';
 import { type EdgeRow, rowToEdge } from '../rows';
 import type { Edge, EdgeType } from '../types';
 import type { MetaRepo } from './meta';
+
+/** How an own-follower observation is dated; `feed` and `accept` carry the exact time. */
+export interface EdgeDating {
+  readonly source: ChangeSource;
+  /** The earliest the change can have happened, when the caller knows better than the default. */
+  readonly lo?: number;
+}
+
+/** What the transition hook needs from the store: the own pk, the change log and the census floor. */
+export interface OwnFollowerHook {
+  ownPk(): string | null;
+  /** The earliest a never-seen follower can have arrived: the last complete census, else the baseline. */
+  gainFloor(): number | null;
+  transition(pk: string, delta: 1 | -1, lo: number, hi: number, source: ChangeSource, at: number): number | null;
+  narrowGain(pk: string, exactAt: number): boolean;
+}
+
+const EXACT: ReadonlySet<ChangeSource> = new Set<ChangeSource>(['feed', 'accept']);
 
 /** LIVE relationship counts, straight from the edges as they stand. */
 export interface RelationshipCounts {
@@ -24,10 +43,56 @@ export class RelationshipRepo {
     private readonly db: SqliteDriver,
     private readonly changed: () => void,
     private readonly meta: MetaRepo,
+    private readonly own: OwnFollowerHook,
   ) {}
 
-  /** Upsert a directed edge, dating first/last seen and its active/removed status. */
-  observeEdge(srcPk: string, dstPk: string, type: EdgeType, active: boolean, at: number): void {
+  /**
+   * Upsert a directed edge, dating first/last seen and its active/removed status. An own-follower
+   * transition writes its change row in the same write; an active follow closes an open request.
+   */
+  observeEdge(srcPk: string, dstPk: string, type: EdgeType, active: boolean, at: number, dating?: EdgeDating): void {
+    const ownPk = this.own.ownPk();
+    if (type !== 'follows' || ownPk === null || dstPk !== ownPk || srcPk === ownPk) {
+      this.upsert(srcPk, dstPk, type, active, at);
+      this.changed();
+      return;
+    }
+    this.db.transaction(() => {
+      const prior = this.getEdge(srcPk, dstPk, 'follows');
+      this.upsert(srcPk, dstPk, type, active, at);
+      const was = prior?.status === 'active';
+      const is = this.getEdge(srcPk, dstPk, 'follows')?.status === 'active';
+      if (is) this.closeRequest(srcPk, ownPk, at);
+      const source = dating?.source ?? 'list';
+      if (!was && is) {
+        const after = prior?.status === 'removed' ? prior.lastConfirmedAt : Number.NEGATIVE_INFINITY;
+        const lo = EXACT.has(source) ? at : (dating?.lo ?? Math.max(after, this.own.gainFloor() ?? at));
+        this.own.transition(srcPk, 1, lo, at, source, at);
+      } else if (was && !is && prior !== null) {
+        this.own.transition(srcPk, -1, prior.lastConfirmedAt, at, source, at);
+      }
+    });
+    this.changed();
+  }
+
+  private closeRequest(srcPk: string, ownPk: string, at: number): void {
+    this.db.prepare(`UPDATE edges SET status = 'removed', last_confirmed_at = MAX(last_confirmed_at, ?)
+      WHERE src_pk = ? AND dst_pk = ? AND type = 'requests' AND status = 'active'`).run(at, srcPk, ownPk);
+  }
+
+  /** Whether `pk` has an open follow request into our account (spec §9.9: a live predicate, never a state). */
+  hasActiveRequest(pk: string, ownPk: string): boolean {
+    return this.db.prepare(`SELECT 1 AS hit FROM edges WHERE src_pk = ? AND dst_pk = ? AND type = 'requests'
+      AND status = 'active'`).get(pk, ownPk) !== undefined;
+  }
+
+  /** Every account with an open follow request into our account. */
+  activeRequestPks(ownPk: string): string[] {
+    return this.db.prepare(`SELECT src_pk FROM edges WHERE dst_pk = ? AND type = 'requests' AND status = 'active'
+      ORDER BY src_pk`).all<{ src_pk: string }>(ownPk).map((r) => r.src_pk);
+  }
+
+  private upsert(srcPk: string, dstPk: string, type: EdgeType, active: boolean, at: number): void {
     this.db
       .prepare(
         `INSERT INTO edges (src_pk, dst_pk, type, first_seen_at, last_confirmed_at, status)
@@ -39,7 +104,6 @@ export class RelationshipRepo {
            first_seen_at = MIN(edges.first_seen_at, excluded.first_seen_at)`,
       )
       .run(srcPk, dstPk, type, at, at, active ? 'active' : 'removed');
-    this.changed();
   }
 
   getEdge(srcPk: string, dstPk: string, type: EdgeType): Edge | null {
@@ -150,17 +214,18 @@ export class RelationshipRepo {
    * List-walk observations (membership, not timing) must NOT come through here
    * — they use plain {@link observeEdge} and the census's stock accounting.
    */
-  observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number): void {
+  observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number, source: 'feed' | 'accept' = 'feed'): void {
     this.ensureBaseline(at);
     const current = this.getEdge(srcPk, ownPk, 'follows');
     if (current !== null && current.lastConfirmedAt >= at) {
-      // A delayed historical event can improve history, never current membership.
+      // A delayed historical event can improve history (and date a counted gain), never current membership.
       this.db.prepare(`UPDATE edges SET first_seen_at = MIN(first_seen_at, ?)
         WHERE src_pk = ? AND dst_pk = ? AND type = 'follows'`).run(at, srcPk, ownPk);
+      this.own.narrowGain(srcPk, at);
       this.changed();
       return;
     }
-    this.observeEdge(srcPk, ownPk, 'follows', true, at);
+    this.observeEdge(srcPk, ownPk, 'follows', true, at, { source });
   }
 
   /** Own-follower edges the census verdict must treat as its own walk's rows. */
@@ -177,21 +242,20 @@ export class RelationshipRepo {
 
   /**
    * Re-date the first census's own discoveries onto the baseline, so the
-   * initial stock can never chart as a one-day cliff.
+   * initial stock can never chart as a one-day cliff; returns their pks.
    */
   redateStockOntoBaseline(
     ownPk: string,
     baselineAt: number,
     windowStart: number,
     windowEnd: number,
-  ): void {
-    this.db
-      .prepare(
-        `UPDATE edges SET first_seen_at = ?
-         WHERE dst_pk = ? AND type = 'follows' AND status = 'active'
-           AND first_seen_at >= ? AND first_seen_at <= ? AND first_seen_at > ?`,
-      )
-      .run(baselineAt, ownPk, windowStart, windowEnd, baselineAt);
+  ): string[] {
+    const where = `WHERE dst_pk = ? AND type = 'follows' AND status = 'active'
+           AND first_seen_at >= ? AND first_seen_at <= ? AND first_seen_at > ?`;
+    const pks = this.db.prepare(`SELECT src_pk FROM edges ${where}`)
+      .all<{ src_pk: string }>(ownPk, windowStart, windowEnd, baselineAt).map((r) => r.src_pk);
+    this.db.prepare(`UPDATE edges SET first_seen_at = ? ${where}`).run(baselineAt, ownPk, windowStart, windowEnd, baselineAt);
+    return pks;
   }
 
   /** src_pk of every active edge INTO `ownPk` — the census's "did we lose them" set. */

@@ -26,7 +26,7 @@ export async function reconcileFollowbackCohort(d: {
         continue;
       }
       if (!Number.isFinite(read.observedAt) || read.observedAt < startedAt || read.observedAt > d.clock.now()) continue;
-      d.store.observeEdge(rec.accountPk, d.ownPk, 'follows', read.followsUs, read.observedAt);
+      d.store.observeEdge(rec.accountPk, d.ownPk, 'follows', read.followsUs, read.observedAt, { source: 'visit' });
       observed++;
     } catch (error) {
       warn('followback: targeted relationship read failed', { accountPk: rec.accountPk, error: String(error) });

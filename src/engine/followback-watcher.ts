@@ -190,7 +190,7 @@ export class FollowbackWatcher {
         continue;
       }
       this.store.observe({ accountPk: acc.pk, observedAt: now, source: 'friend-requests', fields: { username: acc.username } });
-      this.store.observeOwnFollowerEvent(acc.pk, this.ownPk, now);
+      this.store.observeOwnFollowerEvent(acc.pk, this.ownPk, now, 'accept');
       const rec = this.store.getFollowRecord(acc.pk);
       if (rec !== null && canDetect(rec)) this.markFollowedBack(acc.pk, now, now, detected);
     }
@@ -232,7 +232,7 @@ export class FollowbackWatcher {
       if (stopped()) return interrupted();
       const observedAt = this.clock.now();
       const members = new Set(census.pks);
-      for (const pk of members) this.store.observeEdge(pk, this.ownPk, 'follows', true, observedAt);
+      for (const pk of members) this.store.observeEdge(pk, this.ownPk, 'follows', true, observedAt, { source: 'census' });
       const stats = this.store.getAccount(this.ownPk);
       const headerFresh = stats?.statsObservedAt !== undefined
         && stats.statsObservedAt >= startedAt - RELATIONSHIP_FRESH_MS && stats.statsObservedAt <= observedAt;
@@ -244,7 +244,9 @@ export class FollowbackWatcher {
         });
         // An absent edge need not exist yet. Write explicit absence for each managed record.
         for (const rec of currentCohort()) {
-          if (!members.has(rec.accountPk)) this.store.observeEdge(rec.accountPk, this.ownPk, 'follows', false, observedAt);
+          if (!members.has(rec.accountPk)) {
+            this.store.observeEdge(rec.accountPk, this.ownPk, 'follows', false, observedAt, { source: 'census' });
+          }
         }
       }
       consumeCurrent();

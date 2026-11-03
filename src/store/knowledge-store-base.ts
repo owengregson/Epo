@@ -5,7 +5,7 @@
 import { Chronos } from './chronos';
 import type { SqliteDriver } from './driver/driver';
 import { openDatabase } from './driver/index';
-import { type KnowledgeStoreOptions, noInjectedRng } from './knowledge-types';
+import { type KnowledgeStoreOptions, noInjectedRng, type PruneCensusRecord } from './knowledge-types';
 import { runMigrations } from './migrations';
 import { MutationPulse } from './mutation-pulse';
 import { AccountRepo } from './repos/accounts';
@@ -98,7 +98,12 @@ export class KnowledgeStoreBase {
     this.targets = new TargetRepo(this.db, changed);
     this.followRecords = new FollowRecordRepo(this.db, changed);
     this.accounts = new AccountRepo(this.db, changed);
-    this.relationships = new RelationshipRepo(this.db, changed, this.meta);
+    this.relationships = new RelationshipRepo(this.db, changed, this.meta, {
+      ownPk: () => this.ownPk,
+      gainFloor: () => this.meta.json<PruneCensusRecord>('pruneLastCensus')?.at ?? this.relationships.baselineAt(),
+      transition: (pk, delta, lo, hi, source, at) => this.growth.onTransition(pk, delta, lo, hi, source, at),
+      narrowGain: (pk, exactAt) => this.growth.narrowLatestGainContaining(pk, exactAt),
+    });
     this.effectIntents = new EffectIntentRepo(this.db, {
       records: this.followRecords, relationships: this.relationships, ledgers: this.ledgers, changed,
     });
@@ -114,7 +119,7 @@ export class KnowledgeStoreBase {
     this.protectionFacts = new ProtectionFactsRepo(this.db);
     this.chronos = new Chronos(this.db, { now: this.now });
     this.spans = new SpanSink(this.db, { now: this.now, rng: this.rng, policy: this.policy.spans });
-    this.census = new CensusRepo(this.db, this.accounts, this.followRecords, this.relationships, this.meta);
+    this.census = new CensusRepo(this.db, this.accounts, this.followRecords, this.relationships, this.meta, this.growth);
   }
 
   /**

@@ -4,6 +4,7 @@ import type { SqliteDriver } from '../driver/driver';
 import type { FollowState } from '../types';
 import type { AccountRepo } from './accounts';
 import type { FollowRecordRepo } from './follow-records';
+import type { GrowthRepo } from './growth';
 import type { MetaRepo } from './meta';
 import type { RelationshipRepo } from './relationships';
 
@@ -40,6 +41,7 @@ export class CensusRepo {
     private readonly records: FollowRecordRepo,
     private readonly relationships: RelationshipRepo,
     private readonly meta: MetaRepo,
+    private readonly growth: Pick<GrowthRepo, 'dropStock'>,
   ) {}
 
   /**
@@ -139,7 +141,7 @@ export class CensusRepo {
       }
       for (const pk of followerPks) {
         if (pk === ownPk) continue;
-        this.relationships.observeEdge(pk, ownPk, 'follows', true, at);
+        this.relationships.observeEdge(pk, ownPk, 'follows', true, at, { source: 'census' });
       }
 
       if (proves.followers) {
@@ -147,7 +149,7 @@ export class CensusRepo {
         const followerSet = new Set(followerPks);
         for (const pk of this.relationships.activeFollowerPks(ownPk)) {
           if (pk === ownPk || followerSet.has(pk)) continue;
-          this.relationships.observeEdge(pk, ownPk, 'follows', false, at);
+          this.relationships.observeEdge(pk, ownPk, 'follows', false, at, { source: 'census' });
         }
       }
       if (proves.following) {
@@ -197,7 +199,9 @@ export class CensusRepo {
         followers: followerCount,
       });
     }
-    this.relationships.redateStockOntoBaseline(ownPk, baselineAt, stockWindowStart, at);
+    // Its discoveries are stock in the change log too; exact event rows stay growth.
+    const stock = this.relationships.redateStockOntoBaseline(ownPk, baselineAt, stockWindowStart, at);
+    this.growth.dropStock(stock, stockWindowStart, at);
     this.meta.setOnce('followersCensusAt', String(at));
   }
 }

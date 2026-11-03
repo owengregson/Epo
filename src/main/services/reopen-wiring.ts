@@ -122,6 +122,11 @@ export function noteMutationFor(
   return noteMutation;
 }
 
+/** The requester predicate churn's selection reads (spec §9.9): an open request into our account, live. */
+export function requesterPredicate(store: Pick<KnowledgeStore, 'hasActiveRequest'>): (pk: string) => boolean {
+  return (pk) => store.hasActiveRequest(pk);
+}
+
 /** The reopen wiring's startup steps and status contributors (the reopen stream fills them). */
 export function reopenWiringParts(): WiringParts {
   return { startupSteps: [], statusContributors: [] };

@@ -5,7 +5,7 @@ import type { TargetYield } from './repos/analytics';
 import type { CensusAuthority, ReconcileOutcome } from './repos/census';
 import type { HealResult } from './repos/follow-records';
 import type { GrowthPoint } from './repos/growth';
-import type { RelationshipCounts } from './repos/relationships';
+import type { EdgeDating, RelationshipCounts } from './repos/relationships';
 import type {
   AccountState,
   Edge,
@@ -70,10 +70,17 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     });
   }
 
-  /** Upsert a directed edge, dating first/last seen and its active/removed status. */
-  observeEdge(srcPk: string, dstPk: string, type: EdgeType, active: boolean, at: number): void {
-    this.relationships.observeEdge(srcPk, dstPk, type, active, at);
+  /** Upsert a directed edge; an own-follower transition also writes its dated change row (ADR 0704). */
+  observeEdge(srcPk: string, dstPk: string, type: EdgeType, active: boolean, at: number, dating?: EdgeDating): void {
+    this.relationships.observeEdge(srcPk, dstPk, type, active, at, dating);
   }
+
+  /** Whether `pk` has an open follow request into our account (the requester predicate, spec §9.9). */
+  hasActiveRequest(pk: string): boolean {
+    return this.ownPk !== null && this.relationships.hasActiveRequest(pk, this.ownPk);
+  }
+
+  activeRequestPks(): string[] { return this.ownPk === null ? [] : this.relationships.activeRequestPks(this.ownPk); }
 
   getAccount(pk: string): AccountState | null {
     return this.accounts.get(pk);
@@ -176,13 +183,8 @@ export class KnowledgeStore extends KnowledgeStoreBase {
   // --- Last complete prune census (meta-backed) ------------------------------------
 
   /**
-   * Replace the durable last-COMPLETE-census record. Kept SEPARATE from the
-   * runnable-scan snapshot above on purpose: the snapshot's candidate rows are
-   * consumed by runs and replaced by the next scan, while THIS record is the
-   * settled whole-list census a finished scan produced — the display truth the
-   * prune panel anchors on. It is only ever replaced by the next COMPLETE scan,
-   * so an aborted/failed scan and a consumed run all leave it standing, and it
-   * survives relaunch (docs/PRINCIPLES.md §3) via the meta table.
+   * Replace the durable last-COMPLETE census (separate from the runnable snapshot, whose rows runs
+   * consume): only the next complete scan replaces it, and it survives relaunch (PRINCIPLES §3).
    */
   savePruneCensus(census: PruneCensusRecord): void {
     this.meta.setJson('pruneLastCensus', census);
@@ -413,8 +415,8 @@ export class KnowledgeStore extends KnowledgeStoreBase {
    * accepted follow request; anchors the growth baseline first. List-walk
    * observations (membership, not timing) must NOT come through here.
    */
-  observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number): void {
-    this.relationships.observeOwnFollowerEvent(srcPk, ownPk, at);
+  observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number, source?: 'feed' | 'accept'): void {
+    this.relationships.observeOwnFollowerEvent(srcPk, ownPk, at, source);
   }
 
   /**
@@ -474,10 +476,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
 
   // --- Emergent analysis (via AnalyticsRepo) --------------------------------------
 
-  /**
-   * Yield statistics for a poaching session against `targetPk`, computed on
-   * demand from follow_records + edges — analysis is an emergent query.
-   */
+  /** Yield statistics for a poaching session against `targetPk`, computed on demand (an emergent query). */
   targetYield(targetPk: string, ownPk: string): TargetYield {
     return this.analytics.targetYield(targetPk, ownPk);
   }
@@ -492,19 +491,12 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.analytics.followbackTimingFor(targetPk);
   }
 
-  /**
-   * Cumulative net own-follower growth per day for the last `days` days, ending
-   * on `now`'s local day. Baseline-aware: only events strictly after the
-   * followers baseline count, so initializing the app never charts a cliff.
-   */
+  /** Cumulative net own-follower growth per local day for the last `days` days (the edge read, baseline-aware). */
   netGrowthSeries(days: number, ownPk: string, now: number = this.now()): GrowthPoint[] {
     return this.growth.netGrowthSeries(days, ownPk, now);
   }
 
-  /**
-   * TRUE net own-follower delta since `sinceMs` (gains minus losses),
-   * baseline-aware. 0 when the own pk is unset.
-   */
+  /** The net own-follower delta since `sinceMs` over the edges, baseline-aware; 0 while the own pk is unset. */
   netFollowersSince(sinceMs: number): number {
     return this.ownPk === null ? 0 : this.growth.netFollowersSince(sinceMs, this.ownPk);
   }
