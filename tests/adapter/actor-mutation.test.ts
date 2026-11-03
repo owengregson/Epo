@@ -40,6 +40,8 @@ function scriptFollowFlow(tab: NetworkTab): void {
   }));
   tab.on(pageCall('probeActionButton'), () => ({ found: true, state: 'following' }));
   tab.on(pageCall('blockText'), () => '');
+  // No confirm layer on screen: an unobserved window counts toward blindness (ADR 0308).
+  tab.on(pageCall('confirmLayer'), () => ({ present: false }));
 }
 
 const build = (tab: AdapterTab, interactor: ActorInteractor, extra: object = {}): Actor =>
@@ -214,10 +216,11 @@ describe('unfollow — the mutation response arbitrates', () => {
       needsConfirm: true,
       rect: RECT,
     }));
-    tab.on(pageCall('locateConfirm'), (): LocateRectResult => ({ found: true, rect: CONFIRM_RECT }));
+    tab.on(pageCall('locateConfirm'), (): LocateRectResult & { sig: string } => ({ found: true, rect: CONFIRM_RECT, sig: 'menu' }));
     // Optimistic flip: the header reads Follow right after the confirm.
     tab.on(pageCall('probeActionButton'), () => ({ found: true, state: 'follow' }));
     tab.on(pageCall('blockText'), () => '');
+    tab.on(pageCall('confirmLayer'), () => ({ present: false }));
     // The mutation fires on the CONFIRM click (the second click).
     h.onClick = () => {
       if (h.clicks.length === 2) h.emitAfterConfirm?.();

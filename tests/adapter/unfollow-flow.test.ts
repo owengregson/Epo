@@ -8,8 +8,10 @@ import { ActionDeferredError } from '@/adapter/errors';
 import type { LocatedRect } from '@/adapter/ig-surface';
 import { SURFACE } from '@/adapter/ig-surface';
 import { lookBeforeActing } from '@/adapter/instagram-adapter';
+import { MUTATION_BLINDNESS } from '@/adapter/mutation-watch';
+import type { TempoSource } from '@/kernel/tempo';
 import { FakeInteractor, marker, NetworkTab, pageCall } from '../kit/tabs';
-import { recordingTempo } from '../kit/tempo';
+import { fixedTempo, recordingTempo } from '../kit/tempo';
 
 const HEADER: LocatedRect = { x: 360, y: 212, width: 324, height: 44 };
 const MENU_ROW: LocatedRect = { x: 420, y: 501, width: 560, height: 54 };
@@ -37,10 +39,12 @@ const menu = (): Layer =>
 const dialog = (): Layer =>
   ({ sig: '0:2:dialog', kind: 'dialog', confirm: DIALOG_BUTTON, cancel: CANCEL, close: null, controls: 2, structural: 'Unfollow' });
 
-/** What a press of the header, a confirm control, Cancel or the Close X does on this page. */
+/** What a press of the header or a confirm control does on this page (Cancel and the X close the top layer). */
 interface Script {
   header?: () => void;
   confirm?: (layer: Layer) => void;
+  /** Called on every confirm locate: lets a layer linger, then change. */
+  poll?: () => void;
 }
 
 /** A profile page that renders confirm layers and fires the mutation when the script says so. */
@@ -51,8 +55,9 @@ class ConfirmPage {
   readonly events: string[] = [];
   state: State;
 
-  constructor(state: State, script: Script) {
+  constructor(state: State, scripted: Script | ((page: ConfirmPage) => Script)) {
     this.state = state;
+    const script = typeof scripted === 'function' ? scripted(this) : scripted;
     this.tab.on(pageCall('locateActionButton'), () => {
       const unfollow = this.tab.evaluated[this.tab.evaluated.length - 1].includes('"op":"unfollow"');
       const wouldClick = unfollow === (this.state !== 'follow');
@@ -60,6 +65,7 @@ class ConfirmPage {
     });
     this.tab.on(pageCall('probeActionButton'), () => ({ found: true, state: this.state }));
     this.tab.on(pageCall('locateConfirm'), () => {
+      script.poll?.();
       const top = this.top();
       return top?.confirm ? { found: true, rect: top.confirm, layer: top.kind, sig: top.sig } : { found: false };
     });
@@ -73,6 +79,11 @@ class ConfirmPage {
     this.tab.on(marker('"control":"drawer-close"'), () =>
       this.top()?.close ? { found: true, rect: this.top()?.close } : { found: false });
     this.tab.on(pageCall('blockText'), () => '');
+    const hover = this.h.hover.bind(this.h);
+    this.h.hover = async (target: LocatedRect) => {
+      this.events.push(`hover:${this.name(target)}`);
+      await hover(target);
+    };
     this.h.onClick = () => {
       const rect = this.h.clicks[this.h.clicks.length - 1];
       this.events.push(`press:${this.name(rect)}`);
@@ -101,13 +112,24 @@ class ConfirmPage {
   }
 }
 
-/** A dwell-free Actor over the page; `admit` is the cadence's `beforeMutation`. */
-function actorOn(page: ConfirmPage, admit: () => Promise<void> = async () => {}): Actor {
+/** A dwell-free Actor over the page; `admit` is the cadence's `beforeMutation`, every step pause is recorded. */
+function actorOn(page: ConfirmPage, opts: { admit?: () => Promise<void>; tempo?: TempoSource } = {}): Actor {
   return new Actor(page.tab, {
-    pollIntervalMs: 1, pollTimeoutMs: 30, mutationTimeoutMs: 30, interactor: page.h, beforeMutation: admit,
+    pollIntervalMs: 1, pollTimeoutMs: 30, mutationTimeoutMs: 30, interactor: page.h,
+    beforeMutation: opts.admit ?? (async () => {}), tempo: opts.tempo,
+    sleep: async () => { page.events.push('pause'); },
     prepareProfile: async (username) => { await page.tab.goto(SURFACE.profileUrl(username)); },
   });
 }
+
+/** Variant P: a private account you follow — the menu sheet, then the dialog, then the answer. */
+const variantP = (page: ConfirmPage): Script => ({
+  header: () => page.layers.push(menu()),
+  confirm: (layer) => {
+    if (layer.kind === 'menu') page.layers.splice(0, page.layers.length, dialog());
+    else page.land();
+  },
+});
 
 /** A `beforeMutation` that admits once and refuses after: the real cadence's re-check contract. */
 const admitsOnce = () => jest.fn()
@@ -123,7 +145,7 @@ describe('F1: one admission per action', () => {
     const admit = admitsOnce();
     const journal = jest.fn();
 
-    const result = await actorOn(page, admit).unfollow('someone', 'pk', journal);
+    const result = await actorOn(page, { admit }).unfollow('someone', 'pk', journal);
 
     expect(result.ok).toBe(true);
     expect(page.h.clicks).toEqual([HEADER, DIALOG_BUTTON]);
@@ -135,7 +157,7 @@ describe('F1: one admission per action', () => {
     const page = new ConfirmPage(op === 'follow' ? 'follow' : 'following', { header: () => page.layers.push(menu()) });
     const refusal = new ActionDeferredError('cadence: the deadline has not passed');
     const journal = jest.fn();
-    const actor = actorOn(page, async () => { throw refusal; });
+    const actor = actorOn(page, { admit: async () => { throw refusal; } });
 
     await expect(op === 'follow' ? actor.follow('someone', 'pk', journal) : actor.unfollow('someone', 'pk', journal))
       .rejects.toBe(refusal);
@@ -162,5 +184,132 @@ describe('F1: one admission per action', () => {
     await actor.unfollow('someone', 'pk', () => order.push('journal'));
 
     expect(order.slice(0, 5)).toEqual(['visit', 'dwell', 'admit', 'journal', 'press']);
+  });
+});
+
+describe('F2: each confirm layer is pressed until Instagram answers', () => {
+  test('Variant P (private, Following): the header, the menu row, then the dialog — one admission', async () => {
+    const page = new ConfirmPage('following', variantP);
+    const admit = admitsOnce();
+    const journal = jest.fn();
+
+    const result = await actorOn(page, { admit }).unfollow('someone', 'pk', journal);
+
+    expect(result.ok).toBe(true);
+    expect(page.h.clicks).toEqual([HEADER, MENU_ROW, DIALOG_BUTTON]);
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(journal).toHaveBeenCalledTimes(1);
+  });
+
+  test('a menu that lingers after its press is never pressed again; the dialog that replaces it is', async () => {
+    let lingering = 0;
+    const page = new ConfirmPage('following', (p) => ({
+      header: () => p.layers.push(menu()),
+      confirm: (layer) => {
+        if (layer.kind === 'menu') lingering = 3;
+        else p.land();
+      },
+      poll: () => {
+        if (lingering > 0 && --lingering === 0) p.layers.push(dialog());
+      },
+    }));
+
+    const result = await actorOn(page).unfollow('someone', 'pk');
+
+    expect(result.ok).toBe(true);
+    expect(page.h.clicks).toEqual([HEADER, MENU_ROW, DIALOG_BUTTON]);
+  });
+
+  test('a public account: the menu press fires the mutation — two presses and at most one more poll', async () => {
+    const page = new ConfirmPage('following', (p) => ({ header: () => p.layers.push(menu()), confirm: () => p.land() }));
+
+    const result = await actorOn(page).unfollow('someone', 'pk');
+
+    expect(result.ok).toBe(true);
+    expect(page.h.clicks).toEqual([HEADER, MENU_ROW]);
+    const laterLocates = page.tab.evaluated.filter((s) => pageCall('locateConfirm', '"dialogsOnly":true')(s));
+    expect(laterLocates.length).toBeLessThanOrEqual(1);
+  });
+
+  test('Variant R answered inline at the header press: no layer is pressed', async () => {
+    const page = new ConfirmPage('requested', (p) => ({ header: () => p.land() }));
+
+    const result = await actorOn(page).unfollow('someone', 'pk');
+
+    expect(result.ok).toBe(true);
+    expect(page.h.clicks).toEqual([HEADER]);
+  });
+
+  test('a follow expects no layer: an unexpected dialog is never pressed', async () => {
+    const page = new ConfirmPage('follow', (p) => ({ header: () => p.layers.push(dialog()) }));
+
+    const result = await actorOn(page).follow('someone', 'pk');
+
+    expect(result.ok).toBe(false);
+    expect(page.h.clicks.filter((r) => r === DIALOG_BUTTON)).toEqual([]);
+  });
+});
+
+describe('F4: a stall on screen is not a blind mutation table', () => {
+  beforeEach(() => MUTATION_BLINDNESS.reset());
+
+  test('a dialog whose button never becomes pressable: an honest unverified result, blindness unchanged', async () => {
+    const stuck: Layer = { ...dialog(), confirm: { x: 0, y: 0, width: 0, height: 0 } };
+    const page = new ConfirmPage('requested', (p) => ({ header: () => p.layers.push(stuck) }));
+
+    const result = await actorOn(page).unfollow('someone', 'pk');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/post-click state not confirmed/);
+    expect(page.h.clicks.filter((r) => r === stuck.confirm)).toEqual([]);
+    expect(MUTATION_BLINDNESS.streak()).toBe(0);
+  });
+
+  test('with nothing on screen, an unobserved window still counts toward blindness', async () => {
+    const page = new ConfirmPage('requested', {});
+
+    await actorOn(page).unfollow('someone', 'pk');
+
+    expect(MUTATION_BLINDNESS.streak()).toBe(1);
+  });
+});
+
+describe('in-action pacing (spec §11.2 item 11)', () => {
+  test('Variant P with the plan tempo: one step pause per located layer, before its travel', async () => {
+    const page = new ConfirmPage('following', variantP);
+    const tempo = recordingTempo();
+
+    expect((await actorOn(page, { tempo }).unfollow('someone', 'pk')).ok).toBe(true);
+
+    expect(page.events).toEqual(['press:header', 'pause', 'hover:menu-row', 'press:menu-row', 'pause', 'hover:dialog',
+      'press:dialog']);
+    expect(tempo.keys.filter((k) => k === 'ui.step-pause')).toHaveLength(2);
+  });
+
+  test('Variant R with the plan tempo: one pause before the dialog', async () => {
+    const page = new ConfirmPage('requested', (p) => ({ header: () => p.layers.push(dialog()), confirm: () => p.land() }));
+
+    expect((await actorOn(page, { tempo: recordingTempo() }).unfollow('someone', 'pk')).ok).toBe(true);
+
+    expect(page.events).toEqual(['press:header', 'pause', 'hover:dialog', 'press:dialog']);
+  });
+
+  test('under the reference tempo the step pause stays off (until the plan swaps its tempo in)', async () => {
+    const page = new ConfirmPage('following', variantP);
+
+    expect((await actorOn(page).unfollow('someone', 'pk')).ok).toBe(true);
+
+    expect(page.events).not.toContain('pause');
+  });
+
+  test('the Actor hands its tempo to the list scroll: a deeper session scrolls further', async () => {
+    const scrolled = async (tempo?: TempoSource): Promise<number> => {
+      const page = new ConfirmPage('follow', {});
+      page.tab.on(pageCall('locateScrollContainer'), () =>
+        ({ found: true, rect: MENU_ROW, scrollTop: 0, scrollHeight: 20_000, clientHeight: 500 }));
+      await actorOn(page, { tempo }).scrollFollowers();
+      return page.h.scrolls[0].deltaPx;
+    };
+    expect(await scrolled(fixedTempo(0.5))).toBe(2 * (await scrolled()));
   });
 });
