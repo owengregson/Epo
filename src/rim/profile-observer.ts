@@ -21,12 +21,13 @@
  */
 
 import { ActionAbortedError } from '@/adapter/errors';
+import type { ArmedCandidates, ObservedRead } from '@/adapter/observed-reads';
 import type { Reader } from '@/adapter/reader';
 import type { Observable } from '@/adapter/tab-ports';
 import type { Clock } from '@/governors/clock';
 import type { ProfileSeen } from '@/rim/profile-visit-port';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import type { SurfaceRead, WallFamily } from '@/surface/read/types';
+import type { Anchor, SurfaceRead, WallFamily } from '@/surface/read/types';
 import type { DriftClass } from '@/surface/sink';
 import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 import type { TabResponse, Unsubscribe } from '@/types';
@@ -63,6 +64,13 @@ export interface ProfileObserverDeps {
 
 type Listener = (event: ExpectationEvent) => void;
 
+/** An armed visit: who hears it, the anchor that witnesses a recovery, and its deadline candidates. */
+interface ArmedVisit {
+  readonly listener: Listener;
+  readonly anchor: Anchor;
+  readonly candidates: ArmedCandidates;
+}
+
 /**
  * What a read that names no profile tells an armed visit: a wall is a wall (errors without the profile
  * wait like one, spec §10.5); only Instagram's explicit null in a clean, complete body is "gone"; a
@@ -79,8 +87,8 @@ function noProfile(read: SurfaceRead): ExpectationEvent | null {
 
 export class ProfileObserver {
   private readonly waiting = new Map<string, Set<Listener>>();
-  /** Every armed listener, for the bodies that name no profile. */
-  private readonly armed = new Set<Listener>();
+  /** Every armed visit, for the bodies that name no profile and for a recovery under its anchor. */
+  private readonly visits = new Set<ArmedVisit>();
 
   constructor(private readonly deps: ProfileObserverDeps) {}
 
@@ -89,8 +97,8 @@ export class ProfileObserver {
     return this.deps.tab.onResponse((resp) => this.onResponse(resp));
   }
 
-  /** Arm BEFORE navigating: the reads that answer a visit to `username`. */
-  expect(username: string): ProfileExpectation {
+  /** Arm BEFORE navigating: the reads that answer a visit to `username` (its pk, when known, anchors a recovery). */
+  expect(username: string, opts: { readonly pk?: string } = {}): ProfileExpectation {
     const key = username.toLowerCase();
     const queue: ExpectationEvent[] = [];
     let wake: (() => void) | null = null;
@@ -101,7 +109,9 @@ export class ProfileObserver {
     const set = this.waiting.get(key) ?? new Set<Listener>();
     set.add(listener);
     this.waiting.set(key, set);
-    this.armed.add(listener);
+    const visit: ArmedVisit = { listener, anchor: { username, ...(opts.pk === undefined ? {} : { pk: opts.pk }) },
+      candidates: this.deps.reader.observed.arm('visit') };
+    this.visits.add(visit);
 
     return {
       next: async (timeoutMs, signal) => {
@@ -126,34 +136,66 @@ export class ProfileObserver {
       },
       dispose: () => {
         set.delete(listener);
-        this.armed.delete(listener);
+        this.visits.delete(visit);
+        visit.candidates.dispose();
         if (set.size === 0 && this.waiting.get(key) === set) this.waiting.delete(key);
       },
     };
   }
 
+  /** At a visit's deadline: its candidates (unrouted reads of the profile family) are read under its anchor (C2). */
+  async recoverArmed(): Promise<void> {
+    for (const visit of [...this.visits]) {
+      const read = await visit.candidates.recover(visit.anchor);
+      const seen = read === null ? null : this.deps.reader.profileSeen(read, this.deps.ownPk ?? null);
+      if (seen !== null) this.deliver(seen);
+    }
+  }
+
   /** Wake every armed visit with a read that names no profile. */
   private toArmed(event: ExpectationEvent): void {
-    for (const listener of [...this.armed]) listener(event);
+    for (const visit of [...this.visits]) visit.listener(event);
   }
 
   private onResponse(resp: TabResponse): void {
-    if (this.deps.reader.profileKindOf(resp) === null) return;
+    const { reader } = this.deps;
+    if (reader.profileKindOf(resp) === null) {
+      // While a visit waits, an unrouted read of the profile family is kept (a reference) for its deadline.
+      if (this.visits.size > 0) reader.observed.offer(resp);
+      return;
+    }
     // One read per response, shared with every other consumer of the same body.
-    this.deps.reader.observed.read(resp, this.deps.clock.now())
-      ?.then(({ read }) => this.read(read))
+    reader.observed.read(resp, this.deps.clock.now())
+      ?.then((observed) => this.read(observed))
       .catch((e: unknown) => {
         logger.warn('rim.profile-observer: profile body unreadable', { error: String(e) });
       });
   }
 
-  private read(read: SurfaceRead): void {
-    const seen = this.deps.reader.profileSeen(read, this.deps.ownPk ?? null);
-    if (seen === null) {
-      const event = noProfile(read);
-      if (event !== null) this.toArmed(event);
-      return;
+  private read({ read, decoded, route }: ObservedRead): void {
+    const { reader } = this.deps;
+    const ownPk = this.deps.ownPk ?? null;
+    const seen = reader.profileSeen(read, ownPk);
+    if (seen !== null) this.deliver(seen);
+    // The record moved, or it lost its username: an armed visit's anchor may witness where (C2, spec §10.6).
+    const moved = read.ok ? seen !== null && seen.obs.fields.username === undefined : read.kind === 'mismatch';
+    if (moved && decoded !== null && route.kind === 'profile-graphql') {
+      for (const visit of [...this.visits]) {
+        const found = reader.profileSeen(reader.recover(route.kind, decoded, { at: this.deps.clock.now(), route, arm: 'visit',
+          anchor: visit.anchor }), ownPk);
+        if (found !== null) {
+          this.deliver(found);
+          return;
+        }
+      }
     }
+    if (seen !== null) return;
+    const event = noProfile(read);
+    if (event !== null) this.toArmed(event);
+  }
+
+  /** Store a seen profile and answer the visit waiting for its username. */
+  private deliver(seen: ProfileSeen): void {
     const counts = seen.presence?.counts;
     if (counts === 'partial' || counts === 'invalid') {
       // A count pair that does not read is drift: the profile is stored without counts.
@@ -161,7 +203,6 @@ export class ProfileObserver {
     }
     this.deps.store.observe(seen.obs);
     const listeners = this.waiting.get(seen.obs.fields.username?.toLowerCase() ?? '');
-    if (listeners === undefined) return;
-    for (const listener of [...listeners]) listener({ kind: 'seen', seen });
+    for (const listener of [...(listeners ?? [])]) listener({ kind: 'seen', seen });
   }
 }

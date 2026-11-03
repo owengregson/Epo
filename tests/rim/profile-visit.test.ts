@@ -15,6 +15,7 @@ import { MOTION } from '@/kernel/motion-policy';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import { MemorySink } from '@/surface/sink';
 import { clamp, logNormal } from '@/timing/distributions';
 import { sample } from '@/timing/primitives';
 import { setLevel } from '@/utils/logger';
@@ -356,5 +357,24 @@ describe('the read behind a visit: presence, the count pair, our own counts (spe
     const other = await visitor.visit('other');
     expect(self.ok && self.presence?.relationship).toBe('self');
     expect(other.ok && other.presence?.relationship).toBe('null');
+  });
+});
+
+describe('a renamed profile query still answers the visit at its deadline (C2, spec §10.6)', () => {
+  test('the unrouted read of the profile family is recovered under the anchor; its viewer flags are withheld', async () => {
+    const sink = new MemorySink();
+    const tab = new PageTab();
+    tab.on(marker('"control":"profile-unavailable"'), () => ({ found: false }));
+    const observer = new ProfileObserver({ tab, reader: new Reader({ sink }), store, clock: new FakeClock(1_000) });
+    observer.start();
+    const visitor = new TabProfileVisitor({ tab, observer, sentinel: { check: async () => 'ok' }, waitMs: 20, pollMs: 1,
+      sleep: async () => {} });
+    tab.pages['https://www.instagram.com/user_8/'] = () => tab.emit({ requestId: 'r9', url: GRAPHQL, status: 200,
+      mimeType: 'text/javascript', requestHeaders: { 'x-fb-friendly-name': 'PolarisUserProfileContentQuery' },
+      body: profileBody('8', 'user_8', { following: true, outgoing_request: false, followed_by: true, incoming_request: false }) });
+    const visit = await visitor.visit('user_8', { pk: '8' });
+    expect(visit).toMatchObject({ ok: true, tier: 'recovered', obs: { accountPk: '8', fields: { followers: 781 } },
+      viewer: { following: null, requested: null, followsUs: null, incomingRequest: null } });
+    expect(sink.snapshot().drift.map((d) => [d.signal.cls, d.signal.path])).toContainEqual(['unrouted', 'PolarisUserProfileContentQuery']);
   });
 });

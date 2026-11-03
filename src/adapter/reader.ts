@@ -13,6 +13,7 @@ import type { ProfileSeen } from '@/rim/profile-visit-port';
 import type { ObservedRelation } from '@/shared/observed-relation';
 import { admits } from '@/surface/read/admission';
 import { defaultEnv, readBody } from '@/surface/read/read';
+import { recoverBody } from '@/surface/read/recover';
 import { mintObserved } from '@/surface/read/relationship';
 import { type ObservedRequest, routeObserved } from '@/surface/read/route';
 import type { BodyInput, ReadCtx, ReadEnv, RouteMatch, SurfaceRead } from '@/surface/read/types';
@@ -45,7 +46,7 @@ export class Reader {
 
   /** Route an observed request through the one routing table, or `null`. */
   route(req: ObservedRequest): RouteMatch | null {
-    return routeObserved(req, { doc: this.env.doc, transport: this.env.doc.read.transport });
+    return routeObserved(req, { doc: this.env.doc, transport: this.env.doc.read.transport, hints: this.env.hints });
   }
 
   /** Route a response URL (and the operation name it carried) to its endpoint kind, or `null`. */
@@ -101,6 +102,11 @@ export class Reader {
   /** One composed list page (lists are never recovered: an own-list walk reads C0/C1 only). */
   readListPage(which: 'followers-list' | 'following-list', decoded: Decoded, at: number): SurfaceRead {
     return this.read(which, { decoded }, { at, source: which });
+  }
+
+  /** C2 recovery of a decoded body under a role's witness (spec §10.6): only ever adds facts, never destructive. */
+  recover(kind: EndpointKind, decoded: Decoded, ctx: ReadCtx): SurfaceRead {
+    return recoverBody(kind, decoded, ctx, this.env);
   }
 
   /** A walk-level drift signal (a stop the read alone cannot see), to the env's sink. */

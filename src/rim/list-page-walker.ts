@@ -1,35 +1,22 @@
 /**
- * ListPageWalker — DIRECT paginated walk of a friendships list.
- *
- * The list dialog's own scroll pagination carries only ~12 users per fetch, so
- * a whole-list census (the prune scan) over thousands of accounts takes many
- * minutes of scrolling. This walker instead pages the SAME endpoint directly
- * from page context (`SURFACE.listPageScript` → FetchEnvelope) at the API's
- * full page size, cursor to cursor — one bounded, jittered loop:
- *
- *   fetch page → parse (versioned extractor) → observe → paced sleep → next,
- *   with a long jittered rest every few pages (anti-throttle breather).
+ * ListPageWalker — DIRECT paginated walk of a friendships list: the SAME endpoint the list dialog
+ * scrolls, paged from page context (`SURFACE.listPageScript` → FetchEnvelope) at the API's full page
+ * size — fetch page → read (the surface document) → observe → paced sleep → next, with a long
+ * jittered rest every few pages.
  *
  * Robustness contract (the decision table is `list-walk-end.ts`, spec §10.4):
  *  - Sentinel re-checked at the TOP of every page.
- *  - An end-of-list claim is VERIFIED, never trusted. In an offset cursor space
- *    one more page is requested past the claimed end; only a well-formed page
- *    with nothing new, or the SPECIFIC past-the-limit rejection (an HTTP 400
- *    that is no throttle/auth wall), confirms it. In an OPAQUE space an offset
- *    probe proves nothing, so only the server's own false flags (no veto key)
- *    end the walk. New rows past a claimed end follow the server's cursor or
- *    stop the walk — never a second synthesized offset.
- *  - A drifted page (no cursor yet a more-flag set, a non-final stream) or a
- *    page that no longer PARSES ends the walk `reason: 'shape-mismatch'`,
- *    `complete: false`, with a `stopDetail` — never a fabricated end.
- *  - Rows that do not read are QUARANTINED and counted (`quarantined`); a page
- *    whose readable rows fall below the row majority stops the walk.
- *  - A non-ok envelope / evaluate throw is retried on the same cursor after a
- *    `pause.retry` wait, up to `SURFACE_BOUNDS.listWalkFetchRetries`, before the
- *    walk ends `reason: 'fetch-failed'` — then callers fall back to the dialog.
- *  - Stagnation tolerates a few duplicate-window pages, then stops.
- *  - Cooperative stop + the active driver's abort signal break the walk
- *    mid-sleep, exactly like the page reader's scroll loop.
+ *  - An end-of-list claim is VERIFIED, never trusted: in an offset space one page is probed past it
+ *    (a page with nothing new, or the SPECIFIC past-the-limit 400, confirms it); in an OPAQUE space
+ *    only the server's own false flags (no veto key) end the walk; new rows past a claimed end follow
+ *    the server's cursor or stop the walk — never a second synthesized offset.
+ *  - A page that does not read, mostly unreadable rows, or a drifted continuation ends the walk
+ *    `shape-mismatch` with a `stopDetail` — never a fabricated end; unread rows are QUARANTINED, counted.
+ *  - Only an ACQUISITION walk reads a source page whose rows moved (C2, spec §10.6): its rows feed the
+ *    candidate pool, its continuation is never recovered, so the walk stops after it.
+ *  - A failed fetch is retried on the same cursor after a `pause.retry` wait, up to
+ *    `SURFACE_BOUNDS.listWalkFetchRetries`, then ends `fetch-failed` (callers fall back to the dialog).
+ *  - Stagnation tolerates a few duplicate-window pages; a stop or the driver's abort breaks any sleep.
  */
 
 import { type ActivityReporter, NOOP_ACTIVITY_REPORTER } from '@/adapter/activity-reporter';
@@ -142,6 +129,7 @@ export class ListPageWalker {
     let fetchFailures = 0;
     let stagnantPages = 0;
     let quarantined = 0;
+    let recoveredRows = 0;
     // Diagnostics: rows the API returned (duplicates included) and the final page's shape.
     let rows = 0;
     let lastPage: { rows: number; continuation: string } | null = null;
@@ -199,6 +187,13 @@ export class ListPageWalker {
       if (!read.ok || read.projection.continuation === null) {
         // SHAPE DRIFT: the page no longer reads, or most of its rows do not (the row majority). It ends the
         // walk INCOMPLETE; a drifted page can never originate or confirm an end-of-list claim.
+        const moved = !read.ok && read.kind === 'mismatch' && args.arm === 'acquisition' && endpoint === 'followers-list'
+          ? this.reader.recover(endpoint, res.decoded, { at: now, arm: 'acquisition', anchor: { pk } }) : null;
+        for (const obs of moved?.ok === true ? moved.projection.facts : []) {
+          recoveredRows += 1;
+          observed.add(obs.accountPk);
+          onObservation(obs, null);
+        }
         reason = 'shape-mismatch';
         if (!read.ok && read.kind === 'rows-unreadable') [stopDetail, quarantined] = ['rows-unreadable', quarantined + read.quarantined];
         logger.warn('rim.list-page-walker: page unreadable, stopping walk', { pk, which, pages, observed: observed.size, stopDetail });
@@ -323,6 +318,7 @@ export class ListPageWalker {
       complete, endConfirmed, endEvidence, stopDetail, reason, cursor: resumeCursor, lastPage,
     });
     return { pks: [...observed], pages, complete, endConfirmed, reason, cursor: resumeCursor, quarantined,
+      ...(recoveredRows === 0 ? {} : { recoveredRows }),
       ...(endEvidence === undefined ? {} : { endEvidence }),
       ...(stopDetail === undefined ? {} : { stopDetail }),
       ...(retryAt === undefined ? {} : { retryAt }) };

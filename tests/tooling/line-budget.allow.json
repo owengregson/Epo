@@ -79,7 +79,7 @@
     },
     {
       "file": "src/rim/list-page-walker.ts",
-      "lines": 330
+      "lines": 326
     },
     {
       "file": "src/renderer/charts/GrowthChart.tsx",

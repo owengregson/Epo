@@ -47,6 +47,11 @@ const RENAMED: Row[] = [
     body: { is_following: true, followed_by: false, outgoing_request: false, status: 'ok' } },
   { id: 'P1 profile friendship_status.outgoing_request renamed', url: GQL, friendlyName: GQL_NAME,
     body: profile({ following: false, followed_by: false, outgoing_request_v2: true }) },
+  // A moved container reads as drift (C2 only under a visit's anchor, and C2 never feeds the reconciler).
+  { id: 'P4 profile container renamed (data.user → data.user_v2)', url: GQL, friendlyName: GQL_NAME,
+    body: { data: { user_v2: profile({ following: false, outgoing_request: false }).data.user } } },
+  { id: 'S3 show_many container renamed', url: SHOW_MANY,
+    body: { friendship_statuses_v2: { [PK]: { following: false, outgoing_request: false } }, status: 'ok' } },
 ];
 
 /** The same bodies with every key present and false: the one shape that may drop a record. */

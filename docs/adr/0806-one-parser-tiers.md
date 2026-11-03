@@ -73,3 +73,30 @@ never subtracts them.**
 - **Defaulting absent booleans to `false`.** Cheaper, and exactly the class of fact this ADR exists to stop.
 - **Lenient parses for "fact-only" callers.** Every lenient variant ended up feeding a completeness or absence
   verdict; strict reads with typed failures replace them.
+
+## Amendment — 2026-11-03: one parser, the flips, structural recovery (PP-b)
+
+- **`readBody` is the parser** (`src/surface/read/read.ts`, never throws): the observed gate, one decode, the declared
+  container resolved FIRST (canonical, then alternates as a C1 step; a GraphQL connection read as a page), then the
+  GraphQL envelope over that root, the field readers, `EXPECTED_KEYS` and the row majority. Every read reports once to
+  the env's sink (`read/report.ts`); the in-memory `SURFACE_HEALTH` is gone. `ObservedReads` (owned by the `Reader`)
+  reads an observed response once for every consumer of it (one body read, one decode, one tally).
+- **The flips** ran in §10.3 order, one commit each: profile (and the dead `/users/<pk>/info/`), feed, requests, the two
+  relationship bodies, the two lists. Each is `enforce` in the document; the legacy extractors read the document's clean
+  canonical bodies (every field and row read) only as comparators, and a field they read differently is
+  `shadow-disagreed` (`src/adapter/reader-shadow.ts`). The differential test pins zero differences on every real body
+  of both corpora; the intended differences are asserted only on synthetic drift (I1 ids, I7 actors, I9 times).
+- **Recovery** (`src/surface/recovery/{locate,signatures}.ts`, `read/recover.ts`) is bounded (R1), skips the declared
+  decoys (R2), needs its witness (R3: a visit's anchor, the drawer's or the requests panel's arm, an acquisition walk's
+  source pk), accepts exactly one place (R4), rows by majority (R5), hints first (R6) and identity continuity for rows
+  (R7). A pattern never carries an id (id-keyed maps render `*`). A recovered read is C2: it adds observations, follow
+  events, requester rows and candidate-pool rows, and every destructive sink refuses it (viewer flags withheld, own
+  counts dropped, `pendingComplete:false`, no absence, a list continuation never recovered).
+- **Only the acquisition walk reads `source-rows`** (`WalkArgs.arm = 'acquisition'`); census, head and following walks
+  read C0/C1 only and stop on a moved page. The walk's own verdicts (`cursor-veto`, `end-claim-false`,
+  `no-continuation-evidence`) and every C2 read reach the sink, which is what pauses cleanup and exploration.
+- **Deadline candidates**: while a visit is armed, unrouted GraphQL responses of the profile family are kept as
+  references (≤ `fallbackCandidates`) and read only at the visit's deadline; the operation that answered is reported
+  `unrouted` with a hint, so a consistent one routes later reads (`via: 'learned'`, still C2, never promoted).
+- **The empty bio** stays unresolved by the corpus (no scrubbed 2026-11-02 profile body carries an empty or null bio):
+  a `null` bio reads as absent (fail safe) until a live read shows the form (`versions/2026-08-12/expected.ts`).

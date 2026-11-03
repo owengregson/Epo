@@ -91,6 +91,11 @@ export interface RecoveryDecl extends IdDecl {
   /** Story types as decimal text: identifiers, compared as text. */
   readonly followStoryTypes: readonly string[];
   readonly knownStoryTypes: readonly string[];
+  /** A story row's type and args keys, the feed's story sections, a connection edge's node key. */
+  readonly storyTypeKey: string;
+  readonly storyArgsKey: string;
+  readonly storySections: readonly string[];
+  readonly edgeNodeKey: string;
   readonly storyActorKey: string;
   readonly storyActorAliases: readonly string[];
   readonly followText: RegExp;

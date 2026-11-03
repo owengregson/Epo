@@ -25,8 +25,12 @@ export const RECOVERY_DECL: RecoveryDecl = {
   followStoryTypes: [String(FEED.followStoryType)],
   /** Every story type the 2026-11-02 feed bodies carry (24 stories: 23 follows, 1 other). */
   knownStoryTypes: [String(FEED.followStoryType), '651'],
+  storyTypeKey: FEED.storyType,
+  storyArgsKey: FEED.args,
+  storySections: FEED.storySections,
+  edgeNodeKey: JSON_PATHS.followRequestsConnection.node,
   storyActorKey: `${FEED.args}.${FEED.profileId}`,
-  storyActorAliases: [`${FEED.args}.inline_follow.user_info.pk`, `${FEED.args}.users.0.pk`],
+  storyActorAliases: [`${FEED.args}.${FEED.inlineFollowPk}`, `${FEED.args}.${FEED.storyUsers}.0.${PROFILE.id}`],
   followText: FEED.followText,
   requesterMarker: 'friendship_status.incoming_request',
   opFamilies: [

@@ -40,21 +40,23 @@ function noveltyOf(kind: EndpointKind, json: unknown): string[] {
 export const defaultEnv = (): ReadEnv => ({ doc: surface(), sink: NO_SINK, hints: NO_HINTS });
 
 /** A read, why it is partial, and the decoded body (the sink's sample on a first sighting). */
-interface Outcome {
+export interface Outcome {
   readonly read: SurfaceRead;
   readonly partial: PartialReason;
   readonly json: unknown;
 }
 
 /** The definitions that may read this body: the routed one, else every definition of the kind. */
-function candidates(kind: EndpointKind, ctx: ReadCtx, env: ReadEnv): DefRef[] {
+export function candidates(kind: EndpointKind, ctx: ReadCtx, env: ReadEnv): DefRef[] {
   const routed = ctx.route === undefined ? undefined : env.doc.endpoints[ctx.route.defIndex];
   if (ctx.route !== undefined && routed?.kind === kind) return [{ def: routed, index: ctx.route.defIndex }];
   return env.doc.endpoints.flatMap((def, index) => (def.kind === kind ? [{ def, index }] : []));
 }
 
-function readOnce(kind: EndpointKind, input: BodyInput, ctx: ReadCtx, env: ReadEnv): Outcome {
+/** One read, unreported (the recovery reuses it). A learned operation's or a candidate's route is C2. */
+export function readOnce(kind: EndpointKind, input: BodyInput, ctx: ReadCtx, env: ReadEnv): Outcome {
   const decls = env.doc.read;
+  const learned = ctx.route?.via === 'learned' || ctx.route?.via === 'candidate';
   const fail = (f: ReadFailure, json?: unknown): Outcome => ({ read: { ...f, endpoint: kind }, partial: null, json });
   if (input.status !== undefined && input.mime !== undefined) {
     // A decoded body that is not JSON keeps its head: an HTML page is a wall, whatever its status.
@@ -88,10 +90,11 @@ function readOnce(kind: EndpointKind, input: BodyInput, ctx: ReadCtx, env: ReadE
   const meta: Omit<ReadMeta, 'tier' | 'steps'> = {
     endpoint: kind, partial: partial !== null, route: ctx.route?.via ?? 'url', novelKeys: noveltyOf(kind, json),
   };
+  const tier: () => Tier = () => (learned ? 'recovered' : tierOf(steps));
   if (found.kind === 'null') {
-    // Instagram's own "gone" comes only from a complete body; a partial one knows nothing yet.
-    const projection = { ...emptyProjection(), absent: partial === null ? true : null };
-    return { read: { ok: true, projection, ...meta, tier: tierOf(steps), steps }, partial, json };
+    // Instagram's own "gone" comes only from a complete, canonically routed body; anything else knows nothing yet.
+    const projection = { ...emptyProjection(), absent: partial === null && !learned ? true : null };
+    return { read: { ok: true, projection, ...meta, tier: tier(), steps }, partial, json };
   }
   const def = found.ref.def;
   const projection = def.project(found.value, { at: ctx.at, source: ctx.source ?? def.source ?? 'show-many', pk: ctx.pk,
@@ -106,7 +109,7 @@ function readOnce(kind: EndpointKind, input: BodyInput, ctx: ReadCtx, env: ReadE
       return fail({ ok: false, kind: 'rows-unreadable', rows, quarantined: projection.rowIssues.length }, json);
     }
   }
-  return { read: { ok: true, projection, ...meta, tier: tierOf(steps), steps }, partial, json };
+  return { read: { ok: true, projection, ...meta, tier: tier(), steps }, partial, json };
 }
 
 /** Read one body as `kind`. Counts and drift go to `env.sink`; `ctx.route` selects the definition. */

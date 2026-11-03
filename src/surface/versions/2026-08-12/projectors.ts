@@ -193,7 +193,11 @@ function storyEventOf(raw: unknown, index: number, section: string, ctx: Project
   const text = valueAt(raw, `${FEED.args}.${FEED.text}`);
   const follow = (type !== null && RECOVERY_DECL.followStoryTypes.includes(type)) || (typeof text === 'string' && RECOVERY_DECL.followText.test(text));
   if (!follow) return null;
-  const actor = readId(raw, { idKeys: [RECOVERY_DECL.storyActorKey, ...RECOVERY_DECL.storyActorAliases], foreignIdKeys: [] });
+  // I7: the actor list's first entry is an alias only for a one-actor story (a grouped story names many).
+  const users = valueAt(raw, `${FEED.args}.${FEED.storyUsers}`);
+  const aliases = RECOVERY_DECL.storyActorAliases.filter((k) => !k.startsWith(`${FEED.args}.${FEED.storyUsers}.`)
+    || (Array.isArray(users) && users.length === 1));
+  const actor = readId(raw, { idKeys: [RECOVERY_DECL.storyActorKey, ...aliases], foreignIdKeys: [] });
   if ('issue' in actor) {
     out.rowIssues.push({ index, path: actor.issue.path, message: actor.issue.kind });
     return null;

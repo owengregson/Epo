@@ -7,8 +7,8 @@
 import type { Reader } from '@/adapter/reader';
 import type { FollowEvent, Observation } from '@/adapter/surface-types';
 import { admits } from '@/surface/read/admission';
-import type { BodyInput } from '@/surface/read/types';
 import type { Tier } from '@/surface/schema/projection';
+import { type Decoded, decodeBody } from '@/surface/transport/decode';
 
 export type DrawerBodyKind = 'activity-feed' | 'friend-requests';
 
@@ -21,7 +21,7 @@ export interface DrawerBody {
 }
 
 export interface DrawerReadCtx {
-  readonly reader: Pick<Reader, 'read'>;
+  readonly reader: Pick<Reader, 'read' | 'recover' | 'env'>;
   /** The read's observation time (requester rows are stamped with it). */
   readonly now: number;
 }
@@ -41,12 +41,9 @@ export interface DrawerRead {
   readonly failure?: DrawerFailure;
 }
 
-/** A captured body as the read pipeline's input: text decodes there, a parsed object is already decoded. */
-function inputOf(resp: DrawerBody): BodyInput {
-  const gate = resp.status === undefined || resp.mime === undefined ? {} : { status: resp.status, mime: resp.mime };
-  return typeof resp.body === 'string' ? { text: resp.body, ...gate }
-    : { decoded: { ok: true, json: resp.body, format: 'json', payloads: 1, final: null }, ...gate };
-}
+/** A captured body decoded once: text through the declared transport, a parsed object as it is. */
+const decodedOf = (resp: DrawerBody, ctx: DrawerReadCtx): Decoded => (typeof resp.body === 'string'
+  ? decodeBody(resp.body, ctx.reader.env.doc.read.transport) : { ok: true, json: resp.body, format: 'json', payloads: 1, final: null });
 
 /** Read one drawer body. */
 export function readDrawerBody(resp: DrawerBody, ctx: DrawerReadCtx): DrawerRead {
@@ -54,7 +51,15 @@ export function readDrawerBody(resp: DrawerBody, ctx: DrawerReadCtx): DrawerRead
   const feed = resp.kind === 'activity-feed';
   const failed = (failure: DrawerFailure): DrawerRead =>
     ({ events: null, pendingPreview: [], requests: none, tier: 'canonical', partial: false, failure });
-  const read = ctx.reader.read(resp.kind, inputOf(resp), { at: ctx.now });
+  const decoded = decodedOf(resp, ctx);
+  const gate = resp.status === undefined || resp.mime === undefined ? {} : { status: resp.status, mime: resp.mime };
+  let read = ctx.reader.read(resp.kind, { decoded, ...gate }, { at: ctx.now });
+  if (!read.ok && read.kind === 'mismatch') {
+    // The container moved: the drawer pass is armed by construction, so its stories or rows may be read from
+    // their new place (C2, spec §10.6) — follow events and requester rows only, never a complete set.
+    const moved = ctx.reader.recover(resp.kind, decoded, { at: ctx.now, arm: feed ? 'drawer' : 'requests-panel' });
+    if (moved.ok) read = moved;
+  }
   if (!read.ok) {
     if (read.kind === 'wall') return failed(feed ? 'feed-walled' : 'requests-walled');
     return failed(feed ? 'shape-mismatch' : 'requests-unreadable');

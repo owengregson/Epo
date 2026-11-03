@@ -117,5 +117,8 @@ export const JSON_PATHS = {
     timestamp: 'timestamp',
     text: 'text',
     followText: /started following you/i,
+    /** The actor's aliases inside `args`: the inline follow button's user, and the story's actor list. */
+    inlineFollowPk: 'inline_follow.user_info.pk',
+    storyUsers: 'users',
   },
 } as const;
