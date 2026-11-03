@@ -3,7 +3,6 @@ import type { RateGovernor } from '../governors/rate-governor';
 import type { ClickVerdict } from '../shared/click-verdict';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { FollowRecord, FollowState } from '../store/types';
-import { MS_PER_DAY } from '../timing/units';
 import type { ProtectionPort } from './protection-port';
 
 /**
@@ -63,26 +62,19 @@ export interface ChurnActions {
 }
 
 /**
- * Lifecycle timers + retry cap for the churn state machine. All tunable in
- * Settings. NB: the post-follow-back HOLD is not here — `holdUntil` is stamped by the
- * FollowbackWatcher (its `holdAfterFollowbackMs`); the scheduler only honors the stamp.
+ * Lifecycle timers + retry cap for the churn state machine, projected from Settings
+ * by `toChurnConfig` (tests build it from `tests/kit/configs.ts`). NB: the post-follow-back
+ * HOLD is not here — `holdUntil` is stamped by the FollowbackWatcher; the scheduler honors it.
  */
 export interface ChurnConfig {
-  /** How long to wait for a follow-back before reclaiming the slot (default 4 days). */
+  /** How long to wait for a follow-back before reclaiming the slot. */
   maxWaitForFollowbackMs: number;
-  /** Failed follow/unfollow attempts tolerated before a record is abandoned (default 3). */
+  /** Failed follow/unfollow attempts tolerated before a record is abandoned. */
   maxRetries: number;
   /** False = "keep people who follow you back": a held mutual is never rotated out (spec §6.4, P2 off). */
   rotateMutuals: boolean;
   relationshipFreshMs?: number;
 }
-
-/** Design defaults. */
-export const CHURN_DEFAULTS: ChurnConfig = {
-  maxWaitForFollowbackMs: 4 * MS_PER_DAY,
-  maxRetries: 3,
-  rotateMutuals: true,
-};
 
 /** What one verb does to a record and the graph when its action verifies. */
 export interface VerbSpec {
@@ -104,7 +96,7 @@ export interface ChurnDeps {
   actions: ChurnActions;
   /** Our own account `pk`; when set, follow/unfollow are recorded as directed edges. */
   ownPk?: string;
-  cfg?: ChurnConfig;
+  cfg: ChurnConfig;
   pickQueued?: (records: FollowRecord[]) => FollowRecord | null;
   validateFollow?: (rec: FollowRecord, now: number) => Promise<boolean> | boolean;
   /** Whether `pk` has a follow request in flight (the requester seam); defaults to never. */

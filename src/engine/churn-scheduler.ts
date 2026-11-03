@@ -5,13 +5,12 @@ import type { KnowledgeStore } from '../store/knowledge-store';
 import type { EffectIntent, FollowRecord } from '../store/types';
 import * as log from '../utils/logger';
 import { ChurnPick } from './churn-pick';
-import { CHURN_DEFAULTS, type ChurnActionOutcome, type ChurnActions, type ChurnConfig, type ChurnDeps, type VerbSpec } from './churn-types';
+import type { ChurnActionOutcome, ChurnActions, ChurnConfig, ChurnDeps, VerbSpec } from './churn-types';
 import { normalizeMutationOutcome } from './mutation-outcome';
 import { keepingVerdictOf, keepRecord, keptStampFor, selectionVerdict } from './protection-gate';
 import { type ProtectionPort, unconfiguredProtection } from './protection-port';
 
 export type { ChurnActionOutcome, ChurnActions, ChurnConfig, ChurnDeps } from './churn-types';
-export { CHURN_DEFAULTS } from './churn-types';
 
 /**
  * Drives every `FollowRecord` through the churn lifecycle:
@@ -110,7 +109,7 @@ export class ChurnScheduler {
     this.rate = deps.rate;
     this.actions = deps.actions;
     this.ownPk = deps.ownPk;
-    this.cfg = deps.cfg ?? CHURN_DEFAULTS;
+    this.cfg = deps.cfg;
     this.protection = deps.protection ?? unconfiguredProtection(deps.clock);
     this.reconciler = deps.reconciler;
     this.pick = new ChurnPick({

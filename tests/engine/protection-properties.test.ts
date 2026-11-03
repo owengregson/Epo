@@ -5,7 +5,7 @@
  * never queue P2. The fake click judges the fresh fields exactly as the click review does.
  */
 import fc from 'fast-check';
-import { CHURN_DEFAULTS, ChurnScheduler } from '@/engine/churn-scheduler';
+import { ChurnScheduler } from '@/engine/churn-scheduler';
 import type { Facts, RunCtx } from '@/engine/facts';
 import { freshSubject, selectionVerdict } from '@/engine/protection-gate';
 import { ProtectionReconciler } from '@/engine/protection-reconciler';
@@ -20,6 +20,7 @@ import { type ProtectionVerdict, protectionVerdict } from '@/shared/unfollow-pro
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { AccountFields, FollowState } from '@/store/types';
 import { MS_PER_DAY, MS_PER_HOUR } from '@/timing/units';
+import { DEFAULT_CONFIGS } from '../kit/configs';
 import {
   FakeActions, FakeListSource, FakePruneActions, FakeSentinel, kitStore, OWN_PK, PRUNE_CFG, T0,
 } from '../kit/engine-harness';
@@ -81,7 +82,7 @@ function churnRig(r: Rules, fresh: Map<string, Facts4>, rotateMutuals = true) {
   const dayClock = calendarPlanDayClock({ now: () => clock.now() });
   const reconciler = new ProtectionReconciler({ store, port: rig.port, clock, dayClock });
   const sched = new ChurnScheduler({ store, clock, rate, actions, protection: rig.port, reconciler,
-    cfg: { ...CHURN_DEFAULTS, maxWaitForFollowbackMs: WAIT, rotateMutuals } });
+    cfg: { ...DEFAULT_CONFIGS.churn, maxWaitForFollowbackMs: WAIT, rotateMutuals } });
   const step = async (): Promise<void> => {
     sched.advanceTimers();
     const due = sched.nextDue(clock.now());

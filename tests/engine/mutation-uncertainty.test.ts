@@ -3,6 +3,7 @@ import { journaledMutation } from '@/engine/journaled-mutation';
 import { FakeClock } from '@/governors/clock';
 import type { RateGovernor } from '@/governors/rate-governor';
 import { setLevel } from '@/utils/logger';
+import { DEFAULT_CONFIGS } from '../kit/configs';
 import { kitStore } from '../kit/engine-harness';
 
 beforeAll(() => setLevel('error'));
@@ -17,7 +18,7 @@ test.each(['failed', 'thrown'] as const)('growth %s after dispatch stays uncerta
     if (failure === 'thrown') throw new Error('connection lost after dispatch');
     return { status: 'failed' as const, cause: 'drift' as const };
   });
-  const churn = new ChurnScheduler({ store, clock, ownPk: 'me', rate: {} as RateGovernor,
+  const churn = new ChurnScheduler({ store, clock, ownPk: 'me', rate: {} as RateGovernor, cfg: DEFAULT_CONFIGS.churn,
     actions: { follow, unfollow: async () => ({ status: 'ok' }) } });
   expect(await churn.execute(store.getFollowRecord('a')!)).toBe('blocked');
   expect(store.getFollowRecord('a')).toMatchObject({ state: 'queued', retryCount: 0 });

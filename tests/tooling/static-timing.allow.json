@@ -56,8 +56,6 @@
     {"key":"src/engine/chain-controller.ts :: CHAIN_DEFAULTS :: minPoolSize :: 300","class":"PENDING","stream":"SC","reason":"SC: CHAIN_DEFAULTS reads SETTINGS_POLICY; the frontier refill reads EXPLORATION_POLICY (spec §17.6)"},
     {"key":"src/engine/chain-controller.ts :: ChainController.advanceFrontier :: if :: 3","class":"PENDING","stream":"SC","reason":"SC: CHAIN_DEFAULTS reads SETTINGS_POLICY; the frontier refill reads EXPLORATION_POLICY (spec §17.6)"},
     {"key":"src/engine/churn-pick.ts :: ChurnPick.nextDue :: if :: 2","class":"PENDING","stream":"PR","reason":"PR: the consecutive-cleanup cap gives way to the plan mix (spec §17.8)"},
-    {"key":"src/engine/churn-types.ts :: CHURN_DEFAULTS :: maxRetries :: 3","class":"PENDING","stream":"UD","reason":"UD: deletes CHURN_DEFAULTS; tests build configs from tests/kit/configs.ts (spec §17.8)"},
-    {"key":"src/engine/churn-types.ts :: CHURN_DEFAULTS :: maxWaitForFollowbackMs :: 4","class":"PENDING","stream":"UD","reason":"UD: deletes CHURN_DEFAULTS; tests build configs from tests/kit/configs.ts (spec §17.8)"},
     {"key":"src/engine/effect-policy.ts :: READ_RETRY :: inner.base :: 2_000","class":"PENDING","stream":"PR","reason":"PR: READ_RETRY base and cap derive from timeoutFor(fetchEnvelope) (spec §17.8)"},
     {"key":"src/engine/effect-policy.ts :: READ_RETRY :: inner.cap :: 30_000","class":"PENDING","stream":"PR","reason":"PR: READ_RETRY base and cap derive from timeoutFor(fetchEnvelope) (spec §17.8)"},
     {"key":"src/engine/effect-policy.ts :: READ_RETRY :: inner.factor :: 2","class":"PENDING","stream":"PR","reason":"PR: READ_RETRY base and cap derive from timeoutFor(fetchEnvelope) (spec §17.8)"},

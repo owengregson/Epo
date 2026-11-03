@@ -1,4 +1,4 @@
-import { CHURN_DEFAULTS, ChurnScheduler } from '@/engine/churn-scheduler';
+import { ChurnScheduler } from '@/engine/churn-scheduler';
 import { Engine } from '@/engine/engine';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { ReentrySupervisor } from '@/engine/reentry';
@@ -9,6 +9,7 @@ import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { DelayManager } from '@/timing/delay-manager';
 import { setLevel } from '@/utils/logger';
+import { DEFAULT_CONFIGS } from '../kit/configs';
 import { kitStore, testDeps } from '../kit/engine-harness';
 import { readLimits } from '../kit/read-limits';
 
@@ -39,7 +40,7 @@ function fixture() {
   };
   const base = testDeps({ store, clock });
   const churn = new ChurnScheduler({ store, clock, ownPk: 'me', rate: base.rate as never, actions,
-    cfg: { ...CHURN_DEFAULTS, maxWaitForFollowbackMs: 3 * DAY } });
+    cfg: { ...DEFAULT_CONFIGS.churn, maxWaitForFollowbackMs: 3 * DAY } });
   let lastSweep: number | null = null;
   const cadence = { isDue: () => lastSweep === null, markRun: (at: number) => { lastSweep = at; } };
   const settings = { ...DEFAULT_SETTINGS, seed: 'hub', lowWaterCandidates: 0,

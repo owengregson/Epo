@@ -1,10 +1,11 @@
-import { CHURN_DEFAULTS, ChurnScheduler } from '@/engine/churn-scheduler';
+import { ChurnScheduler } from '@/engine/churn-scheduler';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { REENTRY_POLICY, ReentrySupervisor } from '@/engine/reentry';
 import { FakeClock } from '@/governors/clock';
 import type { RateGovernor } from '@/governors/rate-governor';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { setLevel } from '@/utils/logger';
+import { DEFAULT_CONFIGS } from '../kit/configs';
 import { openTestStore } from '../kit/store';
 
 const DAY = 86_400_000;
@@ -22,7 +23,7 @@ afterEach(() => store.close());
 
 const scheduler = () => new ChurnScheduler({
   store, clock, ownPk: 'me', rate: {} as RateGovernor,
-  cfg: { ...CHURN_DEFAULTS, maxWaitForFollowbackMs: 3 * DAY },
+  cfg: { ...DEFAULT_CONFIGS.churn, maxWaitForFollowbackMs: 3 * DAY },
   actions: { follow: jest.fn(async () => ({ status: 'ok' as const })), unfollow: jest.fn(async () => ({ status: 'ok' as const })) },
 });
 const pending = () => store.upsertFollowRecord({
