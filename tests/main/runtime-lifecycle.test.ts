@@ -220,23 +220,31 @@ test('identity changes revoke intent and rebuild into an isolated database', asy
   await foundation.dispose();
 });
 
+/** A relaunch over `userDataDir` whose boot sequence ran to its release (the tab already shows the own profile). */
+async function relaunch(userDataDir: string): Promise<Foundation> {
+  const next = newFoundation({ userDataDir, tab: makeFakeTab({ currentUrl: () => 'https://www.instagram.com/myself/' }) })
+    .foundation;
+  const booting = next.startBoot();
+  next.bootRevealed();
+  await booting;
+  return next;
+}
+
 test('a deliberate quit persists stopped intent across the next launch', async () => {
   const { foundation, userDataDir } = await running();
   foundation.shutdownRuntime();
   await foundation.dispose();
-  const next = newFoundation({ userDataDir }).foundation;
-  await next.restoreRuntimeIntent();
+  const next = await relaunch(userDataDir);
   expect((await next.status()).state).toBe('idle');
   expect(next.runtimeSnapshot().desired).toBe('stopped');
   await next.dispose();
 });
 
-test('an interrupted running intent resumes on relaunch after identity validation', async () => {
+test('an interrupted running intent resumes on relaunch after identity validation, after the reveal', async () => {
   const { foundation, userDataDir } = await running();
   // Dispose releases test resources without going through intentional Quit.
   await foundation.dispose();
-  const next = newFoundation({ userDataDir }).foundation;
-  await next.restoreRuntimeIntent();
+  const next = await relaunch(userDataDir);
   expect((await next.status()).state).toBe('running');
   await next.stopEngine();
   await next.dispose();

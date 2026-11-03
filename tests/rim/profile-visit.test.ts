@@ -12,7 +12,7 @@ import type { SentinelStatus } from '@/adapter/ig-surface';
 import { Reader } from '@/adapter/reader';
 import { FakeClock } from '@/governors/clock';
 import { MOTION } from '@/kernel/motion-policy';
-import { ProfileObserver } from '@/rim/profile-observer';
+import { admitOwnCounts, ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { clamp, logNormal } from '@/timing/distributions';
@@ -99,7 +99,8 @@ describe('a profile visit reads the body the page fetched', () => {
     expect(visit.ok).toBe(true);
     if (!visit.ok) return;
     expect(visit.obs.accountPk).toBe('503');
-    expect(visit.viewer).toEqual({ following: true, requested: false, followsUs: true });
+    // `incoming_request` is absent from this body: unknown, never false.
+    expect(visit.viewer).toEqual({ following: true, requested: false, followsUs: true, incomingRequest: null });
     const acc = store.getAccount('503');
     expect(acc?.followers).toBe(781);
     expect(acc?.following).toBe(796);
@@ -113,7 +114,7 @@ describe('a profile visit reads the body the page fetched', () => {
 
     const visit = await visitor.visit('me');
 
-    expect(visit.ok && visit.viewer).toEqual({ following: null, requested: null, followsUs: null });
+    expect(visit.ok && visit.viewer).toEqual({ following: null, requested: null, followsUs: null, incomingRequest: null });
   });
 
   test("another profile's body never answers the visit (it is still harvested)", async () => {
@@ -164,6 +165,58 @@ describe('typed non-ok outcomes', () => {
     ac.abort();
     const { visitor } = setup('ok', () => ac.signal);
     await expect(visitor.visit('x')).rejects.toBeInstanceOf(ActionAbortedError);
+  });
+});
+
+describe('outcome precedence: evidence decides, never a guess (spec §10.4, U10 F5)', () => {
+  const unavailable = (tab: PageTab, found: boolean) => {
+    tab.scripts.length = 0;
+    tab.on(marker('"control":"profile-unavailable"'), () => (found ? { found: true, rect: { x: 1, y: 1, width: 9, height: 9 } } : { found: false }));
+  };
+
+  test('a throttle body answering the visit is walled by the body, never gone', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { user: null }, errors: [{ message: 'e', summary: 'Try Again Later' }] });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'walled', detail: { via: 'body', family: 'rate-limited' } });
+  });
+
+  test('{data:{user:null}} with errors is a wall to wait out, never "gone"', async () => {
+    const { tab, visitor } = setup();
+    unavailable(tab, true);
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { user: null }, errors: [{ message: 'unknown' }] });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'walled', detail: { via: 'body', family: 'server-error' } });
+  });
+
+  test('an HTTP wall on the profile query is walled by the response', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/x/'] = () =>
+      tab.emit({ requestId: 'w', url: GRAPHQL, status: 429, mimeType: 'text/html', requestHeaders: PROFILE_QUERY, body: '<html>' });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'walled', detail: { via: 'body', family: 'rate-limited', status: 429 } });
+  });
+
+  test('a clean {data:{user:null}} is gone on the profile-absent evidence', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { user: null }, extensions: { is_final: true } });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'gone', evidence: 'profile-absent' });
+  });
+
+  test('an unavailable page with no body is gone on page text only', async () => {
+    const { tab, visitor } = setup();
+    unavailable(tab, true);
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'gone', evidence: 'page-text' });
+  });
+
+  test('a drifted body outranks the page text: unanswered with the drift, never gone', async () => {
+    const { tab, visitor } = setup();
+    unavailable(tab, true);
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { profile_v2: { pk: '1' } } });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'unanswered', detail: { drift: 'mismatch' } });
+  });
+
+  test('a stream that is not final never reads as gone', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { user: null }, extensions: { is_final: false } });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'unanswered', detail: { drift: 'incomplete-stream' } });
   });
 });
 
@@ -245,5 +298,54 @@ describe('visits are paced like a person browsing (live 2026-11-02: ten back to 
     await visitor.visit('a');
     ac.abort();
     await expect(visitor.visit('b')).rejects.toBeInstanceOf(ActionAbortedError);
+  });
+});
+
+describe('the read behind a visit: presence, the count pair, our own counts (spec §10.3, §10.4)', () => {
+  test('a visit carries which decision-bearing fields the body held, and how it was read', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/user_8/'] = () =>
+      serve(tab, profileBody('8', 'user_8', { following: false, outgoing_request: false, followed_by: false }));
+    const visit = await visitor.visit('user_8');
+    expect(visit.ok && { presence: visit.presence, tier: visit.tier, partial: visit.partial }).toEqual({
+      presence: { counts: 'read', bio: 'read', isPrivate: 'read', isVerified: 'read', relationship: 'read' },
+      tier: 'canonical',
+      partial: false,
+    });
+  });
+
+  test('a partial count pair stores the profile without any count (I5)', async () => {
+    const { tab, visitor } = setup();
+    const { following_count: _drop, ...user } = profileBody('9', 'user_9').data.user;
+    tab.pages['https://www.instagram.com/user_9/'] = () => serve(tab, { data: { user } });
+    const visit = await visitor.visit('user_9');
+    expect(visit.ok && visit.presence?.counts).toBe('partial');
+    expect(store.getAccount('9')).toMatchObject({ username: 'user_9' });
+    expect(store.getAccount('9')?.followers ?? null).toBeNull();
+    expect(store.getAccount('9')?.following ?? null).toBeNull();
+  });
+
+  test('our own counts come only from a canonical or normalized, complete read', () => {
+    const obs = { accountPk: '1', observedAt: 5, source: 'profile' as const, fields: { username: 'me', followers: 3, following: 4 } };
+    expect(admitOwnCounts(obs, { tier: 'canonical', partial: false }, '1')).toBe(obs);
+    expect(admitOwnCounts(obs, { tier: 'normalized', partial: false }, '1')).toBe(obs);
+    expect(admitOwnCounts(obs, { tier: 'recovered', partial: false }, '1').fields).toMatchObject({ followers: undefined, following: undefined });
+    expect(admitOwnCounts(obs, { tier: 'canonical', partial: true }, '1').fields.followers).toBeUndefined();
+    expect(admitOwnCounts(obs, { tier: 'recovered', partial: true }, '2')).toBe(obs);
+  });
+
+  test("a null relationship reads as the viewer's own only on our own record (I10)", async () => {
+    const tab = new PageTab();
+    tab.on(marker('"control":"profile-unavailable"'), () => ({ found: false }));
+    const observer = new ProfileObserver({ tab, reader: new Reader(), store, clock: new FakeClock(1_000), ownPk: '1' });
+    observer.start();
+    const visitor = new TabProfileVisitor({ tab, observer, sentinel: { check: async () => 'ok' }, waitMs: 20, pollMs: 1,
+      sleep: async () => {} });
+    tab.pages['https://www.instagram.com/me/'] = () => serve(tab, profileBody('1', 'me'));
+    tab.pages['https://www.instagram.com/other/'] = () => serve(tab, profileBody('2', 'other'));
+    const self = await visitor.visit('me');
+    const other = await visitor.visit('other');
+    expect(self.ok && self.presence?.relationship).toBe('self');
+    expect(other.ok && other.presence?.relationship).toBe('null');
   });
 });

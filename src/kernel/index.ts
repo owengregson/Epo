@@ -43,6 +43,7 @@ export {
   verifiedWalk,
 } from './capabilities';
 export * from './derive';
+export { retryLimit } from './derive-lifecycle';
 // Landed by other wave-A agents; re-exported so the kernel has one door.
 export * from './fundamentals';
 export * from './module';
@@ -62,6 +63,7 @@ export {
 export * from './overrides';
 export type { Drift, Parsed } from './parse';
 export { isDrift, parseWith } from './parse';
+export * as plan from './plan';
 export * from './policy';
 export type { Res } from './result';
 export {

@@ -32,7 +32,7 @@ import { MS_PER_DAY } from '../timing/units';
 import { WaitRunner } from '../timing/wait-runner';
 import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
-import { censusAuthority } from './census-authority';
+import { censusAuthority, type OwnHeader } from './census-authority';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import { type HaltReason, haltReasonKey } from './halt-reason';
 import { journaledMutation } from './journaled-mutation';
@@ -865,13 +865,12 @@ export class PruneEngine {
     // them is unreliable (an SPA profile navigation may never issue
     // the profile endpoint) — so a scan BEGINS with one active profile fetch
     // for our own account. A failed required refresh cannot authorize a census.
+    let header: OwnHeader | undefined;
     if (this.deps.refreshOwnStats) {
       try {
-        await this.deps.refreshOwnStats();
+        header = (await this.deps.refreshOwnStats()) ?? undefined;
       } catch (e) {
-        log.warn('prune: own-stats refresh failed, preserving previous census', {
-          error: String(e),
-        });
+        log.warn('prune: own-stats refresh failed, preserving previous census', { error: String(e) });
         throw e;
       }
     }
@@ -924,11 +923,12 @@ export class PruneEngine {
     // header-count heuristic below is only a second net.
     assertFetchComplete('followers', followersFetch);
 
-    // Census coverage guard (second net): when the profile header's own counts
-    // are known, a scraped list far short of them still fails the scan.
-    const ownStats = this.deps.store.getAccount(this.deps.ownPk);
-    assertScanCoverage('following', followingPks.length, ownStats?.following ?? null);
-    assertScanCoverage('followers', followerSet.size, ownStats?.followers ?? null);
+    // Census coverage guard (second net): the header refreshed for THIS scan (else the stored
+    // one) must be covered; when the scan refreshed it, an unknown header fails closed.
+    const ownStats = header ?? this.deps.store.getAccount(this.deps.ownPk);
+    const headerRequired = this.deps.refreshOwnStats !== undefined;
+    assertScanCoverage('following', followingPks.length, ownStats?.following ?? null, { headerRequired });
+    assertScanCoverage('followers', followerSet.size, ownStats?.followers ?? null, { headerRequired });
 
     // Feed the whole census back into the shared graph BEFORE computing candidates
     // (the two systems enrich each other): our-follow edges are healed

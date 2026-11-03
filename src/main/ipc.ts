@@ -38,11 +38,11 @@ export interface IpcContext {
   updater: UpdaterPort;
   /**
    * Swap what fills the window region right of the console: the Instagram tab
-   * ('tab') or the renderer's Graph stage ('graph'). Owned by `main.ts`, which
-   * holds the window layout. `covered` hides the native views regardless of
-   * mode (a renderer modal is open and must not sit under them).
+   * ('tab') or a stage that covers it. Routed to the stage controller (spec
+   * §12.4), which serializes requests and curtains the entry into Live;
+   * `covered` conceals the native views (a renderer modal must not sit under them).
    */
-  setStage(mode: StageMode, covered: boolean): void;
+  setStage(mode: StageMode, covered: boolean): void | Promise<void>;
 }
 
 /** Register every contract channel; returns the disposer for window teardown. */
@@ -122,9 +122,9 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
 
     // --- Stage ----------------------------------------------------------------
     graphSnapshot: () => foundation.graphSnapshot(),
-    // Renderer input is unvalidated at the boundary: only a known stage moves.
-    setStage: (mode: unknown, covered: unknown) => {
-      if (isStageMode(mode)) setStage(mode, covered === true);
+    // Renderer input is unvalidated at the boundary: only a known stage moves (logged otherwise).
+    setStage: async (mode: unknown, covered: unknown) => {
+      if (isStageMode(mode)) await setStage(mode, covered === true);
       else logger.warn('stage: unknown mode refused', { mode: String(mode) });
     },
     // Park/unpark the app while the renderer's tour is on screen (see
@@ -141,7 +141,7 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     ...settingsHandlers(foundation),
     ...planHandlers(),
     ...liveHandlers(currentUpdate),
-    ...bootHandlers(),
+    ...bootHandlers(foundation),
     ...surfaceHandlers(),
   };
 

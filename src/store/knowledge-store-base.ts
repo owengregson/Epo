@@ -26,13 +26,13 @@ import { SurfaceDriftRepo } from './repos/surface-drift';
 import { TargetRepo } from './repos/targets';
 import { assertSchema } from './schema/manifest';
 import { SpanSink } from './spans';
-import type { MutationTally, StorePolicy } from './types';
+import type { MutationTally, Observation, StorePolicy } from './types';
 
 /** Opening a store: the ambient options plus the kernel bounds main injects. */
 export type StoreOpenOptions = KnowledgeStoreOptions & { readonly policy: StorePolicy };
 
 /** What every store needs before its first delegation; `KnowledgeStore` adds the reads and writes. */
-export class KnowledgeStoreBase {
+export abstract class KnowledgeStoreBase {
   protected readonly db: SqliteDriver;
   /** The `meta` key/value table (durable scalars), behind its typed manifest. */
   protected readonly meta: MetaRepo;
@@ -54,7 +54,7 @@ export class KnowledgeStoreBase {
   protected readonly relationships: RelationshipRepo;
   /** Read-only analysis over the whole graph. */
   protected readonly analytics: AnalyticsRepo;
-  /** The own-follower growth reads (baseline-aware) and, later, the follower change log. */
+  /** The follower change log, the own header series and the growth reads (ADR 0704). */
   readonly growth: GrowthRepo;
   /** The reopen frontiers (`meta.reopen_state`). */
   readonly reopen: ReopenStateRepo;
@@ -98,20 +98,28 @@ export class KnowledgeStoreBase {
     this.targets = new TargetRepo(this.db, changed);
     this.followRecords = new FollowRecordRepo(this.db, changed);
     this.accounts = new AccountRepo(this.db, changed);
-    this.relationships = new RelationshipRepo(this.db, changed, this.meta);
+    this.relationships = new RelationshipRepo(this.db, changed, this.meta, {
+      ownPk: () => this.ownPk,
+      gainFloor: () => this.census.lastCompleteAt() ?? this.relationships.baselineAt(),
+      transition: (pk, delta, lo, hi, source, at) => this.growth.onTransition(pk, delta, lo, hi, source, at),
+      narrowGain: (pk, exactAt) => this.growth.narrowLatestGainContaining(pk, exactAt),
+    });
     this.effectIntents = new EffectIntentRepo(this.db, {
       records: this.followRecords, relationships: this.relationships, ledgers: this.ledgers, changed,
     });
     this.pruneRetainedLogs();
     this.analytics = new AnalyticsRepo(this.db);
-    this.growth = new GrowthRepo(this.db, () => this.relationships.baselineAt());
-    this.reopen = new ReopenStateRepo(this.db, this.meta, changed);
+    this.growth = new GrowthRepo(this.db, {
+      meta: this.meta, baselineAt: () => this.relationships.baselineAt(), now: this.now, changed,
+      lookbackMs: this.policy.retentionMs,
+    });
+    this.reopen = new ReopenStateRepo(this.db, this.meta, changed, (message, context) => this.reportFault(message, context));
     this.feed = new FeedReadsRepo(this.db);
     this.surface = new SurfaceDriftRepo(this.db, this.meta, changed);
     this.protectionFacts = new ProtectionFactsRepo(this.db);
     this.chronos = new Chronos(this.db, { now: this.now });
     this.spans = new SpanSink(this.db, { now: this.now, rng: this.rng, policy: this.policy.spans });
-    this.census = new CensusRepo(this.db, this.accounts, this.followRecords, this.relationships, this.meta);
+    this.census = new CensusRepo(this.db, this.accounts, this.followRecords, this.relationships, this.meta, this.growth);
   }
 
   /**
@@ -121,6 +129,16 @@ export class KnowledgeStoreBase {
    */
   setOwnPk(pk: string): void {
     this.ownPk = pk;
+    // The first build after migration 15 fills the change log from the edges (set-once, law L8).
+    const filled = this.growth.ensureBackfilled(pk, this.relationships.baselineAt());
+    if (filled !== null) this.changed();
+  }
+
+  /** Every own-header observation joins the header series, in the observation's own write (ADR 0704). */
+  protected noteOwnHeader(obs: Observation): void {
+    const { followers, following } = obs.fields;
+    if (this.ownPk === null || obs.accountPk !== this.ownPk || followers === undefined || following === undefined) return;
+    this.growth.noteOwnHeader({ at: obs.observedAt, followers, following });
   }
 
   // --- Plan state and the write-budget union (read by the plan service) ------------
@@ -142,9 +160,16 @@ export class KnowledgeStoreBase {
 
   protected readonly mutationPulse = new MutationPulse();
 
+  /** A repo recovered from a corrupt durable value (it reads as absent): the facade logs it as an error. */
+  protected abstract reportFault(message: string, context: Record<string, unknown>): void;
+
   /** Subscribe to committed graph changes; listeners must throttle their projections. */
   onMutation(listener: () => void): () => void { return this.mutationPulse.subscribe(listener); }
-  protected changed(): void { this.mutationPulse.changed(); }
+  protected changed(): void {
+    // Construction writes (retention) can pulse before the growth repo exists.
+    if (this.growth !== undefined) this.growth.invalidate();
+    this.mutationPulse.changed();
+  }
 
   pruneRetainedLogs(): void {
     this.accounts.pruneAppendOnlyLogs(this.policy.retentionMs);

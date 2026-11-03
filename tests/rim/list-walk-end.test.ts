@@ -1,141 +1,117 @@
 /**
- * Pins today's end-claim decisions of the list walk, extracted from
- * `list-page-walker.ts` as the pure `decideStep` (the walk tests run it live).
+ * The list walk's decision table (spec §10.4) and L-WALK: an end is complete only on a verified
+ * probe or, in an opaque cursor space, on the server's own false flags with no veto.
  */
-import { decideStep, type StepDecision, type WalkEndState, type WalkPage } from '@/rim/list-walk-end';
+import fc from 'fast-check';
+import { decideStep, type StepDecision, type WalkCursorState } from '@/rim/list-walk-end';
+import type { Continuation } from '@/surface/schema/projection';
 
-const STOP = 3;
 const probe = (rows: number): string => `probe:${rows}`;
-const fresh: WalkEndState = { probing: false, stagnantPages: 0 };
-const probing: WalkEndState = { probing: true, stagnantPages: 0 };
+const next = (cursor: string, form: 'offset' | 'opaque' = 'offset'): Continuation => ({ kind: 'next', cursor, form });
+const FLAGS_FALSE: Continuation = { kind: 'end', evidence: 'flags-false' };
+const NO_FLAGS: Continuation = { kind: 'end', evidence: 'no-flags' };
+const VETOED: Continuation = { kind: 'end', evidence: 'flags-false', vetoKey: 'next_cursor' };
+const at = (lastForm: WalkCursorState['lastForm'], probing = false): WalkCursorState => ({ lastForm, probing });
 
 interface Row {
   name: string;
-  page: WalkPage;
-  state: WalkEndState;
-  rows: number;
+  continuation: Continuation;
+  newRows: number;
+  state: WalkCursorState;
+  form: 'paged' | 'whole-list';
   want: StepDecision;
 }
 
 const ROWS: Row[] = [
-  {
-    name: 'probe page with nothing new verifies the end',
-    page: { hasMore: false, cursor: null, newRows: 0 },
-    state: probing,
-    rows: 120,
-    want: { act: 'complete' },
-  },
-  {
-    name: 'probe page with nothing new verifies the end even when it claims more pages',
-    page: { hasMore: true, cursor: '200', newRows: 0 },
-    state: { probing: true, stagnantPages: 2 },
-    rows: 120,
-    want: { act: 'complete' },
-  },
-  {
-    name: 'probe page with new rows and no cursor: claim was false, probe again at the new offset',
-    page: { hasMore: false, cursor: null, newRows: 5 },
-    state: probing,
-    rows: 125,
-    want: { act: 'probe', cursor: 'probe:125', stagnantPages: 0, claimWasFalse: true },
-  },
-  {
-    name: 'probe page with new rows and a leftover cursor: claim was false, probe the leftover cursor',
-    page: { hasMore: false, cursor: 'left', newRows: 5 },
-    state: probing,
-    rows: 125,
-    want: { act: 'probe', cursor: 'left', stagnantPages: 0, claimWasFalse: true },
-  },
-  {
-    name: 'probe page with new rows and more pages: claim was false, continue from its cursor',
-    page: { hasMore: true, cursor: '150', newRows: 5 },
-    state: { probing: true, stagnantPages: 2 },
-    rows: 125,
-    want: { act: 'continue', cursor: '150', stagnantPages: 0, claimWasFalse: true },
-  },
-  {
-    name: 'end claim without a cursor probes the synthesized offset and resets the stagnant streak',
-    page: { hasMore: false, cursor: null, newRows: 10 },
-    state: { probing: false, stagnantPages: 1 },
-    rows: 60,
-    want: { act: 'probe', cursor: 'probe:60', stagnantPages: 0, claimWasFalse: false },
-  },
-  {
-    name: 'end claim on a page with nothing new still probes (never counted stagnant)',
-    page: { hasMore: false, cursor: null, newRows: 0 },
-    state: { probing: false, stagnantPages: 2 },
-    rows: 60,
-    want: { act: 'probe', cursor: 'probe:60', stagnantPages: 0, claimWasFalse: false },
-  },
-  {
-    name: 'a missing cursor is an end claim even when the more-flag is set',
-    page: { hasMore: true, cursor: null, newRows: 4 },
-    state: fresh,
-    rows: 60,
-    want: { act: 'probe', cursor: 'probe:60', stagnantPages: 0, claimWasFalse: false },
-  },
-  {
-    name: 'a cleared more-flag with a cursor probes that leftover cursor',
-    page: { hasMore: false, cursor: 'c1', newRows: 4 },
-    state: fresh,
-    rows: 60,
-    want: { act: 'probe', cursor: 'c1', stagnantPages: 0, claimWasFalse: false },
-  },
-  {
-    name: 'a page with new rows continues from the server cursor and resets the streak',
-    page: { hasMore: true, cursor: 'c2', newRows: 10 },
-    state: { probing: false, stagnantPages: 2 },
-    rows: 60,
-    want: { act: 'continue', cursor: 'c2', stagnantPages: 0, claimWasFalse: false },
-  },
-  {
-    name: 'a duplicate-window page continues and counts toward the streak',
-    page: { hasMore: true, cursor: 'c3', newRows: 0 },
-    state: fresh,
-    rows: 60,
-    want: { act: 'continue', cursor: 'c3', stagnantPages: 1, claimWasFalse: false },
-  },
-  {
-    name: 'one page short of the threshold still continues',
-    page: { hasMore: true, cursor: 'c3', newRows: 0 },
-    state: { probing: false, stagnantPages: STOP - 2 },
-    rows: 60,
-    want: { act: 'continue', cursor: 'c3', stagnantPages: STOP - 1, claimWasFalse: false },
-  },
-  {
-    name: 'the page that reaches the threshold stops the walk as stagnant',
-    page: { hasMore: true, cursor: 'c3', newRows: 0 },
-    state: { probing: false, stagnantPages: STOP - 1 },
-    rows: 60,
-    want: { act: 'stop', reason: 'stagnant', cursor: 'c3', stagnantPages: STOP, claimWasFalse: false },
-  },
+  { name: 'a drifted page stops the walk (rows already streamed)', continuation: { kind: 'drift', reason: 'more-without-cursor', key: 'has_more' },
+    newRows: 3, state: at('offset'), form: 'paged', want: { act: 'stop', reason: 'shape-mismatch', detail: 'more-without-cursor' } },
+  { name: 'an incomplete stream stops the walk', continuation: { kind: 'drift', reason: 'incomplete-stream' },
+    newRows: 0, state: at('none', true), form: 'paged', want: { act: 'stop', reason: 'shape-mismatch', detail: 'incomplete-stream' } },
+  { name: 'a whole-list page probes once in the plain form, whatever it claims', continuation: next('50'),
+    newRows: 40, state: at('none'), form: 'whole-list', want: { act: 'probe', cursor: 'probe:120', plainForm: true } },
+  { name: 'a paged next continues with the server cursor', continuation: next('QVFE', 'opaque'),
+    newRows: 12, state: at('offset'), form: 'paged', want: { act: 'continue', cursor: 'QVFE', form: 'opaque' } },
+  { name: 'a paged end in an offset space is probed', continuation: FLAGS_FALSE,
+    newRows: 7, state: at('offset'), form: 'paged', want: { act: 'probe', cursor: 'probe:120', plainForm: false } },
+  { name: 'a paged end on the first page is probed', continuation: NO_FLAGS,
+    newRows: 7, state: at('none'), form: 'paged', want: { act: 'probe', cursor: 'probe:120', plainForm: false } },
+  { name: 'an opaque end on false flags, unvetoed, is complete on the server flags', continuation: FLAGS_FALSE,
+    newRows: 7, state: at('opaque'), form: 'paged', want: { act: 'complete', endEvidence: 'server-flags' } },
+  { name: 'an opaque end with a veto key stops', continuation: VETOED,
+    newRows: 7, state: at('opaque'), form: 'paged', want: { act: 'stop', reason: 'shape-mismatch', detail: 'cursor-veto' } },
+  { name: 'an opaque end without flags stops: no continuation evidence', continuation: NO_FLAGS,
+    newRows: 7, state: at('opaque'), form: 'paged', want: { act: 'stop', reason: 'shape-mismatch', detail: 'no-continuation-evidence' } },
+  { name: 'a probe page with nothing new completes', continuation: next('170'),
+    newRows: 0, state: at('offset', true), form: 'paged', want: { act: 'complete', endEvidence: 'probe' } },
+  { name: 'a probe page with new rows and a next continues from the server cursor', continuation: next('170'),
+    newRows: 5, state: at('offset', true), form: 'paged', want: { act: 'continue', cursor: '170', form: 'offset' } },
+  { name: 'a probe page with new rows and an end stops: never a second synthesized offset', continuation: FLAGS_FALSE,
+    newRows: 5, state: at('offset', true), form: 'paged', want: { act: 'stop', reason: 'shape-mismatch', detail: 'end-claim-false' } },
+  { name: 'a whole-list probe page with new rows stops', continuation: next('50'),
+    newRows: 5, state: at('none', true), form: 'whole-list', want: { act: 'stop', reason: 'shape-mismatch', detail: 'end-claim-false' } },
 ];
 
-describe("decideStep: today's end-claim decisions", () => {
-  test.each(ROWS)('$name', ({ page, state, rows, want }) => {
-    expect(decideStep(page, state, rows, probe, STOP)).toEqual(want);
+describe('decideStep: the decision table', () => {
+  test.each(ROWS.map((r) => [r.name, r] as const))('%s', (_name, r) => {
+    expect(decideStep({ continuation: r.continuation, newRows: r.newRows }, r.state, r.form, 120, probe)).toEqual(r.want);
+  });
+});
+
+const continuationArb: fc.Arbitrary<Continuation> = fc.oneof(
+  fc.record({ kind: fc.constant('next' as const), cursor: fc.string({ minLength: 1 }), form: fc.constantFrom('offset' as const, 'opaque' as const) }),
+  fc.record({ kind: fc.constant('end' as const), evidence: fc.constantFrom('flags-false' as const, 'no-flags' as const) },
+    { requiredKeys: ['kind', 'evidence'] }),
+  fc.record({ kind: fc.constant('end' as const), evidence: fc.constant('flags-false' as const), vetoKey: fc.string({ minLength: 1 }) }),
+  fc.record({ kind: fc.constant('drift' as const), reason: fc.constantFrom('more-without-cursor' as const, 'incomplete-stream' as const) }),
+);
+const caseArb = fc.record({
+  continuation: continuationArb,
+  newRows: fc.nat({ max: 60 }),
+  state: fc.record({ lastForm: fc.constantFrom('none' as const, 'offset' as const, 'opaque' as const), probing: fc.boolean() }),
+  form: fc.constantFrom('paged' as const, 'whole-list' as const),
+  rows: fc.nat({ max: 10_000 }),
+});
+interface Case {
+  continuation: Continuation;
+  newRows: number;
+  state: WalkCursorState;
+  form: 'paged' | 'whole-list';
+  rows: number;
+}
+const decide = (c: Case): StepDecision =>
+  decideStep({ continuation: c.continuation, newRows: c.newRows }, c.state, c.form, c.rows, probe);
+
+describe('L-WALK', () => {
+  const RUNS = { numRuns: 500, seed: 20261102 };
+
+  test('a drifted page always stops', () => {
+    fc.assert(fc.property(caseArb, (c) => c.continuation.kind !== 'drift' || decide(c).act === 'stop'), RUNS);
   });
 
-  test('a handed-back cursor is probed as is; the offset probe is never built', () => {
-    const built: number[] = [];
-    const spy = (rows: number): string => {
-      built.push(rows);
-      return probe(rows);
-    };
-    decideStep({ hasMore: false, cursor: 'left', newRows: 4 }, fresh, 80, spy, STOP);
-    decideStep({ hasMore: true, cursor: 'next', newRows: 0 }, fresh, 80, spy, STOP);
-    decideStep({ hasMore: true, cursor: null, newRows: 0 }, probing, 80, spy, STOP);
-    expect(built).toEqual([]);
+  test('complete only on a verified probe, or on false flags, unvetoed, in an opaque paged space', () => {
+    fc.assert(fc.property(caseArb, (c) => {
+      const d = decide(c);
+      if (d.act !== 'complete') return true;
+      if (d.endEvidence === 'probe') return c.state.probing && c.newRows === 0;
+      const end = c.continuation;
+      return !c.state.probing && c.form === 'paged' && c.state.lastForm === 'opaque'
+        && end.kind === 'end' && end.evidence === 'flags-false' && end.vetoKey === undefined;
+    }), RUNS);
   });
 
-  test('a run of duplicate windows stops on exactly the threshold page', () => {
-    let state: WalkEndState = fresh;
-    const acts: string[] = [];
-    for (let i = 0; i < STOP; i++) {
-      const step = decideStep({ hasMore: true, cursor: 'same', newRows: 0 }, state, 50, probe, STOP);
-      acts.push(step.act);
-      if (step.act !== 'complete') state = { probing: false, stagnantPages: step.stagnantPages };
-    }
-    expect(acts).toEqual([...Array<string>(STOP - 1).fill('continue'), 'stop']);
+  test('never a second synthesized offset, and never one in an opaque space', () => {
+    fc.assert(fc.property(caseArb, (c) => {
+      const d = decide(c);
+      if (d.act !== 'probe') return true;
+      return !c.state.probing && (c.form === 'whole-list' || c.state.lastForm !== 'opaque') && d.cursor === probe(c.rows);
+    }), RUNS);
+  });
+
+  test('a continue always follows the server cursor, and never on a whole-list page outside a probe', () => {
+    fc.assert(fc.property(caseArb, (c) => {
+      const d = decide(c);
+      if (d.act !== 'continue') return true;
+      return c.continuation.kind === 'next' && d.cursor === c.continuation.cursor && c.form === 'paged';
+    }), RUNS);
   });
 });

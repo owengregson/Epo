@@ -1,3 +1,4 @@
+import { followbackOutcome, type OutcomeRow } from '../../shared/followback-outcome';
 import * as logger from '../../utils/logger';
 import type { SqliteDriver } from '../driver/driver';
 import {
@@ -20,6 +21,12 @@ export interface TargetYield {
   mutualOverlap: number;
 }
 
+/** How a target's follow-backs are classified: the follow-back window and the instant of the read. */
+export interface OutcomeWindow { readonly windowMs: number; readonly now: number }
+
+/** States past the follow stage: the records a target's `total` counts. */
+const FOLLOWED: ReadonlySet<string> = new Set(['pending_followback', 'followed_back', 'unfollow_queued', 'unfollowed', 'kept']);
+
 /**
  * Read-only analysis over the graph: yields, funnels, follow-back latency and
  * the Graph view's bulk source rows (the growth reads live in `growth.ts`).
@@ -32,23 +39,22 @@ export class AnalyticsRepo {
   constructor(private readonly db: SqliteDriver) {}
 
   /**
-   * Yield for a poaching session against `targetPk`, from follow_records + edges.
-   *
-   * - `total`: records aimed at the target that reached at least the
-   *   pending-followback stage (i.e. we actually followed the candidate).
-   * - `followedBack`: of those, the ones that reciprocated.
-   * - `poolSize`: active followers of the target (the raw poaching pool).
-   * - `mutualOverlap`: target-followers we ALREADY actively follow.
+   * Yield for a poaching session against `targetPk`: `total` = records past the follow stage;
+   * `followedBack` = successes and the rate = successes / (successes + failures) of the one classifier
+   * (the engine's source quality folds the same, law L7); the pool and the overlap from active edges.
    */
-  targetYield(targetPk: string, ownPk: string): TargetYield {
-    const counts = this.db
-      .prepare(
-        `SELECT COUNT(*) AS total, COUNT(followed_back_at) AS followed_back
-         FROM follow_records
-         WHERE target_pk = ?
-           AND state IN ('pending_followback', 'followed_back', 'unfollow_queued', 'unfollowed')`,
-      )
-      .get(targetPk) as { total: number; followed_back: number };
+  targetYield(targetPk: string, ownPk: string, outcome: OutcomeWindow): TargetYield {
+    const rows = this.db.prepare(`SELECT state, followed_at AS followedAt, followed_back_at AS followedBackAt,
+        followback_after AS followbackAfter, followback_observed_at AS followbackObservedAt,
+        reconciled_at AS reconciledAt, unfollow_reason AS unfollowReason
+      FROM follow_records WHERE target_pk = ?`).all<OutcomeRow>(targetPk);
+    let success = 0;
+    let failure = 0;
+    for (const r of rows) {
+      const o = followbackOutcome(r, outcome.windowMs, outcome.now);
+      if (o === 'success') success += 1;
+      else if (o === 'failure') failure += 1;
+    }
 
     const pool = this.db
       .prepare(
@@ -68,9 +74,9 @@ export class AnalyticsRepo {
     };
 
     return {
-      total: counts.total,
-      followedBack: counts.followed_back,
-      followBackRate: counts.total === 0 ? 0 : counts.followed_back / counts.total,
+      total: rows.filter((r) => FOLLOWED.has(r.state)).length,
+      followedBack: success,
+      followBackRate: success + failure === 0 ? 0 : success / (success + failure),
       poolSize: pool.pool_size,
       mutualOverlap: pool.mutual_overlap ?? 0,
     };

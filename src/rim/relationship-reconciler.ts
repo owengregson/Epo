@@ -19,6 +19,7 @@
 import type { Reader } from '@/adapter/reader';
 import type { Clock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
+import type { ObservedRelation } from '@/shared/observed-relation';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
@@ -69,21 +70,23 @@ export class RelationshipReconciler {
     }
     try {
       const at = this.clock.now();
-      const facts = this.reader.relationshipFacts(
-        resp.url,
-        body,
-        at,
-        this.friendlyNameOf(resp),
-      );
-      for (const { pk, weFollow } of facts) {
-        if (pk === this.ownPk) continue; // never reconcile our own account
-        this.store.reconcileOwnFollow(pk, weFollow, at);
-      }
+      this.apply(this.reader.relationshipFacts(resp.url, body, at, this.friendlyNameOf(resp)), at);
     } catch (e) {
       logger.warn('rim.relationship-reconciler: reconciliation failed', {
         url: resp.url,
         error: String(e),
       });
+    }
+  }
+
+  /**
+   * Feed minted relationship facts to the store's policy sink. Only an `ObservedRelation` is
+   * accepted, so an absent key can never reach `reconcileOwnFollow(pk, false)`.
+   */
+  private apply(facts: readonly ObservedRelation[], at: number): void {
+    for (const { pk, weFollow } of facts) {
+      if (pk === this.ownPk) continue; // never reconcile our own account
+      this.store.reconcileOwnFollow(pk, weFollow, at);
     }
   }
 }

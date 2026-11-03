@@ -25,6 +25,10 @@ import {
 import { ResponseWatch } from '@/adapter/response-watch';
 import type { MaybeObservable } from '@/adapter/tab-ports';
 import { driftConfirmThreshold } from '@/kernel/derive';
+import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
+import { gateObserved } from '@/surface/read/gate';
+import { decodeBody } from '@/surface/transport/decode';
+import { graphqlEnvelope } from '@/surface/transport/graphql';
 import type { TabResponse } from '@/types';
 import * as logger from '@/utils/logger';
 
@@ -36,6 +40,8 @@ export interface MutationObservation {
   url: string;
   httpStatus: number;
   classification: MutationClassification;
+  /** `candidate`: an unrecognised relationship mutation read at the deadline — only ever a wall. */
+  via?: 'match' | 'candidate';
 }
 
 /** One unmatched POST seen while the watch was armed — diagnosis, not data. */
@@ -46,8 +52,6 @@ export interface UnmatchedPost {
   status: number;
 }
 
-/** How many unmatched POSTs a watch remembers (the newest win). */
-const UNMATCHED_POSTS_KEPT = 12;
 
 /**
  * BLINDNESS — the watch's verdict on its own table. One unobserved window is a
@@ -89,9 +93,13 @@ export class MutationWatch {
   readonly available: boolean;
   private readonly watch: ResponseWatch<MutationObservation>;
   private readonly unmatched: UnmatchedPost[] = [];
+  /** Unrecognised relationship-family mutation responses (references, read only at the deadline). */
+  private readonly candidates: TabResponse[] = [];
+  private readonly kind: MutationKind;
   private readonly op: string;
 
   constructor(kind: MutationKind, op: string, tab: ResponseObservable) {
+    this.kind = kind;
     this.op = op;
     this.watch = new ResponseWatch<MutationObservation>(
       {
@@ -120,13 +128,52 @@ export class MutationWatch {
     return this.watch.latencyMs();
   }
 
+  /** The classified observation if one has arrived, without waiting (the confirm-layer loop, ADR 0308). */
+  peek(): MutationObservation | null {
+    return this.watch.peek();
+  }
+
+  /** Re-base the arrival latency on the press that may fire the mutation (a later confirm layer). */
+  markPress(): void {
+    this.watch.markPress();
+  }
+
   /**
-   * The first matching mutation's classified observation, or `null` when none
-   * arrives within `timeoutMs`. Throws `ActionAbortedError` when the driver's
-   * abort signal fires mid-wait — the same contract as the Actor's DOM polls.
+   * The first matching mutation's classified observation, else — at the deadline — a wall an
+   * unrecognised relationship mutation answered with, else `null`. A candidate never confirms a
+   * success. Throws `ActionAbortedError` when the driver's abort signal fires mid-wait.
    */
-  next(timeoutMs: number, signal?: AbortSignal): Promise<MutationObservation | null> {
-    return this.watch.next(timeoutMs, signal);
+  async next(timeoutMs: number, signal?: AbortSignal): Promise<MutationObservation | null> {
+    return (await this.watch.next(timeoutMs, signal)) ?? (await this.candidateWall());
+  }
+
+  /** The newest candidate whose status or GraphQL body names a wall, as a `via: 'candidate'` observation. */
+  private async candidateWall(): Promise<MutationObservation | null> {
+    for (const response of [...this.candidates].reverse()) {
+      const wall = await this.wallOf(response);
+      if (wall === null) continue;
+      logger.warn(`${this.op}: an unrecognised relationship mutation answered with a wall`, {
+        friendlyName: SURFACE.friendlyName(response.requestHeaders) ?? null, status: response.status, outcome: wall.kind });
+      return { kind: this.kind, pk: null, url: response.url, httpStatus: response.status, classification: wall, via: 'candidate' };
+    }
+    return null;
+  }
+
+  /** The wall one candidate's status or GraphQL body names, or `null` (never a success). */
+  private async wallOf(response: TabResponse): Promise<MutationClassification | null> {
+    const gate = gateObserved(response.status, response.mimeType, SURFACE.transport.parseableMime);
+    if (gate.kind === 'wall') return { kind: gate.family, detail: `HTTP ${response.status}` };
+    let text: string;
+    try {
+      text = await response.getBody();
+    } catch (e) {
+      logger.debug('mutation-watch: candidate body unavailable', { op: this.op, error: String(e) });
+      return null;
+    }
+    const decoded = decodeBody(text, SURFACE.transport);
+    const envelope = decoded.ok ? graphqlEnvelope(decoded.json, () => false, SURFACE.graphql, SURFACE.mutationRefusalSignatures) : null;
+    if (envelope?.kind !== 'wall') return null;
+    return { kind: envelope.status === 'action-blocked' ? 'rate-limited' : 'auth', wall: envelope.status, detail: envelope.text };
   }
 
   /**
@@ -163,7 +210,11 @@ export class MutationWatch {
       friendlyName: SURFACE.friendlyName(response.requestHeaders) ?? null,
       status: response.status,
     });
-    if (this.unmatched.length > UNMATCHED_POSTS_KEPT) this.unmatched.shift();
+    if (this.unmatched.length > SURFACE_BOUNDS.unmatchedPostsKept) this.unmatched.shift();
+    if (SURFACE.mutationCandidate({ url: response.url, method: response.method, requestHeaders: response.requestHeaders })) {
+      this.candidates.push(response);
+      if (this.candidates.length > SURFACE_BOUNDS.unmatchedPostsKept) this.candidates.shift();
+    }
   }
 
   /** Release the tab subscription. Idempotent; safe before and after `next`. */
@@ -184,21 +235,14 @@ export class MutationWatch {
     op: string,
     response: TabResponse,
   ): Promise<MutationObservation> {
-    const raw = await response.getBody();
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // Not JSON — an HTML wall page on a 429 is the expected shape here; the
-      // status classifies it. Logged (head only) so it stays diagnosable.
-      logger.debug('mutation-watch: non-JSON mutation body', {
-        op,
-        status: response.status,
-        head: raw.slice(0, 120),
-      });
-      parsed = undefined;
+    // One decoder for every body: a guarded or streamed mutation body classifies too.
+    const decoded = decodeBody(await response.getBody(), SURFACE.transport);
+    if (!decoded.ok) {
+      // An HTML wall page on a 429 is the expected shape here; the status classifies it.
+      logger.debug('mutation-watch: undecodable mutation body', { op, status: response.status, reason: decoded.reason,
+        head: decoded.head });
     }
-    const verdict = SURFACE.extractMutationVerdict(parsed, kind);
+    const verdict = SURFACE.extractMutationVerdict(decoded.ok ? decoded.json : undefined, kind);
     return MutationWatch.observation(kind, response, verdict, op);
   }
 
@@ -219,6 +263,6 @@ export class MutationWatch {
       outcome: classification.kind,
       detail: classification.detail,
     });
-    return { kind, pk, url: response.url, httpStatus: response.status, classification };
+    return { kind, pk, url: response.url, httpStatus: response.status, classification, via: 'match' };
   }
 }

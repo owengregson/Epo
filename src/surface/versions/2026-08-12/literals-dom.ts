@@ -29,6 +29,8 @@ export const SELECTORS = {
   followBackText: /^\s*follow back/i,
   /** The confirm control in the unfollow / cancel-request dialog (PREFIX match). */
   unfollowConfirmText: /^\s*(unfollow|cancel request)\b/i,
+  /** A confirm DIALOG's companion beside its confirm (whole text: "Cancel request" is a confirm). */
+  confirmCancelText: /^\s*cancel\s*$/i,
   /** The left-nav notifications control, by accessible name (not an href link). */
   notificationsLabelText: /^\s*notifications\s*$/i,
   /** The "Follow requests" entry inside the open notifications drawer. */
@@ -83,10 +85,18 @@ export const SCOPES = {
   /** The nav rail before page content — a stray profile link must never win. */
   nav: ['nav', '[role="navigation"]'],
   navThenBody: ['nav', '[role="navigation"]', 'body'],
+  /** Where a confirm layer renders: Instagram's dialog portals. */
+  dialogs: ['[role="dialog"]', '[role="alertdialog"]'],
   /** The open drawer/modal before page content. */
   drawer: ['[role="dialog"]', '[role="alertdialog"]', 'aside'],
   drawerThenBody: ['[role="dialog"]', '[role="alertdialog"]', 'aside', 'body'],
 } as const;
+
+/**
+ * The confirm layers an unfollow can show after the header press, in order: the menu sheet, then
+ * (a private account) the dialog. Their count bounds the confirm flow (ADR 0308).
+ */
+export const CONFIRM_LAYERS = ['menu', 'dialog'] as const;
 
 // ---------------------------------------------------------------------------
 // Identity knowledge

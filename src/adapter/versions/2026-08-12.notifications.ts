@@ -21,7 +21,9 @@ export function activityFeedRoot(body: unknown): unknown {
 
 /**
  * The follow-requests page as the list shape: a GraphQL connection becomes
- * `{ users, next_max_id, has_more }`; anything else is returned untouched.
+ * `{ users, next_max_id, has_more }`; anything else is returned untouched. The
+ * cursor and the more-flag are carried only when present: a missing flag must
+ * read as missing, never as "no next page" (spec §10.4).
  */
 export function followRequestsPage(body: unknown): unknown {
   const g = JSON_PATHS.followRequestsGraphql;
@@ -29,9 +31,16 @@ export function followRequestsPage(body: unknown): unknown {
   if (!Array.isArray(edges)) return body;
   const l = JSON_PATHS.followersList;
   const cursor = getPath(body, g.cursor);
+  const more = getPath(body, g.hasMore);
   return {
     [l.users]: edges.map((edge) => getPath(edge, g.node)),
-    [l.nextMaxId]: typeof cursor === 'string' ? cursor : null,
-    [l.hasMore]: getPath(body, g.hasMore) === true,
+    ...(typeof cursor === 'string' ? { [l.nextMaxId]: cursor } : {}),
+    ...(typeof more === 'boolean' ? { [l.hasMore]: more } : {}),
   };
+}
+
+/** The feed's side list of pending requesters, at its declared place only (never searched for). */
+export function feedPendingRows(body: unknown): unknown[] {
+  const rows = getPath(body, JSON_PATHS.activityFeedPendingPreview);
+  return Array.isArray(rows) ? rows : [];
 }

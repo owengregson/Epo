@@ -36,6 +36,9 @@ export const rectOf = (el: Element): Rect => {
   return { x: r.left, y: r.top, width: r.width, height: r.height };
 };
 
+/** The centre of a rect: where a press aims and where a hit test samples. */
+export const centreOf = (r: Rect): { x: number; y: number } => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
+
 /** Hit-test samples per axis when measuring how much of a control is exposed. */
 const AIM_GRID = 8;
 
@@ -81,14 +84,24 @@ export function exposedAim(el: Element, rect: Rect): Rect | undefined {
  * hidden copy while the real control sat plainly on screen.
  */
 export function visible(el: Element): boolean {
-  const r = el.getBoundingClientRect();
+  const r = rectOf(el);
   if (!(r.width >= 2 && r.height >= 2)) return false;
-  const cx = r.left + r.width / 2;
-  const cy = r.top + r.height / 2;
-  if (cx <= 0 || cy <= 0 || cx >= window.innerWidth || cy >= window.innerHeight) return false;
+  const c = centreOf(r);
+  if (c.x <= 0 || c.y <= 0 || c.x >= window.innerWidth || c.y >= window.innerHeight) return false;
   const st = window.getComputedStyle(el);
   if (st.visibility === 'hidden' || st.display === 'none') return false;
   return Number(st.opacity === '' ? 1 : st.opacity) > 0.05;
+}
+
+/**
+ * Whether a press at `el`'s centre reaches it: the hit test lands on it or inside it. `visible()`
+ * alone accepts a layer still fading out beneath a newer one. A page that cannot hit-test defers to it.
+ */
+export function onTop(el: Element): boolean {
+  if (typeof document.elementFromPoint !== 'function') return true;
+  const c = centreOf(rectOf(el));
+  const hit = document.elementFromPoint(c.x, c.y);
+  return hit !== null && el.contains(hit);
 }
 
 /**

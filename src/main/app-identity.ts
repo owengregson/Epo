@@ -18,6 +18,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app } from 'electron';
+import { RUNTIME_BOUNDS } from '@/kernel/runtime-bounds';
 import * as logger from '@/utils/logger';
 
 /**
@@ -80,8 +81,8 @@ function migrateLegacyUserData(): void {
       });
       return;
     } catch (e) {
-      if (attempt < 5) {
-        sleepSync(400);
+      if (attempt < RUNTIME_BOUNDS.USERDATA_RENAME_RETRIES) {
+        sleepSync(RUNTIME_BOUNDS.USERDATA_RENAME_RETRY_MS);
         continue;
       }
       logger.error('app-identity: could not move legacy userData; staying on it in place', {

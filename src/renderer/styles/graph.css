@@ -25,7 +25,7 @@
 }
 .graph-stage.on {
   display: block;
-  animation: gsReveal 0.3s var(--ease, ease);
+  animation: gsReveal var(--dur-3) var(--ease, ease);
 }
 @keyframes gsReveal {
   from {
@@ -58,9 +58,9 @@
   padding: 24px;
   text-align: center;
   color: var(--faint);
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   pointer-events: none;
-  animation: gsFade 0.35s ease;
+  animation: gsFade var(--dur-3) ease;
 }
 @keyframes gsFade {
   from {
@@ -79,18 +79,18 @@
   border-radius: 6px;
   box-shadow: var(--elev-2);
   pointer-events: none;
-  font-size: var(--fs-md);
-  animation: gsFade 0.15s ease;
+  font-size: var(--fs-label);
+  animation: gsFade var(--dur-1) ease;
 }
 .graph-tip__title {
   color: var(--text);
   font-family: var(--mono);
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   margin-bottom: 2px;
 }
 .graph-tip__line {
   color: var(--muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   line-height: 1.5;
 }
 
@@ -113,7 +113,7 @@
   box-shadow: var(--elev-2);
   backdrop-filter: blur(6px);
   overflow: hidden;
-  animation: glIn 0.35s var(--ease, ease);
+  animation: glIn var(--dur-3) var(--ease, ease);
 }
 @keyframes glIn {
   from {
@@ -135,12 +135,10 @@
   border: 0;
   color: var(--muted);
   font: inherit;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
   font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
   cursor: pointer;
-  transition: color 0.15s;
+  transition: color var(--dur-1);
 }
 .graph-legend__head:hover {
   color: var(--text);
@@ -152,7 +150,7 @@
   letter-spacing: 0;
 }
 .graph-legend__chev {
-  transition: transform 0.25s var(--ease, ease);
+  transition: transform var(--dur-2) var(--ease, ease);
 }
 .graph-legend.collapsed .graph-legend__chev {
   transform: rotate(-90deg);
@@ -162,8 +160,8 @@
   opacity: 1;
   overflow: hidden;
   transition:
-    max-height 0.3s var(--ease, ease),
-    opacity 0.22s;
+    max-height var(--dur-3) var(--ease, ease),
+    opacity var(--dur-2);
 }
 .graph-legend.collapsed .graph-legend__body {
   max-height: 0;
@@ -179,7 +177,7 @@
 .graph-legend__hint {
   margin: 0;
   color: var(--faint);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   line-height: 1.5;
 }
 
@@ -201,10 +199,10 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--dur-1);
 }
 .gleg-row:hover {
   background: rgba(255, 255, 255, 0.03);
@@ -223,13 +221,13 @@
   height: 9px;
   border-radius: 5px;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
-  transition: opacity 0.2s;
+  transition: opacity var(--dur-2);
 }
 .gleg-label {
   flex: 1 1 auto;
   min-width: 0;
   color: var(--muted);
-  transition: color 0.15s;
+  transition: color var(--dur-1);
 }
 .gleg-row:hover .gleg-label {
   color: var(--text);
@@ -237,5 +235,5 @@
 .gleg-count {
   color: var(--text);
   font-family: var(--mono);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
 }

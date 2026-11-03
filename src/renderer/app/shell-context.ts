@@ -1,23 +1,25 @@
 import { computed, type ReadonlySignal, signal } from '@preact/signals';
 import { createContext } from 'preact';
 import { useContext } from 'preact/hooks';
+import { liveRevealedSignal, resetLiveSignals } from '@/renderer/app/live-signals';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
-import type { LogLine } from '@/renderer/hooks/useLogFeed';
 import type { ToastKind } from '@/renderer/hooks/useToasts';
 import { type TransportModel, transportModel } from '@/renderer/lib/engine-view';
+import type { LogEntry } from '@/shared/log-entry';
+import type { SettingsFacts } from '@/shared/settings-facts';
+import type { SettingsView } from '@/shared/settings-view';
+import type { StageMode } from '@/shared/stage-mode';
 import type { EpoStatus, PruneStatus, Settings } from '@/types';
 
 /**
- * The shell's published projections — the four things it owns exactly once and
- * every view reads. Subscribing or fetching any of these a second time inside a
- * view lets two copies of one projection disagree, so they live here.
+ * The shell's published projections — the things it owns exactly once and
+ * every page reads. Subscribing or fetching any of these a second time inside a
+ * page lets two copies of one projection disagree, so they live here.
  *
- * They are SIGNALS, not context state (ADR 1004). The subscription plumbing is
- * unchanged — push-first with a keep-alive pull backstop (docs/PRINCIPLES.md
- * §2) — only the sink moved: `useKeepAlivePoll` writes `.value` instead of
- * calling `setState` on the shell. That is what stops a streamed log line (or a
- * status push during a scan) from re-rendering the entire tree: a component
- * re-renders only if it READ the signal that changed.
+ * They are SIGNALS, not context state (ADR 1004): the shell's hooks write
+ * `.value`, and a component re-renders only if it READ the signal that changed,
+ * so a push never re-renders the whole tree. The live feeds beyond status live
+ * in `live-signals.ts`.
  */
 
 /** The engine status projection (pushed on store mutation, never gated on completion). */
@@ -26,17 +28,41 @@ export const statusSignal = signal<EpoStatus | null>(null);
 export const pruneSignal = signal<PruneStatus | null>(null);
 /** Canonical settings, loaded once by the shell. */
 export const settingsSignal = signal<Settings | null>(null);
-/** The streamed structured log, capped by the feed's ring buffer. */
+/** The Settings view (pushed after every persisted settings write). */
+export const settingsViewSignal = signal<SettingsView | null>(null);
+/** The store-derived Settings facts (a projection row; pushed on store mutation). */
+export const settingsFactsSignal = signal<SettingsFacts | null>(null);
+
+/** A log entry stamped with a feed-local sequence number (the stable render key). */
+export interface LogLine extends LogEntry {
+  seq: number;
+}
+/** Log lines for the console column's activity card (the raw log itself streams only to Diagnostics). */
 export const logSignal = signal<LogLine[]>([]);
+
+/** Which stage fills the window right of the console. */
+export const stageSignal = signal<StageMode>('tab');
+/** A renderer modal is open: the native views must not float above its scrim. */
+export const modalSignal = signal(false);
+/** True while the Instagram page is drawn over the Live stage (it covers x ≥ console, y ≥ stage bar). */
+export const nativeViewSignal: ReadonlySignal<boolean> = computed(
+  () => stageSignal.value === 'tab' && liveRevealedSignal.value && !modalSignal.value,
+);
+
+/** Where `openSettings` lands: a section, and a field to focus in it. */
+export interface SettingsTarget {
+  readonly section: string;
+  readonly focus?: string;
+}
+/** The latest Settings destination (a fresh object per request), for the Settings stage to act on. */
+export const settingsTargetSignal = signal<SettingsTarget | null>(null);
 
 /**
  * The unified console posture derived from BOTH status channels.
  *
  * `transportModel` builds a fresh object per call, so the computed caches the
- * previous one whenever all three fields match. That referential stability is
- * load-bearing: it means a status push that does not change the POSTURE wakes
- * nothing — the console's `data-state`, the transport trio and the routing all
- * stay put while counts tick underneath.
+ * previous one whenever all fields match: a status push that does not change
+ * the POSTURE wakes nothing while counts tick underneath.
  */
 let lastTransport: TransportModel = { state: 'idle', driver: 'growth', pruneScanning: false };
 export const transportSignal: ReadonlySignal<TransportModel> = computed(() => {
@@ -54,12 +80,6 @@ export const transportSignal: ReadonlySignal<TransportModel> = computed(() => {
   return next;
 });
 
-/** The most recent streamed line, or null before anything has streamed. */
-export const latestLogSignal: ReadonlySignal<LogLine | null> = computed(() => {
-  const lines = logSignal.value;
-  return lines.length > 0 ? (lines[lines.length - 1] as LogLine) : null;
-});
-
 /** Adopt a saved Settings object as the new canonical one. */
 export function adoptSettings(next: Settings): void {
   settingsSignal.value = next;
@@ -75,10 +95,16 @@ export function resetShellSignals(): void {
   pruneSignal.value = null;
   settingsSignal.value = null;
   logSignal.value = [];
+  settingsViewSignal.value = null;
+  settingsFactsSignal.value = null;
+  stageSignal.value = 'tab';
+  modalSignal.value = false;
+  settingsTargetSignal.value = null;
+  resetLiveSignals();
   lastTransport = { state: 'idle', driver: 'growth', pruneScanning: false };
 }
 
-/** The two shell-level services — per-App closures, so not signals. */
+/** The shell's two services — per-App closures, so context rather than signals. */
 export interface ShellServices {
   /** The one confirmation modal; resolves true on confirm. */
   confirm(options: ConfirmOptions): Promise<boolean>;
@@ -86,7 +112,30 @@ export interface ShellServices {
   toast(kind: ToastKind, message: string): void;
 }
 
-/** What `useShell()` hands a view: the four projections plus the two services. */
+/**
+ * The shell's controls (spec §12.4, §13): stages, the Settings destination and
+ * the one runner behind Start / Pause / Stop / Sign in. A context of their own,
+ * read with `useShellControls()`, so a page that only needs the two services
+ * (and the tests that provide them) stays as it was.
+ */
+export interface ShellControls {
+  /** Show a stage. */
+  showStage(mode: StageMode): void;
+  /** Open the Settings stage, at a section and field when given. */
+  openSettings(target?: SettingsTarget): void;
+  /** Start Epo, or open Settings at the starting account when none is chosen yet. */
+  start(): void;
+  /** Pause or resume whichever driver holds the page. */
+  pauseResume(): void;
+  /** Stop whichever driver holds the page. */
+  stop(): Promise<void>;
+  /** Show Instagram on the Live stage, then sign in there. */
+  signIn(): void;
+  /** Open the intro tour again. */
+  replayTour(): void;
+}
+
+/** What `useShell()` hands a page: the projections plus the services. */
 export interface Shell extends ShellServices {
   status: EpoStatus | null;
   prune: PruneStatus | null;
@@ -99,18 +148,29 @@ const MISSING = (): never => {
   throw new Error('useShell() used outside <ShellContext.Provider>');
 };
 
-export const ShellContext = createContext<ShellServices>({
-  confirm: MISSING,
-  toast: MISSING,
+export const ShellContext = createContext<ShellServices>({ confirm: MISSING, toast: MISSING });
+
+export const ShellControlsContext = createContext<ShellControls>({
+  showStage: MISSING,
+  openSettings: MISSING,
+  start: MISSING,
+  pauseResume: MISSING,
+  stop: MISSING,
+  signIn: MISSING,
+  replayTour: MISSING,
 });
+
+/** The shell's controls (stable per App, so reading them re-renders nothing). */
+export function useShellControls(): ShellControls {
+  return useContext(ShellControlsContext);
+}
 
 /**
  * Read the shell's shared projections and services.
  *
  * The projections are GETTERS on purpose: destructuring `const { settings } =
  * useShell()` reads exactly one signal, so that component subscribes to exactly
- * one signal. Reading the whole object eagerly would re-subscribe every
- * consumer to every push — the very churn ADR 0403 left on the table.
+ * one signal.
  */
 export function useShell(): Shell {
   const services = useContext(ShellContext);

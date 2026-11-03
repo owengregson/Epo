@@ -1,34 +1,44 @@
 {
   "pending": [
     {
-      "module": "src/shared/posture.ts",
-      "stream": "BL",
-      "reason": "the stage controller derives the window title and Dock badge from the posture; SB's live column follows"
-    },
-    {
-      "module": "src/settings/doc-rules.ts",
-      "stream": "SC",
-      "reason": "the settings service coerces epo-settings-v2.json through these rules when it reads the document"
-    },
-    {
-      "module": "src/settings/migrate-v1.ts",
-      "stream": "SC",
-      "reason": "the settings service runs the v1 migration at construction, with the kernel-derived basis"
-    },
-    {
-      "module": "src/renderer/settings/SettingsStage.tsx",
-      "stream": "SU",
-      "reason": "the Settings stage replaces its body and the stage host mounts it"
-    },
-    {
       "module": "src/renderer/copy/boost.ts",
       "stream": "SB",
       "reason": "the sidebar's one Boost control and the Settings Boost section read this copy deck"
     },
     {
-      "module": "src/surface/sink.ts",
-      "stream": "PH",
-      "reason": "surface-wiring.ts swaps the production sink in for NO_SINK and the read pipeline reports to it"
+      "module": "src/governors/plan-projection.ts",
+      "stream": "PR",
+      "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
+    },
+    {
+      "module": "src/main/modules/settings-transitional.ts",
+      "stream": "SC",
+      "reason": "deleted, not wired: production serves the v2 view; only tests/kit/render-bridge.ts (lead) still builds its view here, and SC or SU deletes the module once the bridge reads the v2 view"
+    },
+    {
+      "module": "src/renderer/settings/compatibility/CompatibilityPanel.tsx",
+      "stream": "SU",
+      "reason": "Settings › Advanced mounts the Instagram compatibility panel"
+    },
+    {
+      "module": "src/renderer/settings/compatibility/CompatibilityLine.tsx",
+      "stream": "SU",
+      "reason": "the Easy settings show the compatibility one-liner, its Details opening Advanced"
+    },
+    {
+      "module": "src/renderer/live/CompatibilityNotice.tsx",
+      "stream": "SB",
+      "reason": "the live column shows the compatibility line and wires its Details to the panel"
+    },
+    {
+      "module": "src/renderer/lib/deadline-anim.ts",
+      "stream": "SB",
+      "reason": "the sidebar ring and the plan strip deplete toward their deadline with one animation each"
+    },
+    {
+      "module": "src/renderer/lib/flip.ts",
+      "stream": "SB",
+      "reason": "the activity feed's new rows arrive and file into place with it"
     }
   ]
 }

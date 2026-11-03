@@ -75,6 +75,35 @@ export function place(
   };
 }
 
+/** True when two boxes share any area. */
+function overlaps(a: Box, b: Box): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/**
+ * {@link place}, kept off a region a native view covers (the Instagram page on
+ * Live draws above everything here). An anchor left of that region is placed
+ * inside the column it sits in; any other placement that would reach under the
+ * page is refused. Null means "nothing fits" — the caller suppresses or falls
+ * back. `covered` null means the whole viewport is ours.
+ */
+export function placeAvoiding(
+  anchor: Box,
+  size: { w: number; h: number },
+  viewport: { w: number; h: number },
+  covered: Box | null,
+  opts: PlaceOptions = {},
+): { left: number; top: number } | null {
+  if (covered === null) return place(anchor, size, viewport, opts);
+  const edge = opts.edge ?? 8;
+  if (anchor.x + anchor.w <= covered.x) {
+    if (size.w > covered.x - 2 * edge || size.h > viewport.h - 2 * edge) return null;
+    return place(anchor, size, { w: covered.x, h: viewport.h }, opts);
+  }
+  const at = place(anchor, size, viewport, opts);
+  return overlaps({ x: at.left, y: at.top, w: size.w, h: size.h }, covered) ? null : at;
+}
+
 /** Clamp one axis into `[edge, extent - length - edge]`, never past `edge`. */
 function clampAxis(value: number, length: number, extent: number, edge: number): number {
   return Math.max(edge, Math.min(value, extent - length - edge));

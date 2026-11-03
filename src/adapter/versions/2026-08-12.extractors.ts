@@ -17,54 +17,71 @@ import type {
   FollowEvent,
   FollowersListResult,
   FriendshipShowResult,
+  ProfileViewer,
   ShowManyEntry,
 } from '@/adapter/surface-types';
-import { activityFeedRoot, followRequestsPage } from '@/adapter/versions/2026-08-12.notifications';
+import { activityFeedRoot, feedPendingRows, followRequestsPage } from '@/adapter/versions/2026-08-12.notifications';
 import type { Observation } from '@/store/types';
+import { continuationOf } from '@/surface/read/continuation';
+import {
+  type CountKeys,
+  readBool,
+  readCountPair,
+  readRelationshipPresence,
+  readTextPresence,
+} from '@/surface/read/fields';
+import { readRelationship } from '@/surface/read/relationship';
+import type { ProfilePresence } from '@/surface/schema/projection';
+import { CONTINUATION } from '@/surface/versions/2026-08-12/continuation-decl';
 import { JSON_PATHS } from '@/surface/versions/2026-08-12/literals';
+
+/** Every relationship flag is read by presence: a renamed key is unknown, never `false`. */
+const REL = JSON_PATHS.relationship;
+/** The profile's count keys, read as one atomic pair. */
+const COUNT_KEYS: CountKeys = {
+  followers: JSON_PATHS.profileUser.followersCount,
+  following: JSON_PATHS.profileUser.followingCount,
+  mutuals: JSON_PATHS.profileUser.mutualCount,
+};
+
+/** One list user row as an observation, or `null` when the row does not read (no record, no id). */
+function listRowOf(entry: unknown, at: number, source: Observation['source']): Observation | null {
+  if (!isRecord(entry)) return null;
+  const p = JSON_PATHS.followersList;
+  const pk = asStringId(entry[p.userPk]);
+  if (pk === null) return null;
+  const username = entry[p.userName];
+  return { accountPk: pk, observedAt: at, source, fields: {
+    username: typeof username === 'string' ? username : undefined,
+    isPrivate: asBool(entry[p.isPrivate]),
+    isVerified: asBool(entry[p.isVerified]),
+  } };
+}
+
+/** The feed's side list of pending requesters: each readable row, as presence — never a complete set. */
+export function extractFeedPendingPreview(body: unknown, at: number): Observation[] {
+  return feedPendingRows(body).flatMap((entry) => listRowOf(entry, at, 'friend-requests') ?? []);
+}
 
 export function extractFollowersList(
   raw: unknown,
   at: number,
   source: 'followers-list' | 'following-list' | 'friend-requests' = 'followers-list',
+  final: boolean | null = null,
 ): FollowersListResult | ShapeMismatch {
   const body = source === 'friend-requests' ? followRequestsPage(raw) : raw;
   if (!isRecord(body)) return SHAPE_MISMATCH;
 
-  const p = JSON_PATHS.followersList;
-  const users = getPath(body, p.users);
+  const users = getPath(body, JSON_PATHS.followersList.users);
   if (!Array.isArray(users)) return SHAPE_MISMATCH;
+  const observations = users.flatMap((entry) => listRowOf(entry, at, source) ?? []);
 
-  const observations: Observation[] = [];
-  for (const entry of users) {
-    if (!isRecord(entry)) continue;
-    const pk = asStringId(entry[p.userPk]);
-    if (pk === null) continue;
-    observations.push({
-      accountPk: pk,
-      observedAt: at,
-      source,
-      fields: {
-        username: typeof entry[p.userName] === 'string'
-          ? (entry[p.userName] as string)
-          : undefined,
-        isPrivate: asBool(entry[p.isPrivate]),
-        isVerified: asBool(entry[p.isVerified]),
-      },
-    });
-  }
-
-  const nextMaxId = getPath(body, p.nextMaxId);
-  const cursor = typeof nextMaxId === 'string' && nextMaxId.length > 0
-    ? nextMaxId
-    : null;
-  // More-pages detection must be resilient to which flag this response carries:
-  // `has_more`, the alternate `big_list`, or neither — a present pagination
-  // cursor ALWAYS means another page exists. A false negative here ends the
-  // scroll loop after one page and silently truncates a whole-list scan.
-  const hasMore =
-    getPath(body, p.hasMore) === true || getPath(body, p.bigList) === true || cursor !== null;
-  return { observations, cursor, hasMore };
+  // A present cursor ALWAYS means another page; without one, the declared more-flags decide,
+  // and a flag set with no cursor is drift — never an end (spec §10.4).
+  const { continuation } = continuationOf(body, CONTINUATION, { final });
+  const cursor = continuation.kind === 'next' ? continuation.cursor : null;
+  const quarantined = users.length - observations.length;
+  return { observations, cursor, hasMore: continuation.kind !== 'end', continuation, quarantined };
 }
 
 /**
@@ -85,14 +102,14 @@ function profileUserOf(body: unknown): Record<string, unknown> | null | ShapeMis
     const user = getPath(body, path);
     if (isRecord(user)) return user;
   }
-  // Neither container held a record. A container that is PRESENT but empty is
-  // the "gone" answer; a body carrying no container at all is drift. The
-  // GraphQL container is the parent of its `user` leaf, derived from the same
-  // path rather than spelled a second time.
-  const graphqlParent = at.graphql.slice(0, at.graphql.lastIndexOf('.'));
-  const present =
-    at.info in (body as Record<string, unknown>) || isRecord(getPath(body, graphqlParent));
-  return present ? null : SHAPE_MISMATCH;
+  // Neither container held a record. Only a container PRESENT and explicitly null is the "gone"
+  // answer (spec §10.4); a missing `user` key, or no container at all, is drift. The GraphQL
+  // container is the parent of its `user` leaf, derived from the same path.
+  const explicitNull = (parent: unknown, key: string): boolean =>
+    isRecord(parent) && Object.hasOwn(parent, key) && parent[key] === null;
+  const cut = at.graphql.lastIndexOf('.');
+  const gone = explicitNull(body, at.info) || explicitNull(getPath(body, at.graphql.slice(0, cut)), at.graphql.slice(cut + 1));
+  return gone ? null : SHAPE_MISMATCH;
 }
 
 export function extractProfileInfo(body: unknown, at: number): Observation | null | ShapeMismatch {
@@ -104,6 +121,9 @@ export function extractProfileInfo(body: unknown, at: number): Observation | nul
   // the GraphQL body sends a string `pk`. Either spelling is the same id.
   const pk = asStringId(user[p.id]) ?? asStringId(user[p.altId]);
   if (pk === null) return SHAPE_MISMATCH;
+  // I5: the counts are an atomic pair — a partial pair stores no stat, a digit string is retyped.
+  const pair = readCountPair(user, COUNT_KEYS);
+  const counts = pair === null || 'issue' in pair ? null : pair;
 
   return {
     accountPk: pk,
@@ -113,9 +133,9 @@ export function extractProfileInfo(body: unknown, at: number): Observation | nul
       username: typeof user[p.username] === 'string'
         ? (user[p.username] as string)
         : undefined,
-      followers: asCount(getPath(user, p.followersCount)),
-      following: asCount(getPath(user, p.followingCount)),
-      mutuals: asCount(getPath(user, p.mutualCount)),
+      followers: counts?.followers,
+      following: counts?.following,
+      mutuals: counts?.mutuals,
       isPrivate: asBool(user[p.isPrivate]),
       isVerified: asBool(user[p.isVerified]),
       bio: typeof user[p.biography] === 'string' ? (user[p.biography] as string) : undefined,
@@ -124,28 +144,37 @@ export function extractProfileInfo(body: unknown, at: number): Observation | nul
 }
 
 /**
- * The viewer-side flags. Carried by the GraphQL profile body only —
- * `/users/<pk>/info/` omits `friendship_status` entirely, so these answer
- * `null` (UNKNOWN) for a fetched profile and the caller reads
- * `friendships/show/<pk>/` when it needs the relationship.
+ * The profile read's presence per decision-bearing field (spec §10.3): whether the count pair,
+ * the bio and the flags were read, and whether a null relationship is the viewer's own record.
  */
-function profileViewerFlag(body: unknown, path: string): boolean | null {
+export function extractProfilePresence(body: unknown, viewerPk: string | null): ProfilePresence | null {
   const user = profileUserOf(body);
   if (user === null || isShapeMismatch(user)) return null;
-  const v = getPath(user, path);
-  return typeof v === 'boolean' ? v : null;
+  const p = JSON_PATHS.profileUser;
+  const pair = readCountPair(user, COUNT_KEYS);
+  const flag = (key: string) => {
+    const b = readBool(user, key);
+    return 'value' in b ? 'read' : b.presence;
+  };
+  return {
+    counts: pair === null ? 'absent' : !('issue' in pair) ? 'read' : pair.issue.kind === 'counts-partial' ? 'partial' : 'invalid',
+    bio: readTextPresence(user, p.biography),
+    isPrivate: flag(p.isPrivate),
+    isVerified: flag(p.isVerified),
+    relationship: readRelationshipPresence(user, p.friendshipStatus,
+      asStringId(user[p.id]) ?? asStringId(user[p.altId]), viewerPk),
+  };
 }
 
-export function extractProfileFollowedByViewer(body: unknown): boolean | null {
-  return profileViewerFlag(body, JSON_PATHS.profileUser.followedByViewer);
-}
-
-export function extractProfileRequestedByViewer(body: unknown): boolean | null {
-  return profileViewerFlag(body, JSON_PATHS.profileUser.requestedByViewer);
-}
-
-export function extractProfileFollowsViewer(body: unknown): boolean | null {
-  return profileViewerFlag(body, JSON_PATHS.profileUser.followsViewer);
+/**
+ * The viewer-side flags, each read by presence. Carried by the GraphQL profile body only —
+ * `/users/<pk>/info/` omits `friendship_status` entirely, so every flag answers `null` (UNKNOWN).
+ */
+export function extractProfileViewer(body: unknown): ProfileViewer {
+  const user = profileUserOf(body);
+  const fs = user === null || isShapeMismatch(user) ? null : user[JSON_PATHS.profileUser.friendshipStatus];
+  const r = readRelationship(isRecord(fs) ? fs : {}, REL, '');
+  return { following: r.following, requested: r.outgoingRequest, followsUs: r.followedBy, incomingRequest: r.incomingRequest };
 }
 
 export function extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch {
@@ -158,14 +187,10 @@ export function extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch 
   const out: ShowManyEntry[] = [];
   for (const [pk, status] of Object.entries(statuses)) {
     if (!isRecord(status)) continue;
-    out.push({
-      pk,
-      following: status[p.following] === true,
-      // A pending request to a private account: `following` is false but the
-      // relationship is OURS — consumers must not read it as "not following".
-      outgoingRequest: status[p.outgoingRequest] === true,
-      isPrivate: asBool(status[p.isPrivate]),
-    });
+    // A pending request to a private account (`outgoing_request`) is OUR relationship
+    // too; this shape carries no followed-by direction.
+    const { following, outgoingRequest, incomingRequest } = readRelationship(status, REL, pk);
+    out.push({ pk, following, outgoingRequest, incomingRequest, isPrivate: asBool(status[p.isPrivate]) });
   }
   return out;
 }
@@ -178,16 +203,10 @@ export function extractFriendshipShow(body: unknown, pk: string): FriendshipShow
   // FALSE "we do not follow them" fact that flows into the reconciler and
   // terminates held records. The interface contract demands SHAPE_MISMATCH so
   // "no relationship" and "unparsed" stay distinguishable.
-  if (typeof body[p.following] !== 'boolean' && typeof body[p.followedBy] !== 'boolean') {
+  if (typeof body[REL.following] !== 'boolean' && typeof body[REL.followedBy] !== 'boolean') {
     return SHAPE_MISMATCH;
   }
-  return {
-    pk,
-    following: body[p.following] === true,
-    followedBy: body[p.followedBy] === true,
-    outgoingRequest: body[p.outgoingRequest] === true,
-    isPrivate: asBool(body[p.isPrivate]),
-  };
+  return { ...readRelationship(body, REL, pk), isPrivate: asBool(body[p.isPrivate]) };
 }
 
 /**

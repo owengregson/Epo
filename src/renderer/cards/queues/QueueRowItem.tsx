@@ -1,119 +1,90 @@
 import { type JSX } from 'preact';
-import type { QueueStageKey } from '@/renderer/cards/queues/QueuePipeline';
-import { clamp, monogram, pctInt, ratio, withAt } from '@/renderer/lib/format';
+import type { RowLaneKey } from '@/renderer/cards/queues/lanes';
+import { clamp, monogram, pctInt, withAt } from '@/renderer/lib/format';
 import { Icon } from '@/renderer/ui/Icon';
-import { MS_PER_DAY } from '@/timing/units';
-import type { QueueRow } from '@/types';
+import type { KeptRow } from '@/shared/settings-facts';
+import type { QueueRow, Settings } from '@/types';
 
-/** Fallback follow-back window while settings load (`maxWaitForFollowbackDays` = 4). */
-const FOLLOWBACK_WINDOW_MS = 4 * MS_PER_DAY;
+/** A day, as a unit of the row's own timestamps (a grid, not a timing). */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Fallback post-followback hold while settings load (`holdAfterFollowbackDays` = 2). */
-const HOLD_MS = 2 * MS_PER_DAY;
-
-/** The live settings-derived windows, passed down from the view (null while loading). */
+/** The follow-back wait and the hold after a follow-back, from the live settings (null while loading). */
 export interface QueueWindows {
   followbackMs: number;
   holdMs: number;
 }
 
-/** Stage-specific context line + progress-bar fill, derived from real timestamps. */
+/** The windows from the settings the shell loaded; null before they land (rows then show no bar). */
+export function queueWindowsOf(
+  s: Pick<Settings, 'maxWaitForFollowbackDays' | 'holdAfterFollowbackDays'> | null,
+): QueueWindows | null {
+  return s === null ? null : { followbackMs: s.maxWaitForFollowbackDays * DAY_MS, holdMs: s.holdAfterFollowbackDays * DAY_MS };
+}
+
+/** A row's line and its progress bar, from the record's own timestamps. */
 interface RowContext {
   ctx: string;
-  /** Bar fill fraction 0..1, or null to omit the bar entirely. */
+  /** Bar fill 0..1, or null to omit the bar (no window known yet, or none applies). */
   barFrac: number | null;
-  /** Brass (warn-toned) bar — only the Due stage. */
+  /** Warm bar — only for people leaving soon. */
   brass: boolean;
 }
 
-/**
- * Derive the honest, stage-specific context for a row. Everything here comes
- * from the record's own timestamps vs `now` — no invented scores or averages.
- */
-function deriveContext(
-  stage: QueueStageKey,
-  row: QueueRow,
-  now: number,
-  windows: QueueWindows | null,
-): RowContext {
-  const followbackWindowMs = windows?.followbackMs ?? FOLLOWBACK_WINDOW_MS;
-  const holdMs = windows?.holdMs ?? HOLD_MS;
-  switch (stage) {
-    case 'queued': {
-      // Ranked candidate, not yet followed — show WHY it ranks where it does:
-      // the mutual-follower count (the dominant score driver) when known.
+const days = (n: number): string => `${n} ${n === 1 ? 'day' : 'days'}`;
+
+/** The honest, lane-specific line for a row: everything from its own timestamps against `now`. */
+export function rowContext(lane: RowLaneKey, row: QueueRow, now: number, windows: QueueWindows | null): RowContext {
+  switch (lane) {
+    case 'next': {
       const m = row.mutuals;
-      const ctx = m !== null && m !== undefined && m > 0 ? `candidate · ${m} mutuals` : 'candidate';
-      return { ctx, barFrac: null, brass: false };
+      return { ctx: m != null && m > 0 ? `Good fit · ${m} followers in common` : 'Good fit', barFrac: null, brass: false };
     }
-
-    case 'awaiting': {
-      if (row.followedAt === undefined) {
-        return { ctx: 'awaiting follow-back', barFrac: null, brass: false };
-      }
+    case 'waiting': {
+      if (row.followedAt === undefined) return { ctx: 'Waiting for a follow-back', barFrac: null, brass: false };
       const elapsed = Math.max(0, now - row.followedAt);
-      const days = Math.floor(elapsed / MS_PER_DAY);
-      return {
-        ctx: days <= 0 ? 'followed today' : `followed ${days}d ago`,
-        barFrac: clamp(elapsed / followbackWindowMs, 0, 1),
-        brass: false,
-      };
+      const d = Math.floor(elapsed / DAY_MS);
+      const ctx = d <= 0 ? 'Followed today' : d === 1 ? 'Followed yesterday' : `Followed ${d} days ago`;
+      return { ctx, barFrac: windows === null ? null : clamp(elapsed / windows.followbackMs, 0, 1), brass: false };
     }
-
-    case 'held': {
-      if (row.holdUntil === undefined) {
-        return { ctx: 'followed back · holding', barFrac: null, brass: false };
-      }
+    case 'back': {
+      if (row.holdUntil === undefined) return { ctx: 'Followed you back', barFrac: null, brass: false };
       const remaining = row.holdUntil - now;
-      if (remaining <= 0) {
-        return { ctx: 'hold complete', barFrac: 1, brass: false };
-      }
-      const days = Math.ceil(remaining / MS_PER_DAY);
+      if (remaining <= 0) return { ctx: 'Followed you back · ready to unfollow', barFrac: 1, brass: false };
       return {
-        ctx: `hold ends in ${days}d`,
-        barFrac: clamp(1 - remaining / holdMs, 0, 1),
+        ctx: `Followed you back · unfollow in ${days(Math.ceil(remaining / DAY_MS))}`,
+        barFrac: windows === null ? null : clamp(1 - remaining / windows.holdMs, 0, 1),
         brass: false,
       };
     }
-
-    case 'due':
-      return { ctx: 'hold complete · ready', barFrac: 1, brass: true };
+    case 'leaving':
+      return { ctx: 'Leaving in an upcoming session', barFrac: 1, brass: true };
   }
 }
 
 export interface QueueRowItemProps {
-  /** Which lifecycle stage this row is listed under (drives ctx + bar). */
-  stage: QueueStageKey;
+  lane: RowLaneKey;
   /** The joined follow_record/account row from `queue:list`. */
   row: QueueRow;
-  /** Live settings-derived windows so bars track the USER's configured days. */
   windows: QueueWindows | null;
 }
 
-/**
- * One `.qr` lifecycle row: monogram avatar, handle with private/ready chips,
- * a stage-specific context line with a progress bar derived from the record's
- * real timestamps, and the follower-ratio chip. The only inline style is the
- * mockup-sanctioned `.qbar i` fill width.
- */
-export function QueueRowItem({ stage, row, windows }: QueueRowItemProps): JSX.Element {
-  const due = stage === 'due';
-  const { ctx, barFrac, brass } = deriveContext(stage, row, Date.now(), windows);
-  const handle = withAt(row.username) || row.pk;
+/** One person in a lane: monogram, handle (and Private), the lane's line and its progress bar. */
+export function QueueRowItem({ lane, row, windows }: QueueRowItemProps): JSX.Element {
+  const leaving = lane === 'leaving';
+  const { ctx, barFrac, brass } = rowContext(lane, row, Date.now(), windows);
 
   return (
-    <div class={due ? 'qr due' : 'qr'}>
+    <div class={leaving ? 'qr due' : 'qr'}>
       <span class="qr-av num">{monogram(row.username)}</span>
       <div class="qr-main">
         <div class="qr-top">
-          <span class="handle">{handle}</span>
+          <span class="handle">{withAt(row.username) || row.pk}</span>
           {row.isPrivate ? (
             <span class="priv">
               <Icon name="lock" title="Private" />
               Private
             </span>
           ) : null}
-          {due ? <span class="ready">Ready</span> : null}
         </div>
         <div class="qr-sub num">
           <span class="ctx">{ctx}</span>
@@ -124,8 +95,42 @@ export function QueueRowItem({ stage, row, windows }: QueueRowItemProps): JSX.El
           ) : null}
         </div>
       </div>
-      {/* An unknown ratio is unknown — never fabricated as the worst case. */}
-      <span class="rchip num">r={row.ratio === null ? '—' : ratio(row.ratio)}</span>
+    </div>
+  );
+}
+
+/** Why protection keeps someone, in words (spec §7.5); an unknown reason still reads as kept. */
+export function keptWhy(row: Pick<KeptRow, 'reason' | 'match'>): string {
+  switch (row.reason) {
+    case 'account':
+      return 'Kept · on your protection list';
+    case 'verified':
+      return 'Kept · verified account';
+    case 'bio-word':
+      return row.match !== null ? `Kept · bio mentions “${row.match}”` : 'Kept · a protected word in the bio';
+    case 'source':
+      return 'Kept · Epo explores through this account';
+    case 'unreadable-bio':
+    case 'unreadable-verified':
+      return 'Kept until Epo can read the profile · checked again later';
+    default:
+      return 'Kept · protected';
+  }
+}
+
+/** One person protection keeps (the Kept lane). */
+export function KeptRowItem({ row }: { row: KeptRow }): JSX.Element {
+  return (
+    <div class="qr">
+      <span class="qr-av num">{monogram(row.username)}</span>
+      <div class="qr-main">
+        <div class="qr-top">
+          <span class="handle">{withAt(row.username) || row.pk}</span>
+        </div>
+        <div class="qr-sub">
+          <span class="ctx">{keptWhy(row)}</span>
+        </div>
+      </div>
     </div>
   );
 }

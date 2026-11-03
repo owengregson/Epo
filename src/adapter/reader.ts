@@ -28,7 +28,10 @@ import {
   shadowRead,
   warnUnexpected,
 } from '@/adapter/reader-shadow';
+import type { ObservedRelation } from '@/shared/observed-relation';
 import type { Observation } from '@/store/types';
+import type { ProfilePresence } from '@/surface/schema/projection';
+import { type GraphqlOutcome, graphqlEnvelope } from '@/surface/transport/graphql';
 
 // Re-export the stable result types so existing consumers keep one import site.
 export type {
@@ -68,7 +71,7 @@ export class Reader {
    * in a request header, and a URL-only match cannot see it.
    */
   kindOf(resp: { url: string; requestHeaders?: Record<string, string> }): EndpointKind | null {
-    return SURFACE.matchEndpoint(resp.url, SURFACE.friendlyName(resp.requestHeaders));
+    return SURFACE.route(resp)?.kind ?? null;
   }
 
   /** The GraphQL operation name a request carried, read off its headers. */
@@ -129,8 +132,8 @@ export class Reader {
    * claim, and downstream completeness verdicts (the prune census's
    * lost-follower marking, growth's exhaustion advance) would act on it.
    */
-  parseFollowersListStrict(body: unknown, at: number): FollowersListResult | null {
-    const result = SURFACE.extractFollowersList(coerceBody(body, 'followers-list'), at);
+  parseFollowersListStrict(body: unknown, at: number, final: boolean | null = null): FollowersListResult | null {
+    const result = SURFACE.extractFollowersList(coerceBody(body, 'followers-list'), at, 'followers-list', final);
     const legacy = isShapeMismatch(result) ? null : result;
     shadowRead('followers-list', body, at, 'followers-list', legacy === null,
       compareList(legacy));
@@ -142,30 +145,14 @@ export class Reader {
   }
 
   /**
-   * Parse one paginated followers page into observations plus the resume
-   * cursor. Lenient variant for callers that only merge facts: drift collapses
-   * to the typed empty result. Anything deriving an end-of-list or
-   * completeness claim MUST use {@link parseFollowersListStrict} instead.
-   */
-  parseFollowersList(body: unknown, at: number): FollowersListResult {
-    return (
-      this.parseFollowersListStrict(body, at) ?? { observations: [], cursor: null, hasMore: false }
-    );
-  }
-
-  /**
    * STRICT parse of one paginated FOLLOWING page (`null` on SHAPE_MISMATCH —
    * see {@link parseFollowersListStrict}). The following-list body carries the
    * exact followers-list shape (a `users` array + `next_max_id`), so this is a
    * thin alias over the same extractor — kept separate so shape-drift warnings
    * name the endpoint that actually broke.
    */
-  parseFollowingListStrict(body: unknown, at: number): FollowersListResult | null {
-    const result = SURFACE.extractFollowersList(
-      coerceBody(body, 'following-list'),
-      at,
-      'following-list',
-    );
+  parseFollowingListStrict(body: unknown, at: number, final: boolean | null = null): FollowersListResult | null {
+    const result = SURFACE.extractFollowersList(coerceBody(body, 'following-list'), at, 'following-list', final);
     const legacy = isShapeMismatch(result) ? null : result;
     shadowRead('following-list', body, at, 'following-list', legacy === null,
       compareList(legacy));
@@ -174,16 +161,6 @@ export class Reader {
       return null;
     }
     return legacy;
-  }
-
-  /**
-   * Lenient FOLLOWING-page variant: drift collapses to the typed empty result.
-   * Completeness-deriving callers use {@link parseFollowingListStrict}.
-   */
-  parseFollowingList(body: unknown, at: number): FollowersListResult {
-    return (
-      this.parseFollowingListStrict(body, at) ?? { observations: [], cursor: null, hasMore: false }
-    );
   }
 
   /**
@@ -216,12 +193,30 @@ export class Reader {
    * has none; `null` when absent). `following` makes a PRIVATE account's followers readable.
    */
   profileViewer(body: unknown, kind: ProfileKind = 'profile-graphql'): ProfileViewer {
+    return SURFACE.extractProfileViewer(coerceBody(body, kind));
+  }
+
+  /** Which decision-bearing fields a profile body carried (`viewerPk` names a null relationship's owner). */
+  profilePresence(body: unknown, kind: ProfileKind, viewerPk: string | null): ProfilePresence | null {
+    return SURFACE.extractProfilePresence(coerceBody(body, kind), viewerPk);
+  }
+
+  /**
+   * A profile body's GraphQL envelope (spec §10.5): a wall, errors without the profile (to wait
+   * out), errors beside it (partial), or plain data. Never "gone".
+   */
+  profileEnvelope(body: unknown, kind: ProfileKind): GraphqlOutcome {
     const json = coerceBody(body, kind);
-    return {
-      following: SURFACE.extractProfileFollowedByViewer(json),
-      requested: SURFACE.extractProfileRequestedByViewer(json),
-      followsUs: SURFACE.extractProfileFollowsViewer(json),
+    const read = (): boolean => {
+      const r = SURFACE.extractProfileInfo(json, 0);
+      return r !== null && !isShapeMismatch(r);
     };
+    return graphqlEnvelope(json, read, SURFACE.graphql, SURFACE.mutationRefusalSignatures);
+  }
+
+  /** Whether the body is Instagram saying the profile is gone: its declared container present and null. */
+  profileAbsent(body: unknown, kind: ProfileKind): boolean {
+    return SURFACE.extractProfileInfo(coerceBody(body, kind), 0) === null;
   }
 
   /** Parse the batched relationship map (`reader-relationships.ts`). */
@@ -235,25 +230,21 @@ export class Reader {
   }
 
   /**
-   * Parse the incoming follow-requests page (`friendships/pending/` — the
-   * followers-list shape) into observations labelled with their own
-   * provenance. Typed empty result on no-match.
+   * STRICT parse of the follow-requests panel (the list shape, REST or a GraphQL connection):
+   * `null` on a shape mismatch, never the typed empty page — an unreadable panel must never
+   * read as "nobody asked to follow you" (spec §10.4).
    */
-  parsePendingRequests(body: unknown, at: number): FollowersListResult {
-    const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false };
-    const result = SURFACE.extractFollowersList(
-      coerceBody(body, 'friend-requests'),
-      at,
-      'friend-requests',
-    );
+  parseRequestsStrict(body: unknown, at: number): FollowersListResult | null {
+    const result = SURFACE.extractFollowersList(coerceBody(body, 'friend-requests'), at, 'friend-requests');
     const legacy = isShapeMismatch(result) ? null : result;
-    shadowRead('friend-requests', body, at, 'friend-requests', legacy === null,
-      compareList(legacy));
-    if (legacy === null) {
-      warnUnexpected('friend-requests', body);
-      return empty;
-    }
+    shadowRead('friend-requests', body, at, 'friend-requests', legacy === null, compareList(legacy));
+    if (legacy === null) warnUnexpected('friend-requests', body);
     return legacy;
+  }
+
+  /** The feed body's side list of pending requesters, row by row (never the complete set). */
+  feedPendingPreview(body: unknown, at: number): Observation[] {
+    return SURFACE.extractFeedPendingPreview(coerceBody(body, 'activity-feed'), at);
   }
 
   /**
@@ -285,13 +276,8 @@ export class Reader {
     return relationships.relationshipBearing(this, url, friendlyName);
   }
 
-  /** Viewer-side relationship facts from a response body (`reader-relationships.ts`). */
-  relationshipFacts(
-    url: string,
-    body: unknown,
-    at: number,
-    friendlyName?: string,
-  ): Array<{ pk: string; weFollow: boolean }> {
+  /** Viewer-side relationship facts, presence-gated and minted (`reader-relationships.ts`). */
+  relationshipFacts(url: string, body: unknown, at: number, friendlyName?: string): ObservedRelation[] {
     return relationships.relationshipFacts(this, url, body, at, friendlyName);
   }
 }

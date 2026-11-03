@@ -21,15 +21,19 @@ import {
   type EnvelopeKind,
   type FetchEnvelope,
   type SentinelStatus,
+  SURFACE,
 } from '@/adapter/ig-surface';
 import type { Evaluable } from '@/adapter/tab-ports';
+import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
 import { SURFACE_METER } from '@/surface/meter';
+import { type Decoded, decodeBody } from '@/surface/transport/decode';
 
-/** A 2xx JSON body. */
+/** A 2xx body, decoded once (spec §10.5); `decoded.final === false` makes the read partial. */
 export interface FetchOk {
   ok: true;
   status: number;
   json: unknown;
+  decoded: Extract<Decoded, { ok: true }>;
 }
 
 /**
@@ -79,11 +83,18 @@ export async function fetchJson(tab: Evaluable, script: string): Promise<FetchRe
     return { ok: false, kind: 'no-envelope', status: 0, envelope: null, detail: {} };
   }
   if (env.ok) {
+    // Decoded ONCE, here; an envelope built main-side may already carry the parsed body.
+    const decoded: Decoded = typeof env.text === 'string' ? decodeBody(env.text, SURFACE.transport)
+      : { ok: true, json: env.json, format: 'json', payloads: 1, final: null };
+    if (!decoded.ok) {
+      // A 2xx that does not decode is drift until proven otherwise: the caller retries, then fails.
+      return { ok: false, kind: 'drift-suspect', status: env.status, envelope: env,
+        detail: { status: env.status, contentType: env.contentType, decode: decoded.reason, textHead: decoded.head } };
+    }
     // Successful samples only (see `SurfaceMeter`): a wall or an abort measures
-    // the failure path, and feeding it back would inflate the abort deadline
-    // that produced it.
+    // the failure path, and feeding it back would inflate the abort deadline that produced it.
     SURFACE_METER.record('list-page', Date.now() - startedAt);
-    return { ok: true, status: env.status, json: env.json };
+    return { ok: true, status: env.status, json: decoded.json, decoded };
   }
 
   const cls = classifyEnvelope(env);
@@ -97,7 +108,7 @@ export async function fetchJson(tab: Evaluable, script: string): Promise<FetchRe
     detail: {
       status: env.status,
       contentType: env.contentType,
-      textHead: env.textHead?.slice(0, 80) ?? null,
+      textHead: env.textHead?.slice(0, SURFACE_BOUNDS.logHeadChars) ?? null,
     },
   };
 }

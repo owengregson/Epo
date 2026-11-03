@@ -13,44 +13,45 @@
  */
 
 import { z } from 'zod';
-import type { PiiKind } from '@/surface/schema/endpoints';
+import { SCRUB_POLICY } from '@/kernel/scrub-policy';
+import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
+import { PII_KINDS, type PiiKind } from '@/surface/schema/endpoints';
 
 // The scrub and novelty shapes live per capture; re-exported so consumers keep one import site.
 export { NOVELTY_SHAPES, SCRUB_SHAPES } from '@/surface/versions/2026-08-12/scrub-shapes';
 
+/**
+ * What the scrubber does with a declared field: the schema's PII classes, plus `count` (rounded to a few
+ * significant digits) and `time` (shifted into the synthetic window), which only scrub shapes declare.
+ */
+export type ScrubClass = PiiKind | 'count' | 'time';
+const SCRUB_CLASSES: readonly string[] = [...PII_KINDS, 'count', 'time'];
+
 /** One node of a schema's shape. */
 export interface ShapeNode {
-  /** The PII class declared on this node, when it carries one. */
-  pii?: PiiKind;
+  /** The scrub class declared on this node, when it carries one. */
+  pii?: ScrubClass;
   /** Known object properties. Absent ⇒ this node is not an object. */
   props?: Map<string, ShapeNode>;
   /** Array element shape. */
   items?: ShapeNode;
   /** Record value shape (`additionalProperties` with a schema). */
   values?: ShapeNode;
-  /** PII class of a record's KEYS (pk-keyed maps). */
-  keyPii?: PiiKind;
+  /** Scrub class of a record's KEYS (pk-keyed maps). */
+  keyPii?: ScrubClass;
   /** True when the object accepts unknown keys (`.loose()`). */
   open: boolean;
 }
 
 type Json = Record<string, unknown>;
 
-const asPii = (v: unknown): PiiKind | undefined =>
-  typeof v === 'string' &&
-  (v === 'handle' ||
-    v === 'name' ||
-    v === 'pk' ||
-    v === 'url' ||
-    v === 'text' ||
-    v === 'cursor')
-    ? v
-    : undefined;
+const asPii = (v: unknown): ScrubClass | undefined =>
+  typeof v === 'string' && SCRUB_CLASSES.includes(v) ? (v as ScrubClass) : undefined;
 
 /** Resolve a `$ref` against the document's `$defs` (zod emits them for reuse). */
 function deref(node: Json, defs: Json): Json {
   let current = node;
-  for (let hop = 0; hop < 8; hop++) {
+  for (let hop = 0; hop < SCRUB_POLICY.refHops; hop++) {
     const ref = current.$ref;
     if (typeof ref !== 'string') return current;
     const name = ref.replace(/^#\/\$defs\//, '');
@@ -139,7 +140,7 @@ export function shapeOf(schema: z.ZodType): ShapeNode {
 // ---------------------------------------------------------------------------
 
 /** How many array elements the novelty pass looks at (the rest repeat). */
-const NOVELTY_SAMPLE = 8;
+const NOVELTY_SAMPLE = SURFACE_BOUNDS.sampleRows;
 
 /**
  * Keys present in `value` that `node` does not know, as dotted paths
@@ -159,7 +160,7 @@ function walkNovel(
   found: Set<string>,
   depth: number,
 ): void {
-  if (depth > 6 || value === null || typeof value !== 'object') return;
+  if (depth > SURFACE_BOUNDS.noveltyMaxDepth || value === null || typeof value !== 'object') return;
   if (Array.isArray(value)) {
     if (!node.items) return;
     for (const entry of value.slice(0, NOVELTY_SAMPLE)) {

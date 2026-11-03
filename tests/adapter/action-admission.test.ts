@@ -1,5 +1,5 @@
 import { prepareAction } from '@/adapter/action-admission';
-import { ActionAbortedError, ActionBlockedError } from '@/adapter/errors';
+import { ActionAbortedError, ActionBlockedError, ActionDeferredError } from '@/adapter/errors';
 import { ScriptedTab } from '../kit/tabs';
 
 test('an expected PK requires a verifier, and dispatch is journaled only after admission', async () => {
@@ -52,4 +52,49 @@ test('abort during fresh profile preparation stops before an admission callback 
     prepareProfile: async () => { token.abort(); },
   }, 'follow', 'alice', 'a', journal)).rejects.toBeInstanceOf(ActionAbortedError);
   expect(journal).not.toHaveBeenCalled();
+});
+
+describe('one admission per action (spec §11.1 F1)', () => {
+  /** A prepared dispatch for alice whose admission and journal mark are counted. */
+  async function prepared(beforeMutation: () => Promise<void> = async () => {}) {
+    const tab = new ScriptedTab();
+    const token = new AbortController();
+    const admit = jest.fn(beforeMutation);
+    const journal = jest.fn();
+    const dispatch = await prepareAction({ tab, abortSignal: () => token.signal, beforeMutation: admit,
+      prepareProfile: async () => { await tab.goto('https://www.instagram.com/alice/'); },
+    }, 'unfollow', 'alice', 'a', journal);
+    return { tab, token, admit, journal, dispatch };
+  }
+
+  test('later calls — the later layers of the same action — admit and journal nothing again', async () => {
+    const { admit, journal, dispatch } = await prepared();
+    await dispatch();
+    await dispatch();
+    await dispatch();
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(journal).toHaveBeenCalledTimes(1);
+  });
+
+  test('a later call still checks the profile and the stop', async () => {
+    const changed = await prepared();
+    await changed.dispatch();
+    await changed.tab.goto('https://www.instagram.com/bob/');
+    await expect(changed.dispatch()).rejects.toBeInstanceOf(ActionBlockedError);
+
+    const stopped = await prepared();
+    await stopped.dispatch();
+    stopped.token.abort();
+    await expect(stopped.dispatch()).rejects.toBeInstanceOf(ActionAbortedError);
+    expect(stopped.admit).toHaveBeenCalledTimes(1);
+  });
+
+  test('a refused admission refuses every later call: nothing is ever pressed after a refusal', async () => {
+    const refusal = new ActionDeferredError('cadence: deadline not reached');
+    const { admit, journal, dispatch } = await prepared(async () => { throw refusal; });
+    await expect(dispatch()).rejects.toBe(refusal);
+    await expect(dispatch()).rejects.toBe(refusal);
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(journal).not.toHaveBeenCalled();
+  });
 });

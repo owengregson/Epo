@@ -1,11 +1,11 @@
 import * as logger from '../utils/logger';
 import { KnowledgeStoreBase } from './knowledge-store-base';
 import type { PruneCensusRecord } from './knowledge-types';
-import type { TargetYield } from './repos/analytics';
+import type { OutcomeWindow, TargetYield } from './repos/analytics';
 import type { CensusAuthority, ReconcileOutcome } from './repos/census';
 import type { HealResult } from './repos/follow-records';
 import type { GrowthPoint } from './repos/growth';
-import type { RelationshipCounts } from './repos/relationships';
+import type { EdgeDating, RelationshipCounts } from './repos/relationships';
 import type {
   AccountState,
   Edge,
@@ -44,6 +44,8 @@ export class KnowledgeStore extends KnowledgeStoreBase {
   /** One-time guard so an unset ownPk warns once, not on every reconciliation. */
   private warnedOwnPkUnset = false;
 
+  protected reportFault(message: string, context: Record<string, unknown>): void { logger.error(message, context); }
+
   // --- Accounts and edges (via AccountRepo / RelationshipRepo) --------------------
 
   /**
@@ -64,31 +66,34 @@ export class KnowledgeStore extends KnowledgeStoreBase {
    * the single write path that keeps the event log and projection consistent.
    */
   observe(obs: Observation): void {
-    this.accounts.observe(obs);
+    this.mutationPulse.atomic(() => this.db.transaction(() => {
+      this.accounts.observe(obs);
+      this.noteOwnHeader(obs);
+    }));
   }
 
-  /** Upsert a directed edge, dating first/last seen and its active/removed status. */
-  observeEdge(srcPk: string, dstPk: string, type: EdgeType, active: boolean, at: number): void {
-    this.relationships.observeEdge(srcPk, dstPk, type, active, at);
+  /** Upsert a directed edge; an own-follower transition also writes its dated change row (ADR 0704). */
+  observeEdge(srcPk: string, dstPk: string, type: EdgeType, active: boolean, at: number, dating?: EdgeDating): void {
+    this.relationships.observeEdge(srcPk, dstPk, type, active, at, dating);
   }
+
+  /** Whether `pk` has an open follow request into our account (the requester predicate, spec §9.9). */
+  hasActiveRequest(pk: string): boolean {
+    return this.ownPk !== null && this.relationships.hasActiveRequest(pk, this.ownPk);
+  }
+
+  activeRequestPks(): string[] { return this.ownPk === null ? [] : this.relationships.activeRequestPks(this.ownPk); }
 
   getAccount(pk: string): AccountState | null {
     return this.accounts.get(pk);
   }
 
-  /**
-   * Stamp `username`'s account as permanently un-enrichable (deleted, suspended,
-   * unparseable profile body) so enrichment selection skips it. Cleared by any
-   * later successful stats observation.
-   */
+  /** Stamp `username`'s account permanently un-enrichable (selection skips it) until a later stats read. */
   markEnrichmentFailed(username: string, at: number): void {
     this.accounts.markEnrichmentFailed(username, at);
   }
 
-  /**
-   * The pk currently projected under `username` (case-insensitive). Lets
-   * acquisition resolve a known target without an Instagram request.
-   */
+  /** The pk projected under `username` (case-insensitive): a known target resolves with no request. */
   pkByUsername(username: string): string | null {
     return this.accounts.pkByUsername(username);
   }
@@ -173,18 +178,16 @@ export class KnowledgeStore extends KnowledgeStoreBase {
   // --- Last complete prune census (meta-backed) ------------------------------------
 
   /**
-   * Replace the durable last-COMPLETE-census record. Kept SEPARATE from the
-   * runnable-scan snapshot above on purpose: the snapshot's candidate rows are
-   * consumed by runs and replaced by the next scan, while THIS record is the
-   * settled whole-list census a finished scan produced — the display truth the
-   * prune panel anchors on. It is only ever replaced by the next COMPLETE scan,
-   * so an aborted/failed scan and a consumed run all leave it standing, and it
-   * survives relaunch (docs/PRINCIPLES.md §3) via the meta table.
+   * Replace the durable last-COMPLETE census (separate from the runnable snapshot, whose rows runs
+   * consume): only the next complete scan replaces it, and it survives relaunch (PRINCIPLES §3).
    */
   savePruneCensus(census: PruneCensusRecord): void {
     this.meta.setJson('pruneLastCensus', census);
     this.changed();
   }
+
+  /** When the last verified-complete census finished, or null (the plan's census predicate reads it). */
+  censusLastCompleteAt(): number | null { return this.census.lastCompleteAt(); }
 
   /** The persisted last-complete census, or null when no scan ever completed. */
   getPruneCensus(): PruneCensusRecord | null {
@@ -330,12 +333,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
 
   // --- Durable meta (migration 5, via MetaRepo) ------------------------------------
 
-  /**
-   * Persist the inter-action paced-delay deadline (epoch ms) so the pacing
-   * survives an app restart: a relaunch resumes the remaining wait instead of
-   * acting immediately (same contract as pause/resume, but durable). `null`
-   * clears it (the delay fully elapsed).
-   */
+  /** The inter-action delay deadline (epoch ms), durable so a relaunch serves the remaining wait; `null` clears it. */
   setActionDelayDeadline(at: number | null): void {
     this.meta.setNumber('actionDelayDeadlineAt', at);
   }
@@ -345,12 +343,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.meta.number('actionDelayDeadlineAt');
   }
 
-  /**
-   * Persist the SessionPlanner's durable snapshot (raw JSON) so the organic pacing
-   * model resumes exactly across a restart (docs/PRINCIPLES.md §3): the day's target, session
-   * plan, owed within-session state, and the trailing-hour action ring all survive.
-   * `null` clears it. Opaque to the store — the planner owns the shape.
-   */
+  /** The SessionPlanner's durable snapshot (raw JSON, PRINCIPLES §3); `null` clears it; the planner owns the shape. */
   setPacingState(raw: string | null): void {
     this.meta.set('pacingState', raw);
   }
@@ -361,13 +354,8 @@ export class KnowledgeStore extends KnowledgeStoreBase {
   }
 
   /**
-   * The per-install noise entropy (meta `install_entropy`): one random 32-bit
-   * value drawn ON FIRST ACCESS and persisted, so every timing-noise seed
-   * derived from it (daily-boundary wake offsets, the engines' noise rngs) is
-   * different per install but stable across relaunches (a mid-park
-   * restart re-derives the same jittered wake). Upgraded installs with no
-   * stored value draw-and-persist cleanly here; a corrupted value is replaced
-   * with a fresh draw, loudly.
+   * The per-install noise entropy: one 32-bit value drawn on first access and persisted, so every
+   * seed derived from it differs per install but holds across relaunches; a corrupt value is redrawn, loudly.
    */
   installEntropy(): number {
     const raw = this.meta.get('installEntropy');
@@ -382,13 +370,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return drawn;
   }
 
-  /**
-   * Persist the recovery ladder's durable state (raw JSON: attempt, holdUntil,
-   * enteredAt, kindTally) so a relaunch mid-hold serves the REMAINDER of the
-   * absolute deadline instead of forgetting the wall it was backing off from
-   * (docs/PRINCIPLES.md §3 — schedules are durable). `null` clears it. Opaque to
-   * the store — the RecoverySupervisor owns the shape.
-   */
+  /** The recovery ladder's durable state (raw JSON; a relaunch mid-hold serves the remainder); `null` clears it. */
   setRecoveryState(raw: string | null): void {
     this.meta.set('recoveryState', raw);
   }
@@ -398,14 +380,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.meta.get('recoveryState');
   }
 
-  /**
-   * Persist the last CLOSED recovery incident (raw JSON: the window
-   * [enteredAt, resolvedAt], attempts, kind tally, and — once the engine's
-   * requeue-healer has run — the heal outcome). Written by the
-   * RecoverySupervisor at ladder reset, the proof moment that the failure
-   * window was systemic-and-over; amended by the engine after healing. `null`
-   * clears it. Opaque to the store — recovery.ts owns the shape.
-   */
+  /** The last CLOSED recovery incident (raw JSON, owned by recovery.ts; the healer amends it); `null` clears it. */
   setRecoveryLastIncident(raw: string | null): void {
     this.meta.set('recoveryLastIncident', raw);
   }
@@ -415,26 +390,14 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.meta.get('recoveryLastIncident');
   }
 
-  /**
-   * The moment follower measurement began — the first follow-back sweep or the
-   * first complete census, whichever ran first — or `null` before either.
-   * Everything first seen AT or BEFORE this moment is pre-existing STOCK — the
-   * net-growth series only counts edge events strictly after it.
-   */
+  /** The moment follower measurement began (null before it); everything at or before it is stock. */
   followersBaselineAt(): number | null {
     return this.relationships.baselineAt();
   }
 
   /**
-   * Establish the followers baseline at `at` if none exists yet (set-once; a
-   * later call never moves it). Called at the top of every follow-back sweep
-   * (`FollowbackWatcher.check`) and by every {@link observeOwnFollowerEvent},
-   * so the FIRST moment follower collection begins stamps the stock/growth
-   * boundary — without this, weeks of event-observed followers would be
-   * erased retroactively by a late first prune scan (whose census would stamp
-   * the baseline after the fact and re-classify every prior gain as stock).
-   * When a census genuinely IS the first collection, {@link ingestScanCensus}
-   * stamps the baseline itself.
+   * Establish the followers baseline at `at` if none exists (set-once): the first moment collection
+   * begins stamps the stock/growth boundary, so a late first census never re-classifies earlier gains.
    */
   ensureFollowersBaseline(at: number): void {
     this.relationships.ensureBaseline(at);
@@ -445,22 +408,19 @@ export class KnowledgeStore extends KnowledgeStoreBase {
    * accepted follow request; anchors the growth baseline first. List-walk
    * observations (membership, not timing) must NOT come through here.
    */
-  observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number): void {
-    this.relationships.observeOwnFollowerEvent(srcPk, ownPk, at);
+  observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number, source?: 'feed' | 'accept'): void {
+    this.relationships.observeOwnFollowerEvent(srcPk, ownPk, at, source);
   }
 
   /**
-   * Ingest a full auto-prune scan census into the shared graph, so a scan also
-   * enriches the growth engine. Additive by default; `authoritative` (a census
-   * whose walks both reported genuine completion) also heals the negative side
-   * — see {@link CensusRepo.ingest}. One transaction; self always skipped; a
-   * no-op with the standard warn when the own pk is unset.
+   * Ingest a full prune-scan census into the shared graph; `authoritative` (per side) also heals the
+   * negative side ({@link CensusRepo.ingest}). One transaction; a warned no-op while the own pk is unset.
    */
   ingestScanCensus(
     followingPks: string[],
     followerPks: string[],
     at: number,
-    opts?: { authoritative?: CensusAuthority },
+    opts?: { authoritative?: CensusAuthority; planDay?: { startsAt: number; endsAt: number } },
   ): void {
     if (this.ownPk === null) {
       this.warnOwnPkUnset('ingestScanCensus');
@@ -509,12 +469,9 @@ export class KnowledgeStore extends KnowledgeStoreBase {
 
   // --- Emergent analysis (via AnalyticsRepo) --------------------------------------
 
-  /**
-   * Yield statistics for a poaching session against `targetPk`, computed on
-   * demand from follow_records + edges — analysis is an emergent query.
-   */
-  targetYield(targetPk: string, ownPk: string): TargetYield {
-    return this.analytics.targetYield(targetPk, ownPk);
+  /** A target's yield; without a window the classifier reads all-time outcomes (an unbounded horizon). */
+  targetYield(targetPk: string, ownPk: string, outcome?: OutcomeWindow): TargetYield {
+    return this.analytics.targetYield(targetPk, ownPk, outcome ?? { windowMs: Number.POSITIVE_INFINITY, now: this.now() });
   }
 
   /** The Targets console's funnel read for one chain target, in cheap COUNTs. */
@@ -527,28 +484,17 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.analytics.followbackTimingFor(targetPk);
   }
 
-  /**
-   * Cumulative net own-follower growth per day for the last `days` days, ending
-   * on `now`'s local day. Baseline-aware: only events strictly after the
-   * followers baseline count, so initializing the app never charts a cliff.
-   */
+  /** Cumulative net own-follower growth per local day for the last `days` days (the edge read, baseline-aware). */
   netGrowthSeries(days: number, ownPk: string, now: number = this.now()): GrowthPoint[] {
     return this.growth.netGrowthSeries(days, ownPk, now);
   }
 
-  /**
-   * TRUE net own-follower delta since `sinceMs` (gains minus losses),
-   * baseline-aware. 0 when the own pk is unset.
-   */
+  /** The net own-follower delta since `sinceMs` over the edges, baseline-aware; 0 while the own pk is unset. */
   netFollowersSince(sinceMs: number): number {
     return this.ownPk === null ? 0 : this.growth.netFollowersSince(sinceMs, this.ownPk);
   }
 
-  /**
-   * LIVE relationship counts from the graph as it stands right now (docs/
-   * PRINCIPLES.md §2): they tick DURING a prune scan because every row's edge
-   * streams as it parses. Zeroes until {@link setOwnPk}.
-   */
+  /** LIVE relationship counts (PRINCIPLES §2: they tick during a scan as rows stream); zeroes until setOwnPk. */
   relationshipCounts(): RelationshipCounts {
     return this.ownPk === null
       ? { following: 0, followers: 0, notFollowingBack: 0 }

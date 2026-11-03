@@ -8,13 +8,15 @@
  * written it to the store by the time the visit resolves. Epo composes no
  * request: no `doc_id`, no session tokens, nothing for a release to rotate.
  *
- * Outcomes are typed, never thrown (an abort excepted):
+ * Outcomes are typed, never thrown (an abort excepted), and decided by evidence:
  *  - `ok`     — the page's profile body, parsed, with the viewer-side flags;
- *  - `gone`   — the page says the profile is not available (deleted, renamed,
- *               or hidden from us) and its client fetched no profile;
- *  - `walled` — the Sentinel names a session/action wall on the page;
- *  - `unanswered` — the page loaded, nothing above happened within the wait:
- *               drift until proven otherwise;
+ *  - `walled` — a wall body answered the visit (`via: 'body'`), or at the
+ *               deadline the Sentinel names one on the page (`via: 'page'`);
+ *  - `gone`   — Instagram's own empty profile body (`profile-absent`), or the
+ *               page's "not available" text with no wall or drifted body
+ *               (`page-text`);
+ *  - `unanswered` — nothing above within the wait, or a drifted body: drift
+ *               until proven otherwise;
  *  - `tab`    — the tab could not navigate (retrying cannot revive it).
  */
 
@@ -24,6 +26,7 @@ import type { Navigable } from '@/adapter/tab-ports';
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import type { ProfileExpectation } from '@/rim/profile-observer';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
+import type { DriftClass } from '@/surface/sink';
 import { ADAPTER } from '@/timing/config';
 import { type Rng, type SleepFn, sample, sleep } from '@/timing/primitives';
 import { launchStream } from '@/utils/entropy';
@@ -91,24 +94,39 @@ export class TabProfileVisitor implements ProfileVisitor {
     if (left > 0) await this.sleep(left, signal);
   }
 
+  /**
+   * The outcome, by evidence (spec §10.4): a profile body answers `ok`; a wall body walls the visit;
+   * Instagram's own empty profile body is `gone`; a drifted body outranks the page's text, which
+   * alone is `gone` on page text; at the deadline the page's sentinel, else `unanswered`.
+   */
   private async load(username: string, signal: AbortSignal | undefined): Promise<ProfileVisit> {
     const { tab, observer, sentinel } = this.deps;
     // Armed BEFORE the navigation: the body can land before `goto` resolves.
     const expectation = observer.expect(username);
+    let drift: DriftClass | null = null;
     try {
       await tab.goto(SURFACE.profileUrl(username));
       const deadline = Date.now() + this.waitMs;
       for (;;) {
-        const seen = await expectation.next(this.pollMs, signal);
-        if (seen !== null) return { ok: true, ...seen };
+        const event = await expectation.next(this.pollMs, signal);
+        if (event?.kind === 'seen') return { ok: true, ...event.seen };
+        if (event?.kind === 'wall') {
+          return { ok: false, kind: 'walled', detail: { username, via: 'body', family: event.family, status: event.status } };
+        }
+        if (event?.kind === 'absent') return { ok: false, kind: 'gone', evidence: 'profile-absent', detail: { username } };
+        if (event?.kind === 'drift') drift = event.cls;
+        if (event !== null) continue;
         const unavailable = await tab.evaluate<LocateRectResult>(SURFACE.locateProfileUnavailableScript());
-        if (unavailable?.found) return { ok: false, kind: 'gone', detail: { username } };
+        if (unavailable?.found) {
+          if (drift !== null) return { ok: false, kind: 'unanswered', detail: { username, drift } };
+          return { ok: false, kind: 'gone', evidence: 'page-text', detail: { username } };
+        }
         if (Date.now() >= deadline) break;
       }
       if (signal?.aborted) throw new ActionAbortedError('profile.visit');
       const status = await sentinel.check();
-      if (status !== 'ok') return { ok: false, kind: 'walled', detail: { username, status } };
-      return { ok: false, kind: 'unanswered', detail: { username, url: tab.currentUrl() } };
+      if (status !== 'ok') return { ok: false, kind: 'walled', detail: { username, via: 'page', status } };
+      return { ok: false, kind: 'unanswered', detail: { username, url: tab.currentUrl(), ...(drift === null ? {} : { drift }) } };
     } catch (e) {
       if (e instanceof TabUnavailableError || e instanceof TabUnresponsiveError) {
         return { ok: false, kind: 'tab', detail: { username, error: String(e) } };

@@ -1251,3 +1251,33 @@ describe('PruneEngine — the blocked park reads the tempo (park.blocked, pace-u
     expect(referenceTempoSource().base('park.blocked')).toBe(PRUNE.PARK_MS);
   });
 });
+
+// --- Parse stream (spec §10.4): the census answers to the header refreshed for the scan ----------
+
+describe('PruneEngine.scan — coverage against the refreshed header', () => {
+  const header = (followers: number, following: number) =>
+    (async () => ({ followers, following, observedAt: T0 })) as unknown as () => Promise<void>;
+
+  test('the header the refresh resolves is the one the census must cover', async () => {
+    const followers = Array.from({ length: 38 }, (_, i) => `f${i}`);
+    const h = build({ following: [OWN_PK, '1'], followers, refreshOwnStats: header(3200, 2) });
+    await expect(h.engine.scan()).rejects.toThrow(/followers scan incomplete/);
+    expect(h.store.getPruneCensus()).toBeNull();
+    h.store.close();
+  });
+
+  test('a refreshed scan with no header to answer to fails closed', async () => {
+    const h = build({ following: [OWN_PK, '1'], followers: ['9'], refreshOwnStats: async () => {} });
+    await expect(h.engine.scan()).rejects.toThrow(/Couldn't confirm your following count/);
+    expect(h.store.getPruneCensus()).toBeNull();
+    h.store.close();
+  });
+
+  test('a census walk that skipped unreadable rows is refused', async () => {
+    const h = build({ following: [OWN_PK, '1'], followers: ['9'] });
+    h.ownFollowers.fetchAllPks = async () => ({ pks: ['9'], complete: true, reason: 'no-more-pages', quarantined: 1 });
+    await expect(h.engine.scan()).rejects.toThrow(/row-issues/);
+    expect(h.store.getPruneCensus()).toBeNull();
+    h.store.close();
+  });
+});

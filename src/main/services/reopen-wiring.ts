@@ -9,6 +9,7 @@ import type { Sentinel } from '@/adapter/sentinel';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { ReentrySupervisor } from '@/engine/reentry';
 import type { SystemClock } from '@/governors/clock';
+import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { ReadBudget } from '@/governors/read-budget';
 import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
 import { managedRelationships } from '@/rim/managed-relationships';
@@ -51,6 +52,7 @@ export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): Followba
   const { store, clock, ownPk, ownUsername, settings, readBudget, policy, adapter, reader, sentinel,
     profiles, liveOwnFollowers } = w;
   const driverSignal = d.driverSignal;
+  const dayClock = calendarPlanDayClock({ now: () => clock.now() });
   // Follow-back detection reads the NOTIFICATIONS feed (one click on the bell,
   // one observed news-inbox response) — cheap enough for the hourly default
   // cadence. Sentinel-gated; a stop() interrupts the response wait.
@@ -83,6 +85,8 @@ export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): Followba
       },
     } : undefined,
     cfg: toFollowbackConfig(settings),
+    // Local-midnight plan-days until the plan's own clock is swapped in at plan-wiring.ts.
+    planDay: (t) => dayClock.window(t),
   });
   return followback;
 }
@@ -120,6 +124,11 @@ export function noteMutationFor(
     d.onProgress?.('mutation-verified');
   };
   return noteMutation;
+}
+
+/** The requester predicate churn's selection reads (spec §9.9): an open request into our account, live. */
+export function requesterPredicate(store: Pick<KnowledgeStore, 'hasActiveRequest'>): (pk: string) => boolean {
+  return (pk) => store.hasActiveRequest(pk);
 }
 
 /** The reopen wiring's startup steps and status contributors (the reopen stream fills them). */

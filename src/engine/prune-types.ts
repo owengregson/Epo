@@ -4,6 +4,7 @@ import type { TempoSource } from '../kernel/tempo';
 import type { KnowledgeStore, PruneCensusRecord } from '../store/knowledge-store';
 import type { DelayManager } from '../timing/delay-manager';
 import type { SleepFn } from '../timing/primitives';
+import type { OwnHeader } from './census-authority';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import type { ProtectionPort } from './protection-port';
 
@@ -45,6 +46,8 @@ export interface PruneScanFetch {
   complete: boolean;
   /** Why the underlying walk/scrape ended (diagnostic; drives stop-vs-fail). */
   reason: string;
+  /** Rows the walk could not read; any makes the census refuse (spec §10.4). */
+  quarantined?: number;
 }
 
 /** The own-following source's single verb: one bounded full-list scrape. */
@@ -238,7 +241,8 @@ export interface PruneEngineDeps {
    * progress estimates and an inert census coverage guard. A failed required
    * refresh aborts this census, preserving the previous complete observation.
    */
-  refreshOwnStats?: () => Promise<void>;
+  // biome-ignore lint/suspicious/noConfusingVoidType: a wired refresh resolves the header or (as wired today) nothing.
+  refreshOwnStats?: () => Promise<OwnHeader | void>;
   /**
    * Active-hours gate, re-checked between unfollows: a run started in the
    * evening must STOP at the window's edge instead of rolling past local
