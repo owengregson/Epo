@@ -3,6 +3,7 @@
  * cover the known list size before its census may drive any unfollow.
  */
 
+import { CENSUS_POLICY } from '../kernel/census-policy';
 import * as log from '../utils/logger';
 import type { PruneScanFetch } from './prune-types';
 
@@ -41,8 +42,8 @@ export function assertFetchComplete(phase: 'following' | 'followers', fetch: Pru
  * little ahead of the real list (deactivated/deleted accounts stay counted).
  */
 export function assertScanCoverage(phase: 'following' | 'followers', scraped: number, known: number | null): void {
-  if (known === null || known < 50) return;
-  if (scraped >= known * 0.85) {
+  if (known === null || known < CENSUS_POLICY.coverageFloor) return;
+  if (scraped >= known * CENSUS_POLICY.scanCoverageMin) {
     // A complete walk that still lands under the header figure is GHOSTS:
     // deactivated/deleted accounts stay in the profile count but Instagram
     // never returns them in the list — the scraped list is the real one.

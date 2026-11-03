@@ -9,7 +9,8 @@ import * as path from 'node:path';
 const KERNEL = path.resolve(__dirname, '..', '..', 'src', 'kernel');
 
 /** The tier-1 modules the plan-derived overhaul created or extended. */
-const MODULES = ['tempo-policy.ts', 'settings-policy.ts', 'reentry-policy.ts'];
+const MODULES = ['tempo-policy.ts', 'settings-policy.ts', 'reentry-policy.ts', 'census-policy.ts', 'input-probe.ts',
+  'exploration-policy.ts'];
 
 const isComment = (line: string): boolean => line.startsWith('/**') || line.startsWith('*') || line.startsWith('//');
 const bracketDelta = (line: string): number =>

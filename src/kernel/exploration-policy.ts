@@ -50,4 +50,26 @@ export const EXPLORATION_POLICY = {
   priorWeight: 20,
   /** Fixed outcome horizon for source quality (the default follow-back wait). */
   outcomeWindowMs: 4 * DAY,
+  /** Own followers profiled per fallback pick: a pick never turns into an enrichment burst. */
+  ownFollowersPickMax: 15,
+  /** Acquisition waits while the unacted pool holds this many plans' worth: selection never starves, reads never pile up. */
+  skipPoolFactor: 4,
+  /** Never read past this share of a source's followers: the deep tail is old, inactive accounts. */
+  maxCoverageFraction: 0.5,
+  /** Enrichment passes per refill cycle: one bounded slice, then plan. */
+  maxEnrichPassesPerCycle: 1,
+  /** Fewer live candidates than this skip the utility ranking: a lone source is simply next. */
+  rankMinCandidates: 2,
+  /** Overlap assumed for a never-sampled source: neither favoured nor shunned. */
+  unknownOverlap: 0.5,
+  /** How much observed audience overlap discounts a source's utility. */
+  overlapWeight: 0.5,
+  /** Utility a source loses per unit of recent follow share: no audience dominates. */
+  sharePenalty: 0.1,
+  /** Sources needed before the follow-share cap applies (with fewer there is nothing to spread over). */
+  shareMinSources: 3,
+  /** Fewer ready or working sources than this refill the frontier from own followers. */
+  refillBelowLiveSources: 3,
+  /** Hubs proposed per chain advance; the gates then filter them. */
+  maxDiscovered: 5,
 } as const;
