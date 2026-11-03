@@ -89,13 +89,18 @@ export function createSurfaceHealthSink(d: SurfaceHealthSinkDeps): SurfaceHealth
     }
   };
 
-  // The roll subscription is taken on the first report, so a sink that never hears one arms no timer.
+  // The first report after open runs the open-time retention (a shipped update resolves every signature of the
+  // surface it replaced) and takes the roll subscription: a sink that never hears a report writes and arms nothing.
   const touched = (): void => {
-    unroll ??= d.day.onRoll(() => {
-      flush();
+    if (unroll === null) {
+      repo.resolveOtherSurfaces(d.surfaceId, d.clock.now());
       prune(d.clock.now());
-      logged.clear();
-    });
+      unroll = d.day.onRoll(() => {
+        flush();
+        prune(d.clock.now());
+        logged.clear();
+      });
+    }
     if (cancel === null && !disposed) cancel = after(POLL.GRAPH_PUSH_THROTTLE_MS, flush);
   };
 
@@ -107,11 +112,9 @@ export function createSurfaceHealthSink(d: SurfaceHealthSinkDeps): SurfaceHealth
     else repo.setSample(signature, text);
   };
 
-  // Retention at open; an update that shipped resolves every signature of the surface it replaced.
+  // A restart starts the meter warm from the stored reservoirs.
   let storedMeter = repo.meter();
   if (storedMeter !== null && !meter.restore(safeJson(storedMeter))) logger.warn('surface: the stored meter is unreadable; it starts cold');
-  repo.resolveOtherSurfaces(d.surfaceId, d.clock.now());
-  prune(d.clock.now());
 
   return {
     read(endpoint: DriftEndpoint, tally: ReadTally, issues: { readonly rows: number; readonly fields: number }, at: number): void {

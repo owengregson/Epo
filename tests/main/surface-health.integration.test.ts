@@ -113,6 +113,20 @@ test('teardown flushes; nothing lands after it', () => {
   expect(h.store.surface.openSignatures(S)).toEqual([]);
 });
 
+test('an idle open writes nothing; the first report resolves the replaced surface and keeps the meter unwritten', () => {
+  const store = memoryStore();
+  store.surface.upsertSignal({ signature: 'old|x', surfaceId: 'old', endpoint: 'profile-graphql', cls: 'mismatch',
+    path: 'data', detail: '{}', at: 1 });
+  const before = store.surface.revision;
+  const h = harness({ store });
+  h.sink.dispose();
+  expect(store.surface.revision).toBe(before);
+  expect(store.surface.meter()).toBeNull();
+  const live = harness({ store });
+  live.sink.read('profile-graphql', 'canonical', { rows: 0, fields: 0 }, 1_000);
+  expect(store.surface.openSignatures('old')).toEqual([]);
+});
+
 test('the meter round-trips through meta.surface_meter; a corrupt one starts cold', () => {
   const store = memoryStore();
   const first = harness({ store });
