@@ -34,6 +34,8 @@ export class OverlayVeil {
   private cursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last activity pushed (dedupe key), so identical re-reports are dropped. */
   private lastActivity: string | null = null;
+  /** True while the stage curtain owns the view: visible over the tab, whatever the activity. */
+  private curtainOn = false;
 
   constructor() {
     this.view = new WebContentsView({
@@ -80,11 +82,29 @@ export class OverlayVeil {
         clearTimeout(this.hideTimer);
         this.hideTimer = null;
       }
-      this.view.setVisible(false);
+      if (!this.curtainOn) this.view.setVisible(false);
     } else if (this.active) {
       this.view.setVisible(true);
       this.run('window.__veil && window.__veil(true)');
     }
+  }
+
+  /**
+   * The stage curtain (spec §12.4): `'opaque'` shows an opaque layer over the tab region and resolves once the
+   * page painted it (two frames); `'clear'` fades it over BOOT.CURTAIN_FADE_MS; `'off'` hands the view back to
+   * the activity rule. Resolves false when the page could not confirm.
+   */
+  curtain(state: 'opaque' | 'clear' | 'off'): Promise<boolean> {
+    if (!this.ready || this.view.webContents.isDestroyed()) return Promise.resolve(false);
+    this.curtainOn = state !== 'off';
+    this.view.setVisible(this.curtainOn || (this.active && !this.obscured));
+    const ms = state === 'clear' ? BOOT.CURTAIN_FADE_MS : 0;
+    return this.view.webContents
+      .executeJavaScript(`window.__curtain ? window.__curtain(${JSON.stringify(state)}, ${ms}) : false`, true)
+      .then((done: unknown) => done === true, (e: unknown) => {
+        logger.error('veil.curtain failed', { state, error: String(e) });
+        return false;
+      });
   }
 
   /**
@@ -126,7 +146,7 @@ export class OverlayVeil {
       this.setActivity(null);
       // stay visible through the fade-out, then hide so the tab is interactive again
       this.hideTimer = setTimeout(() => {
-        this.view.setVisible(false);
+        if (!this.curtainOn) this.view.setVisible(false);
         this.hideTimer = null;
       }, FADE_MS);
     }

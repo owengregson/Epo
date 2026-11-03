@@ -15,6 +15,7 @@ import { registerEpoIpc } from '@/main/ipc';
 import type { OverlayVeil } from '@/main/overlay/veil-view';
 import { electronIgSession } from '@/main/services/ig-session';
 import { createAppShell } from '@/main/window/shell';
+import { createStageController, statusPosture } from '@/main/window/stage-controller';
 import type { LogEntry, LogLevel } from '@/shared/log-entry';
 import * as logger from '@/utils/logger';
 
@@ -52,15 +53,20 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   win.on('closed', () => {
     h.mainWindow = null;
   });
+  // The one entry point for the stage (spec §12.4): the tab sits under the dashboard from frame 1.
+  const stage = createStageController({ shell, veil, dock: app.dock ?? null,
+    timing: { paintMaxMs: BOOT.CURTAIN_PAINT_MAX_MS, fadeMs: BOOT.CURTAIN_FADE_MS } });
+  stage.cover();
 
   /**
    * The typed push seam. Every main→renderer channel string comes from the
    * contract's `PUSH` table and the payload is checked against `PushContract`,
    * so a channel can no longer be misspelled here or drift from what preload
-   * subscribes to (ADR 1008).
+   * subscribes to (ADR 1008). Each status also titles the window and badges the Dock.
    */
   const push = <C extends PushMethod>(channel: C, payload: PushContract[C]): void => {
     shell.send(PUSH[channel], payload);
+    if (channel === 'status') stage.onPosture(statusPosture(payload as PushContract['status'], Date.now()));
   };
 
   // Stream structured logs to the renderer's log pane.
@@ -136,7 +142,7 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
     tab,
     foundation: found,
     updater: upd,
-    setStage: shell.setStage,
+    setStage: (mode, covered) => stage.set(mode, covered),
   });
 
   // --- Connectivity monitor (offline-hold for the engine loop) -------------
