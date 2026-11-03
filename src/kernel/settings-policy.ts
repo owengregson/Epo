@@ -47,6 +47,8 @@ export const SETTINGS_POLICY = {
   },
   /** The settings document format this build reads and writes; the v1 file stays as it was for older builds. */
   DOC_VERSION: 2,
+  /** Typed Advanced values snap to these steps: a finer grid than anyone can tell apart is noise. */
+  PARAM_STEP: { whole: 1, share: 0.01, hours: 0.05, factor: 0.1 },
 } as const;
 
 const NO_MAX = Number.POSITIVE_INFINITY;

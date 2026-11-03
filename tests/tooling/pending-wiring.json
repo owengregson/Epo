@@ -16,16 +16,6 @@
       "reason": "the settings service runs the v1 migration at construction, with the kernel-derived basis"
     },
     {
-      "module": "src/kernel/derive-schedule.ts",
-      "stream": "SC",
-      "reason": "the settings parameter catalog resolves quiet hours, the masked session mass and feasibility through it"
-    },
-    {
-      "module": "src/kernel/derive-audience.ts",
-      "stream": "SC",
-      "reason": "the settings parameter catalog derives the follow-back curve and follower range per audience choice"
-    },
-    {
       "module": "src/renderer/settings/SettingsStage.tsx",
       "stream": "SU",
       "reason": "the Settings stage replaces its body and the stage host mounts it"
