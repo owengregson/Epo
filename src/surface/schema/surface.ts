@@ -7,85 +7,26 @@
  * page sizes) is validated once at load, and whose behaviour half (a response
  * schema and a pure `project()` per endpoint) is typed rather than duplicated.
  *
- * Layering: this module imports zod and the store's `Observation` type and
- * NOTHING else. It carries no Electron, no adapter, no engine — so the contract
+ * Layering: this module imports zod, the store's types and its schema siblings
+ * and NOTHING else. It carries no Electron, no adapter, no engine — so the contract
  * tests can load a surface without a tab, and `src/surface/**` can never
  * acquire a dependency that makes it un-testable in CI.
  */
 
 import { z } from 'zod';
-import type { Observation, Source } from '@/store/types';
+import type { Source } from '@/store/types';
 import type { EndpointKind } from '@/surface/schema/endpoints';
+import type { ProjectCtx, Projection } from '@/surface/schema/projection';
 
-// ---------------------------------------------------------------------------
-// Facts a projection can emit
-// ---------------------------------------------------------------------------
-
-/** One "started following you" event parsed from the activity feed. */
-export interface FollowEvent {
-  pk: string;
-  username: string | null;
-  /** Epoch MS (the feed reports seconds). */
-  atMs: number | null;
-}
-
-/** A viewer-side relationship fact: do WE own a follow/pending request to `pk`. */
-export interface RelationshipFact {
-  pk: string;
-  following: boolean;
-  /** TRUE while our follow request to a private account awaits acceptance. */
-  outgoingRequest: boolean;
-  /** `followedBy` => THEY follow us. `null` when the shape carries no direction. */
-  followedBy: boolean | null;
-  isPrivate?: boolean;
-}
-
-/** A row the row schema rejected — counted drift evidence, never silently dropped. */
-export interface RowIssue {
-  /** Index of the offending row inside its container. */
-  index: number;
-  /** The zod issue path, e.g. `pk`. */
-  path: string;
-  message: string;
-}
-
-/**
- * What one response body projects to. EVERY member is per-item by construction:
- * `facts` is one `Observation` per row, so a consumer writes through as it
- * iterates (PRINCIPLES §1) instead of receiving a completed batch.
- */
-export interface Projection {
-  facts: Observation[];
-  relationships: RelationshipFact[];
-  events: FollowEvent[];
-  /** Resume cursor for a paginated endpoint; `null` when there is no next page. */
-  cursor: string | null;
-  hasMore: boolean;
-  /** `null` when this endpoint carries no "the profile is gone" answer. */
-  absent: boolean | null;
-  rowIssues: RowIssue[];
-}
-
-/** An empty projection — the shape every `project()` starts from. */
-export const emptyProjection = (): Projection => ({
-  facts: [],
-  relationships: [],
-  events: [],
-  cursor: null,
-  hasMore: false,
-  absent: null,
-  rowIssues: [],
-});
-
-/** Context a projection needs that the body itself does not carry. */
-export interface ProjectCtx {
-  /** Observation timestamp (epoch MS). */
-  at: number;
-  /** Provenance label for the observations this body produces. */
-  source: Source;
-  /** The subject pk pulled out of the request URL, when the endpoint carries one. */
-  pk?: string;
-}
+// The fact types live in `projection.ts`; re-exported so consumers keep one import site.
+export {
+  emptyProjection,
+  type FollowEvent,
+  type ProjectCtx,
+  type Projection,
+  type RelationshipFact,
+  type RowIssue,
+} from '@/surface/schema/projection';
 
 // ---------------------------------------------------------------------------
 // Drift

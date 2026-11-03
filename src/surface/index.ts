@@ -11,10 +11,7 @@
  * below, and run `tests/surface/replay.test.ts` against the corpus.
  */
 
-import {
-  type EndpointKind,
-  RESPONSE_SCHEMAS,
-} from '@/surface/schema/endpoints';
+import type { EndpointKind } from '@/surface/schema/endpoints';
 import {
   type EndpointDef,
   flattenIssues,
@@ -22,6 +19,7 @@ import {
   type SurfaceDocument,
   type SurfaceInvalid,
 } from '@/surface/schema/surface';
+import { RESPONSE_SCHEMAS } from '@/surface/versions/2026-08-12/schemas';
 import { SURFACE_DOC_2026_08_12 } from '@/surface/versions/2026-08-12/surface';
 
 /** The document the app is built against. */

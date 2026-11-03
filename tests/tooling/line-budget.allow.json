@@ -19,7 +19,7 @@
     },
     {
       "file": "src/adapter/actor.ts",
-      "lines": 817
+      "lines": 759
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -38,10 +38,6 @@
       "lines": 592
     },
     {
-      "file": "src/adapter/ig-surface.ts",
-      "lines": 546
-    },
-    {
       "file": "src/capture/capture-harness.ts",
       "lines": 537
     },
@@ -50,28 +46,16 @@
       "lines": 528
     },
     {
-      "file": "src/adapter/versions/2026-08-12.ts",
-      "lines": 493
-    },
-    {
-      "file": "src/adapter/reader.ts",
-      "lines": 485
-    },
-    {
-      "file": "src/surface/versions/2026-08-12/literals.ts",
-      "lines": 450
-    },
-    {
       "file": "src/engine/target-pipeline.ts",
       "lines": 421
     },
     {
-      "file": "src/rim/list-page-walker.ts",
-      "lines": 413
-    },
-    {
       "file": "src/main/foundation-reads.ts",
       "lines": 410
+    },
+    {
+      "file": "src/rim/list-page-walker.ts",
+      "lines": 406
     },
     {
       "file": "src/main/services/graph-builder.ts",
@@ -98,10 +82,6 @@
       "lines": 340
     },
     {
-      "file": "src/rim/follow-notifications.ts",
-      "lines": 340
-    },
-    {
       "file": "src/kernel/policy.ts",
       "lines": 331
     },
@@ -112,10 +92,6 @@
     {
       "file": "src/renderer/design/scale.ts",
       "lines": 316
-    },
-    {
-      "file": "src/surface/schema/surface.ts",
-      "lines": 313
     },
     {
       "file": "src/renderer/cards/settings/BehaviorCard.tsx",

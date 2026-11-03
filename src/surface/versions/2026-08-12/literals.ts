@@ -28,6 +28,8 @@
  * the stories and user rows inside are unchanged, only wrapped.
  */
 
+import { SELECTORS } from '@/surface/versions/2026-08-12/literals-dom';
+
 /** Capture provenance — bump when these notes are re-verified against live IG. */
 export const VERSION = '2026-08-12';
 
@@ -169,259 +171,25 @@ export const GRAPHQL_MUTATION_NAME = /mutation/i;
 export const GRAPHQL_UNFOLLOW_NAME = /unfollow/i;
 export const GRAPHQL_FOLLOW_NAME = /follow/i;
 
-/** Verdict keys of a mutation body (REST form; a GraphQL `data` child nests the same). */
-export const MUTATION_JSON = {
-  status: 'status',
-  ok: 'ok',
-  fail: 'fail',
-  message: 'message',
-  spam: 'spam',
-  feedbackTitle: 'feedback_title',
-  feedbackMessage: 'feedback_message',
-  result: 'result',
-  errors: 'errors',
-  data: 'data',
-  friendshipStatus: 'friendship_status',
-  following: 'following',
-  outgoingRequest: 'outgoing_request',
-} as const;
-
-// ---------------------------------------------------------------------------
-// JSON paths (verified live 2026-08-12)
-// ---------------------------------------------------------------------------
-
-export const JSON_PATHS = {
-  followersList: {
-    users: 'users',
-    userPk: 'pk',
-    userName: 'username',
-    isPrivate: 'is_private',
-    isVerified: 'is_verified',
-    nextMaxId: 'next_max_id',
-    hasMore: 'has_more',
-    /** Alternate more-pages flag carried by some friendships-list responses. */
-    bigList: 'big_list',
-  },
-  /**
-   * The profile USER record. Both profile sources carry the same field names —
-   * `/users/<pk>/info/` nests it under `user`, the GraphQL profile query under
-   * `data.user` — so one field map serves both (`PROFILE_USER_AT` names the
-   * container per source).
-   *
-   * These are the app-API names (`follower_count`), not the retired
-   * `web_profile_info` edge shape (`edge_followed_by.count`).
-   */
-  profileUser: {
-    id: 'pk',
-    /** `/users/<pk>/info/` answers `pk` as a NUMBER; `id` is its string twin. */
-    altId: 'id',
-    username: 'username',
-    followersCount: 'follower_count',
-    followingCount: 'following_count',
-    /** MUTUALS: the number behind "Followed by x and N others". */
-    mutualCount: 'mutual_followers_count',
-    isPrivate: 'is_private',
-    isVerified: 'is_verified',
-    biography: 'biography',
-    /**
-     * Viewer-side relationship. Carried by the GraphQL profile body only —
-     * `/users/<pk>/info/` omits it, so a caller that needs it reads
-     * `friendships/show/<pk>/` (which is unaffected by the retirement).
-     */
-    followedByViewer: 'friendship_status.following',
-    requestedByViewer: 'friendship_status.outgoing_request',
-    followsViewer: 'friendship_status.followed_by',
-  },
-  /** The GraphQL feed nests the REST inbox body (stories unchanged) here. */
-  activityFeedGraphql: 'data.xdt_activity_inbox',
-  /** The GraphQL follow-requests panel: a connection of the list endpoints' user rows. */
-  followRequestsGraphql: {
-    edges: 'data.xdt_friendships_pending_users.users.edges',
-    node: 'node',
-    cursor: 'data.xdt_friendships_pending_users.users.page_info.end_cursor',
-    hasMore: 'data.xdt_friendships_pending_users.users.page_info.has_next_page',
-  },
-  /** Where each profile source puts that user record. */
-  profileUserAt: {
-    info: 'user',
-    graphql: 'data.user',
-  },
-  friendshipShow: {
-    following: 'following',
-    followedBy: 'followed_by',
-    isPrivate: 'is_private',
-    outgoingRequest: 'outgoing_request',
-  },
-  showMany: {
-    statuses: 'friendship_statuses',
-    following: 'following',
-    isPrivate: 'is_private',
-    outgoingRequest: 'outgoing_request',
-  },
-  activityFeed: {
-    storySections: ['new_stories', 'old_stories'] as readonly string[],
-    storyType: 'story_type',
-    followStoryType: 101,
-    args: 'args',
-    profileId: 'profile_id',
-    profileName: 'profile_name',
-    /** Feed timestamps are epoch SECONDS (float). */
-    timestamp: 'timestamp',
-    text: 'text',
-    followText: /started following you/i,
-  },
-} as const;
-
-// ---------------------------------------------------------------------------
-// DOM contact points. Class names rotate — match by TEXT/ROLE (ADR 0302).
-// ---------------------------------------------------------------------------
-
-export const SELECTORS = {
-  /** The followers/following modal. */
-  dialog: '[role="dialog"]',
-  /**
-   * The header COUNTS are `<a href="#">` that open the modal via JS — NOT
-   * `/<user>/followers/` links. Located by TEXT: an anchor/button whose text
-   * names one stat and NOT the other (`\bfollowers?\b` does not match "following").
-   */
-  followersStatText: /\bfollowers?\b/i,
-  followingStatText: /\bfollowing\b/i,
-  /**
-   * Profile action button. Renders inside a semantic `<header>`; its textContent
-   * LEADS with the state word but may include icon alt text (observed:
-   * "FollowingDown chevron icon"), so the matchers are PREFIX tests.
-   */
-  profileActionButtonRole: 'header button, header [role="button"]',
-  followText: /^\s*follow(\s|$)/i,
-  followingText: /^\s*following/i,
-  requestedText: /^\s*requested/i,
-  followBackText: /^\s*follow back/i,
-  /** The confirm control in the unfollow / cancel-request dialog (PREFIX match). */
-  unfollowConfirmText: /^\s*(unfollow|cancel request)\b/i,
-  /** The left-nav notifications control, by accessible name (not an href link). */
-  notificationsLabelText: /^\s*notifications\s*$/i,
-  /** The "Follow requests" entry inside the open notifications drawer. */
-  followRequestsEntryText: /^\s*follow requests\b/i,
-  /** The per-row accept control in the follow-requests panel. */
-  confirmRequestText: /^\s*confirm\s*$/i,
-  /** The "Follows" category filter chip inside the notifications drawer. */
-  followsFilterText: /^\s*follows\s*$/i,
-  /**
-   * A profile that does not exist (or is hidden from us): a `<span>` in `main`,
-   * and the page's client fetches no profile (live 2026-10-08).
-   */
-  profileUnavailableText: /^\s*sorry, this page isn['’]t available/i,
-  /** The drawer's close (X) control, by accessible name. */
-  drawerCloseLabelText: /^\s*close\s*$/i,
-  /** The nav avatar image, by its alt-text shape. */
-  avatarImage: 'img[alt*="profile picture"], img[alt*="profile photo"]',
-  /**
-   * Where a block interstitial renders. Deliberately NOT the whole body — a
-   * candidate's bio is stranger-controlled text.
-   */
-  blockTextContainers: '[role="dialog"], [role="alertdialog"], [role="alert"]',
-  blockTextHeadings: 'h1, h2',
-} as const;
-
-/**
- * Generic DOM vocabulary the searches use. Not Instagram knowledge, but kept
- * beside the selectors so one directory holds everything a new capture retunes.
- */
-export const ROLES = {
-  /** Anything the page treats as a press target. */
-  clickable: 'a, button, [role="button"], [role="link"]',
-  /** Role-marked controls, menu items included (the confirm menu's primary pass). */
-  menuControl: 'button, [role="button"], [role="menuitem"]',
-  /** Press-shaped ancestors a self-recovery hit may resolve to. */
-  menuClickable: 'button, [role="button"], [role="menuitem"], [tabindex], a',
-  /** Bare containers the self-recovery pass scans when the role query goes blind. */
-  bareContainer: 'div, span, a, [tabindex]',
-  /** Nodes scanned for a smallest-text match (drawer entries, filter chips). */
-  textNode: 'span, div, a, button, [role="button"]',
-  /** Elements that can carry an accessible name. */
-  labeled: 'svg[aria-label], [aria-label]',
-  /** Elements a wheel must not rest on — they open hover cards that eat it. */
-  hoverTrigger: 'a, button, [role="button"], img, canvas, video, [role="link"]',
-  button: 'button, [role="button"]',
-} as const;
-
-/** Scope lists, in the priority order each search walks. */
-export const SCOPES = {
-  /** Profile header first, then main, then the whole body. */
-  profile: ['header', 'main', 'body'],
-  /** The nav rail before page content — a stray profile link must never win. */
-  nav: ['nav', '[role="navigation"]'],
-  navThenBody: ['nav', '[role="navigation"]', 'body'],
-  /** The open drawer/modal before page content. */
-  drawer: ['[role="dialog"]', '[role="alertdialog"]', 'aside'],
-  drawerThenBody: ['[role="dialog"]', '[role="alertdialog"]', 'aside', 'body'],
-} as const;
-
-// ---------------------------------------------------------------------------
-// Identity knowledge
-// ---------------------------------------------------------------------------
-
-/** Non-username first path segments that must never be taken as a username. */
-export const RESERVED_ROUTES: ReadonlySet<string> = new Set([
-  'explore', 'reels', 'reel', 'direct', 'stories', 'p', 'tv', 'accounts', 'about',
-  'legal', 'privacy', 'terms', 'api', 'directory', 'your_activity', 'emails',
-  'session', 'challenge', 'oauth', 'developer', 'ads', 'business', 'help',
-]);
-
-export const USERNAME_RE = /^[A-Za-z0-9._]+$/;
-
-/** A bare profile path: `/<username>/`. */
-export const PROFILE_PATH_RE = /^\/([A-Za-z0-9._]+)\/?$/;
-
-/**
- * The nav avatar link's href shape — the trailing slash is REQUIRED so a
- * partial/relative link elsewhere in the rail cannot pass for our own profile.
- */
-export const NAV_PROFILE_PATH_RE = /^\/[A-Za-z0-9._]+\/$/;
-
-/** A follow-request row's profile link; the trailing slash is optional there. */
-export const ROW_PROFILE_PATH_RE = /^\/[A-Za-z0-9._]+\/?$/;
-
-/** Avatar alt text: "<username>'s profile picture" (straight or curly quote). */
-export const AVATAR_ALT_RE = /^([A-Za-z0-9._]+)['’]s profile/;
-
-// ---------------------------------------------------------------------------
-// Signals (Sentinel + mutation refusals)
-// ---------------------------------------------------------------------------
-
-/**
- * URL block / challenge / logged-out signatures. The login redirect means the
- * session expired (`logged-out`); `/challenge/` and `/accounts/suspended/` are
- * account interstitials (`challenge`).
- */
-export const URL_BLOCK_SIGNATURES = [
-  { pattern: /\/challenge\//i, status: 'challenge' },
-  { pattern: /\/accounts\/suspended\//i, status: 'challenge' },
-  { pattern: /\/accounts\/login\//i, status: 'logged-out' },
-] as const;
-
-/** Body-text signatures (best-effort; refine the first time a wall is hit). */
-export const TEXT_BLOCK_SIGNATURES = [
-  { pattern: /action blocked/i, status: 'action-blocked' },
-  { pattern: /try again later/i, status: 'action-blocked' },
-  { pattern: /we restrict certain activity/i, status: 'action-blocked' },
-  { pattern: /confirm it['’]s you/i, status: 'action-blocked' },
-  { pattern: /your account has been/i, status: 'action-blocked' },
-] as const;
-
-/**
- * Refusal signatures over a FAILED mutation verdict's message + feedback text.
- * The throttle family maps to `action-blocked` (the ladder waits it out); the
- * session walls map to their sentinel statuses.
- */
-export const MUTATION_REFUSAL_SIGNATURES = [
-  { pattern: /feedback_required/i, status: 'action-blocked' },
-  { pattern: /try again later/i, status: 'action-blocked' },
-  { pattern: /we restrict certain activity/i, status: 'action-blocked' },
-  { pattern: /rate.?limit|wait a few minutes/i, status: 'action-blocked' },
-  { pattern: /checkpoint_required|challenge_required/i, status: 'challenge' },
-  { pattern: /login_required/i, status: 'logged-out' },
-] as const;
+// JSON paths, DOM contact points and signals live in sibling modules,
+// re-exported here so every consumer keeps one import site.
+export {
+  AVATAR_ALT_RE,
+  NAV_PROFILE_PATH_RE,
+  PROFILE_PATH_RE,
+  RESERVED_ROUTES,
+  ROLES,
+  ROW_PROFILE_PATH_RE,
+  SCOPES,
+  SELECTORS,
+  USERNAME_RE,
+} from '@/surface/versions/2026-08-12/literals-dom';
+export { JSON_PATHS, MUTATION_JSON } from '@/surface/versions/2026-08-12/literals-json';
+export {
+  MUTATION_REFUSAL_SIGNATURES,
+  TEXT_BLOCK_SIGNATURES,
+  URL_BLOCK_SIGNATURES,
+} from '@/surface/versions/2026-08-12/literals-signals';
 
 // ---------------------------------------------------------------------------
 // Capture-harness extras — broader, URL-substring heuristics the live capture

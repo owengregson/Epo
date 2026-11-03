@@ -16,16 +16,6 @@
 import { z } from 'zod';
 import type { Source } from '@/store/types';
 import {
-  ActivityFeedGraphqlBody,
-  ActivityFeedStories,
-  FollowRequestsGraphqlBody,
-  FriendshipShowBody,
-  ListPageBody,
-  ProfileGraphqlBody,
-  ProfileInfoBody,
-  ShowManyBody,
-} from '@/surface/schema/endpoints';
-import {
   defineEndpoint,
   type MutationSpec,
   type Signal,
@@ -56,6 +46,16 @@ import {
   projectProfileInfo,
   projectShowMany,
 } from '@/surface/versions/2026-08-12/projectors';
+import {
+  ActivityFeedGraphqlBody,
+  ActivityFeedStories,
+  FollowRequestsGraphqlBody,
+  FriendshipShowBody,
+  ListPageBody,
+  ProfileGraphqlBody,
+  ProfileInfoBody,
+  ShowManyBody,
+} from '@/surface/versions/2026-08-12/schemas';
 
 // ---------------------------------------------------------------------------
 // Signals

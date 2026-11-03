@@ -44,6 +44,7 @@ import { SURFACE } from '@/adapter/ig-surface';
 import type { Reader } from '@/adapter/reader';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { ReadBudget } from '@/governors/read-budget';
+import { decideStep } from '@/rim/list-walk-end';
 import type { RimTab } from '@/rim/types';
 import { RIM } from '@/timing/config';
 import { nextRestStride } from '@/timing/noise';
@@ -274,23 +275,28 @@ export class ListPageWalker {
       };
 
       const newThisPage = observed.size - sizeBefore;
-
-      // A pending end claim resolves on THIS page (the past-the-end probe):
-      // nothing new past the claimed end = the end is verified; anything new
-      // means the claim was FALSE and the walk carries on from here.
-      if (pendingEndClaim) {
-        if (newThisPage === 0) {
-          complete = true;
-          endConfirmed = true;
-          reason = 'no-more-pages';
-          logger.info('rim.list-page-walker: end-of-list verified (probe found nothing new)', {
-            pk,
-            which,
-            pages,
-            observed: observed.size,
-          });
-          break;
-        }
+      // The end-claim decision is pure (`list-walk-end.ts`); it is applied in
+      // two halves around the demand and known-density stops, as before.
+      const step = decideStep(
+        { hasMore: parsed.hasMore, cursor: parsed.cursor, newRows: newThisPage },
+        { probing: pendingEndClaim, stagnantPages },
+        rows,
+        (n) => SURFACE.listEndProbeCursor(n),
+        RIM.LIST_WALK_STAGNANT_STOP,
+      );
+      if (step.act === 'complete') {
+        complete = true;
+        endConfirmed = true;
+        reason = 'no-more-pages';
+        logger.info('rim.list-page-walker: end-of-list verified (probe found nothing new)', {
+          pk,
+          which,
+          pages,
+          observed: observed.size,
+        });
+        break;
+      }
+      if (step.claimWasFalse) {
         logger.warn('rim.list-page-walker: end-of-list claim was FALSE, continuing', {
           pk,
           which,
@@ -341,38 +347,25 @@ export class ListPageWalker {
         }
       }
 
-      if (!parsed.hasMore || parsed.cursor === null) {
-        // The API claims the list is done. VERIFY before believing it: request
-        // one page past the end — via the leftover cursor when one was handed
-        // back, else the surface's synthesized offset probe.
+      cursor = step.cursor;
+      stagnantPages = step.stagnantPages;
+      if (step.act === 'probe') {
         pendingEndClaim = true;
-        stagnantPages = 0;
-        cursor = parsed.cursor ?? SURFACE.listEndProbeCursor(rows);
         logger.info('rim.list-page-walker: end-of-list claimed, probing one page past it', {
           pk,
           which,
           pages,
           observed: observed.size,
         });
-      } else {
-        cursor = parsed.cursor;
-        // Duplicate-window pages (IG shifts windows on a live list) are
-        // tolerated a few in a row; a persistent circle still terminates.
-        if (newThisPage === 0) {
-          stagnantPages += 1;
-          if (stagnantPages >= RIM.LIST_WALK_STAGNANT_STOP) {
-            reason = 'stagnant';
-            logger.warn('rim.list-page-walker: no new pks across consecutive pages, stopping', {
-              pk,
-              which,
-              pages,
-              stagnantPages,
-            });
-            break;
-          }
-        } else {
-          stagnantPages = 0;
-        }
+      } else if (step.act === 'stop') {
+        reason = 'stagnant';
+        logger.warn('rim.list-page-walker: no new pks across consecutive pages, stopping', {
+          pk,
+          which,
+          pages,
+          stagnantPages,
+        });
+        break;
       }
 
       await this.sleepFn(sample(pacePolicy, this.rng), this.abortSignal?.());
