@@ -3,6 +3,7 @@ import type { ReentrySupervisor } from '@/engine/reentry';
 import type { Clock } from '@/governors/clock';
 import type { RateGovernor } from '@/governors/rate-governor';
 import type { ReadBudget } from '@/governors/read-budget';
+import type { ParkSlots } from '@/kernel/derive-parks';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { Settings } from '@/settings/settings';
 import type { ProtectionIndex } from '@/shared/unfollow-protection';
@@ -31,6 +32,8 @@ interface MutationPolicyDeps {
   onProgress?(phase: string): void;
   /** The reconciliation gate at admission; defaults to today's global re-entry check. */
   journal?: JournalGate;
+  /** Where a journal park lands (the unfollow wiring hands the plan-day slots). */
+  parkSlots?(): ParkSlots;
 }
 
 /** Every writer proves identity and current relationship policy at the physical click boundary. */

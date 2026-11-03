@@ -5,6 +5,7 @@
  */
 
 import { type ParkKind, type ParkSlots, parkTerminal, parkUntil } from '../kernel/derive-parks';
+import type { PlanDayClock } from '../kernel/plan';
 import type { EffectIntent, EffectSettlement, FollowRecord } from '../store/types';
 
 /** A write whose outcome the journal still owes: dispatched, or dispatched and unverified. */
@@ -20,6 +21,26 @@ export function journalBlocks(pk: string, unsettled: readonly EffectIntent[], ex
 /** Whether `i` is due for its settlement read at `now`: open, and any park it has served. */
 export function journalDue(i: EffectIntent, now: number): boolean {
   return open(i) && (i.nextAttemptAt === null || i.nextAttemptAt <= now);
+}
+
+/** The per-account journal gate (spec §9.8): no global block; only an account's own open write blocks it. */
+export function accountJournalGate(unsettled: () => readonly EffectIntent[]) {
+  return {
+    requiresReconciliation: (_now: number, subject?: { pk: string; intentId?: string }): boolean =>
+      subject !== undefined && journalBlocks(subject.pk, unsettled(), subject.intentId),
+  };
+}
+
+/** Park slots on the one plan-day boundary at `now`; the next session arrives with the plan view (null until then). */
+export function planDaySlots(dayClock: PlanDayClock, now: number, nextSessionAt: number | null = null): ParkSlots {
+  return {
+    nextSessionAt,
+    planDayStartAfter: (k) => {
+      let w = dayClock.window(now);
+      for (let i = 0; i < k; i += 1) w = dayClock.window(w.endsAt);
+      return w.startsAt;
+    },
+  };
 }
 
 /** One observation of an intent's account: a fresh page, an unavailable one, a wall, or a refused read. */

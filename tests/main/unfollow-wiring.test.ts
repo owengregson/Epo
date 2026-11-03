@@ -2,17 +2,23 @@
  * The unfollow wiring (spec §7): the protection port reads the settings service's index live,
  * the churn scheduler runs on it, and the graph-open pass re-judges the kept records at build.
  */
+import type { FollowbackWatcher } from '@/engine/followback-watcher';
+import { ReentrySupervisor } from '@/engine/reentry';
 import type { SourceFrontier } from '@/engine/source-frontier';
-import { FakeClock } from '@/governors/clock';
-import type { RateGovernor } from '@/governors/rate-governor';
+import { FakeClock, type SystemClock } from '@/governors/clock';
+import { RateGovernor } from '@/governors/rate-governor';
+import { ReadBudget } from '@/governors/read-budget';
 import type { BuiltGraph, GraphBuildDeps } from '@/main/services/graph-types';
-import { unfollowWiringParts, wireChurn, wireProtection } from '@/main/services/unfollow-wiring';
+import { unfollowWiringParts, wireChurn, wireMutationPolicy, wireProtection } from '@/main/services/unfollow-wiring';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
+import type { TabProfileVisitor } from '@/rim/profile-visit';
+import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
+import { DEFAULT_SETTINGS, toRateGovernorConfig } from '@/settings/settings';
 import type { ProtectionSettings } from '@/shared/settings-model';
 import { compileProtection } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeActions } from '../kit/engine-harness';
+import { readLimits } from '../kit/read-limits';
 import { memoryStore } from '../kit/store';
 
 const T0 = Date.parse('2026-11-03T12:00:00');
@@ -78,6 +84,48 @@ test('the unfollowsPaused contributor names a paused index, and nothing before t
 test('the churn reports the live protection state', () => {
   const churn = churnFor(new FakeClock(T0));
   expect(churn.protectionState()).toBe('ready');
+});
+
+describe('the wired journal (spec §9.8)', () => {
+  const policyFor = (clock: FakeClock, visit: ProfileVisitor['visit']) => {
+    const reentry = new ReentrySupervisor({ store, clock });
+    reentry.prepare(clock.now());
+    const rate = new RateGovernor(store, clock, toRateGovernorConfig(DEFAULT_SETTINGS));
+    const policy = wireMutationPolicy({ ...deps(), driverSignal: () => undefined } as GraphBuildDeps, {
+      store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock, rate, reentry,
+      readBudget: new ReadBudget({ store, clock, limits: readLimits() }),
+      profiles: () => ({ visit }) as unknown as TabProfileVisitor,
+      followback: () => ({ check: async () => ({ detected: [], outcome: 'complete' }) }) as unknown as FollowbackWatcher,
+    });
+    return { policy, reentry };
+  };
+  const stuck = (pk: string, at: number) => {
+    const i = store.beginEffectIntent({ accountPk: pk, username: pk, action: 'unfollow', channel: 'growth', at });
+    store.markEffectUncertain(i.id, at);
+    return i;
+  };
+
+  test('admission has no global block: an absence or another account\'s unsettled write never stops a write', async () => {
+    const clock = new FakeClock(T0);
+    const { policy, reentry } = policyFor(clock, async () => ({ ok: false, kind: 'tab', detail: {} }));
+    stuck('x', clock.now());
+    clock.advance(7 * 86_400_000);
+    expect(reentry.requiresReconciliation(clock.now())).toBe(true);
+    await expect(policy.beforeMutation()).resolves.toBeUndefined();
+  });
+
+  test('a standalone write first settles the due journal on the plan-day slots (F6: still following stays queued)', async () => {
+    const clock = new FakeClock(T0);
+    store.upsertFollowRecord({ accountPk: 'a', targetPk: null, state: 'unfollow_queued', retryCount: 0, followedAt: T0 });
+    const i = stuck('a', clock.now());
+    const visit = jest.fn(async (username: string): Promise<ProfileVisit> => ({ ok: true,
+      obs: { accountPk: 'a', observedAt: clock.now(), source: 'profile', fields: { username } },
+      viewer: { following: true, requested: false, followsUs: false } }));
+    const { policy } = policyFor(clock, visit);
+    await policy.prepareMutation();
+    expect(store.getEffectIntent(i.id)).toMatchObject({ state: 'settled', result: 'cancelled' });
+    expect(store.getFollowRecord('a')).toMatchObject({ state: 'unfollow_queued', reconciledAt: T0 });
+  });
 });
 
 test('the graph-open pass releases a record no rule protects anymore', () => {

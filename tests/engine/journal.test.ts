@@ -4,7 +4,10 @@
  * laws L5 (an unavailable account ends in a terminal, never a wedge) and L6 (journal per account).
  */
 import fc from 'fast-check';
-import { type IntentObservation, journalBlocks, journalDue, type Settlement, settlementFor } from '@/engine/journal';
+import {
+  accountJournalGate, type IntentObservation, journalBlocks, journalDue, planDaySlots, type Settlement, settlementFor,
+} from '@/engine/journal';
+import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { ParkSlots } from '@/kernel/derive-parks';
 import type { EffectIntent, EffectState, FollowRecord, MutationAction } from '@/store/types';
 
@@ -43,6 +46,25 @@ describe('the per-account gate', () => {
     expect(journalDue(intent({ nextAttemptAt: T + 1 }), T)).toBe(false);
     expect(journalDue(intent({ state: 'prepared' }), T)).toBe(false);
     expect(journalDue(intent({ state: 'settled' }), T)).toBe(false);
+  });
+
+  test('the wired gate has no global block: it answers only for a named account', () => {
+    const all = [intent({ id: 'x', accountPk: 'x', state: 'uncertain' })];
+    const gate = accountJournalGate(() => all);
+    expect(gate.requiresReconciliation(T)).toBe(false);
+    expect(gate.requiresReconciliation(T, { pk: 'x' })).toBe(true);
+    expect(gate.requiresReconciliation(T, { pk: 'x', intentId: 'x' })).toBe(false);
+    expect(gate.requiresReconciliation(T, { pk: 'y' })).toBe(false);
+  });
+
+  test('park slots sit on the plan-day boundary: the start of each later plan-day', () => {
+    const clock = calendarPlanDayClock({ now: () => T });
+    const s = planDaySlots(clock, T);
+    const today = clock.window(T);
+    expect(s.nextSessionAt).toBeNull();
+    expect(s.planDayStartAfter(1)).toBe(today.endsAt);
+    expect(s.planDayStartAfter(2)).toBe(clock.window(today.endsAt).endsAt);
+    expect(planDaySlots(clock, T, T + 60_000).nextSessionAt).toBe(T + 60_000);
   });
 
   test('law L6: an unsettled intent on X never blocks Y, and always blocks a second write on X', () => {
