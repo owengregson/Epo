@@ -80,7 +80,13 @@ export function createSurfaceHealthSink(d: SurfaceHealthSinkDeps): SurfaceHealth
       if (p.clean > 0) repo.noteCleanRead(d.surfaceId, p.endpoint, null, at, threshold, p.clean);
     }
     pending.clear();
-    repo.setMeter(JSON.stringify(meter.dump()));
+    // The reservoirs are written only when they changed: an idle teardown writes nothing.
+    const dump = meter.dump();
+    const text = JSON.stringify(dump);
+    if (text !== storedMeter && (storedMeter !== null || Object.keys(dump.samples).length > 0)) {
+      repo.setMeter(text);
+      storedMeter = text;
+    }
   };
 
   // The roll subscription is taken on the first report, so a sink that never hears one arms no timer.
@@ -102,8 +108,8 @@ export function createSurfaceHealthSink(d: SurfaceHealthSinkDeps): SurfaceHealth
   };
 
   // Retention at open; an update that shipped resolves every signature of the surface it replaced.
-  const meterRaw = repo.meter();
-  if (meterRaw !== null && !meter.restore(safeJson(meterRaw))) logger.warn('surface: the stored meter is unreadable; it starts cold');
+  let storedMeter = repo.meter();
+  if (storedMeter !== null && !meter.restore(safeJson(storedMeter))) logger.warn('surface: the stored meter is unreadable; it starts cold');
   repo.resolveOtherSurfaces(d.surfaceId, d.clock.now());
   prune(d.clock.now());
 
