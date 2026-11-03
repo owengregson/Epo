@@ -1,6 +1,6 @@
+import { LATE_MIGRATIONS } from './schema/late-migrations';
 import { SPANS, TIMERS } from './schema/manifest';
 import type { Migration } from './schema/migration-types';
-import { REENTRY_MIGRATION } from './schema/reentry-migration';
 import { ddl } from './schema/tables';
 
 /**
@@ -12,8 +12,6 @@ import { ddl } from './schema/tables';
  * nobody recounts. Migrations are APPEND-ONLY: never edit, reorder, or
  * renumber a shipped entry — add a new one.
  */
-export type { Migration } from './schema/migration-types';
-
 export const MIGRATIONS: Migration[] = [
   {
     id: 0,
@@ -297,5 +295,5 @@ export const MIGRATIONS: Migration[] = [
     CREATE INDEX idx_spans_parent ON spans(parent_id);
     `,
   },
-  REENTRY_MIGRATION,
+  ...LATE_MIGRATIONS,
 ];

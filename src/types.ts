@@ -8,60 +8,19 @@
  * MUST stay dependency-free (no `electron`, no Node built-ins).
  */
 
-// ---------------------------------------------------------------------------
-// Tab network-observation contract (consumed by the Reader in Task 7)
-// ---------------------------------------------------------------------------
-
-/**
- * A single observed network response from the embedded Instagram tab.
- *
- * The tab observes responses via the Chrome DevTools Protocol (see
- * `src/adapter/tab.ts`). `getBody()` lazily fetches the decoded response body
- * so the Reader only pays for bodies it actually wants to parse.
- */
-export interface TabResponse {
-  /** CDP request identifier; unique within the tab's page session. */
-  requestId: string;
-  /** Fully-qualified response URL. */
-  url: string;
-  /** HTTP status code. */
-  status: number;
-  /** Response MIME type (e.g. `application/json`). */
-  mimeType: string;
-  /**
-   * The request's HTTP method (from `Network.requestWillBeSent`), when the
-   * observer saw the request go out. Absent for responses whose request
-   * predates the observer (a debugger re-attach mid-flight).
-   */
-  method?: string;
-  /**
-   * The request headers the page sent, keys LOWER-CASED. Lets a consumer tell
-   * a GraphQL mutation apart from a query by its friendly-name header without
-   * the tab knowing any Instagram literal. Absent when `method` is.
-   */
-  requestHeaders?: Record<string, string>;
-  /**
-   * Lazily fetch the decoded response body as a UTF-8 string.
-   * Rejects if the body is no longer available in the CDP resource cache.
-   */
-  getBody(): Promise<string>;
-}
-
-/** Handler registered via {@link InstagramTab.onResponse}. */
-export type ResponseHandler = (response: TabResponse) => void;
-
-/** Disposer returned by subscription helpers; idempotent. */
-export type Unsubscribe = () => void;
-
 import type { EngineParkReason, EngineStatus } from '@/engine/engine';
 import type { PruneCandidate, PruneState, PruneStatus } from '@/engine/prune-engine';
 import type { BridgeInvokers, PushContract, PushMethod } from '@/ipc/contract';
-import type { Settings } from '@/settings/settings';
+import type { Settings } from '@/settings/v1/settings-v1-types';
+import type { LogEntry, LogLevel } from '@/shared/log-entry';
+import type { StageMode } from '@/shared/stage-mode';
+import type { ResponseHandler, TabResponse, Unsubscribe } from '@/shared/tab-response';
+import type { UpdateMode, UpdateStatus } from '@/shared/update-status';
 import type { FollowState, Target } from '@/store/types';
 
-// Re-export so the renderer can name the Engine's status shape from one place.
-// These are all TYPE-ONLY re-exports — no runtime code crosses into the renderer,
-// so the dependency-free contract above still holds.
+// Re-export so the renderer can name the Engine's status shape and the tab's
+// response contract (`src/shared/tab-response.ts`) from one place. TYPE-ONLY:
+// no runtime code crosses into the renderer, so the dependency-free contract holds.
 export type {
   EngineParkReason,
   EngineStatus,
@@ -69,23 +28,18 @@ export type {
   PruneCandidate,
   PruneState,
   PruneStatus,
+  ResponseHandler,
   Settings,
+  TabResponse,
   Target,
+  Unsubscribe,
 };
 
 // ---------------------------------------------------------------------------
-// Structured log stream (main -> renderer)
+// Structured log stream (main -> renderer; one home: `src/shared/log-entry.ts`)
 // ---------------------------------------------------------------------------
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-
-export interface LogEntry {
-  level: LogLevel;
-  message: string;
-  meta?: unknown;
-  /** Epoch milliseconds when the entry was emitted. */
-  at: number;
-}
+export type { LogEntry, LogLevel };
 
 // ---------------------------------------------------------------------------
 // IPC request/response payloads (renderer -> main, via invoke)
@@ -306,12 +260,8 @@ export interface GraphSnapshot {
   counts: Record<GraphNodeStatus, number>;
 }
 
-/**
- * What fills the window region right of the console: the embedded IG tab, the
- * network graph, or the prune screen (both non-'tab' modes hide the native
- * tab view, which keeps running underneath).
- */
-export type StageMode = 'tab' | 'graph' | 'prune';
+/** What fills the window region right of the console (one home: `src/shared/stage-mode.ts`). */
+export type { StageMode };
 
 /**
  * Result of a read-only prune scan (`prune:scan`). `ok: false` carries a typed
@@ -352,30 +302,10 @@ export interface SeedCheck {
 }
 
 // ---------------------------------------------------------------------------
-// Self-updater (docs/RELEASE.md §5)
+// Self-updater (docs/RELEASE.md §5; one home: `src/shared/update-status.ts`)
 // ---------------------------------------------------------------------------
 
-/**
- * What "update itself" means on this install: 'full' downloads and installs
- * (Windows NSIS), 'notify' can only announce and open the release page
- * (unsigned macOS, Windows portable), 'off' means no updater at all
- * (unpackaged dev runs).
- */
-export type UpdateMode = 'full' | 'notify' | 'off';
-
-/** The updater's live state, pushed to the renderer as it changes. */
-export interface UpdateStatus {
-  state: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
-  mode: UpdateMode;
-  /** The running app's version (always present — the Updates card shows it). */
-  current: string;
-  /** The offered version, once one is known (available/downloading/ready). */
-  version: string | null;
-  /** Download progress percent while 'downloading' (full mode only). */
-  percent: number | null;
-  /** Human-readable failure, only when state === 'error'. */
-  error: string | null;
-}
+export type { UpdateMode, UpdateStatus };
 
 /**
  * Payload pushed on each renderer-facing event channel — DERIVED from the push

@@ -17,8 +17,6 @@ import type { SentinelStatus } from '@/adapter/sentinel';
 import type { AdvanceResult } from '@/engine/chain-controller';
 import {
   CHURN_DEFAULTS,
-  type ChurnActionOutcome,
-  type ChurnActions,
   type ChurnConfig,
   ChurnScheduler,
 } from '@/engine/churn-scheduler';
@@ -29,14 +27,12 @@ import {
   type EngineChurn,
   type EngineDeps,
   type EngineEnricher,
-  type EngineFollowback,
   type EnginePacing,
   type EngineScanner,
   type EngineStatus,
   type EngineTabDiagnostics,
   type EngineUnfollowFeed,
   type SleepFn,
-  type SweepCadence,
 } from '@/engine/engine';
 import {
   type PruneConfig,
@@ -56,6 +52,12 @@ import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import type { AccountFields, FollowRecord } from '@/store/types';
 import { DelayManager, type DelayManagerDeps } from '@/timing/delay-manager';
+import { FakeActions, FakePruneActions, NO_UNFOLLOW_FEED } from './harness-journal';
+import { memorySweepCadence } from './harness-plan';
+import { FakeFollowback } from './harness-reopen';
+
+// The per-concern fakes live beside the core; every suite still imports them from here.
+export { FakeActions, FakeFollowback, FakePruneActions, memorySweepCadence, NO_UNFOLLOW_FEED };
 
 /** Local noon — every harness starts here unless a test says otherwise. */
 export const T0 = Date.parse('2026-08-12T12:00:00');
@@ -217,14 +219,6 @@ export class FakeChain implements EngineChain {
   }
 }
 
-export class FakeFollowback implements EngineFollowback {
-  checks = 0;
-  async check(): Promise<{ detected: string[] }> {
-    this.checks += 1;
-    return { detected: [] };
-  }
-}
-
 export class FakeAcquisition implements EngineAcquisition {
   calls: string[] = [];
   /** Scripted results; an omitted endReason defaults to the VERIFIED list end
@@ -285,86 +279,13 @@ export class FakeListSource implements PruneOwnFollowing, PruneOwnFollowers {
   }
 }
 
-/** Scripted prune churn actions: per-username outcomes, defaulting to a verified ok. */
-export class FakePruneActions {
-  unfollows: string[] = [];
-  outcomes = new Map<string, ChurnActionOutcome>();
-  async unfollow(username: string): Promise<ChurnActionOutcome> {
-    this.unfollows.push(username);
-    return this.outcomes.get(username) ?? { status: 'ok' };
-  }
-}
-
-/** Records every churn call and returns a configurable discriminated outcome. */
-export class FakeActions implements ChurnActions {
-  followCalls: string[] = [];
-  unfollowCalls: string[] = [];
-  followOk = true;
-  unfollowOk = true;
-  followStatus?: ChurnActionOutcome['status'];
-  unfollowStatus?: ChurnActionOutcome['status'];
-  /** Report an `ok` that clicked nothing (already in the target state). */
-  followAlreadyInState?: boolean;
-  unfollowAlreadyInState?: boolean;
-  /** Recovery-ladder classification of a non-ok outcome (tab stall / drift). */
-  followCause?: ChurnActionOutcome['cause'];
-  unfollowCause?: ChurnActionOutcome['cause'];
-  /** The click was dispatched but its verification stalled. */
-  followUnverifiedClick?: boolean;
-  unfollowUnverifiedClick?: boolean;
-  async follow(username: string): Promise<ChurnActionOutcome> {
-    this.followCalls.push(username);
-    return {
-      status: this.followStatus ?? (this.followOk ? 'ok' : 'failed'),
-      alreadyInState: this.followAlreadyInState,
-      cause: this.followCause,
-      unverifiedClick: this.followUnverifiedClick,
-    };
-  }
-  async unfollow(username: string): Promise<ChurnActionOutcome> {
-    this.unfollowCalls.push(username);
-    return {
-      status: this.unfollowStatus ?? (this.unfollowOk ? 'ok' : 'failed'),
-      alreadyInState: this.unfollowAlreadyInState,
-      cause: this.unfollowCause,
-      unverifiedClick: this.unfollowUnverifiedClick,
-    };
-  }
-}
-
 // --- Required-deps kit ---------------------------------------------------------------
-
-/**
- * The no-op woven feed. `EngineDeps.unfollowFeed` is REQUIRED (the composition
- * root always wires one); "prune weaving is off" is a feed that offers nothing,
- * not an absent port.
- */
-export const NO_UNFOLLOW_FEED: EngineUnfollowFeed = {
-  nextCandidate: () => null,
-  executeUnfollow: () => Promise.resolve('failed'),
-  atDailyCap: () => true,
-};
 
 /** A healthy tab: every recovery entry takes the rate-limit hold path. */
 export const HEALTHY_TAB: EngineTabDiagnostics = {
   probeInput: () => Promise.resolve(true),
   checkHealth: () => Promise.resolve({ healthy: true }),
   recoverTab: () => Promise.resolve(),
-};
-
-/**
- * The in-memory follow-back cadence: starts due (a fresh Engine's first
- * eligible step performs a catch-up sweep), then honours the configured
- * interval. Production injects a PERSISTED cadence instead (PRINCIPLES §3).
- */
-export const memorySweepCadence = (): SweepCadence => {
-  let last = 0;
-  return {
-    isDue: (now, everyMs) => now - last >= everyMs,
-    markRun: (now) => {
-      last = now;
-    },
-  };
 };
 
 /**
