@@ -87,7 +87,8 @@ test('L-BOOT: before the reveal the tab sees the landing press and its URL wait,
   const { tab, calls } = profileTab('owen', { currentUrl: () => url });
   const { foundation: f } = newFoundation({ tab });
   const booting = f.startBoot();
-  for (let i = 0; i < 200 && (await f.status()).boot?.ig === 'pending'; i++) await flush();
+  // The landing sleeps a real-timer ADAPTER.NAV_SETTLE_MS round (300 ms) before it reads the URL; a tick is ≥ 1 ms.
+  for (let i = 0; i < 2000 && (await f.status()).boot?.ig === 'pending'; i++) await flush();
   const view = (await f.status()).boot;
   expect(view).toMatchObject({ phase: 'ready', ig: 'ready', startup: { done: false } });
   expect(press).toHaveBeenCalledTimes(1);
