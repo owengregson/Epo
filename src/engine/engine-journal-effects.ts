@@ -1,20 +1,21 @@
 /**
  * The journal's step and the follow-back sweep's read: one due intent settled per step (spec §9.8),
  * and the watcher's check before a sweep completes (until the frontier sweep replaces it). There is
- * no batch and no halt: a failed read backs off on the tempo, and an unavailable account parks.
+ * no batch and no halt: an incomplete read ends its sweep, and an unavailable account parks.
  */
 
-import { tempoOrReference } from '../kernel/tempo';
 import type { WaitResult } from '../timing/delay-manager';
 import type { DelayPolicy } from '../timing/primitives';
+import * as log from '../utils/logger';
 import type { EngineWaitKey } from './engine-waits';
 import type { EngineTempo } from './plan-port';
-import type { EngineDeps, StepResult } from './ports';
+import type { EngineDeps, StepResult, SweepCadence } from './ports';
 import type { FailureKind } from './recovery';
 
 /** The slice of the Engine the journal and sweep-read steps read and write. */
 export interface EngineJournalContext {
   readonly deps: EngineDeps & EngineTempo;
+  readonly sweepCadence: SweepCadence;
   /** The owed inter-action deadline, re-read from the store after a read that may accept requests. */
   actionDelayDeadline: number | null;
   superseded(token: AbortController): boolean;
@@ -50,11 +51,11 @@ export async function followbackBeforeSweep(ctx: EngineJournalContext, token: Ab
     return 'idle';
   }
   if (result.deferred !== undefined || (result.outcome ?? 'complete') !== 'complete') {
-    // A known reopening instant is waited exactly (never under a beat); an unknown one backs off.
-    const tempo = tempoOrReference(ctx.deps.tempo);
-    const wait = result.retryAt === undefined ? tempo.base('backoff.walled')
-      : Math.max(tempo.base('beat.transient'), result.retryAt - clock.now());
-    await ctx.engineWait(result.deferred === 'read-budget' ? 'engine:read-budget-park' : 'engine:enrich-backoff', wait);
+    // An incomplete read ends this sweep only (spec §9.12): the next one waits its interval, growth goes on.
+    log.warn('engine: the follow-back read ended incomplete; the next sweep waits its interval',
+      { outcome: result.outcome ?? null, deferred: result.deferred ?? null });
+    ctx.sweepCadence.markRun(clock.now());
+    await ctx.pacingSleep();
     return 'idle';
   }
   reentry?.noteReconciled({ outcome: 'complete' }, clock.now());
