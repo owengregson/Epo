@@ -87,4 +87,13 @@ export const MOTION = {
   wheelCorrectionPauseMs: [120, 300],
   wheelCorrectionMaxTicks: 3,
   wheelCorrectionFraction: [0.3, 0.7],
+  /** The beat between the cursor arriving on a control and the press. */
+  prePressMs: [30, 120],
+  /** Chance per wheel tick that a free-resting cursor shifts slightly. */
+  driftProbability: 0.15,
+  /** How far that shift reaches, in px each way. */
+  driftPx: 3,
+  /** The cursor's starting point before any gesture knows the viewport (absolute px). */
+  initialCursorXPx: [180, 720],
+  initialCursorYPx: [160, 560],
 } as const;
