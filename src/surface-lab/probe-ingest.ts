@@ -57,6 +57,7 @@ function variablesOf(ex: Exchange): unknown {
   try {
     return JSON.parse(raw) as unknown;
   } catch {
+    // Variables the recorder could not keep as JSON carry nothing to harvest or to facet on.
     return undefined;
   }
 }
@@ -148,7 +149,9 @@ export function ingestProbeRuns(opts: { source: string; outDir: string; repoRoot
       const source = SOURCE_OF[kind];
       const replay = endpoint === undefined ? null : readResponse(endpoint, scrubbed, { at: REPLAY_AT, source });
       if (replay === null || !replay.ok) {
-        throw new Error(`probe-ingest: a scrubbed ${kind} body no longer parses (${replay === null || replay.ok ? "" : replay.issues.map((i) => `${i.path}: ${i.message}`).join("; ")}) — the scrubber changed a load-bearing field`);
+        // Issue paths and zod messages name schema paths and types only, never a value.
+        const issues = replay === null ? 'no endpoint' : replay.issues.map((i) => `${i.path}: ${i.message}`).join('; ');
+        throw new Error(`probe-ingest: a scrubbed ${kind} body no longer parses (${issues}); the scrubber changed a load-bearing field`);
       }
       const file = corpusFile(kind, index + 1, 'json');
       writeFileSync(join(bodiesOut, file), text);

@@ -57,6 +57,7 @@ function detailOf(row: DriftRowView): Record<string, unknown> {
     const parsed = JSON.parse(row.detail) as unknown;
     return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
+    // A corrupt detail names no family and no role: it can neither count a server-error streak nor a source page.
     return {};
   }
 }
