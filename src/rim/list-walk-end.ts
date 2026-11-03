@@ -1,83 +1,54 @@
 /**
- * The list walk's end-claim decision, pure: whether a parsed page verifies a
- * probed end, claims an end to probe, continues, or ends a stagnant run.
+ * The list walk's decision table (spec §10.4), pure: what the walk does after one parsed page.
+ * An end is complete only on a verified probe or, in an opaque cursor space, on the server's own
+ * false flags with no veto — never on a second synthesized offset.
  */
 
-/** What one parsed page says about the list's continuation. */
-export interface WalkPage {
-  readonly hasMore: boolean;
-  readonly cursor: string | null;
-  /** Rows on this page the walk had not observed before. */
-  readonly newRows: number;
+import type { Continuation } from '@/surface/schema/projection';
+
+/** The cursor form the walk has seen (sticky: any opaque cursor makes the space opaque), and whether this page is a probe. */
+export interface WalkCursorState {
+  readonly lastForm: 'none' | 'offset' | 'opaque';
+  readonly probing: boolean;
 }
 
-/** The end-claim state the walk carries between pages. */
-export interface WalkEndState {
-  /** True while this page is the one-past-the-end verification read. */
-  readonly probing: boolean;
-  /** Consecutive earlier pages that added nothing new. */
-  readonly stagnantPages: number;
-}
+/** Why a walk stopped short of an end (every stop is reported as `shape-mismatch` plus this detail). */
+export type StopDetail = 'more-without-cursor' | 'incomplete-stream' | 'cursor-veto' | 'no-continuation-evidence'
+  | 'end-claim-false' | 'rows-unreadable';
 
 export type StepDecision =
-  /** The probe page found nothing new past the claimed end: the end is verified. */
-  | { readonly act: 'complete' }
-  /** The page claims the end: read one page past it next. */
-  | {
-      readonly act: 'probe';
-      readonly cursor: string;
-      readonly stagnantPages: 0;
-      /** This page was a probe that carried new rows: the earlier end claim was false. */
-      readonly claimWasFalse: boolean;
-    }
-  | {
-      readonly act: 'continue';
-      readonly cursor: string;
-      readonly stagnantPages: number;
-      readonly claimWasFalse: boolean;
-    }
-  /** Consecutive pages without a new row reached the threshold. */
-  | {
-      readonly act: 'stop';
-      readonly reason: 'stagnant';
-      readonly cursor: string;
-      readonly stagnantPages: number;
-      readonly claimWasFalse: false;
-    };
+  | { readonly act: 'continue'; readonly cursor: string; readonly form: 'offset' | 'opaque' }
+  /** Read one page past the claimed end, at the synthesized offset; `plainForm` drops the fixed order. */
+  | { readonly act: 'probe'; readonly cursor: string; readonly plainForm: boolean }
+  | { readonly act: 'complete'; readonly endEvidence: 'probe' | 'server-flags' }
+  | { readonly act: 'stop'; readonly reason: 'shape-mismatch'; readonly detail: StopDetail };
 
-/** Decide what the walk does after a parsed page; `probeCursor` builds the past-the-end offset. */
+const stop = (detail: StopDetail): StepDecision => ({ act: 'stop', reason: 'shape-mismatch', detail });
+
+/** The form after a cursor: an opaque cursor makes the space opaque for the rest of the walk. */
+export function nextForm(lastForm: WalkCursorState['lastForm'], form: 'offset' | 'opaque'): WalkCursorState['lastForm'] {
+  return lastForm === 'opaque' || form === 'opaque' ? 'opaque' : 'offset';
+}
+
+/** Decide after a parsed page; `probeCursor` builds the past-the-end offset for `rowsFetched` rows. */
 export function decideStep(
-  page: WalkPage,
-  state: WalkEndState,
+  page: { readonly continuation: Continuation; readonly newRows: number },
+  state: WalkCursorState,
+  form: 'paged' | 'whole-list',
   rowsFetched: number,
   probeCursor: (rows: number) => string,
-  stagnantStop: number,
 ): StepDecision {
-  // A pending end claim resolves on THIS page (the past-the-end probe):
-  // nothing new past the claimed end = the end is verified; anything new
-  // means the claim was FALSE and the walk carries on from here.
-  if (state.probing && page.newRows === 0) return { act: 'complete' };
-  const claimWasFalse = state.probing;
-
-  if (!page.hasMore || page.cursor === null) {
-    // The API claims the list is done. VERIFY before believing it: request
-    // one page past the end — via the leftover cursor when one was handed
-    // back, else the surface's synthesized offset probe.
-    return {
-      act: 'probe',
-      cursor: page.cursor ?? probeCursor(rowsFetched),
-      stagnantPages: 0,
-      claimWasFalse,
-    };
+  const c = page.continuation;
+  if (c.kind === 'drift') return stop(c.reason);
+  if (state.probing) {
+    if (page.newRows === 0) return { act: 'complete', endEvidence: 'probe' };
+    // New rows past a claimed end: follow the server's own cursor, or stop — never guess again.
+    return form === 'paged' && c.kind === 'next' ? { act: 'continue', cursor: c.cursor, form: c.form } : stop('end-claim-false');
   }
-  // Duplicate-window pages (IG shifts windows on a live list) are
-  // tolerated a few in a row; a persistent circle still terminates.
-  if (page.newRows !== 0) {
-    return { act: 'continue', cursor: page.cursor, stagnantPages: 0, claimWasFalse };
-  }
-  const stagnantPages = state.stagnantPages + 1;
-  if (stagnantPages >= stagnantStop) {
-    return { act: 'stop', reason: 'stagnant', cursor: page.cursor, stagnantPages, claimWasFalse: false };
-  }
-  return { act: 'continue', cursor: page.cursor, stagnantPages, claimWasFalse };
+  if (form === 'whole-list') return { act: 'probe', cursor: probeCursor(rowsFetched), plainForm: true };
+  if (c.kind === 'next') return { act: 'continue', cursor: c.cursor, form: c.form };
+  if (state.lastForm !== 'opaque') return { act: 'probe', cursor: probeCursor(rowsFetched), plainForm: false };
+  // An offset probe cannot verify an opaque space: the server's false flags decide, unless vetoed.
+  if (c.evidence === 'no-flags') return stop('no-continuation-evidence');
+  return c.vetoKey === undefined ? { act: 'complete', endEvidence: 'server-flags' } : stop('cursor-veto');
 }

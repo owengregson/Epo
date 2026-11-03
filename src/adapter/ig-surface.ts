@@ -26,10 +26,15 @@ import type {
   FollowersListResult,
   FriendshipShowResult,
   Observation,
+  ProfileViewer,
   ShowManyEntry,
   StaleComponent,
 } from '@/adapter/surface-types';
+import type { ObservedRequest, RouteMatch } from '@/surface/read/route';
 import type { EndpointKind } from '@/surface/schema/endpoints';
+import type { ProfilePresence } from '@/surface/schema/projection';
+import type { TransportDecl } from '@/surface/transport/decode';
+import type { GraphqlDecl } from '@/surface/transport/graphql';
 
 // The envelope, mutation and result types live in sibling modules that import
 // nothing from here; re-exported so every consumer keeps one import site.
@@ -103,6 +108,11 @@ export interface IgSurface {
    * supplied and matches.
    */
   matchEndpoint(url: string, friendlyName?: string): EndpointKind | null;
+  /** Route an observed request (URL plus its recorded headers) through the one routing table. */
+  route(req: ObservedRequest): RouteMatch | null;
+  /** The transport and GraphQL envelope keys every body is decoded and classified with. */
+  transport: TransportDecl;
+  graphql: GraphqlDecl;
 
   /**
    * The GraphQL operation name a request carried, read off its (lower-cased)
@@ -129,18 +139,17 @@ export interface IgSurface {
     body: unknown,
     at: number,
     source?: 'followers-list' | 'following-list' | 'friend-requests',
+    final?: boolean | null,
   ): FollowersListResult | ShapeMismatch;
   /**
    * Parse a profile-info body into a profile observation. `null` when the user
    * is genuinely absent; `SHAPE_MISMATCH` when a user is present but unreadable.
    */
   extractProfileInfo(body: unknown, at: number): Observation | null | ShapeMismatch;
-  /** Whether the viewer already follows this profile; `null` when absent. */
-  extractProfileFollowedByViewer(body: unknown): boolean | null;
-  /** Whether the viewer has a PENDING follow request to this profile; `null` when absent. */
-  extractProfileRequestedByViewer(body: unknown): boolean | null;
-  /** Whether this profile follows the viewer (`followed_by`); `null` when absent. */
-  extractProfileFollowsViewer(body: unknown): boolean | null;
+  /** The viewer-side flags of a profile body, each read by presence (`null` when absent). */
+  extractProfileViewer(body: unknown): ProfileViewer;
+  /** Which decision-bearing profile fields were read; `viewerPk` tells a null relationship's owner. */
+  extractProfilePresence(body: unknown, viewerPk: string | null): ProfilePresence | null;
   /** Parse the batched relationship map. `SHAPE_MISMATCH` on unexpected shape. */
   extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch;
   /**
@@ -155,6 +164,8 @@ export interface IgSurface {
    * recent follows).
    */
   extractActivityFeed(body: unknown): FollowEvent[] | ShapeMismatch;
+  /** The feed body's side list of pending requesters, row by row, at its declared place only. */
+  extractFeedPendingPreview(body: unknown, at: number): Observation[];
 
   // --- Mutations (the action button's own requests) ------------------------
   /**
@@ -163,6 +174,8 @@ export interface IgSurface {
    * friendly-name header. `null` for reads and everything else.
    */
   matchMutation(req: MutationRequest): MutationMatch | null;
+  /** An unrecognised relationship-family mutation: it may reveal a wall, never a success. */
+  mutationCandidate(req: MutationRequest): boolean;
   /** The server's verdict from a mutation body; `SHAPE_MISMATCH` when unreadable. */
   extractMutationVerdict(body: unknown, kind?: MutationKind): MutationVerdict | ShapeMismatch;
   /**
@@ -182,14 +195,17 @@ export interface IgSurface {
    * `maxId` is the previous page's resume cursor (`null` for the first page);
    * the body parses with {@link extractFollowersList}.
    */
-  listPageScript(pk: string, which: 'followers' | 'following', maxId: string | null, endProbe?: boolean): string;
+  listPageScript(pk: string, which: 'followers' | 'following', maxId: string | null, endProbe?: boolean, abortMs?: number): string;
   /**
-   * A synthesized cursor pointing just PAST `rowsFetched` rows — used to probe
-   * one page beyond a claimed end-of-list so the end is VERIFIED, not trusted.
-   * Must be safe when cursor semantics drift: a bogus value should make IG
-   * return already-seen rows (a confirmation), never new phantom data.
+   * A synthesized cursor pointing just PAST `rowsFetched` rows — used to probe one page beyond
+   * a claimed end-of-list in an OFFSET cursor space. An opaque space is never probed this way
+   * (an offset there only returns the head; spec §10.4).
    */
   listEndProbeCursor(rowsFetched: number): string;
+  /** How each list is requested: page by page, or the whole list in one response. */
+  listForm(which: 'followers' | 'following'): 'paged' | 'whole-list';
+  /** A list cursor's form: a row offset, or opaque. */
+  listCursorForm(cursor: string): 'offset' | 'opaque';
 
   // --- In-page non-fetch probes -------------------------------------------
   /** Read the page's visible body text (Sentinel's block-text backstop). */

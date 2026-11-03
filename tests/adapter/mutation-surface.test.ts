@@ -151,13 +151,13 @@ describe('SURFACE.extractMutationVerdict — the server’s verdict in the body'
     expect((v as MutationVerdict).feedbackText).toMatch(/restrict certain activity/);
   });
 
-  test('a GraphQL mutation body: errors → fail, data → ok (nested verdicts honoured)', () => {
+  test('a GraphQL mutation body: errors → error, data → ok (nested verdicts honoured)', () => {
     expect(
       SURFACE.extractMutationVerdict({
         errors: [{ message: 'rate limit exceeded', severity: 'ERROR' }],
         data: null,
       }),
-    ).toMatchObject({ verdict: 'fail', message: 'rate limit exceeded' });
+    ).toMatchObject({ verdict: 'error', message: 'rate limit exceeded' });
     expect(
       SURFACE.extractMutationVerdict({
         data: { xdt_create_friendship: { friendship_status: { following: true } } },
@@ -197,7 +197,7 @@ describe('SURFACE.extractMutationVerdict — the server’s verdict in the body'
         errors: [{ message: 'feedback_required', severity: 'CRITICAL' }],
         status: 'ok',
       }),
-    ).toMatchObject({ verdict: 'fail', message: 'feedback_required' });
+    ).toMatchObject({ verdict: 'error', message: 'feedback_required' });
   });
 
   test('a GraphQL envelope with nothing readable in it is SHAPE_MISMATCH, not a success', () => {
@@ -221,7 +221,9 @@ describe('SURFACE.extractMutationVerdict — the server’s verdict in the body'
     expect(
       SURFACE.extractMutationVerdict(left({ following: false, outgoing_request: true }), 'unfollow'),
     ).toBe(SHAPE_MISMATCH);
-    expect(SURFACE.extractMutationVerdict(left({ following: false }), 'unfollow')).toMatchObject({
+    // `not-following` needs both keys: a missing `outgoing_request` is unknown, never ok.
+    expect(SURFACE.extractMutationVerdict(left({ following: false }), 'unfollow')).toBe(SHAPE_MISMATCH);
+    expect(SURFACE.extractMutationVerdict(left({ following: false, outgoing_request: false }), 'unfollow')).toMatchObject({
       verdict: 'ok',
     });
     expect(SURFACE.extractMutationVerdict(left({ following: true }), 'follow')).toMatchObject({

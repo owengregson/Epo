@@ -86,3 +86,12 @@ in the same commit that rewrites them.
 - **Make the Actor return the Verdict now.** It would change
   `ChurnActionOutcome` in the same wave that introduces the algebra, with the engine
   tests as the only net. Sequenced deliberately.
+
+## Amendment — 2026-11-02: a mutation's `errors[]` is evidence (ADR 0806, spec §10.5)
+
+A GraphQL `errors[]` mutation body is a new `error` verdict whose text joins every entry's `message`, `summary`
+and `description`. With a refusal signature (or a 429/5xx/401/403) it is a wall; without one it is `drift-suspect`,
+so the screen and the block probe pick its class, and through the arbiter and the confirm flow it always ends as a
+refusal toward the recovery ladder: never "unverified", never a burned record. `not-following` is read only when
+both relationship keys are present and false. An unrecognised relationship-family mutation POST is kept as a
+candidate and read only at the deadline, where it can reveal a wall and never a success.

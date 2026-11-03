@@ -14,12 +14,15 @@ import type {
   MutationVerdict,
 } from '@/adapter/mutation-types';
 import { isRecord, SHAPE_MISMATCH, type ShapeMismatch } from '@/adapter/parse-helpers';
+import { graphqlErrorText } from '@/surface/transport/graphql';
 import {
   GRAPHQL_FRIENDLY_NAME_HEADER,
   GRAPHQL_MUTATION_NAME,
+  MUTATION_CANDIDATE_FAMILY,
   MUTATION_JSON,
 } from '@/surface/versions/2026-08-12/literals';
 import { SURFACE_DOC_2026_08_12 as DOC } from '@/surface/versions/2026-08-12/surface';
+import { GRAPHQL } from '@/surface/versions/2026-08-12/transport-decl';
 
 export function matchMutation(req: MutationRequest): MutationMatch | null {
   if (req.method !== undefined && req.method.toUpperCase() !== 'POST') return null;
@@ -57,13 +60,27 @@ function readMutationRecord(rec: Record<string, unknown>): MutationVerdict | nul
   };
 }
 
-/** The relationship a GraphQL mutation child's `friendship_status` reports; `null` when unreadable. */
+/**
+ * The relationship a GraphQL mutation child's `friendship_status` reports, read by presence:
+ * `not-following` needs both keys present and false (a renamed key is unknown); `null` when unreadable.
+ */
 function readFriendshipResult(child: Record<string, unknown>): string | null {
   const fs = child[MUTATION_JSON.friendshipStatus];
   if (!isRecord(fs)) return null;
   if (fs[MUTATION_JSON.following] === true) return 'following';
   if (fs[MUTATION_JSON.outgoingRequest] === true) return 'requested';
-  return fs[MUTATION_JSON.following] === false ? 'not-following' : null;
+  const bothFalse = fs[MUTATION_JSON.following] === false && fs[MUTATION_JSON.outgoingRequest] === false;
+  return bothFalse ? 'not-following' : null;
+}
+
+/**
+ * An unrecognised relationship-family mutation POST seen while armed: a candidate that may only
+ * ever reveal a wall at the deadline, never a success (spec §10.5).
+ */
+export function mutationCandidate(req: MutationRequest): boolean {
+  const name = req.requestHeaders?.[GRAPHQL_FRIENDLY_NAME_HEADER];
+  return (req.method === undefined || req.method.toUpperCase() === 'POST') && typeof name === 'string'
+    && GRAPHQL_MUTATION_NAME.test(name) && MUTATION_CANDIDATE_FAMILY.test(name) && matchMutation(req) === null;
 }
 
 /** Does the relationship an ok envelope reports CONTRADICT the op that was pressed? */
@@ -82,19 +99,11 @@ export function extractMutationVerdict(
   if (!isRecord(body)) return SHAPE_MISMATCH;
   const direct = readMutationRecord(body);
   if (direct?.verdict === 'fail') return direct;
-  // GraphQL `errors` outrank the envelope's own top-level `status: "ok"`, which
-  // describes the exchange, not the mutation.
+  // GraphQL `errors` outrank the envelope's own top-level `status: "ok"`, which describes the
+  // exchange, not the mutation. Every entry's text keys are read (throttle text hides in `summary`).
   const errors = body[MUTATION_JSON.errors];
   if (Array.isArray(errors) && errors.length > 0) {
-    const first: unknown = errors[0];
-    const message = isRecord(first) ? first[MUTATION_JSON.message] : null;
-    return {
-      verdict: 'fail',
-      result: null,
-      message: typeof message === 'string' ? message : null,
-      feedbackText: null,
-      spam: false,
-    };
+    return { verdict: 'error', result: null, message: graphqlErrorText(body, GRAPHQL), feedbackText: null, spam: false };
   }
   const data = body[MUTATION_JSON.data];
   if (data === undefined) return direct ?? SHAPE_MISMATCH;

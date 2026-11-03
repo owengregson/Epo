@@ -18,6 +18,11 @@ import {
   shadowRead,
   warnUnexpected,
 } from '@/adapter/reader-shadow';
+import type { ObservedRelation } from '@/shared/observed-relation';
+import { mintObserved } from '@/surface/read/relationship';
+
+/** A read the legacy extractors parsed: the declared container and keys, never partial. */
+const LEGACY_READ = { tier: 'canonical', partial: false } as const;
 
 /** The Reader members the relationship routing reads through. */
 export interface RelationshipReader {
@@ -89,16 +94,11 @@ export function relationshipBearing(
 }
 
 /**
- * Relationship facts (whether WE own a follow/pending-request toward each pk)
- * from a response body, routed by endpoint. Pure; used by the
- * RelationshipReconciler to heal divergence caused by external follow/
- * unfollow changes. `[]` on any endpoint that carries no viewer-side
- * relationship (or on no-match).
- *
- * `weFollow` is `following || outgoingRequest`: a pending request to a
- * private account is OUR relationship — reporting it as "not following"
- * would make the reconciler destroy the follow record while the request
- * awaits acceptance.
+ * Relationship facts (whether WE own a follow/pending-request toward each pk) from a response
+ * body, routed by endpoint, for the RelationshipReconciler. Each flag is read by presence and
+ * the fact is minted only when `weFollow` is known: `following || outgoingRequest` is TRUE when
+ * either key says so, FALSE only when both keys are present and false (spec §10.4). A pending
+ * request to a private account is OUR relationship. `[]` on endpoints without a viewer side.
  */
 export function relationshipFacts(
   reader: RelationshipReader,
@@ -106,26 +106,21 @@ export function relationshipFacts(
   body: unknown,
   at: number,
   friendlyName?: string,
-): Array<{ pk: string; weFollow: boolean }> {
+): ObservedRelation[] {
   switch (reader.matchEndpoint(url, friendlyName)) {
     case 'show-many':
-      return reader.parseShowMany(body, at).map((e) => ({
-        pk: e.pk,
-        weFollow: e.following || e.outgoingRequest,
-      }));
+      return mintObserved(LEGACY_READ, reader.parseShowMany(body, at).map((e) => ({ ...e, followedBy: null })));
     case 'friendship-show': {
       const pk = reader.extractPkFromUrl(url);
-      if (pk === null) return [];
-      const r = reader.parseFriendshipShow(body, at, pk);
-      if (r === null) return []; // unparsed ≠ "no relationship"
-      return [{ pk, weFollow: r.following || r.outgoingRequest }];
+      const r = pk === null ? null : reader.parseFriendshipShow(body, at, pk);
+      return r === null ? [] : mintObserved(LEGACY_READ, [r]); // unparsed ≠ "no relationship"
     }
     case 'profile-graphql': {
       const obs = reader.parseProfileInfo(body, at, 'profile-graphql');
-      const viewer = reader.profileViewer(body, 'profile-graphql');
-      // Emit only when BOTH the pk and the viewer-side flag are present.
-      if (obs === null || viewer.following === null) return [];
-      return [{ pk: obs.accountPk, weFollow: viewer.following || viewer.requested === true }];
+      if (obs === null) return [];
+      const v = reader.profileViewer(body, 'profile-graphql');
+      return mintObserved(LEGACY_READ, [{ pk: obs.accountPk, following: v.following, outgoingRequest: v.requested,
+        followedBy: v.followsUs, incomingRequest: v.incomingRequest ?? null }]);
     }
     default:
       return [];

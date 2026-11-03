@@ -8,18 +8,34 @@
 
 import type { ProfileViewer } from '@/adapter/ig-surface';
 import type { Observation } from '@/store/types';
+import type { ProfilePresence, Tier } from '@/surface/schema/projection';
 
 /** One profile as the page's own client read it. */
 export interface ProfileSeen {
   obs: Observation;
   /** Who follows whom, from the body's `friendship_status` (`null` flags when absent). */
   viewer: ProfileViewer;
+  /** Which decision-bearing fields the body carried (absent on hand-built test values). */
+  presence?: ProfilePresence;
+  /** How the read was located, and whether it was complete. */
+  tier?: Tier;
+  partial?: boolean;
 }
+
+/** Whether the read behind a seen profile carried no valid count pair (I5); `false` when its presence is unknown. */
+export const countsUnread = (seen: Pick<ProfileSeen, 'presence'>): boolean =>
+  seen.presence !== undefined && seen.presence.counts !== 'read';
 
 /** A profile visit's typed outcome (see `profile-visit.ts` for each kind). */
 export type ProfileVisit =
   | ({ ok: true } & ProfileSeen)
-  | { ok: false; kind: 'gone' | 'walled' | 'unanswered' | 'tab'; detail: Record<string, unknown> };
+  | {
+      ok: false;
+      kind: 'gone' | 'walled' | 'unanswered' | 'tab';
+      detail: Record<string, unknown>;
+      /** What proved `gone`: Instagram's own empty profile body, or only the page's text. */
+      evidence?: 'profile-absent' | 'page-text';
+    };
 
 /** Reads a profile by VISITING it — composes no request. */
 export interface ProfileVisitor {

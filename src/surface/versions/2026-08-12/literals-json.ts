@@ -25,6 +25,13 @@ export const MUTATION_JSON = {
 // ---------------------------------------------------------------------------
 
 export const JSON_PATHS = {
+  /** The viewer-side relationship keys every relationship record carries (read by presence). */
+  relationship: {
+    following: 'following',
+    outgoingRequest: 'outgoing_request',
+    followedBy: 'followed_by',
+    incomingRequest: 'incoming_request',
+  },
   followersList: {
     users: 'users',
     userPk: 'pk',
@@ -62,12 +69,12 @@ export const JSON_PATHS = {
      * `/users/<pk>/info/` omits it, so a caller that needs it reads
      * `friendships/show/<pk>/` (which is unaffected by the retirement).
      */
-    followedByViewer: 'friendship_status.following',
-    requestedByViewer: 'friendship_status.outgoing_request',
-    followsViewer: 'friendship_status.followed_by',
+    friendshipStatus: 'friendship_status',
   },
   /** The GraphQL feed nests the REST inbox body (stories unchanged) here. */
   activityFeedGraphql: 'data.xdt_activity_inbox',
+  /** The feed's side list of pending requesters (a few rows; never the complete set). */
+  activityFeedPendingPreview: 'data.xdt_api__v1__friendships__pending.users',
   /** The GraphQL follow-requests panel: a connection of the list endpoints' user rows. */
   followRequestsGraphql: {
     edges: 'data.xdt_friendships_pending_users.users.edges',
@@ -80,17 +87,14 @@ export const JSON_PATHS = {
     info: 'user',
     graphql: 'data.user',
   },
+  /** `friendships/show/<pk>/`: the relationship keys at the root, plus the privacy flag. */
   friendshipShow: {
-    following: 'following',
-    followedBy: 'followed_by',
     isPrivate: 'is_private',
-    outgoingRequest: 'outgoing_request',
   },
+  /** `friendships/show_many/`: one relationship record per pk under `statuses`. */
   showMany: {
     statuses: 'friendship_statuses',
-    following: 'following',
     isPrivate: 'is_private',
-    outgoingRequest: 'outgoing_request',
   },
   activityFeed: {
     storySections: ['new_stories', 'old_stories'] as readonly string[],

@@ -54,10 +54,6 @@
       "lines": 410
     },
     {
-      "file": "src/rim/list-page-walker.ts",
-      "lines": 400
-    },
-    {
       "file": "src/main/services/graph-builder.ts",
       "lines": 367
     },
@@ -83,6 +79,10 @@
     },
     {
       "file": "src/kernel/policy.ts",
+      "lines": 331
+    },
+    {
+      "file": "src/rim/list-page-walker.ts",
       "lines": 331
     },
     {
