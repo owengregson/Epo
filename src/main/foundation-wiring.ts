@@ -1017,9 +1017,7 @@ export class Foundation {
     const token = this.runtime.beginWake();
     try {
       const restart = this.runtime.snapshot().desired === 'running';
-      logger.warn('foundation: system resumed — running wake sequence', {
-        restartEngine: restart,
-      });
+      logger.warn('foundation: system resumed — running wake sequence', { restartEngine: restart });
       const settleMs = opts.settleMsOverride ?? sample(referenceTempoSource().policy('pause.wake-settle'));
       await sleep(settleMs, this.disposeAbort.signal);
       if (this.disposing || this.runtime.snapshot().phase === 'suspended') return;
@@ -1059,6 +1057,7 @@ export class Foundation {
       }
 
       this.runtime.finishWake(token);
+      this.graph?.plan.resumed();
       if (
         restart &&
         this.runtime.wantsRun(token) &&

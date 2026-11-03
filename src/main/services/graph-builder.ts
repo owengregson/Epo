@@ -71,7 +71,7 @@ export function buildGraph(
   // from a single registry.
   const delays = new DelayManager({ clock });
   const { settings, driverSignal } = d;
-  const plan = wirePlan(store, clock, ownPk, d);
+  const plan = wirePlan(store, clock, ownPk, delays, d);
   const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
 
   // Interactor: every Actor click/scroll becomes native input events

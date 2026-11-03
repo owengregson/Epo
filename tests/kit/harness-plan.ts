@@ -14,6 +14,9 @@ import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
 import type { SettingsCapabilities } from '@/shared/settings-view';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import { DelayManager } from '@/timing/delay-manager';
+import { ScheduleManager } from '@/timing/schedule-manager';
+import { openTestStore } from './store';
 
 /**
  * The in-memory follow-back cadence: starts due (a fresh Engine's first
@@ -86,9 +89,10 @@ export function fakePlanHost(settings: Settings = DEFAULT_SETTINGS): FakePlanHos
   return host;
 }
 
-/** The plan wiring over a real store, as the graph builds it. */
-export function storePlanWiring(store: KnowledgeStore, clock: PlanClock, host: FakePlanHost = fakePlanHost()): PlanWiring {
-  return wirePlan(store, clock, 'ME', { plan: host, settings: host.settingsNow });
+/** The plan wiring over a real store, as the graph builds it (the edge timer on `scheduler`). */
+export function storePlanWiring(store: KnowledgeStore, clock: PlanClock, host: FakePlanHost = fakePlanHost(),
+  scheduler: ScheduleManager = new ScheduleManager(), delays: DelayManager = new DelayManager({ clock })): PlanWiring {
+  return wirePlan(store, clock, 'ME', delays, { plan: host, settings: host.settingsNow, scheduler });
 }
 
 /** The plan service over a real store and the given v1 settings, the way the plan wiring builds it. */
@@ -103,4 +107,20 @@ export function busyDay(plan: PlanService, from: number, sessions = 3): PlanView
     if (v.plan.sessions.filter((s) => s.budget > 0).length >= sessions) return v;
   }
   throw new Error('no busy plan-day in four weeks');
+}
+
+/** The install entropy every plan integration store pins, so separate stores draw the same plans. */
+export const PLAN_TEST_RNG = (): number => 0.375;
+
+/** The busy plan-day's ideal plan for a store pinned to {@link PLAN_TEST_RNG}, read from a scratch store. */
+export function idealDay(from: number, sessions = 3): PlanView {
+  const scratch = openTestStore(':memory:', { rng: PLAN_TEST_RNG });
+  // Built two days earlier, so every day scanned is drawn whole (none is the build's own day).
+  const plan = storePlanWiring(scratch, planClock(from - MS_PER_DAY - MS_PER_DAY));
+  try {
+    return busyDay(plan.service, from, sessions);
+  } finally {
+    plan.dispose();
+    scratch.close();
+  }
 }

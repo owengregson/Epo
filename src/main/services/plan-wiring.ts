@@ -5,11 +5,13 @@
  * reference tempo stays in force (the plan's tempo is swapped in with the cadence switch).
  */
 
+import type { EngineWaitKey } from '@/engine/engine-waits';
 import type { Clock, SystemClock } from '@/governors/clock';
 import { projectBoost } from '@/governors/plan-boost';
 import { projectPlan } from '@/governors/plan-projection';
 import { PlanService } from '@/governors/plan-service';
 import { ReadBudget } from '@/governors/read-budget';
+import { PlanControl } from '@/main/modules/plan-control';
 import { patternCircadianProfile } from '@/settings/pattern-map';
 import { toPlanIntent } from '@/settings/plan-intent';
 import { toReadAllowance } from '@/settings/read-allowance';
@@ -18,6 +20,7 @@ import { NEVER_PAUSED } from '@/shared/surface-gate';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { samplePhaseOffset } from '@/timing/circadian';
 import { CIRCADIAN } from '@/timing/config';
+import type { DelayManager } from '@/timing/delay-manager';
 import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
 import { launchStream } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
@@ -63,12 +66,16 @@ export interface PlanWiring extends GraphPlan {
   readonly pacing: SessionPlanner | undefined;
 }
 
-/** The plan service over the store and the live settings, and the one plan-day boundary it backs. */
-export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string,
-  d: Pick<GraphBuildDeps, 'plan' | 'settings'>): PlanWiring {
+/** The loop's waits a re-plan can move: the plan's own parks. */
+const PLAN_PARKS: readonly EngineWaitKey[] = ['engine:session-park', 'engine:daily-ceiling-park'];
+
+/** The plan service over the store and the live settings, the one plan-day boundary it backs, and its triggers. */
+export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, delays: DelayManager,
+  d: Pick<GraphBuildDeps, 'plan' | 'settings' | 'scheduler'>): PlanWiring {
   const host = d.plan;
   const effective = () => host.settings.effective();
   const installEntropy = store.installEntropy();
+  let control: PlanControl | null = null;
   const service = new PlanService({
     store,
     clock,
@@ -85,14 +92,28 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string,
     runIntent: () => host.runIntent(),
     unconfirmed: () => null,
     surfaceGate: NEVER_PAUSED,
+    onChanged: () => control?.changed(),
   }, { log: logger });
+  control = new PlanControl({
+    plan: service, scheduler: d.scheduler, settings: host.settings, clock,
+    pushStatus: () => host.pushStatus(),
+    wake: () => {
+      for (const key of PLAN_PARKS) delays.cancel(key);
+    },
+  });
+  const triggers = control;
   host.settings.setPlanPort(service);
   host.settings.setCapabilities({ plan: true });
+  triggers.start();
   return {
     service,
     dayClock: service.planDayClock(),
     pacing: wirePacing(store, d.settings),
+    resumed: () => triggers.resumed(),
+    demandChanged: () => triggers.demandChanged(),
+    boostActive: () => service.view(clock.now()).boost !== null,
     dispose: () => {
+      triggers.dispose();
       host.settings.setPlanPort(null);
       host.settings.setCapabilities({ plan: false });
     },

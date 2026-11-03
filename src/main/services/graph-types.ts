@@ -52,7 +52,13 @@ export interface WiringParts {
 export interface GraphPlan {
   readonly service: PlanService;
   readonly dayClock: PlanDayClock;
-  /** Withdraw what the graph registered with the settings (the graph is closing). */
+  /** The machine woke: the plan and its next edge are re-read from the wall clock. */
+  resumed(): void;
+  /** A census completed: the remainder re-plans its demand. */
+  demandChanged(): void;
+  /** True while a Boost window is open (a prune waits for it). */
+  boostActive(): boolean;
+  /** Stop the plan's triggers and withdraw what the graph registered (the graph is closing). */
   dispose(): void;
 }
 

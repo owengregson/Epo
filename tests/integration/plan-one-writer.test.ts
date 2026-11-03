@@ -9,26 +9,44 @@ import * as path from 'node:path';
 import type { PlanView } from '@/governors/plan-types';
 import { ReadBudget } from '@/governors/read-budget';
 import { MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
+import type { PlanWiring } from '@/main/services/plan-wiring';
 import { planWiringParts } from '@/main/services/plan-wiring';
 import { toReadAllowance } from '@/settings/read-allowance';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import { busyDay, fakePlanHost, planClock, storePlan, storePlanWiring } from '../kit/harness-plan';
+import { fakePlanHost, idealDay, PLAN_TEST_RNG, type PlanClock, planClock, storePlanWiring } from '../kit/harness-plan';
 import { openTestStore } from '../kit/store';
 
 const T0 = new Date(2026, 10, 9, 12).getTime();
 const dirs: string[] = [];
 const stores: KnowledgeStore[] = [];
+const wirings: PlanWiring[] = [];
 
-/** A store on disk (so a restart can reopen it), with a pinned install entropy. */
+/** A store on disk (so a restart can reopen it), with the pinned install entropy. */
 function diskStore(dir = mkdtempSync(path.join(tmpdir(), 'epo-plan-'))): { store: KnowledgeStore; dir: string } {
   if (!dirs.includes(dir)) dirs.push(dir);
-  const store = openTestStore(path.join(dir, 'epo.db'), { rng: () => 0.375 });
+  const store = openTestStore(path.join(dir, 'epo.db'), { rng: PLAN_TEST_RNG });
   stores.push(store);
   return { store, dir };
 }
 
+/** The graph's plan, built now: the build ensures the plan once. */
+function build(store: KnowledgeStore, clock: PlanClock): PlanWiring {
+  const plan = storePlanWiring(store, clock);
+  wirings.push(plan);
+  return plan;
+}
+
+/** Close one process: its plan's triggers stop and its store closes. */
+function close(plan: PlanWiring, store: KnowledgeStore): void {
+  plan.dispose();
+  wirings.splice(wirings.indexOf(plan), 1);
+  store.close();
+  stores.splice(stores.indexOf(store), 1);
+}
+
 afterEach(() => {
+  while (wirings.length > 0) wirings.pop()?.dispose();
   while (stores.length > 0) stores.pop()?.close();
 });
 afterAll(() => {
@@ -38,27 +56,21 @@ afterAll(() => {
 const kept = (v: PlanView) => v.plan.sessions.filter((s) => s.budget > 0);
 
 describe('I4 — status reads never write plan_state', () => {
-  test('before the first ensure nothing is written; after it N composed reads leave plan_state byte-identical', () => {
+  test('the build writes the plan once; N composed status reads leave plan_state byte-identical', () => {
+    const day = idealDay(T0);
     const { store } = diskStore();
-    const clock = planClock(T0);
+    const clock = planClock(kept(day)[0].startAt);
     const host = fakePlanHost();
     const plan = storePlanWiring(store, clock, host);
-    const reads = new ReadBudget({ store, clock, limits: () => toReadAllowance(DEFAULT_SETTINGS) });
-    const contributors = planWiringParts(plan, reads, store, { plan: host }).statusContributors;
-    const statusAt = (t: number) => contributors.map((c) => c.contribute(null, t));
-    const day = busyDay(plan.service, T0);
-    for (let i = 0; i < 30; i += 1) statusAt(day.window.startsAt + i * 20 * MS_PER_MINUTE);
-    expect(store.getPlanState()).toBeNull();
-
-    const open = kept(day)[0].startAt;
-    clock.t = open;
-    plan.service.ensure(open);
+    wirings.push(plan);
     const raw = store.getPlanState();
     expect(raw).not.toBeNull();
+    const reads = new ReadBudget({ store, clock, limits: () => toReadAllowance(DEFAULT_SETTINGS) });
+    const contributors = planWiringParts(plan, reads, store, { plan: host }).statusContributors;
     const writes = jest.spyOn(store, 'setPlanState');
-    for (let t = open; t < day.window.endsAt; t += 7 * MS_PER_MINUTE) {
+    for (let t = clock.t; t < day.window.endsAt; t += 7 * MS_PER_MINUTE) {
       clock.t = t;
-      statusAt(t);
+      for (const c of contributors) c.contribute(null, t);
       plan.dayClock.window(t);
     }
     expect(writes).not.toHaveBeenCalled();
@@ -68,21 +80,20 @@ describe('I4 — status reads never write plan_state', () => {
 
 describe('I5 — a restart mid-session', () => {
   test('a new process finds the same plan, the same open session and the ledger usage, and writes nothing', () => {
+    const session = kept(idealDay(T0))[0];
     const { store, dir } = diskStore();
-    const clock = planClock(T0);
-    const day = busyDay(storePlan(store, clock), T0);
-    const session = kept(day)[0];
-    clock.t = session.startAt + MS_PER_MINUTE;
-    const before = storePlan(store, clock).ensure(clock.t);
+    const clock = planClock(session.startAt + MS_PER_MINUTE);
+    const first = build(store, clock);
+    const before = first.service.view(clock.t);
     store.recordAction('a1', 'follow', 'ok', clock.t);
     const raw = store.getPlanState();
-    store.close();
-    stores.splice(stores.indexOf(store), 1);
+    close(first, store);
 
     const reopened = diskStore(dir).store;
     clock.t += 2 * MS_PER_MINUTE;
-    const after = storePlan(reopened, clock).ensure(clock.t);
+    const after = build(reopened, clock).service.view(clock.t);
     expect(reopened.getPlanState()).toBe(raw);
+    expect(after.provisional).toBe(false);
     expect(after.plan.revision).toBe(before.plan.revision);
     expect(after.plan.seed).toBe(before.plan.seed);
     expect(after.open?.idx).toBe(before.open?.idx);
@@ -92,20 +103,20 @@ describe('I5 — a restart mid-session', () => {
 });
 
 describe('I8 — a six-hour close and a late first open', () => {
-  test('sessions missed while closed expire with no catch-up; the plan is not re-drawn', () => {
-    const { store } = diskStore();
-    const clock = planClock(T0);
-    const plan = storePlan(store, clock);
-    const day = busyDay(plan, T0);
-    const first = kept(day)[0];
-    clock.t = first.startAt;
-    const opened = plan.ensure(clock.t);
+  test('sessions missed while closed expire with no catch-up; the reopen does not re-draw the plan', () => {
+    const first = kept(idealDay(T0))[0];
+    const { store, dir } = diskStore();
+    const clock = planClock(first.startAt);
+    const plan = build(store, clock);
+    const opened = plan.service.view(clock.t);
     store.recordAction('a1', 'follow', 'ok', clock.t);
     const raw = store.getPlanState();
+    close(plan, store);
 
     clock.t += 6 * MS_PER_HOUR;
-    const back = plan.ensure(clock.t);
-    expect(store.getPlanState()).toBe(raw);
+    const reopened = diskStore(dir).store;
+    const back = build(reopened, clock).service.view(clock.t);
+    expect(reopened.getPlanState()).toBe(raw);
     expect(back.plan.revision).toBe(opened.plan.revision);
     back.plan.sessions.forEach((s, i) => {
       const windowEnd = back.plan.sessions[i + 1]?.startAt ?? back.plan.window.endsAt;
@@ -116,13 +127,10 @@ describe('I8 — a six-hour close and a late first open', () => {
   });
 
   test('a first open after a session ended prorates it to nothing; planned volume keeps only the rest', () => {
+    const ideal = idealDay(T0);
     const { store } = diskStore();
-    const clock = planClock(T0);
-    const plan = storePlan(store, clock);
-    const ideal = busyDay(plan, T0);
-    const gone = kept(ideal)[0];
-    clock.t = gone.expectedEndAt + MS_PER_MINUTE;
-    const late = plan.ensure(clock.t);
+    const clock = planClock(kept(ideal)[0].expectedEndAt + MS_PER_MINUTE);
+    const late = build(store, clock).service.view(clock.t);
     const prorated = late.plan.sessions.filter((s) => s.before === 'first-open');
     expect(prorated.length).toBeGreaterThan(0);
     expect(prorated.every((s) => s.budget === 0)).toBe(true);

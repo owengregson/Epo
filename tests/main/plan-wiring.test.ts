@@ -8,7 +8,7 @@ import { FakeClock } from '@/governors/clock';
 import { ReadBudget } from '@/governors/read-budget';
 import { MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
 import { lastMutationBefore, planDemand } from '@/main/services/plan-demand';
-import { planWiringParts } from '@/main/services/plan-wiring';
+import { type PlanWiring, planWiringParts } from '@/main/services/plan-wiring';
 import { effectiveFromV1 } from '@/settings/effective';
 import { toReadAllowance } from '@/settings/read-allowance';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
@@ -18,12 +18,19 @@ import { openTestStore } from '../kit/store';
 
 const T0 = new Date(2026, 10, 9, 12).getTime();
 const stores: KnowledgeStore[] = [];
+const wirings: PlanWiring[] = [];
 const store = (): KnowledgeStore => {
   const s = openTestStore(':memory:', { rng: () => 0.375 });
   stores.push(s);
   return s;
 };
+const wire = (...args: Parameters<typeof storePlanWiring>): PlanWiring => {
+  const plan = storePlanWiring(...args);
+  wirings.push(plan);
+  return plan;
+};
 afterEach(() => {
+  while (wirings.length > 0) wirings.pop()?.dispose();
   while (stores.length > 0) stores.pop()?.close();
 });
 
@@ -31,9 +38,12 @@ const reads = (s: KnowledgeStore, clock: { now(): number }) =>
   new ReadBudget({ store: s, clock, limits: () => toReadAllowance(DEFAULT_SETTINGS) });
 
 describe('registration', () => {
-  test('the preview port and the plan capability are set at build and withdrawn when the graph closes', () => {
+  test('the build writes the plan once; the preview port and the plan capability come and go with the graph', () => {
     const host = fakePlanHost();
-    const plan = storePlanWiring(store(), planClock(T0), host);
+    const s = store();
+    const plan = wire(s, planClock(T0), host);
+    expect(s.getPlanState()).not.toBeNull();
+    expect(plan.service.view(T0).provisional).toBe(false);
     expect(host.port).toBe(plan.service);
     expect(host.capabilities.plan).toBe(true);
     plan.dispose();
@@ -42,7 +52,7 @@ describe('registration', () => {
   });
 
   test('the day clock is the plan service own boundary, not local midnight', () => {
-    const plan = storePlanWiring(store(), planClock(T0));
+    const plan = wire(store(), planClock(T0));
     const view = plan.service.view(T0);
     expect(plan.dayClock.window(T0)).toEqual(view.window);
     expect(plan.dayClock.dayKey(T0)).toBe(view.window.key);
@@ -55,26 +65,27 @@ describe('the contributors', () => {
     const s = store();
     const clock = planClock(T0);
     const host = fakePlanHost();
-    const plan = storePlanWiring(s, clock, host);
+    const plan = wire(s, clock, host);
     const budget = reads(s, clock);
     const day = busyDay(plan.service, T0);
     clock.t = day.window.startsAt + MS_PER_HOUR;
     budget.consume('profile', 'exploration', 2);
     budget.consume('notification', 'reconciliation', 1);
+    const raw = s.getPlanState();
     const [planC] = planWiringParts(plan, budget, s, { plan: host }).statusContributors;
     const fields = planC.contribute(null, clock.t);
     expect(fields.plan?.day.key).toBe(day.window.key);
     expect(fields.plan?.reads.profiles.done).toBe(2);
     expect(fields.plan?.reads.checks.done).toBe(1);
     expect(fields.plan?.totals.automaticMax).toBe(day.plan.ceilings.automaticMax);
-    expect(s.getPlanState()).toBeNull();
+    expect(s.getPlanState()).toBe(raw);
   });
 
   test('boost is off with no window, and paused while the window is open and Epo is stopped', () => {
     const s = store();
     const clock = planClock(T0);
     const host = fakePlanHost();
-    const plan = storePlanWiring(s, clock, host);
+    const plan = wire(s, clock, host);
     const [, boostC] = planWiringParts(plan, reads(s, clock), s, { plan: host }).statusContributors;
     expect(boostC.contribute(null, T0).boost?.state).toBe('off');
     plan.service.startBoost(2 * MS_PER_HOUR, T0);
@@ -87,7 +98,7 @@ describe('the store reads', () => {
   test('the demand counts due lifecycle work, today follows, the stock and recent accepts', () => {
     const s = store();
     const clock = new FakeClock(T0);
-    const plan = storePlanWiring(s, planClock(T0));
+    const plan = wire(s, planClock(T0));
     const window = plan.service.view(T0).window;
     const settings = effectiveFromV1(DEFAULT_SETTINGS);
     const wait = settings.maxWaitForFollowbackDays * MS_PER_DAY;
