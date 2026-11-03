@@ -6,3 +6,4 @@ export * from './circadian';
 export * from './policy';
 export * from './seed';
 export type * from './types';
+export * from './volume';
