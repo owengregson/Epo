@@ -86,7 +86,7 @@ export function createClickReview(d: ClickReviewDeps) {
     }
     const v = seen.viewer;
     // Step 7: they asked to follow you — the fresh flag (which also records the request) or an open request.
-    const asked = 'incomingRequest' in v && v.incomingRequest === true;
+    const asked = v.incomingRequest === true;
     if (asked) store.observeEdge(pk, ownPk, 'requests', true, now);
     if (asked || store.getEdge(pk, ownPk, 'requests')?.status === 'active') throw reviewed({ kind: 'request-pending' });
     if (v.following === false && v.requested === false) throw reviewed({ kind: 'already-gone' });
