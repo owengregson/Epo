@@ -1,10 +1,9 @@
 /**
  * The interactive intro tour — a coach-marks overlay across the whole window.
  * One spotlight ring cuts a hole in the dim over the current step's target
- * (found by its `data-tour` attribute) and one raised tip card narrates; steps
- * with no target render the card centered (welcome / finish). Each step drives
- * the REAL shell — switching the sidebar view and the stage — so the element
- * being described is actually on screen, live.
+ * (found by its `data-tour` token) and one raised tip card narrates; steps with
+ * no target render the card centered (welcome / finish). Each step shows its
+ * stage first, so the element being described is actually on screen, live.
  *
  * Interaction: Next/Back buttons, backdrop click = Next, ←/→ arrows, Esc =
  * dismiss. Every way out lands in `onClose`, which persists completion — the
@@ -12,18 +11,18 @@
  */
 import { type JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { ViewKey } from '@/renderer/hooks/useView';
 import { place } from '@/renderer/lib/anchor';
-import { TOUR_STEPS } from '@/renderer/tour/steps';
+import { TOUR_STEPS, type TourStep } from '@/renderer/tour/steps';
 import { Icon } from '@/renderer/ui/Icon';
-import type { StageMode } from '@/types';
+import type { StageMode } from '@/shared/stage-mode';
 
 export interface TourProps {
   open: boolean;
   /** Close the tour (the shell persists completion and restores the stage). */
   onClose(): void;
-  goTo(view: ViewKey): void;
   setStage(stage: StageMode): void;
+  /** The steps to walk (the full tour unless given, e.g. the short new-look tour). */
+  steps?: readonly TourStep[];
 }
 
 interface Box {
@@ -50,17 +49,17 @@ const sameBox = (a: Box | null, b: Box | null): boolean => {
   );
 };
 
-export function Tour({ open, onClose, goTo, setStage }: TourProps): JSX.Element | null {
+export function Tour({ open, onClose, setStage, steps = TOUR_STEPS }: TourProps): JSX.Element | null {
   const [idx, setIdx] = useState(0);
   const [box, setBox] = useState<Box | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
 
-  const step = TOUR_STEPS[idx];
-  const last = idx === TOUR_STEPS.length - 1;
+  const step = steps[idx];
+  const last = idx === steps.length - 1;
   const advance = (): void => {
     if (last) onClose();
-    else setIdx((i) => Math.min(i + 1, TOUR_STEPS.length - 1));
+    else setIdx((i) => Math.min(i + 1, steps.length - 1));
   };
 
   // Restart from the first step each time the tour opens.
@@ -70,12 +69,10 @@ export function Tour({ open, onClose, goTo, setStage }: TourProps): JSX.Element 
 
   // Step entry drives the shell: the described element must be on screen.
   useEffect(() => {
-    if (!open || step === undefined) return;
-    if (step.view !== undefined) goTo(step.view);
-    if (step.stage !== undefined) setStage(step.stage);
-  }, [open, step, goTo, setStage]);
+    if (open && step !== undefined) setStage(step.stage);
+  }, [open, step, setStage]);
 
-  // Track the target's rect every frame while open: view/stage swaps animate
+  // Track the target's rect every frame while open: stage swaps animate
   // for ~350ms and panes can resize mid-step, so a one-shot measure would pin
   // the ring to a stale spot. One getBoundingClientRect per frame on a single
   // element is negligible; state only updates when the rect actually moves.
@@ -88,7 +85,7 @@ export function Tour({ open, onClose, goTo, setStage }: TourProps): JSX.Element 
     }
     let raf = 0;
     const track = (): void => {
-      const el = document.querySelector(`[data-tour="${target}"]`);
+      const el = document.querySelector(`[data-tour~="${target}"]`);
       const r = el?.getBoundingClientRect();
       const next =
         r !== undefined && r.width > 0 && r.height > 0
@@ -132,7 +129,7 @@ export function Tour({ open, onClose, goTo, setStage }: TourProps): JSX.Element 
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
         if (last) onClose();
-        else setIdx((i) => Math.min(i + 1, TOUR_STEPS.length - 1));
+        else setIdx((i) => Math.min(i + 1, steps.length - 1));
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
         setIdx((i) => Math.max(0, i - 1));
@@ -140,7 +137,7 @@ export function Tour({ open, onClose, goTo, setStage }: TourProps): JSX.Element 
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, last, onClose]);
+  }, [open, last, onClose, steps.length]);
 
   // Focus the primary button per step so Enter always means "keep going".
   useEffect(() => {
@@ -181,13 +178,13 @@ export function Tour({ open, onClose, goTo, setStage }: TourProps): JSX.Element 
           <Icon name="xmark" />
         </button>
         <div class="tour-kicker">
-          Intro tour · {idx + 1} / {TOUR_STEPS.length}
+          Intro tour · {idx + 1} / {steps.length}
         </div>
         <div class="tour-t">{step.title}</div>
         <div class="tour-b">{step.body}</div>
         <div class="tour-a">
           <div class="tour-dots" aria-hidden="true">
-            {TOUR_STEPS.map((s, i) => (
+            {steps.map((s, i) => (
               <span key={s.id} class={i === idx ? 'dot on' : 'dot'} />
             ))}
           </div>

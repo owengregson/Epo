@@ -1,124 +1,106 @@
 /**
- * The intro tour's script — an ordered list of coach-mark steps. Each step can
- * drive the shell (switch the sidebar view and/or the stage) before it points,
- * so the tour walks the REAL, live UI. Targets are `data-tour` keys resolved
- * at display time; a step with no target renders as a centered dialog
- * (welcome / finish).
+ * The intro tour's script (spec Appendix C.15.7, B.10): ordered coach-mark
+ * steps keyed on stages. Each step shows its stage before it points, so the tour
+ * walks the REAL, live UI. Targets are `data-tour` tokens resolved at display
+ * time; a step with no target renders as a centered dialog.
  *
- * Steps about console elements park the stage on 'graph' so the whole window
- * belongs to this renderer and the spotlight dim covers it — in 'tab' mode the
- * native Instagram view floats above anything we draw. The stage step alone
- * keeps 'tab' up on purpose: the live page IS the thing being introduced (its
- * tip card docks over the console column, which the native view never covers).
+ * Steps about the console column park the stage on Graph, so the whole window
+ * belongs to this renderer and the dim covers it (on Live the Instagram page
+ * floats above anything drawn here). The stage-bar step keeps Live up on
+ * purpose: the page IS what it introduces, and its card docks over the column.
  */
 
-import type { ViewKey } from '@/renderer/hooks/useView';
-import type { StageMode } from '@/types';
+import type { StageMode } from '@/shared/stage-mode';
 
 export interface TourStep {
   id: string;
   title: string;
   body: string;
-  /** `data-tour` key of the element to spotlight; centered dialog when absent. */
+  /** `data-tour` token of the element to spotlight; centered dialog when absent. */
   target?: string;
-  /** Sidebar view to show for this step. */
-  view?: ViewKey;
-  /** Stage mode to show for this step. */
-  stage?: StageMode;
+  /** The stage to show for this step. */
+  stage: StageMode;
   /** Where the tip card sits relative to the target ('inside' for huge targets). */
   side?: 'right' | 'left' | 'above' | 'below' | 'inside';
 }
 
 /** Platform modifier for shortcut mentions in the copy. */
-const MOD =
-  typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+';
+const MOD = typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+';
 
 export const TOUR_STEPS: readonly TourStep[] = [
   {
     id: 'welcome',
     title: 'Welcome to Epo',
     body:
-      'Epo is a growth console for your Instagram account: pick a seed audience, set the ' +
-      'pace, and it follows, watches for follow-backs, and tidies up — all from this ' +
-      'window. This one-minute tour points out the controls.',
+      'Epo grows your Instagram audience a little every day, following a plan it makes for you. ' +
+      'Here’s a one-minute tour.',
     stage: 'graph',
-    view: 'overview',
   },
   {
-    id: 'stage',
-    title: 'The stage',
+    id: 'now',
+    title: 'What Epo is doing',
+    body: 'This always says what Epo is doing and why: the step happening now, what’s next, and when.',
+    target: 'now',
+    stage: 'graph',
+    side: 'right',
+  },
+  {
+    id: 'today',
+    title: 'Today’s plan',
     body:
-      'This selector swaps what fills the big pane: the live Instagram tab, the network ' +
-      'graph, and the prune console. Log in on the Instagram tab first — the session ' +
-      'persists, and the page keeps working even while another stage covers it.',
+      'Each day Epo plans a few sessions. The strip shows them; the bright one is now. Boost puts the ' +
+      'rest of today into finding new people.',
+    target: 'today',
+    stage: 'graph',
+    side: 'right',
+  },
+  {
+    id: 'results',
+    title: 'Results',
+    body: 'Your results: followers gained today, your follower count, and who followed back.',
+    target: 'results',
+    stage: 'graph',
+    side: 'right',
+  },
+  {
+    id: 'feed',
+    title: 'Activity',
+    body: 'Everything Epo did, including what happened while you were away.',
+    target: 'feed',
+    stage: 'graph',
+    side: 'right',
+  },
+  {
+    id: 'stages',
+    title: 'Pages',
+    body:
+      'Live shows Instagram as Epo uses it; sign in there first. People, Graph and Prune show who Epo ' +
+      `works with. Settings is where you choose how Epo works. ${MOD}1–${MOD}5 switch pages.`,
     target: 'stageseg',
     stage: 'tab',
     side: 'left',
   },
   {
-    id: 'transport',
-    title: 'Transport',
-    body:
-      'Start, pause, and cancel the engine here. The lit button is always the natural ' +
-      'next action for the current state, and the ring around the brand mark breathes ' +
-      'while a session is running.',
-    target: 'transport',
-    stage: 'graph',
-    side: 'right',
-  },
-  {
-    id: 'consoles',
-    title: 'Four consoles',
-    body:
-      'Overview shows live status and growth, Targets the current audience funnel and chain ' +
-      'lineage, Queues every ' +
-      `account in the pipeline, Settings the tuning knobs. ${MOD}1–${MOD}4 jump between ` +
-      'them, and the ticker at the bottom streams the engine log.',
-    target: 'nav',
-    stage: 'graph',
-    side: 'right',
-  },
-  {
-    id: 'graph',
-    title: 'The graph',
-    body:
-      'Every account Epo knows lands here the moment it is observed — clustered around ' +
-      'the target that surfaced it, colored by status. Scroll to zoom, drag to pan, ' +
-      'hover for details, and click legend rows to filter.',
-    target: 'stagebody',
-    stage: 'graph',
-    side: 'inside',
-  },
-  {
-    id: 'prune',
-    title: 'Prune',
-    body:
-      'The prune console takes a census of who follows you back, lists the candidates ' +
-      'for review, and unfollows non-reciprocating accounts at a safe pace. Whitelisted ' +
-      'accounts and protected bio words are never touched.',
-    target: 'prune-census',
-    stage: 'prune',
-    side: 'below',
-  },
-  {
     id: 'settings',
     title: 'Make it yours',
     body:
-      'Start with a seed account whose followers look like your audience — Epo checks it ' +
-      'as you type. Below it, the Behavior personas set pace and rhythm in plain words, ' +
-      'and every change saves the moment you make it.',
+      'Settings has an Easy view for the essentials and an Advanced view for every detail. Start by ' +
+      'choosing a starting account whose followers look like your audience. Every change saves as you make it.',
     target: 'seed',
-    view: 'settings',
-    stage: 'graph',
-    side: 'right',
+    stage: 'settings',
+    side: 'below',
   },
   {
     id: 'done',
     title: 'Ready when you are',
     body:
-      'Log in on the Instagram tab, set a seed, and press Start. You can replay this ' +
-      'tour anytime from Settings → Data & session.',
+      'Sign in on the Live tab, choose a starting account in Settings, and press Start. You can replay ' +
+      'this tour from Settings → Practice & app.',
     stage: 'graph',
-    view: 'overview',
   },
 ];
+
+/** The short "new look" tour shown once after an update (spec C.15.7, owner Q30): what moved. */
+export const NEW_LOOK_STEPS: readonly TourStep[] = TOUR_STEPS.filter((s) =>
+  ['now', 'today', 'feed', 'stages'].includes(s.id),
+);

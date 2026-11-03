@@ -71,6 +71,7 @@ describe('icons.ts covers what the app renders', () => {
     'spinner',
     'stopwatch',
     'user-minus',
+    'users',
     'wifi',
     'xmark',
   ];
