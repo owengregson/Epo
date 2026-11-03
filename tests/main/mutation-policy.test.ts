@@ -54,7 +54,7 @@ function policy() {
     profiles: () => ({ visit }), settings: () => settings, protection: () => protection, signal: () => controller.signal,
     validateIdentity: async () => identity,
     followback: () => new FollowbackWatcher({ store, clock, ownPk: 'me',
-      notifications: { fetchRecent: async () => ({ ok: true, events: [] }) } }),
+      cfg: { holdAfterFollowbackMs: 0, autoAcceptRequests: false } }),
   });
 }
 

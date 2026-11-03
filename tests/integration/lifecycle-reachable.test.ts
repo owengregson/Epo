@@ -24,7 +24,7 @@ import { DEFAULT_SETTINGS, toRateGovernorConfig } from '@/settings/settings';
 import { DelayManager } from '@/timing/delay-manager';
 import { setLevel } from '@/utils/logger';
 import { ok } from '@/utils/result';
-import { FakeSentinel, kitStore, testDeps } from '../kit/engine-harness';
+import { FakeFollowback, FakeSentinel, kitStore, testDeps } from '../kit/engine-harness';
 import { readLimits } from '../kit/read-limits';
 
 const DAY = 86_400_000;
@@ -67,7 +67,9 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
   // The kit's plan-day boundary: local midnight over the fake clock (the build hands the plan's).
   const dayClock = calendarPlanDayClock({ now: () => clock.now() });
   const followback = new FollowbackWatcher({ store, clock, ownPk: 'me',
-    notifications: { fetchRecent: async () => ({ ok: false, events: [] }) } });
+    cfg: { holdAfterFollowbackMs: 0, autoAcceptRequests: false } });
+  // A sweep whose every step fails still ends: nothing absence-related gates the due unfollow.
+  const sweep = new FakeFollowback();
   const policy = wireMutationPolicy(d, { store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock,
     rate, reentry, readBudget, dayClock, profiles: () => profiles, followback: () => followback });
   const presses: string[] = [];
@@ -86,7 +88,7 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
   const churnActions = new AdapterBackedChurnActions({ adapter, store, ownPk: 'me', dryRun: false, clock });
   const churn = wireChurn(d, { frontier: { pickQueued: () => null } as unknown as SourceFrontier, store,
     clock: clock as unknown as SystemClock, rate, churnActions, ownPk: 'me', settings, dayClock });
-  const engine = new Engine(testDeps({ store, clock, rate, churn, reentry, followback, settings,
+  const engine = new Engine(testDeps({ store, clock, rate, churn, reentry, followback: sweep, settings,
     delays: new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); } }),
     settleJournal: journalSettler(d, { store, profiles, ownPk: 'me', clock, readBudget, dayClock }) }));
   const stepUntilPressed = async (n: number, maxSteps = 10): Promise<void> => {

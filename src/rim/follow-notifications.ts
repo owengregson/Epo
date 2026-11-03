@@ -14,8 +14,7 @@ import type { ReadBudget } from '@/governors/read-budget';
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import { CLOCK_TOLERANCE_MS } from '@/kernel/tempo-policy';
 import { awaitCaptured, type CaptureState, captureFeed } from '@/rim/feed-capture';
-import type {
-  AcceptedFollowRequest, FeedFailure, FeedPassOptions, FeedReadResult, FeedSource, NotificationsActor,
+import type {FeedFailure, FeedPassOptions, FeedReadResult, FeedSource, NotificationsActor,
 } from '@/rim/feed-source';
 import { advanceWatermark, classifyBody, eventKey, type FeedWatermark, gapOf, reached } from '@/rim/feed-watermark';
 import type { RimTab } from '@/rim/types';
@@ -29,16 +28,6 @@ export type { FollowEvent } from '@/adapter/surface-types';
 export type {
   AcceptedFollowRequest, FeedFailure, FeedPanel, FeedPassOptions, FeedReadResult, FeedRequester, FeedSource, NotificationsActor,
 } from '@/rim/feed-source';
-
-/** The watcher's result shape, until the frontier sweep replaces the watcher's check. */
-export interface FollowNotificationsResult {
-  ok: boolean;
-  events: FollowEvent[];
-  accepted: AcceptedFollowRequest[];
-  reason?: string;
-  retryAt?: number;
-  pendingRequestPks?: string[];
-}
 
 export interface FollowNotificationsDeps {
   readBudget?: ReadBudget;
@@ -120,21 +109,6 @@ export class AdapterBackedFollowNotifications implements FeedSource {
     } finally {
       this.reporter.clear();
     }
-  }
-
-  /** The watcher's read until the frontier sweep replaces it: one pass with no watermark, collected. */
-  async fetchRecent(opts?: { acceptRequests?: boolean }): Promise<FollowNotificationsResult> {
-    const events: FollowEvent[] = [];
-    const accepted: AcceptedFollowRequest[] = [];
-    const requesters = new Set<string>();
-    const r = await this.fetchSince(null, { use: 'check', signal: this.d.abortSignal?.() ?? new AbortController().signal,
-      panel: opts?.acceptRequests === true ? { mode: 'accept', allowed: RIM.REQUEST_ACCEPT_CAP } : null,
-      onEvent: (e) => events.push(e), onUndated: (e) => events.push(e),
-      onRequester: (q) => { requesters.add(q.pk); this.d.store?.observe(q.observation); },
-      onAccepted: (a) => accepted.push({ pk: a.pk, username: a.username }) });
-    if (!r.ok) return { ok: false, events: [], accepted: [], reason: r.reason, retryAt: r.retryAt };
-    return { ok: true, events, accepted, pendingRequestPks: [...requesters].filter((pk) => !accepted.some((a) => a.pk === pk)),
-      retryAt: this.d.store?.getActionDelayDeadline() ?? undefined };
   }
 
   private async pass(w: FeedWatermark | null, o: FeedPassOptions): Promise<FeedReadResult> {

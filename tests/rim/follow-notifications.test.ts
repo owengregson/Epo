@@ -290,17 +290,3 @@ describe('typed failures end the pass only', () => {
     expect((await pass(source, null)).res).toMatchObject({ ok: true, fresh: 1 });
   });
 });
-
-test('the watcher read (until the frontier sweep): one pass collected, requester rows stored', async () => {
-  const store = openTestStore(':memory:');
-  const { tab, drawer, source } = build({ store });
-  drawer.entryExists = true;
-  drawer.requestQueue = ['req_a'];
-  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([followStory('111', 2_000)]), FEED_OP));
-  drawer.onEntry = () => tab.emit(mkResp(GRAPHQL_QUERY_URL, panel([{ pk: '901', username: 'req_a' }]), PANEL_OP));
-  const res = await source.fetchRecent({ acceptRequests: true });
-  expect(res).toMatchObject({ ok: true, events: [{ pk: '111', username: 'u111', atMs: 2_000_000 }],
-    accepted: [{ pk: '901', username: 'req_a' }], pendingRequestPks: [] });
-  expect(store.getAccount('901')?.username).toBe('req_a');
-  store.close();
-});

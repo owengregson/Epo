@@ -40,9 +40,7 @@ import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import { liveWiringParts } from './live-wiring';
 import { planWiringParts, wirePlan, wireReadBudget } from './plan-wiring';
-import {
-  noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry, wireSweepCadence,
-} from './reopen-wiring';
+import { noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry } from './reopen-wiring';
 import { surfaceWiringParts, wireSurface } from './surface-wiring';
 import { journalSettler, pruneUnfollowDeps, unfollowWiringParts, wireChurn, wireMutationPolicy } from './unfollow-wiring';
 
@@ -200,8 +198,8 @@ export function buildGraph(
     scorerCfg: toScorerConfig(settings),
     cfg: toScannerConfig(settings),
   });
-  const followback = wireFollowback(d, { store, clock, ownPk, ownUsername, settings, readBudget, policy,
-    adapter, reader, sentinel, profiles, liveOwnFollowers, dayClock: plan.dayClock });
+  const { watcher: followback, sweep, cadence: sweepCadence } = wireFollowback(d, { store, clock, ownPk, settings,
+    readBudget, policy, adapter, reader, sentinel, walker: listWalker, plan, rate });
 
   // Live discovery over the already-harvested graph: propose the biggest
   // enriched PUBLIC hubs inside the exhausted target's audience, projected at
@@ -218,8 +216,6 @@ export function buildGraph(
     ownFollowers: ownFollowersTarget,
     cfg: toChainConfig(settings),
   });
-
-  const sweepCadence = wireSweepCadence(d);
 
   // Woven prune feed: the growth loop drains unfollows from the PruneEngine's
   // scanned census, interleaved with its follows. The PruneEngine is built
@@ -250,7 +246,7 @@ export function buildGraph(
     churn,
     scanner,
     chain,
-    followback,
+    followback: sweep,
     acquisition,
     enricher,
     settings,

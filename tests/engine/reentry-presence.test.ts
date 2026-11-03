@@ -10,11 +10,9 @@
  *  - a return re-reads only the obligations its timers made due;
  *  - a full census is owed only when the timers themselves cannot be trusted.
  */
-import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { ReentrySupervisor } from '@/engine/reentry';
 import { FakeClock } from '@/governors/clock';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import type { FollowRecord } from '@/store/types';
 import { setLevel } from '@/utils/logger';
 import { makeEngineHarness } from '../kit/engine-harness';
 import { openTestStore } from '../kit/store';
@@ -164,31 +162,4 @@ describe('a census is owed only when the timers cannot be trusted', () => {
     expect(s.requiresCensus(clock.now())).toBe(true);
     expect(s.snapshot().reason).toBe('clock-change');
   });
-});
-
-test('a week away visits only the obligations its timers made due', async () => {
-  const s = settled();
-  clock.advance(7 * DAY);
-  const now = clock.now();
-  const records: Array<Partial<FollowRecord> & Pick<FollowRecord, 'accountPk' | 'state'>> = [
-    { accountPk: 'due', state: 'pending_followback', followedAt: now - 5 * DAY },
-    { accountPk: 'young', state: 'pending_followback', followedAt: now - DAY },
-    { accountPk: 'held', state: 'followed_back', followedAt: now - 6 * DAY, followedBackAt: now - 5 * DAY,
-      holdUntil: now + DAY, reconciledAt: now - 5 * DAY },
-  ];
-  for (const r of records) {
-    store.observe({ accountPk: r.accountPk, observedAt: START, source: 'profile', fields: { username: r.accountPk } });
-    store.upsertFollowRecord({ targetPk: null, retryCount: 0, ...r });
-  }
-  const read = jest.fn(async (_pk: string) => ({ ok: true as const, followsUs: false, observedAt: clock.now() }));
-  const watcher = new FollowbackWatcher({ store, clock, ownPk: 'me',
-    notifications: { fetchRecent: async () => ({ ok: true, events: [] }) }, relationships: { read } });
-  // The sweep's read (spec §9.7: the runner and its batches are gone; the watcher reads, the reentry notes it).
-  const checked = await watcher.check({ requireFresh: s.requiresCensus(clock.now()),
-    freshSinceAt: s.snapshot().reconciliationStartedAt ?? undefined });
-  expect(checked.outcome).toBe('complete');
-  s.noteReconciled(checked, clock.now());
-
-  expect(read.mock.calls.map(([pk]) => pk)).toEqual(['due']);
-  expect(s.snapshot().phase).toBe('probation');
 });

@@ -1,25 +1,34 @@
 /**
- * The reopen wiring: the re-entry supervisor, the follow-back watcher with its
- * notifications feed and managed-relationship reads, and the persisted sweep cadence.
+ * The reopen wiring: the re-entry supervisor, the follow-back appliers, and the frontier sweep over the
+ * notifications drawer, the followers head and the following check (spec §9), with the sweep's cadence
+ * anchored on its own persisted end.
  */
 
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
+import { FrontierSweep, type SweepPlanView } from '@/engine/frontier-sweep';
+import type { SweepCadence } from '@/engine/ports';
 import { ReentrySupervisor } from '@/engine/reentry';
 import type { SystemClock } from '@/governors/clock';
+import type { RateGovernor } from '@/governors/rate-governor';
 import type { ReadBudget } from '@/governors/read-budget';
-import type { PlanDayClock } from '@/kernel/plan';
+import { checkSpacingMs } from '@/kernel/plan/reads';
+import { BOUNDS_REENTRY } from '@/kernel/reentry-policy';
+import { CLOCK_TOLERANCE_MS } from '@/kernel/tempo-policy';
 import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
-import { managedRelationships } from '@/rim/managed-relationships';
-import type { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
-import type { TabProfileVisitor } from '@/rim/profile-visit';
+import { storeHeadFacts, walkFollowersHead } from '@/rim/followers-head';
+import { checkFollowing, storeFollowingFacts } from '@/rim/following-check';
+import { settleFromChannels } from '@/rim/journal-settlement';
+import type { ListPageWalker } from '@/rim/list-page-walker';
+import { toPlanIntent } from '@/settings/plan-intent';
 import { type Settings, toFollowbackConfig } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import type { Cadence } from '@/timing/schedule-manager';
 import type { GraphBuildDeps, WiringParts } from './graph-types';
 import type { createMutationPolicy } from './mutation-policy';
+import type { PlanWiring } from './plan-wiring';
+import { sweepFacts } from './sweep-facts';
 
 /** The re-entry supervisor over the graph's store. */
 export function wireReentry(store: KnowledgeStore, clock: SystemClock): ReentrySupervisor {
@@ -31,86 +40,80 @@ export function prepareReentry(reentry: ReentrySupervisor, clock: SystemClock): 
   reentry.prepare(clock.now());
 }
 
-/** What the follow-back watcher is built from (the graph's shared pieces). */
+/** What the sweep is built from (the graph's shared pieces). */
 export interface FollowbackWiring {
   store: KnowledgeStore;
   clock: SystemClock;
   ownPk: string;
-  ownUsername: string | undefined;
   settings: Settings;
   readBudget: ReadBudget;
   policy: ReturnType<typeof createMutationPolicy>;
   adapter: InstagramAdapter;
   reader: Reader;
   sentinel: Sentinel;
-  profiles: TabProfileVisitor;
-  liveOwnFollowers: AdapterBackedOwnFollowersSource | null;
-  /** The plan's plan-day boundary (spec §4.4). */
-  dayClock: PlanDayClock;
+  /** The composed list walker the head walk and the following check page with. */
+  walker: ListPageWalker;
+  /** The plan service and its plan-day boundary (spec §4.4). */
+  plan: Pick<PlanWiring, 'service' | 'dayClock'>;
+  rate: Pick<RateGovernor, 'actionsInLastHour'>;
 }
 
-/** The follow-back watcher over the notifications feed and the managed-relationship reads. */
-export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): FollowbackWatcher {
-  const { store, clock, ownPk, ownUsername, settings, readBudget, policy, adapter, reader, sentinel,
-    profiles, liveOwnFollowers, dayClock } = w;
-  const driverSignal = d.driverSignal;
-  // Follow-back detection reads the NOTIFICATIONS feed (one click on the bell,
-  // one observed news-inbox response) — cheap enough for the hourly default
-  // cadence. Sentinel-gated; a stop() interrupts the response wait.
-  const followNotifications = new AdapterBackedFollowNotifications({
-    readBudget,
-    ownPk,
-    canAccept: policy.canAccept,
-    onAccepted: policy.onAccepted,
-    tab: d.tab,
-    actor: adapter.actor,
-    reader,
-    sentinel,
-    store,
-    abortSignal: driverSignal,
-    reporter: d.reporter,
-  });
-  const followback = new FollowbackWatcher({
-    signal: driverSignal,
-    relationships: managedRelationships({ clock, readBudget, profiles, signal: driverSignal,
-      validateIdentity: d.validateIdentity, onProgress: d.onProgress }),
-    store,
-    clock,
-    ownPk,
-    notifications: followNotifications,
-    followers: liveOwnFollowers && ownUsername ? {
-      fetchAllPks: async () => {
-        const refreshed = await policy.refreshOwnStats();
-        if (!refreshed.ok) return { pks: [], complete: false, reason: refreshed.reason, retryAt: refreshed.retryAt };
-        return liveOwnFollowers.fetchAllPks();
-      },
-    } : undefined,
-    cfg: toFollowbackConfig(settings),
-    planDay: (t) => dayClock.window(t),
-  });
-  return followback;
+/** The appliers (live config), the frontier sweep the engine runs, and its cadence. */
+export interface FollowbackParts {
+  readonly watcher: FollowbackWatcher;
+  readonly sweep: FrontierSweep;
+  readonly cadence: SweepCadence;
 }
 
-/** The follow-back sweep's persisted cadence (and its persisted jitter factor). */
-export function wireSweepCadence(d: GraphBuildDeps): Cadence {
-  // The follow-back sweep cadence, persisted through Settings so the rhythm
-  // survives restarts (docs/PRINCIPLES.md §3). The jitter factor is persisted
-  // beside it: each completed sweep redraws a bounded interval factor, so the
-  // check never lands on a bare hourly grid — and a restart mid-interval keeps
-  // the factor already drawn.
-  const sweepCadence = d.scheduler.cadence('engine:followback-sweep', {
-    getLastRunAt: () => d.resolveSettings().sweepLastRunAt,
-    setLastRunAt: (at) => {
-      d.updateSettings({ sweepLastRunAt: at });
+/** The plan at an instant, as the sweep reads it: spacing, Boost, the catch-up and check pages, the accepts. */
+function sweepPlan(d: Pick<GraphBuildDeps, 'plan'>, w: FollowbackWiring): { view(now: number): SweepPlanView } {
+  return {
+    view: (now) => {
+      const v = w.plan.service.view(now);
+      return {
+        checkSpacingMs: checkSpacingMs(v.tempo, toPlanIntent(d.plan.settings.effective())),
+        clockToleranceMs: CLOCK_TOLERANCE_MS, light: v.checkLight(), catchUp: v.plan.reads.catchUp,
+        checkPages: v.open?.readsLeft.checkPages ?? BOUNDS_REENTRY.FRONTIER_PAGES_MAX, followingPages: v.plan.reads.following,
+        acceptsAllowed: (pending) => v.acceptsAllowed(pending, w.rate.actionsInLastHour()),
+        planDayKey: w.plan.dayClock.dayKey(now), planDayStartsAt: v.window.startsAt,
+      };
     },
-    jitter: {
-      getFactor: () => d.resolveSettings().sweepIntervalFactor,
-      setFactor: (factor) => {
-        d.updateSettings({ sweepIntervalFactor: factor });
+  };
+}
+
+/** The follow-back appliers and the frontier sweep over the drawer, the head walk and the following check. */
+export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): FollowbackParts {
+  const { store, clock, ownPk, settings, readBudget, policy, adapter, reader, sentinel, walker } = w;
+  const feed = new AdapterBackedFollowNotifications({ readBudget, ownPk, canAccept: policy.canAccept,
+    onAccepted: policy.onAccepted, tab: d.tab, actor: adapter.actor, reader, sentinel, store,
+    abortSignal: d.driverSignal, reporter: d.reporter });
+  const watcher = new FollowbackWatcher({ store, clock, ownPk, cfg: toFollowbackConfig(settings),
+    // An open accept settles from what the drawer saw, with zero reads (spec §9.8).
+    settleChannels: (e) => { settleFromChannels({ store, ownPk, now: clock.now() }, e); } });
+  const sweep = new FrontierSweep({
+    clock, ownPk, launchAt: clock.now(), plan: sweepPlan(d, w), feed, facts: sweepFacts(store, ownPk, watcher),
+    header: {
+      // The landing runs behind the splash (boot); a sweep reads the header with one own-profile visit.
+      land: async () => false,
+      visit: async () => {
+        const r = await policy.refreshOwnStats();
+        return r.ok ? 'ok' : r.reason === 'read-budget' ? 'read-budget' : 'failed';
       },
     },
+    head: (a) => walkFollowersHead({ walker, facts: storeHeadFacts(store, ownPk), clock, sentinel }, a),
+    following: (a) => checkFollowing({ walker, facts: storeFollowingFacts(store, ownPk), clock, sentinel }, a),
+    autoAccept: () => d.resolveSettings().autoAcceptFollowRequests,
   });
-  return sweepCadence;
+  const cadence: SweepCadence = {
+    isDue: (now, everyMs) => {
+      const last = sweep.lastSweepEndedAt();
+      return last === null || now - last >= everyMs;
+    },
+    // The sweep persisted its own end (one writer of reopen_state).
+    markRun: () => {},
+    lastSweepEndedAt: () => sweep.lastSweepEndedAt(),
+  };
+  return { watcher, sweep, cadence };
 }
 
 /** A verified mutation: the re-entry supervisor notes it and the progress seam hears it. */

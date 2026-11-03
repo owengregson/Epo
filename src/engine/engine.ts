@@ -21,8 +21,8 @@ import { absurd } from './absurd';
 import { queuedCountFor } from './decisions';
 import { actChurn, actWovenUnfollow, type EngineActionContext, performAction } from './engine-actions';
 import { buildEngineFactSources } from './engine-facts';
-import { type EngineJournalContext, followbackBeforeSweep, settleJournalStep } from './engine-journal-effects';
-import { completeFollowbackSweep, type EngineSweepContext } from './engine-sweep-effects';
+import { type EngineJournalContext, settleJournalStep } from './engine-journal-effects';
+import { type EngineSweepContext, runFollowbackSweep } from './engine-sweep-effects';
 import {
   ENGINE_WAIT_CLASS,
   type EngineParkReason,
@@ -564,7 +564,7 @@ export class Engine {
       case 'settle-journal':
         return settleJournalStep(this.ctx, token);
       case 'sweep-followback':
-        return (await followbackBeforeSweep(this.ctx, token)) ?? completeFollowbackSweep(this.ctx);
+        return runFollowbackSweep(this.ctx, token);
       case 'refill-pool': {
         this.refillSinceAction = true;
         const result = await this.targets.refillPool(effect.target, token);

@@ -34,16 +34,6 @@
       "module": "src/renderer/lib/flip.ts",
       "stream": "SB",
       "reason": "the activity feed's new rows arrive and file into place with it"
-    },
-    {
-      "module": "src/rim/followers-head.ts",
-      "stream": "RO",
-      "reason": "the frontier sweep's followers-head step (reopen-wiring.ts) walks it"
-    },
-    {
-      "module": "src/rim/following-check.ts",
-      "stream": "RO",
-      "reason": "the frontier sweep's following step (step G, reopen-wiring.ts) runs it"
     }
   ]
 }

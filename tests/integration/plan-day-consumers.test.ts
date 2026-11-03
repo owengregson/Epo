@@ -69,7 +69,7 @@ test("a built graph hands the plan's day clock to every day-keyed consumer", asy
     journal: handed(journalSettler)[1].dayClock,
     churn: handed(wireChurn)[1].dayClock,
     prune: handed(pruneUnfollowDeps)[1].dayClock,
-    followback: handed(wireFollowback)[1].dayClock,
+    followback: handed(wireFollowback)[1].plan.dayClock,
     surface: handed(wireSurface)[0].day,
     live: handed(liveSources)[2].planDay,
   };

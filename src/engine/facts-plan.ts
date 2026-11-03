@@ -5,10 +5,11 @@
 
 import type { PlanView } from '../governors/plan-types';
 import type { Settings } from '../settings/settings';
+import type { KnowledgeStore } from '../store/knowledge-store';
 import { PATTERN } from '../timing/config';
 import type { FactSource, FeedCandidate } from './facts';
 import type { EnginePacing, PlanFacts } from './plan-port';
-import type { EngineChurn } from './ports';
+import type { EngineChurn, SweepCadence } from './ports';
 
 /** What the plan sources read (the Engine's fact deps satisfy it). */
 export interface PlanFactDeps {
@@ -16,6 +17,9 @@ export interface PlanFactDeps {
   settings(): Settings;
   /** The plan, or undefined in the legacy model. */
   pacing?: EnginePacing;
+  /** The planned check's anchor (the last sweep's end) and the census host's input (the last complete census). */
+  sweepCadence: Pick<SweepCadence, 'lastSweepEndedAt'>;
+  store: Pick<KnowledgeStore, 'censusLastCompleteAt'>;
   churn: EngineChurn;
   /** The woven prune feed's next offer (consumes leading skips — see the Engine). */
   selectPruneCandidate(now: number): FeedCandidate | null;
@@ -40,11 +44,14 @@ export function planPark(view: PlanView, atHardCeiling: boolean): PlanFacts['par
   return null;
 }
 
-/**
- * The plan's facts at the view's instant. The planned check and the census host arrive with the
- * reopen sweep and the cadence switch; until then neither is due here.
- */
-export function planFacts(view: PlanView, atHardCeiling: boolean): PlanFacts {
+/** What the plan's check and census predicates are anchored on (spec C11, §5.8.3); no anchor, no planned check. */
+export interface PlanAnchors {
+  readonly lastSweepEndedAt?: number | null;
+  readonly censusLastCompleteAt: number | null;
+}
+
+/** The plan's facts at the view's instant; the census walk is the plan's reserved census and following pages. */
+export function planFacts(view: PlanView, atHardCeiling: boolean, anchors: PlanAnchors = { censusLastCompleteAt: null }): PlanFacts {
   const open = view.open;
   return {
     sessionOpen: open !== null,
@@ -58,9 +65,10 @@ export function planFacts(view: PlanView, atHardCeiling: boolean): PlanFacts {
     mix: open?.mix ?? 'normal',
     probation: open?.probation ?? false,
     reads: { exploreLeft: open?.readsLeft.explore ?? 0, reconcileLeft: open?.readsLeft.reconcile ?? 0 },
-    checkDue: false,
+    checkDue: anchors.lastSweepEndedAt !== undefined && view.checkDue(anchors.lastSweepEndedAt),
     checkLight: view.checkLight(),
-    censusDue: false,
+    censusDue: view.censusDue({ lastCompleteAt: anchors.censusLastCompleteAt,
+      walkPages: view.plan.reads.census + view.plan.reads.following }),
   };
 }
 
@@ -74,7 +82,8 @@ export function pacingSource(d: PlanFactDeps): FactSource<'pacing'> {
       if (plan === undefined) return { model: 'legacy' as const, activeHoursStart: d.settings().activeHoursStart };
       const { atHardCeiling } = await read('ledger');
       const view = plan.ensureIfProvisional(now);
-      return { model: 'plan' as const, hourlyCap: view.plan.ceilings.hour, ...planFacts(view, atHardCeiling) };
+      return { model: 'plan' as const, hourlyCap: view.plan.ceilings.hour, ...planFacts(view, atHardCeiling, {
+        lastSweepEndedAt: d.sweepCadence.lastSweepEndedAt?.(), censusLastCompleteAt: d.store.censusLastCompleteAt() }) };
     },
   };
 }

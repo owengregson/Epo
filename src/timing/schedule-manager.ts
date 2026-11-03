@@ -7,21 +7,14 @@
  * `checking` flag. Task exceptions are caught and logged; a bad tick never
  * kills the loop. `after()` arms one replaceable one-shot (the plan's edge).
  *
- * `cadence()` models due-by-timestamp scheduling (follow-back sweep, pruneDue):
+ * `cadence()` models due-by-timestamp scheduling:
  * "due when never run, or when everyMs has elapsed since the recorded last run" —
  * with the timestamp read/written through the caller (so it can live in
  * persisted Settings and survive restarts). `everyMs` is an `isDue` parameter,
  * not creation-time state, because cadences read live settings values.
  */
 
-import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
-import { NOISE } from './config';
-import { cadenceFactor } from './noise';
-import type { Rng } from './primitives';
-
-/** The factor redraw's stream when the caller injects none. */
-const FACTOR_RNG = launchStream('timing/schedule-manager');
 
 export interface EveryOpts {
   /** `unref` the timer so it can never hold the process open (main-process loops). */
@@ -116,44 +109,18 @@ export class ScheduleManager {
     this.loops.delete(key);
   }
 
-  /**
-   * `jitter` (optional, timing-noise layer): `isDue` stretches the interval by a
-   * PERSISTED factor (`everyMs × factor`), and each `markRun` redraws a fresh
-   * `cadenceFactor` and persists it — so consecutive intervals differ while a
-   * restart mid-interval keeps the factor already drawn (§3, durable schedules).
-   * The read factor is sanitized into the cadence band; a missing/garbage value
-   * degrades to the exact interval (factor 1), never to a throw.
-   */
+  /** A due-by-timestamp cadence over the caller's persisted last-run stamp. */
   cadence(
     key: string,
-    cfg: {
-      getLastRunAt: () => number | null;
-      setLastRunAt: (at: number) => void;
-      jitter?: {
-        getFactor: () => number | null;
-        setFactor: (factor: number) => void;
-        /** Randomness for the factor redraw; defaults to a launch stream. */
-        rng?: Rng;
-      };
-    },
+    cfg: { getLastRunAt: () => number | null; setLastRunAt: (at: number) => void },
   ): Cadence {
-    const factorNow = (): number => {
-      const raw = cfg.jitter?.getFactor() ?? null;
-      if (raw === null || !Number.isFinite(raw)) return 1;
-      return Math.min(NOISE.CADENCE_MAX_FACTOR, Math.max(NOISE.CADENCE_MIN_FACTOR, raw));
-    };
     return {
       isDue: (now, everyMs) => {
         const last = cfg.getLastRunAt();
-        return last === null || now - last >= everyMs * factorNow();
+        return last === null || now - last >= everyMs;
       },
       markRun: (now) => {
         cfg.setLastRunAt(now);
-        if (cfg.jitter !== undefined) {
-          const factor = cadenceFactor(cfg.jitter.rng ?? FACTOR_RNG);
-          cfg.jitter.setFactor(factor);
-          log.debug('schedule: cadence factor redrawn', { key, factor });
-        }
         log.debug('schedule: cadence run recorded', { key, at: now });
       },
       lastRunAt: cfg.getLastRunAt,
