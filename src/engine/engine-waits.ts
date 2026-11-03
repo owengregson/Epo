@@ -20,7 +20,6 @@ export type EngineWaitKey =
   | 'engine:session-park'
   | 'engine:velocity-park'
   | 'engine:enrich-backoff'
-  | 'engine:reconcile-backoff'
   | 'engine:read-budget-park'
   | 'engine:prune-park'
   | 'engine:blocked-park'
@@ -39,7 +38,6 @@ export const ENGINE_WAIT_CLASS = {
   'engine:active-hours-park': 'daily-boundary',
   'engine:daily-ceiling-park': 'daily-boundary',
   'engine:enrich-backoff': 'retry-backoff',
-  'engine:reconcile-backoff': 'retry-backoff',
   // The allowance reopens at a KNOWN time: never wake before it, never stretch it 2×.
   'engine:read-budget-park': 'daily-boundary',
   'engine:prune-park': 'retry-backoff',
@@ -65,7 +63,7 @@ export type EngineParkReason =
   | 'session'
   | 'velocity'
   | 'enrich-backoff'
-  /** The follow-back reconciliation could not read its evidence (e.g. the notifications feed). */
+  /** @deprecated-renderer No wait parks under it any more; the old live-status card still names it. */
   | 'reconcile-backoff'
   /** The rolling profile-read allowance is spent; it reopens at a known time. */
   | 'read-budget'
@@ -83,7 +81,6 @@ const PARK_REASON_BY_KEY = new Map<EngineWaitKey, EngineParkReason>([
   ['engine:session-park', 'session'],
   ['engine:velocity-park', 'velocity'],
   ['engine:enrich-backoff', 'enrich-backoff'],
-  ['engine:reconcile-backoff', 'reconcile-backoff'],
   ['engine:read-budget-park', 'read-budget'],
   ['engine:recovery-hold', 'recovery'],
 ]);

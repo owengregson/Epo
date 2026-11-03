@@ -15,7 +15,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 968
+      "lines": 965
     },
     {
       "file": "src/adapter/actor.ts",
@@ -59,7 +59,7 @@
     },
     {
       "file": "src/main/services/graph-builder.ts",
-      "lines": 367
+      "lines": 366
     },
     {
       "file": "src/rim/followers-page-reader.ts",

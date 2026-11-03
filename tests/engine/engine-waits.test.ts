@@ -1,14 +1,12 @@
 /**
- * The engine's park vocabulary. A failed follow-back reconciliation used to
- * park under `engine:enrich-backoff`, so a live log read "holding enrich-backoff"
- * while the real fault was the notifications read (2026-11-02). Each cause
- * now surfaces as itself.
+ * The engine's park vocabulary: each long park surfaces as its own reason. The journal has no
+ * backoff of its own (spec §9.8: an unavailable account parks per intent, never the loop).
  */
 import { ENGINE_WAIT_CLASS, parkReasonFor } from '@/engine/engine-waits';
 
-test('a reconciliation wait surfaces as its own long-park reason', () => {
-  expect(parkReasonFor('engine:reconcile-backoff')).toBe('reconcile-backoff');
-  expect(ENGINE_WAIT_CLASS['engine:reconcile-backoff']).toBe('retry-backoff');
+test('no wait parks the loop for a reconciliation any more: the key is gone', () => {
+  expect(parkReasonFor('engine:reconcile-backoff')).toBeNull();
+  expect(Object.keys(ENGINE_WAIT_CLASS)).not.toContain('engine:reconcile-backoff');
 });
 
 test('enrichment walls keep their own reason', () => {

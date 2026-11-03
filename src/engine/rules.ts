@@ -24,7 +24,7 @@ import { pickAction } from './decisions';
 import type { EngineWaitKey } from './engine-waits';
 import type { FactKey, Facts, FeedCandidate, Mode, RunCtx } from './facts';
 import type { HaltReason } from './halt-reason';
-import { followbackRule, reconcileRule, rotateRule, targetRule } from './lifecycle-rules';
+import { followbackRule, journalRule, rotateRule, targetRule } from './lifecycle-rules';
 import { pacingVerdict } from './pacers';
 import type { CurrentTarget, StepResult } from './ports';
 import type { FailureKind } from './recovery';
@@ -51,6 +51,7 @@ export type EffectRef =
   | { id: 'serve-recovery-hold' }
   | { id: 'enter-recovery'; kind: FailureKind }
   | { id: 'bootstrap-seed-target' }
+  | { id: 'settle-journal'; now: number }
   | { id: 'sweep-followback'; now: number }
   | { id: 'refill-pool'; target: CurrentTarget }
   | { id: 'churn-action'; now: number; record: FollowRecord }
@@ -83,7 +84,7 @@ export type RuleId =
   | 'pacing'
   | 'target'
   | 'followback'
-  | 'reconcile'
+  | 'journal'
   | 'rotate'
   | 'refill'
   | 'action'
@@ -241,8 +242,8 @@ const idleRule = defineRule({
 export const PROGRAM = {
   safety: [abortedRule, sentinelAuthRule, recoveryHoldRule, sentinelBlockedRule],
   growth: [
-    reconcileRule,
     pacingRule,
+    journalRule,
     targetRule,
     followbackRule,
     rotateRule,

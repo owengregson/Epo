@@ -18,7 +18,9 @@ import type { RateGovernor } from '@/governors/rate-governor';
 import type { ReadBudget } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import { settleNextIntent } from '@/rim/journal-settlement';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
+import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import { type Settings, toChurnConfig, toPruneConfig, toScorerConfig } from '@/settings/settings';
 import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -62,6 +64,16 @@ export function wireMutationPolicy(d: GraphBuildDeps, w: MutationPolicyWiring): 
     journal: accountJournalGate(() => store.pendingEffectIntents()),
     parkSlots: () => planDaySlots(dayClock, clock.now()),
     signal: d.driverSignal, validateIdentity: d.validateIdentity, onProgress: d.onProgress });
+}
+
+/** The engine's journal step: the oldest due intent settled with one read, on the plan-day slots (spec §9.8). */
+export function journalSettler(
+  d: Pick<GraphBuildDeps, 'resolveSettings' | 'driverSignal'>,
+  w: { store: KnowledgeStore; profiles: ProfileVisitor; ownPk: string; clock: Clock; readBudget: ReadBudget },
+): () => ReturnType<typeof settleNextIntent> {
+  const dayClock = planDayClockOf(w.clock);
+  return () => settleNextIntent({ ...w, slots: () => planDaySlots(dayClock, w.clock.now()),
+    maxRetries: () => d.resolveSettings().maxRetries, signal: d.driverSignal });
 }
 
 /** What the churn scheduler is built from (the graph's shared pieces). */

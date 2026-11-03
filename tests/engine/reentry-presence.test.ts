@@ -11,7 +11,6 @@
  *  - a full census is owed only when the timers themselves cannot be trusted.
  */
 import { FollowbackWatcher } from '@/engine/followback-watcher';
-import { ReconciliationRunner } from '@/engine/reconciliation-runner';
 import { ReentrySupervisor } from '@/engine/reentry';
 import { FakeClock } from '@/governors/clock';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -184,9 +183,11 @@ test('a week away visits only the obligations its timers made due', async () => 
   const read = jest.fn(async (_pk: string) => ({ ok: true as const, followsUs: false, observedAt: clock.now() }));
   const watcher = new FollowbackWatcher({ store, clock, ownPk: 'me',
     notifications: { fetchRecent: async () => ({ ok: true, events: [] }) }, relationships: { read } });
-  const runner = new ReconciliationRunner({ clock, reentry: s, reconcileEffects: async () => true, followback: watcher });
-
-  expect(await runner.run(clock.now(), () => false)).toEqual({ outcome: 'complete' });
+  // The sweep's read (spec §9.7: the runner and its batches are gone; the watcher reads, the reentry notes it).
+  const checked = await watcher.check({ requireFresh: s.requiresCensus(clock.now()),
+    freshSinceAt: s.snapshot().reconciliationStartedAt ?? undefined });
+  expect(checked.outcome).toBe('complete');
+  s.noteReconciled(checked, clock.now());
 
   expect(read.mock.calls.map(([pk]) => pk)).toEqual(['due']);
   expect(s.snapshot().phase).toBe('probation');

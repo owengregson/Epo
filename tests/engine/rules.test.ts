@@ -41,8 +41,8 @@ const GROWTH_ORDER = [
   'sentinel-auth',
   'recovery-hold',
   'sentinel-blocked',
-  'reconcile',
   'pacing',
+  'journal',
   'target',
   'followback',
   'rotate',
@@ -85,6 +85,7 @@ const arbQueue: fc.Arbitrary<QueueFacts> = fc.record({
 
 const arbCadence: fc.Arbitrary<CadenceFacts> = fc.record({
   sweepDue: fc.boolean(),
+  journalDue: fc.boolean(),
   overdue: fc.constant([]),
 });
 
@@ -338,6 +339,21 @@ describe('the precedence property', () => {
         const safety = PROGRAM.safety.map((r) => r.decide(facts, run)).find((v) => v != null);
         if (safety === undefined) return;
         expect((await decide(facts))?.verdict).toEqual(safety);
+      }),
+      { numRuns: 400 },
+    );
+  });
+
+  test('the journal never preempts the safety prefix or pacing, and settles before any other growth work', async () => {
+    const run: RunCtx = { mode: 'growth' };
+    const pacing = PROGRAM.growth.find((r) => r.id === 'pacing') as Rule;
+    await fc.assert(
+      fc.asyncProperty(arbFacts, async (facts) => {
+        const due: Facts = { ...facts, cadence: { ...facts.cadence, journalDue: true } };
+        const first = [...PROGRAM.safety, pacing].map((r) => r.decide(due, run)).find((v) => v != null);
+        const claim = await decide(due);
+        if (first !== undefined) expect(claim?.rule).not.toBe('journal');
+        else expect(claim).toEqual({ rule: 'journal', verdict: { do: 'run', effect: { id: 'settle-journal', now: due.clock.now } } });
       }),
       { numRuns: 400 },
     );
