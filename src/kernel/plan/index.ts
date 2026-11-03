@@ -1,5 +1,6 @@
 /**
- * The day plan's one door (ADR 0607): Phase F lands its vocabulary; the plan
- * core adds the seeded draw, the quiet-minute boundary and the gap model here.
+ * The day plan's one door (ADR 0607): the vocabulary, the counter-seeded draws, the quiet-minute
+ * boundary, the day law, the gap model, the session tempo and layout, the reads, the draw and Boost.
  */
+export * from './seed';
 export type * from './types';
