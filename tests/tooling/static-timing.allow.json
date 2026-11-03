@@ -65,7 +65,6 @@
     {"key":"src/engine/prune-engine.ts :: PruneEngine.constructor :: mulberry32 :: 0x51abc0de","class":"GEOM","reason":"a 32-bit mask or hash-mixing constant, numeric"},
     {"key":"src/engine/prune-engine.ts :: PruneEngine.constructor :: mulberry32 :: 0xffffffff","class":"GEOM","reason":"a 32-bit mask or hash-mixing constant, numeric"},
     {"key":"src/engine/reconcile-followback-cohort.ts :: reconcileFollowbackCohort :: d.records.slice :: 10","class":"PENDING","stream":"RO","reason":"RO: deletes this pre-read module (verify-at-act, spec §9.7)"},
-    {"key":"src/engine/recovery.ts :: RecoverySupervisor.driftConfirmed :: return :: 2","class":"PENDING","stream":"PR","reason":"PR: drift confirmation reads the D5 driftConfirmThreshold() (spec §17.8)"},
     {"key":"src/engine/reentry.ts :: DAY :: DAY :: 24","class":"PENDING","stream":"RO","reason":"RO: deletes reentry.ts and REENTRY_POLICY (spec §17.8)"},
     {"key":"src/engine/reentry.ts :: HOUR :: HOUR :: 3_600_000","class":"PENDING","stream":"RO","reason":"RO: deletes reentry.ts and REENTRY_POLICY (spec §17.8)"},
     {"key":"src/engine/reentry.ts :: REENTRY_POLICY :: clockToleranceMs :: 5","class":"PENDING","stream":"RO","reason":"RO: deletes reentry.ts and REENTRY_POLICY (spec §17.8)"},

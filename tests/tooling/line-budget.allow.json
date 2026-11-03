@@ -71,7 +71,7 @@
     },
     {
       "file": "src/engine/recovery.ts",
-      "lines": 340
+      "lines": 339
     },
     {
       "file": "src/kernel/policy.ts",
