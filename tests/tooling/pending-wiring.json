@@ -29,6 +29,21 @@
       "module": "src/settings/plan-intent.ts",
       "stream": "PR",
       "reason": "plan-wiring.ts feeds the plan service toPlanIntent(effective()); the settings core wraps it for the PlanPreviewPort fingerprint"
+    },
+    {
+      "module": "src/renderer/settings/compatibility/CompatibilityPanel.tsx",
+      "stream": "SU",
+      "reason": "Settings › Advanced mounts the Instagram compatibility panel"
+    },
+    {
+      "module": "src/renderer/settings/compatibility/CompatibilityLine.tsx",
+      "stream": "SU",
+      "reason": "the Easy settings show the compatibility one-liner, its Details opening Advanced"
+    },
+    {
+      "module": "src/renderer/live/CompatibilityNotice.tsx",
+      "stream": "SB",
+      "reason": "the live column shows the compatibility line and wires its Details to the panel"
     }
   ]
 }

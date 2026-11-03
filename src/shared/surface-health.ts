@@ -158,6 +158,25 @@ export function explanation(area: SurfaceArea, state: AreaState, paused: readonl
   }
 }
 
+/** The sidebar's one compatibility line: calm while Epo adapts, attention while work is paused or unreadable. */
+export function noticeLine(summary: SurfaceSummary | null | undefined): { tone: 'calm' | 'attention'; text: string } | null {
+  const order: readonly AreaState[] = ['paused', 'unreadable', 'adapting'];
+  const first = [...(summary?.attention ?? [])].sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state))[0];
+  if (first === undefined) return null;
+  const name = AREA_LABEL[first.area].toLowerCase();
+  if (first.state === 'adapting') return { tone: 'calm', text: `Adapted to an Instagram change in ${name}. Following continues.` };
+  if (first.state === 'unreadable') return { tone: 'attention', text: `Epo can't read ${name} right now. Following continues.` };
+  if (first.paused.includes('exploration')) {
+    return { tone: 'attention', text: 'Finding new people paused: Instagram changed how follower lists look. Epo keeps following the people it already found.' };
+  }
+  const what = first.paused.includes('unfollows') ? PAUSED_LABEL.unfollows : PAUSED_LABEL[first.paused[0] ?? 'unfollows'];
+  return { tone: 'attention', text: `${what} paused: Instagram changed how it sends ${name}. Following continues.` };
+}
+
+/** The Easy-mode one-liner: the worst area's state. */
+export const compatibilityLine = (summary: SurfaceSummary | null | undefined): string =>
+  `Instagram compatibility: ${STATE_LABEL[summary?.worst ?? 'unseen']}`;
+
 const CONTINUATION_CLASSES = ['more-without-cursor', 'cursor-veto', 'end-claim-false', 'no-continuation-evidence',
   'incomplete-stream'];
 
