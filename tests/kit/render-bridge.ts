@@ -4,11 +4,19 @@
  * Every bridge method resolves from a mutable `data` bag so a suite can stage a
  * projection before render; `emit(channel, payload)` drives the push channels the
  * renderer subscribes to (`status`, `pruneStatus`, `chainList`, `log`,
- * `updateStatus`), which is how §2 liveness is exercised without a main process.
+ * `updateStatus`, `settings`, `settingsFacts`, `feed`, `stageRequest`), which is
+ * how §2 liveness is exercised without a main process.
  * `calls` records every invocation so control wiring can be asserted.
  */
 import type { PruneStatus } from '@/engine/prune-engine';
+import { BOOST_OFF } from '@/main/ipc-plan';
+import { notBuiltFacts, notBuiltFeed } from '@/main/modules/not-built';
+import { transitionalView } from '@/main/modules/settings-transitional';
 import { resetShellSignals } from '@/renderer/app/shell-context';
+import { effectiveFromV1 } from '@/settings/effective';
+import type { FeedView } from '@/shared/feed';
+import type { SettingsFacts } from '@/shared/settings-facts';
+import type { SettingsView } from '@/shared/settings-view';
 import type {
   ChainTargetView,
   EpoBridge,
@@ -109,6 +117,10 @@ export interface FakeBridgeData {
   update: UpdateStatus;
   /** What the `chain:list` PULL backstop resolves with (the push is `emit`). */
   chainList: ChainTargetView[];
+  /** The Settings view the `settings:view` pull resolves with (the push is `settings`). */
+  settingsView: SettingsView;
+  settingsFacts: SettingsFacts;
+  feed: FeedView;
 }
 
 export interface FakeBridge {
@@ -148,6 +160,10 @@ export function installFakeBridge(settings: Settings): FakeBridge {
     settings,
     update: IDLE_UPDATE,
     chainList: [],
+    settingsView: transitionalView(settings, effectiveFromV1(settings), 0,
+      { plan: false, tempo: false, boost: false, protectionEverywhere: false }),
+    settingsFacts: notBuiltFacts('loading'),
+    feed: notBuiltFeed(0),
   };
 
   /** Every promise-returning method routes through here: record, then resolve. */
@@ -210,14 +226,29 @@ export function installFakeBridge(settings: Settings): FakeBridge {
       }),
     resetSettings: (...a: unknown[]) => call('resetSettings', a, () => data.settings),
     clearData: (...a: unknown[]) => call('clearData', a, () => data.status),
-    showTab: (...a: unknown[]) => call('showTab', a, () => undefined),
-    hideTab: (...a: unknown[]) => call('hideTab', a, () => undefined),
     graphSnapshot: (...a: unknown[]) => call('graphSnapshot', a, () => null),
     setStage: (...a: unknown[]) => call('setStage', a, () => undefined),
     setTourHold: (...a: unknown[]) => call('setTourHold', a, () => undefined),
     checkForUpdate: (...a: unknown[]) => call('checkForUpdate', a, () => data.update),
     installUpdate: (...a: unknown[]) => call('installUpdate', a, () => data.update),
     openLatestRelease: (...a: unknown[]) => call('openLatestRelease', a, () => undefined),
+    bootRevealed: (...a: unknown[]) => call('bootRevealed', a, () => undefined),
+    settingsView: (...a: unknown[]) => call('settingsView', a, () => data.settingsView),
+    applySettings: (...a: unknown[]) =>
+      call('applySettings', a, () => ({ kind: 'refused', reason: 'internal', detail: 'fake', view: data.settingsView })),
+    previewSettings: (...a: unknown[]) => call('previewSettings', a, () => ({ kind: 'unavailable' })),
+    settingsBasis: (...a: unknown[]) => call('settingsBasis', a, () => ({ kind: 'unavailable' })),
+    settingsFacts: (...a: unknown[]) => call('settingsFacts', a, () => data.settingsFacts),
+    suggestAccounts: (...a: unknown[]) => call('suggestAccounts', a, () => ({ kind: 'ok', rows: [] })),
+    keptList: (...a: unknown[]) => call('keptList', a, () => ({ kind: 'ok', rows: [], total: 0 })),
+    startBoost: (...a: unknown[]) => call('startBoost', a, () => ({ kind: 'refused', reason: 'internal', boost: BOOST_OFF })),
+    endBoost: (...a: unknown[]) => call('endBoost', a, () => ({ kind: 'refused', reason: 'internal', boost: BOOST_OFF })),
+    previewBoost: (...a: unknown[]) => call('previewBoost', a, () => null),
+    feedView: (...a: unknown[]) => call('feedView', a, () => data.feed),
+    logTail: (...a: unknown[]) => call('logTail', a, () => []),
+    setLogStream: (...a: unknown[]) => call('setLogStream', a, () => undefined),
+    openLogFolder: (...a: unknown[]) => call('openLogFolder', a, () => undefined),
+    updateStatus: (...a: unknown[]) => call('updateStatus', a, () => data.update),
     on: (channel: string, cb: (p: never) => void) => subscribe(channel, cb),
     off: (channel: string, cb: (p: never) => void) => unsubscribe(channel, cb),
   } as unknown as EpoBridge;
