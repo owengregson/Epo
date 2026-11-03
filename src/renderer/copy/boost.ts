@@ -8,6 +8,7 @@ export const BOOST_COPY = {
   settings: {
     lead: 'Boost has Epo spend the next hours finding and following new people. Unfollowing, pruning and routine checks wait until it ends. Your daily safety limits never change.',
     defaultLength: 'Default length',
+    hours: '{h} h',
     keepAccepting: 'Keep accepting follow requests during Boost',
     keepAcceptingHelp: 'Matters only for private accounts: their follow-backs arrive as requests.',
     checklist: [
@@ -20,6 +21,7 @@ export const BOOST_COPY = {
     showMe: 'Show me',
     on: 'Boost is on until {time} · {n} follows so far',
     end: 'End Boost',
+    endFailed: 'Couldn’t end Boost. Try again.',
   },
   control: {
     start: '⚡ Boost for {h} h',

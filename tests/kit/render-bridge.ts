@@ -12,13 +12,15 @@ import type { PruneStatus } from '@/engine/prune-engine';
 import { NO_ACTIVITY } from '@/main/ipc-live';
 import { BOOST_OFF } from '@/main/ipc-plan';
 import { notBuiltFacts, notBuiltFeed, notBuiltSurfaceReport } from '@/main/modules/not-built';
-import { transitionalView } from '@/main/modules/settings-transitional';
 import { resetShellSignals } from '@/renderer/app/shell-context';
-import { effectiveFromV1 } from '@/settings/effective';
+import { DEFAULT_DOC } from '@/settings/doc';
+import { effectiveFrom } from '@/settings/effective';
+import { resolveParams } from '@/settings/resolve';
+import { buildView } from '@/settings/view';
 import type { FeedView } from '@/shared/feed';
 import type { LiveTab } from '@/shared/live-op';
 import type { SettingsFacts } from '@/shared/settings-facts';
-import type { SettingsView } from '@/shared/settings-view';
+import type { SettingsCapabilities, SettingsView } from '@/shared/settings-view';
 import type { SurfaceReport } from '@/shared/surface-health';
 import type {
   ChainTargetView,
@@ -29,6 +31,7 @@ import type {
   Settings,
   UpdateStatus,
 } from '@/types';
+import { FAKE_PLAN_MATH } from './settings';
 
 /** A neutral idle engine status — the shape every projection starts from. */
 export function idleStatus(over: Partial<EpoStatus> = {}): EpoStatus {
@@ -103,6 +106,19 @@ export function chainTarget(over: Partial<ChainTargetView> = {}): ChainTargetVie
   };
 }
 
+const NOTHING_WIRED: SettingsCapabilities = { plan: false, tempo: false, boost: false, protectionEverywhere: false };
+
+/**
+ * The Settings view main builds for a fresh document carrying the older settings' seed and tour stamp, with
+ * no capability wired: the same `buildView` main serves, over the plan-math fake.
+ */
+export function v2ViewFor(settings: Settings): SettingsView {
+  const doc = { ...DEFAULT_DOC, seed: settings.seed, app: { ...DEFAULT_DOC.app, tourCompletedAt: settings.tourCompletedAt } };
+  const resolved = resolveParams({ intent: doc.intent, overrides: doc.overrides, plan: false, math: FAKE_PLAN_MATH });
+  const effective = effectiveFrom(doc, resolved);
+  return buildView({ doc, health: { kind: 'ok' }, capabilities: NOTHING_WIRED, resolved, effective, math: FAKE_PLAN_MATH, week: null });
+}
+
 const IDLE_UPDATE: UpdateStatus = {
   state: 'idle',
   mode: 'notify',
@@ -167,8 +183,7 @@ export function installFakeBridge(settings: Settings): FakeBridge {
     settings,
     update: IDLE_UPDATE,
     chainList: [],
-    settingsView: transitionalView(settings, effectiveFromV1(settings), 0,
-      { plan: false, tempo: false, boost: false, protectionEverywhere: false }),
+    settingsView: v2ViewFor(settings),
     settingsFacts: notBuiltFacts('loading'),
     feed: notBuiltFeed(0),
     activity: NO_ACTIVITY,
@@ -221,10 +236,7 @@ export function installFakeBridge(settings: Settings): FakeBridge {
       call('growthSeries', a, () => ({ points: [], baselineAt: null })),
     checkSeed: (...a: unknown[]) =>
       call('checkSeed', a, () => ({
-        ok: true,
-        exists: true,
-        followersVisible: true,
-        isPrivate: false,
+        kind: 'ok', pk: '1', isPrivate: false, followersVisible: true, followers: null, observedAt: 0, fromStore: true,
       })),
     queueList: (...a: unknown[]) => call('queueList', a, () => ({ rows: [], truncated: false })),
     getSettings: (...a: unknown[]) => call('getSettings', a, () => data.settings),
@@ -233,7 +245,6 @@ export function installFakeBridge(settings: Settings): FakeBridge {
         data.settings = { ...data.settings, ...(a[0] as Partial<Settings>) };
         return data.settings;
       }),
-    resetSettings: (...a: unknown[]) => call('resetSettings', a, () => data.settings),
     clearData: (...a: unknown[]) => call('clearData', a, () => data.status),
     graphSnapshot: (...a: unknown[]) => call('graphSnapshot', a, () => null),
     setStage: (...a: unknown[]) => call('setStage', a, () => undefined),

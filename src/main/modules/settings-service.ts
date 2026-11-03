@@ -269,12 +269,6 @@ export class SettingsService {
     return this.resolveSettings();
   }
 
-  async resetSettings(): Promise<Settings> {
-    const r = this.apply([{ op: 'reset', scope: { kind: 'recommended' } }], 'user');
-    if (r.kind !== 'saved') throw new Error(`settings not reset: ${r.detail}`);
-    return this.resolveSettings();
-  }
-
   /** The v1 run stamps today's sweep and scheduled prune keep, persisted with the migration record. */
   private recordBookkeeping(patch: Partial<V1Bookkeeping>): void {
     if (this.refused !== null) return;

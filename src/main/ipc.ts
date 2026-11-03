@@ -89,9 +89,7 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
       logger.info('prune:scan');
       return foundation.scanPrune();
     },
-    // Annotated by protection once the unfollow-decisions stream wires it; the base fields are today's.
-    pruneCandidates: async () =>
-      (await foundation.pruneCandidates()).map((c) => ({ ...c, protectedBy: null, bioUnread: false })),
+    pruneCandidates: () => foundation.pruneCandidates(),
     startPrune: () => {
       logger.info('prune:start');
       return foundation.startPrune();

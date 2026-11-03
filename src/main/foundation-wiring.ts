@@ -27,7 +27,7 @@ import {
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import type { EngineStatus } from '@/engine/engine';
 import { journaledMutation, refusalReason } from '@/engine/journaled-mutation';
-import type { PruneCandidate, PruneStatus } from '@/engine/prune-engine';
+import type { PruneStatus } from '@/engine/prune-engine';
 import { SystemClock } from '@/governors/clock';
 import type { CursorObserver } from '@/interaction/input-driver';
 import { referenceTempoSource } from '@/kernel/tempo';
@@ -535,8 +535,8 @@ export class Foundation {
   // Auto-prune controls (Phase 5) — same tab/rim, mutually exclusive with growth
   // -------------------------------------------------------------------------
 
-  /** The persisted scan's candidates (see {@link PruneControl.pruneCandidates}). */
-  pruneCandidates(): Promise<PruneCandidate[]> { return this.prune.pruneCandidates(); }
+  /** The persisted scan's candidates, annotated by protection (see {@link PruneControl.pruneCandidates}). */
+  pruneCandidates(): ReturnType<PruneControl['pruneCandidates']> { return this.prune.pruneCandidates(); }
   /** Scan the own lists for prune candidates (see {@link PruneControl.scanPrune}); `'starting'` during startup. */
   scanPrune(): Promise<PruneScanResult> { return this.boot.busy() ? Promise.resolve({ ok: false, reason: 'starting', following: 0, followers: 0, candidates: [] }) : this.prune.scanPrune(); }
   /** Prepare, then start a prune run (see {@link PruneControl.startPrune}); `'starting'` during startup. */
