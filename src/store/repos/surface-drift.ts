@@ -258,10 +258,11 @@ export class SurfaceDriftRepo {
    * `resolvedBefore`, and signatures past `maxPerEndpoint` (informational ones first, then the oldest).
    */
   prune(keep: { healthDays: number; resolvedBefore: number; maxPerEndpoint: number }): void {
-    this.db.transaction(() => {
-      this.db.prepare(`DELETE FROM surface_health WHERE day NOT IN
-        (SELECT DISTINCT day FROM surface_health ORDER BY day DESC LIMIT ?)`).run(keep.healthDays);
-      this.db.prepare(`DELETE FROM surface_drift WHERE state = 'resolved' AND last_seen_at < ?`).run(keep.resolvedBefore);
+    // Only a prune that removed something is a write: an idle open must not pulse the projections.
+    const removed = this.db.transaction(() => {
+      let n = this.db.prepare(`DELETE FROM surface_health WHERE day NOT IN
+        (SELECT DISTINCT day FROM surface_health ORDER BY day DESC LIMIT ?)`).run(keep.healthDays).changes;
+      n += this.db.prepare(`DELETE FROM surface_drift WHERE state = 'resolved' AND last_seen_at < ?`).run(keep.resolvedBefore).changes;
       const rows = (this.db.prepare(`SELECT signature, endpoint, cls, last_seen_at FROM surface_drift`).all() as SqlRow[]);
       const byEndpoint = new Map<string, SqlRow[]>();
       for (const r of rows) byEndpoint.set(String(r.endpoint), [...(byEndpoint.get(String(r.endpoint)) ?? []), r]);
@@ -269,10 +270,11 @@ export class SurfaceDriftRepo {
       for (const group of byEndpoint.values()) {
         const rank = (r: SqlRow): number => (INFORMATIONAL.has(String(r.cls)) ? 0 : 1);
         group.sort((a, b) => rank(a) - rank(b) || num(a.last_seen_at) - num(b.last_seen_at));
-        for (const r of group.slice(0, Math.max(0, group.length - keep.maxPerEndpoint))) drop.run(String(r.signature));
+        for (const r of group.slice(0, Math.max(0, group.length - keep.maxPerEndpoint))) n += drop.run(String(r.signature)).changes;
       }
+      return n;
     });
-    this.wrote();
+    if (removed > 0) this.wrote();
   }
 
   /** The persisted latency reservoir (`meta.surface_meter`), raw. */

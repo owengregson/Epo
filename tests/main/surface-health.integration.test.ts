@@ -1,17 +1,28 @@
 /**
  * The production surface sink over a real store (spec §10.7): tallies buffer and land on the throttle's
  * trailing edge, a plan-day roll and teardown; a first sighting lands at once with a scrubbed sample (≤ the
- * day's cap, held to the leak rules); clean canonical reads resolve drift; the meter round-trips through meta.
+ * day's cap, held to the leak rules); clean canonical reads resolve drift; the meter round-trips through meta;
+ * the gate stops an unfollow before any read; `status.surface` moves with the store.
  */
 
+import { ActionDeferredError } from '@/adapter/errors';
+import { FakeClock } from '@/governors/clock';
+import { ReadBudget } from '@/governors/read-budget';
 import type { PlanDayClock, PlanDayWindow } from '@/kernel/plan';
 import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
+import { createClickReview } from '@/main/services/click-review';
 import { createSurfaceHealthSink, type SurfaceHealthSinkDeps } from '@/main/services/surface-health-sink';
+import { createSurfaceReport } from '@/main/services/surface-report';
+import { liveSurfaceReporter } from '@/main/services/surface-wiring';
+import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { FollowRecord } from '@/store/types';
 import { scrubSample } from '@/surface/lab/sample';
 import { structuralLeaks } from '@/surface/lab/structural-leak';
 import { SurfaceMeter } from '@/surface/meter';
 import type { DriftSignal } from '@/surface/sink';
+import { builtFoundation, cleanupMainHarness, foundationStore } from '../kit/main-harness';
+import { readLimits } from '../kit/read-limits';
 import { memoryStore } from '../kit/store';
 
 const S = '2026-08-12';
@@ -126,4 +137,44 @@ test('the hint book and the identity oracle read the store', () => {
   h.store.observe({ accountPk: '42', observedAt: 1, source: 'profile', fields: { username: 'user_a1' } });
   expect(h.sink.usernameOf('42')).toBe('user_a1');
   expect(h.sink.usernameOf('43')).toBeUndefined();
+});
+
+describe('the gate at the click and status.surface over a built graph', () => {
+  afterAll(cleanupMainHarness);
+
+  test('a drifted relationship key defers an unfollow before any read; the record is untouched', async () => {
+    const store = memoryStore();
+    const clock = new FakeClock(Date.UTC(2026, 10, 3, 12));
+    const report = createSurfaceReport({ store, surfaceId: S, day: manualDay(), clock });
+    store.surface.upsertSignal({ signature: 'rel', surfaceId: S, endpoint: 'profile-graphql', cls: 'expected-absent',
+      path: 'data.user.friendship_status.following', detail: '{}', at: clock.now() });
+    const record: FollowRecord = { accountPk: 'a', targetPk: null, state: 'unfollow_queued', followedAt: 1, retryCount: 0,
+      checkFailures: 0 };
+    store.upsertFollowRecord(record);
+    const before = store.getFollowRecord('a');
+    const budget = new ReadBudget({ store, clock, limits: readLimits() });
+    const visit = jest.fn();
+    const err = await createClickReview({ store, ownPk: 'me', clock, readBudget: budget, profiles: () => ({ visit }),
+      settings: () => DEFAULT_SETTINGS, signal: () => undefined, active: async () => true, surfaceGate: report.gate })
+      .prepareProfile('alice', 'a', 'unfollow').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ActionDeferredError);
+    expect(visit).not.toHaveBeenCalled();
+    expect(budget.snapshot().debits).toEqual([]);
+    expect(store.getFollowRecord('a')).toEqual(before);
+  });
+
+  test('status.surface moves with the store, and the live report follows the graph', async () => {
+    const { foundation: f } = await builtFoundation();
+    const first = (await f.status()).surface;
+    expect(first?.worst).toBe('unseen');
+    expect(liveSurfaceReporter()).not.toBeNull();
+    foundationStore(f).surface.upsertSignal({ signature: 'x', surfaceId: S, endpoint: 'followers-list',
+      cls: 'more-without-cursor', path: 'has_more', detail: '{}', at: Date.now() });
+    const next = (await f.status()).surface;
+    expect(next?.areas.lists).toBe('paused');
+    expect(next?.paused).toContain('cleanup');
+    expect(next?.revision).toBeGreaterThan(first?.revision ?? Number.POSITIVE_INFINITY);
+    await f.dispose();
+    expect(liveSurfaceReporter()).toBeNull();
+  });
 });

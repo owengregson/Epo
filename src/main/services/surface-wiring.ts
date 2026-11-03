@@ -14,11 +14,21 @@ import {
   installRelationshipReconciler,
   RelationshipReconciler,
 } from '@/rim/relationship-reconciler';
+import type { SurfaceGate } from '@/shared/surface-gate';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { surface } from '@/surface/index';
 import { scrubSample } from '@/surface/lab/sample';
 import type { WiringParts } from './graph-types';
 import { createSurfaceHealthSink, type SurfaceHealthSink } from './surface-health-sink';
+import { createSurfaceReport, type SurfaceReporter } from './surface-report';
+
+/** Each graph's report, by its store: the `surface` contributor receives the graph, never the wiring. */
+const reporters = new WeakMap<KnowledgeStore, SurfaceReporter>();
+/** The live graph's report, for the `surface:report` handler (cleared when that graph tears down). */
+let live: SurfaceReporter | null = null;
+
+/** The report of the graph that is live now, or null before a graph is built or after it tore down. */
+export const liveSurfaceReporter = (): SurfaceReporter | null => live;
 
 /** The readers one graph shares, the disposers of the two passive taps, and the surface sink. */
 export interface SurfaceWiring {
@@ -29,6 +39,10 @@ export interface SurfaceWiring {
   profileInfoUnsub: () => void;
   /** The production sink: the read pipeline's reports land here (with its hint book and identity oracle). */
   sink: SurfaceHealthSink;
+  /** Area states, the status summary and the surface gate, over the persisted rows. */
+  report: SurfaceReporter;
+  /** The real surface gate: the click review's step 0b and the plan mix read it (spec §10.6). */
+  gate: SurfaceGate;
 }
 
 /** Build the Reader and the sink, and install the reconciler and the profile observer on the tab. */
@@ -43,7 +57,11 @@ export function wireSurface(d: {
   const { store, ownPk, clock } = d;
   const reader = new Reader();
   const day = d.day ?? calendarPlanDayClock({ now: () => clock.now() });
-  const sink = createSurfaceHealthSink({ store, surfaceId: surface().id, day, clock, scrub: scrubSample });
+  const surfaceId = surface().id;
+  const sink = createSurfaceHealthSink({ store, surfaceId, day, clock, scrub: scrubSample });
+  const report = createSurfaceReport({ store, surfaceId, day, clock });
+  reporters.set(store, report);
+  live = report;
 
   // Heal external follow/unfollow drift from the SAME response pipeline: every
   // relationship-bearing body reconciles our own follow-status through the
@@ -65,11 +83,18 @@ export function wireSurface(d: {
   const profileInfoUnsub = (): void => {
     stopObserver();
     sink.dispose();
+    if (live === report) live = null;
   };
-  return { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub, sink };
+  return { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub, sink, report, gate: report.gate };
 }
 
-/** The surface wiring's startup steps and status contributors (the parse-health stream fills them). */
+/** The surface wiring's status contributor: `status.surface` from the graph's persisted drift and health. */
 export function surfaceWiringParts(): WiringParts {
-  return { startupSteps: [], statusContributors: [] };
+  return {
+    startupSteps: [],
+    statusContributors: [{
+      name: 'surface',
+      contribute: (graph) => ({ surface: graph === null ? null : (reporters.get(graph.store)?.summary() ?? null) }),
+    }],
+  };
 }
