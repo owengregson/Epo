@@ -3,7 +3,7 @@
  * demand, and helpers that draw a plan-day for a window. Suites override only what they test.
  */
 
-import type { UsageTally } from '@/governors/plan-types';
+import type { PlanServiceDeps, PlanStore, UsageTally } from '@/governors/plan-types';
 import type { PlanViewInputs } from '@/governors/plan-view';
 import {
   ACTIVITY,
@@ -150,3 +150,57 @@ export const CONSISTENCIES = (['clockwork', 'natural', 'erratic'] as const).map(
   restDayProbability: REST_DAY_PCT[k] / 100,
   consistencyScale: SCALES.consistency[k],
 }));
+
+/** An in-memory plan store with a write counter and a mutation ledger the suite appends to. */
+export interface MemoryPlanStore extends PlanStore {
+  raw: string | null;
+  pacing: string | null;
+  writes: number;
+  readonly mutations: { at: number; kind: 'follow' | 'unfollow' | 'accept'; auto: boolean }[];
+}
+
+export function memoryPlanStore(): MemoryPlanStore {
+  const store: MemoryPlanStore = {
+    raw: null,
+    pacing: null,
+    writes: 0,
+    mutations: [],
+    getPlanState: () => store.raw,
+    setPlanState: (raw) => {
+      store.writes += 1;
+      store.raw = raw;
+    },
+    getPacingState: () => store.pacing,
+    tallySince: (since) => {
+      const m = store.mutations.filter((x) => x.at >= since);
+      const count = (k: string) => m.filter((x) => x.kind === k).length;
+      return {
+        all: m.length, auto: m.filter((x) => x.auto).length, manual: m.filter((x) => !x.auto).length,
+        follow: count('follow'), unfollow: count('unfollow'), accept: count('accept'),
+      };
+    },
+    recentMutationTimes: (since) => store.mutations.filter((x) => x.at >= since).map((x) => x.at).sort((a, b) => a - b),
+    hasAnyMutation: () => store.mutations.length > 0,
+  };
+  return store;
+}
+
+/** Plan-service deps over a memory store and a settable clock; override what a case needs. */
+export function planDeps(store: MemoryPlanStore, clock: { t: number }, over: Partial<PlanServiceDeps> = {}): PlanServiceDeps {
+  return {
+    store,
+    clock: { now: () => clock.t },
+    installEntropy: 0x5eed,
+    launchSeed: 7,
+    intent: () => testIntent(),
+    demand: () => emptyDemand(),
+    lastMutationBefore: (t) => store.mutations.filter((x) => x.at < t).reduce<number | null>((a, x) => Math.max(a ?? 0, x.at), null),
+    outsideSince: () => 0,
+    deadline: () => null,
+    journal: { blocks: () => false },
+    runIntent: () => 'running',
+    unconfirmed: () => null,
+    surfaceGate: { paused: () => false },
+    ...over,
+  };
+}

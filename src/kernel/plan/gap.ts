@@ -33,9 +33,12 @@ const maxAtBeatMax = (key: 'dwell.visit' | 'dwell.before-press'): number => {
   return p.shape === 'band' || p.shape === 'logn' ? p.max : 0;
 };
 
+let capMaxMemo: number | null = null;
+
 /** The longest gap a session may draw: a gap plus the slowest pre-action span never ends a session (law L4). */
 export function gapCapMax(): number {
-  return SESSION.SESSION_BOUNDARY_MS - (maxAtBeatMax('dwell.visit') + maxAtBeatMax('dwell.before-press') + TAB.GOTO_TIMEOUT_MS);
+  capMaxMemo ??= SESSION.SESSION_BOUNDARY_MS - (maxAtBeatMax('dwell.visit') + maxAtBeatMax('dwell.before-press') + TAB.GOTO_TIMEOUT_MS);
+  return capMaxMemo;
 }
 
 /** The reference shape time-scaled by τ: median, floor and Hawkes τ scale; the cap scales up to CAP_MAX. */

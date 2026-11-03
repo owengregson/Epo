@@ -37,6 +37,8 @@ export interface PlanViewInputs {
   windowOf(t: number): { readonly startsAt: number; readonly endsAt: number };
   readonly provisional: boolean;
   readonly upgradeProbation: boolean;
+  /** The first mutation inside each session's window (the late-join rule), when the service knows it. */
+  readonly joinedAt?: readonly (number | null)[];
 }
 
 const AUTOMATIC: readonly Writer[] = ['growth', 'woven', 'cleanup-run', 'accept-pass'];
@@ -52,7 +54,7 @@ export function boostActiveAt(boost: BoostWindow | null, t: number): boolean {
 /** The plan at `inputs.now`: pure, read-only. */
 export function viewPlan(plan: DayPlan, inputs: PlanViewInputs): PlanView {
   const { now, used, intent } = inputs;
-  const usage = { auto: used.auto, follow: used.follow, perSession: used.perSession };
+  const usage = { auto: used.auto, follow: used.follow, perSession: used.perSession, joinedAt: inputs.joinedAt };
   const statuses = plan.sessions.map((_, i) => sessionStatus(plan, i, now, usage));
   const firstLater = statuses.findIndex((s) => s.state === 'later');
   const sessions = statuses.map((s, idx) => ({

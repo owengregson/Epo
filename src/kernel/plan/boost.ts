@@ -67,7 +67,7 @@ function insertNow(plan: DayPlan, sessions: LaidSession[], input: DrawInput, now
         mix: mixes[0], tempo, before: 'none' };
       const placed = rest.map((s, i) => ({ ...s, mix: mixes[i + 1], startAt: (starts as number[])[i],
         expectedEndAt: Math.round((starts as number[])[i] + s.budget * s.tempo.gap.targetMeanMs) }));
-      return [...started, inserted, ...placed];
+      return [...started, inserted, ...placed.filter((s) => s.budget > 0)];
     }
     // Two smallest adjacent future sessions merge until the rest fits after the inserted one.
     let pair = 0;

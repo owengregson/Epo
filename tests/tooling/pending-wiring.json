@@ -31,19 +31,9 @@
       "reason": "surface-wiring.ts swaps the production sink in for NO_SINK and the read pipeline reports to it"
     },
     {
-      "module": "src/governors/plan-day-clock.ts",
+      "module": "src/governors/plan-service.ts",
       "stream": "PR",
-      "reason": "plan-wiring.ts, the one swap site, hands the plan-day clock to every day-keyed consumer (UD, RO, PH, LD); the first of them to merge wires this default and removes the entry"
-    },
-    {
-      "module": "src/governors/plan-state.ts",
-      "stream": "PR",
-      "reason": "PlanService (the plan core) reads and writes meta.plan_state through it; plan-wiring.ts builds the service"
-    },
-    {
-      "module": "src/governors/plan-view.ts",
-      "stream": "PR",
-      "reason": "PlanService.view builds it; the engine reads it through the plan port (facts-plan.ts, PR S1)"
+      "reason": "plan-wiring.ts builds the plan service over the store and settings, and swaps its plan-day clock in for every day-keyed consumer"
     }
   ]
 }
