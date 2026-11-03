@@ -25,7 +25,7 @@ export function GetStarted({ started }: { started: boolean }): JSX.Element {
     <section class="sb-zone sb-start" data-zone="get-started" data-tour="today results">
       <div class="sb-start__title">
         <h3>{GET_STARTED.title}</h3>
-        <span class="num">{GET_STARTED.progress(done)}</span>
+        <span class="num">{GET_STARTED.progress(done, steps.length)}</span>
       </div>
       <div class="sb-start__bar" aria-hidden="true">
         <i style={{ transform: `scaleX(${done / steps.length})` }} />

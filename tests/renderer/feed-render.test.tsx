@@ -124,19 +124,19 @@ describe('rendered rows', () => {
     expect(document.querySelector('.sb-feed__empty')?.textContent).toBe('Nothing yet today. Activity shows up here as Epo works.');
   });
 
-  it('a grouped row expands to list at most twenty people, then how many more', async () => {
-    const people = Array.from({ length: 23 }, (_, i) => person(`p${i}`));
+  it('a grouped row shows two handles and how many more, and expands to list the whole group', async () => {
+    // Main closes a group at the live policy's people bound, so an expanded row lists every member.
+    const people = Array.from({ length: 6 }, (_, i) => person(`p${i}`));
     await mount({
       items: [{ id: 'g', at: T - 1_000, kind: 'followed', people, via: 'plan', practice: false }],
       awayFrom: null, windowStart: T - HOUR, shapedAt: T, days: DAYS,
     });
+    expect(document.querySelector('.sb-row__detail')?.textContent).toBe('@p0, @p1 +4');
     expect(document.querySelector('.sb-row__people')).toBeNull();
     await act(async () => {
       fireEvent.click(document.querySelector('.sb-row__more') as HTMLButtonElement);
     });
-    const list = document.querySelector('.sb-row__people');
-    expect(list?.querySelectorAll('.sb-handle')).toHaveLength(20);
-    expect(list?.textContent).toContain('+3 more');
+    expect(document.querySelector('.sb-row__people')?.querySelectorAll('.sb-handle')).toHaveLength(6);
   });
 
   it('a handle opens the People page', async () => {

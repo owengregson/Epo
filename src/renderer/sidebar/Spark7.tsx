@@ -11,13 +11,13 @@ const BASE = 32;
 const BAR = 18;
 const PITCH = 23;
 
-export function Spark7({ values, label }: { values: readonly number[] | null; label: string }): JSX.Element | null {
+export function Spark7({ values, label }: { values: readonly number[] | null; label(days: number): string }): JSX.Element | null {
   if (values === null || values.length === 0) return null;
   const max = Math.max(1, ...values.map((v) => Math.abs(v)));
   const week = values.reduce((a, b) => a + b, 0);
   return (
     <div class="sb-spark">
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${week >= 0 ? '+' : '−'}${count(Math.abs(week))} over ${label}`}>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${week >= 0 ? '+' : '−'}${count(Math.abs(week))} over ${label(values.length)}`}>
         <line class="sb-spark__base" x1="0" x2={W} y1={BASE + 0.5} y2={BASE + 0.5} />
         {values.map((v, i) => {
           const h = Math.max(2, (Math.abs(v) / max) * (v >= 0 ? BASE - 2 : H - BASE - 2));
@@ -28,7 +28,7 @@ export function Spark7({ values, label }: { values: readonly number[] | null; la
           );
         })}
       </svg>
-      <span>{label}</span>
+      <span>{label(values.length)}</span>
     </div>
   );
 }

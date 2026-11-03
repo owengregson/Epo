@@ -61,12 +61,12 @@ export const RESULTS = {
   updating: 'updating…',
   signedOut: 'Your numbers appear after you sign in.',
   loading: 'Loading your numbers…',
-  spark: 'last 7 days',
+  spark: (days: number): string => `last ${count(days)} days`,
 } as const;
 
 export const GET_STARTED = {
   title: 'Get started',
-  progress: (done: number): string => `${count(done)} of 3`,
+  progress: (done: number, total: number): string => `${count(done)} of ${count(total)}`,
   signIn: 'Sign in to Instagram',
   seed: 'Choose a starting account',
   start: 'Press Start',

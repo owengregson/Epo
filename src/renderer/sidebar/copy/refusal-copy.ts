@@ -29,6 +29,9 @@ const REFUSAL: Readonly<Record<string, string | null>> = {
   'not-on': null,
 };
 
+/** Every refusal key the deck words (any other reads as "That didn't work"). */
+export const KNOWN_REFUSALS: readonly string[] = Object.keys(REFUSAL);
+
 /** The reason line for a typed refusal; null when the refusal needs no words. */
 export function refusalText(reason: string): string | null {
   return Object.hasOwn(REFUSAL, reason) ? (REFUSAL[reason] ?? null) : DIDNT_WORK;

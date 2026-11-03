@@ -8,13 +8,9 @@ import { useState } from 'preact/hooks';
 import { useNow } from '@/renderer/app/clock';
 import { rowFace } from '@/renderer/sidebar/copy/feed-copy';
 import type { FeedEntry } from '@/renderer/sidebar/feed-entries';
-import { count } from '@/renderer/sidebar/format';
 import { Said } from '@/renderer/sidebar/Said';
 import { Icon } from '@/renderer/ui/Icon';
 import { type FeedItem, formatAgo, type Person } from '@/shared/feed';
-
-/** A grouped row lists at most this many people when expanded, then "+N more" (the feed's own group bound). */
-const LIST_MAX = 20;
 
 function Row({ item, now, fresh, onPerson }: { item: FeedItem; now: number; fresh: boolean; onPerson(p: Person): void }): JSX.Element {
   const [open, setOpen] = useState(false);
@@ -47,8 +43,8 @@ function Row({ item, now, fresh, onPerson }: { item: FeedItem; now: number; fres
       </div>
       {open && people !== null ? (
         <p class="sb-row__people">
-          <Said parts={people.slice(0, LIST_MAX).flatMap((x, i) => (i === 0 ? [{ person: x }] : [', ', { person: x }]))} onPerson={onPerson} />
-          {people.length > LIST_MAX ? <span> +{count(people.length - LIST_MAX)} more</span> : null}
+          {/* Main closes a group at the live policy's people bound, so the whole group fits here. */}
+          <Said parts={people.flatMap((x, i) => (i === 0 ? [{ person: x }] : [', ', { person: x }]))} onPerson={onPerson} />
         </p>
       ) : null}
     </div>
