@@ -10,6 +10,17 @@ export const reconcileRule: Rule<'clock' | 'cadence'> = {
     : null,
 };
 
+/** The follow-back sweep on its slow, persisted cadence (IG traffic → paced). */
+export const followbackRule: Rule<'clock' | 'cadence'> = {
+  id: 'followback',
+  modes: ['growth'],
+  needs: ['clock', 'cadence'],
+  decide: (f) =>
+    f.cadence.sweepDue
+      ? { do: 'run', effect: { id: 'sweep-followback', now: f.clock.now } }
+      : null,
+};
+
 export const rotateRule: Rule<'target' | 'queue' | 'action'> = {
   id: 'rotate',
   modes: ['growth'],

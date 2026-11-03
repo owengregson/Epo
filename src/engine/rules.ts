@@ -24,7 +24,7 @@ import { pickAction } from './decisions';
 import type { EngineWaitKey } from './engine-waits';
 import type { FactKey, Facts, FeedCandidate, Mode, RunCtx } from './facts';
 import type { HaltReason } from './halt-reason';
-import { reconcileRule, rotateRule, targetRule } from './lifecycle-rules';
+import { followbackRule, reconcileRule, rotateRule, targetRule } from './lifecycle-rules';
 import { pacingVerdict } from './pacers';
 import type { CurrentTarget, StepResult } from './ports';
 import type { FailureKind } from './recovery';
@@ -171,17 +171,6 @@ const pacingRule = defineRule({
     const spec = pacingVerdict(f);
     return spec === null ? null : { do: 'park', spec };
   },
-});
-
-/** The follow-back sweep on its slow, persisted cadence (IG traffic → paced). */
-const followbackRule = defineRule({
-  id: 'followback',
-  modes: ['growth'],
-  needs: ['clock', 'cadence'],
-  decide: (f) =>
-    f.cadence.sweepDue
-      ? { do: 'run', effect: { id: 'sweep-followback', now: f.clock.now } }
-      : null,
 });
 
 /**

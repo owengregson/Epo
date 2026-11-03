@@ -120,10 +120,6 @@
     {
       "file": "src/renderer/cards/settings/BehaviorCard.tsx",
       "lines": 312
-    },
-    {
-      "file": "src/engine/rules.ts",
-      "lines": 303
     }
   ]
 }
