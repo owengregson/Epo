@@ -167,7 +167,7 @@
     {"key":"src/main/modules/settings-transitional.ts :: intentFromV1 :: startMinute :: 60","class":"PENDING","stream":"SU","reason":"SU: deletes the transitional settings adapter with the old settings UI"},
     {"key":"src/main/services/runtime-coordinator.ts :: RuntimeCoordinator.persist :: mode :: 0o600","class":"GEOM","reason":"a file permission mode: owner read and write"},
     {"key":"src/main/services/runtime-log.ts :: RuntimeLog.append :: mode :: 0o600","class":"GEOM","reason":"a file permission mode: owner read and write"},
-    {"key":"src/main/updater.ts :: EpoUpdater.constructor :: percent :: 100","class":"GEOM","reason":"a percent scale (unit)"},
+    {"key":"src/main/update-core.ts :: nextUpdateStatus :: percent :: 100","class":"GEOM","reason":"a percent scale (unit)","movedFrom":"src/main/updater.ts :: EpoUpdater.constructor :: percent :: 100"},
     {"key":"src/main/window-state.ts :: DEFAULT_WINDOW_STATE :: height :: 920","class":"GEOM","reason":"window geometry in px and the state file indentation"},
     {"key":"src/main/window-state.ts :: DEFAULT_WINDOW_STATE :: width :: 1440","class":"GEOM","reason":"window geometry in px and the state file indentation"},
     {"key":"src/main/window-state.ts :: MIN_VISIBLE_PX :: MIN_VISIBLE_PX :: 96","class":"GEOM","reason":"window geometry in px and the state file indentation"},

@@ -37,14 +37,15 @@ describe('update-core', () => {
     }
   });
 
-  test('initial status carries the mode and running version, nothing else', () => {
+  test('initial status carries the mode and running version, unchecked, nothing else', () => {
     expect(initialStatus('notify', '3.0.0')).toEqual({
-      state: 'idle',
+      state: 'unchecked',
       mode: 'notify',
       current: '3.0.0',
       version: null,
       percent: null,
       error: null,
+      checkedAt: null,
     });
   });
 });
