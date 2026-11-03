@@ -72,7 +72,7 @@
         "facts": 12,
         "relationships": 0,
         "events": 0,
-        "cursor": "cursor.700000000073.len120",
+        "cursor": "cursor.700000000107.len120",
         "hasMore": true,
         "absent": null,
         "rowIssues": 0,
@@ -156,7 +156,7 @@
       "file": "friendship-show-01.json",
       "endpoint": "friendship-show",
       "source": "show-many",
-      "pk": "700000000096",
+      "pk": "700000000149",
       "origin": "0009-friendship-show.json",
       "expect": {
         "facts": 0,
@@ -242,17 +242,17 @@
   ],
   "missing": [
     "following-list",
-    "activity-feed",
     "profile-info",
-    "profile-graphql"
+    "profile-graphql",
+    "activity-feed"
   ],
   "dropped": [],
   "stats": {
     "handles": 297,
-    "names": 118,
-    "pks": 121,
-    "urls": 52,
-    "texts": 1,
-    "unknownKeys": 564
+    "names": 117,
+    "pks": 150,
+    "urls": 51,
+    "texts": 0,
+    "unknownKeys": 309
   }
 }
