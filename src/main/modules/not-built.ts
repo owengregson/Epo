@@ -14,6 +14,7 @@
  * Settings, which is why the prune shape takes it.
  */
 
+import { NOT_BUILT_FIELDS } from '@/shared/status-fields';
 import type { EpoStatus, PruneStatus, Settings } from '@/types';
 
 /** The prune projection before a graph exists: idle, zeroed, settings-seeded. */
@@ -41,7 +42,8 @@ export function notBuiltPruneStatus(s: Settings): PruneStatus {
 /**
  * The growth projection before a graph exists. `loggedIn` and `online` are the
  * only two fields that can be true here — everything else is a count the graph
- * has not yet been asked for.
+ * has not yet been asked for: `basis` is 'not-built' and every optional status
+ * field is `null` ("not known yet", never a zero).
  */
 export function notBuiltStatus(loggedIn: boolean, online: boolean): EpoStatus {
   return {
@@ -68,5 +70,6 @@ export function notBuiltStatus(loggedIn: boolean, online: boolean): EpoStatus {
     recovery: null,
     pacing: null,
     loggedIn,
+    ...NOT_BUILT_FIELDS,
   };
 }

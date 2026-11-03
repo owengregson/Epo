@@ -1,0 +1,13 @@
+/** `paceLabel` names a session's pace factor with one word per pace band (spec §5.17). */
+
+import { paceLabel } from '@/shared/plan-projection';
+
+test('a slower-than-reference session is relaxed, a brisker one quick, the band between normal', () => {
+  expect(paceLabel(1.45)).toBe('relaxed');
+  expect(paceLabel(1.16)).toBe('relaxed');
+  expect(paceLabel(1.15)).toBe('normal');
+  expect(paceLabel(1)).toBe('normal');
+  expect(paceLabel(0.87)).toBe('normal');
+  expect(paceLabel(0.86)).toBe('quick');
+  expect(paceLabel(0.7)).toBe('quick');
+});

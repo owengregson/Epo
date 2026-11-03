@@ -26,6 +26,7 @@ const MIN = 60_000;
 /** A neutral, logged-in idle engine — every scenario starts from this. */
 export function baseStatus(over: Partial<EpoStatus> = {}): EpoStatus {
   return {
+    basis: 'built',
     state: 'idle',
     loggedIn: true,
     currentTargetPk: '1001',

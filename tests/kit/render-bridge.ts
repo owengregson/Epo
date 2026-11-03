@@ -22,6 +22,7 @@ import type {
 /** A neutral idle engine status — the shape every projection starts from. */
 export function idleStatus(over: Partial<EpoStatus> = {}): EpoStatus {
   return {
+    basis: 'built',
     state: 'idle',
     loggedIn: true,
     currentTargetPk: null,

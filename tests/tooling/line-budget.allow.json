@@ -59,7 +59,7 @@
     },
     {
       "file": "src/main/services/graph-builder.ts",
-      "lines": 370
+      "lines": 367
     },
     {
       "file": "src/rim/followers-page-reader.ts",

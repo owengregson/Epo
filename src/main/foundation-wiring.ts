@@ -1411,7 +1411,7 @@ export class Foundation {
     // emit — in that order, so the hand-off never dips the veil.
     this.activity.signal('growth-loop', status.state === 'running');
     this.releaseGrowthStartBridge();
-    this.projections.send('status', { ...status, loggedIn: this.graph !== null, runtime: this.runtimeSnapshot() });
+    this.projections.send('status', composeStatus({ ...status, loggedIn: this.graph !== null, runtime: this.runtimeSnapshot() }, [], this.graph, Date.now()));
   }
 
   /** Retire the `growth-start` bridge hold (idempotent; see {@link startEngine}). */

@@ -16,7 +16,7 @@ import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
 import { type Settings, toChurnConfig, toPruneConfig, toScorerConfig } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import type { GraphBuildDeps } from './graph-types';
+import type { GraphBuildDeps, WiringParts } from './graph-types';
 import { createMutationPolicy } from './mutation-policy';
 
 type MutationPolicy = ReturnType<typeof createMutationPolicy>;
@@ -99,4 +99,9 @@ export function pruneUnfollowDeps(
         }
       : undefined,
   };
+}
+
+/** The unfollow wiring's startup steps and status contributors (the unfollow-decisions stream fills them). */
+export function unfollowWiringParts(): WiringParts {
+  return { startupSteps: [], statusContributors: [] };
 }

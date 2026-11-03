@@ -24,10 +24,24 @@ import type { FollowerAcquisition } from '@/rim/types';
 import type {
   Settings,
 } from '@/settings/settings';
+import type { StartupStep } from '@/shared/boot';
+import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DelayManager } from '@/timing/delay-manager';
 import type { ScheduleManager } from '@/timing/schedule-manager';
 import type { SessionPlanner } from '@/timing/session-planner';
+
+/** One source of status fields beyond the engine's own, read on every composed status. */
+export interface StatusContributor {
+  readonly name: keyof StatusFields | string;
+  contribute(graph: BuiltGraph | null, now: number): Partial<StatusFields>;
+}
+
+/** What each wiring module returns for the graph: its startup steps and status contributors. */
+export interface WiringParts {
+  readonly startupSteps: readonly StartupStep[];
+  readonly statusContributors: readonly StatusContributor[];
+}
 
 /** The lazily-built dependency graph, cached once `ownPk` is resolvable. */
 export interface BuiltGraph {
@@ -76,6 +90,10 @@ export interface BuiltGraph {
   chain: ChainController;
   /** The organic pacing planner, present only when `Settings.pacingModel === 'organic'`. */
   pacing: SessionPlanner | undefined;
+  /** Every wiring module's startup steps, aggregated once per build (a rebuild never duplicates one). */
+  startupSteps: readonly StartupStep[];
+  /** Every wiring module's status contributors, aggregated once per build. */
+  statusContributors: readonly StatusContributor[];
 }
 
 /** Everything {@link buildGraph} needs from the composition root. */

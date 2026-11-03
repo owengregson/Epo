@@ -9,6 +9,7 @@ import type { SourceFrontierSnapshot } from './source-frontier';
 export interface EngineStatus {
   health?: RuntimeHealthSnapshot;
   frontier?: SourceFrontierSnapshot;
+  /** @deprecated The old renderer reads it; `status.catchUp`/`journal` replace it (removal sweep). */
   reentry?: ReentrySnapshot;
   state: EngineState;
   currentTargetPk: string | null;
@@ -56,8 +57,8 @@ export interface EngineStatus {
     maxAttempts: number;
     resumeAt: number | null;
   } | null;
-  /** Organic-pacing session status (null in legacy mode). */
-  pacing: {
+  /** @deprecated Organic-pacing session status (null in legacy mode); `status.plan` replaces it (removal sweep). */
+  pacing?: {
     sessionOpen: boolean;
     sessionEndsAt: number | null;
     nextSessionAt: number | null;
