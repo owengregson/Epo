@@ -7,7 +7,7 @@ import { type JSX } from 'preact';
 import { sidebarGeometry } from '@/renderer/gallery/direction/layout';
 import type { PostureSpec } from '@/renderer/gallery/direction/postures';
 import { Footer, Masthead, NowZone } from '@/renderer/gallery/direction/sidebar-now';
-import { ActivityZone, GetStarted, ResultsZone, TodayZone } from '@/renderer/gallery/direction/sidebar-panels';
+import { ActivityZone, BoostPreview, GetStarted, ResultsZone, TodayZone } from '@/renderer/gallery/direction/sidebar-panels';
 
 export function Sidebar({ p, height }: { p: PostureSpec; height: number }): JSX.Element {
   const g = sidebarGeometry(height);
@@ -17,7 +17,7 @@ export function Sidebar({ p, height }: { p: PostureSpec; height: number }): JSX.
         <GetStarted height={g.today + g.results} />
       ) : (
         <>
-          <TodayZone t={p.today} preview={p.popover === 'boost-preview'} height={g.today} />
+          <TodayZone t={p.today} height={g.today} />
           <ResultsZone r={p.results} height={g.results} />
         </>
       )}
@@ -37,6 +37,8 @@ export function Sidebar({ p, height }: { p: PostureSpec; height: number }): JSX.
         </div>
       )}
       <Footer />
+      {/* Under the Boost button: the title row (40) below the zone's top padding (14). */}
+      {p.popover === 'boost-preview' ? <BoostPreview top={g.masthead + g.now + 54} /> : null}
     </aside>
   );
 }

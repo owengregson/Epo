@@ -41,10 +41,10 @@ export const SURFACES: readonly PaletteKey[] = ['bg', 'surface', 'elevated', 'ch
 /** Text tokens checked against every surface. */
 export const TEXT_TOKENS: readonly PaletteKey[] = ['text', 'muted', 'faint', 'silver', 'chrome', 'live', 'warn', 'danger', 'ok'];
 
-/** Colour is state: each posture tone aliases one existing accent (no new hue). */
+/** Colour is state: each posture tone aliases one existing accent (no new hue); calm sits a step below live. */
 export const TONES = {
   live: 'live',
-  calm: 'silver',
+  calm: 'muted',
   hold: 'warn',
   alert: 'danger',
   good: 'ok',

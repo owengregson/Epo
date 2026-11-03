@@ -9,11 +9,32 @@
  * words, the proposed tokens obeying their own rules, and every board one
  * chip away in the `?gallery=1` rail.
  */
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { act, cleanup, fireEvent, render, within } from '@testing-library/preact';
 import { h } from 'preact';
 import { BoardPage } from '@/renderer/gallery/direction/Board';
-import { BOARD_WIDTHS, overlaps, type Rect, SIDEBAR_HEIGHTS, sidebarGeometry } from '@/renderer/gallery/direction/layout';
-import { POSTURES } from '@/renderer/gallery/direction/postures';
+import {
+  FEED_ATTENTION,
+  FEED_BOOST,
+  FEED_CATCHING_UP,
+  FEED_WORKING,
+  type FeedEntry,
+  FUNNEL,
+  LIMITS,
+} from '@/renderer/gallery/direction/fixtures';
+import {
+  BOARD_WIDTHS,
+  overlaps,
+  PLAN_TABLE_MIN_W,
+  type Rect,
+  SIDEBAR_HEIGHTS,
+  settingsContentWidth,
+  sidebarGeometry,
+  TODAY_TITLE_H,
+} from '@/renderer/gallery/direction/layout';
+import { funnelShare } from '@/renderer/gallery/direction/people-page';
+import { POPOVER_FRAMES, POSTURES } from '@/renderer/gallery/direction/postures';
 import {
   contrast,
   DUR_MS,
@@ -79,12 +100,13 @@ describe('the live column', () => {
     it(`at ${height} px every posture's zones add up exactly, in the right mode`, () => {
       const root = renderBoard(`sidebar-${height}`, 1440);
       const cols = [...root.querySelectorAll<HTMLElement>('.dx-col')];
-      expect(cols).toHaveLength(POSTURES.length);
+      expect(cols).toHaveLength(POSTURES.length + POPOVER_FRAMES.length);
       const g = sidebarGeometry(height);
       for (const col of cols) {
         expect(px(col.style.height)).toBe(height);
         expect(col.dataset.mode).toBe(g.mode);
-        const parts = [...col.children].map((z) => px((z as HTMLElement).style.height));
+        const zones = [...col.children].filter((z) => (z as HTMLElement).dataset.zone !== undefined);
+        const parts = zones.map((z) => px((z as HTMLElement).style.height));
         expect(parts.every((p) => p > 0)).toBe(true);
         expect(parts.reduce((s, p) => s + p, 0)).toBe(height);
       }
@@ -220,5 +242,114 @@ describe('the ?gallery=1 rail', () => {
     await act(async () => {
       fireEvent.click(within(document.querySelector('.db-bar') as HTMLElement).getByText('Back to the gallery'));
     });
+  });
+});
+
+/** A board stylesheet's text, for the rules a layout-free DOM cannot measure. */
+function sheet(name: string): string {
+  return readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'gallery', 'direction', name), 'utf8');
+}
+
+/** The declarations of the first rule whose selector list is exactly `selector`. */
+function rule(css: string, selector: string): string {
+  const at = css.indexOf(`${selector} {`);
+  return at < 0 ? '' : css.slice(at, css.indexOf('}', at));
+}
+
+describe('the design review, folded in', () => {
+  it('the ring glyph stays in flow: only the ring’s own drawing is placed absolutely', () => {
+    const css = sheet('sidebar.css');
+    expect(rule(css, '.dx-ring > svg')).toContain('position: absolute');
+    expect(css).not.toMatch(/\.dx-ring svg\s*\{/);
+  });
+
+  it('nothing in the column loops but the two breaths (the mark, the Live dot); the Now ring never spins', () => {
+    const loops = ['sidebar.css', 'stage.css'].flatMap((f) => sheet(f).match(/animation:[^;]*infinite/g) ?? []);
+    expect(loops).toHaveLength(2);
+    expect(loops.every((l) => l.includes('dx-breathe'))).toBe(true);
+    expect(POSTURES.every((p) => p.ring.mode !== 'deplete' || p.next !== null)).toBe(true);
+  });
+
+  it('every feed sentence fits its row; a reason or a list goes to the detail line, never cut', () => {
+    const feeds: FeedEntry[] = [...FEED_WORKING, ...FEED_CATCHING_UP, ...FEED_BOOST, ...FEED_ATTENTION];
+    for (const e of feeds) {
+      if (!('id' in e)) continue;
+      const line = e.parts.join('');
+      expect({ line, fits: line.length <= 34 && !line.includes(' — ') }).toEqual({ line, fits: true });
+    }
+  });
+
+  it('the divider is a strict time boundary: “While you were away” sits above it', () => {
+    for (const feed of [FEED_WORKING, FEED_BOOST]) {
+      const away = feed.findIndex((e) => 'id' in e && e.parts[0] === 'While you were away');
+      expect(away).toBeLessThan(feed.findIndex((e) => 'divider' in e));
+    }
+  });
+
+  it('posture headlines keep to 15 characters (spec §12.2)', () => {
+    for (const p of POSTURES) expect({ h: p.headline, ok: p.headline.length <= 15 }).toEqual({ h: p.headline, ok: true });
+  });
+
+  it('the Today title row and the Boost band are one fixed height, so Boost moves nothing', () => {
+    const root = renderBoard('sidebar-800', 1440);
+    const firstRows = [...root.querySelectorAll<HTMLElement>('.dx-today')].map((t) => t.firstElementChild as HTMLElement);
+    expect(firstRows.some((r) => r.classList.contains('dx-band'))).toBe(true);
+    for (const r of firstRows) expect(px(r.style.height)).toBe(TODAY_TITLE_H);
+  });
+
+  it('Settings at 1024 keeps every section in view as wrapping chips', () => {
+    const root = renderBoard('settings-advanced', 1024);
+    const chips = root.querySelector('[data-frame="settings-advanced-timing"] .dx-set__chips') as HTMLElement;
+    expect(chips.querySelectorAll('button')).toHaveLength(12);
+    expect(chips.querySelector('[aria-current="true"]')?.textContent).toBe('Timing');
+    const css = rule(sheet('stage.css'), '.dx-set__chips');
+    expect(css).toContain('flex-wrap: wrap');
+    expect(css).not.toContain('overflow');
+  });
+
+  it('today’s plan in detail is a table only where it fits, otherwise one sentence per session', () => {
+    for (const width of BOARD_WIDTHS) {
+      const root = renderBoard('settings-advanced', width);
+      const table = settingsContentWidth(width - 460, 'advanced') >= PLAN_TABLE_MIN_W;
+      expect({ width, table: root.querySelector('.dx-plan__table') !== null }).toEqual({ width, table });
+      if (!table) {
+        const items = [...root.querySelectorAll('.dx-plan__sessions li')];
+        expect(items).toHaveLength(5);
+        for (const li of items) {
+          expect(li.querySelector('.dx-plan__when')?.textContent).toMatch(/^ Session \d · \d/);
+          expect(li.querySelector('.dx-plan__what')?.textContent).toMatch(
+            /^\d+ follows? · \d+ unfollows? · \d+ approvals? · \w+ pace · average pause \d.* · shortest \d.*$/,
+          );
+        }
+      }
+    }
+  });
+
+  it('Easy’s “When Epo works” offers the three session styles, the middle one recommended', () => {
+    const text = productText(renderBoard('settings-easy', 1024));
+    for (const t of ['Many short visits', 'A few regular sessions', 'A couple of longer sessions']) expect(text).toContain(t);
+    const group = renderBoard('settings-easy', 1440).querySelector('[aria-label="Session style"]') as HTMLElement;
+    const cards = group.querySelectorAll('.dx-card');
+    expect([...cards].map((c) => c.querySelector('.dx-tag') !== null)).toEqual([false, true, false]);
+  });
+
+  it('Advanced prints one value per limit wherever it appears', () => {
+    const text = productText(renderBoard('settings-advanced', 1920));
+    expect(text).toContain(`At most an hour${LIMITS.hourly} (`);
+    expect(text).toContain(`Hard stop${LIMITS.hardStop} actions`);
+    expect(text).toContain(`At most ${LIMITS.hourly} an hour · hard stop ${LIMITS.hardStop} a day`);
+    expect(text).not.toMatch(/At most an hour(?!22)\d+/);
+  });
+
+  it('funnel bars are the true linear share of the first stage', () => {
+    const shares = FUNNEL.map((f) => funnelShare(f.value));
+    expect(shares[0]).toBe(100);
+    for (const [i, f] of FUNNEL.entries()) expect(shares[i]).toBeCloseTo((Number(f.value.replace(/,/g, '')) / 8150) * 100, 6);
+  });
+
+  it('under reduced motion the splash shows a still, even hairline, not a stuck highlight', () => {
+    const css = sheet('launch.css');
+    const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(rule(reduced, '  .dx-splash__shimmer::after')).toContain('display: none');
   });
 });

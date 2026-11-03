@@ -68,7 +68,7 @@ export function GrowthPaceEasy(): JSX.Element {
       <p class="dx-sec__foot">Follows, unfollows and approvals together.</p>
       <p class="dx-sec__line num">Most days land between 29 and 47.</p>
       <div class="dx-safety">
-        <Meter share={0.48} tick={0.65} />
+        <Meter share={0.48} />
         <p>Epo’s own work never uses more than 48% of the lowest daily follow limit Instagram is known to apply.</p>
       </div>
     </section>
@@ -82,9 +82,15 @@ function DayBars({ peaks, quiet }: { peaks: ReadonlyArray<[number, number]>; qui
   const inQuiet = (h: number): boolean => (quiet[0] > quiet[1] ? h >= quiet[0] || h < quiet[1] : h >= quiet[0] && h < quiet[1]);
   return (
     <span class="dx-daybars" aria-hidden="true">
-      {Array.from({ length: 24 }, (_, h) => (
-        <i key={h} class={inQuiet(h) ? 'is-quiet' : undefined} style={`height:${inQuiet(h) ? 8 : 12 + level(h) * 88}%`} />
-      ))}
+      <span class="dx-daybars__bars">
+        {Array.from({ length: 24 }, (_, h) => (
+          <i key={h} class={inQuiet(h) ? 'is-quiet' : undefined} style={`height:${inQuiet(h) ? 8 : 12 + level(h) * 88}%`} />
+        ))}
+      </span>
+      <span class="dx-daybars__axis">
+        <small>12 AM</small>
+        <small>12 PM</small>
+      </span>
     </span>
   );
 }
@@ -101,7 +107,7 @@ export function WhenEasy(): JSX.Element {
   return (
     <section class="dx-sec" aria-label="When Epo works">
       <SectionHead title="When Epo works" question="When should Epo be active?" />
-      <div class="dx-cards dx-cards--days" role="radiogroup" aria-label="Day shape" style="--cols:5">
+      <div class="dx-cards dx-cards--days" role="radiogroup" aria-label="Day shape" style="--cols:3">
         {SHAPES.map((s, i) => (
           <button key={s.title} type="button" role="radio" aria-checked={i === 0} class={i === 0 ? 'dx-card is-on' : 'dx-card'}>
             <DayBars peaks={s.peaks} quiet={s.quiet} />
@@ -130,6 +136,15 @@ export function WhenEasy(): JSX.Element {
         </span>
       </div>
       <p class="dx-sec__hint">Epo takes these days off completely (up to 6 days a week). Your daily limits don’t move to other days.</p>
+      <h3 class="dx-sec__sub">Session style</h3>
+      <Cards
+        name="Session style"
+        choices={[
+          { title: 'Many short visits', line: '5–9 a day' },
+          { title: 'A few regular sessions', line: '3–6 a day', recommended: true, selected: true },
+          { title: 'A couple of longer sessions', line: '2–4 a day' },
+        ]}
+      />
     </section>
   );
 }

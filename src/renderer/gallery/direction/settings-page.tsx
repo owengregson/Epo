@@ -4,9 +4,9 @@
  * stage is wide enough. The layout follows the stage width (spec §6, T2 §14.2).
  */
 import { type ComponentChildren, type JSX } from 'preact';
-import { PLAN_DAY } from '@/renderer/gallery/direction/fixtures';
-import { Meter, PlanStrip } from '@/renderer/gallery/direction/instruments';
-import { settingsLayout } from '@/renderer/gallery/direction/layout';
+import { LIMITS, PLAN_DAY } from '@/renderer/gallery/direction/fixtures';
+import { PlanStrip } from '@/renderer/gallery/direction/instruments';
+import { SETTINGS_EXPECT_W, SETTINGS_RAIL_W, settingsLayout } from '@/renderer/gallery/direction/layout';
 import { Icon } from '@/renderer/ui/Icon';
 
 type SettingsMode = 'easy' | 'advanced';
@@ -39,11 +39,11 @@ function Rail({ mode, active }: { mode: SettingsMode; active: string }): JSX.Ele
     >
       <Icon name={icon} />
       <span>{label}</span>
-      {mode === 'advanced' && key === 'pace' ? <i class="dx-rail__dot" title="1 value set by you" /> : null}
+      {mode === 'advanced' && key === 'pace' ? <i class="dx-rail__dot" title="1 value set by you" aria-label="1 value set by you" /> : null}
     </button>
   );
   return (
-    <nav class="dx-rail" aria-label="Settings sections">
+    <nav class="dx-rail" aria-label="Settings sections" style={`flex-basis:${SETTINGS_RAIL_W}px`}>
       {EASY_SECTIONS.map(item)}
       {mode === 'advanced' ? (
         <>
@@ -55,24 +55,42 @@ function Rail({ mode, active }: { mode: SettingsMode; active: string }): JSX.Ele
   );
 }
 
+/** A narrow stage: every section stays in view as wrapping chips (never a sideways scroller). */
 function Chips({ mode, active }: { mode: SettingsMode; active: string }): JSX.Element {
-  const all = mode === 'advanced' ? [...EASY_SECTIONS, ...ADVANCED_SECTIONS] : EASY_SECTIONS;
+  const chip = ([key, label]: [string, string, string]): JSX.Element => (
+    <button key={key} type="button" class={key === active ? 'dx-chip is-on' : 'dx-chip'} aria-current={key === active ? 'true' : undefined}>
+      {label}
+    </button>
+  );
   return (
     <nav class="dx-set__chips" aria-label="Settings sections">
-      {all.map(([key, label]) => (
-        <button key={key} type="button" class={key === active ? 'dx-chip is-on' : 'dx-chip'}>
-          {label}
-        </button>
-      ))}
+      {EASY_SECTIONS.map(chip)}
+      {mode === 'advanced' ? (
+        <>
+          <span class="dx-set__chips-sep">Advanced</span>
+          {ADVANCED_SECTIONS.map(chip)}
+        </>
+      ) : null}
     </nav>
   );
 }
 
-/** The live consequences of the current choices; Easy shows no per-hour figures. */
+/** The next seven plan-days (Sunday is the day off chosen in Easy); bars scale to Epo's own maximum. */
+const WEEK: ReadonlyArray<[string, number]> = [
+  ['Today', 44],
+  ['Wed', 41],
+  ['Thu', 47],
+  ['Fri', 38],
+  ['Sat', 36],
+  ['Sun', 0],
+  ['Mon', 44],
+];
+const DAY_MAX = 48;
+
+/** What the current choices lead to, each fact once (the sections say the rest); no per-hour figures in Easy. */
 function Expect({ mode }: { mode: SettingsMode }): JSX.Element {
-  const week = [38, 44, 41, 47, 36, 29, 44];
   return (
-    <aside class="dx-expect" aria-label="What to expect">
+    <aside class="dx-expect" aria-label="What to expect" style={`flex-basis:${SETTINGS_EXPECT_W}px`}>
       <h3>What to expect</h3>
       <div class="dx-expect__block">
         <span class="dx-expect__k">Today</span>
@@ -80,26 +98,22 @@ function Expect({ mode }: { mode: SettingsMode }): JSX.Element {
         <PlanStrip sessions={PLAN_DAY} now={14.5} />
       </div>
       <div class="dx-expect__block">
-        <span class="dx-expect__k">Most days</span>
-        <span class="dx-expect__v num">29–47 actions</span>
-      </div>
-      <div class="dx-expect__block">
-        <span class="dx-expect__k">This week</span>
-        <div class="dx-expect__week" aria-hidden="true">
-          {week.map((v, i) => (
-            <i key={`${i}-${v}`} style={`height:${(v / 48) * 100}%`} />
+        <span class="dx-expect__k">The next 7 days</span>
+        <div class="dx-expect__week">
+          {WEEK.map(([day, v]) => (
+            <span key={day} class={v === 0 ? 'is-off' : undefined} title={v === 0 ? `${day}: day off` : `${day}: about ${v} actions`}>
+              <i style={`height:${(v / DAY_MAX) * 100}%`} />
+              <small>{day}</small>
+            </span>
           ))}
         </div>
-      </div>
-      <div class="dx-expect__block">
-        <span class="dx-expect__k">Safety</span>
-        <Meter share={0.48} tick={0.65} />
-        <span class="dx-expect__note">Epo’s own work uses up to 48% of the lowest daily follow limit Instagram is known to apply.</span>
       </div>
       {mode === 'advanced' ? (
         <div class="dx-expect__block">
           <span class="dx-expect__k">Limits</span>
-          <span class="dx-expect__v num">At most 18 an hour · hard stop 65 a day</span>
+          <span class="dx-expect__v num">
+            At most {LIMITS.hourly} an hour · hard stop {LIMITS.hardStop} a day
+          </span>
           <button type="button" class="dx-link">
             1 value set by you · Review
           </button>
@@ -156,7 +170,7 @@ export function SettingsPage({ mode, stageWidth, active, scrollTo, children }: S
       </header>
       {layout === 'wide' ? null : (
         <div class="dx-set__summary num">
-          <span>Today: about 44 actions in 5 sessions · next at 5:40 PM</span>
+          <span>Today: about 44 actions in 5 sessions · next session at 5:40 PM</span>
           <button type="button" class="dx-link">
             Details <Icon name="chevron-down" />
           </button>

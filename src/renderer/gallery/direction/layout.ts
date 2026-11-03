@@ -7,6 +7,8 @@
 /** Spec §12.2 / §12.6: the column and the top band never change size. */
 export const SIDEBAR_W = 460;
 export const BAND_H = 44;
+/** Today's first row: the title with the Boost button, or the Boost band (one rung, `--h-md`). */
+export const TODAY_TITLE_H = 40;
 
 /** The window widths and sidebar heights the boards are judged at. */
 export const BOARD_WIDTHS = [1024, 1440, 1920] as const;
@@ -108,6 +110,25 @@ export type SettingsLayout = 'wide' | 'medium' | 'narrow';
 export function settingsLayout(stageWidth: number): SettingsLayout {
   return stageWidth >= 1180 ? 'wide' : stageWidth >= 840 ? 'medium' : 'narrow';
 }
+
+/** Settings geometry: page padding and gaps, the section rail, "What to expect", the content cap. */
+const SET_PAD = 32;
+const SET_GAP = 32;
+export const SETTINGS_RAIL_W = 208;
+export const SETTINGS_EXPECT_W = 320;
+const SETTINGS_CONTENT_MAX = { easy: 720, advanced: 880 } as const;
+
+/** Width the section content gets: the stage less padding, the rail and "What to expect" where shown. */
+export function settingsContentWidth(stageWidth: number, mode: 'easy' | 'advanced'): number {
+  const layout = settingsLayout(stageWidth);
+  let w = stageWidth - 2 * SET_PAD;
+  if (layout !== 'narrow') w -= SETTINGS_RAIL_W + SET_GAP;
+  if (layout === 'wide') w -= SETTINGS_EXPECT_W + SET_GAP;
+  return Math.min(w, SETTINGS_CONTENT_MAX[mode]);
+}
+
+/** Below this content width "Today's plan in detail" lists sessions as sentences, never a clipped table. */
+export const PLAN_TABLE_MIN_W = 700;
 
 /** People keeps two columns only where each still gets the width its lists were built for. */
 export function peopleColumns(stageWidth: number): 1 | 2 {

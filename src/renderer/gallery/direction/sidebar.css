@@ -42,6 +42,7 @@
   overflow-y: auto;
   border-top: 1px solid var(--border);
   scrollbar-width: thin;
+  mask-image: linear-gradient(180deg, #000 calc(100% - 32px), transparent);
 }
 
 .dx-scroller .dx-today::before {
@@ -134,7 +135,7 @@
   flex-direction: column;
   gap: 10px;
   height: 100%;
-  padding: 16px;
+  padding: 20px 16px 10px;
   background:
     radial-gradient(120% 150% at 0% 0%, var(--glow), transparent 58%),
     linear-gradient(
@@ -227,9 +228,17 @@
 }
 
 .dx-why {
+  position: relative;
   color: var(--silver);
   text-decoration: underline dotted;
   text-underline-offset: 3px;
+}
+
+.dx-why::after,
+.dx-link::after {
+  content: "";
+  position: absolute;
+  inset: -8px -6px;
 }
 
 .dx-now__progress {
@@ -261,6 +270,7 @@
 .dx-now__reason {
   display: flex;
   flex: 0 0 16px;
+  margin-top: -2px;
   align-items: center;
   gap: 6px;
   font-size: var(--fs-small);
@@ -311,7 +321,8 @@
   place-items: center;
 }
 
-.dx-ring svg {
+/* Only the ring's own drawing fills the box; the glyph's icon svg stays in flow. */
+.dx-ring > svg {
   position: absolute;
   inset: 0;
 }
@@ -332,10 +343,6 @@
   filter: drop-shadow(0 0 4px var(--glow));
 }
 
-.dx-ring--arc .dx-ring__turn {
-  animation: dx-turn 1.4s linear infinite;
-}
-
 .dx-ring__glyph {
   position: relative;
   display: grid;
@@ -345,12 +352,6 @@
 
 .dx-now.is-compact .dx-ring__glyph {
   font-size: 22px;
-}
-
-@keyframes dx-turn {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* ---------- buttons, pills, links ---------- */
@@ -373,9 +374,18 @@
   height: var(--h-lg);
   font-size: var(--fs-body);
   color: var(--chrome);
-  background: var(--sheen), var(--grad-raised);
-  border: 1px solid var(--border-active);
-  box-shadow: var(--elev-1);
+  background:
+    linear-gradient(
+      180deg,
+      rgba(238, 241, 244, 0.16),
+      rgba(238, 241, 244, 0.05)
+    ),
+    var(--elevated);
+  border: 1px solid rgba(238, 241, 244, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 0 0 3px rgba(216, 221, 227, 0.05),
+    var(--elev-1);
 }
 
 .dx-btn--ghost {
@@ -459,6 +469,7 @@
 }
 
 .dx-link {
+  position: relative;
   font-size: inherit;
   color: var(--muted);
   text-decoration: underline;
@@ -488,6 +499,11 @@
   margin-top: 6px;
 }
 
+.dx-pop__more {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
 /* A notch pointing back at what opened the popover. */
 .dx-pop::before {
   content: "";
@@ -504,7 +520,6 @@
 
 .dx-pop--boost {
   --notch: 236px;
-  top: 54px;
   right: 24px;
   width: 300px;
 }
@@ -575,7 +590,7 @@
 
 .dx-today__title {
   display: flex;
-  flex: 0 0 36px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
 }
@@ -591,8 +606,7 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 10px;
-  min-height: 36px;
-  padding: 2px 4px 2px 12px;
+  padding: 0 4px 0 12px;
   background: linear-gradient(
     90deg,
     rgba(216, 221, 227, 0.12),
@@ -611,8 +625,9 @@
   flex: 1;
   min-width: 0;
   font-size: var(--fs-small);
-  line-height: 1.35;
+  line-height: 20px;
   color: var(--text);
+  white-space: nowrap;
 }
 
 .dx-band__text b {
@@ -746,6 +761,10 @@
 /* ---------- Get started ---------- */
 .dx-start {
   padding: 20px 24px;
+}
+
+.dx-start::before {
+  display: none;
 }
 
 .dx-start__title {

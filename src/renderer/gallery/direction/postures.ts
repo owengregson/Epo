@@ -15,7 +15,7 @@ import {
 } from '@/renderer/gallery/direction/fixtures';
 import type { Tone } from '@/renderer/gallery/direction/proposed-tokens';
 
-export type RingMode = 'arc' | 'deplete' | 'static';
+export type RingMode = 'full' | 'deplete' | 'static';
 export type BoostState = 'ready' | 'on' | 'paused' | 'unavailable';
 
 export interface TodaySpec {
@@ -52,15 +52,17 @@ export interface PostureSpec {
   /** The reserved progress hairline (a known total), as a fraction. */
   progress: number | null;
   ring: { mode: RingMode; fraction: number; glyph: string };
-  primary: { label: string; icon: string } | null;
+  primary: { label: string; icon: string; brand?: boolean } | null;
   secondary: string | null;
   reason: string | null;
   today: TodaySpec | 'get-started';
   results: ResultsSpec | null;
   feed: FeedEntry[];
-  /** A popover drawn open in this frame, to show its design. */
-  popover?: 'boost-preview' | 'why-catching-up';
+  /** A popover drawn open (only in the popover frames, so it never hides a posture's zones). */
+  popover?: Popover;
 }
+
+export type Popover = 'boost-preview' | 'why-catching-up';
 
 const RESULTS: ResultsSpec = {
   net: '+12',
@@ -78,7 +80,7 @@ export const POSTURES: PostureSpec[] = [
   {
     id: 'working',
     label: 'Working',
-    note: 'The ring spins while a step runs; the now line names the person; one primary button.',
+    note: 'The ring is full while a step runs and drains toward the next one; the now line names the person.',
     tone: 'live',
     headline: 'Working',
     pills: [],
@@ -86,7 +88,7 @@ export const POSTURES: PostureSpec[] = [
     next: 'Next step in 1:12',
     why: true,
     progress: null,
-    ring: { mode: 'arc', fraction: 0.18, glyph: 'wave-square' },
+    ring: { mode: 'full', fraction: 1, glyph: 'wave-square' },
     primary: { label: 'Pause', icon: 'pause' },
     secondary: 'Stop',
     reason: null,
@@ -97,7 +99,7 @@ export const POSTURES: PostureSpec[] = [
   {
     id: 'resting',
     label: 'Resting',
-    note: 'Between sessions the ring runs down to the next one. Hovering Boost shows what it would do first.',
+    note: 'Between sessions the ring runs down to the next one; the strip shows the day so far.',
     tone: 'calm',
     headline: 'Resting',
     pills: [],
@@ -112,12 +114,11 @@ export const POSTURES: PostureSpec[] = [
     today: { ...DAY, sessions: RESTED, now: 16.2, summary: '23 of 30 follows · 7 of 10 unfollows', next: 'Next session at 5:40 PM' },
     results: { ...RESULTS, net: '+14', backs: '6 follow-backs today · 37 waiting' },
     feed: FEED_WORKING,
-    popover: 'boost-preview',
   },
   {
     id: 'catching-up',
     label: 'Catching up',
-    note: 'At launch Epo reads only what changed. Each finished step ticks off; numbers say they are updating.',
+    note: 'At launch Epo reads only what changed; numbers say they are updating. The morning ran without Epo.',
     tone: 'live',
     headline: 'Catching up',
     pills: [],
@@ -125,14 +126,13 @@ export const POSTURES: PostureSpec[] = [
     next: 'You can press Start anytime.',
     why: true,
     progress: 0.5,
-    ring: { mode: 'arc', fraction: 0.18, glyph: 'arrows-rotate' },
+    ring: { mode: 'full', fraction: 1, glyph: 'arrows-rotate' },
     primary: { label: 'Start', icon: 'play' },
     secondary: null,
     reason: null,
     today: { boost: 'ready', sessions: PLAN_LATE_OPEN, now: 13.5, summary: '0 of 25 follows · 0 of 8 unfollows', next: 'Next session at 2:40 PM' },
     results: { net: '+3', up: true, followers: '1,276 followers', age: 'checking now…', backs: '2 follow-backs today · updating…' },
     feed: FEED_CATCHING_UP,
-    popover: 'why-catching-up',
   },
   {
     id: 'needs-attention',
@@ -146,7 +146,7 @@ export const POSTURES: PostureSpec[] = [
     why: false,
     progress: null,
     ring: { mode: 'static', fraction: 1, glyph: 'circle-exclamation' },
-    primary: { label: 'Open Live', icon: 'arrow-up-right-from-square' },
+    primary: { label: 'Open Live', icon: 'instagram', brand: true },
     secondary: 'Start',
     reason: 'Scheduled work waits until you press Start.',
     today: { ...DAY, boost: 'unavailable', now: 14.5, next: 'Next session at 5:40 PM' },
@@ -181,7 +181,7 @@ export const POSTURES: PostureSpec[] = [
   {
     id: 'boost-paused',
     label: 'Boost on, Epo stopped',
-    note: 'A Boost keeps its clock while Epo is stopped, and says so instead of silently waiting.',
+    note: 'A Boost keeps its clock while Epo is stopped and says so; the reason line says what to do.',
     tone: 'idle',
     headline: 'Stopped',
     pills: ['boost'],
@@ -192,17 +192,18 @@ export const POSTURES: PostureSpec[] = [
     ring: { mode: 'static', fraction: 1, glyph: 'play' },
     primary: { label: 'Start', icon: 'play' },
     secondary: null,
-    reason: null,
+    reason: 'Press Start to use Boost.',
     today: { ...DAY, boost: 'paused', band: { from: 9.67, to: 21.67 }, next: 'Next session at 5:40 PM' },
     results: { ...RESULTS, net: '+7' },
-    feed: FEED_BOOST,
+    // Epo stopped a while ago, so nothing in the feed is "just now".
+    feed: FEED_BOOST.map((e) => ('id' in e && e.id === 'b1' ? { ...e, time: '25m', fresh: false } : e)),
   },
   {
     id: 'get-started',
     label: 'Get started',
     note: 'A first run replaces Today and Results with three steps that tick off as they happen.',
     tone: 'idle',
-    headline: 'Let’s get set up',
+    headline: 'Get set up',
     pills: [],
     nowLine: ['Choose a starting account whose followers look like your audience.'],
     next: null,
@@ -217,3 +218,25 @@ export const POSTURES: PostureSpec[] = [
     feed: [],
   },
 ];
+
+/** The two popovers, each in a frame of its own beside the posture it belongs to. */
+export const POPOVER_FRAMES: ReadonlyArray<{ base: string; popover: Popover; label: string; note: string }> = [
+  {
+    base: 'resting',
+    popover: 'boost-preview',
+    label: 'Resting · before a Boost',
+    note: 'Hovering Boost shows what one tap would do, including the quiet hours it waits through.',
+  },
+  {
+    base: 'catching-up',
+    popover: 'why-catching-up',
+    label: 'Catching up · Why?',
+    note: 'The checklist of the launch check: each finished step ticks off as it happens.',
+  },
+];
+
+/** A posture with one popover drawn open. */
+export function withPopover(base: string, popover: Popover): PostureSpec {
+  const p = POSTURES.find((x) => x.id === base) as PostureSpec;
+  return { ...p, id: `${p.id}-${popover}`, popover };
+}

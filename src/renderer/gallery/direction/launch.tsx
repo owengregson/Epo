@@ -85,8 +85,8 @@ export const INTRO_STEPS: IntroStep[] = [
   { key: 'i4', at: '900 ms', title: 'Live', note: 'Instagram is already on your profile; Epo catches up on what changed, then waits for Start.' },
 ];
 
-/** The posture the app lands on after the reveal, without the popover its own board frame shows. */
-const CATCHING_UP: PostureSpec = { ...(POSTURES.find((p) => p.id === 'catching-up') as PostureSpec), popover: undefined };
+/** The posture the app lands on after the reveal. */
+const CATCHING_UP = POSTURES.find((p) => p.id === 'catching-up') as PostureSpec;
 
 /** One storyboard instant: the real window plus the splash at that point of its exit. */
 export function IntroFrame({ step }: { step: number }): JSX.Element {

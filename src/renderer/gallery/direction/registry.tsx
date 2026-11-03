@@ -13,9 +13,16 @@ import {
   STORY_H,
   STORY_W,
 } from '@/renderer/gallery/direction/launch';
-import { SIDEBAR_HEIGHTS, SIDEBAR_W, thumbColumns, thumbWidth } from '@/renderer/gallery/direction/layout';
+import {
+  SIDEBAR_HEIGHTS,
+  SIDEBAR_W,
+  settingsContentWidth,
+  settingsLayout,
+  thumbColumns,
+  thumbWidth,
+} from '@/renderer/gallery/direction/layout';
 import { PeoplePage } from '@/renderer/gallery/direction/people-page';
-import { POSTURES, type PostureSpec } from '@/renderer/gallery/direction/postures';
+import { POPOVER_FRAMES, POSTURES, type PostureSpec, withPopover } from '@/renderer/gallery/direction/postures';
 import { Sidebar } from '@/renderer/gallery/direction/Sidebar';
 import { GrowthPaceFineTune, TimingDetail } from '@/renderer/gallery/direction/settings-advanced';
 import { GrowthPaceEasy, WhenEasy } from '@/renderer/gallery/direction/settings-easy';
@@ -55,26 +62,37 @@ function sidebarBoard(h: number): BoardSpec {
     id: `sidebar-${h}`,
     chip: `Sidebar ${h}`,
     title: `The live column at ${h} px`,
-    intro: `Seven postures at a ${h} px tall window (${mode}). Zones keep fixed heights, so a posture change never moves anything; only the content changes.`,
-    frames: () =>
-      POSTURES.map((p) => ({ key: `${p.id}-${h}`, title: p.label, note: p.note, w: SIDEBAR_W, h, render: () => <Sidebar p={p} height={h} /> })),
+    intro: `Seven postures at a ${h} px tall window (${mode}), then the two popovers. Zones keep fixed heights, so a posture change never moves anything; only the content changes.`,
+    frames: () => [
+      ...POSTURES.map((p) => ({ key: `${p.id}-${h}`, title: p.label, note: p.note, w: SIDEBAR_W, h, render: () => <Sidebar p={p} height={h} /> })),
+      ...POPOVER_FRAMES.map((f) => {
+        const p = withPopover(f.base, f.popover);
+        return { key: `${p.id}-${h}`, title: f.label, note: f.note, w: SIDEBAR_W, h, render: () => <Sidebar p={p} height={h} /> };
+      }),
+    ],
   };
 }
 
-function windowFrame(key: string, title: string, note: string, h: number, body: (stageW: number) => JSX.Element, stage: 'people' | 'settings'): (canvas: number) => FrameSpec {
-  return (canvas) => ({
-    key,
-    title,
-    note,
-    w: canvas,
-    h,
-    bleed: true,
-    render: () => (
-      <Window width={canvas} height={h} posture={WORKING} stage={stage}>
-        {body(canvas - SIDEBAR_W)}
-      </Window>
-    ),
-  });
+/** A window height per Settings layout, for pages whose length follows the stage width. */
+type Heights = number | { narrow: number; medium: number; wide: number };
+
+function windowFrame(key: string, title: string, note: string, heights: Heights, body: (stageW: number) => JSX.Element, stage: 'people' | 'settings'): (canvas: number) => FrameSpec {
+  return (canvas) => {
+    const h = typeof heights === 'number' ? heights : heights[settingsLayout(canvas - SIDEBAR_W)];
+    return {
+      key,
+      title,
+      note,
+      w: canvas,
+      h,
+      bleed: true,
+      render: () => (
+        <Window width={canvas} height={h} posture={WORKING} stage={stage}>
+          {body(canvas - SIDEBAR_W)}
+        </Window>
+      ),
+    };
+  };
 }
 
 const easy = windowFrame(
@@ -85,6 +103,19 @@ const easy = windowFrame(
   (w) => (
     <SettingsPage mode="easy" stageWidth={w} active="pace">
       <GrowthPaceEasy />
+      <WhenEasy />
+    </SettingsPage>
+  ),
+  'settings',
+);
+
+const easyWhen = windowFrame(
+  'settings-easy-when',
+  'Easy · When Epo works',
+  'The day’s shape, quiet hours, days off and the session style: the whole section at every window width.',
+  { narrow: 1280, medium: 920, wide: 920 },
+  (w) => (
+    <SettingsPage mode="easy" stageWidth={w} active="when">
       <WhenEasy />
     </SettingsPage>
   ),
@@ -108,11 +139,11 @@ const advancedPace = windowFrame(
 const advancedTiming = windowFrame(
   'settings-advanced-timing',
   'Advanced · Timing',
-  'Today’s plan in detail (read only), then the timing rows — which can only make Epo slower.',
-  900,
+  'Today’s plan in detail (read only; a table where it fits, sentences where it does not), then rows that can only slow Epo.',
+  { narrow: 1300, medium: 1080, wide: 940 },
   (w) => (
     <SettingsPage mode="advanced" stageWidth={w} active="timing">
-      <TimingDetail />
+      <TimingDetail contentWidth={settingsContentWidth(w, 'advanced')} />
     </SettingsPage>
   ),
   'settings',
@@ -151,7 +182,7 @@ export const BOARDS: BoardSpec[] = [
     chip: 'Settings · Easy',
     title: 'Settings — Easy',
     intro: 'Settings is now a stage beside Live, People, Graph and Prune. Easy answers plain questions; a decent amount to choose, none of the timings.',
-    frames: (c) => [easy(c)],
+    frames: (c) => [easy(c), easyWhen(c)],
   },
   {
     id: 'settings-advanced',

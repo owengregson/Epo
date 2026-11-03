@@ -120,9 +120,9 @@ export interface Gesture {
 
 export const GESTURES: Gesture[] = [
   { key: 'settle', name: 'Settle', meaning: 'A value changed: digits roll to the new number.', reduced: 'The number swaps.' },
-  { key: 'deplete', name: 'Deplete', meaning: 'Time runs down toward a known moment, smoothly, one animation per deadline.', reduced: 'A still fraction, refreshed each minute.' },
+  { key: 'deplete', name: 'Deplete', meaning: 'The ring is full while a step runs, then drains toward the next one: one animation per deadline.', reduced: 'A still fraction, refreshed each minute.' },
   { key: 'arrive', name: 'Arrive', meaning: 'Something new appeared: it slides in and its highlight fades.', reduced: 'It appears.' },
-  { key: 'breathe', name: 'Breathe', meaning: 'Epo is working. Only two things ever loop: the mark’s ring and the Live dot.', reduced: 'Still.' },
+  { key: 'breathe', name: 'Breathe', meaning: 'Epo is working. Only two things ever loop: the mark’s ring and the Live dot. The Now ring never spins.', reduced: 'Still.' },
   { key: 'nudge', name: 'Nudge', meaning: 'Something needs you: two small shakes, once.', reduced: 'The border changes colour.' },
   { key: 'file-into', name: 'File into', meaning: 'The step just done becomes history: the now line drops into the feed.', reduced: 'The row appears.' },
 ];

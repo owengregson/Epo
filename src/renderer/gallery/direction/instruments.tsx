@@ -10,34 +10,35 @@ import { Icon } from '@/renderer/ui/Icon';
 export interface RingProps {
   size: number;
   mode: RingMode;
-  /** Remaining share of the deadline (deplete) or the arc length (arc). */
+  /** Remaining share of the deadline (deplete); ignored when full or static. */
   fraction: number;
   glyph: string;
 }
 
-/** One ring, one meaning: a turning arc while a step runs, a draining arc toward a deadline, or a still track. */
+/**
+ * One ring, one meaning, and nothing that loops: full while a step runs, a
+ * draining arc toward a known deadline, or a still track when idle.
+ */
 export function Ring({ size, mode, fraction, glyph }: RingProps): JSX.Element {
   const stroke = size >= 80 ? 6 : 5;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
-  const arc = mode === 'static' ? 0 : Math.max(0, Math.min(1, fraction));
+  const arc = mode === 'static' ? 0 : mode === 'full' ? 1 : Math.max(0, Math.min(1, fraction));
   return (
     <div class={`dx-ring dx-ring--${mode}`} style={`width:${size}px;height:${size}px`}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
         <circle class="dx-ring__track" cx={size / 2} cy={size / 2} r={r} stroke-width={stroke} />
         {arc > 0 ? (
-          <g class="dx-ring__turn" style={`transform-origin:${size / 2}px ${size / 2}px`}>
-            <circle
-              class="dx-ring__arc"
-              cx={size / 2}
-              cy={size / 2}
-              r={r}
-              stroke-width={stroke}
-              stroke-dasharray={`${c} ${c}`}
-              stroke-dashoffset={c * (1 - arc)}
-              transform={`rotate(-90 ${size / 2} ${size / 2})`}
-            />
-          </g>
+          <circle
+            class="dx-ring__arc"
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            stroke-width={stroke}
+            stroke-dasharray={`${c} ${c}`}
+            stroke-dashoffset={c * (1 - arc)}
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
         ) : null}
       </svg>
       <span class="dx-ring__glyph">

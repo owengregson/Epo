@@ -53,6 +53,13 @@ function GrowthChart(): JSX.Element {
   );
 }
 
+const count = (v: string): number => Number(v.replace(/,/g, ''));
+
+/** A stage's true share of the first, linear; the stylesheet keeps a sliver so a small one stays visible. */
+export function funnelShare(value: string): number {
+  return (count(value) / count(FUNNEL[0].value)) * 100;
+}
+
 function Finds(): JSX.Element {
   return (
     <section class="dx-panel" aria-label="Where Epo finds people">
@@ -73,8 +80,8 @@ function Finds(): JSX.Element {
         ))}
       </ol>
       <div class="dx-funnel">
-        {FUNNEL.map((f, i) => (
-          <div key={f.label} class="dx-funnel__stage" style={`--w:${[100, 58, 26, 12][i]}%`}>
+        {FUNNEL.map((f) => (
+          <div key={f.label} class="dx-funnel__stage" style={`--w:${funnelShare(f.value)}%`}>
             <span class="dx-funnel__bar" />
             <span class="dx-funnel__label">{f.label}</span>
             <span class="dx-funnel__value num">{f.value}</span>

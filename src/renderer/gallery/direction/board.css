@@ -61,7 +61,7 @@ html.db-open #app {
 }
 .db [data-tone="calm"] {
   --tone: var(--st-calm);
-  --glow: rgba(201, 204, 209, 0.06);
+  --glow: rgba(168, 168, 176, 0.05);
 }
 .db [data-tone="hold"] {
   --tone: var(--st-hold);

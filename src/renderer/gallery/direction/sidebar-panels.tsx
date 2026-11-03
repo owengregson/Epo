@@ -5,31 +5,28 @@
 import { type JSX } from 'preact';
 import { type FeedEntry, SPARK } from '@/renderer/gallery/direction/fixtures';
 import { PlanStrip, Said, Spark } from '@/renderer/gallery/direction/instruments';
+import { TODAY_TITLE_H } from '@/renderer/gallery/direction/layout';
 import type { BoostState, ResultsSpec, TodaySpec } from '@/renderer/gallery/direction/postures';
 import { Icon } from '@/renderer/ui/Icon';
 
+/** The title row and the Boost band share one fixed height, so Boost never moves the strip. */
+const ROW = `height:${TODAY_TITLE_H}px`;
+
 /** The only Boost control: one tap with the length saved in Settings. */
 function BoostControl({ state }: { state: BoostState }): JSX.Element {
-  if (state === 'on') {
+  if (state === 'on' || state === 'paused') {
     return (
-      <div class="dx-band">
+      <div class={state === 'paused' ? 'dx-band is-paused' : 'dx-band'} style={ROW}>
         <Icon name="bolt" />
-        <span class="dx-band__text">
-          <b>Boost on</b> · ends 9:40 PM · <span class="num">7 h 12 m</span> left
-        </span>
-        <button type="button" class="dx-btn dx-btn--small">
-          End Boost
-        </button>
-      </div>
-    );
-  }
-  if (state === 'paused') {
-    return (
-      <div class="dx-band is-paused">
-        <Icon name="bolt" />
-        <span class="dx-band__text">
-          <b>Boost on until 9:40 PM</b> — Epo is stopped. Press Start to use it.
-        </span>
+        {state === 'on' ? (
+          <span class="dx-band__text">
+            <b>Boost on</b> · ends 9:40 PM · <span class="num">7 h 12 m</span> left
+          </span>
+        ) : (
+          <span class="dx-band__text">
+            <b>Boost on until 9:40 PM</b> · Epo is stopped
+          </span>
+        )}
         <button type="button" class="dx-btn dx-btn--small">
           End Boost
         </button>
@@ -37,7 +34,7 @@ function BoostControl({ state }: { state: BoostState }): JSX.Element {
     );
   }
   return (
-    <div class="dx-today__title">
+    <div class="dx-today__title" style={ROW}>
       <h3>Today’s plan</h3>
       <button
         type="button"
@@ -52,14 +49,15 @@ function BoostControl({ state }: { state: BoostState }): JSX.Element {
   );
 }
 
-/** Hover card under the Boost button: what one tap would do, before it is pressed. */
-function BoostPreview(): JSX.Element {
+/** Hover card under the Boost button: what one tap would do. Drawn at column level, as a shell popover is. */
+export function BoostPreview({ top }: { top: number }): JSX.Element {
   return (
-    <div class="dx-pop dx-pop--boost" role="tooltip">
+    <div class="dx-pop dx-pop--boost" role="tooltip" style={`top:${top}px`}>
       <p>
         Until <b>4:12 AM</b> · about <b>+8 follows</b> today, within your usual limits · <b>4</b> unfollows will
         wait
       </p>
+      <p class="dx-pop__more">Quiet hours (11:30 PM – 6:00 AM) still apply.</p>
       <button type="button" class="dx-link">
         Change length in Settings
       </button>
@@ -67,14 +65,13 @@ function BoostPreview(): JSX.Element {
   );
 }
 
-export function TodayZone({ t, preview, height }: { t: TodaySpec; preview: boolean; height: number }): JSX.Element {
+export function TodayZone({ t, height }: { t: TodaySpec; height: number }): JSX.Element {
   return (
     <section class="dx-zone dx-today" data-zone="today" style={`height:${height}px`}>
       <BoostControl state={t.boost} />
       <PlanStrip sessions={t.sessions} now={t.now} band={t.band} />
       <p class="dx-today__sum num">{t.summary}</p>
       <p class="dx-today__next">{t.next}</p>
-      {preview ? <BoostPreview /> : null}
     </section>
   );
 }
@@ -148,7 +145,11 @@ function FeedItem({ e }: { e: FeedEntry }): JSX.Element {
         <span class="dx-feed__line">
           <Said parts={e.parts} />
         </span>
-        {e.detail ? <span class="dx-feed__detail">{e.detail}</span> : null}
+        {e.detail ? (
+          <span class="dx-feed__detail">
+            <Said parts={e.detail} />
+          </span>
+        ) : null}
       </span>
       <time class="num">{e.time}</time>
     </div>

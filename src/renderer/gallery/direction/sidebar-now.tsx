@@ -96,7 +96,7 @@ export function NowZone({ p, compact, height }: { p: PostureSpec; compact: boole
         <div class="dx-now__buttons">
           {p.primary ? (
             <button type="button" class="dx-btn dx-btn--primary">
-              <Icon name={p.primary.icon} />
+              <Icon name={p.primary.icon} brand={p.primary.brand} />
               {p.primary.label}
             </button>
           ) : null}

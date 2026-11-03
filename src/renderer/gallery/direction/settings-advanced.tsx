@@ -5,7 +5,8 @@
  * "Set by you" only when overridden, the safe range and when a change applies.
  */
 import { type JSX } from 'preact';
-import { PLAN_DETAIL_DAY, PLAN_DETAIL_SESSIONS } from '@/renderer/gallery/direction/fixtures';
+import { LIMITS, PLAN_DETAIL_DAY, PLAN_DETAIL_SESSIONS } from '@/renderer/gallery/direction/fixtures';
+import { PLAN_TABLE_MIN_W } from '@/renderer/gallery/direction/layout';
 import { SectionHead } from '@/renderer/gallery/direction/settings-easy';
 import { Icon } from '@/renderer/ui/Icon';
 
@@ -97,19 +98,19 @@ const PACE_ROWS: ParamRow[] = [
   {
     label: 'Most actions in a day, including your own',
     help: 'The hard stop. It never raises Epo’s automatic day.',
-    value: '65',
-    recommended: 'Recommended 65 · 1.3 × your daily target',
+    value: `${LIMITS.hardStop}`,
+    recommended: `Recommended ${LIMITS.hardStopRecommended} · 1.3 × your daily target`,
     range: '50–130',
     applies: 'Applies now',
+    setByYou: true,
   },
   {
     label: 'Most actions in an hour',
     help: 'Epo spreads each hour’s actions out and never goes past this.',
-    value: '18',
-    recommended: 'Recommended 22 · Standard caution',
+    value: `${LIMITS.hourly}`,
+    recommended: `Recommended ${LIMITS.hourly} · Standard caution`,
     range: '1–30',
     applies: 'Applies now',
-    setByYou: true,
   },
   {
     label: 'Day-to-day variation',
@@ -162,7 +163,69 @@ const TIMING_ROWS: ParamRow[] = [
   },
 ];
 
-export function TimingDetail(): JSX.Element {
+const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+type PlanSession = (typeof PLAN_DETAIL_SESSIONS)[number];
+
+/** Wide content: one row per session, every column visible. */
+function SessionTable(): JSX.Element {
+  return (
+    <table class="dx-plan__table num">
+      <thead>
+        <tr>
+          <th>Session</th>
+          <th>Time</th>
+          <th>Follows</th>
+          <th>Unfollows</th>
+          <th>Approvals</th>
+          <th>Pace</th>
+          <th>Average pause</th>
+          <th>Shortest</th>
+        </tr>
+      </thead>
+      <tbody>
+        {PLAN_DETAIL_SESSIONS.map((s) => (
+          <tr key={s.i} class={`is-${s.state}`}>
+            <td>
+              <i class="dx-plan__state" /> {s.i}
+            </td>
+            <td>{s.time}</td>
+            <td>{s.f}</td>
+            <td>{s.u}</td>
+            <td>{s.a}</td>
+            <td>{s.pace}</td>
+            <td>{s.avg}</td>
+            <td>{s.min}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** A duration never breaks between its number and unit. */
+const glued = (t: string): string => t.replace(/ /g, '\u00a0');
+
+/** Narrower content: each session as the deck's sentence, wrapped, nothing hidden (Appendix B.10). */
+function SessionSentences(): JSX.Element {
+  const what = (s: PlanSession): string =>
+    [count(s.f, 'follow', 'follows'), count(s.u, 'unfollow', 'unfollows'), count(s.a, 'approval', 'approvals'), `${s.pace} pace`,
+      `average pause ${glued(s.avg)}`, `shortest ${glued(s.min)}`].join(' · ');
+  return (
+    <ol class="dx-plan__sessions num">
+      {PLAN_DETAIL_SESSIONS.map((s) => (
+        <li key={s.i} class={`is-${s.state}`}>
+          <span class="dx-plan__when">
+            <i class="dx-plan__state" /> Session {s.i} · {s.time}
+          </span>
+          <span class="dx-plan__what">{what(s)}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function TimingDetail({ contentWidth }: { contentWidth: number }): JSX.Element {
   return (
     <section class="dx-sec" aria-label="Timing">
       <SectionHead title="Timing" question="Every wait Epo uses comes from today’s plan. These rows only make it slower." />
@@ -181,36 +244,7 @@ export function TimingDetail(): JSX.Element {
             </div>
           ))}
         </dl>
-        <table class="dx-plan__table num">
-          <thead>
-            <tr>
-              <th>Session</th>
-              <th>Time</th>
-              <th>Follows</th>
-              <th>Unfollows</th>
-              <th>Approvals</th>
-              <th>Pace</th>
-              <th>Average pause</th>
-              <th>Shortest</th>
-            </tr>
-          </thead>
-          <tbody>
-            {PLAN_DETAIL_SESSIONS.map((s) => (
-              <tr key={s.i} class={`is-${s.state}`}>
-                <td>
-                  <i class="dx-plan__state" /> {s.i}
-                </td>
-                <td>{s.time}</td>
-                <td>{s.f}</td>
-                <td>{s.u}</td>
-                <td>{s.a}</td>
-                <td>{s.pace}</td>
-                <td>{s.avg}</td>
-                <td>{s.min}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {contentWidth >= PLAN_TABLE_MIN_W ? <SessionTable /> : <SessionSentences />}
       </div>
       {TIMING_ROWS.map((r) => (
         <Param key={r.label} r={r} />

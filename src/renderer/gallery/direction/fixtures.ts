@@ -50,56 +50,59 @@ interface FeedRow {
   id: string;
   glyph: FeedGlyph;
   tone: Tone;
-  /** Sentence parts: strings starting with "@" render as handle buttons. */
+  /** The sentence, short enough for one row; strings starting with "@" render as handle buttons. */
   parts: string[];
-  /** A second line for sentences too long for one row (the deck's words, split at a ' · '). */
-  detail?: string;
+  /** The 12 px second line: the deck's words after its " · " or " — ", so a reason is never cut. */
+  detail?: string[];
   time: string;
   fresh?: boolean;
 }
 
 export type FeedEntry = FeedRow | { divider: string } | { group: string };
 
+/** Newest first. The divider is a strict time boundary: everything above it happened after you left. */
 export const FEED_WORKING: FeedEntry[] = [
   { group: 'Today' },
   { id: 'f1', glyph: 'plus', tone: 'live', parts: ['Followed ', '@jane.doe'], time: 'just now', fresh: true },
-  { id: 'f2', glyph: 'arrows-rotate', tone: 'good', parts: ['@bob.rivera', ' followed you back'], detail: '2 days after you followed', time: '4m' },
-  { id: 'f3', glyph: 'plus', tone: 'live', parts: ['Followed 3 people · ', '@kai.m', ', ', '@lena.k', ' +1'], time: '18m' },
-  { id: 'f4', glyph: 'user-minus', tone: 'idle', parts: ['Unfollowed ', '@carl.b', ' · didn’t follow back'], time: '26m' },
+  { id: 'f2', glyph: 'arrows-rotate', tone: 'good', parts: ['@bob.rivera', ' followed you back'], detail: ['2 days after you followed'], time: '4m' },
+  { id: 'f3', glyph: 'plus', tone: 'live', parts: ['Followed 3 people'], detail: ['@kai.m', ', ', '@lena.k', ' +1'], time: '18m' },
+  { id: 'f4', glyph: 'user-minus', tone: 'idle', parts: ['Unfollowed ', '@carl.b'], detail: ['Didn’t follow back'], time: '26m' },
   { id: 'f5', glyph: 'check', tone: 'good', parts: ['Accepted ', '@erin.w', '’s follow request'], time: '41m' },
-  { id: 'f6', glyph: 'arrow-trend-up', tone: 'good', parts: ['3 new followers · ', '@dana.o', ', ', '@mo.li', ' +1'], time: '1h 5m' },
+  { id: 'f6', glyph: 'arrow-trend-up', tone: 'good', parts: ['3 new followers'], detail: ['@dana.o', ', ', '@mo.li', ' +1'], time: '1h 5m' },
+  { id: 'f7', glyph: 'circle-up', tone: 'calm', parts: ['While you were away'], detail: ['14 new followers · 6 follow-backs · 2 left'], time: '9h' },
   { divider: 'Since you left · Mon 11:20 PM' },
-  { id: 'f7', glyph: 'circle-up', tone: 'calm', parts: ['While you were away'], detail: '14 new followers · 6 follow-backs · 2 left', time: '9h' },
   { group: 'Yesterday' },
   { id: 'f8', glyph: 'shield-halved', tone: 'calm', parts: ['Kept ', '@theo.park', ' · protected'], time: '8:12 PM' },
-  { id: 'f9', glyph: 'plus', tone: 'live', parts: ['Followed 6 people · ', '@ines.v', ', ', '@sam.ortiz', ' +4'], time: '7:40 PM' },
+  { id: 'f9', glyph: 'plus', tone: 'live', parts: ['Followed 6 people'], detail: ['@ines.v', ', ', '@sam.ortiz', ' +4'], time: '7:40 PM' },
 ];
 
 export const FEED_CATCHING_UP: FeedEntry[] = [
   { divider: 'Since you left · Mon 11:20 PM' },
   { group: 'Yesterday' },
-  { id: 'c1', glyph: 'plus', tone: 'live', parts: ['Followed 6 people · ', '@ines.v', ', ', '@sam.ortiz', ' +4'], time: '7:40 PM' },
+  { id: 'c1', glyph: 'plus', tone: 'live', parts: ['Followed 6 people'], detail: ['@ines.v', ', ', '@sam.ortiz', ' +4'], time: '7:40 PM' },
   { id: 'c2', glyph: 'arrows-rotate', tone: 'good', parts: ['@nora.h', ' followed you back'], time: '6:55 PM' },
-  { id: 'c3', glyph: 'user-minus', tone: 'idle', parts: ['Unfollowed 2 people · didn’t follow back'], time: '6:20 PM' },
-  { id: 'c4', glyph: 'hourglass-half', tone: 'hold', parts: ['Instagram asked Epo to slow down'], detail: 'Trying again at 5:10 PM', time: '4:58 PM' },
+  { id: 'c3', glyph: 'user-minus', tone: 'idle', parts: ['Unfollowed 2 people'], detail: ['Didn’t follow back'], time: '6:20 PM' },
+  { id: 'c4', glyph: 'hourglass-half', tone: 'hold', parts: ['Instagram asked Epo to slow down'], detail: ['Trying again at 5:10 PM'], time: '4:58 PM' },
 ];
 
 export const FEED_BOOST: FeedEntry[] = [
   { group: 'Today' },
-  { id: 'b1', glyph: 'plus', tone: 'live', parts: ['Followed 4 people · ', '@lena.k', ', ', '@mo.li', ' +2 · Boost'], time: 'just now', fresh: true },
+  { id: 'b1', glyph: 'plus', tone: 'live', parts: ['Followed 4 people'], detail: ['@lena.k', ', ', '@mo.li', ' +2 · Boost'], time: 'just now', fresh: true },
   { id: 'b2', glyph: 'arrows-rotate', tone: 'good', parts: ['@bob.rivera', ' followed you back'], time: '40m' },
-  { id: 'b3', glyph: 'plus', tone: 'live', parts: ['Followed 3 people · ', '@kai.m', ', ', '@jane.doe', ' +1 · Boost'], time: '1h 2m' },
-  { id: 'b4', glyph: 'bolt', tone: 'live', parts: ['Boost started — focusing on new people until 9:40 PM'], time: '4h 48m' },
+  { id: 'b3', glyph: 'plus', tone: 'live', parts: ['Followed 3 people'], detail: ['@kai.m', ', ', '@jane.doe', ' +1 · Boost'], time: '1h 2m' },
+  { id: 'b4', glyph: 'bolt', tone: 'live', parts: ['Boost started'], detail: ['Focusing on new people until 9:40 PM'], time: '4h 48m' },
+  { id: 'b5', glyph: 'circle-up', tone: 'calm', parts: ['While you were away'], detail: ['9 new followers · 4 follow-backs · 1 left'], time: '9h' },
   { divider: 'Since you left · Mon 11:20 PM' },
-  { id: 'b5', glyph: 'circle-up', tone: 'calm', parts: ['While you were away'], detail: '9 new followers · 4 follow-backs · 1 left', time: '9h' },
+  { group: 'Yesterday' },
+  { id: 'b6', glyph: 'plus', tone: 'live', parts: ['Followed 6 people'], detail: ['@ines.v', ', ', '@sam.ortiz', ' +4'], time: '7:40 PM' },
 ];
 
 export const FEED_ATTENTION: FeedEntry[] = [
   { group: 'Today' },
-  { id: 'a1', glyph: 'circle-exclamation', tone: 'hold', parts: ['Couldn’t follow ', '@kai.m', ' — Instagram didn’t confirm it'], time: '6m' },
+  { id: 'a1', glyph: 'circle-exclamation', tone: 'hold', parts: ['Couldn’t follow ', '@kai.m'], detail: ['Instagram didn’t confirm it'], time: '6m' },
   { id: 'a2', glyph: 'plus', tone: 'live', parts: ['Followed ', '@jane.doe'], time: '12m' },
   { id: 'a3', glyph: 'arrows-rotate', tone: 'good', parts: ['@bob.rivera', ' followed you back'], time: '31m' },
-  { id: 'a4', glyph: 'user-minus', tone: 'idle', parts: ['Unfollowed ', '@carl.b', ' · didn’t follow back'], time: '44m' },
+  { id: 'a4', glyph: 'user-minus', tone: 'idle', parts: ['Unfollowed ', '@carl.b'], detail: ['Didn’t follow back'], time: '44m' },
 ];
 
 /** Followers measured once a day for the People chart (calendar days). */
@@ -158,21 +161,28 @@ export const FUNNEL = [
   { label: 'Followed back', value: '51' },
 ] as const;
 
+/**
+ * The limits Advanced prints, one source for every place that shows them: the
+ * hourly limit at Standard caution and the hard stop the user lowered (65 → 60).
+ */
+export const LIMITS = { hourly: 22, hardStop: 60, hardStopRecommended: 65 } as const;
+
 /** "Today's plan in detail" (Advanced → Timing): one plan-day and its sessions. */
 export const PLAN_DETAIL_DAY = [
   ['Plan-day', '2:45 AM – 2:45 AM tomorrow'],
   ['Resets at', '2:45 AM'],
   ['Epo’s own maximum', '48 actions'],
-  ['Hard stop', '65 actions'],
-  ['At most an hour', '22 (14 unfollows, 11 while easing back in)'],
+  ['Hard stop', `${LIMITS.hardStop} actions`],
+  // Unfollows: the unfollow wall's share at Standard (22); easing back in: one caution rung down (14).
+  ['At most an hour', `${LIMITS.hourly} (22 unfollows, 14 while easing back in)`],
   ['Approvals per check', 'up to 5'],
 ] as const;
 
-/** 30 follows + 10 unfollows + 4 approvals = 44, the Balanced day; Epo's own maximum is 48. */
+/** 30 follows + 10 unfollows + 4 approvals = 44, the Balanced day; each session holds its pauses. */
 export const PLAN_DETAIL_SESSIONS = [
   { i: 1, time: '9:04–9:41 AM', f: 6, u: 2, a: 1, pace: 'normal', avg: '5 m 4 s', min: '2 m 10 s', state: 'done' },
-  { i: 2, time: '11:20 AM–12:05 PM', f: 7, u: 2, a: 1, pace: 'relaxed', avg: '6 m 12 s', min: '2 m 38 s', state: 'done' },
-  { i: 3, time: '1:52–3:10 PM', f: 10, u: 3, a: 1, pace: 'quick', avg: '4 m 21 s', min: '1 m 52 s', state: 'now' },
+  { i: 2, time: '11:20 AM–12:05 PM', f: 6, u: 2, a: 1, pace: 'relaxed', avg: '6 m 12 s', min: '2 m 38 s', state: 'done' },
+  { i: 3, time: '1:52–3:10 PM', f: 11, u: 3, a: 1, pace: 'quick', avg: '4 m 21 s', min: '1 m 52 s', state: 'now' },
   { i: 4, time: '5:40–6:30 PM', f: 5, u: 2, a: 1, pace: 'normal', avg: '5 m 0 s', min: '2 m 8 s', state: 'next' },
   { i: 5, time: '8:15–9:00 PM', f: 2, u: 1, a: 0, pace: 'relaxed', avg: '6 m 40 s', min: '2 m 50 s', state: 'later' },
 ] as const;

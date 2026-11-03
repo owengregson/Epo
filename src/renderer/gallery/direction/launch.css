@@ -72,6 +72,18 @@
   }
 }
 
+/* Reduced motion: a still, even hairline. A frozen highlight would read as a
+   progress bar stuck part-way, a number the splash does not have. */
+@media (prefers-reduced-motion: reduce) {
+  .dx-splash__shimmer {
+    background: rgba(255, 255, 255, 0.16);
+  }
+
+  .dx-splash__shimmer::after {
+    display: none;
+  }
+}
+
 /* ---------- intro storyboard: the window frozen at five instants ---------- */
 .dx-intro {
   position: relative;
