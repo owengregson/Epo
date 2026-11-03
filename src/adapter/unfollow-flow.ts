@@ -1,9 +1,9 @@
 /**
- * The confirm layers of one follow or unfollow (ADR 0308, spec §11.1 F2/F4): after the header press,
- * each layer is located, paused on and pressed until Instagram answers or the surface's layers run out.
+ * The confirm layers of one follow or unfollow (ADR 0308, spec §11.1 F2–F5): after the header press, each
+ * layer is located, paused on and pressed until Instagram answers; an exit that did not land is closed.
  */
 
-import type { LocatedRect } from '@/adapter/ig-surface';
+import type { LocatedRect, LocateRectResult } from '@/adapter/ig-surface';
 import { SURFACE } from '@/adapter/ig-surface';
 import type { MutationWatch } from '@/adapter/mutation-watch';
 import type { ConfirmLocate, LayerReport, ProbeStateResult } from '@/adapter/page';
@@ -11,21 +11,31 @@ import { pageCall } from '@/adapter/page-call';
 import { type SettleInteractor, settleAndPress } from '@/adapter/settle-press';
 import type { TempoSource } from '@/kernel/tempo';
 import { surface } from '@/surface/index';
-import type { SleepFn } from '@/timing/primitives';
+import { NO_SINK, type SurfaceSink } from '@/surface/sink';
+import { type SleepFn, sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
+import type { Result } from '@/utils/result';
 import type { AdapterTab } from './actor-types';
-import { ActionAbortedError } from './errors';
+import { ActionAbortedError, ActionBlockedError, ActionRateLimitedError, AdapterStaleError } from './errors';
 
 const CONFIRM = 'unfollow-confirm';
+const CANCEL = 'unfollow-dialog-cancel';
+const CLOSE = 'drawer-close';
 
 /** What the confirm flow adds to the Actor's options. */
 export interface ConfirmFlowOptions {
   /** The step pause's sleep (default: the real one). */
   readonly sleep?: SleepFn;
+  /** Where an unrecognized confirm layer is reported (default: nowhere, until the production sink is wired). */
+  readonly sink?: SurfaceSink;
 }
 
+/** The flow options with their defaults filled in. */
+export const confirmDefaults = (o: ConfirmFlowOptions): Required<ConfirmFlowOptions> =>
+  ({ sleep: o.sleep ?? sleep, sink: o.sink ?? NO_SINK });
+
 /** One action's flow: what the layer loop drives and reads. */
-export interface LayerFlow {
+export interface LayerFlow extends Required<ConfirmFlowOptions> {
   readonly op: 'actor.follow' | 'actor.unfollow';
   readonly username: string;
   readonly tab: AdapterTab;
@@ -36,7 +46,6 @@ export interface LayerFlow {
   /** Header states that prove the action landed (an inline or optimistic flip). */
   readonly settled: (state: ProbeStateResult['state']) => boolean;
   readonly tempo: TempoSource;
-  readonly sleep: SleepFn;
   readonly signal: () => AbortSignal | undefined;
   readonly usable: (rect: LocatedRect | undefined) => rect is LocatedRect;
   /** The Actor's D4 poll: `run` until `done`, the control deadline, or a stop. */
@@ -66,6 +75,10 @@ const confirmScript = (later: boolean): string =>
   pageCall('locate', { control: CONFIRM, ...descriptor(CONFIRM), dialogsOnly: later });
 const layerScript = (withMarkup: boolean): string =>
   pageCall('confirmLayer', { control: CONFIRM, ...descriptor(CONFIRM), withMarkup });
+const cancelScript = (): string => pageCall('locate', { control: CANCEL, ...descriptor(CANCEL) });
+/** The menu's Close X: the drawer's descriptor, searched in the confirm layers' scopes only. */
+const closeScript = (): string =>
+  pageCall('locate', { control: CLOSE, ...descriptor(CLOSE), scopes: descriptor(CONFIRM).scopes });
 
 /** A located layer's signature; one the page cannot tell apart reads as the same layer, never as a new one. */
 const sigOf = (located: ConfirmLocate | null): string => located?.sig ?? '';
@@ -122,11 +135,75 @@ async function pressLayer(f: LayerFlow, located: ConfirmLocate, later: boolean):
 
 /** F4: an unobserved mutation window counts toward blindness only when no confirm layer is on screen. */
 export async function noteUnobserved(f: LayerFlow): Promise<void> {
-  const top = await f.tab.evaluate<LayerReport | null>(layerScript(false));
+  const top = await report(f, false);
   if (top?.present !== true) {
     f.watch.warnUnobserved(f.username);
     return;
   }
   logger.warn(`${f.op}: no mutation response while a confirm layer is on screen; the page stalled, not the mutation table`,
     { username: f.username, layer: top.layer ?? null, postsSeen: f.watch.unmatchedPosts() });
+}
+
+/** The top confirm layer on screen, with its markup on request. */
+const report = (f: LayerFlow, withMarkup: boolean): Promise<LayerReport | null> =>
+  f.tab.evaluate<LayerReport | null>(layerScript(withMarkup));
+
+/** An exit after which a layer may still need closing: Instagram's own refusal, or a drifted control. */
+const leavesOnError = (e: unknown): boolean =>
+  e instanceof ActionBlockedError || e instanceof ActionRateLimitedError || e instanceof AdapterStaleError;
+
+/**
+ * The layers, then the one arbitration; an exit that did not land leaves the tab clean (F5). A stop,
+ * a stalled tab or a check that failed mid-layers presses nothing more.
+ */
+export async function runFlow(f: LayerFlow, decide: () => Promise<Result<{ clicked: boolean }>>):
+  Promise<Result<{ clicked: boolean }>> {
+  const run = await pressConfirmLayers(f);
+  let result: Result<{ clicked: boolean }>;
+  try {
+    result = await decide();
+  } catch (e) {
+    if (leavesOnError(e)) await leaveLayers(f, run, 'refusal');
+    throw e;
+  }
+  if (!result.ok) await leaveLayers(f, run, 'nothing');
+  return result;
+}
+
+/**
+ * F5: close a layer left on screen — the dialog's Cancel, else the menu's Close X. When Instagram showed
+ * nothing and the layer is neither one already pressed nor one carrying the confirm, it is unrecognized.
+ */
+async function leaveLayers(f: LayerFlow, run: LayerRun, shown: 'nothing' | 'refusal'): Promise<void> {
+  try {
+    if (f.signal()?.aborted) return;
+    const top = await report(f, false);
+    if (top?.present !== true) return;
+    const unknown = top.sig !== run.lastSig && (f.maxLayers === 0 || top.matches !== true);
+    if (shown === 'nothing' && unknown) noteUnrecognized(f, top);
+    await closeLayer(f, top);
+  } catch (e) {
+    logger.warn(`${f.op}: leaving the confirm layer failed`, { username: f.username, error: String(e) });
+  }
+}
+
+/** Never pressed: the drift signature and the log say what was there instead (spec §11.1 F3). */
+function noteUnrecognized(f: LayerFlow, top: LayerReport): void {
+  logger.warn(`${f.op}: a confirmation step looked different; Epo cancelled instead of guessing`,
+    { username: f.username, layer: top.layer ?? null, controls: top.controls ?? null });
+  f.sink.drift({ endpoint: 'mutation', cls: 'confirm-unrecognized', path: `controls.${CONFIRM}`,
+    detail: { op: f.op, layer: top.layer ?? null, controls: top.controls ?? null } }, Date.now());
+}
+
+/** Press the layer's Cancel, else its Close X, until it is gone; a layer that stays is a warn, never silent. */
+async function closeLayer(f: LayerFlow, top: LayerReport): Promise<void> {
+  for (const script of [cancelScript(), closeScript()]) {
+    if (f.signal()?.aborted) return;
+    const locate = (): Promise<LocateRectResult | null> => f.tab.evaluate<LocateRectResult | null>(script);
+    if ((await settleAndPress(f.interactor, await locate(), locate, f.usable)) === null) continue;
+    const gone = await f.waitFor(() => report(f, false), (r) => r?.present !== true || r.sig !== top.sig);
+    if (gone !== null) return;
+  }
+  logger.warn(`${f.op}: a confirm layer stayed on screen; neither its Cancel nor its Close X closed it`,
+    { username: f.username, layer: top.layer ?? null });
 }

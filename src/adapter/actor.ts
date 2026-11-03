@@ -27,12 +27,12 @@ import { ADAPTER_BOUNDS } from '@/kernel/adapter-bounds';
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import { SURFACE_METER, type SurfaceMetric } from '@/surface/meter';
 import { ADAPTER } from '@/timing/config';
-import { type SleepFn, sleep } from '@/timing/primitives';
+import { sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 import { ok, type Result } from '@/utils/result';
 import { prepareAction } from './action-admission';
 import type { ActorInteractor, ActorOptions, AdapterTab } from './actor-types';
-import { type ConfirmFlowOptions, confirmLayerBound, type LayerFlow, noteUnobserved, pressConfirmLayers } from './unfollow-flow';
+import { type ConfirmFlowOptions, confirmDefaults, confirmLayerBound, type LayerFlow, noteUnobserved, runFlow } from './unfollow-flow';
 
 export type { ActorInteractor, ActorOptions, AdapterTab } from './actor-types';
 
@@ -69,7 +69,7 @@ export class Actor {
   private readonly prepareProfile?: ActorOptions['prepareProfile'];
   private readonly beforeMutation?: ActorOptions['beforeMutation'];
   private readonly tempo: TempoSource;
-  private readonly pause: SleepFn;
+  private readonly confirm: Required<ConfirmFlowOptions>;
 
   constructor(tab: AdapterTab, opts: ActorOptions & ConfirmFlowOptions) {
     this.tab = tab;
@@ -82,7 +82,7 @@ export class Actor {
     this.abortSignal = opts.abortSignal;
     this.reporter = opts.reporter ?? NOOP_ACTIVITY_REPORTER;
     this.tempo = tempoOrReference(opts.tempo);
-    this.pause = opts.sleep ?? sleep;
+    this.confirm = confirmDefaults(opts);
   }
 
   /**
@@ -204,8 +204,7 @@ export class Actor {
    */
   private async afterPress(f: LayerFlow, stateBefore: ButtonState | undefined): Promise<Result<{ clicked: boolean }>> {
     try {
-      await pressConfirmLayers(f);
-      return await this.decide(f, stateBefore);
+      return await runFlow(f, () => this.decide(f, stateBefore));
     } catch (e) {
       Actor.rethrowMarkedPostClick(e);
     }
@@ -218,7 +217,7 @@ export class Actor {
       ? (state: ButtonState) => state === 'following' || state === 'requested'
       : (state: ButtonState) => state === 'follow' || state === 'follow-back';
     return { op, username, tab: this.tab, interactor: this.interactor, watch, dispatch, settled, maxLayers,
-      tempo: this.tempo, sleep: this.pause, signal: () => this.abortSignal?.(), usable: Actor.rectUsable,
+      ...this.confirm, tempo: this.tempo, signal: () => this.abortSignal?.(), usable: Actor.rectUsable,
       waitFor: (run, done) => this.waitFor(op, run, done) };
   }
 

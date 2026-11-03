@@ -10,6 +10,8 @@ import { SURFACE } from '@/adapter/ig-surface';
 import { lookBeforeActing } from '@/adapter/instagram-adapter';
 import { MUTATION_BLINDNESS } from '@/adapter/mutation-watch';
 import type { TempoSource } from '@/kernel/tempo';
+import { MemorySink, type SurfaceSink } from '@/surface/sink';
+import { setLevel, setSink } from '@/utils/logger';
 import { FakeInteractor, marker, NetworkTab, pageCall } from '../kit/tabs';
 import { fixedTempo, recordingTempo } from '../kit/tempo';
 
@@ -112,11 +114,19 @@ class ConfirmPage {
   }
 }
 
+interface ActorOpts {
+  admit?: () => Promise<void>;
+  tempo?: TempoSource;
+  sink?: SurfaceSink;
+  abort?: AbortController;
+}
+
 /** A dwell-free Actor over the page; `admit` is the cadence's `beforeMutation`, every step pause is recorded. */
-function actorOn(page: ConfirmPage, opts: { admit?: () => Promise<void>; tempo?: TempoSource } = {}): Actor {
+function actorOn(page: ConfirmPage, opts: ActorOpts = {}): Actor {
   return new Actor(page.tab, {
     pollIntervalMs: 1, pollTimeoutMs: 30, mutationTimeoutMs: 30, interactor: page.h,
-    beforeMutation: opts.admit ?? (async () => {}), tempo: opts.tempo,
+    beforeMutation: opts.admit ?? (async () => {}), tempo: opts.tempo, sink: opts.sink,
+    abortSignal: opts.abort === undefined ? undefined : () => opts.abort?.signal,
     sleep: async () => { page.events.push('pause'); },
     prepareProfile: async (username) => { await page.tab.goto(SURFACE.profileUrl(username)); },
   });
@@ -253,16 +263,20 @@ describe('F2: each confirm layer is pressed until Instagram answers', () => {
 describe('F4: a stall on screen is not a blind mutation table', () => {
   beforeEach(() => MUTATION_BLINDNESS.reset());
 
-  test('a dialog whose button never becomes pressable: an honest unverified result, blindness unchanged', async () => {
+  test('a dialog whose button never becomes pressable: Cancel, blindness unchanged, an honest error', async () => {
     const stuck: Layer = { ...dialog(), confirm: { x: 0, y: 0, width: 0, height: 0 } };
     const page = new ConfirmPage('requested', (p) => ({ header: () => p.layers.push(stuck) }));
+    const sink = new MemorySink();
 
-    const result = await actorOn(page).unfollow('someone', 'pk');
+    const result = await actorOn(page, { sink }).unfollow('someone', 'pk');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/post-click state not confirmed/);
-    expect(page.h.clicks.filter((r) => r === stuck.confirm)).toEqual([]);
+    expect(page.h.clicks).toEqual([HEADER, CANCEL]);
+    expect(page.layers).toEqual([]);
     expect(MUTATION_BLINDNESS.streak()).toBe(0);
+    // The confirm text was there, just never pressable: a stall, not an unknown layer.
+    expect(sink.snapshot().drift).toEqual([]);
   });
 
   test('with nothing on screen, an unobserved window still counts toward blindness', async () => {
@@ -271,6 +285,92 @@ describe('F4: a stall on screen is not a blind mutation table', () => {
     await actorOn(page).unfollow('someone', 'pk');
 
     expect(MUTATION_BLINDNESS.streak()).toBe(1);
+  });
+});
+
+describe('F5: an exit that did not land leaves the tab clean', () => {
+  /** The menu press opened a "Restrict @x?" dialog instead: two buttons, no confirm text (spec §11.2 item 9). */
+  const restrict = (): Layer => ({ sig: '0:2:restrict', kind: 'dialog', confirm: null, cancel: CANCEL, close: null,
+    controls: 2, structural: 'Restrict' });
+
+  test('an unexpected two-button dialog on a later layer: never pressed, Cancel, a confirm-unrecognized signature', async () => {
+    const page = new ConfirmPage('following', (p) => ({
+      header: () => p.layers.push(menu()),
+      confirm: () => p.layers.splice(0, p.layers.length, restrict()),
+    }));
+    const sink = new MemorySink();
+
+    const result = await actorOn(page, { sink }).unfollow('someone', 'pk');
+
+    expect(result.ok).toBe(false);
+    expect(page.h.clicks).toEqual([HEADER, MENU_ROW, CANCEL]);
+    expect(sink.snapshot().drift.map((d) => [d.signal.endpoint, d.signal.cls, d.signal.detail.op])).toEqual([
+      ['mutation', 'confirm-unrecognized', 'actor.unfollow'],
+    ]);
+  });
+
+  test('a menu left on screen has no Cancel: its Close X closes it', async () => {
+    const page = new ConfirmPage('following', (p) => ({ header: () => p.layers.push(menu()) }));
+
+    // The menu row is pressed but nothing follows: the same layer stays, then the X closes it.
+    const result = await actorOn(page).unfollow('someone', 'pk');
+
+    expect(result.ok).toBe(false);
+    expect(page.h.clicks).toEqual([HEADER, MENU_ROW, CLOSE]);
+    expect(page.layers).toEqual([]);
+  });
+
+  test('a layer nothing can close is a warn, never silent', async () => {
+    const stuck: Layer = { ...dialog(), confirm: null, cancel: null, structural: null };
+    const page = new ConfirmPage('requested', (p) => ({ header: () => p.layers.push(stuck) }));
+    const lines: string[] = [];
+    setLevel('warn');
+    setSink((level, message) => { if (level === 'warn') lines.push(message); });
+    try {
+      await actorOn(page).unfollow('someone', 'pk');
+    } finally {
+      setSink(null);
+      setLevel('error');
+    }
+
+    expect(page.h.clicks).toEqual([HEADER]);
+    expect(lines.some((m) => m.includes('stayed on screen'))).toBe(true);
+  });
+
+  test("Instagram's refusal with the dialog still up: Cancel, and no drift (the refusal is evidence)", async () => {
+    const page = new ConfirmPage('requested', (p) => ({
+      header: () => p.layers.push(dialog()),
+      confirm: () => p.tab.emit({ url: UNFOLLOW_URL, status: 400, body: { status: 'fail', message: 'feedback_required', spam: true } }),
+    }));
+    const sink = new MemorySink();
+
+    await expect(actorOn(page, { sink }).unfollow('someone', 'pk')).rejects.toThrow();
+    expect(page.h.clicks).toEqual([HEADER, DIALOG_BUTTON, CANCEL]);
+    expect(sink.snapshot().drift).toEqual([]);
+  });
+
+  test('a stop mid-flow presses nothing more: no Cancel after a stop', async () => {
+    const abort = new AbortController();
+    let polls = 0;
+    const stuck: Layer = { ...dialog(), confirm: { x: 0, y: 0, width: 0, height: 0 } };
+    const page = new ConfirmPage('requested', (p) => ({
+      header: () => p.layers.push(stuck),
+      poll: () => { if (++polls === 2) abort.abort(); },
+    }));
+
+    await expect(actorOn(page, { abort }).unfollow('someone', 'pk')).rejects.toThrow();
+    expect(page.h.clicks).toEqual([HEADER]);
+  });
+
+  test('a follow that did not land with a dialog on screen: the dialog is never pressed; Cancel closes it', async () => {
+    const page = new ConfirmPage('follow', (p) => ({ header: () => p.layers.push(restrict()) }));
+    const sink = new MemorySink();
+
+    const result = await actorOn(page, { sink }).follow('someone', 'pk');
+
+    expect(result.ok).toBe(false);
+    expect(page.h.clicks).toEqual([HEADER, CANCEL]);
+    expect(sink.snapshot().drift.map((d) => d.signal.detail.op)).toEqual(['actor.follow']);
   });
 });
 
