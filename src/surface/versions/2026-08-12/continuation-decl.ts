@@ -6,6 +6,7 @@
 import type { ContinuationDecl } from '@/surface/read/continuation';
 
 export const CONTINUATION: ContinuationDecl = {
+  rowsKey: 'users',
   /** The REST resume cursor (a GraphQL connection's `end_cursor` is normalized onto it). */
   cursorKeys: ['next_max_id'],
   /** `big_list` is the alternate more-flag some friendships pages carry; `has_next_page` the connection's. */

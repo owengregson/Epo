@@ -50,7 +50,14 @@
           "data.xdt_activity_inbox.partition",
           "data.xdt_api__v1__friendships__pending",
           "extensions"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": null,
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 4
       }
     },
     {
@@ -98,7 +105,14 @@
           "data.xdt_activity_inbox.partition",
           "data.xdt_api__v1__friendships__pending",
           "extensions"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": null,
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 4
       }
     },
     {
@@ -133,7 +147,17 @@
           "data.xdt_friendships_pending_users.users.edges[].node.live_broadcast_visibility",
           "data.xdt_friendships_pending_users.users.edges[].node.supervision_info",
           "extensions"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": {
+          "kind": "end",
+          "evidence": "flags-false"
+        },
+        "fieldIssues": [],
+        "presence": null,
+        "pendingPreview": 0
       }
     },
     {
@@ -215,7 +239,20 @@
           "data.user.zip",
           "data.viewer",
           "extensions"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": null,
+        "fieldIssues": [],
+        "presence": {
+          "counts": "read",
+          "bio": "read",
+          "isPrivate": "read",
+          "isVerified": "read",
+          "relationship": "self"
+        },
+        "pendingPreview": 0
       }
     },
     {
@@ -304,7 +341,20 @@
           "data.user.zip",
           "data.viewer",
           "extensions"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": null,
+        "fieldIssues": [],
+        "presence": {
+          "counts": "read",
+          "bio": "read",
+          "isPrivate": "read",
+          "isVerified": "read",
+          "relationship": "read"
+        },
+        "pendingPreview": 0
       }
     },
     {
@@ -393,7 +443,20 @@
           "data.user.zip",
           "data.viewer",
           "extensions"
-        ]
+        ],
+        "tier": "canonical",
+        "partial": false,
+        "steps": [],
+        "continuation": null,
+        "fieldIssues": [],
+        "presence": {
+          "counts": "read",
+          "bio": "read",
+          "isPrivate": "read",
+          "isVerified": "read",
+          "relationship": "read"
+        },
+        "pendingPreview": 0
       }
     }
   ],

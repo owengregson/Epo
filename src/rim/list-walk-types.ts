@@ -30,6 +30,12 @@ export interface WalkArgs {
   stopAfterPage?: (page: readonly Observation[]) => boolean;
   /** What the walk's page reads are for: the `use` tag on each read debit. */
   readUse?: ReadUse;
+  /**
+   * `acquisition`: the walk pages a SOURCE's followers for the candidate pool, so a page whose rows moved
+   * may be read from their new place (C2) — its continuation never is, so the walk stops after it. Own-list
+   * walks (census, followers head, following check) never pass it: they read C0/C1 only.
+   */
+  arm?: 'acquisition';
   /** Runaway page bound; defaults to `RIM.LIST_WALK_MAX_PAGES`. */
   maxPages?: number;
   /**
@@ -75,6 +81,8 @@ export interface WalkResult {
    * misses accounts, so every absence verdict refuses it (spec §10.4).
    */
   quarantined: number;
+  /** Rows an acquisition walk read from a page whose rows moved (C2: the candidate pool only). */
+  recoveredRows?: number;
   /**
    * Why the walk ended. Genuine completion: 'no-more-pages'. Demand stops:
    * 'target-reached' | 'no-new-for-caller'. Bounds: 'max-pages' | 'stagnant'.

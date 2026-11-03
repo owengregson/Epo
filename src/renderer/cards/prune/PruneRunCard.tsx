@@ -1,15 +1,15 @@
-import { type JSX } from 'preact';
+import { type ComponentChildren, type JSX } from 'preact';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import { commas } from '@/renderer/lib/format';
 import { sentinelLabel } from '@/renderer/lib/labels';
+import { fill } from '@/renderer/settings/format';
 import { Badge, type BadgeTone } from '@/renderer/ui/Badge';
 import { Button } from '@/renderer/ui/Button';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
-import { Field } from '@/renderer/ui/Field';
 import { KeyValue } from '@/renderer/ui/KeyValue';
 import { Meter } from '@/renderer/ui/Meter';
-import { Stepper } from '@/renderer/ui/Stepper';
-import type { PruneStatus, Settings } from '@/types';
+import type { PruneStatus } from '@/types';
+import { PRUNE_COPY } from './prune-copy';
 
 type PruneSentinel = NonNullable<PruneStatus['lastSentinel']>;
 
@@ -69,10 +69,8 @@ export interface PruneRunCardProps {
   onStop(): void;
   /** The shell's confirm modal — gates every stop. */
   confirm(options: ConfirmOptions): Promise<boolean>;
-  /** Persisted settings (for the daily-unfollow cap); null while loading. */
-  settings: Settings | null;
-  /** Persist a partial settings change (the view saves + relays onSaved). */
-  onSave(part: Partial<Settings>): void;
+  /** The "Unfollow these gradually" control or its on-line (the view owns the settings change). */
+  gradual?: ComponentChildren;
 }
 
 /**
@@ -90,8 +88,7 @@ export function PruneRunCard({
   onRun,
   onStop,
   confirm,
-  settings,
-  onSave,
+  gradual,
 }: PruneRunCardProps): JSX.Element {
   const state = prune?.state ?? 'idle';
   const active = state === 'scanning' || state === 'running' || state === 'paused';
@@ -173,11 +170,11 @@ export function PruneRunCard({
             disabled={!readyToRun || active || pending !== null}
             onClick={onRun}
           >
-            Run prune
+            {PRUNE_COPY.pruneNow}
           </Button>
         )}
         <div class="hint" hidden={!readyToRun || active}>
-          Unfollows run one at a time with paced delays; the daily limit and whitelist always apply.
+          Unfollows run one at a time at the plan’s pace; today’s allowance and your protection list always apply.
         </div>
         <div class="hint" hidden={readyToRun || active}>
           Run a scan first — it unlocks pruning and shows exactly who a run would drop.
@@ -191,21 +188,12 @@ export function PruneRunCard({
         <div class="hint alarm" role="alert" hidden={!halted}>
           {haltText(prune?.haltReason ?? null, lastSentinel)}
         </div>
-        {settings !== null ? (
-          <Field
-            label="Daily unfollow limit"
-            tip="Hard cap on prune unfollows per local day. Prune keeps its own ledger, independent of the growth engine's daily ceiling."
-          >
-            <Stepper
-              min={5}
-              max={500}
-              step={5}
-              value={settings.pruneDailyLimit}
-              onChange={(v) => onSave({ pruneDailyLimit: v })}
-              ariaLabel="Daily prune unfollow limit"
-            />
-          </Field>
-        ) : null}
+        <KeyValue k={PRUNE_COPY.allowance}>
+          <span class="num">
+            {dailyLimit > 0 ? fill(PRUNE_COPY.allowanceLine, { used: dailyDone, n: dailyLimit }) : PRUNE_COPY.allowanceUnknown}
+          </span>
+        </KeyValue>
+        {gradual ?? null}
       </CardBody>
     </Card>
   );

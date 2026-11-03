@@ -13,22 +13,22 @@ test('a malformed list page or failed profile visit cannot count as useful runti
   tab.onEvaluate = () => ({ ok: true, status: 200, contentType: 'application/json', json: { unexpected: true } });
   const onProgress = jest.fn();
   const walker = new ListPageWalker({ tab, reader: new Reader(), onProgress, sleep: async () => {} });
-  expect((await walker.walkAll({ pk: 'a', which: 'followers', sentinel: sentinel(), onObservation: () => {} })).reason)
+  expect((await walker.walkAll({ pk: '11', which: 'followers', sentinel: sentinel(), onObservation: () => {} })).reason)
     .toBe('shape-mismatch');
   const enricher = new AdapterBackedProfileEnricher({ onProgress, sentinel: sentinel(), paceMs: 0,
     store: { markEnrichmentFailed: () => {} }, visitor: { visit: async () => ({ ok: false, kind: 'walled', detail: {} }) },
   });
-  await enricher.enrich(['a']);
+  await enricher.enrich(['11']);
   expect(onProgress).not.toHaveBeenCalled();
 });
 
 test('a validated list page signals progress only after its observations have been delivered', async () => {
   const tab = new FakeTab();
-  tab.onEvaluate = () => ({ ok: true, status: 200, contentType: 'application/json', json: followersBody(['one'], 'C1', true) });
+  tab.onEvaluate = () => ({ ok: true, status: 200, contentType: 'application/json', json: followersBody(['1'], 'C1', true) });
   const seen: string[] = [];
-  const onProgress = jest.fn(() => expect(seen).toEqual(['one']));
+  const onProgress = jest.fn(() => expect(seen).toEqual(['1']));
   const walker = new ListPageWalker({ tab, reader: new Reader(), onProgress, sleep: async () => {} });
-  await walker.walkAll({ pk: 'a', which: 'followers', sentinel: sentinel(), maxPages: 1, onObservation: (obs) => seen.push(obs.accountPk) });
+  await walker.walkAll({ pk: '11', which: 'followers', sentinel: sentinel(), maxPages: 1, onObservation: (obs) => seen.push(obs.accountPk) });
   expect(onProgress).toHaveBeenCalledTimes(1);
 });
 
@@ -44,13 +44,13 @@ test('passive parsed pages cannot keep a wedged dialog scroll driver healthy', a
   const reader = new FollowersPageReader({ tab, actor, reader: new Reader(), clock: new FakeClock(1000),
     onProgress, sleep: async () => {} });
   const seen: string[] = [];
-  const collecting = reader.collect({ targetUsername: 'a', sentinel: sentinel(), maxRounds: 1, noNewStop: 1,
+  const collecting = reader.collect({ targetUsername: '11', sentinel: sentinel(), maxRounds: 1, noNewStop: 1,
     onObservation: (obs) => seen.push(obs.accountPk) });
   await inScroll;
-  tab.emit(mkResp(followersUrl('999'), followersBody(['one'], 'C1', true)));
+  tab.emit(mkResp(followersUrl('999'), followersBody(['1'], 'C1', true)));
   await Promise.resolve();
   await Promise.resolve();
-  expect(seen).toEqual(['one']);
+  expect(seen).toEqual(['1']);
   expect(onProgress).not.toHaveBeenCalled();
   release();
   await collecting;

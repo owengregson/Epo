@@ -56,8 +56,8 @@ describe('direct API walk (the request-efficient path)', () => {
     tab.onEvaluate = (script) => {
       // Two followers pages, then the API says the list is done. The built
       // script embeds the cursor as encodeURIComponent("C1"), so match on "C1".
-      if (script.includes('"C1"')) return okEnv(followersBody(['c', 'd'], null, false));
-      return okEnv(followersBody(['a', 'b'], 'C1', true));
+      if (script.includes('"C1"')) return okEnv(followersBody(['13', '14'], null, false));
+      return okEnv(followersBody(['11', '12'], 'C1', true));
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
@@ -78,7 +78,7 @@ describe('direct API walk (the request-efficient path)', () => {
     expect(result.observed).toBe(4);
     // The list's end was VERIFIED — a genuine completion reason.
     expect(result.endReason).toBe('no-more-pages');
-    for (const pk of ['a', 'b', 'c', 'd']) {
+    for (const pk of ['11', '12', '13', '14']) {
       const edge = store.getEdge(pk, '999', 'follows');
       expect(edge).not.toBeNull();
       expect(edge!.status).toBe('active');
@@ -99,7 +99,7 @@ describe('direct API walk (the request-efficient path)', () => {
     tab.onEvaluate = (script) => {
       seenUrls.push(script);
       // The walk must START at C1; that page ends the list.
-      return okEnv(followersBody(['c', 'd'], null, false));
+      return okEnv(followersBody(['13', '14'], null, false));
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
@@ -134,7 +134,7 @@ describe('direct API walk (the request-efficient path)', () => {
       // Each page yields 2 fresh pks and always claims more pages exist.
       const base = page * 2;
       page += 1;
-      return okEnv(followersBody([`p${base}`, `p${base + 1}`], `C${page}`, true));
+      return okEnv(followersBody([`${1_000 + base}`, `${1_000 + base + 1}`], `C${page}`, true));
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
@@ -174,7 +174,7 @@ describe('direct API walk (the request-efficient path)', () => {
     tab.onEvaluate = () => {
       const base = page * 2;
       page += 1;
-      return okEnv(followersBody([`n${base}`, `n${base + 1}`], `K${page}`, true));
+      return okEnv(followersBody([`${2_000 + base}`, `${2_000 + base + 1}`], `K${page}`, true));
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
@@ -210,7 +210,7 @@ describe('direct API walk (the request-efficient path)', () => {
     tab.onEvaluate = () => {
       calls += 1;
       // First page parses; the second no longer matches the extractor (drift).
-      if (calls === 1) return okEnv(followersBody(['a', 'b'], 'C1', true));
+      if (calls === 1) return okEnv(followersBody(['11', '12'], 'C1', true));
       return okEnv({ unexpected_new_shape: true });
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
@@ -241,7 +241,7 @@ describe('direct API walk (the request-efficient path)', () => {
     store.observe({ accountPk: '999', observedAt: 1_000, source: 'profile', fields: { username: 'target' } });
 
     const tab = new FakeTab();
-    tab.onEvaluate = () => okEnv(followersBody(['a', 'b'], 'C1', true));
+    tab.onEvaluate = () => okEnv(followersBody(['11', '12'], 'C1', true));
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
     const visitor = new StubVisitor();
@@ -303,8 +303,8 @@ describe('dialog-scroll fallback', () => {
     const tab = new FakeTab();
     const actor = new FakeActor();
     const pages = [
-      mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)),
-      mkResp(followersUrl('999', 'C1'), followersBody(['c', 'd'], 'C2', false)),
+      mkResp(followersUrl('999'), followersBody(['11', '12'], 'C1', true)),
+      mkResp(followersUrl('999', 'C1'), followersBody(['13', '14'], 'C2', false)),
     ];
     let i = 0;
     actor.onOpen = () => tab.emit(pages[i++]);
@@ -338,7 +338,7 @@ describe('dialog-scroll fallback', () => {
     // The dialog stopped yielding new rows — its natural drain, a genuine
     // outcome (the last page still carried a cursor, so never 'no-more-pages').
     expect(result.endReason).toBe('stagnant');
-    for (const pk of ['a', 'b', 'c', 'd']) {
+    for (const pk of ['11', '12', '13', '14']) {
       const edge = store.getEdge(pk, '999', 'follows');
       expect(edge).not.toBeNull();
       expect(edge!.status).toBe('active');
@@ -354,8 +354,8 @@ describe('dialog-scroll fallback', () => {
     const actor = new FakeActor();
     const ac = new AbortController();
     const pages = [
-      mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)),
-      mkResp(followersUrl('999', 'C1'), followersBody(['c', 'd'], 'C2', true)),
+      mkResp(followersUrl('999'), followersBody(['11', '12'], 'C1', true)),
+      mkResp(followersUrl('999', 'C1'), followersBody(['13', '14'], 'C2', true)),
     ];
     let i = 0;
     // The first page lands, then the driver is stopped before any scroll.
@@ -396,10 +396,10 @@ describe('dialog-scroll fallback', () => {
     expect(result.endReason).toBe('stopped');
     expect(actor.scrollCalls).toBe(0); // it really did stop before the next page
     // The first page's edges survived the stop.
-    for (const pk of ['a', 'b']) {
+    for (const pk of ['11', '12']) {
       expect(store.getEdge(pk, '999', 'follows')).not.toBeNull();
     }
-    expect(store.getEdge('c', '999', 'follows')).toBeNull();
+    expect(store.getEdge('13', '999', 'follows')).toBeNull();
   });
 });
 

@@ -3,24 +3,10 @@
  * declared cursor keys and more-flags in a fixed rule order. Version-agnostic: keys are injected.
  */
 
-import type { NormalizeStep } from '@/surface/read/types';
-import type { Continuation } from '@/surface/schema/projection';
+import type { ContinuationDecl } from '@/surface/schema/decls';
+import type { Continuation, NormalizeStep } from '@/surface/schema/projection';
 
-/** A surface version's continuation keys (declared in `versions/<capture>/continuation-decl.ts`). */
-export interface ContinuationDecl {
-  readonly cursorKeys: readonly string[];
-  readonly moreFlags: readonly string[];
-  /** A cursor that is a row offset; anything else is opaque. */
-  readonly offsetCursor: RegExp;
-  /** Root keys a real page carries that say nothing about continuation (corpus-derived). */
-  readonly explainedPageKeys: readonly string[];
-  /** Names that mark a cursor-like key inside an unexplained container. */
-  readonly cursorName: RegExp;
-  /** Names under which `true` reads as "more". */
-  readonly moreFlagName: RegExp;
-  /** How each list is requested: page by page, or the whole list in one response. */
-  readonly composedForm: { readonly followers: 'paged'; readonly following: 'whole-list' };
-}
+export type { ContinuationDecl } from '@/surface/schema/decls';
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 

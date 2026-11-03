@@ -88,10 +88,11 @@ export function buildGraph(
 
   // The adapter owns the single Actor + Sentinel instances the whole rim shares;
   // the Reader is pure and held directly.
+  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub, sink } = wireSurface({ tab: d.tab, store, ownPk, clock, day: plan.dayClock });
   const adapter = new InstagramAdapter(d.tab, {
     interactor,
     abortSignal: driverSignal,
-    reporter: d.reporter,
+    reporter: d.reporter, sink, // an unrecognized confirm layer reaches the surface sink
     beforeMutation: policy.beforeMutation,
     prepareProfile: policy.prepareProfile,
   });
@@ -101,7 +102,6 @@ export function buildGraph(
   });
   const actor = adapter.actor;
   const sentinel = adapter.sentinel;
-  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub } = wireSurface({ tab: d.tab, store, ownPk, clock, day: plan.dayClock });
   const profiles = new TabProfileVisitor({
     tab: d.tab,
     observer: profileObserver,

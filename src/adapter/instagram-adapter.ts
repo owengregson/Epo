@@ -16,6 +16,7 @@ import { Actor, type ActorInteractor, type ActorOptions, type AdapterTab } from 
 import { SURFACE } from '@/adapter/ig-surface';
 import { Sentinel } from '@/adapter/sentinel';
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
+import type { SurfaceSink } from '@/surface/sink';
 import { type SleepFn, sample, sleep } from '@/timing/primitives';
 
 /** Adapter construction options. */
@@ -37,6 +38,8 @@ export interface InstagramAdapterOptions {
   reporter?: ActivityReporter;
   /** The tempo the adapter's reading pauses resolve from (default: the reference tempo). */
   tempo?: TempoSource;
+  /** Where an unrecognized confirm layer is reported: the production surface sink (default: nowhere). */
+  sink?: SurfaceSink;
 }
 
 export class InstagramAdapter {
@@ -53,6 +56,7 @@ export class InstagramAdapter {
       abortSignal: opts.abortSignal,
       reporter: opts.reporter,
       tempo,
+      ...(opts.sink === undefined ? {} : { sink: opts.sink }),
     });
     this.sentinel = new Sentinel(tab);
   }

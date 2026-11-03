@@ -33,7 +33,8 @@ import { launchStream } from '@/utils/entropy';
 
 export interface TabProfileVisitorDeps {
   tab: Navigable;
-  observer: { expect(username: string): ProfileExpectation };
+  /** `recoverArmed` reads a visit's deadline candidates (unrouted reads of the profile family) under its anchor. */
+  observer: { expect(username: string, opts?: { readonly pk?: string }): ProfileExpectation; recoverArmed?(): Promise<void> };
   sentinel: { check(): Promise<SentinelStatus> };
   /** The ACTIVE driver's abort signal — a stop ends the wait at once. */
   abortSignal?: () => AbortSignal | undefined;
@@ -71,12 +72,12 @@ export class TabProfileVisitor implements ProfileVisitor {
     this.tempo = tempoOrReference(deps.tempo);
   }
 
-  async visit(username: string): Promise<ProfileVisit> {
+  async visit(username: string, opts: { readonly pk?: string } = {}): Promise<ProfileVisit> {
     const signal = this.deps.abortSignal?.();
     await this.dwell(signal);
     if (signal?.aborted) throw new ActionAbortedError('profile.visit');
     try {
-      return await this.load(username, signal);
+      return await this.load(username, opts, signal);
     } finally {
       this.lastVisitAt = this.now();
     }
@@ -99,10 +100,10 @@ export class TabProfileVisitor implements ProfileVisitor {
    * Instagram's own empty profile body is `gone`; a drifted body outranks the page's text, which
    * alone is `gone` on page text; at the deadline the page's sentinel, else `unanswered`.
    */
-  private async load(username: string, signal: AbortSignal | undefined): Promise<ProfileVisit> {
+  private async load(username: string, opts: { readonly pk?: string }, signal: AbortSignal | undefined): Promise<ProfileVisit> {
     const { tab, observer, sentinel } = this.deps;
     // Armed BEFORE the navigation: the body can land before `goto` resolves.
-    const expectation = observer.expect(username);
+    const expectation = observer.expect(username, opts);
     let drift: DriftClass | null = null;
     try {
       await tab.goto(SURFACE.profileUrl(username));
@@ -124,6 +125,11 @@ export class TabProfileVisitor implements ProfileVisitor {
         if (Date.now() >= deadline) break;
       }
       if (signal?.aborted) throw new ActionAbortedError('profile.visit');
+      // The deadline: a read of the profile family the page made under a name Epo does not route may still answer (C2).
+      await observer.recoverArmed?.();
+      for (let late = await expectation.next(0, signal); late !== null; late = await expectation.next(0, signal)) {
+        if (late.kind === 'seen') return { ok: true, ...late.seen };
+      }
       const status = await sentinel.check();
       if (status !== 'ok') return { ok: false, kind: 'walled', detail: { username, via: 'page', status } };
       return { ok: false, kind: 'unanswered', detail: { username, url: tab.currentUrl(), ...(drift === null ? {} : { drift }) } };

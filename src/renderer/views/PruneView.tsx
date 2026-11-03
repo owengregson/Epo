@@ -1,149 +1,93 @@
 import { type JSX } from 'preact';
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import { useShell } from '@/renderer/app/shell-context';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import type { PruneCandidateView } from '@/ipc/contract';
+import { settingsFactsSignal, settingsViewSignal, useShell, useShellControls } from '@/renderer/app/shell-context';
 import { PruneCandidatesCard } from '@/renderer/cards/prune/PruneCandidatesCard';
 import { PruneCensusCard } from '@/renderer/cards/prune/PruneCensusCard';
+import { PruneProtectionTile } from '@/renderer/cards/prune/PruneProtectionTile';
 import { PruneRunCard, stateChip } from '@/renderer/cards/prune/PruneRunCard';
 import { PruneScanCard } from '@/renderer/cards/prune/PruneScanCard';
-import { PruneScheduleCard } from '@/renderer/cards/prune/PruneScheduleCard';
-import { PruneWhitelistCard } from '@/renderer/cards/prune/PruneWhitelistCard';
-import { commas } from '@/renderer/lib/format';
+import { PRUNE_COPY, PRUNE_REFUSAL } from '@/renderer/cards/prune/prune-copy';
+import { UNFOLLOW_COPY } from '@/renderer/settings/copy/choices';
+import { agoLabel, fill } from '@/renderer/settings/format';
 import { Badge } from '@/renderer/ui/Badge';
-import { Card, CardBody } from '@/renderer/ui/Card';
-import { filterPruneCandidates } from '@/shared/prune-whitelist';
-import type { PruneCandidate, PruneScanResult, Settings } from '@/types';
+import { Button } from '@/renderer/ui/Button';
+import type { PruneScanResult } from '@/types';
 
-/** Readable message for a typed prune refusal (`ok: false` from scan/start). */
+/** A refused scan or run, in plain words. */
 function refusalMessage(reason: string | undefined): string {
-  switch (reason) {
-    case 'growth-running':
-      return 'Stop the growth engine before pruning.';
-    case 'growth-busy':
-      return 'The growth engine is finishing a step — try again in a moment.';
-    case 'prune-running':
-      return 'A prune scan or run is already active.';
-    case 'not-logged-in':
-      return 'Not logged in — open Overview and log in to Instagram first.';
-    default:
-      return reason ? `Prune refused: ${reason}` : 'Prune refused.';
-  }
+  if (reason !== undefined && reason in PRUNE_REFUSAL) return PRUNE_REFUSAL[reason as keyof typeof PRUNE_REFUSAL];
+  return reason ? `Prune refused: ${reason}` : 'Prune refused.';
 }
 
+type List = { kind: 'none' } | { kind: 'ok'; rows: readonly PruneCandidateView[] } | { kind: 'failed' };
+
 /**
- * Prune view — auto-prune laid out as a full PAGE on the wide stage:
- * a hero strip (title + live state badge), the Census card across the top
- * (tiles + reciprocity bar), then two card columns — Scan / Run / Schedule on
- * the left, Candidates / Whitelist on the right. Prune settings persist
- * immediately as partials through `settings:update`; every shared projection
- * (engine status, the live prune status, settings) comes from the shell.
+ * The Prune page (spec §7.8): the census, the scan and run, the candidates as main annotates them, and
+ * what is protected (read only, edited in Settings). Pruning gradually is the Unfollowing setting, turned
+ * on here with the same confirm; today's allowance is the plan's, shown read only. No settings are edited
+ * on this page beyond that one opt-in.
  */
 export function PruneView(): JSX.Element {
-  const { status, prune, settings, onSaved, confirm, toast } = useShell();
+  const { status, prune, confirm, toast } = useShell();
+  const { openSettings } = useShellControls();
+  const view = settingsViewSignal.value;
+  const facts = settingsFactsSignal.value;
   const [scan, setScan] = useState<PruneScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [pending, setPending] = useState<'run' | 'stop' | null>(null);
+  const [list, setList] = useState<List>({ kind: 'none' });
+  const [reload, setReload] = useState(0);
 
-  // Prune does not wait for growth to be idle — pressing Scan
-  // or Run pauses a RUNNING growth engine, does the prune, and resumes it after.
-  // So the only thing the cards surface is an informational "this will pause
-  // growth" note while growth is actively running (a user-paused engine leaves
-  // the tab free already, so no pause/resume is needed there).
   const growthRunning = status?.state === 'running';
-
-  // 2-step gate: Run is locked until a fresh, complete scan is ready. The backend
-  // `scanReady` flag is authoritative (it expires and clears when consumed); the
-  // session scan only bridges the first paint. Whitelist edits do NOT lock Run —
-  // the candidate set re-derives live instead.
+  // Run is unlocked by a fresh, complete scan; `scanReady` is main's word (it expires and clears when used).
   const readyToRun = prune !== null ? prune.scanReady : scan !== null;
+  const remaining = prune?.remaining ?? 0;
 
-  // RESTORED candidates (docs/PRINCIPLES.md §2 — the UI mirrors the graph):
-  // on launch, a persisted scan's not-yet-visited census populates the list
-  // immediately instead of sitting empty until a fresh scan. A session scan
-  // supersedes it; re-pulled whenever the backend reports a ready scan while
-  // no session scan exists (e.g. a scheduled scan completed).
-  const [restored, setRestored] = useState<PruneCandidate[] | null>(null);
-  const remainingCount = prune?.remaining ?? 0;
+  // The saved census's candidates arrive annotated by protection; re-read whenever the census or the rules move.
   useEffect(() => {
-    // The saved census populates the list whenever unvisited rows exist —
-    // even when it has EXPIRED for running (Run stays gated on `scanReady`;
-    // the list itself must never blank out just because time passed).
-    if (scan !== null || remainingCount === 0) return;
+    if (remaining === 0 && scan === null) {
+      setList({ kind: 'none' });
+      return;
+    }
     let alive = true;
-    window.epo
-      .pruneCandidates()
-      .then((rows) => {
-        if (alive) setRestored(rows);
-      })
-      .catch(() => {
-        /* foundation logs; the empty state stands */
-      });
+    window.epo.pruneCandidates().then(
+      (rows) => {
+        if (alive) setList(rows.length === 0 && remaining > 0 ? { kind: 'failed' } : { kind: 'ok', rows });
+      },
+      () => {
+        if (alive) setList({ kind: 'failed' });
+      },
+    );
     return () => {
       alive = false;
     };
-  }, [scan, remainingCount]);
+  }, [scan, remaining, prune?.scanAt, view?.rev, reload]);
 
-  // The scan census is RAW (whitelist not applied); derive the visible and
-  // runnable list against the LIVE whitelist so an edit reacts instantly —
-  // adding a user hides their row, removing them brings it back.
-  const rawCandidates = scan?.candidates ?? (remainingCount > 0 ? restored : null);
-  const visibleCandidates = useMemo(
-    () =>
-      rawCandidates === null
-        ? null
-        : filterPruneCandidates(rawCandidates, settings?.pruneWhitelist ?? []),
-    [rawCandidates, settings?.pruneWhitelist],
-  );
-
-  /** Persist a prune-settings partial and relay the saved object to the shell. */
-  const save = useCallback(
-    (part: Partial<Settings>): void => {
-      window.epo
-        .updateSettings(part)
-        .then(onSaved)
-        .catch(() => {
-          /* foundation logs; the canonical settings keep their values */
-        });
-    },
-    [onSaved],
-  );
+  const rows = list.kind === 'ok' ? list.rows : null;
+  const open = rows === null ? null : rows.filter((r) => r.protectedBy === null);
+  const tooLarge = facts?.built === true && facts.cleanup?.census?.tooLarge === true;
 
   const onScan = useCallback((): void => {
     setScanning(true);
     window.epo
       .scanPrune()
       .then((res) => {
-        if (!res.ok) {
-          toast('error', refusalMessage(res.reason));
-          return;
-        }
-        if (res.aborted === true) {
-          // A stopped scan is a PARTIAL census — presenting its empty candidate
-          // list would read as "everyone you follow follows you back".
-          toast('info', 'Scan stopped — the census is incomplete.');
-          return;
-        }
-        setScan(res);
+        if (!res.ok) toast('error', refusalMessage(res.reason));
+        else if (res.aborted === true) toast('info', 'Scan stopped — the census is incomplete.');
+        else setScan(res);
       })
-      .catch((e: unknown) =>
-        toast('error', `Scan failed: ${e instanceof Error ? e.message : String(e)}`),
-      )
+      .catch((e: unknown) => toast('error', `Scan failed: ${e instanceof Error ? e.message : String(e)}`))
       .finally(() => setScanning(false));
   }, [toast]);
 
-  const knownCandidates = visibleCandidates !== null ? visibleCandidates.length : (prune?.candidates ?? 0);
-
   const onRun = useCallback(async (): Promise<void> => {
-    const n = knownCandidates;
+    const n = open?.length ?? 0;
     const ok = await confirm({
-      title: 'Run prune?',
-      body:
-        n > 0
-          ? `Unfollow ${commas(n)} ${n === 1 ? 'account' : 'accounts'} that ${n === 1 ? 'doesn’t' : 'don’t'} follow you back? ` +
-            'Whitelisted accounts are skipped and the daily limit still applies.'
-          : 'Prune scans your following list, then unfollows every account that doesn’t follow you back. ' +
-            'Whitelisted accounts are skipped and the daily limit still applies.',
-      confirm: 'Run prune',
-      dismiss: 'Keep them',
+      title: PRUNE_COPY.pruneNowTitle,
+      body: n > 0 ? fill(PRUNE_COPY.pruneNowBody, { n }) : PRUNE_COPY.pruneNowBodyNoList,
+      confirm: PRUNE_COPY.pruneNowYes,
+      dismiss: PRUNE_COPY.pruneNowNo,
       danger: true,
     });
     if (!ok) return;
@@ -151,37 +95,60 @@ export function PruneView(): JSX.Element {
     try {
       const res = await window.epo.startPrune();
       if (!res.ok) toast('error', refusalMessage(res.reason));
-      // The run consumes the reviewed census — the session's scan snapshot is
-      // stale from this moment (it used to keep listing accounts already
-      // unfollowed, and the next Run dialog quoted a count that no longer
-      // existed). The live prune status stream carries the truth from here.
+      // The run consumes the reviewed census; the live prune status carries the truth from here.
       else setScan(null);
     } catch (e) {
       toast('error', `Prune failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setPending(null);
     }
-  }, [confirm, toast, knownCandidates]);
+  }, [confirm, toast, open]);
 
-  // Plain stop — both cards confirm-gate before calling this (scan + run stops).
   const onStop = useCallback((): void => {
     setPending('stop');
     window.epo
       .stopPrune()
-      .catch((e: unknown) =>
-        toast('error', `Stop failed: ${e instanceof Error ? e.message : String(e)}`),
-      )
+      .catch((e: unknown) => toast('error', `Stop failed: ${e instanceof Error ? e.message : String(e)}`))
       .finally(() => setPending(null));
   }, [toast]);
 
-  const chip = stateChip(prune?.state);
+  /** Prune gradually = the Unfollowing setting's "a few a day", asked the same way Settings asks. */
+  const onGradual = async (): Promise<void> => {
+    const census = facts?.built ? (facts.cleanup?.census ?? null) : null;
+    const ok = await confirm({
+      title: UNFOLLOW_COPY.confirmTitle,
+      body: census === null ? UNFOLLOW_COPY.confirmNoCensus
+        : fill(UNFOLLOW_COPY.confirm, { n: census.candidates, ago: agoLabel(census.at, Date.now()), k: census.protectedAmong }),
+      confirm: UNFOLLOW_COPY.confirmYes,
+      dismiss: UNFOLLOW_COPY.confirmNo,
+    });
+    if (!ok) return;
+    window.epo.applySettings([{ op: 'intent', key: 'cleanup', value: 'trickle' }]).then(
+      (r) => toast(r.kind === 'saved' ? 'success' : 'error', r.kind === 'saved' ? PRUNE_COPY.gradualSaved : PRUNE_COPY.notSaved),
+      () => toast('error', PRUNE_COPY.notSaved),
+    );
+  };
+  const gradualOn = view !== null && view.intent.cleanup !== 'off';
+  const gradual = view === null ? null : gradualOn ? (
+    <p class="hint">
+      {PRUNE_COPY.gradualOn}{' '}
+      <button type="button" class="link-btn" onClick={() => openSettings({ section: 'unfollow' })}>
+        {PRUNE_COPY.gradualChange}
+      </button>
+    </p>
+  ) : (
+    <Button wide icon="user-minus" onClick={() => void onGradual()}>
+      {PRUNE_COPY.gradual}
+    </Button>
+  );
 
+  const chip = stateChip(prune?.state);
   return (
     <div class="prune-page stage-page">
       <header class="prune-hero">
         <div>
-          <h2>Prune</h2>
-          <p>Scan who follows back, review the candidates, unfollow at a safe pace.</p>
+          <h2>{PRUNE_COPY.title}</h2>
+          <p>{PRUNE_COPY.lead}</p>
         </div>
         <Badge tone={chip.tone}>{chip.label}</Badge>
       </header>
@@ -190,55 +157,27 @@ export function PruneView(): JSX.Element {
         <PruneCensusCard
           prune={prune}
           scanning={scanning}
-          visibleCount={visibleCandidates !== null ? visibleCandidates.length : null}
-          whitelistCount={settings?.pruneWhitelist.length ?? 0}
+          visibleCount={open === null ? null : open.length}
+          protectedCount={rows === null || open === null ? null : rows.length - open.length}
         />
       </div>
+      {tooLarge ? (
+        <div class="hint warn" role="status">
+          {PRUNE_COPY.tooLarge}
+        </div>
+      ) : null}
       <div class="prune-cols">
         <div class="prune-col stage-col">
-          <PruneScanCard
-            prune={prune}
-            scan={scan}
-            scanning={scanning}
-            growthRunning={growthRunning}
-            stopping={pending === 'stop'}
-            onScan={onScan}
-            onStop={onStop}
-            confirm={confirm}
-          />
-          <PruneRunCard
-            prune={prune}
-            growthRunning={growthRunning}
-            readyToRun={readyToRun}
-            candidates={knownCandidates}
-            pending={pending}
-            onRun={() => {
-              void onRun();
-            }}
-            onStop={onStop}
-            confirm={confirm}
-            settings={settings}
-            onSave={save}
-          />
-          {settings !== null ? <PruneScheduleCard settings={settings} onSave={save} /> : null}
+          <PruneScanCard prune={prune} scan={scan} scanning={scanning} growthRunning={growthRunning} stopping={pending === 'stop'}
+            onScan={onScan} onStop={onStop} confirm={confirm} />
+          <PruneRunCard prune={prune} growthRunning={growthRunning} readyToRun={readyToRun && !tooLarge} candidates={open?.length ?? 0}
+            pending={pending} onRun={() => void onRun()} onStop={onStop} confirm={confirm} gradual={tooLarge ? null : gradual} />
         </div>
         <div class="prune-col stage-col">
-          <PruneCandidatesCard
-            scanned={visibleCandidates !== null}
-            candidates={visibleCandidates ?? []}
-            scanning={scanning}
-          />
-          {settings !== null ? (
-            <PruneWhitelistCard
-              whitelist={settings.pruneWhitelist}
-              bioFilterWords={settings.pruneBioFilterWords}
-              onSave={save}
-            />
-          ) : (
-            <Card>
-              <CardBody>Loading settings…</CardBody>
-            </Card>
+          {tooLarge ? null : (
+            <PruneCandidatesCard rows={rows} scanning={scanning} failed={list.kind === 'failed'} onRetry={() => setReload((n) => n + 1)} />
           )}
+          <PruneProtectionTile />
         </div>
       </div>
     </div>

@@ -25,8 +25,8 @@ test('collects observed pks, the URL-derived target pk, and the final cursor', a
 
   // Scripted followers pages: one on open, then one per scroll.
   const pages: TabResponse[] = [
-    mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)), // on open
-    mkResp(followersUrl('999', 'C1'), followersBody(['c', 'd'], 'C2', true)), // scroll 1
+    mkResp(followersUrl('999'), followersBody(['11', '12'], 'C1', true)), // on open
+    mkResp(followersUrl('999', 'C1'), followersBody(['13', '14'], 'C2', true)), // scroll 1
     mkResp(followersUrl('999', 'C2'), followersBody([], 'C2', true)), // scroll 2: no new
     mkResp(followersUrl('999', 'C2'), followersBody([], 'C2', true)), // scroll 3: no new → stop
   ];
@@ -45,10 +45,10 @@ test('collects observed pks, the URL-derived target pk, and the final cursor', a
     noNewStop: 2,
   });
 
-  expect([...result.observedPks].sort()).toEqual(['a', 'b', 'c', 'd']);
+  expect([...result.observedPks].sort()).toEqual(['11', '12', '13', '14']);
   expect(result.targetPk).toBe('999'); // R1: derived from the followers URL
   expect(result.cursor).toBe('C2'); // R4: the last page's next_max_id
-  expect(seen.map((o) => o.accountPk).sort()).toEqual(['a', 'b', 'c', 'd']);
+  expect(seen.map((o) => o.accountPk).sort()).toEqual(['11', '12', '13', '14']);
 });
 
 test('a page that no longer parses ends the scrape shape-mismatch — never a drained list', async () => {
@@ -56,7 +56,7 @@ test('a page that no longer parses ends the scrape shape-mismatch — never a dr
   const actor = new FakeActor();
 
   const pages: TabResponse[] = [
-    mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)), // on open
+    mkResp(followersUrl('999'), followersBody(['11', '12'], 'C1', true)), // on open
     mkResp(followersUrl('999', 'C1'), { unexpected_new_shape: true }), // drift
   ];
   let i = 0;
@@ -75,8 +75,8 @@ test('a page that no longer parses ends the scrape shape-mismatch — never a dr
   });
 
   // Rows parsed before the drift are kept (facts stream)…
-  expect([...result.observedPks].sort()).toEqual(['a', 'b']);
-  expect(seen.map((o) => o.accountPk).sort()).toEqual(['a', 'b']);
+  expect([...result.observedPks].sort()).toEqual(['11', '12']);
+  expect(seen.map((o) => o.accountPk).sort()).toEqual(['11', '12']);
   // …but the scrape ends as the FAILURE it is: the drifted page must never
   // read as the typed empty end-of-list page, so census consumers (which key
   // completeness on 'no-more-pages') refuse it.
@@ -126,10 +126,10 @@ test('R3: a non-ok sentinel at the top of round 2 stops the scroll loop', async 
 
   // Every page has fresh pks so nothing else would stop the loop.
   let n = 0;
-  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['a'], 'C', true)));
+  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['11'], 'C', true)));
   actor.onScroll = () => {
     n += 1;
-    tab.emit(mkResp(followersUrl('999', `C${n}`), followersBody([`s${n}`], `C${n}`, true)));
+    tab.emit(mkResp(followersUrl('999', `C${n}`), followersBody([`${50 + n}`], `C${n}`, true)));
   };
 
   // ok, ok, then action-blocked at the 3rd check (round index 2).
@@ -154,9 +154,9 @@ test('onProgress reports the cumulative observed count once per page that grows 
   const actor = new FakeActor();
 
   const pages: TabResponse[] = [
-    mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)), // on open → 2
-    mkResp(followersUrl('999', 'C1'), followersBody(['c'], 'C2', true)), // scroll 1 → 3
-    mkResp(followersUrl('999', 'C2'), followersBody(['a', 'c'], 'C3', true)), // dupes only → silent
+    mkResp(followersUrl('999'), followersBody(['11', '12'], 'C1', true)), // on open → 2
+    mkResp(followersUrl('999', 'C1'), followersBody(['13'], 'C2', true)), // scroll 1 → 3
+    mkResp(followersUrl('999', 'C2'), followersBody(['11', '13'], 'C3', true)), // dupes only → silent
     mkResp(followersUrl('999', 'C3'), followersBody([], 'C3', true)), // empty → silent, stop
   ];
   let i = 0;
@@ -178,7 +178,7 @@ test('onProgress reports the cumulative observed count once per page that grows 
   // One call per GROWING page with the cumulative count; duplicate-only and
   // empty pages fire nothing.
   expect(progress).toEqual([2, 3]);
-  expect([...result.observedPks].sort()).toEqual(['a', 'b', 'c']);
+  expect([...result.observedPks].sort()).toEqual(['11', '12', '13']);
 });
 
 // --- Scan pacing + cooperative stop (Phase 5 prune scan) ---------------------------
@@ -204,10 +204,10 @@ const makePacedReader = (
 /** Script fresh-pk pages so only pacing/stop args can end the loop early. */
 const scriptEndlessPages = (tab: FakeTab, actor: FakeActor): void => {
   let n = 0;
-  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['a'], 'C', true)));
+  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['11'], 'C', true)));
   actor.onScroll = () => {
     n += 1;
-    tab.emit(mkResp(followersUrl('999', `C${n}`), followersBody([`s${n}`], `C${n}`, true)));
+    tab.emit(mkResp(followersUrl('999', `C${n}`), followersBody([`${50 + n}`], `C${n}`, true)));
   };
 };
 
@@ -262,10 +262,10 @@ test('shouldStop flipping true breaks the scroll loop early (fewer rounds than m
   const actor = new FakeActor();
   let stop = false;
   let n = 0;
-  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['a'], 'C', true)));
+  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['11'], 'C', true)));
   actor.onScroll = () => {
     n += 1;
-    tab.emit(mkResp(followersUrl('999', `C${n}`), followersBody([`s${n}`], `C${n}`, true)));
+    tab.emit(mkResp(followersUrl('999', `C${n}`), followersBody([`${50 + n}`], `C${n}`, true)));
     if (n === 2) stop = true; // request the stop after the second scroll lands
   };
 
@@ -281,13 +281,13 @@ test('shouldStop flipping true breaks the scroll loop early (fewer rounds than m
   // Rounds 0 and 1 scrolled; round 2's top-of-round check broke the loop.
   expect(actor.scrollCalls).toBe(2);
   // Everything captured up to the stop is still drained and returned.
-  expect([...result.observedPks].sort()).toEqual(['a', 's1', 's2']);
+  expect([...result.observedPks].sort()).toEqual(['11', '51', '52']);
 });
 
 test('shouldStop true from the start skips the initial post-open wait and all scrolling', async () => {
   const tab = new FakeTab();
   const actor = new FakeActor();
-  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['a', 'b'], null, false)));
+  actor.onOpen = () => tab.emit(mkResp(followersUrl('999'), followersBody(['11', '12'], null, false)));
 
   const sleeps: number[] = [];
   const result = await makePacedReader(tab, actor, { sleeps, rng: () => 0.5 }).collect({
@@ -302,7 +302,7 @@ test('shouldStop true from the start skips the initial post-open wait and all sc
   expect(sleeps).toEqual([]); // not even the post-open wait ran
   expect(actor.scrollCalls).toBe(0);
   // The page captured on open is still drained and returned (nothing lost).
-  expect([...result.observedPks].sort()).toEqual(['a', 'b']);
+  expect([...result.observedPks].sort()).toEqual(['11', '12']);
 });
 
 test('default scroll path draws a fresh bounded pause for every round', async () => {
@@ -334,7 +334,7 @@ test('R5: drain awaits a response that lands during teardown', async () => {
 
   // A late second response, delivered to the (already-unsubscribed) handler while
   // the first response's body is still resolving during the drain.
-  const late = mkResp(followersUrl('999', 'C1'), followersBody(['late'], 'C2', false));
+  const late = mkResp(followersUrl('999', 'C1'), followersBody(['94'], 'C2', false));
 
   const first: TabResponse = {
     requestId: 'first',
@@ -346,7 +346,7 @@ test('R5: drain awaits a response that lands during teardown', async () => {
         setTimeout(() => {
           // Lands during teardown → pushes a new in-flight parse the drain must catch.
           tab.emitRaw(late);
-          resolve(JSON.stringify(followersBody(['early'], 'C1', true)));
+          resolve(JSON.stringify(followersBody(['93'], 'C1', true)));
         }, 5);
       }),
   };
@@ -361,7 +361,7 @@ test('R5: drain awaits a response that lands during teardown', async () => {
   });
 
   // Both the early body and the late-landing body were fully drained before return.
-  expect([...result.observedPks].sort()).toEqual(['early', 'late']);
+  expect([...result.observedPks].sort()).toEqual(['93', '94']);
 });
 
 test('an aborted driver signal ends the scroll loop like shouldStop', async () => {
@@ -391,5 +391,5 @@ test('an aborted driver signal ends the scroll loop like shouldStop', async () =
   expect(actor.scrollCalls).toBe(0); // no scroll round ran
   // The page captured on open is still drained and returned (a stop never
   // loses parsed data).
-  expect(result.observedPks).toEqual(['a']);
+  expect(result.observedPks).toEqual(['11']);
 });

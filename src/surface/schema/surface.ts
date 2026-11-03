@@ -15,6 +15,7 @@
 
 import { z } from 'zod';
 import type { Source } from '@/store/types';
+import type { ContainerDecl, ReadDecls } from '@/surface/schema/decls';
 import type { EndpointKind } from '@/surface/schema/endpoints';
 import type { ProjectCtx, Projection } from '@/surface/schema/projection';
 
@@ -133,11 +134,23 @@ export const MatchSchema = z.object({
 });
 export type Match = z.infer<typeof MatchSchema>;
 
+/** Where a definition's record or page sits (spec Appendix D.1): canonical first, then alternates. */
+export const ContainerSchema = z.object({
+  at: z.string(),
+  kind: z.enum(['object', 'connection']),
+  connection: z.object({ edges: z.string().min(1), node: z.string().min(1), cursor: z.string().min(1),
+    hasNext: z.string().min(1) }).optional(),
+  absentWhenNull: z.literal(true).optional(),
+  evidence: z.string().min(1),
+}).refine((c) => (c.kind === 'connection') === (c.connection !== undefined), {
+  error: 'a connection container declares its edges, node, cursor and more-flag; an object container none',
+});
+
 /**
  * One endpoint entry. `response` and `project` are behaviour, not data, so they
  * are validated as "is a zod schema" / "is a function" — the CONTRACT TESTS
  * (`tests/surface/replay.test.ts`) are what actually validate them, against the
- * committed corpus.
+ * committed corpus. `response` validates the CONTAINER's record or page.
  */
 export const EndpointSchema = z.object({
   kind: z.string(),
@@ -159,6 +172,8 @@ export const EndpointSchema = z.object({
   source: z.string().optional(),
   /** GraphQL root fields that route a renamed operation here (a normalized step). */
   rootFields: z.array(z.string().min(1)).optional(),
+  containers: z.array(ContainerSchema).min(1),
+  sideLists: z.object({ pendingPreview: z.string().min(1) }).optional(),
 });
 
 /** A relationship mutation the action button fires. */
@@ -185,6 +200,16 @@ export const SurfaceDocSchema = z.object({
     /** Rows requested per direct friendships-list page. */
     listPage: z.int().min(1).max(200),
   }),
+  /** The keys, flags and signatures every body of this version is read by (typed in `schema/decls.ts`). */
+  read: z.object({
+    transport: z.object({ jsonGuards: z.array(z.string()), parseableMime: z.instanceof(RegExp) }).loose(),
+    graphql: z.object({ errorsKey: z.string().min(1), dataKey: z.string().min(1) }).loose(),
+    continuation: z.object({ cursorKeys: z.array(z.string()).min(1), moreFlags: z.array(z.string()).min(1) }).loose(),
+    recovery: z.object({ idKeys: z.array(z.string()).min(1), handleRe: z.instanceof(RegExp) }).loose(),
+    signatures: z.array(z.object({ pattern: z.instanceof(RegExp), status: z.string() })),
+    expected: z.record(z.string(), z.array(z.string().min(1))),
+    novelty: z.record(z.string(), z.array(z.string().min(1))),
+  }),
 });
 export type SurfaceDoc = z.infer<typeof SurfaceDocSchema>;
 
@@ -203,12 +228,17 @@ export interface EndpointDef {
   kind: EndpointKind;
   mode: 'observe' | 'enforce';
   match: Match;
+  /** Validates the record or page inside the chosen container. */
   response: z.ZodType;
   project: (body: unknown, ctx: ProjectCtx) => Projection;
   /** Provenance label for the observations this endpoint produces. */
   source?: Source;
   /** GraphQL root fields that route a renamed operation here (a normalized step). */
   rootFields?: readonly string[];
+  /** Where the record or page sits: the canonical container first (C0), declared alternates after (C1). */
+  containers: readonly [ContainerDecl, ...ContainerDecl[]];
+  /** Side lists outside the container, by dotted path from the body (never a complete set). */
+  sideLists?: { readonly pendingPreview: string };
 }
 
 /** Define one endpoint, narrowing `project`'s body to what `response` parses to. */
@@ -220,6 +250,8 @@ export function defineEndpoint<B>(def: {
   project: (body: B, ctx: ProjectCtx) => Projection;
   source?: Source;
   rootFields?: readonly string[];
+  containers: readonly [ContainerDecl, ...ContainerDecl[]];
+  sideLists?: { readonly pendingPreview: string };
 }): EndpointDef {
   return {
     kind: def.kind,
@@ -228,7 +260,9 @@ export function defineEndpoint<B>(def: {
     response: def.response as z.ZodType,
     project: (body: unknown, ctx: ProjectCtx): Projection => def.project(body as B, ctx),
     source: def.source,
+    containers: def.containers,
     ...(def.rootFields === undefined ? {} : { rootFields: def.rootFields }),
+    ...(def.sideLists === undefined ? {} : { sideLists: def.sideLists }),
   };
 }
 
@@ -243,6 +277,7 @@ export interface SurfaceDocument {
   controls: Readonly<Record<string, ControlDescriptor>>;
   signals: readonly Signal[];
   pageSizes: { listPage: number };
+  read: ReadDecls;
 }
 
 /** A document that failed validation — never silently coerced into a working one. */
