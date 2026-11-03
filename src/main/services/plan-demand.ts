@@ -13,7 +13,10 @@ import type { FollowRecord } from '@/store/types';
 
 /** The store slice the demand reads. */
 export type DemandStore = Pick<KnowledgeStore, 'followRecordsByState' | 'tallySince' | 'pendingEffectIntents'
-  | 'pruneScanRemainingCount' | 'getAccount' | 'getPruneCensus'>;
+  | 'pruneScanRemainingCount' | 'getAccount' | 'getPruneCensus' | 'activeRequestPks'> & {
+  readonly followRecords: Pick<KnowledgeStore['followRecords'], 'recheckDue'>;
+  readonly growth: Pick<KnowledgeStore['growth'], 'outsideSince'>;
+};
 
 /** How many lifecycle unfollows are due by `t`: the queued ones and the timers that expire by then. */
 function lifecycleDueBy(store: DemandStore, s: EffectiveSettings, t: number): number {
@@ -26,8 +29,8 @@ function lifecycleDueBy(store: DemandStore, s: EffectiveSettings, t: number): nu
 }
 
 /**
- * The demand at `now` for the plan-day `window`. The re-evaluations of kept records, outside
- * actions and pending requests have no store source yet and read as none.
+ * The demand at `now` for the plan-day `window`: the kept records whose re-read falls in it, the outside
+ * following actions charged to it (increases only), and the open follow requests into the account.
  */
 export function planDemand(store: DemandStore, s: EffectiveSettings, ownPk: string, window: PlanDayWindow,
   now: number): PlanDemand {
@@ -39,11 +42,11 @@ export function planDemand(store: DemandStore, s: EffectiveSettings, ownPk: stri
     lifecycleDueByDayEnd: lifecycleDueBy(store, s, window.endsAt),
     lifecycleBacklog: lifecycleDueBy(store, s, now),
     pruneStock: store.pruneScanRemainingCount(),
-    protectedReeval: 0,
+    protectedReeval: store.followRecords.recheckDue(window.endsAt).length,
     journalPending: store.pendingEffectIntents().length,
     followsDoneToday: store.tallySince(window.startsAt).follow,
-    outsideToday: 0,
-    pendingRequests: 0,
+    outsideToday: store.growth.outsideSince(window.startsAt),
+    pendingRequests: store.activeRequestPks().length,
     acceptsRecent: (store.tallySince(weekAgo).accept - store.tallySince(window.startsAt).accept) / WEEKLY_CYCLE,
     ownHeader: { followers: own?.followers ?? null, following: own?.following ?? null },
     census: { lastCompleteAt: census?.at ?? null, rowsPerPage: null },

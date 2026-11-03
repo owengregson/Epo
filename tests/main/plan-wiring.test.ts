@@ -129,6 +129,28 @@ describe('the store reads', () => {
     expect(d.census.lastCompleteAt).toBeNull();
   });
 
+  test('the outside actions, the open requests and the kept re-checks due today come from the store', () => {
+    const s = store();
+    s.setOwnPk('ME');
+    const plan = wire(s, planClock(T0));
+    const window = plan.service.view(T0).window;
+    const header = (at: number, following: number) =>
+      s.observe({ accountPk: 'ME', observedAt: at, source: 'profile', fields: { followers: 100, following } });
+    header(window.startsAt + 1, 200);
+    header(window.startsAt + 2, 203);
+    header(window.startsAt + 3, 199); // the owner's own unfollows are never charged
+    s.observeEdge('r1', 'ME', 'requests', true, T0);
+    s.observeEdge('r2', 'ME', 'requests', true, T0);
+    s.observeEdge('ME', 'r3', 'requests', true, T0);
+    const kept = (pk: string, recheckAt: number) => s.upsertFollowRecord({ accountPk: pk, targetPk: null, state: 'kept',
+      retryCount: 0, keptReason: 'unreadable-bio', recheckAt });
+    kept('k1', window.endsAt - MS_PER_MINUTE);
+    kept('k2', window.endsAt + MS_PER_HOUR);
+    const d = planDemand(s, effectiveFromV1(DEFAULT_SETTINGS), 'ME', window, T0);
+    expect([d.outsideToday, d.pendingRequests, d.protectedReeval]).toEqual([3, 2, 1]);
+    expect(plan.service.view(T0).used.outside).toBe(3);
+  });
+
   test('the last write before an instant is exact, looks back past a day, and is null with no ledger', () => {
     const s = store();
     expect(lastMutationBefore(s, T0)).toBeNull();

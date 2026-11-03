@@ -63,8 +63,8 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     intent: () => toPlanIntent(effective()),
     demand: (window, now) => planDemand(store, effective(), ownPk, window, now),
     lastMutationBefore: (t) => lastMutationBefore(store, t),
-    // Outside actions arrive with the own-header log; until then none are charged.
-    outsideSince: () => 0,
+    // Outside following actions from the own-header log (spec §9.10): charged to the ceiling, increases only.
+    outsideSince: (since) => store.growth.outsideSince(since),
     // The engine still arms the shared delay itself; the plan's deadline arrives with the cadence switch.
     deadline: () => null,
     journal: { blocks: (pk, exceptIntentId) => journalBlocks(pk, store.effectIntents.unsettledFor(pk), exceptIntentId) },
