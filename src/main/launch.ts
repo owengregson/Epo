@@ -4,20 +4,25 @@
  */
 
 import * as path from 'node:path';
-import { app, type BaseWindow, Menu } from 'electron';
+import { app, type BaseWindow, shell as desktop, Menu } from 'electron';
 import type { InstagramTab } from '@/adapter/tab';
 import { PUSH, type PushContract, type PushMethod } from '@/ipc/contract';
 import { BOOT } from '@/kernel/boot-policy';
+import { DIAGNOSTICS } from '@/kernel/live-policy';
 import { type App, composeApp } from '@/main/app';
 import { ConnectivityMonitor } from '@/main/connectivity';
 import { Foundation } from '@/main/foundation-wiring';
 import { registerEpoIpc } from '@/main/ipc';
+import { bindLiveIpc, FeedMirror } from '@/main/ipc-live';
+import { createActivityRelay, timerAfter } from '@/main/modules/activity-relay';
+import { LogRing } from '@/main/modules/log-ring';
 import type { OverlayVeil } from '@/main/overlay/veil-view';
 import { electronIgSession } from '@/main/services/ig-session';
 import { buildAppMenu } from '@/main/window/app-menu';
 import { createAppShell } from '@/main/window/shell';
 import { createStageController, statusPosture } from '@/main/window/stage-controller';
 import type { LogEntry, LogLevel } from '@/shared/log-entry';
+import { POLL } from '@/timing/config';
 import * as logger from '@/utils/logger';
 
 /** The live parts of the window; main reads them for focus, incidents and ordered disposal. */
@@ -59,13 +64,16 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
     timing: { paintMaxMs: BOOT.CURTAIN_PAINT_MAX_MS, fadeMs: BOOT.CURTAIN_FADE_MS } });
   stage.cover();
 
+  const feedMirror = new FeedMirror();
   /**
    * The typed push seam. Every main→renderer channel string comes from the
    * contract's `PUSH` table and the payload is checked against `PushContract`,
    * so a channel can no longer be misspelled here or drift from what preload
-   * subscribes to (ADR 1008). Each status also titles the window and badges the Dock.
+   * subscribes to (ADR 1008). Each status also titles the window and badges the Dock; each feed is mirrored
+   * for the feed pull.
    */
   const push = <C extends PushMethod>(channel: C, payload: PushContract[C]): void => {
+    feedMirror.note(channel, payload);
     shell.send(PUSH[channel], payload);
     if (channel === 'status') stage.onPosture(statusPosture(payload as PushContract['status'], Date.now()));
   };
@@ -74,11 +82,16 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   Menu.setApplicationMenu(buildAppMenu({ onStage: (mode) => push('stageRequest', mode), isPackaged: app.isPackaged, isMac }));
   if (!isMac) win.setAutoHideMenuBar(true);
 
-  // Stream structured logs to the renderer's log pane.
+  // The raw log: a ring for Diagnostics' first pull; the push streams only while a panel asks (spec §12.9).
+  const logRing = new LogRing(DIAGNOSTICS.LOG_RING);
   logger.setSink((level: LogLevel, message: string, meta?: unknown) => {
     const entry: LogEntry = { level, message, meta, at: Date.now() };
-    push('log', entry);
+    logRing.add(entry);
+    if (logRing.streaming()) push('log', entry);
   });
+  // What the tab-driving layers report: the veil at once, the sidebar as the activity push (spec §12.9).
+  const relay = createActivityRelay({ veil, push: (tab) => push('activity', tab), clock: { now: () => Date.now() },
+    after: timerAfter, throttleMs: POLL.GRAPH_PUSH_THROTTLE_MS, nullHoldMs: BOOT.ACTIVITY_NULL_HOLD_MS });
 
   // --- Foundation (composition root) ---------------------------------------
   // Status projections are PUSHED, not polled. The veil mirrors the
@@ -103,15 +116,13 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
       moved: (x, y) => veil.cursorMoved(x, y),
       pressed: (down) => veil.cursorPressed(down),
     },
-    onActivity: (active) => veil.setActive(active),
-    // Live phase readout on the veil: each tab-driving layer reports what it is
-    // doing (direct JSON-API reads vs real page driving) as it starts, and
-    // clears when done — so the overlay shows "API · Reading follower list · 250"
-    // instead of only the static "Working" chip.
-    activityReporter: {
-      report: (info) => veil.setActivity(info),
-      clear: () => veil.setActivity(null),
+    onActivity: (active, holds) => {
+      veil.setActive(active);
+      relay.onHolds(active, holds);
     },
+    // Each tab-driving layer reports what it is doing as it starts and clears when done; the relay shows it on
+    // the veil at once and pushes it to the sidebar.
+    activityReporter: relay,
     // One push seam for every store-derived projection; which projections ride
     // it is the PROJECTIONS table in `main/modules/projections.ts` (§2).
     push,
@@ -143,6 +154,8 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   h.composedApp = composed;
   const upd = composed.updater;
 
+  bindLiveIpc({ activity: relay, log: logRing, feed: feedMirror, built: async () => (await found.status()).basis === 'built',
+    logsDir: path.join(app.getPath('userData'), 'logs'), openPath: (dir) => desktop.openPath(dir) });
   h.disposeIpc = registerEpoIpc({
     tab,
     foundation: found,
