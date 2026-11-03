@@ -1,12 +1,13 @@
 /**
- * The window launch: the shell, the Foundation, the module graph, IPC and the
- * connectivity monitor, composed in order. Each part lands in the handles as it is built.
+ * The window launch (spec §12.8): a hidden shell, the Foundation, the module graph and IPC, and only then the
+ * dashboard load; its first load reveals the window. Each part lands in the handles as it is built.
  */
 
 import * as path from 'node:path';
 import { app, type BaseWindow } from 'electron';
 import type { InstagramTab } from '@/adapter/tab';
 import { PUSH, type PushContract, type PushMethod } from '@/ipc/contract';
+import { BOOT } from '@/kernel/boot-policy';
 import { type App, composeApp } from '@/main/app';
 import { ConnectivityMonitor } from '@/main/connectivity';
 import { Foundation } from '@/main/foundation-wiring';
@@ -41,7 +42,8 @@ function windowStateFile(): string {
 
 export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   const h = env.handles;
-  const shell = createAppShell({ windowStateFile: windowStateFile(),
+  // Hidden until the dashboard has painted; the page loads only once IPC answers (below).
+  const shell = createAppShell({ windowStateFile: windowStateFile(), startHidden: true, deferDashboardLoad: true,
     onDashboardBlocked: (reason) => h.foundation?.stopForIncident(reason) });
   const { win, tab, veil } = shell;
   h.mainWindow = win;
@@ -128,9 +130,6 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   const composed = await composeApp(host);
   h.composedApp = composed;
   const upd = composed.updater;
-  // The renderer may finish loading after the launch check settled — replay
-  // the current status so the Updates card never starts blank.
-  shell.onRendererLoad(() => push('updateStatus', upd.current()));
 
   h.disposeIpc = registerEpoIpc({
     tab,
@@ -145,6 +144,15 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   });
   h.connectivityMonitor = connectivity;
   connectivity.start();
+
+  // The dashboard loads against registered IPC; its first load reveals the window, the timer guards a page
+  // that never finishes.
+  const revealFallback = setTimeout(() => shell.reveal(), BOOT.SHOW_FALLBACK_MS);
+  shell.onRendererLoad(() => {
+    clearTimeout(revealFallback);
+    shell.reveal();
+  });
+  shell.loadDashboard();
 
   await found.restoreRuntimeIntent();
   void found.landOnOwnProfile();
