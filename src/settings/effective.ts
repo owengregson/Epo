@@ -45,8 +45,6 @@ export interface EffectiveSettings {
   /** @transitional — deleted with the legacy pacer. */
   pacingModel: 'legacy' | 'organic'; minDelayMinutes: number; maxDelayMinutes: number; jitterPercent: number;
   activeHoursStart: number; activeHoursEnd: number;
-  /** @transitional — deleted once every unfollow path reads the protection port. */
-  pruneWhitelist: string[]; pruneBioFilterWords: string[];
   /** @transitional — the sweep cadence moves to plan checks. */
   followbackSweepHours: number;
   /** @transitional — the prune daily plan and the scheduled prune are deleted. */
@@ -87,7 +85,6 @@ export function effectiveFromV1(v1: Settings): EffectiveSettings {
     boost: { hours: SETTINGS_POLICY.BOOST.DEFAULT_HOURS, acceptRequests: true },
     pacingModel: v1.pacingModel, minDelayMinutes: v1.minDelayMinutes, maxDelayMinutes: v1.maxDelayMinutes,
     jitterPercent: v1.jitterPercent, activeHoursStart: v1.activeHoursStart, activeHoursEnd: v1.activeHoursEnd,
-    pruneWhitelist: [...v1.pruneWhitelist], pruneBioFilterWords: [...v1.pruneBioFilterWords],
     followbackSweepHours: v1.followbackSweepHours,
     pruneDailyLimit: v1.pruneDailyLimit, pruneScheduleDays: v1.pruneScheduleDays,
     pruneScanMinSeconds: v1.pruneScanMinSeconds, pruneScanMaxSeconds: v1.pruneScanMaxSeconds,
