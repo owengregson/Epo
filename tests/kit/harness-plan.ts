@@ -4,9 +4,11 @@
  * wiring builds it (the plan integration tests). Re-exported by `engine-harness.ts`.
  */
 
-import type { SweepCadence } from '@/engine/engine';
+import type { EnginePacing, SweepCadence } from '@/engine/engine';
 import type { PlanService } from '@/governors/plan-service';
 import type { PlanPreviewPort, PlanView } from '@/governors/plan-types';
+import { viewPlan } from '@/governors/plan-view';
+import { drawDayPlan } from '@/kernel/plan';
 import { MS_PER_DAY } from '@/kernel/units';
 import type { PlanHost } from '@/main/services/graph-types';
 import { type PlanWiring, wirePlan } from '@/main/services/plan-wiring';
@@ -16,6 +18,7 @@ import type { SettingsCapabilities } from '@/shared/settings-view';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { DelayManager } from '@/timing/delay-manager';
 import { ScheduleManager } from '@/timing/schedule-manager';
+import { drawInput, viewInputs } from './plan';
 import { openTestStore } from './store';
 
 /**
@@ -107,6 +110,53 @@ export function busyDay(plan: PlanService, from: number, sessions = 3): PlanView
     if (v.plan.sessions.filter((s) => s.budget > 0).length >= sessions) return v;
   }
   throw new Error('no busy plan-day in four weeks');
+}
+
+/** A plan view at `now` from a drawn plan, with the fields a loop test steers set. */
+export function stubPlanView(now: number, o: { open: boolean; nextSessionAt: number | null; target: number;
+  hourCap?: number; usedAuto?: number }): PlanView {
+  const plan = drawDayPlan(drawInput(now));
+  const base = viewPlan(plan, viewInputs(plan, now));
+  const reads = { reconcile: 0, explore: 0, explorePages: 0, checks: 0, checkPages: 0 };
+  return {
+    ...base,
+    plan: {
+      ...plan,
+      volume: { ...plan.volume, drawn: o.target, planned: o.target },
+      ceilings: { ...plan.ceilings, hour: o.hourCap ?? plan.ceilings.hour },
+    },
+    open: o.open
+      ? { idx: 0, mixLeft: { follow: 1, unfollow: 1, accept: 0 }, readsLeft: reads, mix: 'normal', probation: false, censusHost: false }
+      : null,
+    nextSessionAt: o.open ? null : o.nextSessionAt,
+    used: { ...base.used, auto: o.usedAuto ?? 0 },
+  };
+}
+
+/** The plan port a loop test steers: open or closed, the next session, the day's target, the gap it arms. */
+export class FakePlan implements EnginePacing {
+  open = true;
+  gapMs = 4 * 60_000;
+  target = 25;
+  hourCap: number | undefined;
+  usedAuto = 0;
+  /** When each action the gap was drawn after landed. */
+  gaps: number[] = [];
+  ensures = 0;
+  constructor(private readonly nextStart: number) {}
+  view(now: number): PlanView {
+    return stubPlanView(now, { open: this.open, nextSessionAt: this.nextStart, target: this.target, hourCap: this.hourCap,
+      usedAuto: this.usedAuto });
+  }
+  ensureIfProvisional(now: number): PlanView {
+    this.ensures += 1;
+    return this.view(now);
+  }
+  wake(): void {}
+  gapAfter(at: number): number {
+    this.gaps.push(at);
+    return this.gapMs;
+  }
 }
 
 /** The install entropy every plan integration store pins, so separate stores draw the same plans. */

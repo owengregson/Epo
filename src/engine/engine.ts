@@ -31,7 +31,7 @@ import {
 } from './engine-waits';
 import { FactGatherer, type FactSources, type Facts, type FeedCandidate } from './facts';
 import { type HaltReason, haltReasonKey } from './halt-reason';
-import { LegacyPacer, OrganicPacer, type Pacer } from './pacers';
+import { LegacyPacer, type Pacer, PlanPacer } from './pacers';
 import type { EngineTempo } from './plan-port';
 import type {
   CurrentTarget,
@@ -159,7 +159,7 @@ export class Engine {
   /** The chain target being worked and its bounded refill cycle. */
   private readonly targets: TargetPipeline;
 
-  /** The organic pacing planner, or undefined in legacy mode (see {@link EngineDeps.pacing}). */
+  /** The plan, or undefined in legacy mode (see {@link EngineDeps.pacing}). */
   private readonly pacing?: EnginePacing;
 
   /** The pacing model in force — the loop never branches on which one. */
@@ -237,11 +237,10 @@ export class Engine {
     this.sweepCadence = deps.sweepCadence;
     this.settings = deps.settings;
     this.pacing = deps.pacing;
-    // The pacing model is chosen ONCE: the composition root injects a planner
+    // The pacing model is chosen ONCE: the composition root injects the plan
     // only for the organic model. GATING is pure (`pacingVerdict` over facts);
     // only the post-action gap needs the model object.
-    this.pacer =
-      deps.pacing === undefined ? new LegacyPacer(deps.rate) : new OrganicPacer(deps.pacing);
+    this.pacer = deps.pacing === undefined ? new LegacyPacer(deps.rate) : new PlanPacer(deps.pacing);
     this.unfollowFeed = deps.unfollowFeed;
     this.rng = deps.rng ?? launchStream('engine/engine');
     // Hydrate the owed inter-action delay from the store so an app relaunch
@@ -509,12 +508,6 @@ export class Engine {
     }
     this.lastStep = result;
     this.emitStatus();
-    // Durable pacing snapshot: persist after every step so a relaunch resumes the
-    // current day plan, owed within-session state, and the trailing-hour ring
-    // exactly. Only the CURRENT generation persists — a stale step's is wrong.
-    if (token === this.runAbort && this.pacing?.serialize !== undefined) {
-      this.deps.store.setPacingState(JSON.stringify(this.pacing.serialize()));
-    }
     return result;
   }
 

@@ -357,7 +357,6 @@ export function buildGraph(
     scanner,
     followback,
     chain,
-    pacing: plan.pacing,
     plan,
     startupSteps: parts.flatMap((p) => p.startupSteps),
     statusContributors: parts.flatMap((p) => p.statusContributors),

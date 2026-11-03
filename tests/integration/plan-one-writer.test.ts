@@ -1,19 +1,23 @@
 /**
  * The plan's one writer over a real store (spec §5.13 S1, §20.3): status reads never write (I4), a
  * restart mid-session finds the same plan and the same open session (I5), and a six-hour close lets
- * the missed sessions expire while a late first open prorates the sessions already over (I8).
+ * the missed sessions expire, Start between sessions parks exactly, and a late first open prorates
+ * the sessions already over (I8).
  */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { Engine } from '@/engine/engine';
 import type { PlanView } from '@/governors/plan-types';
 import { ReadBudget } from '@/governors/read-budget';
 import { MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
 import type { PlanWiring } from '@/main/services/plan-wiring';
 import { planWiringParts } from '@/main/services/plan-wiring';
 import { toReadAllowance } from '@/settings/read-allowance';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
+import { DEFAULT_SETTINGS, toRateGovernorConfig } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import { DelayManager } from '@/timing/delay-manager';
+import { testDeps } from '../kit/engine-harness';
 import { fakePlanHost, idealDay, PLAN_TEST_RNG, type PlanClock, planClock, storePlanWiring } from '../kit/harness-plan';
 import { openTestStore } from '../kit/store';
 
@@ -124,6 +128,24 @@ describe('I8 — a six-hour close and a late first open', () => {
     });
     const left = back.sessions.filter((s) => s.state === 'now' || s.state === 'next' || s.state === 'later');
     expect(back.R).toBe(left.reduce((a, s) => a + Math.max(0, s.budget - s.used), 0));
+  });
+
+  test('Start between two sessions parks exactly until the next one opens', async () => {
+    const [first, second] = kept(idealDay(T0));
+    const { store } = diskStore();
+    const clock = planClock(first.expectedEndAt + MS_PER_MINUTE);
+    const plan = build(store, clock);
+    const sleeps: number[] = [];
+    const sleep = (ms: number): Promise<void> => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    };
+    const delays = new DelayManager({ clock, sleep });
+    const rate = plan.rateGovernor(toRateGovernorConfig(DEFAULT_SETTINGS));
+    const engine = new Engine({ ...testDeps({ store, clock, rate, delays }), pacing: plan.pacing });
+    expect(await engine.stepOnce()).toBe('waited-session');
+    expect(sleeps).toEqual([second.startAt - clock.t]);
+    expect(engine.status().pacing?.nextSessionAt).toBe(second.startAt);
   });
 
   test('a first open after a session ended prorates it to nothing; planned volume keeps only the rest', () => {

@@ -1,28 +1,26 @@
 /**
  * The plan wiring (ADR 0607, spec §5.13 S1): the plan service, the single writer of the day plan,
  * over the store and the live settings; its plan-backed day clock (the one boundary every day
- * counter reads); the plan and Boost status contributors; and the settings preview port. The
- * reference tempo stays in force (the plan's tempo is swapped in with the cadence switch).
+ * counter reads); the loop's plan port; the plan and Boost status contributors; and the settings
+ * preview port. The pace is unchanged: the reference tempo and the reference gap stay in force.
  */
 
 import type { EngineWaitKey } from '@/engine/engine-waits';
+import type { EnginePlanPacing } from '@/engine/plan-port';
 import type { Clock, SystemClock } from '@/governors/clock';
 import { projectBoost } from '@/governors/plan-boost';
 import { projectPlan } from '@/governors/plan-projection';
 import { PlanService } from '@/governors/plan-service';
 import { RateGovernor, type RateGovernorConfig, type RatePlan } from '@/governors/rate-governor';
 import { ReadBudget } from '@/governors/read-budget';
+import { drawGapMs, type PlanIntent, velocityWakeAt } from '@/kernel/plan';
+import { MS_PER_HOUR } from '@/kernel/units';
 import { PlanControl } from '@/main/modules/plan-control';
-import { patternCircadianProfile } from '@/settings/pattern-map';
 import { toPlanIntent } from '@/settings/plan-intent';
 import { toReadAllowance } from '@/settings/read-allowance';
-import { type Settings, toPacingConfig } from '@/settings/settings';
 import { NEVER_PAUSED } from '@/shared/surface-gate';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import { samplePhaseOffset } from '@/timing/circadian';
-import { CIRCADIAN } from '@/timing/config';
 import type { DelayManager } from '@/timing/delay-manager';
-import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
 import { launchStream } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import type { GraphBuildDeps, GraphPlan, StatusContributor, WiringParts } from './graph-types';
@@ -37,34 +35,22 @@ export function wireReadBudget(
   return new ReadBudget({ store, clock, limits: () => toReadAllowance(d.resolveSettings()) });
 }
 
-/** The organic planner when the settings select it, else undefined (the legacy metronome). */
-function wirePacing(store: KnowledgeStore, settings: Settings): SessionPlanner | undefined {
-  // The per-install circadian phase offset lives in the snapshot, so it is stable
-  // across restarts and freshly drawn on first run.
-  let pacingSnap: PlannerSnapshot | null = null;
-  const pacingSnapRaw = store.getPacingState();
-  if (pacingSnapRaw !== null) {
-    try {
-      pacingSnap = JSON.parse(pacingSnapRaw) as PlannerSnapshot;
-    } catch (e) {
-      logger.warn('foundation: bad pacing snapshot, starting fresh', { error: String(e) });
-    }
-  }
-  const phaseOffset =
-    pacingSnap?.phaseOffsetHours ??
-    samplePhaseOffset(CIRCADIAN.PHASE_JITTER_MAX_HOURS, launchStream('main/plan-wiring'));
-  return settings.pacingModel === 'organic'
-    ? new SessionPlanner({
-        profile: patternCircadianProfile(settings.pattern, phaseOffset),
-        cfg: toPacingConfig(settings),
-        snapshot: pacingSnap,
-      })
-    : undefined;
+/**
+ * The gap after an action at time-scale 1 (spec §5.13 S1, pace unchanged): a full rolling hour waits
+ * until it has room plus the floor, else today's planner draw over the reference shape, excited by
+ * the trailing hour (the action just taken included).
+ */
+export function referenceGapMs(intent: PlanIntent, recent: readonly number[], at: number, rng: () => number): number {
+  const shape = intent.gap;
+  const wake = velocityWakeAt(recent, intent.hourlyCap, at);
+  if (wake !== null) return Math.max(shape.floorMs, wake - at + shape.floorMs);
+  return drawGapMs(shape, recent, at, () => rng());
 }
 
-/** What the plan wiring hands the graph: the graph's plan, the rate governor over it, and the session planner it still runs. */
+/** What the plan wiring hands the graph: the graph's plan, the loop's plan port and the rate governor over it. */
 export interface PlanWiring extends GraphPlan {
-  readonly pacing: SessionPlanner | undefined;
+  /** The loop's plan, for the session-paced model only (the legacy metronome keeps none). */
+  readonly pacing: EnginePlanPacing | undefined;
   /** The rate governor counting against the plan's day and volume. */
   rateGovernor(cfg: RateGovernorConfig): RateGovernor;
 }
@@ -97,17 +83,28 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     surfaceGate: NEVER_PAUSED,
     onChanged: () => control?.changed(),
   }, { log: logger });
+  const wake = (): void => {
+    for (const key of PLAN_PARKS) delays.cancel(key);
+  };
   control = new PlanControl({
-    plan: service, scheduler: d.scheduler, settings: host.settings, clock,
-    pushStatus: () => host.pushStatus(),
-    wake: () => {
-      for (const key of PLAN_PARKS) delays.cancel(key);
-    },
+    plan: service, scheduler: d.scheduler, settings: host.settings, clock, pushStatus: () => host.pushStatus(), wake,
   });
   const triggers = control;
   host.settings.setPlanPort(service);
   host.settings.setCapabilities({ plan: true });
   triggers.start();
+  // The legacy planner's phase is migrated by the plan's first write; its snapshot is retired.
+  if (store.getPlanState() !== null && store.getPacingState() !== null) store.setPacingState(null);
+  const gapRng = launchStream('main/plan-gap');
+  const enginePlan: EnginePlanPacing = {
+    view: (now) => service.view(now),
+    ensureIfProvisional: (now) => {
+      const view = service.view(now);
+      return view.provisional ? service.ensure(now) : view;
+    },
+    wake,
+    gapAfter: (at) => referenceGapMs(toPlanIntent(effective()), store.recentMutationTimes(at - MS_PER_HOUR), at, gapRng),
+  };
   const dayClock = service.planDayClock();
   const ratePlan: RatePlan = {
     day: dayClock,
@@ -119,7 +116,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   return {
     service,
     dayClock,
-    pacing: wirePacing(store, d.settings),
+    pacing: d.settings.pacingModel === 'organic' ? enginePlan : undefined,
     rateGovernor: (cfg) => new RateGovernor(store, clock, cfg, launchStream('governors/rate-governor'), ratePlan),
     resumed: () => triggers.resumed(),
     demandChanged: () => triggers.demandChanged(),

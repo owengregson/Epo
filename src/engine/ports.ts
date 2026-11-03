@@ -222,11 +222,10 @@ export interface EngineDeps {
   enricher: EngineEnricher;
   settings: Settings;
   /**
-   * The organic pacing planner. When injected, the loop
-   * runs the session-driven model (circadian sessions, log-normal gaps, daily-volume
-   * distribution) and persists its snapshot to store meta; when absent, the legacy
-   * active-hours + operating-rate metronome runs unchanged. The composition root
-   * injects it only when `Settings.pacingModel === 'organic'`.
+   * The plan (spec §5.15). When injected, the loop parks where the plan says
+   * (sessions, the day done) and arms the plan's reference gap; when absent, the
+   * legacy active-hours + operating-rate metronome runs unchanged. The composition
+   * root injects it only when `Settings.pacingModel === 'organic'`.
    */
   pacing?: EnginePacing;
   /**

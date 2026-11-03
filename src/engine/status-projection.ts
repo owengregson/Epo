@@ -1,26 +1,28 @@
+import type { PlanView } from '../governors/plan-types';
 import { startOfLocalDay } from '../timing/units';
 import type { CurrentTarget, EngineDeps, EnginePacing } from './ports';
 import type { RuntimeHealth } from './runtime-health';
 
-export function projectEngineStatus(deps: EngineDeps, target: CurrentTarget | null, pacingPlanner: EnginePacing | undefined, health: RuntimeHealth) {
+/** The deprecated session readout the old renderer shows, read from the plan's pure view. */
+function sessionReadout(view: PlanView) {
+  const open = view.open;
+  return {
+    sessionOpen: open !== null,
+    sessionEndsAt: open === null ? null : (view.sessions[open.idx]?.closesAt ?? null),
+    nextSessionAt: open === null ? view.nextSessionAt : null,
+    sessionsToday: view.plan.sessions.filter((s) => s.budget > 0).length,
+    dailyTarget: view.plan.volume.planned,
+  };
+}
+
+export function projectEngineStatus(deps: EngineDeps, target: CurrentTarget | null, plan: EnginePacing | undefined, health: RuntimeHealth) {
     const { store, rate, clock } = deps;
     const chainIndex =
       target === null
         ? null
         : (store.getTarget(target.pk)?.chainIndex ?? null);
     const startOfToday = startOfLocalDay(clock.now());
-    const pnow = clock.now();
-    const pacing = pacingPlanner
-      ? {
-          sessionOpen: pacingPlanner.isSessionOpen(pnow),
-          sessionEndsAt: pacingPlanner.sessionEndsAt(pnow),
-          nextSessionAt: pacingPlanner.isSessionOpen(pnow)
-            ? null
-            : pacingPlanner.nextSessionStartAt(pnow),
-          sessionsToday: pacingPlanner.sessionsToday(pnow),
-          dailyTarget: pacingPlanner.dailyTarget(pnow),
-        }
-      : null;
+    const pacing = plan === undefined ? null : sessionReadout(plan.view(clock.now()));
     return {
       health: health.snapshot(),
       frontier: deps.frontier?.snapshot(),

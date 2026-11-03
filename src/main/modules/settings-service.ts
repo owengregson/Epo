@@ -17,7 +17,6 @@ import {
   toChainConfig,
   toChurnConfig,
   toFollowbackConfig,
-  toPacingConfig,
   toPruneConfig,
   toRateGovernorConfig,
   toScannerConfig,
@@ -152,9 +151,6 @@ export class SettingsService {
     g.followback.applyConfig(toFollowbackConfig(s));
     g.chain.applyConfig(toChainConfig(s));
     g.pruneEngine.applyConfig(toPruneConfig(s));
-    // Organic pacing knobs update live (gap/velocity/volume); a legacy↔organic model
-    // switch takes effect on the next graph build (the planner is a construction-time dep).
-    g.pacing?.applyConfig(toPacingConfig(s));
     g.churnActions.setDryRun(s.dryRun);
     g.engine.applySettings(s);
     logger.info('foundation: settings reloaded into live engine configs');

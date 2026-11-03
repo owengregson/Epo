@@ -34,7 +34,6 @@ import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DelayManager } from '@/timing/delay-manager';
 import type { ScheduleManager } from '@/timing/schedule-manager';
-import type { SessionPlanner } from '@/timing/session-planner';
 
 /** One source of status fields beyond the engine's own, read on every composed status. */
 export interface StatusContributor {
@@ -119,8 +118,6 @@ export interface BuiltGraph {
   scanner: Scanner;
   followback: FollowbackWatcher;
   chain: ChainController;
-  /** The organic pacing planner, present only when `Settings.pacingModel === 'organic'`. */
-  pacing: SessionPlanner | undefined;
   plan: GraphPlan;
   /** Every wiring module's startup steps, aggregated once per build (a rebuild never duplicates one). */
   startupSteps: readonly StartupStep[];
