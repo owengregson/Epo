@@ -38,16 +38,16 @@
       "lines": 592
     },
     {
-      "file": "src/engine/churn-scheduler.ts",
-      "lines": 552
-    },
-    {
       "file": "src/adapter/ig-surface.ts",
       "lines": 546
     },
     {
       "file": "src/capture/capture-harness.ts",
       "lines": 537
+    },
+    {
+      "file": "src/engine/churn-scheduler.ts",
+      "lines": 528
     },
     {
       "file": "src/main/services/graph-builder.ts",

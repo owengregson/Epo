@@ -109,4 +109,6 @@ export interface ChurnDeps {
   cfg?: ChurnConfig;
   pickQueued?: (records: FollowRecord[]) => FollowRecord | null;
   validateFollow?: (rec: FollowRecord, now: number) => Promise<boolean> | boolean;
+  /** Whether `pk` has a follow request in flight (the requester seam); defaults to never. */
+  hasActiveRequest?: (pk: string) => boolean;
 }

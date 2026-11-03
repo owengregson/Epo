@@ -1,9 +1,9 @@
 import type { Clock } from '../governors/clock';
 import type { RateGovernor } from '../governors/rate-governor';
 import type { KnowledgeStore } from '../store/knowledge-store';
-import { compareByScoreDesc, type EffectIntent, type FollowRecord } from '../store/types';
-import { MS_PER_DAY } from '../timing/units';
+import type { EffectIntent, FollowRecord } from '../store/types';
 import * as log from '../utils/logger';
+import { ChurnPick } from './churn-pick';
 import { CHURN_DEFAULTS, type ChurnActionOutcome, type ChurnActions, type ChurnConfig, type ChurnDeps, type VerbSpec } from './churn-types';
 import { normalizeMutationOutcome } from './mutation-outcome';
 import { bioMatchesFilter } from './prune-bio-filter';
@@ -50,7 +50,8 @@ export class ChurnScheduler {
   private readonly actions: ChurnActions;
   private readonly ownPk?: string;
   private cfg: ChurnConfig;
-  private readonly pickQueued?: ChurnDeps['pickQueued'];
+  /** The due ranking and the unfollow gates (see `churn-pick.ts`). */
+  private readonly pick: ChurnPick;
   private readonly validateFollow?: ChurnDeps['validateFollow'];
   private consecutiveCleanup = 0;
   /**
@@ -124,7 +125,14 @@ export class ChurnScheduler {
     this.actions = deps.actions;
     this.ownPk = deps.ownPk;
     this.cfg = deps.cfg ?? CHURN_DEFAULTS;
-    this.pickQueued = deps.pickQueued;
+    this.pick = new ChurnPick({
+      store: deps.store,
+      ownPk: deps.ownPk,
+      cfg: () => this.cfg,
+      consecutiveCleanup: () => this.consecutiveCleanup,
+      pickQueued: deps.pickQueued,
+      hasActiveRequest: deps.hasActiveRequest ?? (() => false),
+    });
     this.validateFollow = deps.validateFollow;
   }
 
@@ -141,14 +149,14 @@ export class ChurnScheduler {
   advanceTimers(now: number = this.clock.now()): void {
     // No follow-back within the max wait → reclaim the slot.
     for (const rec of this.store.followRecordsByState('pending_followback')) {
-      if (this.isRetained(rec.accountPk)) continue;
+      if (this.pick.isRetained(rec.accountPk)) continue;
       if (rec.followedAt === undefined) continue;
       if (now - rec.followedAt >= this.cfg.maxWaitForFollowbackMs) {
         const deadline = rec.followedAt + this.cfg.maxWaitForFollowbackMs;
         if (this.ownPk !== undefined) {
           const edge = this.store.getEdge(rec.accountPk, this.ownPk, 'follows');
           if (edge?.status !== 'removed' || edge.lastConfirmedAt < deadline
-            || !this.fresh(rec, now)) continue;
+            || !this.pick.fresh(rec, now)) continue;
         }
         this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: deadline, unfollowReason: 'no-followback' });
         log.info('churn: no follow-back within max wait, queuing unfollow', {
@@ -161,7 +169,7 @@ export class ChurnScheduler {
     // (no state is rewritten), so editing the keep-words — or the follower
     // unfollowing us — takes effect on the next pass.
     for (const rec of this.store.followRecordsByState('followed_back')) {
-      if (this.isRetained(rec.accountPk) || !this.fresh(rec, now)) continue;
+      if (this.pick.isRetained(rec.accountPk) || !this.pick.fresh(rec, now)) continue;
       if (rec.holdUntil === undefined) continue;
       if (now >= rec.holdUntil) {
         if (this.bioKeepsFollower(rec.accountPk)) continue;
@@ -169,17 +177,6 @@ export class ChurnScheduler {
         log.info('churn: hold elapsed, queuing unfollow', { pk: rec.accountPk });
       }
     }
-  }
-
-  private fresh(rec: FollowRecord, now: number): boolean {
-    if (this.ownPk === undefined) return true;
-    return rec.reconciledAt !== undefined && rec.reconciledAt <= now
-      && now - rec.reconciledAt <= (this.cfg.relationshipFreshMs ?? MS_PER_DAY);
-  }
-
-  private isRetained(pk: string): boolean {
-    return this.store.getTarget(pk)?.status === 'retained'
-      || this.store.getAccount(pk)?.role === 'retained_target';
   }
 
   /**
@@ -200,32 +197,11 @@ export class ChurnScheduler {
   }
 
   /**
-   * Return the single most-due record needing Instagram traffic, or `null` if none.
-   *
-   * Ordering: reclaimed slots first — `unfollow_queued` records are preferred
-   * over `queued`, so we free capacity before spending it on new follows. Within
-   * `unfollow_queued`, order by `unfollowDueAt` ascending then `accountPk`. Among
-   * `queued` records the BEST candidate goes first: descending `score` (the
-   * Scorer's composite — ratio, mutuals, private boost), with `accountPk` only as
-   * a deterministic tie-break. A record without a score (not Scanner-created)
-   * sorts last. This method does NOT check the ceiling/active-hours (the Engine
-   * gates before calling) and does NOT act.
+   * Return the single most-due record needing Instagram traffic, or `null` if none
+   * (the ranking lives in {@link ChurnPick.nextDue}; `kind` narrows it to one verb).
    */
-  nextDue(now: number = this.clock.now()): FollowRecord | null {
-    const queued = this.store.followRecordsByState('queued').filter((r) => r.score !== 0);
-    const chosenFollow = this.pickQueued ? this.pickQueued(queued) : queued.sort(compareByScoreDesc)[0] ?? null;
-    const unfollows = this.store.followRecordsByState('unfollow_queued')
-      .filter((r) => !this.isRetained(r.accountPk) && this.fresh(r, now));
-    if (unfollows.length > 0 && (this.consecutiveCleanup < 2 || chosenFollow === null)) {
-      return unfollows.sort((a, b) => {
-        const da = a.unfollowDueAt ?? 0;
-        const db = b.unfollowDueAt ?? 0;
-        if (da !== db) return da - db;
-        return a.accountPk < b.accountPk ? -1 : a.accountPk > b.accountPk ? 1 : 0;
-      })[0];
-    }
-
-    return chosenFollow;
+  nextDue(now: number = this.clock.now(), kind?: 'follow' | 'unfollow'): FollowRecord | null {
+    return this.pick.nextDue(now, kind);
   }
 
   /**
@@ -333,7 +309,7 @@ export class ChurnScheduler {
     rec: FollowRecord,
     now: number,
   ): Promise<ChurnActionOutcome['status'] | 'noop'> {
-    if (this.isRetained(rec.accountPk) || !this.fresh(rec, now)) return 'noop';
+    if (this.pick.isRetained(rec.accountPk) || !this.pick.fresh(rec, now)) return 'noop';
     if (this.bioKeepsFollower(rec.accountPk)) {
       // The hold stamp is kept (or set due-now), so the sweep's own gate
       // re-decides each pass: remove the keep-word later and rotation resumes.

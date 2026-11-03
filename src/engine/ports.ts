@@ -56,7 +56,7 @@ export interface SweepCadence {
 export interface EngineChurn {
   lastActionOutcome?(): ChurnActionOutcome | null;
   advanceTimers(now: number): void;
-  nextDue(now: number): FollowRecord | null;
+  nextDue(now: number, kind?: 'follow' | 'unfollow'): FollowRecord | null;
   /**
    * Perform the one record's action and report its outcome: the Engine routes
    * `'blocked'` to a short park (never a full-pace re-drive of the same
