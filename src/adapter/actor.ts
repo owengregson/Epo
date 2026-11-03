@@ -543,7 +543,7 @@ export class Actor {
     if (res.wouldClick && !Actor.rectUsable(res.rect)) return { found: false };
     const clicked = Boolean(res.wouldClick && res.rect);
     if (clicked && res.rect) {
-      if (op === 'follow' || res.state === 'requested' || !res.needsConfirm) await dispatch();
+      await dispatch(); // one admission per action, before its first press (ADR 0308)
       await this.interactor.click(res.rect);
     }
     return {
