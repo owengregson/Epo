@@ -11,15 +11,12 @@
 
 import * as path from 'node:path';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
-import { Reader } from '@/adapter/reader';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { ChainController, type TargetDiscovery } from '@/engine/chain-controller';
-import { ChurnScheduler } from '@/engine/churn-scheduler';
 import {
   createEngine,
   type EngineUnfollowFeed,
 } from '@/engine/engine';
-import { FollowbackWatcher } from '@/engine/followback-watcher';
 import {
   createPruneEngine,
   type PruneEngine,
@@ -27,44 +24,37 @@ import {
   type PruneOwnFollowing,
   type PruneScanFetch,
 } from '@/engine/prune-engine';
-import { ReentrySupervisor } from '@/engine/reentry';
 import { Scanner } from '@/engine/scanner';
-import { scoreCandidate } from '@/engine/scorer';
 import { SourceFrontier } from '@/engine/source-frontier';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
-import { ReadBudget } from '@/governors/read-budget';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { reconcileEffects } from '@/rim/effect-reconciliation';
-import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
-import { managedRelationships } from '@/rim/managed-relationships';
 import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
 import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
 import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
-import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
-import {
-  installRelationshipReconciler,
-  RelationshipReconciler,
-} from '@/rim/relationship-reconciler';
 import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
-import { patternCircadianProfile } from '@/settings/pattern-map';
-import { toReadAllowance } from '@/settings/read-allowance';
 import {
-  toChainConfig, toChurnConfig, toFollowbackConfig, toPacingConfig,
-  toPruneConfig, toRateGovernorConfig, toScannerConfig, toScorerConfig,
+  toChainConfig, toRateGovernorConfig, toScannerConfig, toScorerConfig,
 } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
-import { samplePhaseOffset } from '@/timing/circadian';
-import { CIRCADIAN } from '@/timing/config';
 import { DelayManager } from '@/timing/delay-manager';
-import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
 import * as logger from '@/utils/logger';
-import { createMutationPolicy } from './mutation-policy';
+import { wirePacing, wireReadBudget } from './plan-wiring';
+import {
+  noteMutationFor,
+  prepareReentry,
+  wireFollowback,
+  wireReentry,
+  wireSweepCadence,
+} from './reopen-wiring';
+import { wireSurface } from './surface-wiring';
+import { pruneUnfollowDeps, wireChurn, wireMutationPolicy } from './unfollow-wiring';
 
 export type { BuiltGraph, GraphBuildDeps } from './graph-types';
 
@@ -81,8 +71,8 @@ export function buildGraph(
   store.setOwnPk(ownPk);
   const clock = new SystemClock();
   const frontier = new SourceFrontier({ store, clock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
-  const reentry = new ReentrySupervisor({ store, clock });
-  const readBudget = new ReadBudget({ store, clock, limits: () => toReadAllowance(d.resolveSettings()) });
+  const reentry = wireReentry(store, clock);
+  const readBudget = wireReadBudget(store, clock, d);
   // The shared wait owner: growth and prune wait through ONE DelayManager
   // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
   // from a single registry.
@@ -103,9 +93,8 @@ export function buildGraph(
     observer: d.cursorObserver,
   });
 
-  const policy = createMutationPolicy({ store, ownPk, ownUsername, clock, rate, reentry, readBudget,
-    profiles: () => profiles, followback: () => followback, settings: d.resolveSettings,
-    signal: driverSignal, validateIdentity: d.validateIdentity, onProgress: d.onProgress });
+  const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, rate, reentry, readBudget,
+    profiles: () => profiles, followback: () => followback });
 
   // The adapter owns the single Actor + Sentinel instances the whole rim shares;
   // the Reader is pure and held directly.
@@ -122,25 +111,8 @@ export function buildGraph(
   });
   const actor = adapter.actor;
   const sentinel = adapter.sentinel;
-  const reader = new Reader();
-
-  // Heal external follow/unfollow drift from the SAME response pipeline: every
-  // relationship-bearing body reconciles our own follow-status through the
-  // store's leave-alone policy sink.
-  const relationshipReconciler = new RelationshipReconciler({ store, ownPk, reader, clock });
-  const relationshipReconcilerUnsub = installRelationshipReconciler(
-    d.tab,
-    relationshipReconciler,
-  );
-
-  // Always-on profile observer: ANY profile the tab loads (the startup landing
-  // on our own page, dialog navigations, visits) is parsed once and stored —
-  // our OWN header counts size the scan progress bars and back the census
-  // coverage guard, and every other profile enriches candidate scoring. It is
-  // also how a profile is READ since 2026-10-08: the visitor navigates and the
-  // observer hands it the page's own profile body (no request is composed).
-  const profileObserver = new ProfileObserver({ tab: d.tab, reader, store, clock });
-  const profileInfoUnsub = profileObserver.start();
+  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub } =
+    wireSurface({ tab: d.tab, store, ownPk, clock });
   const profiles = new TabProfileVisitor({
     tab: d.tab,
     observer: profileObserver,
@@ -232,59 +204,15 @@ export function buildGraph(
     minPoolSize: settings.minPoolSize,
   });
 
-  const churn = new ChurnScheduler({
-    pickQueued: (records) => frontier.pickQueued(records),
-    validateFollow: (record) => {
-      const account = store.getAccount(record.accountPk);
-      return account !== null && scoreCandidate(account, toScorerConfig(d.resolveSettings())).eligible;
-    },
-    store,
-    clock,
-    rate,
-    actions: churnActions,
-    ownPk,
-    cfg: toChurnConfig(settings),
-  });
-  // Expiry is eligibility for reconciliation, not evidence of a missing follow-back.
-  reentry.prepare(clock.now());
+  const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings });
+  prepareReentry(reentry, clock);
   const scanner = new Scanner({
     store,
     scorerCfg: toScorerConfig(settings),
     cfg: toScannerConfig(settings),
   });
-  // Follow-back detection reads the NOTIFICATIONS feed (one click on the bell,
-  // one observed news-inbox response) — cheap enough for the hourly default
-  // cadence. Sentinel-gated; a stop() interrupts the response wait.
-  const followNotifications = new AdapterBackedFollowNotifications({
-    readBudget,
-    ownPk,
-    canAccept: policy.canAccept,
-    onAccepted: policy.onAccepted,
-    tab: d.tab,
-    actor: adapter.actor,
-    reader,
-    sentinel,
-    store,
-    abortSignal: driverSignal,
-    reporter: d.reporter,
-  });
-  const followback = new FollowbackWatcher({
-    signal: driverSignal,
-    relationships: managedRelationships({ clock, readBudget, profiles, signal: driverSignal,
-      validateIdentity: d.validateIdentity, onProgress: d.onProgress }),
-    store,
-    clock,
-    ownPk,
-    notifications: followNotifications,
-    followers: liveOwnFollowers && ownUsername ? {
-      fetchAllPks: async () => {
-        const refreshed = await policy.refreshOwnStats();
-        if (!refreshed.ok) return { pks: [], complete: false, reason: refreshed.reason, retryAt: refreshed.retryAt };
-        return liveOwnFollowers.fetchAllPks();
-      },
-    } : undefined,
-    cfg: toFollowbackConfig(settings),
-  });
+  const followback = wireFollowback(d, { store, clock, ownPk, ownUsername, settings, readBudget, policy,
+    adapter, reader, sentinel, profiles, liveOwnFollowers });
 
   // Live discovery over the already-harvested graph: propose the biggest
   // enriched PUBLIC hubs inside the exhausted target's audience, projected at
@@ -302,50 +230,9 @@ export function buildGraph(
     cfg: toChainConfig(settings),
   });
 
-  // The follow-back sweep cadence, persisted through Settings so the rhythm
-  // survives restarts (docs/PRINCIPLES.md §3). The jitter factor is persisted
-  // beside it: each completed sweep redraws a bounded interval factor, so the
-  // check never lands on a bare hourly grid — and a restart mid-interval keeps
-  // the factor already drawn.
-  const sweepCadence = d.scheduler.cadence('engine:followback-sweep', {
-    getLastRunAt: () => d.resolveSettings().sweepLastRunAt,
-    setLastRunAt: (at) => {
-      d.updateSettings({ sweepLastRunAt: at });
-    },
-    jitter: {
-      getFactor: () => d.resolveSettings().sweepIntervalFactor,
-      setFactor: (factor) => {
-        d.updateSettings({ sweepIntervalFactor: factor });
-      },
-    },
-  });
+  const sweepCadence = wireSweepCadence(d);
 
-  // Organic pacing model: a durable SessionPlanner hydrated from store meta,
-  // injected ONLY when the user selected it (Settings.pacingModel). Absent →
-  // the engine runs its legacy active-hours + operating-rate metronome. The
-  // per-install circadian phase offset lives in the snapshot, so it is stable
-  // across restarts and freshly drawn on first run.
-  let pacingSnap: PlannerSnapshot | null = null;
-  const pacingSnapRaw = store.getPacingState();
-  if (pacingSnapRaw !== null) {
-    try {
-      pacingSnap = JSON.parse(pacingSnapRaw) as PlannerSnapshot;
-    } catch (e) {
-      logger.warn('foundation: bad pacing snapshot, starting fresh', { error: String(e) });
-    }
-  }
-  const phaseOffset =
-    pacingSnap?.phaseOffsetHours ??
-    samplePhaseOffset(CIRCADIAN.PHASE_JITTER_MAX_HOURS, Math.random);
-  const pacing =
-    settings.pacingModel === 'organic'
-      ? new SessionPlanner({
-          // The circadian shape follows the user's qualitative day/week choice.
-          profile: patternCircadianProfile(settings.pattern, phaseOffset),
-          cfg: toPacingConfig(settings),
-          snapshot: pacingSnap,
-        })
-      : undefined;
+  const pacing = wirePacing(store, settings);
 
   // Woven prune feed: the growth loop drains unfollows from the PruneEngine's
   // scanned census, interleaved with its follows. The PruneEngine is built
@@ -429,10 +316,7 @@ export function buildGraph(
     : unresolvedUsernameSource('prune scan');
   const pruneOwnFollowers: PruneOwnFollowers =
     liveOwnFollowers ?? unresolvedUsernameSource('prune followers scan');
-  const noteMutation = (): void => {
-    reentry.noteAction(clock.now());
-    d.onProgress?.('mutation-verified');
-  };
+  const noteMutation = noteMutationFor(reentry, clock, d);
   const pruneEngine = createPruneEngine({
     onMutation: noteMutation,
     store,
@@ -442,7 +326,6 @@ export function buildGraph(
     ownFollowers: pruneOwnFollowers,
     churnActions,
     sentinel,
-    cfg: toPruneConfig(settings),
     delays,
     installEntropy,
     lastRunAt: settings.pruneLastRunAt,
@@ -454,22 +337,7 @@ export function buildGraph(
     // start, not calendar midnight.
     cycleStartMs: (now: number): number => rate.cycleStartMs(now),
     onStatus: (s) => d.onPruneStatus(s),
-    // Persist the completed run's timestamp through the one settings save path
-    // (also reloads live configs — harmless, and keeps one write path).
-    onRunComplete: (at) => {
-      d.updateSettings({ pruneLastRunAt: at });
-    },
-    // A scan's first act: ONE active profile-info fetch for our own account, so
-    // the header counts sizing the progress bar (and backing the census
-    // coverage guard) are fresh in the store — the passive observer alone can
-    // miss them entirely (SPA profile loads don't always issue
-    // the profile endpoint).
-    refreshOwnStats: ownUsername
-      ? async (): Promise<void> => {
-          const refreshed = await policy.refreshOwnStats();
-          if (!refreshed.ok) throw new Error(`Fresh own profile required: ${refreshed.reason}`);
-        }
-      : undefined,
+    ...pruneUnfollowDeps(d, { settings, policy, ownUsername }),
   });
   // Back the woven-feed adapter now that the PruneEngine exists.
   pruneEngineRef = pruneEngine;

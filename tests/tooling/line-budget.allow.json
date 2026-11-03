@@ -50,10 +50,6 @@
       "lines": 528
     },
     {
-      "file": "src/main/services/graph-builder.ts",
-      "lines": 504
-    },
-    {
       "file": "src/adapter/versions/2026-08-12.ts",
       "lines": 493
     },
@@ -76,6 +72,10 @@
     {
       "file": "src/main/foundation-reads.ts",
       "lines": 410
+    },
+    {
+      "file": "src/main/services/graph-builder.ts",
+      "lines": 372
     },
     {
       "file": "src/rim/followers-page-reader.ts",
