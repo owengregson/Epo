@@ -17,7 +17,7 @@ import { FEED_EMPTY, rowFace, SOMEONE, sinceYouLeft } from '@/renderer/sidebar/c
 import { headlineOf, nextLineOf, PILL, PRIMARY_FACE, SECONDARY_LABEL, sentenceOf } from '@/renderer/sidebar/copy/posture-copy';
 import { COMMAND_FAILED, KNOWN_REFUSALS, refusalText } from '@/renderer/sidebar/copy/refusal-copy';
 import {
-  approvalsNote, FEED_TITLE, FOOTER, freshPill, GET_STARTED, NO_PLAN, RESULTS, sessionTip, TODAY_TITLE, todayNext,
+  approvalsNote, FEED_TITLE, FOOTER, freshPill, GET_STARTED, NO_PLAN, RESULTS, sessionTip, TODAY_TITLE, todayLines, todayNext,
   todaySummary,
 } from '@/renderer/sidebar/copy/zone-copy';
 import { classifyBlock, KNOWN_BLOCK_KEYS } from '@/shared/attention';
@@ -157,9 +157,15 @@ function everySentence(): string[] {
     out.push(explainText(topic, { sessions: 4, visitsAt: T + HOUR, attempt: { n: 2, max: 3 }, lateOrLight: true }));
   }
   out.push(TODAY_TITLE, NO_PLAN, FEED_TITLE, freshPill(2), todaySummary(plan, true), todaySummary(plan, false), approvalsNote(plan) ?? '');
-  for (const p of statuses.map((s) => s.plan).filter((x): x is PlanProjection => x != null)) out.push(todayNext(p, T));
-  out.push(todayNext({ ...plan, day: { ...plan.day, dayOff: true } }, T), todayNext({ ...plan, now: { sessionIdx: 0, nextAt: null, closesAt: T + HOUR } }, T));
-  out.push(todayNext({ ...plan, totals: { ...plan.totals, remaining: 0 } }, T), todayNext({ ...plan, day: { ...plan.day, light: true } }, T));
+  const days = [
+    ...statuses.map((s) => s.plan).filter((x): x is PlanProjection => x != null),
+    { ...plan, day: { ...plan.day, dayOff: true } }, { ...plan, now: { sessionIdx: 0, nextAt: null, closesAt: T + HOUR } },
+    { ...plan, totals: { ...plan.totals, remaining: 0 } }, { ...plan, day: { ...plan.day, light: true } },
+  ];
+  for (const p of days) {
+    const lines = todayLines(p, T, true);
+    out.push(todayNext(p, T), lines.sum, lines.next, todayLines(p, T, false).sum);
+  }
   for (const s of plan.sessions) out.push(sessionTip(s));
   out.push(RESULTS.heroLabel, RESULTS.heroTip(T), RESULTS.followers(1), RESULTS.followers(1284), RESULTS.checked(T - MIN, T));
   out.push(RESULTS.checked(T - 30 * HOUR, T), RESULTS.checkingNow, RESULTS.neverSeen, RESULTS.backs(null, 4), RESULTS.backs(1, 0));

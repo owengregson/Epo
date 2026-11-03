@@ -222,6 +222,8 @@ export function derivePosture(
       break;
   }
   if (attention === null && input.unconfirmed !== null) attention = classify('actions-unconfirmed');
+  // An overlay explains itself where the posture has no topic of its own.
+  explain ??= input.boost !== 'off' ? 'boost' : input.practice ? 'practice' : null;
   const busy = kind === 'starting-up' || kind === 'reconnecting' || kind === 'catching-up' || kind === 'starting'
     || (kind === 'working' && timer === null);
   return {

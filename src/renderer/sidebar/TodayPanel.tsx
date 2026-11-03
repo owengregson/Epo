@@ -5,28 +5,23 @@
  * on the line they move to its tooltip.
  */
 import type { JSX } from 'preact';
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+
 import { useNow } from '@/renderer/app/clock';
 import { statusSignal } from '@/renderer/app/shell-context';
 import { BoostControl } from '@/renderer/sidebar/BoostControl';
-import { approvalsNote, NO_PLAN, todayNext, todaySummary } from '@/renderer/sidebar/copy/zone-copy';
+import { approvalsNote, NO_PLAN, todayLines } from '@/renderer/sidebar/copy/zone-copy';
 import { PlanStrip } from '@/renderer/sidebar/PlanStrip';
+import { useOneLine } from '@/renderer/sidebar/use-one-line';
 
 export function TodayPanel(): JSX.Element {
   const status = statusSignal.value;
   const plan = status?.plan ?? null;
   const boost = status?.boost ?? null;
   const now = useNow('minute');
-  const sum = useRef<HTMLParagraphElement>(null);
-  const [fits, setFits] = useState(true);
-  const full = plan === null ? '' : todaySummary(plan, true);
-
-  // Measure the full line; when it would be cut, the approvals go to its tooltip instead.
-  useLayoutEffect(() => setFits(true), [full]);
-  useLayoutEffect(() => {
-    const el = sum.current;
-    if (fits && el !== null && el.scrollWidth > el.clientWidth) setFits(false);
-  }, [full, fits]);
+  const full = plan === null ? '' : todayLines(plan, now, true).sum;
+  // When the full summary would be cut, the approvals go to its tooltip instead.
+  const [sum, fits] = useOneLine<HTMLParagraphElement>(full);
+  const lines = plan === null ? null : todayLines(plan, now, fits);
 
   const band = boost !== null && boost.state !== 'off' && boost.startedAt !== null && boost.endsAt !== null
     ? { from: boost.startedAt, to: boost.endsAt } : null;
@@ -39,9 +34,9 @@ export function TodayPanel(): JSX.Element {
         <>
           <PlanStrip plan={plan} band={band} />
           <p class="sb-today__sum num" ref={sum} data-tip={fits ? undefined : (approvalsNote(plan) ?? undefined)}>
-            {fits ? full : todaySummary(plan, false)}
+            {lines?.sum}
           </p>
-          <p class="sb-today__next">{todayNext(plan, now)}</p>
+          <p class="sb-today__next">{lines?.next}</p>
         </>
       )}
     </section>

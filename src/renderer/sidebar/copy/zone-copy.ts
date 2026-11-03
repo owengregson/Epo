@@ -33,13 +33,29 @@ export function todayNext(plan: Plan, now: number): string {
   const { day, totals } = plan;
   const next = plan.now.nextAt;
   const tomorrow = next === null ? '' : ` · next session ${atTime(next, now)}`;
-  if (day.dayOff) return 'Day off — Epo does no automatic work today.';
   if (plan.now.sessionIdx !== null && plan.now.closesAt !== null) return `This session until about ${clock(plan.now.closesAt)}`;
-  if (day.lateStart && totals.planned === 0) return `Today’s sessions had already passed when Epo opened${tomorrow}`;
-  if (day.light && totals.planned === 0) return 'Light day — no actions planned today.';
-  if (totals.remaining === 0) return `Today’s plan is done${tomorrow}`;
+  if (totals.remaining === 0 && totals.planned > 0) return `Today’s plan is done${tomorrow}`;
   if (day.light) return `Light day — about ${count(totals.planned)} actions.`;
   return next === null ? `About ${count(totals.planned)} actions today` : `Next session ${atTime(next, now)}`;
+}
+
+/**
+ * A day with nothing to count (a day off, a late first open, a zero-volume light day): why, on the summary's
+ * line, and when the next session is, on the line under it — two lines that each fit the column.
+ */
+function emptyDay(plan: Plan): string | null {
+  if (plan.day.dayOff) return 'Day off — Epo does no automatic work today.';
+  if (plan.totals.planned > 0) return null;
+  if (plan.day.lateStart) return 'Today’s sessions had already passed when Epo opened.';
+  return plan.day.light ? 'Light day — no actions planned today.' : null;
+}
+
+/** The two lines under the strip: what the day holds, then when things happen. */
+export function todayLines(plan: Plan, now: number, withApprovals: boolean): { readonly sum: string; readonly next: string } {
+  const empty = emptyDay(plan);
+  if (empty === null) return { sum: todaySummary(plan, withApprovals), next: todayNext(plan, now) };
+  const at = plan.now.nextAt;
+  return { sum: empty, next: at === null ? '' : `Next session ${atTime(at, now)}` };
 }
 
 /** A plan block's tooltip. */

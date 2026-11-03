@@ -35,6 +35,14 @@
   --glow: var(--glow-idle);
 }
 
+/* The column's tips carry no "?" badge: the dot, the plan blocks and the hero already mean something. */
+.sidebar [data-tip] {
+  cursor: default;
+}
+.sidebar [data-tip]::after {
+  content: none;
+}
+
 .sb-zone {
   position: relative;
   flex: 0 0 auto;
@@ -170,9 +178,9 @@
 .sb-now__card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   height: 100%;
-  padding: 20px 16px 10px;
+  padding: 10px 16px 6px;
   background:
     radial-gradient(120% 150% at 0% 0%, var(--glow), transparent 58%),
     linear-gradient(
@@ -193,9 +201,11 @@
   border-color: rgba(210, 120, 120, 0.4);
 }
 
+/* 96 px: the posture word, a now line of up to two lines, and the next line beside the 88 px ring. */
 .sb-now__row {
   display: flex;
-  flex: 0 0 88px;
+  flex: 0 0 96px;
+  align-items: center;
   gap: 16px;
   min-height: 0;
 }
@@ -241,10 +251,11 @@
   text-overflow: ellipsis;
 }
 
-.sb-now__line.is-two {
+.sb-now__line.is-two,
+.sb-now__line.is-fit {
   display: -webkit-box;
   font-size: var(--fs-body);
-  line-height: 21px;
+  line-height: 19px;
   white-space: normal;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -290,22 +301,33 @@
   gap: 8px;
 }
 
+/* Two reserved lines: a refusal or an attention's follow-up never cuts off mid-sentence. */
 .sb-now__reason {
   display: flex;
-  flex: 0 0 16px;
+  flex: 0 0 32px;
   margin-top: -2px;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   overflow: hidden;
   font-size: var(--fs-small);
   line-height: 16px;
   color: var(--muted);
-  white-space: nowrap;
 }
 
 .sb-now__reason span {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.sb-now__reason .icon {
+  margin-top: 2px;
+}
+
+.sb-now__who {
+  font-weight: 600;
+  color: var(--chrome);
 }
 
 .sb-now__reason .icon {
@@ -546,6 +568,41 @@
   font-size: var(--fs-small);
   line-height: 1.5;
   color: var(--silver);
+}
+
+.sb-why__steps {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.sb-why__steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sb-why__steps li.is-done,
+.sb-why__steps li.is-now {
+  color: var(--text);
+}
+
+.sb-why__tick {
+  display: grid;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  font-size: var(--fs-micro);
+  color: var(--st-good);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.sb-why__steps li.is-now .sb-why__tick {
+  border-color: var(--st-live);
 }
 
 /* ---------- Today ---------- */
@@ -1216,8 +1273,8 @@
 
 /* ---------- short windows: everything under Now scrolls as one ---------- */
 @media (max-height: 799px) {
+  /* Still a flex column, so every zone keeps its fixed height; the feed takes its content height. */
   .sb-middle {
-    display: block;
     overflow-y: auto;
     border-top: 1px solid var(--border);
     scrollbar-width: thin;
@@ -1225,7 +1282,8 @@
   }
 
   .sb-feed {
-    display: block;
+    flex: 0 0 auto;
+    min-height: auto;
   }
 
   .sb-feed__list {
@@ -1247,6 +1305,14 @@
 
   .sb-now__row {
     flex-basis: 72px;
+  }
+
+  .sb-now__reason {
+    flex-basis: 16px;
+  }
+
+  .sb-now__reason span {
+    -webkit-line-clamp: 1;
   }
 
   .sb-ring {
@@ -1274,6 +1340,13 @@
   .sb-now__line.is-two {
     font-size: var(--fs-small);
     line-height: 18px;
+  }
+
+  /* The compact row has room for one now line beside its next line: a long one ellipsizes. */
+  .sb-now__line.is-fit {
+    display: block;
+    line-height: 20px;
+    white-space: nowrap;
   }
 }
 

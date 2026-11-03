@@ -212,6 +212,16 @@ test('a queued Start can be stopped while the startup sequence runs', () => {
   expect(p).toMatchObject({ kind: 'catching-up', primary: 'starting', secondary: 'stop' });
 });
 
+test('Boost and practice explain themselves when the posture has no topic of its own', () => {
+  const run = status({ nextActionAt: T + 60_000 });
+  expect(derivePosture(input({ status: run, boost: 'on' }), T)).toMatchObject({ kind: 'working', explain: 'boost' });
+  expect(derivePosture(input({ status: run, practice: true }), T)).toMatchObject({ kind: 'working', explain: 'practice' });
+  expect(derivePosture(input({ status: run }), T).explain).toBeNull();
+  // A posture's own topic wins: resting explains the sessions, even during a Boost.
+  const resting = status({ parkReason: 'session', parkedUntil: T + 60_000 });
+  expect(derivePosture(input({ status: resting, boost: 'on' }), T).explain).toBe('resting');
+});
+
 test('the first-run headline is the short one', () => {
   expect(postureHeadline('needs-seed')).toBe('Get set up');
   expect(postureHeadline('data-unavailable')).toBe("Can't open data");

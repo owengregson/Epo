@@ -9,22 +9,37 @@ import { useNow } from '@/renderer/app/clock';
 import { activitySignal, pendingControlSignal } from '@/renderer/app/live-signals';
 import { usePopover } from '@/renderer/app/PopoverHost';
 import { pruneSignal, statusSignal } from '@/renderer/app/shell-context';
-import { showStage } from '@/renderer/app/shell-services';
 import { DUR } from '@/renderer/design/motion-scale';
 import { play } from '@/renderer/lib/play';
 import { attentionCode, attentionSentence, SCHEDULES_WAIT } from '@/renderer/sidebar/copy/attention-copy';
-import { explainText } from '@/renderer/sidebar/copy/explain-copy';
+import { catchUpChecklist, explainText } from '@/renderer/sidebar/copy/explain-copy';
 import { headlineOf, nextLineOf, PILL, RING_GLYPH, sentenceOf } from '@/renderer/sidebar/copy/posture-copy';
 import { postureSignal } from '@/renderer/sidebar/posture-signal';
 import { clearReason, reasonSignal } from '@/renderer/sidebar/reason-line';
-import { partsOf, Said } from '@/renderer/sidebar/Said';
+import { partsOf } from '@/renderer/sidebar/Said';
 import { StatusRing } from '@/renderer/sidebar/StatusRing';
 import { TransportRow } from '@/renderer/sidebar/TransportRow';
+import { useOneLine } from '@/renderer/sidebar/use-one-line';
 import { Icon } from '@/renderer/ui/Icon';
 import { liveOpProgress, liveOpText } from '@/shared/live-op';
 import type { Posture } from '@/shared/posture';
 
-const openPeople = (): void => showStage('people');
+/** The now line as plain inline words, its people in bold: one line that ellipsizes as a whole. */
+function NowWords({ text }: { text: string }): JSX.Element {
+  return (
+    <>
+      {partsOf(text).map((part, i) =>
+        typeof part === 'string' ? (
+          part
+        ) : (
+          <b key={`${i}:${part.person.username}`} class="sb-now__who">
+            @{part.person.username}
+          </b>
+        ),
+      )}
+    </>
+  );
+}
 
 /** Kinds whose now line may name the step in flight. */
 const NARRATES = new Set<Posture['kind']>(['working', 'cleaning-up', 'catching-up', 'starting', 'taking-a-break']);
@@ -45,6 +60,7 @@ function WhyButton({ posture }: { posture: Posture }): JSX.Element | null {
       attempt: s?.recovery ? { n: s.recovery.attempt, max: s.recovery.maxAttempts } : null,
       lateOrLight: plan !== null && plan.totals.planned === 0 && (plan.day.lateStart || plan.day.light),
     });
+    const steps = topic === 'catching-up' && s?.catchUp ? catchUpChecklist(s.catchUp.steps, s.catchUp.since) : [];
     popover.open({
       anchor: e.currentTarget as Element,
       labelledBy: 'sb-why-title',
@@ -52,6 +68,16 @@ function WhyButton({ posture }: { posture: Posture }): JSX.Element | null {
         <div class="sb-why">
           <h3 id="sb-why-title">Why?</h3>
           <p>{text}</p>
+          {steps.length === 0 ? null : (
+            <ul class="sb-why__steps">
+              {steps.map((step) => (
+                <li key={step.label} class={step.done ? 'is-done' : step.now ? 'is-now' : undefined}>
+                  <span class="sb-why__tick">{step.done ? <Icon name="check" /> : null}</span>
+                  {step.label}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ),
     });
@@ -116,6 +142,9 @@ export function NowPanel(): JSX.Element {
   const fraction = progress !== null && progress.total !== null && progress.total > 0 ? Math.min(1, progress.done / progress.total) : null;
   const glyph = p.kind === 'working' && p.overlay.boost ? 'bolt' : RING_GLYPH[p.kind];
   const why = reasonOf(p);
+  // Beside a next line the now line has one line at 17 px; a longer sentence takes two smaller lines.
+  const [lineEl, oneLine] = useOneLine<HTMLParagraphElement>(line);
+  const lineClass = next === null ? 'sb-now__line is-two' : oneLine ? 'sb-now__line' : 'sb-now__line is-fit';
 
   return (
     <section class="sb-now" data-zone="now" data-tour="now" data-tone={p.tone} data-kind={p.kind}>
@@ -132,8 +161,8 @@ export function NowPanel(): JSX.Element {
               ) : null}
               {p.overlay.practice ? <span class="sb-pill">{PILL.practice}</span> : null}
             </div>
-            <p class={next === null ? 'sb-now__line is-two' : 'sb-now__line'} data-now-line="">
-              <Said parts={partsOf(line)} onPerson={openPeople} />
+            <p class={lineClass} ref={lineEl} data-now-line="">
+              <NowWords text={line} />
             </p>
             {next !== null ? (
               <p class="sb-now__next num">

@@ -13,7 +13,7 @@ import {
 } from '@/renderer/app/shell-context';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
 import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, GALLERY_SETTINGS, type Scenario } from '@/renderer/gallery/fixtures';
-import { LIVE_SCENARIOS } from '@/renderer/gallery/fixtures-live';
+import { LIVE_SCENARIOS, resetLiveGallery } from '@/renderer/gallery/fixtures-live';
 import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
 import { GALLERY_LANES, installGalleryBridge } from '@/renderer/gallery/gallery-bridge';
 import type { ToastControls } from '@/renderer/hooks/useToasts';
@@ -38,6 +38,8 @@ const SCENARIOS: Scenario[] = [...BASE_SCENARIOS, ...LIVE_SCENARIOS, ...SURFACE_
 function applyScenario(s: Scenario): void {
   statusSignal.value = s.status;
   pruneSignal.value = s.prune;
+  resetLiveGallery();
+  s.apply?.();
 }
 
 const noop = (): void => undefined;

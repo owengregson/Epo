@@ -5,6 +5,23 @@
 import { BOOST_COPY } from '@/renderer/copy/boost';
 import { clock } from '@/renderer/sidebar/format';
 import type { ExplainTopic } from '@/shared/posture';
+import type { CatchUpStepId, StepState } from '@/shared/reopen-view';
+
+/** The catch-up's checklist under its "Why?" (spec Appendix E.2): each step's label, done or running. */
+export function catchUpChecklist(
+  steps: readonly { readonly id: CatchUpStepId; readonly step: StepState }[],
+  since: number | null,
+): { readonly label: string; readonly done: boolean; readonly now: boolean }[] {
+  const label = (id: CatchUpStepId): string =>
+    id === 'profile'
+      ? 'Your profile numbers'
+      : id === 'followers-head'
+        ? 'Newest followers'
+        : since === null
+          ? 'Notifications'
+          : `Notifications since ${clock(since)}`;
+  return steps.map(({ id, step }) => ({ label: label(id), done: step.state === 'done', now: step.state === 'running' }));
+}
 
 export interface ExplainFacts {
   /** Today's planned sessions, when a plan exists. */
