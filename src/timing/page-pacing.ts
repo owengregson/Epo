@@ -3,10 +3,9 @@ import { ADAPTER } from './config';
 import { type Rng, sample, sleep } from './primitives';
 
 /**
- * A fresh bounded pause between page attempts (`pause.retry`). Correctness
- * polls and deadlines stay exact; this pause controls when another
- * navigation/click may be attempted, and abort remains immediate. The band is
- * relative to the call site's own retry wait; its floor is the navigation poll.
+ * A fresh bounded pause before another navigation/click attempt (`pause.retry`): its band is relative
+ * to the call site's retry wait, its floor the navigation poll. Correctness polls and deadlines stay
+ * exact; abort remains immediate.
  */
 export function pauseBeforePageRetry(
   baseMs: number,

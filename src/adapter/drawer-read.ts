@@ -1,8 +1,7 @@
 /**
- * The notifications drawer's per-body read (spec §10, C20): one pure function
- * the feed capture calls for every observed drawer body. It delegates to
- * today's extractors (lenient: a requests read is taken as the complete
- * pending list); the parse stream makes it strict and tiered in place.
+ * The notifications drawer's per-body read (spec §10, C20), called by the feed capture for every body:
+ * today's extractors, lenient (a requests read is taken as the whole pending list). The parse
+ * stream makes it strict and tiered in place.
  */
 
 import type { Reader } from '@/adapter/reader';

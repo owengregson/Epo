@@ -1,8 +1,6 @@
 /**
- * Tier 2 — the tab's input probe (D4; ADR 1007 amendment): after a synthetic
- * pointer move, how often and how many times the probe looks for the page's
- * listener to fire. Derived from the display frame; not registry keys.
- *
+ * Tier 2 — the tab's input probe (D4; ADR 1007 amendment): after a synthetic move, how often and how
+ * many times it looks for the page's listener. Derived from the display frame; not registry keys.
  * Layering: `src/kernel/**` imports nothing from the rest of `src/`.
  */
 

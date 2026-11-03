@@ -1,7 +1,6 @@
 /**
- * The tempo-spec registry (ADR 0607, spec §5.11): for every tempo key, the axis
- * it scales on, its prior (the value at tempo 1 — today's value), the floor it
- * never crosses, and the registry or MOTION keys its prior reproduces. Outside
+ * The tempo-spec registry (ADR 0607, spec §5.11): per key, its axis, its prior (today's value, at
+ * tempo 1), the floor it never crosses and the registry or MOTION keys the prior reproduces. Outside
  * `src/kernel/tempo` no code reads a claimed prior: it asks a `TempoSource`.
  */
 

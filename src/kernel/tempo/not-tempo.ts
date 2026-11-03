@@ -1,8 +1,7 @@
 /**
- * RIM, ENGINE and NOISE registry keys no tempo spec claims, each with the
- * reason it does not scale with the session's tempo (spec §5.12, §17). The
- * tempo-identity golden requires every key in those groups to be claimed by
- * exactly one spec or listed here.
+ * RIM, ENGINE and NOISE registry keys no tempo spec claims, each with the reason it does not scale
+ * with the tempo (spec §5.12, §17). The tempo-identity golden requires every key in those groups to
+ * be claimed by exactly one spec or listed here.
  */
 export const NOT_TEMPO: Readonly<Record<string, string>> = {
   'ENGINE.VELOCITY_PARK_MEDIAN_MS': 'retired: the velocity park becomes the exact trailing-hour window (PR)',
@@ -17,11 +16,11 @@ export const NOT_TEMPO: Readonly<Record<string, string>> = {
   'RIM.ACQUIRE_NO_NEW_STOP': 'a stagnation count on an acquisition slice, not a wait',
   'RIM.LIST_WALK_MAX_PAGES': 'a runaway page bound for acquisition walks, not a wait',
   'RIM.LIST_WALK_STAGNANT_STOP': 'a statistical stagnation threshold (D5), identical at every tempo',
-  'RIM.NOTIFICATIONS_WAIT_MS': 'a D4 deadline: failure detection never loosens with a relaxed session',
+  'RIM.NOTIFICATIONS_WAIT_MS': 'a D4 deadline: a failure is called just as soon on a relaxed session',
   'RIM.REQUEST_ACCEPT_CAP': 'a runaway bound on accepts per pass; the plan sizes each pass',
   'RIM.NOTIFICATIONS_SCROLL_ROUNDS': 'a runaway bound on drawer rounds; the watermark sets the depth',
   'RIM.NOTIFICATIONS_POLL_MS': 'a D4 poll interval, identical at every tempo',
-  'RIM.ACCEPT_VERIFY_MS': 'a D4 deadline: failure detection never loosens with a relaxed session',
+  'RIM.ACCEPT_VERIFY_MS': 'a D4 deadline: a failure is called just as soon on a relaxed session',
   'RIM.ACCEPT_VERIFY_POLL_MS': 'a D4 poll interval, identical at every tempo',
   'NOISE.DAILY_BOUNDARY_JITTER_MAX_MS': 'a desync jitter retired with the exact plan-day parks (PR)',
   'NOISE.CADENCE_SIGMA': 'the sweep cadence factor, retired with the plan-derived check spacing (PR)',

@@ -1,8 +1,6 @@
 /**
- * Tier 1 — the census guards (spec §10.9). Phase F moves the prune scan's two
- * coverage numbers here unchanged; the parse stream owns and extends the table.
- * One guard line per entry.
- *
+ * Tier 1 — the census guards (spec §10.9): the prune scan's two coverage numbers, moved unchanged,
+ * and the walk bound. One guard line per entry; the parse stream owns and extends the table.
  * Layering: `src/kernel/**` imports nothing from the rest of `src/`.
  */
 

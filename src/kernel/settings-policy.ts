@@ -1,8 +1,6 @@
 /**
- * Tier 1 — the settings envelope's dials and bounds (ADR 0608). This is the
- * Phase F skeleton: the entries other streams need before the settings core
- * lands (which then owns and completes this table). One guard line per entry.
- *
+ * Tier 1 — the settings envelope's dials and bounds (ADR 0608): the Phase F skeleton other streams
+ * need first; the settings core owns and completes it. One guard line per entry.
  * Layering: `src/kernel/**` imports nothing from the rest of `src/`.
  */
 

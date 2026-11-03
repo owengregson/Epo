@@ -1,8 +1,7 @@
 /**
- * The tempo-identity golden (ADR 0607, spec §5.12 item 3): at REFERENCE_TEMPO
- * every spec resolves to its prior, every prior reproduces the value today's
- * call site draws from, and every RIM/ENGINE/NOISE key and every MOTION tempo
- * key is claimed by exactly one spec or listed in NOT_TEMPO with a reason.
+ * The tempo-identity golden (ADR 0607, spec §5.12 item 3): at REFERENCE_TEMPO every spec resolves to
+ * its prior, every prior is the value today's call site draws from, and every RIM/ENGINE/NOISE key and
+ * MOTION tempo key is claimed by exactly one spec or listed in NOT_TEMPO with a reason.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';

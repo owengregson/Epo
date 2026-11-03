@@ -1,9 +1,7 @@
 /**
- * The surface sink (spec §10.7, Appendix D.1): the read pipeline reports each
- * read's tally and each drift signal here, so drift and per-plan-day health are
- * persisted by one owner while `src/surface` stays pure. Phase F lands the port,
- * an in-memory sink and the record-nothing default; the parse-health stream
- * wires the production sink.
+ * The surface sink (spec §10.7, Appendix D.1): the read pipeline reports each read's tally and drift
+ * signal here, so one owner persists drift and health while `src/surface` stays pure. Phase F lands
+ * the port, an in-memory sink and a record-nothing default; the parse-health stream wires the real one.
  */
 
 import type { EndpointKind } from '@/surface/schema/endpoints';

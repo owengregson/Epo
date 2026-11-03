@@ -1,12 +1,7 @@
 /**
- * Tier 1 — what each `MOTION` key is for (ADR 0607). A key is a TEMPO duration
- * (stretched by the session's motion factor through a tempo spec), a
- * SPEED–ACCURACY key (co-varies with that factor), a SHAPE dial (path geometry,
- * fixed per install; one guard line and provenance each), a GUARDRAIL, or a
- * DEVICE geometry fact. `motion-golden.test.ts` holds MOTION to the frozen
- * snapshot plus {@link MOTION_ADDED}, and every key to exactly one role.
- *
- * Layering: `src/kernel/**` imports nothing from the rest of `src/`.
+ * Tier 1 — each `MOTION` key's role (ADR 0607): a TEMPO duration, a SPEED–ACCURACY key (co-varies with
+ * the motion factor), a SHAPE dial (fixed per install; guard line + provenance), a GUARDRAIL or a
+ * DEVICE fact. The motion golden holds MOTION to the frozen snapshot plus {@link MOTION_ADDED}.
  */
 
 import type { MOTION } from './motion-policy';

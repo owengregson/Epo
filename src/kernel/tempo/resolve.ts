@@ -1,10 +1,7 @@
 /**
- * Resolving a tempo spec at a session tempo (ADR 0607, spec §5.11).
- *
- * `scaleAbove` is the one scaling rule: a value moves away from its floor by the
- * factor, so it is the identity at f = 1 and never crosses the floor for f ≥ 0.
- * A `pace-up` base is the exception: it multiplies by max(1, pace), so it is
- * never shorter than its prior and longer on a relaxed session.
+ * Resolving a tempo spec at a session tempo (ADR 0607, spec §5.11). `scaleAbove` is the one scaling
+ * rule (identity at 1, never below the floor); a `pace-up` base instead multiplies by max(1, pace),
+ * so it is never shorter than its prior and longer on a relaxed session.
  */
 
 import { EMPIRICAL } from '../fundamentals';

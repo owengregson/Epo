@@ -1,8 +1,7 @@
 /**
- * The calendar plan-day clock: the Phase F default of the ONE plan-day boundary
- * (spec §4.4) — local midnight, DST-safe (23, 24 or 25 h days). Every consumer
- * that keys anything by day takes a `PlanDayClock` from its wiring module; the
- * plan core's quiet-minute clock replaces this one at a single swap site.
+ * The Phase F default of the ONE plan-day boundary (spec §4.4): local midnight, DST-safe (23-25 h).
+ * Day-keyed consumers take a `PlanDayClock` from their wiring module; the plan core's quiet-minute
+ * clock replaces this one at a single swap site.
  */
 
 import type { PlanDayClock, PlanDayWindow } from '../kernel/plan';

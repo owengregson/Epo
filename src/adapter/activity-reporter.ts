@@ -1,14 +1,7 @@
 /**
- * ActivityReporter — the seam that lets the tab-driving layers announce WHAT
- * they are doing right now, as a typed `LiveOp` (`src/shared/live-op.ts`), so
- * the veil and the sidebar can show it live.
- *
- * It is deliberately tiny and side-effect-free at the call site: the rim/adapter
- * classes take an optional reporter (defaulting to {@link NOOP_ACTIVITY_REPORTER})
- * and call `report(...)` when a phase of work begins and `clear()` when it ends.
- * The concrete reporter (wired in the composition root) forwards to the veil.
- * A `done`/`total` pair is a real denominator only when genuinely known: an
- * unknown total stays null (an indeterminate sweep), never invented.
+ * The tab-driving layers announce WHAT they are doing as a typed `LiveOp`: `report()` when a phase
+ * begins, `clear()` when it ends (default {@link NOOP_ACTIVITY_REPORTER}); the composition root
+ * forwards to the veil. A `total` is a real denominator only when known; unknown stays null.
  */
 
 import type { ActivityInfo } from '@/shared/live-op';

@@ -1,8 +1,7 @@
 /**
- * The gesture's motion policy (ADR 0607, spec §5.11): the `MOTION` table with
- * its tempo-role durations stretched by the session's motion factor and its
- * speed–accuracy keys co-varying with it. Shape, guardrail and device keys
- * never move. `deriveMotion(1)` is `MOTION_REFERENCE`, exactly.
+ * The gesture's motion policy (ADR 0607, spec §5.11): MOTION with its tempo durations stretched by the
+ * motion factor and its speed–accuracy keys co-varying with it; shape, guardrail and device keys never
+ * move. `deriveMotion(1)` is `MOTION_REFERENCE`, exactly.
  */
 
 import { MOTION } from '../motion-policy';

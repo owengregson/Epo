@@ -1,8 +1,6 @@
 /**
- * The day plan's vocabulary (ADR 0607, spec §5.15 and Appendix A) — types only.
- * The plan core (PC) writes the functions over these; every other layer reads
- * them through `src/governors/plan-types.ts` or the engine's plan port.
- *
+ * The day plan's vocabulary (ADR 0607, spec §5.15, Appendix A) — types only. The plan core writes
+ * the functions over these; other layers read them through `governors/plan-types.ts` or the plan port.
  * Layering: `src/kernel/**` imports nothing from the rest of `src/`.
  */
 

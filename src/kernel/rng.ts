@@ -1,8 +1,7 @@
 /**
- * Seeded randomness the kernel's draws share. The kernel never reads an ambient
- * random source: every stream is mulberry32 over seed material (an install
- * entropy, a launch seed, a key hash), so a draw is reproducible from its inputs.
- * `src/timing/noise.ts` re-exports both functions for the timing layer.
+ * Seeded randomness the kernel's draws share: every stream is mulberry32 over seed material (an
+ * install entropy, a launch seed, a key hash), never an ambient random source, so a draw is
+ * reproducible from its inputs. `src/timing/noise.ts` re-exports both functions.
  */
 
 /** mulberry32: a small, fast 32-bit PRNG returning draws in [0, 1). */

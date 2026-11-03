@@ -1,8 +1,7 @@
 /**
- * The TempoSource port (ADR 0607, spec §5.11): every Instagram-facing wait,
- * dwell and gesture asks it rather than reading a registry constant. The
- * reference source reproduces today's values exactly; the plan swaps a
- * plan-backed source in at its wiring module, and no consumer changes.
+ * The TempoSource port (ADR 0607, spec §5.11): every Instagram-facing wait, dwell and gesture asks it.
+ * The reference source reproduces today's values exactly; the plan swaps a plan-backed source in at
+ * its wiring module, and no consumer changes.
  */
 
 import { CAUTION, hourlyCap, NOISE, RHYTHM, SESSION } from '../derive';

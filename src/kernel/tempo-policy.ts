@@ -1,9 +1,6 @@
 /**
- * Tier 1 — the tempo dials and bounds the plan-derived timing needs (ADR 0607).
- * Each entry carries one guard line: what it keeps from going wrong. The tempo
- * registry (`./tempo/specs.ts`) and `deriveMotion` read these; nothing else
- * scales a wait.
- *
+ * Tier 1 — the tempo dials and bounds the plan-derived timing needs (ADR 0607), one guard line each.
+ * The tempo registry (`./tempo/specs.ts`) and `deriveMotion` read these; nothing else scales a wait.
  * Layering: `src/kernel/**` imports nothing from the rest of `src/`.
  */
 

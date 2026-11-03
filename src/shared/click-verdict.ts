@@ -1,8 +1,7 @@
 /**
- * What the click review decided for one action (spec §9.7): `proceed` lets the
- * dispatch run; every other verdict consumes the work and is thrown as an
- * `ActionReviewedError` for the scheduler to settle. Pure; the adapter, rim
- * and engine share it.
+ * What the click review decided for one action (spec §9.7): `proceed` lets the dispatch run; every
+ * other verdict consumes the work, thrown as an `ActionReviewedError` for the scheduler to settle.
+ * Pure; the adapter, rim and engine share it.
  */
 
 /** Which protection rule kept an account (the protection predicate's vocabulary, spec §7.3). */

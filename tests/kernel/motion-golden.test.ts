@@ -1,8 +1,7 @@
 /**
- * The MOTION golden (ADR 0607, spec §5.12 item 4): the table equals the frozen
- * snapshot plus the ADDED ledger, every key has exactly one role, every shape
- * dial carries a guard line and provenance, and `deriveMotion` is the identity
- * at m = 1 and moves only what the roles say it may.
+ * The MOTION golden (ADR 0607, spec §5.12 item 4): the table equals the frozen snapshot plus the ADDED
+ * ledger, every key has one role, every shape dial a guard line and provenance, and `deriveMotion` is
+ * the identity at m = 1 and moves only what the roles allow.
  */
 import fc from 'fast-check';
 import { MOTION } from '@/kernel/motion-policy';
