@@ -66,7 +66,7 @@ describe('the scanner catches every position', () => {
     ]);
   });
 
-  test('a read of a claimed prior, through a group import, an alias, a namespace or destructuring', () => {
+  test('a read of a claimed prior: group import, alias, namespace, destructuring, dynamic key, the group whole', () => {
     expect(keysIn('priors.ts')).toEqual([
       'scrollWait :: scrollWait :: RIM.SCROLL_WAIT_MS',
       'idle :: idle :: ENGINE.IDLE_MS',
@@ -74,15 +74,21 @@ describe('the scanner catches every position', () => {
       '<module> :: BEAT_MIN_FACTOR :: NOISE.BEAT_MIN_FACTOR',
       'gravity :: gravity :: MOTION.gravity',
       'readBase :: readBase :: PACING_BASE_MS.read',
+      'viaAlias :: viaAlias :: RIM.LIST_WALK_REST_MIN_MS',
+      'viaKey :: return :: RIM.*',
+      'handedOver :: Object.keys :: NOISE.*',
+      'copied :: copied :: ENGINE.*',
     ]);
   });
 
-  test('Math.random, called, referenced, defaulted or destructured', () => {
+  test('Math.random: called, referenced, defaulted, destructured, aliased, or Math handed on whole', () => {
     expect(keysIn('randomness.ts')).toEqual([
       'draw :: return :: Math.random',
       'source :: source :: Math.random',
       'pick :: return :: Math.random',
       '<module> :: random :: Math.random',
+      'viaAlias :: return :: Math.random',
+      'handedOver :: Object.getOwnPropertyNames :: Math.*',
     ]);
   });
 
@@ -226,8 +232,8 @@ const found = new Map<string, number[]>();
 for (const f of scan.tree) found.set(f.key, [...(found.get(f.key) ?? []), f.line]);
 const listed = new Map(allow.map((e) => [e.key, e.count ?? 1] as const));
 const fileOf = (e: Entry): string => e.key.split(' :: ')[0];
-/** Math.random and prior reads (`GROUP.key`) are never excused; only a numeric literal can be. */
-const isLiteral = (e: Entry): boolean => !/^(Math[.]random|[A-Z_]+[.][A-Za-z_]+)$/.test(e.key.split(' :: ')[3]);
+/** Math.random and prior reads (`GROUP.key`, `GROUP.*`) are never excused; only a numeric literal can be. */
+const isLiteral = (e: Entry): boolean => !/^[A-Za-z_]+[.]([A-Za-z_]+|[*])$/.test(e.key.split(' :: ')[3]);
 
 describe('the tree against static-timing.allow.json', () => {
   test('every finding is listed', () => {

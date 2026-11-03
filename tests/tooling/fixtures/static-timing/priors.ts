@@ -16,3 +16,10 @@ export const readBase = PACING_BASE_MS.read;
 
 // Not claimed by any tempo spec: a runaway bound stays readable.
 export const walkPages = RIM.LIST_WALK_MAX_PAGES;
+
+// A local alias, a dynamic key, and the group handed over whole: each still reads a prior.
+const WALK = RIM;
+export const viaAlias = WALK.LIST_WALK_REST_MIN_MS;
+export const viaKey = (key: 'SCROLL_WAIT_MS'): number => RIM[key];
+export const handedOver = Object.keys(NOISE);
+export const copied = { ...ENGINE_TIMING };

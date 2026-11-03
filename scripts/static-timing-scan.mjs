@@ -108,7 +108,9 @@ export function unitMultipliers(source = read(UNITS_FILE)) {
 
 /** The scan's inputs, read from the kernel once. */
 export function scanContext() {
-  return { claims: new Set(tempoClaims()), whole: new Set(WHOLE_GROUPS), multipliers: new Set(unitMultipliers()) };
+  const claims = tempoClaims();
+  const groups = new Set([...WHOLE_GROUPS, ...claims.map((c) => c.split('.')[0])]);
+  return { claims: new Set(claims), whole: new Set(WHOLE_GROUPS), groups, multipliers: new Set(unitMultipliers()) };
 }
 
 const TYPE_KEYS = new Set(['typeAnnotation', 'typeParameters', 'typeParams', 'typeArguments', 'superTypeParams', 'returnType', 'implements']);
@@ -126,6 +128,12 @@ const STATEMENTS = {
   SwitchStatement: 'switch', SwitchCase: 'case', ExpressionStatement: 'expr', TemplateLiteral: 'template',
   ExportDefaultExpression: 'default', ArrowFunctionExpression: 'return',
 };
+
+/** Wrappers a value passes through unchanged on its way to where it is used. */
+const WRAPPERS = new Set(['ParenthesisExpression', 'TsAsExpression', 'TsSatisfiesExpression', 'TsNonNullExpression', 'TsConstAssertion', 'TsTypeAssertion']);
+/** Slots where an identifier names something (or another check covers it) rather than hands its value on. */
+const NAMING_KEYS = new Set(['key', 'identifier', 'id', 'local', 'imported', 'orig', 'exported', 'label', 'params', 'pat', 'name']);
+const NAMING_SLOTS = new Set(['MemberExpression:object', 'MemberExpression:property', 'AssignmentPattern:left', 'AssignmentExpression:left']);
 
 function patternName(p) {
   if (p?.type === 'Identifier') return p.value;
@@ -229,14 +237,20 @@ export function scanSource(file, source, ctx) {
   const ast = parse(file, source);
   const line = lineOf(source);
   const aliases = new Map();
-  each(ast, (n) => {
-    if (n.type === 'ImportSpecifier' && n.imported) aliases.set(n.local.value, propKey(n.imported));
-  });
   const groupOf = (obj) => {
     const o = unwrap(obj);
     if (o?.type === 'Identifier') return aliases.get(o.value) ?? o.value;
     return o?.type === 'MemberExpression' ? propKey(o.property) : null;
   };
+  /** `random` for Math, `prior` for a group a tempo spec claims keys of, else null. */
+  const watched = (name) => (name === 'Math' ? 'random' : ctx.groups.has(name) ? 'prior' : null);
+  each(ast, (n) => {
+    if (n.type === 'ImportSpecifier' && n.imported) aliases.set(n.local.value, propKey(n.imported));
+    if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && unwrap(n.init)?.type === 'Identifier') {
+      const name = groupOf(n.init);
+      if (watched(name) !== null) aliases.set(n.id.value, name);
+    }
+  });
   const claimed = (group, key) => ctx.whole.has(group) || ctx.claims.has(`${group}.${key}`);
   const findings = [];
   const stack = [];
@@ -260,10 +274,23 @@ export function scanSource(file, source, ctx) {
     } else if (node.type === 'MemberExpression') {
       const group = groupOf(node.object);
       const key = propKey(node.property);
+      const dynamic = node.property.type === 'Computed' && node.property.expression.type !== 'StringLiteral';
       if (group === 'Math' && key === 'random') {
         const call = stack[top]?.node.type === 'CallExpression' && stack[top].key === 'callee';
         report(node, 'random', 'Math.random', call ? top - 1 : top);
       } else if (group !== null && claimed(group, key)) report(node, 'prior', `${group}.${key}`, top);
+      else if (dynamic && watched(group) !== null) report(node, watched(group), `${group}.*`, top);
+    } else if (node.type === 'Identifier' && watched(aliases.get(node.value) ?? node.value) !== null) {
+      // A watched object handed on whole (an argument, a spread, a return) gives away every key.
+      if (stack.some((f) => TYPE_KEYS.has(f.key) || TYPE_DECLS.has(f.node.type))) return;
+      let i = top;
+      while (i >= 0 && (stack[i].node.type === undefined || WRAPPERS.has(stack[i].node.type))) i -= 1;
+      const anchor = stack[i];
+      const declared = anchor?.node.type === 'VariableDeclarator' && anchor.key === 'init' &&
+        (anchor.node.id.type === 'Identifier' || anchor.node.id.type === 'ObjectPattern');
+      if (anchor === undefined || declared || NAMING_KEYS.has(anchor.key) || NAMING_SLOTS.has(`${anchor.node.type}:${anchor.key}`)) return;
+      const name = aliases.get(node.value) ?? node.value;
+      report(node, watched(name), `${name}.*`, top);
     } else if (node.type === 'VariableDeclarator' && node.id.type === 'ObjectPattern' && node.init) {
       // Destructuring reads the property too: `const { random } = Math`, `const { X } = RIM`.
       const group = groupOf(node.init);

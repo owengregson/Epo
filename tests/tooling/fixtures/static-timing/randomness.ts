@@ -11,3 +11,7 @@ export function pick(rng?: () => number): number {
 
 const { random } = Math;
 export const viaDestructuring = random;
+
+const M = Math;
+export const viaAlias = (): number => M.random();
+export const handedOver = Object.getOwnPropertyNames(Math);
