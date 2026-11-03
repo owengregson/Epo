@@ -8,6 +8,39 @@
  * happens we want the failure to be LOUD and attributable — never a silently
  * swallowed no-op that lets the engine believe an action succeeded.
  */
+
+import type { ClickVerdict } from '@/shared/click-verdict';
+
+/**
+ * Thrown when an admission gate held an action back before any press: the
+ * record is untouched and the work runs later. `reason` is the typed refusal
+ * when the gate named one (else the message); `until` is when it lifts, if known.
+ */
+export class ActionDeferredError extends Error {
+  readonly reason: string;
+  readonly until: number | null;
+
+  constructor(message: string, opts: { reason?: string; until?: number | null } = {}) {
+    super(message);
+    this.name = 'ActionDeferredError';
+    this.reason = opts.reason ?? message;
+    this.until = opts.until ?? null;
+  }
+}
+
+/**
+ * Thrown when the click review CONSUMED the work with a verdict other than
+ * `proceed` (spec §9.7). Not a deferral: the scheduler settles the record by
+ * the verdict instead of retrying the same act.
+ */
+export class ActionReviewedError extends Error {
+  constructor(readonly verdict: ClickVerdict) {
+    super(`Action reviewed: ${verdict.kind}`);
+    this.name = 'ActionReviewedError';
+    Object.setPrototypeOf(this, ActionReviewedError.prototype);
+  }
+}
+
 /**
  * Thrown when an Actor operation was interrupted by the ACTIVE driver's abort
  * signal (a user `stop()`/pause) rather than failing. Distinguishing this from
@@ -16,10 +49,6 @@
  * command — the record must be left completely untouched so it retries when
  * the engine next runs.
  */
-export class ActionDeferredError extends Error {
-  constructor(readonly reason: string) { super(reason); this.name = 'ActionDeferredError'; }
-}
-
 export class ActionAbortedError extends Error {
   /** The adapter operation that was interrupted, e.g. `actor.follow`. */
   readonly component: string;
