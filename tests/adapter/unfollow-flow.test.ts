@@ -4,6 +4,7 @@
  * Instagram renders after each press, served to the Actor through a scripted network tab.
  */
 import { Actor } from '@/adapter/actor';
+import type { ConfirmCapture, ConfirmCaptureRecord } from '@/adapter/confirm-capture';
 import { ActionDeferredError } from '@/adapter/errors';
 import type { LocatedRect } from '@/adapter/ig-surface';
 import { SURFACE } from '@/adapter/ig-surface';
@@ -41,6 +42,19 @@ const menu = (): Layer =>
 const dialog = (): Layer =>
   ({ sig: '0:2:dialog', kind: 'dialog', confirm: DIALOG_BUTTON, cancel: CANCEL, close: null, controls: 2, structural: 'Unfollow' });
 
+/** A layer's markup as the page would hand it over: the account's handle, its link, an image, a long id. */
+const markupOf = (layer: Layer): string =>
+  `<div role="dialog" data-sig="${layer.sig}"><a href="/someone/">someone</a>`
+  + '<span>If you change your mind, you\'ll have to request to follow @someone again.</span>'
+  + '<img src="https://scontent.cdninstagram.com/v/t51/123456789012_n.jpg"></div>';
+
+/** A capture that keeps what it is handed, each signature once. */
+function recordingCapture(): ConfirmCapture & { records: ConfirmCaptureRecord[] } {
+  const kept = new Set<string>();
+  const records: ConfirmCaptureRecord[] = [];
+  return { records, wants: (sig) => !kept.has(sig), save: (sig, record) => { kept.add(sig); records.push(record); } };
+}
+
 /** What a press of the header or a confirm control does on this page (Cancel and the X close the top layer). */
 interface Script {
   header?: () => void;
@@ -73,8 +87,9 @@ class ConfirmPage {
     });
     this.tab.on(pageCall('confirmLayer'), () => {
       const top = this.top();
+      const withMarkup = this.tab.evaluated[this.tab.evaluated.length - 1].includes('"withMarkup":true');
       return top === null ? { present: false } : { present: true, sig: top.sig, layer: top.kind, controls: top.controls,
-        matches: top.confirm !== null, structural: top.structural, markup: `<div role="dialog">${top.sig}</div>` };
+        matches: top.confirm !== null, structural: top.structural, markup: withMarkup ? markupOf(top) : undefined };
     });
     this.tab.on(marker('"control":"unfollow-dialog-cancel"'), () =>
       this.top()?.cancel ? { found: true, rect: this.top()?.cancel } : { found: false });
@@ -118,6 +133,7 @@ interface ActorOpts {
   admit?: () => Promise<void>;
   tempo?: TempoSource;
   sink?: SurfaceSink;
+  capture?: ConfirmCapture;
   abort?: AbortController;
 }
 
@@ -125,7 +141,7 @@ interface ActorOpts {
 function actorOn(page: ConfirmPage, opts: ActorOpts = {}): Actor {
   return new Actor(page.tab, {
     pollIntervalMs: 1, pollTimeoutMs: 30, mutationTimeoutMs: 30, interactor: page.h,
-    beforeMutation: opts.admit ?? (async () => {}), tempo: opts.tempo, sink: opts.sink,
+    beforeMutation: opts.admit ?? (async () => {}), tempo: opts.tempo, sink: opts.sink, capture: opts.capture,
     abortSignal: opts.abort === undefined ? undefined : () => opts.abort?.signal,
     sleep: async () => { page.events.push('pause'); },
     prepareProfile: async (username) => { await page.tab.goto(SURFACE.profileUrl(username)); },
@@ -299,14 +315,17 @@ describe('F5: an exit that did not land leaves the tab clean', () => {
       confirm: () => p.layers.splice(0, p.layers.length, restrict()),
     }));
     const sink = new MemorySink();
+    const capture = recordingCapture();
 
-    const result = await actorOn(page, { sink }).unfollow('someone', 'pk');
+    const result = await actorOn(page, { sink, capture }).unfollow('someone', 'pk');
 
     expect(result.ok).toBe(false);
     expect(page.h.clicks).toEqual([HEADER, MENU_ROW, CANCEL]);
     expect(sink.snapshot().drift.map((d) => [d.signal.endpoint, d.signal.cls, d.signal.detail.op])).toEqual([
       ['mutation', 'confirm-unrecognized', 'actor.unfollow'],
     ]);
+    // The capture request: the unknown layer's markup, scrubbed, and the control it offered (never pressed).
+    expect(capture.records.map((r) => [r.reason, r.layer, r.structural])).toEqual([['unrecognized', 'dialog', 'Restrict']]);
   });
 
   test('a menu left on screen has no Cancel: its Close X closes it', async () => {
@@ -411,5 +430,43 @@ describe('in-action pacing (spec §11.2 item 11)', () => {
       return page.h.scrolls[0].deltaPx;
     };
     expect(await scrolled(fixedTempo(0.5))).toBe(2 * (await scrolled()));
+  });
+});
+
+describe('the passive capture (spec §11.1, §22 L5)', () => {
+  test('a layer met after the first is captured once, scrubbed, with the POSTs the tab saw', async () => {
+    const capture = recordingCapture();
+    const page = new ConfirmPage('following', variantP);
+    const actor = actorOn(page, { capture });
+
+    expect((await actor.unfollow('someone', 'pk')).ok).toBe(true);
+    page.state = 'following';
+    expect((await actor.unfollow('someone', 'pk')).ok).toBe(true);
+
+    expect(capture.records).toHaveLength(1);
+    const [record] = capture.records;
+    expect(record).toMatchObject({ reason: 'later-layer', op: 'actor.unfollow', layer: 'dialog', controls: 2 });
+    expect(record.markup).not.toMatch(/someone|cdninstagram|123456789012/);
+    expect(record.markup).toContain('request to follow @user_a1 again');
+    expect(Array.isArray(record.unmatchedPosts)).toBe(true);
+  });
+
+  test('a layer left on screen is captured as such before it is closed', async () => {
+    const capture = recordingCapture();
+    const stuck: Layer = { ...dialog(), confirm: { x: 0, y: 0, width: 0, height: 0 } };
+    const page = new ConfirmPage('requested', (p) => ({ header: () => p.layers.push(stuck) }));
+
+    await actorOn(page, { capture }).unfollow('someone', 'pk');
+
+    expect(capture.records.map((r) => r.reason)).toEqual(['left-visible']);
+    expect(page.h.clicks).toEqual([HEADER, CANCEL]);
+  });
+
+  test('a public account shows no later layer: nothing is captured', async () => {
+    const capture = recordingCapture();
+    const page = new ConfirmPage('following', (p) => ({ header: () => p.layers.push(menu()), confirm: () => p.land() }));
+
+    expect((await actorOn(page, { capture }).unfollow('someone', 'pk')).ok).toBe(true);
+    expect(capture.records).toEqual([]);
   });
 });

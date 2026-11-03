@@ -18,6 +18,7 @@ import { type SleepFn, sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 import type { Result } from '@/utils/result';
 import type { AdapterTab } from './actor-types';
+import { type CaptureReason, type ConfirmCapture, logCapture, scrubbedCapture } from './confirm-capture';
 import { ActionAbortedError, ActionBlockedError, ActionRateLimitedError, AdapterStaleError } from './errors';
 
 const CONFIRM = 'unfollow-confirm';
@@ -30,11 +31,13 @@ export interface ConfirmFlowOptions {
   readonly sleep?: SleepFn;
   /** Where an unrecognized confirm layer is reported (default: nowhere, until the production sink is wired). */
   readonly sink?: SurfaceSink;
+  /** Where layer captures go (default: the durable runtime log, each layer once). */
+  readonly capture?: ConfirmCapture;
 }
 
 /** The flow options with their defaults filled in. */
 export const confirmDefaults = (o: ConfirmFlowOptions): Required<ConfirmFlowOptions> =>
-  ({ sleep: o.sleep ?? sleep, sink: o.sink ?? NO_SINK });
+  ({ sleep: o.sleep ?? sleep, sink: o.sink ?? NO_SINK, capture: o.capture ?? logCapture() });
 
 /** One action's flow: what the layer loop drives and reads. */
 export interface LayerFlow extends Required<ConfirmFlowOptions> {
@@ -99,10 +102,30 @@ export async function pressConfirmLayers(f: LayerFlow): Promise<LayerRun> {
     const later = layer > 0;
     const step = await f.waitFor(() => probe(f, lastSig, later), (s) => s.kind !== 'pending');
     if (step === null || step.kind !== 'confirm') break;
+    if (later) await captureLater(f, step.located);
     const pressed = await pressLayer(f, step.located, later);
     if (pressed !== null) lastSig = sigOf(pressed);
   }
   return { lastSig };
+}
+
+/** A layer met after the first is captured once (the next private unfollow is also the capture, §22 L5). */
+async function captureLater(f: LayerFlow, located: ConfirmLocate): Promise<void> {
+  if (!f.capture.wants(sigOf(located))) return;
+  try {
+    const top = await report(f, true);
+    if (top?.present === true) keep(f, 'later-layer', top);
+  } catch (e) {
+    logger.warn(`${f.op}: the confirm layer capture failed`, { username: f.username, error: String(e) });
+  }
+}
+
+/** Save one capture of the top layer: scrubbed markup and the watch's unmatched POSTs. */
+function keep(f: LayerFlow, reason: CaptureReason, top: LayerReport): void {
+  const sig = top.sig ?? '';
+  if (!f.capture.wants(sig) || top.markup === undefined) return;
+  f.capture.save(sig, scrubbedCapture({ reason, op: f.op, username: f.username, layer: top.layer, controls: top.controls,
+    structural: top.structural, markup: top.markup, unmatchedPosts: f.watch.unmatchedPosts() }));
 }
 
 /** One poll: the mutation's answer, a new pressable layer, or the header's flip. */
@@ -191,10 +214,11 @@ export async function runFlow(f: LayerFlow, decide: () => Promise<Result<{ click
 async function leaveLayers(f: LayerFlow, run: LayerRun, shown: 'nothing' | 'refusal'): Promise<void> {
   try {
     if (f.signal()?.aborted) return;
-    const top = await report(f, false);
+    const top = await report(f, true);
     if (top?.present !== true) return;
-    const unknown = top.sig !== run.lastSig && (f.maxLayers === 0 || top.matches !== true);
-    if (shown === 'nothing' && unknown) noteUnrecognized(f, top);
+    const unrecognized = shown === 'nothing' && top.sig !== run.lastSig && (f.maxLayers === 0 || top.matches !== true);
+    if (unrecognized) noteUnrecognized(f, top);
+    keep(f, unrecognized ? 'unrecognized' : 'left-visible', top);
     await closeLayer(f, top);
   } catch (e) {
     logger.warn(`${f.op}: leaving the confirm layer failed`, { username: f.username, error: String(e) });
