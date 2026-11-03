@@ -88,6 +88,7 @@ export function UnfollowSection({ s }: SectionProps): JSX.Element {
       <RadioCards
         class="radio-cards--two"
         label={UNFOLLOW_COPY.mutuals}
+        dataRow="unfollow.mutuals"
         choices={mutuals}
         selected={s.c.value<MutualPolicy>(mutualKey, view.intent.mutuals)}
         onSelect={(m) => s.send(mutualKey, [{ op: 'intent', key: 'mutuals', value: m }], m)}
@@ -98,6 +99,7 @@ export function UnfollowSection({ s }: SectionProps): JSX.Element {
       <p class="set-sec__hint">{UNFOLLOW_COPY.ownHelp}</p>
       <RadioCards
         label={UNFOLLOW_COPY.own}
+        dataRow="unfollow.cleanup"
         choices={levels}
         selected={cleanup}
         onSelect={pickCleanup}

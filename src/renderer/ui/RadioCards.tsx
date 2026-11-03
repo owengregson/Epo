@@ -40,10 +40,12 @@ export interface RadioCardsProps<T> {
   onPreview?(value: T | null): void;
   pending?: boolean;
   class?: string;
+  /** The page anchor search and deep links scroll to. */
+  dataRow?: string;
 }
 
 /** Intent cards: a radio group whose selected card says so in words, not colour alone. */
-export function RadioCards<T>({ label, choices, selected, onSelect, onPreview, pending, class: cls }: RadioCardsProps<T>): JSX.Element {
+export function RadioCards<T>({ label, choices, selected, onSelect, onPreview, pending, class: cls, dataRow }: RadioCardsProps<T>): JSX.Element {
   const values = choices.filter((c) => !c.disabled).map((c) => c.value);
   return (
     <div
@@ -51,6 +53,7 @@ export function RadioCards<T>({ label, choices, selected, onSelect, onPreview, p
       role="radiogroup"
       aria-label={label}
       aria-busy={pending ? 'true' : undefined}
+      data-row={dataRow}
       style={`--cols:${Math.min(3, choices.length)}`}
       onKeyDown={(e) => onRovingKey(e, values, selected, onSelect)}
     >

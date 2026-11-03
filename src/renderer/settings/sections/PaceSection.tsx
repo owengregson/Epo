@@ -82,6 +82,7 @@ export function PaceSection({ s }: SectionProps): JSX.Element {
     <>
       <RadioCards
         label={PACE_COPY.label}
+        dataRow="pace.cards"
         choices={choices}
         selected={selected}
         onSelect={(id) => s.send(KEY, paceOps(id), id)}

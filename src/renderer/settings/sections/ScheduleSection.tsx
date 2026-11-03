@@ -99,6 +99,7 @@ export function ScheduleSection({ s }: SectionProps): JSX.Element {
       <RadioCards
         class="radio-cards--days"
         label={SCHEDULE_COPY.shapeLabel}
+        dataRow="schedule.shape"
         choices={shapes}
         selected={s.c.value(shapeKey, view.intent.dayShape)}
         onSelect={(v) => s.send(shapeKey, [{ op: 'intent', key: 'dayShape', value: v }], v)}
@@ -114,6 +115,7 @@ export function ScheduleSection({ s }: SectionProps): JSX.Element {
       <Sub>{SCHEDULE_COPY.sessions}</Sub>
       <RadioCards
         label={SCHEDULE_COPY.sessions}
+        dataRow="schedule.rhythm"
         choices={rhythms}
         selected={s.c.value(rhythmKey, view.intent.rhythm)}
         onSelect={(v) => s.send(rhythmKey, [{ op: 'intent', key: 'rhythm', value: v }], v)}

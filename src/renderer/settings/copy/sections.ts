@@ -45,6 +45,8 @@ export const STAGE_COPY = {
   search: 'Search settings',
   searchEmpty: 'Nothing matches “{q}”.',
   searchInAdvanced: 'In Advanced → {section}',
+  searchCount: '{n} found',
+  searchKey: 'Press / to search',
   show: 'Show',
   loadFailed: 'Couldn’t load your settings.',
   retry: 'Retry',

@@ -16,6 +16,7 @@ import { Notices } from './Notices';
 import { Section } from './Section';
 import { SectionRail } from './SectionRail';
 import { SettingsHeader, saveStatusOf } from './SettingsHeader';
+import { SettingsSearch } from './SettingsSearch';
 import { useScrollSpy } from './scroll-spy';
 import { ADVANCED_EXTRAS, SECTION_BODIES } from './section-bodies';
 import { isAdvancedOnly, type SettingsMode, sectionDomId, sectionOf, visibleSections } from './sections';
@@ -97,7 +98,7 @@ function Stage({ view, c, updateStatus }: { view: SettingsView; c: SettingsCommi
 
   return (
     <div class="stage-page set-page" data-mode={mode}>
-      <SettingsHeader mode={mode} onMode={setMode} save={saveStatusOf(c.state, c.undo, c.retry)} />
+      <SettingsHeader mode={mode} onMode={setMode} save={saveStatusOf(c.state, c.undo, c.retry)} search={<SettingsSearch s={api} />} />
       <Notices s={api} />
       <SummaryLine status={status} />
       <div class="set-grid">

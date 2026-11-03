@@ -68,6 +68,7 @@ export function AudienceSection({ s }: SectionProps): JSX.Element {
       <Sub>{AUDIENCE_COPY.size}</Sub>
       <RadioCards
         label={AUDIENCE_COPY.size}
+        dataRow="audience.size"
         choices={sizes}
         selected={size}
         onSelect={(v) => s.send(sizeKey, [{ op: 'intent', key: 'audienceSize', value: v }], v)}
@@ -80,6 +81,7 @@ export function AudienceSection({ s }: SectionProps): JSX.Element {
       <RadioCards
         class="radio-cards--two"
         label={AUDIENCE_COPY.prefer}
+        dataRow="audience.focus"
         choices={focuses}
         selected={focus}
         onSelect={(v) => s.send(focusKey, [{ op: 'intent', key: 'audienceFocus', value: v }], v)}
