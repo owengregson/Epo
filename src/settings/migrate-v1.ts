@@ -1,9 +1,7 @@
 /**
- * The pure v1 → v2 migration (spec §6.10). Today's own v1 pipeline resolves every
- * v1 quirk; the mapping writes an override only where v1 differs from the FROZEN v1
- * derivation (`V1_DERIVED`, so a default install of any persona migrates with zero
- * overrides); timing rows only ever slow down; both protection lists come from the
- * raw file, every item counted. A broken post-condition refuses, never fixes up.
+ * The pure v1 → v2 migration (spec §6.10): today's v1 pipeline resolves every quirk; an override is written
+ * only where v1 differs from the FROZEN `V1_DERIVED` (a default install of any persona gets none); timing
+ * rows only slow down; both lists come raw, every item counted; a broken post-condition refuses.
  */
 import { createHash } from 'node:crypto';
 import { SETTINGS_POLICY } from '@/kernel/settings-policy';

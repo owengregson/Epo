@@ -1,9 +1,7 @@
 /**
- * The FROZEN v1 derivation (spec §6.10 †): the fourteen pattern-derived numbers as
- * the snapshot-era `derivePattern` produced them, never the live kernel. Each
- * number depends on one ordinal knob, so the table per knob reproduces every
- * pattern; a test pins it to the 30 grid points and the personas of
- * `tests/kernel/legacy-config.snapshot.ts`. The migration compares v1 values here.
+ * The FROZEN v1 derivation (spec §6.10 †): the fourteen pattern-derived numbers as the snapshot-era
+ * `derivePattern` made them, never the live kernel. Each depends on one ordinal knob, so a per-knob table
+ * reproduces every pattern (pinned to the snapshot's 30 grid points and personas); the migration reads it.
  */
 import type { PatternSettings, ResolvedPattern } from '../pattern-map';
 

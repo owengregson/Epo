@@ -1,11 +1,9 @@
 import type { Migration } from './migration-types';
 
 /**
- * Append-only migration 14: the review columns. `follow_records` gains the kept
- * state's reason, match and stamp, the shared re-check columns (`recheck_at` =
- * earliest next Instagram read, `check_failures` = consecutive unreadable or
- * unreachable observations), the park reason and the follow-back dating bound;
- * `effect_intents` gains its attempt count and next attempt.
+ * Append-only migration 14, the review columns: `follow_records` gains the kept reason, match and stamp, the
+ * re-check columns (`recheck_at` = earliest next Instagram read, `check_failures` = consecutive unreadable or
+ * unreachable reads), the park reason and the follow-back bound; `effect_intents` its attempts and next attempt.
  */
 export const REVIEW_COLUMNS_MIGRATION: Migration = {
   id: 14,

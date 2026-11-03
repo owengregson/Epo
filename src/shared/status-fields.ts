@@ -1,8 +1,7 @@
 /**
- * The status fields beyond the engine's own (spec §15.3, §14 C22): `EpoStatus` is
- * `EngineStatus & StatusFields`. Main composes them from the current graph's
- * status contributors plus the graph-independent `basis`; each wiring module
- * returns its own contributors. Renderer-safe types only.
+ * The status fields beyond the engine's own (spec §15.3, §14 C22): `EpoStatus` is `EngineStatus &
+ * StatusFields`. Main composes them from the current graph's status contributors (each wiring module
+ * returns its own) plus the graph-independent `basis`. Renderer-safe types only.
  */
 import type { BoostView } from './boost';
 import type { BootView } from './boot';

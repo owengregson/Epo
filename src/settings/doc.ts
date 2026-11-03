@@ -13,7 +13,7 @@ export interface OverrideEntry {
   /** What the user asked for; clamping happens at resolve time and is reported. */
   readonly value: ParamValue;
   readonly setAt: number;
-  /** The recommendation when it was set (stale detection). */
+  /** The recommendation when it was set: the override reads as stale once the recommendation moves. */
   readonly basis: ParamValue;
 }
 

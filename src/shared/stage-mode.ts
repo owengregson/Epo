@@ -1,8 +1,7 @@
 /**
- * What fills the window region right of the console: the embedded IG tab, or a
- * stage that covers it (People, Graph, Prune, Settings) while the tab keeps
- * running underneath. The shell (main) swaps the view; the renderer asks for
- * the swap — one vocabulary, shared, with its guard.
+ * What fills the window region right of the console: the embedded IG tab, or a stage that covers it (People,
+ * Graph, Prune, Settings) while the tab keeps running underneath. The shell (main) swaps the view and the
+ * renderer asks for the swap: one vocabulary, shared, with its guard.
  */
 export const STAGE_MODES = ['tab', 'people', 'graph', 'prune', 'settings'] as const;
 export type StageMode = (typeof STAGE_MODES)[number];

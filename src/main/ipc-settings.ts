@@ -1,8 +1,7 @@
 /**
- * The Settings rows' handlers and typed fallbacks (Appendix B.9), spread into
- * `src/main/ipc.ts`. Until the settings core lands, the v2 rows answer their
- * typed fallbacks (the view is the service's transitional one); the three v1
- * rows and `seed:check` keep today's behaviour and today's wire shapes.
+ * The Settings rows' handlers and typed fallbacks (Appendix B.9), spread into `src/main/ipc.ts`. Until the
+ * settings core lands, the v2 rows answer their typed fallbacks (the view is the service's transitional
+ * one); the three v1 rows and `seed:check` keep today's behaviour and today's wire shapes.
  */
 
 import type { IpcFallbacks, IpcHandlers } from '@/ipc/register';

@@ -1,8 +1,7 @@
 /**
- * What the engine consumes (spec §6.9, Appendix B.3): a flat record that keeps
- * the v1 field names wherever the meaning is unchanged, so the `toXConfig`
- * mappers and engine call sites barely move. There is no alias: the renderer
- * keeps the frozen v1 `Settings` until the Settings stage replaces it.
+ * What the engine consumes (spec §6.9, Appendix B.3): a flat record keeping the v1 field names wherever the
+ * meaning is unchanged, so the `toXConfig` mappers and engine call sites barely move. There is no alias: the
+ * renderer keeps the frozen v1 `Settings` until the Settings stage replaces it.
  */
 import { SCORER_DEFAULTS } from '@/engine/scorer';
 import { SETTINGS_POLICY } from '@/kernel/settings-policy';

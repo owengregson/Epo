@@ -1,10 +1,7 @@
 /**
- * The settings service: loads, caches, persists and live-reloads the v1
- * settings file for the Foundation, so every reader shares one copy. Its v2
- * surface (spec §6.9) runs on these v1 internals until the settings core
- * replaces them: `effective()`, `protection()` (the new predicate over the v1
- * lists), `view()`, the capability flags each wiring site sets and the plan
- * preview port the plan wiring registers.
+ * The settings service: loads, caches, persists and live-reloads the v1 settings file, one copy for every
+ * reader. Its v2 surface (spec §6.9) runs on v1 internals until the settings core replaces them: `effective()`,
+ * `protection()` (the new predicate), `view()`, the capability flags and the plan preview port.
  */
 
 import * as path from 'node:path';

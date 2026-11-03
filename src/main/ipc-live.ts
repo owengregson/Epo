@@ -1,8 +1,7 @@
 /**
- * The live-data rows' handlers and typed fallbacks (spec §12.9), spread into
- * `src/main/ipc.ts`. Until the live-data stream lands, the live tab reports no
- * phase and no hold, the feed is the not-built one, the log ring is empty and its
- * switches do nothing; the updater pull serves the updater's current state as today.
+ * The live-data rows' handlers and typed fallbacks (spec §12.9), spread into `src/main/ipc.ts`. Until the
+ * live-data stream lands the live tab reports no phase and no hold, the feed is the not-built one, the log
+ * ring is empty and its switches do nothing; the updater pull serves the updater's current state as today.
  */
 
 import type { IpcFallbacks, IpcHandlers } from '@/ipc/register';

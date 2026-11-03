@@ -1,8 +1,7 @@
 /**
- * The seed check's typed result (spec §13): only an evidence-backed
- * `not-found` is a verdict; `queued` and `unreadable` never read as "not found".
- * The `seed:check` wire keeps the older shape until the Settings stage lands,
- * mapped down by {@link toLegacySeedCheck}. Pure.
+ * The seed check's typed result (spec §13): only an evidence-backed `not-found` is a verdict; `queued` and
+ * `unreadable` never read as "not found". The `seed:check` wire keeps the older shape until the Settings
+ * stage lands, mapped down by {@link toLegacySeedCheck}. Pure.
  */
 
 export type SeedQueueReason =

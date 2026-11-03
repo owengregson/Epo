@@ -1,8 +1,7 @@
 /**
- * Coercion for the v2 document (ADR 0103 style): every field is repaired to the
- * nearest safe value, never a throw; garbage is dropped and COUNTED so the caller
- * can put protection under review. Shape only — value bounds apply at resolve time.
- * The table is `satisfies`-linked to the document, so a field cannot go uncoerced.
+ * Coercion for the v2 document (ADR 0103 style): each field is repaired to the nearest safe value, never a
+ * throw; garbage is dropped and COUNTED so the caller can put protection under review. Shape only (value
+ * bounds apply at resolve time); the table is `satisfies`-linked to the document, so no field goes uncoerced.
  */
 import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import {

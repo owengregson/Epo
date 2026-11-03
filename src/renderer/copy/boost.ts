@@ -1,8 +1,7 @@
 /**
- * The Boost copy deck (Appendix B.10 and C.15, with the recorded answers: Boost
- * may lift a day up to Epo's fullest automatic day, and the user-facing word for
- * cleanup is Prune). `{name}` marks a value the caller fills from a projection;
- * no number lives in copy. Shared by the Settings section and the sidebar control.
+ * The Boost copy deck (Appendix B.10, C.15 and the recorded answers: Boost may lift a day up to Epo's fullest
+ * automatic day; the user-facing word for cleanup is Prune). `{name}` marks a value the caller fills from a
+ * projection; no number lives in copy. The Settings section and the sidebar control share it.
  */
 
 export const BOOST_COPY = {

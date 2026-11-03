@@ -1,8 +1,7 @@
 /**
- * The one protection predicate (spec §7.3): people by pk (or, unlinked, by
- * username), Unicode-folded bio words and verified accounts. It never reads
- * follow-back state, and it is monotone: adding an entry, a word or a rule never
- * turns a protected or unknown subject clear. Pure, renderer-safe.
+ * The one protection predicate (spec §7.3): people by pk (or, unlinked, by username), Unicode-folded bio
+ * words and verified accounts. It never reads follow-back state, and it is monotone: adding an entry, a word
+ * or a rule never turns a protected or unknown subject clear. Pure, renderer-safe.
  */
 import type { ProtectionSettings, ProtectionState } from './settings-model';
 

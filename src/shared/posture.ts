@@ -1,8 +1,7 @@
 /**
- * Posture: one vocabulary, one pure function (spec §12.3). The renderer derives
- * the live column's posture from its signals and main derives the window title
- * and Dock badge from the same function. `POSTURE_RULES` is the precedence
- * table: the first rule that holds names the kind.
+ * Posture: one vocabulary, one pure function (spec §12.3). The renderer derives the live column's posture
+ * from its signals and main the window title and Dock badge from the same function. `POSTURE_RULES` is the
+ * precedence table: the first rule that holds names the kind.
  */
 import type { BootView } from './boot';
 
