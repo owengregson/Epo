@@ -9,7 +9,7 @@ import type { EngineWriteKind } from '@/engine/plan-port';
 import { UnconfirmedBreaker } from '@/engine/unconfirmed-breaker';
 import type { Clock } from '@/governors/clock';
 import type { PlanService } from '@/governors/plan-service';
-import type { PlanPreviewPort, PlanView } from '@/governors/plan-types';
+import type { Admission, PlanPreviewPort, PlanView } from '@/governors/plan-types';
 import { viewPlan } from '@/governors/plan-view';
 import { drawDayPlan } from '@/kernel/plan';
 import { MS_PER_DAY } from '@/kernel/units';
@@ -147,10 +147,17 @@ export function busyDay(plan: PlanService, from: number, sessions = 3): PlanView
 
 /** A plan view at `now` from a drawn plan, with the fields a loop test steers set. */
 export function stubPlanView(now: number, o: { open: boolean; nextSessionAt: number | null; target: number;
-  hourCap?: number; usedAuto?: number }): PlanView {
+  hourCap?: number; usedAuto?: number; mixDraw?: number | null; unfollowsLeft?: number }): PlanView {
   const plan = drawDayPlan(drawInput(now));
   const base = viewPlan(plan, viewInputs(plan, now));
   const reads = { reconcile: 0, explore: 0, explorePages: 0, checks: 0, checkPages: 0 };
+  const usedAuto = o.usedAuto ?? 0;
+  // The admission the flags describe: closed between sessions, done once the target is spent, else open.
+  const admits = (): Admission => {
+    if (!o.open) return { ok: false, reason: 'session-closed', until: o.nextSessionAt };
+    if (usedAuto >= o.target) return { ok: false, reason: 'day-done', until: base.window.endsAt };
+    return { ok: true };
+  };
   return {
     ...base,
     plan: {
@@ -159,10 +166,13 @@ export function stubPlanView(now: number, o: { open: boolean; nextSessionAt: num
       ceilings: { ...plan.ceilings, hour: o.hourCap ?? plan.ceilings.hour },
     },
     open: o.open
-      ? { idx: 0, mixLeft: { follow: 1, unfollow: 1, accept: 0 }, readsLeft: reads, mix: 'normal', probation: false, censusHost: false }
+      ? { idx: 0, mixLeft: { follow: 1, unfollow: o.unfollowsLeft ?? 1, accept: 0 }, readsLeft: reads, mix: 'normal', probation: false,
+        censusHost: false }
       : null,
     nextSessionAt: o.open ? null : o.nextSessionAt,
-    used: { ...base.used, auto: o.usedAuto ?? 0 },
+    used: { ...base.used, auto: usedAuto },
+    admits,
+    mixDraw: () => o.mixDraw ?? null,
   };
 }
 
@@ -176,6 +186,10 @@ export class FakePlan implements EnginePacing {
   target = 25;
   hourCap: number | undefined;
   usedAuto = 0;
+  /** The mix draw the open session offers (null: an unfollow first whenever one is due). */
+  mixDrawValue: number | null = null;
+  /** The session's unfollow share left. */
+  unfollowsLeft = 1;
   /** The exact velocity window the next read reports (null: the rolling hour has room). */
   velocityUntil: number | null = null;
   /** When each practice-mode write landed. */
@@ -186,7 +200,7 @@ export class FakePlan implements EnginePacing {
     private readonly deadlines?: Pick<KnowledgeStore, 'setActionDelayDeadline'>) {}
   view(now: number): PlanView {
     return stubPlanView(now, { open: this.open, nextSessionAt: this.nextStart, target: this.target, hourCap: this.hourCap,
-      usedAuto: this.usedAuto });
+      usedAuto: this.usedAuto, mixDraw: this.mixDrawValue, unfollowsLeft: this.unfollowsLeft });
   }
   ensureIfProvisional(now: number): PlanView {
     this.ensures += 1;
@@ -202,6 +216,11 @@ export class FakePlan implements EnginePacing {
   }
   noteOutcome(kind: EngineWriteKind, unverified: boolean, at: number): number {
     return this.breaker.note(kind, unverified, at, this.nextStart);
+  }
+  /** The surface gate's pauses a test sets. */
+  pausedActivities = new Set<'unfollows' | 'exploration'>();
+  paused(activity: 'unfollows' | 'exploration'): boolean {
+    return this.pausedActivities.has(activity);
   }
 }
 

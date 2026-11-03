@@ -69,8 +69,8 @@ export interface EngineFactDeps {
   sweepCadence: SweepCadence;
   /** The woven prune feed's next offer (consumes leading skips — see the Engine). */
   selectPruneCandidate(now: number): FeedCandidate | null;
-  /** The seeded engine stream (never the noise stream). */
-  rng(): number;
+  /** The cleanup cool-down after a rate wall (spec §5.7). */
+  cleanupCooldown(now: number): boolean;
   /** The cold consecutive-failure threshold the ladder enters at. */
   actionsFailingHalt: number;
   yieldRefill?(): boolean;
@@ -134,9 +134,11 @@ export function buildEngineFactSources(d: EngineFactDeps): FactSources {
       staleAfterMs: 0,
       gather: async (read) => {
         const target = (await read('target')).current;
+        // Finding new people waits while the list surface is unconfirmed (spec §10.6); queued follows continue.
+        const exploring = !d.pacing.paused('exploration');
         return {
           queuedForTarget: target === null ? 0 : queuedCountFor(store, target.pk),
-          lowWaterCandidates: Math.min(d.settings().lowWaterCandidates, EXPLORATION_POLICY.queuedPerSource),
+          lowWaterCandidates: exploring ? Math.min(d.settings().lowWaterCandidates, EXPLORATION_POLICY.queuedPerSource) : 0,
           targetExhausted: d.targets.isExhausted(),
           yieldToAction: d.yieldRefill?.() ?? false,
           rotationReason: d.rotationReason?.() ?? null,

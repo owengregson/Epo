@@ -9,13 +9,11 @@ import { compareByScoreDesc, type FollowRecord } from '../store/types';
 import type { ChurnConfig, ChurnDeps } from './churn-types';
 import { journalBlocks } from './journal';
 
-/** What the pick reads; the config and the cleanup streak are read live. */
+/** What the pick reads; the config is read live. */
 export interface ChurnPickDeps {
   store: KnowledgeStore;
   ownPk?: string;
   cfg(): ChurnConfig;
-  /** Consecutive verified unfollows since the last verified follow. */
-  consecutiveCleanup(): number;
   pickQueued?: ChurnDeps['pickQueued'];
   /** Whether `pk` has asked to follow us and the request is open (a live predicate, spec §9.9). */
   hasActiveRequest(pk: string): boolean;
@@ -41,10 +39,6 @@ export class ChurnPick {
     this.pickQueued = deps.pickQueued;
   }
 
-  private get consecutiveCleanup(): number {
-    return this.deps.consecutiveCleanup();
-  }
-
   /**
    * The most-due record, or null: reclaimed slots first (by `unfollowDueAt`), then the best-scored follow;
    * never one parked ahead, one with its own write unsettled, or a retained or requesting unfollow.
@@ -58,7 +52,8 @@ export class ChurnPick {
     if (kind === 'follow') return chosenFollow;
     const unfollows = !this.unfollowsOffered(now) ? [] : this.store.followRecordsByState('unfollow_queued')
       .filter((r) => open(r) && !this.isRetained(r.accountPk) && !this.isRequester(r.accountPk));
-    if (unfollows.length > 0 && (kind === 'unfollow' || this.consecutiveCleanup < 2 || chosenFollow === null)) {
+    // A reclaimed slot comes first; the plan's mix decides between the kinds (spec §5.7).
+    if (unfollows.length > 0) {
       return unfollows.sort(byUnfollowDue)[0];
     }
     return kind === 'unfollow' ? null : chosenFollow;

@@ -63,6 +63,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   const installEntropy = store.installEntropy();
   let control: PlanControl | null = null;
   const breaker = new UnconfirmedBreaker();
+  const gate = surfaceGateOf(store);
   const service = new PlanService({
     store,
     clock,
@@ -79,7 +80,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     runIntent: () => host.runIntent(),
     unconfirmed: () => breaker.held(clock.now()),
     // The real gate of this store's graph, read at each ask (the plan mix and the admission).
-    surfaceGate: surfaceGateOf(store),
+    surfaceGate: gate,
     onChanged: () => control?.changed(),
   }, { log: logger });
   const wake = (): void => {
@@ -111,6 +112,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
       const view = service.view(at);
       return breaker.note(kind, unverified, at, view.nextSessionAt ?? view.window.endsAt);
     },
+    paused: (activity) => gate.paused(activity),
   };
   const dayClock = service.planDayClock();
   const ratePlan: RatePlan = { day: dayClock };

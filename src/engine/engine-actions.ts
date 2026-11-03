@@ -141,6 +141,12 @@ export async function actWovenUnfollow(
   if (unverified !== null) return { step: unverified };
   if (status === 'blocked') {
     if (detail?.cause === 'rate-limited') return { step: await ctx.enterRecovery(token, 'rate-limited') };
+    // A refusal before the visit yields: an instant the plan names is served exactly, otherwise the next
+    // tick's mix sees the refusal and takes a follow (spec §9.7); the candidate stays unvisited.
+    if (detail?.cause === 'local-policy') {
+      await serveDeferral(ctx, detail);
+      return { step: 'idle' };
+    }
     // The journal retains unresolved effects; no failed attempt consumes the candidate.
     await ctx.engineWait('engine:prune-park', tempoOrReference(ctx.deps.tempo).base('park.blocked'));
     return { step: 'idle' };

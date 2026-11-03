@@ -1400,30 +1400,77 @@ describe('Engine — woven prune feed', () => {
     expect(h.store.getActionDelayDeadline()).toBeNull(); // nothing dispatched, nothing owed
   });
 
-  test('interleaves: both available and rng below the cap picks the prune unfollow', async () => {
+  test.each([
+    [0.1, 'the woven unfollow'],
+    [0.9, 'the follow'],
+  ] as const)('the plan mix: with both kinds available a draw of %s against the session share picks %s', async (draw, picked) => {
     const pacing = new FakePacing(T0);
+    pacing.mixDrawValue = draw; // the session's shares are one follow and one unfollow: an unfollow share of 0.5
     const feed = new FakeFeed();
     feed.candidates = [{ pk: 'p1', username: 'prunee' }];
-    const h = makeHarness({ pacing, unfollowFeed: feed, rng: () => 0 }); // 0 < maxUnfollowFraction
+    const h = makeHarness({ pacing, unfollowFeed: feed });
     h.churn.due = [rec({ accountPk: 'f1', state: 'queued' })];
 
     await h.engine.stepOnce();
 
-    expect(feed.executed.length).toBe(1);
-    expect(h.churn.executed).toEqual([]); // the follow was NOT taken this step
+    expect(feed.executed.length).toBe(picked === 'the follow' ? 0 : 1);
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(picked === 'the follow' ? ['f1'] : []);
   });
 
-  test('interleave never displaces a due lifecycle unfollow', async () => {
+  test('the mix never lets a woven candidate displace a due lifecycle unfollow', async () => {
     const pacing = new FakePacing(T0);
     const feed = new FakeFeed();
     feed.candidates = [{ pk: 'p1', username: 'prunee' }];
-    const h = makeHarness({ pacing, unfollowFeed: feed, rng: () => 0 });
+    const h = makeHarness({ pacing, unfollowFeed: feed });
     h.churn.due = [rec({ accountPk: 'u1', state: 'unfollow_queued' })];
 
     await h.engine.stepOnce();
 
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['u1']); // lifecycle wins
     expect(feed.executed).toEqual([]);
+  });
+
+  test.each([
+    ['a paused relationship surface', (p: FakePacing) => { p.pausedActivities.add('unfollows'); }],
+    ["a spent session unfollow share (the follow takes it)", (p: FakePacing) => { p.unfollowsLeft = 0; }],
+  ] as const)('unfollow work is unavailable under %s: the follow is chosen', async (_name, set) => {
+    const pacing = new FakePacing(T0);
+    set(pacing);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    const h = makeHarness({ pacing, unfollowFeed: feed });
+    h.churn.due = [rec({ accountPk: 'u1', state: 'unfollow_queued' }), rec({ accountPk: 'f1', state: 'queued' })];
+
+    await h.engine.stepOnce();
+
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['f1']);
+    expect(feed.executed).toEqual([]);
+  });
+
+  test('woven cleanup waits out the cool-down after a rate wall; the follow goes on', async () => {
+    const pacing = new FakePacing(T0);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    const h = makeHarness({ pacing, unfollowFeed: feed });
+    (h.engine as unknown as { lastHalt: { reason: string; at: number } }).lastHalt = { reason: 'rate-limited', at: T0 - 1 };
+    h.churn.due = [rec({ accountPk: 'f1', state: 'queued' })];
+
+    await h.engine.stepOnce();
+
+    expect(feed.executed).toEqual([]);
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['f1']);
+  });
+
+  test('finding new people waits while the list surface is paused: no refill, queued follows go on', async () => {
+    const pacing = new FakePacing(T0);
+    pacing.pausedActivities.add('exploration');
+    const h = makeHarness({ pacing, settings: { lowWaterCandidates: 5 } });
+    h.churn.due = [rec({ accountPk: 'f1', state: 'queued' })];
+
+    await h.engine.stepOnce();
+
+    expect(h.acquisition.calls).toEqual([]);
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['f1']);
   });
 });
 

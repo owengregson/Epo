@@ -15,7 +15,6 @@ import type { WaitResult } from '../timing/delay-manager';
 import { mulberry32 } from '../timing/noise';
 import { type DelayPolicy, type Rng, TIMED_OUT, withTimeout } from '../timing/primitives';
 import { WaitRunner } from '../timing/wait-runner';
-import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
 import { absurd } from './absurd';
 import { queuedCountFor } from './decisions';
@@ -32,6 +31,7 @@ import {
 } from './engine-waits';
 import { FactGatherer, type FactSources, type Facts, type FeedCandidate } from './facts';
 import { type HaltReason, haltReasonKey } from './halt-reason';
+import { cleanupCooldown } from './plan-mix';
 import type { EngineTempo } from './plan-port';
 import type {
   CurrentTarget,
@@ -160,14 +160,12 @@ export class Engine {
   /** The woven prune-unfollow feed (a no-op feed when weaving is off). */
   private readonly unfollowFeed: EngineUnfollowFeed;
 
-  /** Randomness for the weave interleave draw; injectable for deterministic tests. */
-  private readonly rng: () => number;
   /** Per-install noise entropy (see {@link EngineDeps.installEntropy}). */
   private readonly installEntropy: number;
 
   /**
-   * The DEDICATED timing-noise rng — NEVER {@link rng}. Noise must not consume the
-   * seeded engine stream, or every downstream draw shifts
+   * The DEDICATED timing-noise rng — never a seeded decision stream. Noise must not consume a
+   * seeded stream, or every downstream draw shifts
    * (`docs/adr/0204-timing-noise.md`). Seeded from the install entropy ⊕
    * construction time.
    */
@@ -221,7 +219,6 @@ export class Engine {
     // in the store (`action_delay_deadline_at`), so a pause, a stop or a quit serves its remainder.
     this.pacing = deps.pacing;
     this.unfollowFeed = deps.unfollowFeed;
-    this.rng = deps.rng ?? launchStream('engine/engine');
     // The ladder hydrates its own durable state (store meta `recovery_state`) —
     // a relaunch mid-hold serves the REMAINDER.
     this.recovery = new RecoverySupervisor({
@@ -588,7 +585,7 @@ export class Engine {
         this.lastSentinel = status;
       },
       selectPruneCandidate: (now) => this.selectPruneCandidate(now),
-      rng: () => this.rng(),
+      cleanupCooldown: (now) => cleanupCooldown({ lastHalt: this.lastHalt, ladder: this.recoverySnapshot() }, now),
     });
   }
 

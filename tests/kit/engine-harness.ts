@@ -162,8 +162,10 @@ export class FakeChurn implements EngineChurn {
   advanceTimers(): void {
     this.advanceCalls += 1;
   }
-  nextDue(): FollowRecord | null {
-    return this.due[0] ?? null;
+  /** The first due record of the asked kind (unfollows are `unfollow_queued`), or the first of any. */
+  nextDue(_now?: number, kind?: 'follow' | 'unfollow'): FollowRecord | null {
+    if (kind === undefined) return this.due[0] ?? null;
+    return this.due.find((r) => (r.state === 'unfollow_queued') === (kind === 'unfollow')) ?? null;
   }
   async execute(r: FollowRecord, actAt = 0): Promise<'ok' | 'failed' | 'blocked' | 'simulated' | 'noop'> {
     // A blocked outcome leaves the record completely untouched (still due),

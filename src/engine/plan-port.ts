@@ -36,6 +36,8 @@ export interface EnginePlan {
   practiced(at: number): void;
   /** A dispatched write's evidence (spec §11.1 F7): the kind's unverified streak after it. */
   noteOutcome(kind: EngineWriteKind, unverified: boolean, at: number): number;
+  /** The surface gate (spec §10.6): unfollows, or finding new people, paused until a fix confirms the change. */
+  paused(activity: 'unfollows' | 'exploration'): boolean;
 }
 
 /** The loop's plan dep, under the name the dep and the fact group keep. */

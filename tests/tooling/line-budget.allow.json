@@ -15,7 +15,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 952
+      "lines": 949
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -43,7 +43,7 @@
     },
     {
       "file": "src/engine/churn-scheduler.ts",
-      "lines": 456
+      "lines": 452
     },
     {
       "file": "src/engine/target-pipeline.ts",

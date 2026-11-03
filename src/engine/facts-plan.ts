@@ -5,8 +5,8 @@
 
 import type { PlanView } from '../governors/plan-types';
 import type { Settings } from '../settings/settings';
-import { PATTERN } from '../timing/config';
 import type { FactSource, FeedCandidate } from './facts';
+import { planMix } from './plan-mix';
 import type { EnginePacing, PlanFacts } from './plan-port';
 import type { EngineChurn } from './ports';
 
@@ -19,8 +19,8 @@ export interface PlanFactDeps {
   churn: EngineChurn;
   /** The woven prune feed's next offer (consumes leading skips — see the Engine). */
   selectPruneCandidate(now: number): FeedCandidate | null;
-  /** The seeded engine stream (never the noise stream). */
-  rng(): number;
+  /** The cleanup cool-down after a rate wall (spec §5.7). */
+  cleanupCooldown(now: number): boolean;
 }
 
 /** The day's automatic volume: what the day law drew, or more once a Boost lifted it. */
@@ -46,7 +46,8 @@ export function planPark(view: PlanView, atHardCeiling: boolean, velocityUntil: 
  * The plan's facts at the view's instant. The planned check and the census host arrive with the
  * reopen sweep (RO-b); until then neither is due here.
  */
-export function planFacts(view: PlanView, atHardCeiling: boolean, velocityUntil: number | null = null): PlanFacts {
+export function planFacts(view: PlanView, atHardCeiling: boolean, velocityUntil: number | null = null,
+  explorationPaused = false): PlanFacts {
   const open = view.open;
   return {
     sessionOpen: open !== null,
@@ -55,7 +56,7 @@ export function planFacts(view: PlanView, atHardCeiling: boolean, velocityUntil:
       follow: view.admits('follow', 'growth').ok,
       unfollow: view.admits('unfollow', 'growth').ok,
       accept: view.admits('accept', 'accept-pass').ok,
-      explore: open !== null,
+      explore: open !== null && !explorationPaused,
     },
     mix: open?.mix ?? 'normal',
     probation: open?.probation ?? false,
@@ -74,31 +75,19 @@ export function pacingSource(d: PlanFactDeps): FactSource<'pacing'> {
       const { now } = await read('clock');
       const { atHardCeiling } = await read('ledger');
       const view = d.pacing.ensureIfProvisional(now);
-      return planFacts(view, atHardCeiling, d.pacing.velocityParkUntil(now));
+      return planFacts(view, atHardCeiling, d.pacing.velocityParkUntil(now), d.pacing.paused('exploration'));
     },
   };
 }
 
-/** The action source: the due record, the woven prune offer and the weave draw. */
+/** The action source: the plan's mix (spec §5.7) — the one record or woven offer the tick acts on. */
 export function actionSource(d: PlanFactDeps): FactSource<'action'> {
   return {
     staleAfterMs: 0,
     gather: async (read) => {
       const { now } = await read('clock');
-      const due = d.churn.nextDue(now);
-      const pruneCandidate = d.selectPruneCandidate(now);
-      const unfollowFraction = Math.min(
-        d.settings().maxUnfollowFractionPerSession,
-        PATTERN.MAX_UNFOLLOW_FRACTION_PER_SESSION,
-      );
-      // The interleave draw is taken HERE — exactly when both streams have
-      // work and the lifecycle record is not itself an unfollow — so the
-      // decision stays pure and the seeded stream keeps its order.
-      const weaveDraw =
-        due !== null && pruneCandidate !== null && due.state !== 'unfollow_queued'
-          ? d.rng()
-          : null;
-      return { due, pruneCandidate, weaveDraw, unfollowFraction };
+      return planMix({ view: d.pacing.view(now), churn: d.churn, woven: () => d.selectPruneCandidate(now),
+        unfollowsPaused: d.pacing.paused('unfollows'), cooldown: d.cleanupCooldown(now) }, now);
     },
   };
 }
