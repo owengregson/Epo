@@ -54,6 +54,16 @@ function sources(over: { now?: () => number; incidents?: { at: number; reason: s
   );
 }
 
+describe('kept rows (SB: the live column narrates protection)', () => {
+  test('an account protection kept from an unfollow shows in the feed at the time it was kept', () => {
+    store.upsertFollowRecord({ accountPk: 'k', targetPk: null, state: 'unfollow_queued', retryCount: 0, followedAt: NOW - DAY, unfollowDueAt: NOW });
+    store.observe({ accountPk: 'k', observedAt: NOW - DAY, source: 'profile', fields: { username: 'friend' } });
+    store.followRecords.review([{ pk: 'k', move: 'keep', stamp: { reason: 'account', match: 'friend', at: NOW - 3 * MIN, recheckAt: null, checks: 0 } }]);
+    const kept = sources().feed().items.filter((i) => i.kind === 'kept');
+    expect(kept).toEqual([{ id: `kept:k:${NOW - 3 * MIN}`, at: NOW - 3 * MIN, kind: 'kept', person: { pk: 'k', username: 'friend' }, reason: 'account' }]);
+  });
+});
+
 test("the feed reads the graph's store and keeps its view while only the clock moves", () => {
   let now = NOW;
   const live = sources({ now: () => now });
