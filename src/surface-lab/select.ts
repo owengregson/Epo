@@ -10,7 +10,9 @@
  */
 
 import type { Source } from '@/store/types';
+import { matchEndpoint } from '@/surface/index';
 import type { EndpointKind } from '@/surface/schema/endpoints';
+import { GRAPHQL_FRIENDLY_NAME_HEADER } from '@/surface/versions/2026-08-12/literals';
 
 /** Observation provenance for each endpoint kind. */
 export const SOURCE_OF: Record<EndpointKind, Source> = {
@@ -23,6 +25,23 @@ export const SOURCE_OF: Record<EndpointKind, Source> = {
   'profile-graphql': 'profile',
   'activity-feed': 'activity-feed',
 };
+
+/** The request half of one recorded exchange: enough to route it the way the production reader does. */
+export interface RecordedRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+/**
+ * Route a recorded exchange through the production router: the URL first, then the GraphQL operation name the
+ * client sent in its friendly-name header (the read pipeline's `routeObserved` replaces this matcher).
+ */
+export function routeExchange(req: RecordedRequest): { kind: EndpointKind; op: string | null } | null {
+  const op = req.headers[GRAPHQL_FRIENDLY_NAME_HEADER] ?? null;
+  const endpoint = matchEndpoint(req.path, op ?? undefined);
+  return endpoint === null ? null : { kind: endpoint.kind, op };
+}
 
 /** Route a raw capture body to the endpoint whose shape it carries. */
 export function classifyBody(name: string, body: unknown): EndpointKind | null {

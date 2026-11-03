@@ -1,6 +1,6 @@
 {
  "friendship_statuses": {
-  "700000000097": {
+  "700000000140": {
    "following": true,
    "is_bestie": false,
    "is_feed_favorite": false,
@@ -10,7 +10,7 @@
    "incoming_request": false,
    "outgoing_request": false
   },
-  "700000000098": {
+  "700000000143": {
    "following": true,
    "is_bestie": false,
    "is_feed_favorite": false,
@@ -20,7 +20,7 @@
    "incoming_request": false,
    "outgoing_request": false
   },
-  "700000000099": {
+  "700000000146": {
    "following": true,
    "is_bestie": false,
    "is_feed_favorite": false,

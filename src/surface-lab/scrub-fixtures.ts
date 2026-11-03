@@ -20,14 +20,17 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import type { Source } from '@/store/types';
 import { surface } from '@/surface/index';
-import { Scrubber, type ScrubStats } from '@/surface/lab/scrub';
+import { Scrubber } from '@/surface/lab/scrub';
 import { SCRUB_SHAPES } from '@/surface/lab/shape';
+import { structuralLeaks } from '@/surface/lab/structural-leak';
 import { readResponse } from '@/surface/parse';
 import type { EndpointKind } from '@/surface/schema/endpoints';
+import type { CorpusBody, CorpusDom, CorpusManifest, ScrubOptions, ScrubOutcome } from '@/surface-lab/corpus-types';
 import { harvestOriginals, residual } from '@/surface-lab/originals';
 import { classifyBody, domFeatures, fingerprint, SOURCE_OF } from '@/surface-lab/select';
+
+export type { CorpusBody, CorpusDom, CorpusManifest, ScrubOptions, ScrubOutcome } from '@/surface-lab/corpus-types';
 
 /** How many bodies per endpoint the corpus keeps. */
 export const PER_ENDPOINT = 4;
@@ -39,62 +42,20 @@ export const DOM_MAX_BYTES = 30_000;
 /** The observation timestamp every replay uses — fixed so counts are stable. */
 export const REPLAY_AT = 1_786_534_400_000;
 
-/** One committed body, and what replaying it must produce. */
-export interface CorpusBody {
-  file: string;
-  endpoint: EndpointKind;
-  source: Source;
-  /** The subject pk for endpoints whose body carries none. */
-  pk?: string;
-  /** Where it came from in the local capture (provenance, no payload). */
-  origin: string;
-  expect: {
-    facts: number;
-    relationships: number;
-    events: number;
-    cursor: string | null;
-    hasMore: boolean;
-    absent: boolean | null;
-    rowIssues: number;
-    novelKeys: string[];
-  };
+/** A corpus file's name: the endpoint (or snapshot kind) and its 1-based index, zero-padded. */
+export const corpusFile = (kind: string, n: number, ext: 'json' | 'html'): string =>
+  `${kind}-${String(n).padStart(2, '0')}.${ext}`;
+
+/** Write a corpus manifest (two-space JSON, trailing newline). */
+export function writeManifest(dir: string, manifest: CorpusManifest): void {
+  writeFileSync(join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-/** One committed DOM snapshot. */
-export interface CorpusDom {
-  file: string;
-  kind: 'profile-header' | 'dialog';
-  origin: string;
-  bytes: number;
-}
-
-export interface CorpusManifest {
-  surfaceId: string;
-  scrubbedAt: string;
-  replayAt: number;
-  bodies: CorpusBody[];
-  dom: CorpusDom[];
-  /** Endpoints the local capture carried NO body for — the corpus's blind spots. */
-  missing: EndpointKind[];
-  /**
-   * Files the residual check REFUSED to commit. A snapshot whose scrub left a
-   * real identifier behind is dropped, never shipped: "if you cannot guarantee
-   * a field is scrubbed, drop the fixture".
-   */
-  dropped: Array<{ origin: string; reason: string }>;
-  stats: ScrubStats;
-}
-
-export interface ScrubOptions {
-  /** The local capture directory (git-ignored real data). */
-  sourceDir: string;
-  /** The committed corpus directory. */
-  outDir: string;
-}
-
-export interface ScrubOutcome {
-  manifest: CorpusManifest;
-  wrote: { bodies: number; dom: number };
+/** Every structural rule a scrubbed text breaks, or the class of an original that survived; `null` when clean. */
+export function leakOf(text: string, originals: ReturnType<typeof harvestOriginals>): string | null {
+  const rules = structuralLeaks(text, [String(REPLAY_AT)]);
+  if (rules.length > 0) return `structural:${rules.join('+')}`;
+  return residual(text, originals);
 }
 
 /** Build the committed corpus from the local capture. Overwrites `outDir`. */
@@ -115,7 +76,12 @@ export function scrubFixtures(opts: ScrubOptions): ScrubOutcome {
   const dropped: Array<{ origin: string; reason: string }> = [];
   const bodiesOut = join(opts.outDir, 'bodies');
   const domOut = join(opts.outDir, 'dom');
-  rmSync(opts.outDir, { recursive: true, force: true });
+  // A bodies-only re-scrub keeps the committed selection: the same raw bodies, the same files, the same DOM.
+  const previous = opts.bodiesOnly === true
+    ? (JSON.parse(readFileSync(join(opts.outDir, 'manifest.json'), 'utf8')) as CorpusManifest)
+    : null;
+  const keptDom = previous?.dom ?? null;
+  if (previous === null) rmSync(opts.outDir, { recursive: true, force: true });
   mkdirSync(bodiesOut, { recursive: true });
   mkdirSync(domOut, { recursive: true });
 
@@ -138,7 +104,14 @@ export function scrubFixtures(opts: ScrubOptions): ScrubOutcome {
   }
 
   const bodies: CorpusBody[] = [];
-  for (const [kind, all] of byEndpoint) {
+  type Pick = { name: string; body: unknown; size: number; file?: string };
+  const pickedByKind = new Map<EndpointKind, Pick[]>();
+  for (const entry of previous?.bodies ?? []) {
+    const raw = byEndpoint.get(entry.endpoint)?.find((b) => b.name === entry.origin);
+    if (raw === undefined) throw new Error(`scrub-fixtures: ${entry.file} has no raw body in the local capture`);
+    pickedByKind.set(entry.endpoint, [...(pickedByKind.get(entry.endpoint) ?? []), { ...raw, file: entry.file }]);
+  }
+  for (const [kind, all] of previous === null ? byEndpoint : new Map<EndpointKind, Pick[]>()) {
     const seen = new Set<string>();
     const picked = all
       .slice()
@@ -150,16 +123,20 @@ export function scrubFixtures(opts: ScrubOptions): ScrubOutcome {
         return true;
       })
       .slice(0, PER_ENDPOINT);
-
+    pickedByKind.set(kind, picked);
+  }
+  // Every picked body's times share one synthetic origin, so intervals across bodies survive.
+  for (const [kind, picked] of pickedByKind) scrubber.seedTimes(SCRUB_SHAPES[kind], picked.map((p) => p.body));
+  for (const [kind, picked] of pickedByKind) {
     picked.forEach((entry, index) => {
       const scrubbed = scrubber.body(SCRUB_SHAPES[kind], entry.body);
       const text = `${JSON.stringify(scrubbed, null, 1)}\n`;
-      const leak = residual(text, originals);
+      const leak = leakOf(text, originals);
       if (leak !== null) {
         dropped.push({ origin: `${kind}/${entry.name}`, reason: leak });
         return;
       }
-      const file = `${kind}-${String(index + 1).padStart(2, '0')}.json`;
+      const file = entry.file ?? corpusFile(kind, index + 1, 'json');
       writeFileSync(join(bodiesOut, file), text);
 
       const endpoint = doc.endpoints.find((e) => e.kind === kind);
@@ -203,8 +180,8 @@ export function scrubFixtures(opts: ScrubOptions): ScrubOutcome {
   // Diversified the same way the bodies are, but along the axis that matters
   // for the control contracts: which BEHAVIOURS a snapshot can exercise. Three
   // byte-identical copies of the same dialog regression-test one thing.
-  const dom: CorpusDom[] = [];
-  if (existsSync(domDir)) {
+  const dom: CorpusDom[] = keptDom ?? [];
+  if (keptDom === null && existsSync(domDir)) {
     const seenHtml = new Set<string>();
     const seenFeatures = new Set<string>();
     const candidates = readdirSync(domDir)
@@ -228,7 +205,7 @@ export function scrubFixtures(opts: ScrubOptions): ScrubOutcome {
 
     for (const candidate of candidates) {
       const scrubbed = scrubber.dom(candidate.html);
-      const leak = residual(scrubbed, originals);
+      const leak = leakOf(scrubbed, originals);
       if (leak !== null) {
         dropped.push({ origin: domFeatures(candidate.html), reason: leak });
         continue;
@@ -236,7 +213,7 @@ export function scrubFixtures(opts: ScrubOptions): ScrubOutcome {
       const kind = candidate.name.startsWith('profile-header') ? 'profile-header' : 'dialog';
       // The capture file name itself carries a handle — rename by index.
       const index = dom.filter((d) => d.kind === kind).length + 1;
-      const file = `${kind}-${String(index).padStart(2, '0')}.html`;
+      const file = corpusFile(kind, index, 'html');
       writeFileSync(join(domOut, file), scrubbed);
       dom.push({
         file,
@@ -247,8 +224,7 @@ export function scrubFixtures(opts: ScrubOptions): ScrubOutcome {
     }
   }
 
-  const missing = doc.endpoints
-    .map((e) => e.kind)
+  const missing = [...new Set(doc.endpoints.map((e) => e.kind))]
     .filter((kind) => !bodies.some((b) => b.endpoint === kind));
 
   const manifest: CorpusManifest = {
@@ -261,6 +237,6 @@ export function scrubFixtures(opts: ScrubOptions): ScrubOutcome {
     dropped,
     stats: scrubber.stats(),
   };
-  writeFileSync(join(opts.outDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  writeManifest(opts.outDir, manifest);
   return { manifest, wrote: { bodies: bodies.length, dom: dom.length } };
 }

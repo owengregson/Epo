@@ -1,0 +1,130 @@
+{
+ "data": {
+  "xdt_friendships_pending_users": {
+   "users": {
+    "edges": [
+     {
+      "node": {
+       "pk": "700000000075",
+       "username": "user_u16",
+       "full_name": "Name F7",
+       "live_broadcast_visibility": "null",
+       "live_broadcast_id": "null",
+       "profile_pic_url": "https://example.invalid/pic/700000000113.jpg",
+       "hd_profile_pic_url_info": {
+        "url": "https://example.invalid/pic/700000000114.jpg"
+       },
+       "is_unpublished": false,
+       "friendship_status": {
+        "blocking": false,
+        "is_feed_favorite": false,
+        "following": false,
+        "outgoing_request": false,
+        "followed_by": false,
+        "incoming_request": true,
+        "is_restricted": false,
+        "is_bestie": false
+       },
+       "supervision_info": null,
+       "id": "700000000075",
+       "__typename": "XDTUserDict"
+      },
+      "cursor": null
+     },
+     {
+      "node": {
+       "pk": "700000000077",
+       "username": "user_s16",
+       "full_name": "",
+       "live_broadcast_visibility": "null",
+       "live_broadcast_id": "null",
+       "profile_pic_url": "https://example.invalid/pic/700000000115.jpg",
+       "hd_profile_pic_url_info": {
+        "url": "https://example.invalid/pic/700000000116.jpg"
+       },
+       "is_unpublished": false,
+       "friendship_status": {
+        "blocking": false,
+        "is_feed_favorite": false,
+        "following": false,
+        "outgoing_request": false,
+        "followed_by": false,
+        "incoming_request": true,
+        "is_restricted": false,
+        "is_bestie": false
+       },
+       "supervision_info": null,
+       "id": "700000000077",
+       "__typename": "XDTUserDict"
+      },
+      "cursor": null
+     },
+     {
+      "node": {
+       "pk": "700000000079",
+       "username": "user_t16",
+       "full_name": "Name E7",
+       "live_broadcast_visibility": "null",
+       "live_broadcast_id": "null",
+       "profile_pic_url": "https://example.invalid/pic/700000000117.jpg",
+       "hd_profile_pic_url_info": {
+        "url": "https://example.invalid/pic/700000000118.jpg"
+       },
+       "is_unpublished": false,
+       "friendship_status": {
+        "blocking": false,
+        "is_feed_favorite": false,
+        "following": false,
+        "outgoing_request": false,
+        "followed_by": false,
+        "incoming_request": true,
+        "is_restricted": false,
+        "is_bestie": false
+       },
+       "supervision_info": null,
+       "id": "700000000079",
+       "__typename": "XDTUserDict"
+      },
+      "cursor": null
+     },
+     {
+      "node": {
+       "pk": "700000000081",
+       "username": "user_v16",
+       "full_name": "Name G7",
+       "live_broadcast_visibility": "null",
+       "live_broadcast_id": "null",
+       "profile_pic_url": "https://example.invalid/pic/700000000082.jpg",
+       "hd_profile_pic_url_info": {
+        "url": "https://example.invalid/pic/700000000119.jpg"
+       },
+       "is_unpublished": false,
+       "friendship_status": {
+        "blocking": false,
+        "is_feed_favorite": false,
+        "following": false,
+        "outgoing_request": false,
+        "followed_by": false,
+        "incoming_request": true,
+        "is_restricted": false,
+        "is_bestie": false
+       },
+       "supervision_info": null,
+       "id": "700000000081",
+       "__typename": "XDTUserDict"
+      },
+      "cursor": null
+     }
+    ],
+    "page_info": {
+     "end_cursor": null,
+     "has_next_page": false
+    }
+   }
+  }
+ },
+ "extensions": {
+  "server_metadata": "object",
+  "is_final": true
+ }
+}

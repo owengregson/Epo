@@ -18,7 +18,7 @@ import { isShapeMismatch } from '@/adapter/parse-helpers';
 import { endpointOf, matchEndpoint, surface } from '@/surface/index';
 import { readResponse } from '@/surface/parse';
 import { PATHS } from '@/surface/versions/2026-08-12/literals';
-import { body, hasCorpus, manifest } from './corpus';
+import { body, bodyOf, CORPORA, type CorpusId, hasCorpus, hasCorpusAt, manifest, manifestOf } from './corpus';
 
 const doc = surface();
 const corpus = hasCorpus() ? manifest() : null;
@@ -85,30 +85,32 @@ describe('the URLs the surface BUILDS are the URLs it ROUTES', () => {
   });
 });
 
-(corpus === null ? describe.skip : describe)('every committed body replays', () => {
-  const bodies = corpus?.bodies ?? [];
+/**
+ * Documented blind spots, not silent gaps. The 2026-08-12 capture never opened the notifications drawer,
+ * the following list shares the followers shape, and both profile endpoints post-date it (they replaced
+ * the retired `web_profile_info` on 2026-09-18). The 2026-11-02 probe runs read profiles, the feed and the
+ * requests panel only.
+ */
+const BLIND_SPOTS: Record<CorpusId, readonly string[]> = {
+  '2026-08-12': ['activity-feed', 'following-list', 'profile-graphql', 'profile-info'],
+  '2026-11-02': ['followers-list', 'following-list', 'friendship-show', 'profile-info', 'show-many'],
+};
 
-  test('the corpus covers the endpoints the capture reached', () => {
+describe.each([...CORPORA].filter(hasCorpusAt))('every committed %s body replays', (id) => {
+  const corpusOf = manifestOf(id);
+  const bodies = corpusOf.bodies;
+
+  test('the corpus covers the endpoints its capture reached', () => {
     expect(bodies.length).toBeGreaterThan(0);
-    // Documented blind spots, not a silent gap: the 2026-08-12 capture never
-    // opened the notifications drawer, and the following-list endpoint shares
-    // the followers-list shape so it was never separately recorded. The two
-    // profile endpoints post-date the capture — they replaced the retired
-    // `web_profile_info` on 2026-09-18 and are covered by unit tests until a
-    // fresh capture lands real bodies for them.
-    expect(corpus?.missing).toEqual([
-      'following-list',
-      'activity-feed',
-      'profile-info',
-      'profile-graphql',
-    ]);
+    expect([...corpusOf.missing].sort()).toEqual(BLIND_SPOTS[id]);
+    expect(corpusOf.surfaceId).toBe(doc.id);
   });
 
   test.each(bodies.map((b) => [b.file, b] as const))('%s parses and projects', (_file, entry) => {
     const endpoint = endpointOf(entry.endpoint);
     expect(endpoint).not.toBeNull();
-    const result = readResponse(endpoint as NonNullable<typeof endpoint>, body(entry.file), {
-      at: corpus?.replayAt ?? 0,
+    const result = readResponse(endpoint as NonNullable<typeof endpoint>, bodyOf(id, entry.file), {
+      at: corpusOf.replayAt,
       source: entry.source,
       pk: entry.pk,
     });
@@ -139,6 +141,14 @@ describe('the URLs the surface BUILDS are the URLs it ROUTES', () => {
     }
     expect([...result.novelKeys]).toEqual(entry.expect.novelKeys);
   });
+
+  const routed = bodies.filter((b) => b.route !== undefined);
+  if (routed.length > 0) {
+    test.each(routed.map((b) => [b.file, b] as const))('%s routes by its real path and operation', (_f, entry) => {
+      const route = entry.route as NonNullable<typeof entry.route>;
+      expect(matchEndpoint(route.path, route.op ?? undefined)?.kind).toBe(entry.endpoint);
+    });
+  }
 });
 
 (corpus === null ? describe.skip : describe)('schema and legacy extractor agree on real bodies', () => {

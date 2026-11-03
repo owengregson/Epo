@@ -1,0 +1,797 @@
+{
+ "data": {
+  "xdt_activity_inbox": {
+   "old_stories": [
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700013614.1751,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000013",
+        "is_verified": false,
+        "id": "700000000013",
+        "username": "user_r16",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000014.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000015.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000016",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": false,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000013",
+      "profile_name": "user_r16",
+      "latest_reel_media": 0,
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_r16",
+        "pk": "700000000013",
+        "id": "700000000013"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000017",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 17,
+     "args": {
+      "timestamp": 1700013078.9329,
+      "destination": "string",
+      "media": "object",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "scrubbed text (62 chars)",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000018",
+        "is_verified": false,
+        "id": "700000000018",
+        "username": "user_m2",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000019.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000020.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000021",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": true,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       },
+       {
+        "pk": "700000000022",
+        "is_verified": false,
+        "id": "700000000022",
+        "username": "user_t15",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000023.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000024.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000025",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": false,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000018",
+      "profile_name": "user_m2",
+      "latest_reel_media": "number",
+      "latest_reel_seen_time": "number",
+      "inline_follow": null,
+      "second_profile_image": "string",
+      "profile_image_destination": "null"
+     },
+     "story_type": 651,
+     "ndid": "string",
+     "pk": "700000000026",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000970.8516,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000009",
+        "is_verified": false,
+        "id": "700000000009",
+        "username": "user_v15",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000027.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000028.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000010",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": true,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000009",
+      "profile_name": "user_v15",
+      "latest_reel_media": 0,
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_v15",
+        "pk": "700000000009",
+        "id": "700000000009"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000029",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000967.5447,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000030",
+        "is_verified": false,
+        "id": "700000000030",
+        "username": "user_w15",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000031.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000032.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000033",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": false,
+         "outgoing_request": true,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000030",
+      "profile_name": "user_w15",
+      "latest_reel_media": "null",
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_w15",
+        "pk": "700000000030",
+        "id": "700000000030"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000034",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000964.3542,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000035",
+        "is_verified": false,
+        "id": "700000000035",
+        "username": "user_x15",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000036.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000037.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000038",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": true,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000035",
+      "profile_name": "user_x15",
+      "latest_reel_media": 0,
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_x15",
+        "pk": "700000000035",
+        "id": "700000000035"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000039",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000961.5544,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000040",
+        "is_verified": false,
+        "id": "700000000040",
+        "username": "user_y15",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000041.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000042.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000043",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": true,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000040",
+      "profile_name": "user_y15",
+      "latest_reel_media": 0,
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_y15",
+        "pk": "700000000040",
+        "id": "700000000040"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000044",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000952.9797,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000045",
+        "is_verified": false,
+        "id": "700000000045",
+        "username": "user_z15",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000046.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000047.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000048",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": true,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000045",
+      "profile_name": "user_z15",
+      "latest_reel_media": "number",
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_z15",
+        "pk": "700000000045",
+        "id": "700000000045"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000049",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000003.9797,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000050",
+        "is_verified": false,
+        "id": "700000000050",
+        "username": "user_a16",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000051.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000052.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000053",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": true,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000050",
+      "profile_name": "user_a16",
+      "latest_reel_media": 0,
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_a16",
+        "pk": "700000000050",
+        "id": "700000000050"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000054",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000003.9175,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000055",
+        "is_verified": false,
+        "id": "700000000055",
+        "username": "user_b16",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000056.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000057.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000058",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": false,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000055",
+      "profile_name": "user_b16",
+      "latest_reel_media": "null",
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_b16",
+        "pk": "700000000055",
+        "id": "700000000055"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000059",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000003.1651,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000060",
+        "is_verified": false,
+        "id": "700000000060",
+        "username": "user_c16",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000061.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000062.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000063",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": true,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000060",
+      "profile_name": "user_c16",
+      "latest_reel_media": 0,
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_c16",
+        "pk": "700000000060",
+        "id": "700000000060"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000064",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000002.446,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000065",
+        "is_verified": false,
+        "id": "700000000065",
+        "username": "user_d16",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000066.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000067.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000068",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": true,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000065",
+      "profile_name": "user_d16",
+      "latest_reel_media": 0,
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_d16",
+        "pk": "700000000065",
+        "id": "700000000065"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000069",
+     "render_path": "string",
+     "serving_stack": "string"
+    },
+    {
+     "__typename": "XDTActivityFeedStory",
+     "type": 3,
+     "args": {
+      "timestamp": 1700000000.7314,
+      "destination": "string",
+      "media": "null",
+      "icon_url": "null",
+      "second_icon_url": "null",
+      "text": "user started following you",
+      "links": "array",
+      "users": [
+       {
+        "pk": "700000000070",
+        "is_verified": false,
+        "id": "700000000070",
+        "username": "user_e16",
+        "live_broadcast_visibility": "null",
+        "live_broadcast_id": "null",
+        "profile_pic_url": "https://example.invalid/pic/700000000071.jpg",
+        "hd_profile_pic_url_info": {
+         "url": "https://example.invalid/pic/700000000072.jpg"
+        },
+        "is_unpublished": false,
+        "fbid_v2": "700000000073",
+        "friendship_status": {
+         "blocking": false,
+         "is_feed_favorite": false,
+         "following": true,
+         "outgoing_request": false,
+         "followed_by": true,
+         "incoming_request": false,
+         "is_restricted": false,
+         "is_bestie": false
+        },
+        "supervision_info": null
+       }
+      ],
+      "aytm_channel_id": "null",
+      "aytm_notif_id": "null",
+      "profile_image": "string",
+      "profile_id": "700000000070",
+      "profile_name": "user_e16",
+      "latest_reel_media": 0,
+      "latest_reel_seen_time": 0,
+      "inline_follow": {
+       "user_info": {
+        "username": "user_e16",
+        "pk": "700000000070",
+        "id": "700000000070"
+       }
+      },
+      "second_profile_image": "null",
+      "profile_image_destination": "null"
+     },
+     "story_type": 101,
+     "ndid": "string",
+     "pk": "700000000074",
+     "render_path": "string",
+     "serving_stack": "string"
+    }
+   ],
+   "new_stories": [],
+   "partition": "object"
+  },
+  "xdt_api__v1__friendships__pending": {
+   "users": [
+    {
+     "__typename": "XDTUserDict",
+     "id": "700000000075",
+     "pk": "700000000075",
+     "username": "user_u16",
+     "profile_pic_url": "https://example.invalid/pic/700000000076.jpg"
+    },
+    {
+     "__typename": "XDTUserDict",
+     "id": "700000000077",
+     "pk": "700000000077",
+     "username": "user_s16",
+     "profile_pic_url": "https://example.invalid/pic/700000000078.jpg"
+    },
+    {
+     "__typename": "XDTUserDict",
+     "id": "700000000079",
+     "pk": "700000000079",
+     "username": "user_t16",
+     "profile_pic_url": "https://example.invalid/pic/700000000080.jpg"
+    },
+    {
+     "__typename": "XDTUserDict",
+     "id": "700000000081",
+     "pk": "700000000081",
+     "username": "user_v16",
+     "profile_pic_url": "https://example.invalid/pic/700000000082.jpg"
+    }
+   ]
+  }
+ },
+ "extensions": {
+  "server_metadata": "object",
+  "is_final": true
+ }
+}
