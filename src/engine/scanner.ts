@@ -13,9 +13,6 @@ export interface ScannerConfig {
   maxQueuedPerSource?: number;
 }
 
-/** Design defaults (v3 §3.5). */
-export const SCANNER_DEFAULTS: ScannerConfig = { dailyPlanSize: 25 };
-
 /** Outcome of planning one target: what was enqueued and how the pool narrowed. */
 export interface ScanPlan {
   /** The poached target whose followers were ranked. */
@@ -51,7 +48,8 @@ export class Scanner {
   constructor(deps: { store: KnowledgeStore; scorerCfg?: ScorerConfig; cfg?: ScannerConfig }) {
     this.store = deps.store;
     this.scorerCfg = deps.scorerCfg;
-    this.cfg = deps.cfg ?? SCANNER_DEFAULTS;
+    // Unconfigured, a target yields at most what one source may queue (the cap applied below anyway).
+    this.cfg = deps.cfg ?? { dailyPlanSize: EXPLORATION_POLICY.queuedPerSource };
   }
 
   /** Swap the live config (scanner + scorer) in place when Settings change at runtime. */
