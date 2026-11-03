@@ -3,6 +3,7 @@
  * intent, sparse overrides `{value, setAt, basis}`, protection, preferences and
  * app state. Derived numbers are never stored; coercion lives in `doc-rules.ts`.
  */
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import type { Intent } from '@/shared/settings-intent';
 import type { ParamValue, Prefs, ProtectionSettings, ProtectionState } from '@/shared/settings-model';
 import type { ParamKey } from '@/shared/settings-params';
@@ -110,7 +111,9 @@ export const DEFAULT_DOC: SettingsDocV2 = {
   overrides: {},
   protection: { accounts: [], words: [], wordMatch: 'anywhere', keepVerified: true },
   protectionState: 'ready',
-  prefs: { practice: false, acceptRequests: true, boost: { hours: 12, acceptRequests: true } },
+  prefs: {
+    practice: false, acceptRequests: true, boost: { hours: SETTINGS_POLICY.BOOST.DEFAULT_HOURS, acceptRequests: true },
+  },
   app: { mode: 'easy', tourCompletedAt: null, tourVersionSeen: null, dismissedNotices: [] },
   migration: null,
   legacyCarry: null,

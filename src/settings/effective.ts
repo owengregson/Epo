@@ -5,6 +5,7 @@
  * keeps the frozen v1 `Settings` until the Settings stage replaces it.
  */
 import { SCORER_DEFAULTS } from '@/engine/scorer';
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import type { TempoKey } from '@/kernel/tempo';
 import type { DayOfWeek } from '@/shared/settings-intent';
 import type { PatternSettings } from './pattern-map';
@@ -84,7 +85,7 @@ export function effectiveFromV1(v1: Settings): EffectiveSettings {
     lowWaterCandidates: v1.lowWaterCandidates, minFollowBackRate: v1.minFollowBackRate, minPoolSize: v1.minPoolSize,
     dryRun: v1.dryRun,
     // v1 has no Boost; its preferences read as the defaults until a v2 document exists.
-    boost: { hours: 12, acceptRequests: true },
+    boost: { hours: SETTINGS_POLICY.BOOST.DEFAULT_HOURS, acceptRequests: true },
     pacingModel: v1.pacingModel, minDelayMinutes: v1.minDelayMinutes, maxDelayMinutes: v1.maxDelayMinutes,
     jitterPercent: v1.jitterPercent, activeHoursStart: v1.activeHoursStart, activeHoursEnd: v1.activeHoursEnd,
     pruneWhitelist: [...v1.pruneWhitelist], pruneBioFilterWords: [...v1.pruneBioFilterWords],

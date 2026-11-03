@@ -4,6 +4,7 @@
  * can put protection under review. Shape only — value bounds apply at resolve time.
  * The table is `satisfies`-linked to the document, so a field cannot go uncoerced.
  */
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import {
   ACTIVITY_LEVELS, AUDIENCE_FOCUSES, AUDIENCE_SIZES, CAUTIONS, CLEANUP_LEVELS, CONSISTENCIES, DAY_SHAPES,
   type DayOfWeek, type Intent, MAX_DAYS_OFF, MUTUAL_POLICIES, PATIENCES, type QuietHours, RHYTHMS, WEEKLY_SHAPES,
@@ -106,9 +107,9 @@ const PROTECTION_RULES = {
 } satisfies { [K in keyof ProtectionSettings]: Rule<ProtectionSettings[K]> };
 
 const nonNegInt = keep((v): v is number => Number.isInteger(v) && (v as number) >= 0);
-const BOOST_HOURS = { min: 1, max: 24 };
+const { MIN_HOURS, MAX_HOURS } = SETTINGS_POLICY.BOOST;
 const hours: Rule<number> = (raw, fb) =>
-  isNum(raw) ? ok(Math.min(BOOST_HOURS.max, Math.max(BOOST_HOURS.min, raw))) : ok(fb, raw === undefined ? 0 : 1);
+  isNum(raw) ? ok(Math.min(MAX_HOURS, Math.max(MIN_HOURS, raw))) : ok(fb, raw === undefined ? 0 : 1);
 const structured = <T>(test: (v: unknown) => boolean): Rule<T | null> =>
   (raw, fb) => (raw === null || test(raw) ? ok(raw as T | null) : ok(fb, raw === undefined ? 0 : 1));
 

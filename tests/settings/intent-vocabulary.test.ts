@@ -5,9 +5,10 @@
  */
 
 import { PREFERENCES, SCALES } from '@/kernel';
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import {
   ACTIVITY_LEVELS, AUDIENCE_FOCUSES, AUDIENCE_SIZES, CAUTIONS, CLEANUP_LEVELS, CONSISTENCIES, DAY_SHAPES,
-  INTENT_KEYS, MUTUAL_POLICIES, PACE_CARDS, PATIENCES, RHYTHMS, WEEKLY_SHAPES,
+  INTENT_KEYS, MAX_DAYS_OFF, MUTUAL_POLICIES, PACE_CARDS, PATIENCES, RHYTHMS, WEEKLY_SHAPES,
 } from '@/shared/settings-intent';
 
 const sorted = (xs: readonly string[]): string[] => [...xs].sort();
@@ -39,4 +40,8 @@ test('the product-only vocabularies and the pace cards are closed', () => {
 
 test('INTENT_KEYS names the fourteen intent keys once', () => {
   expect(new Set(INTENT_KEYS).size).toBe(14);
+});
+
+test("the shared days-off bound restates the settings policy's", () => {
+  expect(MAX_DAYS_OFF).toBe(SETTINGS_POLICY.MAX_DAYS_OFF);
 });

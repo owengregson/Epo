@@ -186,6 +186,7 @@ describe('golden fixtures', () => {
     expect(e).toMatchObject({ dryRun: true, dailyOperatingRate: 50, rotateMutuals: true, quietHours: null, daysOff: [] });
     // Today's engine reads the scan band itself, so the v1 view carries no tempo override.
     expect(e.tempoOverrides).toEqual({});
+    expect(e.boost).toEqual({ hours: SETTINGS_POLICY.BOOST.DEFAULT_HOURS, acceptRequests: true });
   });
 });
 

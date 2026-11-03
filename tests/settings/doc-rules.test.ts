@@ -5,6 +5,7 @@
  */
 
 import fc from 'fast-check';
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import { DEFAULT_DOC } from '@/settings/doc';
 import { coerceDoc } from '@/settings/doc-rules';
 
@@ -54,6 +55,16 @@ test('a tempo override is a parameter like any other; the two keys other paramet
   const c = coerceDoc({ ...DEFAULT_DOC, overrides: tempo });
   expect(c.value.overrides).toEqual({ 'tempo.walk.page': { value: 1.5, setAt: 5, basis: 1 } });
   expect(c.dropped).toBe(1);
+});
+
+test('Boost lengths come from the settings policy: the default and the clamp at both ends', () => {
+  const { DEFAULT_HOURS, MIN_HOURS, MAX_HOURS } = SETTINGS_POLICY.BOOST;
+  expect(DEFAULT_DOC.prefs.boost.hours).toBe(DEFAULT_HOURS);
+  const hours = (h: number) =>
+    coerceDoc({ ...DEFAULT_DOC, prefs: { ...DEFAULT_DOC.prefs, boost: { hours: h, acceptRequests: true } } }).value.prefs.boost.hours;
+  expect(hours(MIN_HOURS / 2)).toBe(MIN_HOURS);
+  expect(hours(MAX_HOURS + 1)).toBe(MAX_HOURS);
+  expect(hours(MIN_HOURS + 1)).toBe(MIN_HOURS + 1);
 });
 
 test('an unknown protection state reads as needs-review, never ready', () => {
