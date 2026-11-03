@@ -22,6 +22,8 @@
  *    maintained incrementally and nothing drifts.
  */
 
+import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
+
 /** The quantities the adapter can measure about itself. */
 export type SurfaceMetric =
   /** `goto` resolve → first successful control locate. */
@@ -44,7 +46,13 @@ export const SURFACE_METRICS: readonly SurfaceMetric[] = [
 ];
 
 /** How many samples one metric holds. */
-export const RESERVOIR = 128;
+export const RESERVOIR = SURFACE_BOUNDS.meterReservoir;
+
+/** The persisted form of the reservoirs (`meta.surface_meter`). */
+export interface MeterDump {
+  v: 1;
+  samples: Partial<Record<SurfaceMetric, number[]>>;
+}
 
 /** One metric's summary. `p50`/`p95` are `null` until any sample exists. */
 export interface MetricSummary {
@@ -112,11 +120,39 @@ export class SurfaceMeter {
   reset(): void {
     this.samples.clear();
   }
+
+  /** The reservoirs as they stand, for `meta.surface_meter`. */
+  dump(): MeterDump {
+    const samples: MeterDump['samples'] = {};
+    for (const [metric, bucket] of this.samples) samples[metric] = [...bucket];
+    return { v: 1, samples };
+  }
+
+  /**
+   * Restore persisted reservoirs (a restart starts warm). Anything malformed restores nothing and
+   * answers false: the meter stays cold, never zero-filled; the caller says so in its log.
+   */
+  restore(raw: unknown): boolean {
+    if (typeof raw !== 'object' || raw === null || (raw as { v?: unknown }).v !== 1) return false;
+    const samples = (raw as { samples?: unknown }).samples;
+    if (typeof samples !== 'object' || samples === null) return false;
+    const next = new Map<SurfaceMetric, number[]>();
+    for (const metric of SURFACE_METRICS) {
+      const bucket = (samples as Record<string, unknown>)[metric];
+      if (bucket === undefined) continue;
+      if (!Array.isArray(bucket) || !bucket.every((ms) => typeof ms === 'number' && Number.isFinite(ms) && ms >= 0)) {
+        return false;
+      }
+      next.set(metric, (bucket as number[]).slice(-RESERVOIR));
+    }
+    this.samples.clear();
+    for (const [metric, bucket] of next) this.samples.set(metric, bucket);
+    return true;
+  }
 }
 
 /**
- * The process-wide meter. In-memory this wave; persisting the compact
- * `{n, p50, p95}` triple per metric into store `meta` (so a restart starts warm
- * instead of cold) is a store seam, not an adapter one.
+ * The process-wide meter. The production surface sink persists its reservoirs
+ * to `meta.surface_meter` on each flush and restores them when a graph builds.
  */
 export const SURFACE_METER = new SurfaceMeter();

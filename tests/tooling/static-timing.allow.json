@@ -376,7 +376,6 @@
     {"key":"src/surface-lab/scrub-fixtures.ts :: scrubFixtures :: if :: 3","class":"HARNESS","reason":"harness: the surface lab (npm run surface) is dev-only; its values never reach production"},
     {"key":"src/surface-lab/scrub-fixtures.ts :: writeManifest :: JSON.stringify :: 2","class":"HARNESS","reason":"harness: the surface lab (npm run surface) is dev-only; its values never reach production","movedFrom":"src/surface-lab/scrub-fixtures.ts :: scrubFixtures :: JSON.stringify :: 2"},
     {"key":"src/surface/lab/scrub-dom.ts :: scrubDom :: u.slice :: 120","class":"GEOM","reason":"an excerpt length for a log or diagnostic line"},
-    {"key":"src/surface/meter.ts :: RESERVOIR :: RESERVOIR :: 128","class":"PENDING","stream":"PH","reason":"PH: the latency reservoir size becomes a SURFACE_BOUNDS entry (spec §10.9)"},
     {"key":"src/surface/meter.ts :: SurfaceMeter.summary :: percentile :: 0.5","class":"GEOM","reason":"quantile definitions (p50, p95), numeric"},
     {"key":"src/surface/meter.ts :: SurfaceMeter.summary :: percentile :: 0.95","class":"GEOM","reason":"quantile definitions (p50, p95), numeric"},
     {"key":"src/surface/schema/surface.ts :: SurfaceDocSchema :: z.int().min().max :: 200","class":"GEOM","reason":"a schema bound of the surface document (protocol)"},
