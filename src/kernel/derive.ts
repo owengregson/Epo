@@ -876,8 +876,8 @@ export const PATTERN = {
   /** A rest day is near-zero, not exactly zero. */
   REST_DAY_MAX_FRACTION: BOUNDS.PATTERN.REST_DAY_MAX_FRACTION,
   /**
-   * Band for the per-cycle volume plan (timing/cycle-plan.ts): each active-hours
-   * cycle draws its day plan uniformly in [MIN, MAX] × the configured cap.
+   * The automatic-day band (kernel/plan/volume.ts): each plan-day draws its band
+   * uniformly in [MIN, MAX] × the operating rate, and V never exceeds it.
    */
   CYCLE_PLAN_MIN_FRACTION: BOUNDS.PATTERN.CYCLE_PLAN_MIN_FRACTION,
   CYCLE_PLAN_MAX_FRACTION: BOUNDS.PATTERN.CYCLE_PLAN_MAX_FRACTION,

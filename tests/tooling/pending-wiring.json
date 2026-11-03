@@ -6,11 +6,6 @@
       "reason": "the sidebar's one Boost control and the Settings Boost section read this copy deck"
     },
     {
-      "module": "src/governors/plan-projection.ts",
-      "stream": "PR",
-      "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
-    },
-    {
       "module": "src/main/modules/settings-transitional.ts",
       "stream": "SC",
       "reason": "deleted, not wired: production serves the v2 view; only tests/kit/render-bridge.ts (lead) still builds its view here, and SC or SU deletes the module once the bridge reads the v2 view"

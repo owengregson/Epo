@@ -6,6 +6,7 @@ import type { FollowbackWatcher } from '@/engine/followback-watcher';
 import { ReentrySupervisor } from '@/engine/reentry';
 import type { SourceFrontier } from '@/engine/source-frontier';
 import { FakeClock, type SystemClock } from '@/governors/clock';
+import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import { RateGovernor } from '@/governors/rate-governor';
 import { ReadBudget } from '@/governors/read-budget';
 import type { BuiltGraph, GraphBuildDeps } from '@/main/services/graph-types';
@@ -38,13 +39,18 @@ const deps = (): GraphBuildDeps => ({
   protection: { index: () => compileProtection(rules, 'ready', rev), setCapabilities: () => undefined },
 }) as unknown as GraphBuildDeps;
 
+/** The kit's plan-day boundary: local midnight over the fake clock (the graph build hands the plan's). */
+const dayOf = (clock: FakeClock) => calendarPlanDayClock({ now: () => clock.now() });
+
 const churnFor = (clock: FakeClock) => wireChurn(deps(), {
   frontier: { pickQueued: () => null } as unknown as SourceFrontier, store, clock, rate: {} as RateGovernor,
   churnActions: new FakeActions() as unknown as AdapterBackedChurnActions, ownPk: 'me', settings: DEFAULT_SETTINGS,
+  dayClock: dayOf(clock),
 });
 
 test('the port reads the settings index live', () => {
-  const { port } = wireProtection(deps(), new FakeClock(T0));
+  const clock = new FakeClock(T0);
+  const { port } = wireProtection(deps(), clock, dayOf(clock));
   expect(port.index().words).toEqual(['cafe']);
   rules = { ...rules, words: [] };
   rev = 2;
@@ -66,6 +72,7 @@ test('building the churn marks protection as wired on every path', () => {
   wireChurn({ ...deps(), protection: { index: () => compileProtection(rules, 'ready', rev), setCapabilities } } as GraphBuildDeps, {
     frontier: { pickQueued: () => null } as unknown as SourceFrontier, store, clock: new FakeClock(T0), rate: {} as RateGovernor,
     churnActions: new FakeActions() as unknown as AdapterBackedChurnActions, ownPk: 'me', settings: DEFAULT_SETTINGS,
+    dayClock: dayOf(new FakeClock(T0)),
   });
   expect(setCapabilities).toHaveBeenCalledWith({ protectionEverywhere: true });
 });
@@ -93,7 +100,7 @@ describe('the wired journal (spec §9.8)', () => {
     const rate = new RateGovernor(store, clock, toRateGovernorConfig(DEFAULT_SETTINGS));
     const policy = wireMutationPolicy({ ...deps(), driverSignal: () => undefined } as GraphBuildDeps, {
       store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock, rate, reentry,
-      readBudget: new ReadBudget({ store, clock, limits: readLimits() }),
+      readBudget: new ReadBudget({ store, clock, limits: readLimits() }), dayClock: dayOf(clock),
       profiles: () => ({ visit }) as unknown as TabProfileVisitor,
       followback: () => ({ check: async () => ({ detected: [], outcome: 'complete' }) }) as unknown as FollowbackWatcher,
     });

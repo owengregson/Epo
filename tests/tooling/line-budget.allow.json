@@ -3,7 +3,7 @@
   "allow": [
     {
       "file": "src/main/foundation-wiring.ts",
-      "lines": 1409
+      "lines": 1408
     },
     {
       "file": "src/engine/prune-engine.ts",
@@ -15,7 +15,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 965
+      "lines": 958
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -55,7 +55,7 @@
     },
     {
       "file": "src/main/services/graph-builder.ts",
-      "lines": 366
+      "lines": 363
     },
     {
       "file": "src/rim/followers-page-reader.ts",
@@ -68,10 +68,6 @@
     {
       "file": "src/types.ts",
       "lines": 352
-    },
-    {
-      "file": "src/timing/session-planner.ts",
-      "lines": 344
     },
     {
       "file": "src/engine/recovery.ts",

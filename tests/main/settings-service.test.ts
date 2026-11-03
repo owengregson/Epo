@@ -176,3 +176,39 @@ test('lists an older build added after the migration are offered back union-only
   expect(ignored.apply([{ op: 'dismiss-notice', id: notice?.id ?? '' }], 'user')).toMatchObject({ kind: 'saved' });
   expect(ignored.view().notices.some((n) => n.kind === 'older-version-changed')).toBe(false);
 });
+
+describe('the effective settings are upstream of the plan; the week preview is downstream', () => {
+  // The port reads the settings back, as the plan's demand and intent do in plan-wiring.
+  function planBacked() {
+    const { svc } = service();
+    let draws = 0;
+    svc.setPlanPort({ previewDays: () => {
+      draws += 1;
+      svc.effective();
+      svc.protection();
+      return [];
+    } });
+    svc.setCapabilities({ plan: true });
+    return { svc, draws: () => draws };
+  }
+
+  test('a port that reads the settings back: view() returns and the week is drawn once per revision', () => {
+    const { svc, draws } = planBacked();
+    expect([svc.view().typical.week, svc.view().typical.week, draws()]).toEqual([[], [], 1]);
+    svc.apply([{ op: 'intent', key: 'activity', value: 'active' }], 'user');
+    expect([svc.view().rev, svc.view().typical.week, draws()]).toEqual([1, [], 2]);
+  });
+
+  test('effective(), protection() and the change events never draw the week', () => {
+    const { svc, draws } = planBacked();
+    const heard: number[][] = [];
+    svc.onChange((e) => heard.push([e.next.dailyOperatingRate, draws()]));
+    expect([svc.effective().dailyOperatingRate, svc.protection().rev, draws()]).toEqual([50, 0, 0]);
+    svc.setCapabilities({ plan: false });
+    svc.setCapabilities({ plan: true });
+    expect([svc.effective().dailyOperatingRate, draws()]).toEqual([50, 0]);
+    // The port stays registered: the listener hears the new settings undrawn; only the pushed view draws, once.
+    svc.apply([{ op: 'intent', key: 'activity', value: 'active' }], 'user');
+    expect([heard, svc.effective().dailyOperatingRate, svc.protection().rev, draws()]).toEqual([[[75, 0]], 75, 1, 1]);
+  });
+});

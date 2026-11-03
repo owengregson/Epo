@@ -24,6 +24,7 @@ import type { Clock } from '../governors/clock';
 import type { ProtectionVerdict } from '../shared/unfollow-protection';
 import type { FollowRecord } from '../store/types';
 import type { ChurnActionOutcome } from './churn-scheduler';
+import type { PlanFacts } from './plan-port';
 import type { CurrentTarget } from './ports';
 import type { RecoveryPhase } from './recovery';
 import type { SourceVisitEndReason } from './source-frontier';
@@ -78,16 +79,13 @@ export interface LedgerFacts {
   actionsInLastHour: number;
 }
 
-/** The planner/settings half of the pacing verdict (see `pacers.ts`). */
-export interface PacingFacts {
-  /** Which model is wired — the presence of a planner, as a value. */
-  model: 'organic' | 'legacy';
-  sessionOpen: boolean;
-  /** Only meaningful while `sessionOpen` is false. */
-  nextSessionStartAt: number;
-  hourlyVelocityCap: number;
-  activeHoursStart: number;
-}
+/**
+ * The plan's half of the pacing verdict (see `pacers.ts`): the plan's facts while it paces the loop,
+ * with the hour cap its velocity backstop reads; with no plan wired, the legacy metronome's window.
+ */
+export type PacingFacts =
+  | (PlanFacts & { readonly model: 'plan'; readonly hourlyCap: number })
+  | { readonly model: 'legacy'; readonly activeHoursStart: number };
 
 /** The chain target the loop is working, once resolved. */
 export interface TargetFacts {

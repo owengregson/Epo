@@ -1,6 +1,6 @@
 /**
- * The plan-facing engine ports: the rate governor slice and the pacing planner the
- * loop consults (re-exported by `ports.ts`, so consumers may import from either).
+ * The plan-facing engine ports: the rate governor slice and the plan the loop
+ * consults (re-exported by `ports.ts`, so consumers may import from either).
  */
 
 import type { PlanView } from '../governors/plan-types';
@@ -21,42 +21,36 @@ export interface EngineRate {
   nextDelayMs(): number;
   actionsToday(): number;
   remainingToday(): number;
-  /** The volume planned for this cycle — a fluctuating draw just under the
+  /** The plan's automatic volume for today — a fluctuating draw just under the
    *  operating rate; where {@link atOperatingRate} actually trips. */
   plannedToday(): number;
-  /** ms until the action counter resets (the next active-hours cycle start) —
-   *  the park horizon once a daily cap is hit. */
+  /** The current plan-day's start: the one boundary every "today" counts from. */
+  dayStart(): number;
+  /** ms until the action counter resets (the next plan-day) — the legacy
+   *  metronome's park horizon once a daily cap is hit. */
   msUntilCycleReset(): number;
   /** Real IG actions (both ledgers) in the trailing hour — the durable velocity signal. */
   actionsInLastHour(): number;
 }
 
-/**
- * The organic pacing planner (SessionPlanner) the Engine consults when
- * `EngineDeps.pacing` is injected. Its presence selects the organic model
- * (`Settings.pacingModel === 'organic'`); absent, the Engine runs the legacy
- * active-hours + operating-rate metronome. Structurally satisfied by
- * `timing/session-planner.PacingPlanner`.
- */
-export interface EnginePacing {
-  advance(now: number): void;
-  isSessionOpen(now: number): boolean;
-  sessionEndsAt(now: number): number | null;
-  nextSessionStartAt(now: number): number;
-  nextActionGapMs(now: number): number;
-  recordAction(now: number, kind: 'follow' | 'unfollow' | 'read-burst'): void;
-  dailyTarget(now: number): number;
-  sessionsToday(now: number): number;
-  /** Durable snapshot for persistence; optional so plain test fakes can omit it. */
-  serialize?(): unknown;
-}
-
-/** The plan the loop consults once the plan core lands (unconsumed in Phase F; replaces EnginePacing). */
+/** The plan the loop consults (spec §5.15): the pure view, an ensure only while provisional, a wake for its parks. */
 export interface EnginePlan {
   view(now: number): PlanView;
   ensureIfProvisional(now: number): PlanView;
   wake(): void;
 }
+
+/**
+ * The plan as the loop's pacing dep while the pace is unchanged (spec §5.13 S1): the gap armed after
+ * each action is the reference shape's draw at time-scale 1 (today's planner gap); the cadence
+ * switch arms the plan's own deadline at dispatch instead.
+ */
+export interface EnginePlanPacing extends EnginePlan {
+  gapAfter(at: number): number;
+}
+
+/** The loop's plan dep, under the name the dep and the fact group keep. */
+export type EnginePacing = EnginePlanPacing;
 
 /** The `pacing` fact group's plan-backed type (the group name is kept; the rules are untouched). */
 export interface PlanFacts {

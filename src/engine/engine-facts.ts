@@ -63,7 +63,7 @@ export interface EngineFactDeps {
   /** Record the tick's sentinel reading on the owner (status projection). */
   onSentinel(status: SentinelStatus): void;
   recovery: FactRecovery;
-  /** The organic planner, or undefined in the legacy model. */
+  /** The plan, or undefined in the legacy model. */
   pacing?: EnginePacing;
   targets: FactTargets;
   sweepCadence: SweepCadence;

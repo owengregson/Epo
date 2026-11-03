@@ -4,7 +4,7 @@
  * own defaults (and those defaults can be deleted later).
  */
 import {
-  DEFAULT_SETTINGS, type Settings, toChainConfig, toChurnConfig, toFollowbackConfig, toPacingConfig, toPruneConfig,
+  DEFAULT_SETTINGS, type Settings, toChainConfig, toChurnConfig, toFollowbackConfig, toPruneConfig,
   toRateGovernorConfig, toScannerConfig, toScorerConfig,
 } from '@/settings/settings';
 
@@ -18,7 +18,6 @@ export function configsFrom(settings: Settings = DEFAULT_SETTINGS) {
     prune: toPruneConfig(settings),
     rateGovernor: toRateGovernorConfig(settings),
     scanner: toScannerConfig(settings),
-    pacing: toPacingConfig(settings),
   };
 }
 

@@ -8,7 +8,6 @@ import { PRUNE_SCAN_FRESH_MS, type PruneStatus } from '@/engine/prune-engine';
 import type { RecoveryIncident, RecoverySnapshot } from '@/engine/recovery';
 import { peekResumeTarget, type ResumeFrontier } from '@/engine/resume-target';
 import { SourceFrontier } from '@/engine/source-frontier';
-import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { PlanDayClock } from '@/kernel/plan';
 import { MS_PER_MINUTE } from '@/kernel/units';
 import { type FeedContext, keepShapedAt, shapeFeed } from '@/main/modules/feed-projection';
@@ -61,9 +60,6 @@ function resumeTargetContributor(deps: LiveWiringDeps): StatusContributor {
 
 /** The runtime incident a deliberate quit records: the "Since you left" divider sits there. */
 export const SHUTDOWN_INCIDENT = 'intentional-shutdown';
-
-/** The local-midnight plan-day until the plan core's clock is handed in (`opts.planDay`). */
-const CALENDAR_DAYS = calendarPlanDayClock();
 
 /** What the live sources read from a built graph. */
 export interface LiveGraph {
@@ -123,9 +119,10 @@ function lastShutdown(incidents: RuntimeIncidents['incidents']): number | null {
 export function liveSources(
   graph: LiveGraph,
   runtime: () => RuntimeIncidents,
-  opts: { planDay?: PlanDayClock; now?: () => number } = {},
+  /** The plan's plan-day boundary: the feed's day groups and its expiry roll there (spec §4.4). */
+  opts: { planDay: PlanDayClock; now?: () => number },
 ): LiveSources {
-  const planDay = opts.planDay ?? CALENDAR_DAYS;
+  const { planDay } = opts;
   const now = opts.now ?? (() => Date.now());
   let shown: FeedView | null = null;
   let episode: { key: string; value: FeedContext['recoveryIncident'] } | null = null;

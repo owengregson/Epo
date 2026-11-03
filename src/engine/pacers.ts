@@ -1,11 +1,11 @@
 /**
  * The pacing models, behind one port.
  *
- * Gating is now a PURE function of facts: {@link pacingVerdict} answers "may I
- * act now, and if not, what park does this model demand?" without awaiting,
+ * Gating is a PURE function of facts: {@link pacingVerdict} answers "may I act
+ * now, and if not, what park does this model demand?" without awaiting,
  * sleeping or reading a clock — the conductor's `pacing` rule turns its
- * `ParkSpec` into the single wait the step performs. Only the post-action gap
- * still needs an object, because the organic planner is stateful.
+ * `ParkSpec` into the single wait the step performs. The plan model parks
+ * exactly where the plan says; the post-action gap still needs an object.
  *
  * See `docs/adr/0202-pacing-models.md` for why both models exist, and
  * `docs/adr/0901-delete-the-legacy-pacer.md` for the deletion list: the legacy
@@ -13,11 +13,13 @@
  * and the one `pacing` rule, so removing it is a local edit plus settings.
  */
 
+import { drawGapMs, type PlanIntent, velocityWakeAt } from '../kernel/plan';
 import { ENGINE as ENGINE_TIMING } from '../timing/config';
 import { clamp, logNormal } from '../timing/distributions';
 import { absurd } from './absurd';
 import { msUntilActiveWindow } from './decisions';
 import type { ClockFacts, LedgerFacts, PacingFacts } from './facts';
+import type { PlanFacts } from './plan-port';
 import type { EnginePacing, EngineRate } from './ports';
 import type { ParkSpec } from './rules';
 
@@ -30,41 +32,34 @@ export type PacingInputs = { clock: ClockFacts; ledger: LedgerFacts; pacing: Pac
  * property-tested without a clock.
  */
 export function pacingVerdict(f: PacingInputs): ParkSpec | null {
-  switch (f.pacing.model) {
-    case 'organic':
-      return organicVerdict(f);
+  const pacing = f.pacing;
+  switch (pacing.model) {
+    case 'plan':
+      return planVerdict(f.clock, f.ledger, pacing);
     case 'legacy':
-      return legacyVerdict(f);
+      return legacyVerdict(f.clock, f.ledger, pacing.activeHoursStart);
     default:
-      return absurd(f.pacing.model);
+      return absurd(pacing);
   }
 }
 
+/** The step each plan park reports. */
+const PARK_STEP = {
+  'engine:session-park': 'waited-session',
+  'engine:daily-ceiling-park': 'waited-ceiling',
+  'engine:velocity-park': 'waited-session',
+  'engine:read-budget-park': 'waited-session',
+} as const satisfies Record<NonNullable<PlanFacts['park']>['key'], ParkSpec['step']>;
+
 /**
- * The organic model: circadian sessions, log-normal gaps, a daily-volume draw.
- * The hard ceiling is the only daily CAP left — the planner's own volume
- * distribution closes the session once the day's target is spent.
+ * The plan model: the plan's own parks, exact (the day done, a closed session), then the
+ * ledger-backed rolling-hour backstop. Sessions subsume active hours: none is placed overnight.
  */
-function organicVerdict(f: PacingInputs): ParkSpec | null {
-  if (f.ledger.atHardCeiling) {
-    return {
-      key: 'engine:daily-ceiling-park',
-      delay: f.ledger.msUntilCycleReset,
-      step: 'waited-ceiling',
-    };
+function planVerdict(clock: ClockFacts, ledger: LedgerFacts, p: PlanFacts & { readonly hourlyCap: number }): ParkSpec | null {
+  if (p.park !== null) {
+    return { key: p.park.key, delay: Math.max(0, p.park.until - clock.now), step: PARK_STEP[p.park.key] };
   }
-  // The session gate subsumes active hours: overnight intensity tapers to ~0,
-  // so no session is scheduled there — reads are session-gated for free.
-  if (!f.pacing.sessionOpen) {
-    return {
-      key: 'engine:session-park',
-      delay: Math.max(0, f.pacing.nextSessionStartAt - f.clock.now),
-      step: 'waited-session',
-    };
-  }
-  // Velocity backstop: a ledger-backed rolling-hour cap that survives even a
-  // lost planner snapshot (defense-in-depth with the planner's own ring).
-  if (f.ledger.actionsInLastHour >= f.pacing.hourlyVelocityCap) {
+  if (ledger.actionsInLastHour >= p.hourlyCap) {
     return {
       key: 'engine:velocity-park',
       delay: clamp(
@@ -79,20 +74,20 @@ function organicVerdict(f: PacingInputs): ParkSpec | null {
 }
 
 /** The legacy model: a flat active-hours window plus an operating-rate metronome. */
-function legacyVerdict(f: PacingInputs): ParkSpec | null {
-  if (!f.ledger.withinActiveHours) {
+function legacyVerdict(clock: ClockFacts, ledger: LedgerFacts, activeHoursStart: number): ParkSpec | null {
+  if (!ledger.withinActiveHours) {
     return {
       key: 'engine:active-hours-park',
-      delay: msUntilActiveWindow(f.clock.now, f.pacing.activeHoursStart),
+      delay: msUntilActiveWindow(clock.now, activeHoursStart),
       step: 'waited-active-hours',
     };
   }
   // The operating rate is the real daily stop; the hard ceiling is the
   // uncrossable backstop behind it.
-  if (f.ledger.atHardCeiling || f.ledger.atOperatingRate) {
+  if (ledger.atHardCeiling || ledger.atOperatingRate) {
     return {
       key: 'engine:daily-ceiling-park',
-      delay: f.ledger.msUntilCycleReset,
+      delay: ledger.msUntilCycleReset,
       step: 'waited-ceiling',
     };
   }
@@ -108,13 +103,24 @@ export interface Pacer {
   noteAction(at: number, kind: 'follow' | 'unfollow'): number;
 }
 
-/** Organic: the planner owns both the record and the next gap. */
-export class OrganicPacer implements Pacer {
-  constructor(private readonly pacing: EnginePacing) {}
+/**
+ * The gap after an action at time-scale 1 (spec §5.13 S1, pace unchanged): a full rolling hour waits
+ * until it has room plus the floor, else today's planner draw over the reference shape, excited by
+ * the trailing hour (the action just taken included).
+ */
+export function referenceGapMs(intent: PlanIntent, recent: readonly number[], at: number, rng: () => number): number {
+  const shape = intent.gap;
+  const wake = velocityWakeAt(recent, intent.hourlyCap, at);
+  if (wake !== null) return Math.max(shape.floorMs, wake - at + shape.floorMs);
+  return drawGapMs(shape, recent, at, () => rng());
+}
 
-  noteAction(at: number, kind: 'follow' | 'unfollow'): number {
-    this.pacing.recordAction(at, kind);
-    return this.pacing.nextActionGapMs(at);
+/** The plan: its reference gap at time-scale 1, drawn over the ledger's trailing hour. */
+export class PlanPacer implements Pacer {
+  constructor(private readonly plan: EnginePacing) {}
+
+  noteAction(at: number, _kind: 'follow' | 'unfollow'): number {
+    return this.plan.gapAfter(at);
   }
 }
 

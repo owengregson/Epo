@@ -5,9 +5,10 @@
  * a clock, or a fake port (the store slices below are read-only reads).
  */
 
+import { bandDay, u } from '../kernel/plan';
+import { MS_PER_MINUTE } from '../kernel/units';
 import type { AcquireEndReason } from '../rim/follower-acquisition';
 import type { AccountState, FollowRecord, FollowState } from '../store/types';
-import { cyclePlan } from '../timing/cycle-plan';
 import { startOfLocalDay } from '../timing/units';
 import { EXPLORATION_POLICY } from './exploration-policy';
 import type { FailureKind } from './recovery';
@@ -127,10 +128,10 @@ export function pruneCycleStart(now: number, cycleStartMs?: (now: number) => num
 }
 
 /**
- * Today's planned prune volume: a deterministic per-cycle draw just under
- * `dailyLimit`, so the amount pruned per day fluctuates instead of landing on
- * the exact configured limit every day.
+ * Today's planned prune volume: the plan's automatic-day band drawn under
+ * `dailyLimit` from the plan-day's start (restart-stable; another day or limit
+ * draws again), so the amount pruned per day fluctuates under the limit.
  */
 export function pruneDailyPlan(dailyLimit: number, cycleStart: number): number {
-  return cyclePlan(dailyLimit, cycleStart);
+  return bandDay(dailyLimit, u(Math.floor(cycleStart / MS_PER_MINUTE) >>> 0, 'prune-band', dailyLimit));
 }

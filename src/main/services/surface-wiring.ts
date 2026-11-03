@@ -7,7 +7,6 @@
 import { Reader } from '@/adapter/reader';
 import type { InstagramTab } from '@/adapter/tab';
 import type { SystemClock } from '@/governors/clock';
-import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { PlanDayClock } from '@/kernel/plan';
 import { ProfileObserver } from '@/rim/profile-observer';
 import {
@@ -59,12 +58,11 @@ export function wireSurface(d: {
   store: KnowledgeStore;
   ownPk: string;
   clock: SystemClock;
-  /** The plan-day boundary (the plan-backed clock at the plan wiring's swap; local midnight until then). */
-  day?: PlanDayClock;
+  /** The plan's plan-day boundary (spec §4.4): the sink's and the report's plan-days. */
+  day: PlanDayClock;
 }): SurfaceWiring {
-  const { store, ownPk, clock } = d;
+  const { store, ownPk, clock, day } = d;
   const reader = new Reader();
-  const day = d.day ?? calendarPlanDayClock({ now: () => clock.now() });
   const surfaceId = surface().id;
   const sink = createSurfaceHealthSink({ store, surfaceId, day, clock, scrub: scrubSample });
   const report = createSurfaceReport({ store, surfaceId, day, clock });
