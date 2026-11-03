@@ -14,10 +14,14 @@
  * not creation-time state, because cadences read live settings values.
  */
 
+import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
 import { NOISE } from './config';
 import { cadenceFactor } from './noise';
 import type { Rng } from './primitives';
+
+/** The factor redraw's stream when the caller injects none. */
+const FACTOR_RNG = launchStream('timing/schedule-manager');
 
 export interface EveryOpts {
   /** `unref` the timer so it can never hold the process open (main-process loops). */
@@ -110,7 +114,7 @@ export class ScheduleManager {
       jitter?: {
         getFactor: () => number | null;
         setFactor: (factor: number) => void;
-        /** Randomness for the factor redraw; defaults to Math.random. */
+        /** Randomness for the factor redraw; defaults to a launch stream. */
         rng?: Rng;
       };
     },
@@ -128,7 +132,7 @@ export class ScheduleManager {
       markRun: (now) => {
         cfg.setLastRunAt(now);
         if (cfg.jitter !== undefined) {
-          const factor = cadenceFactor(cfg.jitter.rng ?? Math.random);
+          const factor = cadenceFactor(cfg.jitter.rng ?? FACTOR_RNG);
           cfg.jitter.setFactor(factor);
           log.debug('schedule: cadence factor redrawn', { key, factor });
         }

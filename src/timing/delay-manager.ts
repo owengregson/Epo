@@ -13,6 +13,7 @@
  */
 
 import type { Clock } from '../governors/clock';
+import { launchStream } from '../utils/entropy';
 import {
   type DelayPolicy,
   type Rng,
@@ -59,7 +60,7 @@ export class DelayManager {
 
   constructor(deps: DelayManagerDeps) {
     this.clock = deps.clock;
-    this.rng = deps.rng ?? Math.random;
+    this.rng = deps.rng ?? launchStream('timing/delay-manager');
     this.sleepFn = deps.sleep ?? realSleep;
   }
 

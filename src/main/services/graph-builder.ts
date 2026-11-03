@@ -38,6 +38,7 @@ import {
 } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { DelayManager } from '@/timing/delay-manager';
+import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import { liveWiringParts } from './live-wiring';
 import { planWiringParts, wirePacing, wireReadBudget } from './plan-wiring';
@@ -56,7 +57,7 @@ export function buildGraph(
   ownUsername: string | undefined,
   d: GraphBuildDeps,
 ): BuiltGraph {
-  const store = new KnowledgeStore(path.join(d.userDataDir, d.dbFile), { policy: STORE_POLICY });
+  const store = new KnowledgeStore(path.join(d.userDataDir, d.dbFile), { policy: STORE_POLICY, rng: cryptoUniform });
   // The store's reconciliation sink + already-following candidate exclusion
   // both anchor on our own pk.
   store.setOwnPk(ownPk);
@@ -102,8 +103,7 @@ export function buildGraph(
   });
   const actor = adapter.actor;
   const sentinel = adapter.sentinel;
-  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub } =
-    wireSurface({ tab: d.tab, store, ownPk, clock });
+  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub } = wireSurface({ tab: d.tab, store, ownPk, clock });
   const profiles = new TabProfileVisitor({
     tab: d.tab,
     observer: profileObserver,

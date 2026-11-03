@@ -24,6 +24,7 @@ import { type TempoPolicy, type TempoSource, tempoOrReference } from '@/kernel/t
 import type { RimTab } from '@/rim/types';
 import { noisify } from '@/timing/noise';
 import { sample, sleep, uniform } from '@/timing/primitives';
+import { launchStream } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 
 /** The list-dialog operations the scraper needs. `Actor` satisfies this. */
@@ -87,7 +88,7 @@ export class FollowersPageReader {
     this.clock = deps.clock ?? new SystemClock();
     this.scrollWaitMs = deps.scrollWaitMs;
     this.sleepFn = deps.sleep ?? sleep;
-    this.rng = deps.rng ?? Math.random;
+    this.rng = deps.rng ?? launchStream('rim/followers-page-reader');
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
     this.tempo = tempoOrReference(deps.tempo);
@@ -283,8 +284,7 @@ export class FollowersPageReader {
         if (status !== 'ok') {
           endReason = `sentinel:${status}`;
           logger.warn('rim.followers-page-reader: sentinel non-ok, stopping scroll', {
-            targetUsername,
-            status,
+            targetUsername, status,
           });
           break;
         }

@@ -15,6 +15,7 @@ import type { WaitResult } from '../timing/delay-manager';
 import { mulberry32 } from '../timing/noise';
 import { type DelayPolicy, type Rng, TIMED_OUT, withTimeout } from '../timing/primitives';
 import { WaitRunner } from '../timing/wait-runner';
+import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
 import { absurd } from './absurd';
 import { queuedCountFor } from './decisions';
@@ -242,7 +243,7 @@ export class Engine {
     this.pacer =
       deps.pacing === undefined ? new LegacyPacer(deps.rate) : new OrganicPacer(deps.pacing);
     this.unfollowFeed = deps.unfollowFeed;
-    this.rng = deps.rng ?? Math.random;
+    this.rng = deps.rng ?? launchStream('engine/engine');
     // Hydrate the owed inter-action delay from the store so an app relaunch
     // resumes the remaining wait rather than acting on the first step.
     this.actionDelayDeadline = deps.store.getActionDelayDeadline();
@@ -601,8 +602,7 @@ export class Engine {
   private buildFactSources(): FactSources {
     const { clock, rate, store, churn, sentinel } = this.deps;
     return buildEngineFactSources({
-      clock,
-      rate,
+      clock, rate,
       store,
       churn,
       sentinel,

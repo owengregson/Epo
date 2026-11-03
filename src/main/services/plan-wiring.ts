@@ -12,6 +12,7 @@ import type { KnowledgeStore } from '@/store/knowledge-store';
 import { samplePhaseOffset } from '@/timing/circadian';
 import { CIRCADIAN } from '@/timing/config';
 import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
+import { launchStream } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import type { GraphBuildDeps, WiringParts } from './graph-types';
 
@@ -42,7 +43,7 @@ export function wirePacing(store: KnowledgeStore, settings: Settings): SessionPl
   }
   const phaseOffset =
     pacingSnap?.phaseOffsetHours ??
-    samplePhaseOffset(CIRCADIAN.PHASE_JITTER_MAX_HOURS, Math.random);
+    samplePhaseOffset(CIRCADIAN.PHASE_JITTER_MAX_HOURS, launchStream('main/plan-wiring'));
   const pacing =
     settings.pacingModel === 'organic'
       ? new SessionPlanner({

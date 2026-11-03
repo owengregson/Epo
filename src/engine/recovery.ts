@@ -21,6 +21,7 @@ import type { Clock } from '../governors/clock';
 import { RECOVERY } from '../timing/config';
 import { clamp, logNormal } from '../timing/distributions';
 import { type Rng, sample } from '../timing/primitives';
+import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
 
 /** The failure families the ladder classifies entries into. */
@@ -100,7 +101,7 @@ export class RecoverySupervisor {
   constructor(deps: RecoverySupervisorDeps) {
     this.clock = deps.clock;
     this.store = deps.store;
-    this.rng = deps.rng ?? Math.random;
+    this.rng = deps.rng ?? launchStream('engine/recovery');
     this.hydrate(deps.store.getRecoveryState());
   }
 
@@ -239,8 +240,7 @@ export class RecoverySupervisor {
   noteRecovered(): RecoveryIncident | null {
     if (this.phaseNow === 'inactive') return null;
     log.info('recovery: probe succeeded — ladder cleared', {
-      attempt: this.attempt,
-      tally: this.kindTally,
+      attempt: this.attempt, tally: this.kindTally,
     });
     return this.reset();
   }

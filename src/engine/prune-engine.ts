@@ -29,6 +29,7 @@ import {
 } from '../timing/primitives';
 import { MS_PER_DAY } from '../timing/units';
 import { WaitRunner } from '../timing/wait-runner';
+import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
 import { censusAuthority } from './census-authority';
 import type { ChurnActionOutcome } from './churn-scheduler';
@@ -200,7 +201,7 @@ export class PruneEngine {
     const delays =
       deps.delays ??
       new DelayManager({ clock: deps.clock, rng: deps.rng, sleep: deps.sleep ?? timingSleep });
-    this.rng = deps.rng ?? Math.random;
+    this.rng = deps.rng ?? launchStream('engine/prune-engine');
     this.noiseRng = mulberry32(
       (((deps.installEntropy ?? 0) >>> 0) ^ (deps.clock.now() & 0xffffffff) ^ 0x51abc0de) >>> 0,
     );
@@ -1022,8 +1023,7 @@ export class PruneEngine {
       followers: displayFollowers,
       scrapedFollowing: followingPks.length,
       scrapedFollowers: followerSet.size,
-      notFollowingBack,
-      candidates: candidates.length,
+      notFollowingBack, candidates: candidates.length,
     };
     this.deps.store.savePruneCensus(census);
     this.lastCensus = census;
