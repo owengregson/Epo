@@ -5,6 +5,7 @@
  * keeps the frozen v1 `Settings` until the Settings stage replaces it.
  */
 import { SCORER_DEFAULTS } from '@/engine/scorer';
+import type { TempoKey } from '@/kernel/tempo';
 import type { DayOfWeek } from '@/shared/settings-intent';
 import type { PatternSettings } from './pattern-map';
 import type { Settings } from './v1/settings-v1-types';
@@ -32,6 +33,8 @@ export interface EffectiveSettings {
   quietHours: { readonly startMinute: number; readonly endMinute: number } | null;
   daysOff: readonly DayOfWeek[];
   checkSpacingHoursOverride: number | null; cleanupPerDayOverride: number | null; censusEveryDaysOverride: number | null;
+  /** The `tempo.<key>` overrides: reference factors in [1, TEMPO_OVERRIDE_MAX_FACTOR], slower only. */
+  tempoOverrides: Readonly<Partial<Record<TempoKey, number>>>;
   // cleanup of own follows
   weaveEnabled: boolean; maxUnfollowFractionPerSession: number;
   // exploration
@@ -75,6 +78,8 @@ export function effectiveFromV1(v1: Settings): EffectiveSettings {
     hourlyVelocityCap: v1.hourlyVelocityCap,
     quietHours: null, daysOff: [],
     checkSpacingHoursOverride: null, cleanupPerDayOverride: null, censusEveryDaysOverride: null,
+    // Today's engine paces the scan from pruneScan*Seconds itself, so no walk.page factor here.
+    tempoOverrides: {},
     weaveEnabled: v1.weaveEnabled, maxUnfollowFractionPerSession: v1.maxUnfollowFractionPerSession,
     lowWaterCandidates: v1.lowWaterCandidates, minFollowBackRate: v1.minFollowBackRate, minPoolSize: v1.minPoolSize,
     dryRun: v1.dryRun,

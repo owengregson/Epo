@@ -2,13 +2,16 @@
  * The pure v1 → v2 migration (spec §6.10): golden fixtures for the default file,
  * every persona (cautious included), custom and numbers-only files, messy lists,
  * the schedule × cleanup mapping, deep, an inert refill threshold, hand-edited
- * active hours, legacy pacing, faster values and a corrupt file; and law L-MIG:
- * protection monotone, no list shrinks, idempotent, every default persona → zero
- * overrides. (The slower-only `tempo.walk.page` row lands with the tempo registry.)
+ * active hours, legacy pacing, faster values (a faster pruneScan included) and a
+ * corrupt file; and law L-MIG: protection monotone, no list shrinks, idempotent,
+ * every default persona → zero overrides.
  */
 
 import fc from 'fast-check';
 import { bioMatchesFilter } from '@/engine/prune-bio-filter';
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
+import { referenceTempoSource } from '@/kernel/tempo';
+import { MS_PER_SECOND } from '@/kernel/units';
 import { effectiveFromV1 } from '@/settings/effective';
 import { type MigrationBasis, type MigrationOutcome, migrateV1 } from '@/settings/migrate-v1';
 import { PERSONAS, type PersonaId } from '@/settings/pattern-map';
@@ -130,6 +133,30 @@ describe('golden fixtures', () => {
     expect(slow.overrides['sessions.gapTypical']).toEqual({ value: 608, setAt: NOW, basis: 304 });
   });
 
+  test('the v1 scan band maps to tempo.walk.page: slower only, a factor over the default band, clamped', () => {
+    // The v1 default band (1–3 s) is the walk.page reference at tempo 1, so its factor is 1.
+    const band = [DEFAULT_SETTINGS.pruneScanMinSeconds, DEFAULT_SETTINGS.pruneScanMaxSeconds];
+    expect(((band[0] + band[1]) / 2) * MS_PER_SECOND).toBe(referenceTempoSource().base('walk.page'));
+    expect(doc(v1()).overrides['tempo.walk.page']).toBeUndefined();
+    const slow = doc(v1({ pruneScanMinSeconds: 2, pruneScanMaxSeconds: 4 }));
+    expect(slow.overrides['tempo.walk.page']).toEqual({ value: 1.5, setAt: NOW, basis: 1 });
+    expect(slow.migration?.notes.map((n) => n.kind)).not.toContain('value-clamped');
+    const slowest = doc(v1({ pruneScanMinSeconds: 10, pruneScanMaxSeconds: 20 }));
+    const max = SETTINGS_POLICY.TEMPO_OVERRIDE_MAX_FACTOR;
+    expect(slowest.overrides['tempo.walk.page']).toEqual({ value: max, setAt: NOW, basis: 1 });
+    expect(slowest.migration?.notes).toContainEqual({ kind: 'value-clamped', key: 'tempo.walk.page', from: 7.5, to: max });
+  });
+
+  test('a faster pruneScan is dropped with a notice: it would speed up every list walk', () => {
+    const fast = doc(v1({ pruneScanMinSeconds: 0.5, pruneScanMaxSeconds: 1.5 }));
+    expect(fast.overrides).toEqual({});
+    expect(fast.migration?.notes).toContainEqual({ kind: 'faster-value-dropped', key: 'pruneScan', from: 1 });
+    // The mean decides: a wider band around the same mean is neither slower nor faster.
+    const same = doc(v1({ pruneScanMinSeconds: 0.5, pruneScanMaxSeconds: 3.5 }));
+    expect(same.overrides).toEqual({});
+    expect(same.migration?.notes.map((n) => n.kind)).not.toContain('faster-value-dropped');
+  });
+
   test('audience: buckets match exactly, a curve or range of your own becomes an override', () => {
     expect(doc(v1({ minFollowers: 50, maxFollowers: 2000 })).intent.audienceSize).toBe('small');
     const own = doc(v1({ minFollowers: 100, maxFollowers: 5000, peakHigh: 1.3, privateBoost: 0.3 }));
@@ -157,6 +184,8 @@ describe('golden fixtures', () => {
   test('a refused migration still has an engine view: effectiveFromV1 is today\'s v1 resolution', () => {
     const e = effectiveFromV1(v1({ dryRun: true }));
     expect(e).toMatchObject({ dryRun: true, dailyOperatingRate: 50, rotateMutuals: true, quietHours: null, daysOff: [] });
+    // Today's engine reads the scan band itself, so the v1 view carries no tempo override.
+    expect(e.tempoOverrides).toEqual({});
   });
 });
 

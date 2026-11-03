@@ -6,6 +6,7 @@
  * raw file, every item counted. A broken post-condition refuses, never fixes up.
  */
 import { createHash } from 'node:crypto';
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import type { AudienceSize, CleanupLevel, Intent, QuietHours } from '@/shared/settings-intent';
 import type { ParamValue, RatioCurve } from '@/shared/settings-model';
 import type { ParamKey } from '@/shared/settings-params';
@@ -80,6 +81,9 @@ function cleanupFrom(v1: Settings, notes: MigrationNote[]): CleanupLevel {
   if (v1.pattern.cleanup !== 'off') notes.push({ kind: 'cleanup-own-follows-off' });
   return 'off';
 }
+
+/** The mean of a band's ends. */
+const meanOf = (xs: readonly number[]): number => xs.reduce((a, b) => a + b, 0) / xs.length;
 
 /** The seed as v2 stores it: trimmed, without a leading '@'. */
 const normalizeSeed = (s: string): string => s.trim().replace(/^@/, '').trim();
@@ -160,6 +164,13 @@ export function migrateV1(raw: string, opts: MigrateOptions): MigrationOutcome {
     set('unfollow.censusEveryDays', clamped('unfollow.censusEveryDays', v1.pruneScheduleDays, 1, 30),
       basis.interim.censusEveryDays);
   }
+  // The scan band becomes a walk.page factor over the v1 default band (the walk.page reference), slower
+  // only: a faster band would speed up every list walk, so it is dropped with a notice.
+  const scanMean = meanOf([v1.pruneScanMinSeconds, v1.pruneScanMaxSeconds]);
+  const scanFactor = scanMean / meanOf([DEFAULT_SETTINGS.pruneScanMinSeconds, DEFAULT_SETTINGS.pruneScanMaxSeconds]);
+  if (scanFactor > 1) {
+    set('tempo.walk.page', clamped('tempo.walk.page', scanFactor, 1, SETTINGS_POLICY.TEMPO_OVERRIDE_MAX_FACTOR), 1);
+  } else if (scanFactor < 1) notes.push({ kind: 'faster-value-dropped', key: 'pruneScan', from: scanMean });
 
   const accounts = migrateAccountList(rawLists.whitelist, now);
   const words = migrateWordList(rawLists.words, now);
