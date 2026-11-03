@@ -137,7 +137,7 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     installUpdate: () => updater.install(),
     openLatestRelease: () => updater.openLatest(),
     ...settingsHandlers(foundation),
-    ...planHandlers(),
+    ...planHandlers(foundation.boost),
     ...liveHandlers(currentUpdate),
     ...bootHandlers(foundation),
     ...surfaceHandlers(),

@@ -1767,10 +1767,11 @@
  ],
  "reads": {
   "profiles": 276,
+  "verifyReserve": 65,
   "explorationProfiles": 126,
-  "listPages": 218,
+  "listPages": 253,
   "explorationPages": 18,
-  "notifications": 30,
+  "notifications": 17,
   "window": "plan-day",
   "backstop": "trailing-24h"
  },

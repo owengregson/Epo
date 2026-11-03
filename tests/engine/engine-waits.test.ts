@@ -15,6 +15,6 @@ test('enrichment walls keep their own reason', () => {
 
 test('a spent read allowance parks as itself, until its known reopen time (never a 2× retry stretch)', () => {
   expect(parkReasonFor('engine:read-budget-park')).toBe('read-budget');
-  // Positive-only boundary offset: never wakes before the window reopens.
-  expect(ENGINE_WAIT_CLASS['engine:read-budget-park']).toBe('daily-boundary');
+  // The plan names the instant the allowance reopens: served exactly (spec §5.16).
+  expect(ENGINE_WAIT_CLASS['engine:read-budget-park']).toBe('exact');
 });

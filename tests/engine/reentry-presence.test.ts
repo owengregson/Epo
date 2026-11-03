@@ -17,6 +17,7 @@ import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
 import { setLevel } from '@/utils/logger';
 import { makeEngineHarness } from '../kit/engine-harness';
+import { FakePlan } from '../kit/harness-plan';
 import { openTestStore } from '../kit/store';
 
 const HOUR = 3_600_000;
@@ -97,10 +98,13 @@ describe('a hold the engine chose is presence, not absence', () => {
 });
 
 describe('the engine notes its own holds', () => {
-  test('a six-hour active-hours park ends with the engine present: no return check', async () => {
+  test('a six-hour session park ends with the engine present: no return check', async () => {
+    const startAt = new Date(2026, 10, 3, 2).getTime();
+    const pacing = new FakePlan(startAt + 6 * HOUR + 1);
+    pacing.open = false;
     const h = makeEngineHarness({
-      startAt: new Date(2026, 10, 3, 2).getTime(),
-      activeHours: { start: 8, end: 22 },
+      startAt,
+      pacing,
       reentry: (d) => {
         const s = new ReentrySupervisor(d);
         s.prepare();
@@ -108,16 +112,19 @@ describe('the engine notes its own holds', () => {
       },
     });
 
-    expect(await h.engine.stepOnce()).toBe('waited-active-hours');
+    expect(await h.engine.stepOnce()).toBe('waited-session');
 
     expect(h.sleep.calls[0]).toBeGreaterThan(6 * HOUR);
     expect(h.reentry?.requiresReconciliation(h.clock.now())).toBe(false);
   });
 
   test('a hold cut short by a stop leaves the engine present only until the stop', async () => {
+    const startAt = new Date(2026, 10, 3, 2).getTime();
+    const pacing = new FakePlan(startAt + 6 * HOUR);
+    pacing.open = false;
     const h = makeEngineHarness({
-      startAt: new Date(2026, 10, 3, 2).getTime(),
-      activeHours: { start: 8, end: 22 },
+      startAt,
+      pacing,
       reentry: (d) => {
         const s = new ReentrySupervisor(d);
         s.prepare();

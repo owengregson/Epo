@@ -1,5 +1,6 @@
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
+import type { Admission } from '../governors/plan-types';
 import type { TempoSource } from '../kernel/tempo';
 import type { KnowledgeStore, PruneCensusRecord } from '../store/knowledge-store';
 import type { DelayManager } from '../timing/delay-manager';
@@ -181,12 +182,8 @@ export interface PruneScanEstimates {
 
 /** Settings-derived knobs (see `toPruneConfig` in `settings/settings.ts`). */
 export interface PruneConfig {
+  /** The cap a rig without the plan reads (the plan's cleanup budget binds in main). */
   dailyLimit: number;
-  /** Usernames (case-insensitive) or pks never pruned. */
-  whitelist: string[];
-  minDelayMs: number;
-  maxDelayMs: number;
-  jitterPercent: number;
   /** SCAN pacing: each inter-scroll wait is a fresh jittered draw in [min,max] ms. */
   scanMinMs: number;
   scanMaxMs: number;
@@ -243,18 +240,22 @@ export interface PruneEngineDeps {
    */
   // biome-ignore lint/suspicious/noConfusingVoidType: a wired refresh resolves the header or (as wired today) nothing.
   refreshOwnStats?: () => Promise<OwnHeader | void>;
-  /**
-   * Active-hours gate, re-checked between unfollows: a run started in the
-   * evening must STOP at the window's edge instead of rolling past local
-   * midnight — where the daily count re-zeroes, which would let one "one-shot"
-   * run spend 2x the daily cap. Absent = no hours gate (tests).
-   */
-  withinActiveHours?: () => boolean;
-  /**
-   * The start of the CURRENT active-hours cycle (RateGovernor.cycleStartMs) —
-   * the prune daily cap counts from here, same boundary as the growth budget,
-   * so an overnight window's post-midnight tail spends the cycle it belongs to.
-   * Absent = local-midnight fallback (tests / no governor).
-   */
-  cycleStartMs?: (now: number) => number;
+  /** The plan the run and the woven feed answer to; absent in unit rigs (the run admits every candidate). */
+  plan?: PrunePlan;
+}
+
+/**
+ * The plan's face toward cleanup (spec §5.13 S2 item 7, §9.7, §11.1 F7): its admission before each
+ * candidate's visit, the practice-mode gap, the unconfirmed-actions breaker, the day's cleanup, the
+ * census freshness rule (§5.8.3) and the plan-day a census is dated in.
+ */
+export interface PrunePlan {
+  preflight(now: number, pk: string): Admission;
+  practiced(now: number): void;
+  /** A dispatched unfollow's evidence; the unfollow kind's unverified streak after it. */
+  noteOutcome(unverified: boolean, now: number): number;
+  cleanupToday(now: number): { readonly done: number; readonly limit: number };
+  /** How long a complete census stays fresh (the plan's patience wait). */
+  censusFreshMs(): number;
+  dayWindow(now: number): { readonly startsAt: number; readonly endsAt: number };
 }

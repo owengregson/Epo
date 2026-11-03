@@ -1,44 +1,54 @@
-import { ActionDeferredError } from '@/adapter/errors';
-import {
-  createMutationAdmission,
-  type JournalGate,
-  type MutationAdmissionDeps,
-  reentryJournalGate,
-} from '@/main/services/mutation-admission';
+import { ActionAbortedError, ActionDeferredError } from '@/adapter/errors';
+import { createMutationAdmission, type ReviewedAction } from '@/main/services/mutation-admission';
+import type { MutationCadence } from '@/main/services/mutation-cadence';
+import { DEFAULT_SETTINGS } from '@/settings/settings';
 
-/** An admission over open budgets, no owed delay and no probation; only the reconciliation gate varies. */
-function admission(reentryOwes: boolean, journal?: JournalGate) {
-  let deadline: number | null = null;
-  const d = {
-    store: {
-      getActionDelayDeadline: () => deadline,
-      setActionDelayDeadline: (at: number | null) => { deadline = at; },
-      pendingEffectIntents: () => [],
+/** An admission over a recording cadence: what each dispatch arms, and the accept pass it asks. */
+function admission(o: { reviewed?: ReviewedAction | null; refuse?: boolean; active?: boolean; dryRun?: boolean } = {}) {
+  const armed: Parameters<MutationCadence['armAtDispatch']>[] = [];
+  let ended = 0;
+  const cadence: MutationCadence = {
+    preflight: () => ({ ok: true }),
+    armAtDispatch: (...args) => {
+      if (o.refuse) throw new ActionDeferredError('deferred at dispatch: deadline', { reason: 'deadline', until: 5 });
+      armed.push(args);
+      return 2_000;
     },
-    clock: { now: () => 1_000 },
-    rate: { atHardCeiling: () => false, atOperatingRate: () => false, actionsInLastHour: () => 0, nextDelayMs: () => 50 },
-    reentry: { requiresReconciliation: () => reentryOwes, mutationWaitUntil: () => null, noteAction: () => {} },
-    settings: () => ({ hourlyVelocityCap: 10, dryRun: false }),
-    active: async () => true,
-    journal,
-  } as unknown as MutationAdmissionDeps;
-  return { gate: createMutationAdmission(d), deadline: () => deadline };
+    acceptPassEnded: () => { ended += 1; return 3_000; },
+    acceptAllowed: () => true,
+    manualOpen: () => ({ ok: true }),
+    armPractice: () => 0,
+    velocityParkUntil: () => null,
+  };
+  let reviewed = o.reviewed ?? null;
+  const gate = createMutationAdmission({ clock: { now: () => 1_000 }, cadence, settings: () => ({ ...DEFAULT_SETTINGS, dryRun: o.dryRun ?? false }),
+    active: async () => o.active ?? true, takeReviewed: () => { const r = reviewed; reviewed = null; return r; } });
+  return { gate, armed, ended: () => ended };
 }
 
-describe('the journal gate at mutation admission', () => {
-  test('the default gate is the global re-entry check', async () => {
-    await expect(admission(true).gate.beforeMutation()).rejects.toThrow(ActionDeferredError);
-    const open = admission(false);
-    await open.gate.beforeMutation();
-    expect(open.deadline()).toBe(1_050);
-    expect(reentryJournalGate({ requiresReconciliation: (now) => (now ?? 0) > 5 }).requiresReconciliation(6)).toBe(true);
-  });
+test('the dispatch closure arms the reviewed action exactly once, with its kind, writer and subject', async () => {
+  const a = admission({ reviewed: { kind: 'unfollow', writer: 'woven', subject: { pk: 'p' } } });
+  await a.gate.beforeMutation();
+  expect(a.armed).toEqual([['unfollow', 'woven', 1_000, { pk: 'p' }]]);
+});
 
-  test('an injected gate decides in place of the re-entry check', async () => {
-    await expect(admission(false, { requiresReconciliation: () => true }).gate.beforeMutation())
-      .rejects.toThrow('relationship reconciliation required');
-    const cleared = admission(true, { requiresReconciliation: () => false });
-    await cleared.gate.beforeMutation();
-    expect(cleared.deadline()).toBe(1_050);
-  });
+test('a dispatch with no review before it is held to the manual headroom', async () => {
+  const a = admission();
+  await a.gate.beforeMutation();
+  expect(a.armed).toEqual([['follow', 'manual', 1_000, undefined]]);
+});
+
+test("a refusal at dispatch propagates the cadence's typed deferral; a stopped driver aborts first", async () => {
+  await expect(admission({ refuse: true }).gate.beforeMutation()).rejects.toMatchObject({ reason: 'deadline', until: 5 });
+  const stopped = admission({ active: false });
+  await expect(stopped.gate.beforeMutation()).rejects.toBeInstanceOf(ActionAbortedError);
+  expect(stopped.armed).toEqual([]);
+});
+
+test('accepts ask the pass and end it once per accept; practice mode never accepts', async () => {
+  const a = admission();
+  expect(await a.gate.canAccept()).toBe(true);
+  a.gate.onAccepted();
+  expect(a.ended()).toBe(1);
+  expect(await admission({ dryRun: true }).gate.canAccept()).toBe(false);
 });

@@ -4,16 +4,18 @@
  * classes get their cadence de-synchronized here: daily boundaries wake a
  * restart-stable random offset PAST the configured o'clock (never before it),
  * watcher cadences stretch/shrink per run, retry backoffs draw log-normal
- * around their base, and local beats breathe inside a uniform band. Without
+ * around their base, and local beats are a `pause.retry` draw around their base. Without
  * this, every default install woke at exactly `activeHoursStart:00:00.000`,
  * resumed daily-ceiling parks on the same o'clock instant, and swept
  * notifications on a bare hourly grid.
  *
  * Pure and dependency-free (no Node, no Electron), like `distributions.ts`.
- * All constants live in the NOISE group of `timing/config.ts`.
+ * The constants live in the NOISE group of `timing/config.ts`; the beat band and the
+ * rest stride are tempo specs (`pause.retry`, `walk.rest-every`).
  */
 
 import { fnv1a, mulberry32 } from '../kernel/rng';
+import { referenceTempoSource, type TempoSource, tempoOrReference } from '../kernel/tempo';
 import { NOISE } from './config';
 import { clamp, logNormal, normal01 } from './distributions';
 import type { DelayPolicy, Rng } from './primitives';
@@ -77,6 +79,9 @@ export function jitterBoundary(baseMs: number, seedKey: string, installEntropy: 
   return baseMs + Math.max(1, Math.round(u * NOISE.DAILY_BOUNDARY_JITTER_MAX_MS));
 }
 
+/** The beat band's source: the reference tempo, whatever the session (see {@link noisify}). */
+const BEAT: TempoSource = referenceTempoSource();
+
 /** A log-normal factor around 1, bounded by re-draw — `clamp` in factor space. */
 function boundedFactor(rng: Rng, sigma: number, min: number, max: number): number {
   return clamp({ kind: 'logNormalFactor', sample: (r) => Math.exp(sigma * normal01(r)) }, min, max)
@@ -94,14 +99,11 @@ export function cadenceFactor(rng: Rng): number {
 }
 
 /**
- * The next list-walk long-rest stride: an integer page count in
- * [LIST_WALK_REST_EVERY_MIN, LIST_WALK_REST_EVERY_MAX], redrawn after each rest
- * — the breather stops landing after exactly every Nth page.
+ * The next list-walk long-rest stride: one `walk.rest-every` draw (whole pages) at the tempo in
+ * force, redrawn after each rest — the breather stops landing after exactly every Nth page.
  */
-export function nextRestStride(rng: Rng): number {
-  const lo = NOISE.LIST_WALK_REST_EVERY_MIN;
-  const hi = NOISE.LIST_WALK_REST_EVERY_MAX;
-  return lo + Math.floor(Math.min(0.999999, Math.max(0, rng())) * (hi - lo + 1));
+export function nextRestStride(rng: Rng, tempo?: TempoSource): number {
+  return tempoOrReference(tempo).policy('walk.rest-every').sample(rng);
 }
 
 /**
@@ -109,7 +111,9 @@ export function nextRestStride(rng: Rng): number {
  * unchanged; every other class returns a policy whose draws vary:
  *
  *  - 'retry-backoff'  → clamp(logNormal(base, BACKOFF_SIGMA), 0.5×, 2.0×)
- *  - 'local-beat' / 'sub-cadence' → uniform(base × 0.7, base × 1.45)
+ *  - 'local-beat' / 'sub-cadence' → the reference `pause.retry` band around base,
+ *    uniform(base × 0.7, base × 1.45): the base already follows the plan, and a brisk
+ *    session never shortens a failure beat (`beat.transient` is pace-up, spec §5.11)
  *  - 'watcher-cadence' → base × cadenceFactor
  *  - 'daily-boundary' → base + uniform(1, DAILY_BOUNDARY_JITTER_MAX_MS)
  *    (the UNSEEDED shape — callers needing restart stability use
@@ -138,12 +142,7 @@ export function noisify(cls: WaitClass, base: DelayPolicy | number, rng: Rng): D
       break;
     case 'local-beat':
     case 'sub-cadence':
-      draw = () => {
-        const b = drawBase();
-        const lo = b * NOISE.BEAT_MIN_FACTOR;
-        const hi = b * NOISE.BEAT_MAX_FACTOR;
-        return Math.round(lo + rng() * (hi - lo));
-      };
+      draw = () => BEAT.policy('pause.retry', { baseMs: drawBase() }).sample(rng);
       break;
     case 'watcher-cadence':
       draw = () => Math.round(drawBase() * cadenceFactor(rng));

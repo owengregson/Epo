@@ -18,6 +18,7 @@
  */
 
 import type { Clock } from '../governors/clock';
+import { driftConfirmThreshold } from '../kernel/derive';
 import { RECOVERY } from '../timing/config';
 import { clamp, logNormal } from '../timing/distributions';
 import { type Rng, sample } from '../timing/primitives';
@@ -146,13 +147,11 @@ export class RecoverySupervisor {
   }
 
   /**
-   * Whether accumulated evidence CONFIRMS drift: at least two independent
-   * drift-classified windows AND at least one served hold (the owner directive:
-   * ambiguity defaults to rate-limited for the first hold; only repeated,
-   * definitive drift evidence short-circuits to the drift terminal).
+   * Whether evidence CONFIRMS drift: `driftConfirmThreshold()` drift-classified windows AND one served hold
+   * (the owner directive: ambiguity is rate-limited for the first hold; only repeated drift short-circuits).
    */
   driftConfirmed(): boolean {
-    return (this.kindTally.drift ?? 0) >= 2 && this.attempt >= 1;
+    return (this.kindTally.drift ?? 0) >= driftConfirmThreshold() && this.attempt >= 1;
   }
 
   // --- Transitions ------------------------------------------------------------

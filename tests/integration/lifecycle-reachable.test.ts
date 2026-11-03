@@ -12,8 +12,6 @@ import { UNCONFIGURED_PROTECTION } from '@/engine/protection-port';
 import { ReentrySupervisor } from '@/engine/reentry';
 import type { SourceFrontier } from '@/engine/source-frontier';
 import { FakeClock, type SystemClock } from '@/governors/clock';
-import { calendarPlanDayClock } from '@/governors/plan-day-clock';
-import { RateGovernor } from '@/governors/rate-governor';
 import { ReadBudget } from '@/governors/read-budget';
 import type { GraphBuildDeps } from '@/main/services/graph-types';
 import { journalSettler, wireChurn, wireMutationPolicy } from '@/main/services/unfollow-wiring';
@@ -25,6 +23,7 @@ import { DelayManager } from '@/timing/delay-manager';
 import { setLevel } from '@/utils/logger';
 import { ok } from '@/utils/result';
 import { FakeSentinel, kitStore, testDeps } from '../kit/engine-harness';
+import { fakePlanHost, intoSession, kitPlan, PLAN_TEST_RNG } from '../kit/harness-plan';
 import { readLimits } from '../kit/read-limits';
 
 const DAY = 86_400_000;
@@ -36,7 +35,7 @@ type Page = 'non-follower' | 'gone' | 'unreadable';
 /** The production unfollow composition after a week away, with a follow-back read that keeps failing. */
 function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean }>) {
   setLevel('error');
-  const store = kitStore();
+  const store = kitStore(PLAN_TEST_RNG);
   store.setOwnPk('me');
   const clock = new FakeClock(START);
   const settings = { ...DEFAULT_SETTINGS, seed: 'hub', lowWaterCandidates: 0, activeHoursStart: 0, activeHoursEnd: 24 };
@@ -59,17 +58,19 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
     return { ok: true, obs: { accountPk: a.pk, observedAt: clock.now(), source: 'profile', fields: { username } },
       viewer: { following: true, requested: false, followsUs: false } };
   });
-  const d = { resolveSettings: () => settings, driverSignal: () => undefined,
+  const d = { resolveSettings: () => settings, driverSignal: () => undefined, plan: fakePlanHost(settings),
     protection: { index: () => UNCONFIGURED_PROTECTION, setCapabilities: () => undefined } } as unknown as GraphBuildDeps;
-  const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
+  // The production plan over the store: its cadence admits every write, the loop acts inside its session.
+  const plan = kitPlan(store, clock, settings);
+  intoSession(plan, clock, (v) => v.plan.kinds.unfollow >= Object.values(accounts).filter((a) => a.record).length);
+  const rate = plan.rateGovernor(toRateGovernorConfig(settings));
   const readBudget = new ReadBudget({ store, clock, limits: readLimits() });
   const profiles = { visit } as unknown as TabProfileVisitor;
-  // The kit's plan-day boundary: local midnight over the fake clock (the build hands the plan's).
-  const dayClock = calendarPlanDayClock({ now: () => clock.now() });
+  const dayClock = plan.dayClock;
   const followback = new FollowbackWatcher({ store, clock, ownPk: 'me',
     notifications: { fetchRecent: async () => ({ ok: false, events: [] }) } });
   const policy = wireMutationPolicy(d, { store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock,
-    rate, reentry, readBudget, dayClock, profiles: () => profiles, followback: () => followback });
+    cadence: plan.cadence, readBudget, dayClock, nextSessionAt: plan.nextSessionAt, profiles: () => profiles, followback: () => followback });
   const presses: string[] = [];
   const tab = { currentUrl: () => url, goto: async (to: string) => { url = to; } };
   const actor = {
@@ -96,7 +97,9 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
 }
 
 test('a due lifecycle unfollow executes end to end while the return phase, a failing sweep and a stuck write all persist', async () => {
-  const r = rig({ alice: { pk: 'a', page: 'non-follower', record: true }, xavier: { pk: 'x', page: 'unreadable' } });
+  // Two due unfollows: the stuck write's unknown outcome reserves one of the day's unfollows (spec §9.8).
+  const r = rig({ alice: { pk: 'a', page: 'non-follower', record: true }, xavier: { pk: 'x', page: 'unreadable' },
+    zara: { pk: 'z', page: 'non-follower', record: true } });
   const stuck = r.store.beginEffectIntent({ accountPk: 'x', username: 'xavier', action: 'unfollow', channel: 'manual', at: r.clock.now() });
   r.store.markEffectUncertain(stuck.id, r.clock.now());
   await r.stepUntilPressed(1);
@@ -112,12 +115,13 @@ test('a due lifecycle unfollow executes end to end while the return phase, a fai
 
 test('on proceed the dispatch closure admits once; a refusal there marks no dispatch, so nothing is pressed', async () => {
   const r = rig({ alice: { pk: 'a', page: 'non-follower', record: true } });
-  r.store.setActionDelayDeadline(r.clock.now() + 60_000);
   const onDispatch = jest.fn();
   const prepare = () => prepareAction({ tab: r.tab as never, prepareProfile: r.policy.prepareProfile,
     beforeMutation: r.policy.beforeMutation, abortSignal: () => undefined }, 'unfollow', 'alice', 'a', onDispatch);
   const refused = await prepare();
   expect(r.visit).toHaveBeenCalledWith('alice');
+  // A deadline armed between the review and the dispatch: the closure's re-check refuses it.
+  r.store.setActionDelayDeadline(r.clock.now() + 60_000);
   await expect(refused()).rejects.toBeInstanceOf(ActionDeferredError);
   // ADR 0308: a refused closure keeps refusing after the refusal clears; the next action prepares its own.
   r.store.setActionDelayDeadline(null);

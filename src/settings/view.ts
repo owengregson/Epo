@@ -102,7 +102,7 @@ export function buildView(i: ViewInput): SettingsView {
   const card = (Object.keys(PACE_CARDS) as PaceCardId[])
     .find((id) => PACE_CARDS[id].activity === doc.intent.activity && PACE_CARDS[id].caution === doc.intent.caution);
   const automaticMax = math.automaticDayMax(e.dailyOperatingRate);
-  const { windowMs: _window, ...reads } = toReadAllowance(e);
+  const reads = toReadAllowance(e);
   return {
     rev: doc.rev, health: i.health, capabilities, mode: doc.app.mode, intent: doc.intent, seed: doc.seed,
     protection: doc.protection, protectionState: doc.protectionState, prefs: doc.prefs,

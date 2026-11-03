@@ -71,21 +71,12 @@ export interface RecoveryFacts {
 /** The rate governor's counters — the ledger-backed half of the pacing verdict. */
 export interface LedgerFacts {
   atHardCeiling: boolean;
-  atOperatingRate: boolean;
-  withinActiveHours: boolean;
-  /** Ms until the action counter resets (the next cycle start). */
-  msUntilCycleReset: number;
   /** Real IG actions (both ledgers) in the trailing hour. */
   actionsInLastHour: number;
 }
 
-/**
- * The plan's half of the pacing verdict (see `pacers.ts`): the plan's facts while it paces the loop,
- * with the hour cap its velocity backstop reads; with no plan wired, the legacy metronome's window.
- */
-export type PacingFacts =
-  | (PlanFacts & { readonly model: 'plan'; readonly hourlyCap: number })
-  | { readonly model: 'legacy'; readonly activeHoursStart: number };
+/** The plan's half of the pacing verdict (see `pacers.ts`): its parks, exact, and its admissions. */
+export type PacingFacts = PlanFacts;
 
 /** The chain target the loop is working, once resolved. */
 export interface TargetFacts {

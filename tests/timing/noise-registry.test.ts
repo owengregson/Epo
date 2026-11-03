@@ -13,6 +13,7 @@
  */
 import { ENGINE_WAIT_CLASS, type EngineWaitKey } from '@/engine/engine';
 import { PRUNE_WAIT_CLASS, type PruneWaitKey } from '@/engine/prune-engine';
+import { REFERENCE_TEMPO, referenceTempoSource, type TempoSource, tempoSource } from '@/kernel/tempo';
 import { ENGINE, NOISE } from '@/timing/config';
 import { DelayManager } from '@/timing/delay-manager';
 import {
@@ -124,7 +125,6 @@ describe('noise — class behavior (i)', () => {
 describe('noise — the class registries cover exactly the wait keys (ii)', () => {
   test('ENGINE_WAIT_CLASS key set === the EngineWaitKey union', () => {
     const expected: EngineWaitKey[] = [
-      'engine:active-hours-park',
       'engine:daily-ceiling-park',
       'engine:session-park',
       'engine:velocity-park',
@@ -142,10 +142,10 @@ describe('noise — the class registries cover exactly the wait keys (ii)', () =
   });
 
   test('the shipped engine classifications match the design', () => {
-    expect(ENGINE_WAIT_CLASS['engine:active-hours-park']).toBe('daily-boundary');
-    expect(ENGINE_WAIT_CLASS['engine:daily-ceiling-park']).toBe('daily-boundary');
+    // The plan's parks end at the instants it names (spec §5.16): exact, never jittered.
+    expect(ENGINE_WAIT_CLASS['engine:daily-ceiling-park']).toBe('exact');
     expect(ENGINE_WAIT_CLASS['engine:enrich-backoff']).toBe('retry-backoff');
-    expect(ENGINE_WAIT_CLASS['engine:read-budget-park']).toBe('daily-boundary');
+    expect(ENGINE_WAIT_CLASS['engine:read-budget-park']).toBe('exact');
     expect(ENGINE_WAIT_CLASS['engine:prune-park']).toBe('retry-backoff');
     expect(ENGINE_WAIT_CLASS['engine:blocked-park']).toBe('retry-backoff');
     expect(ENGINE_WAIT_CLASS['engine:idle']).toBe('local-beat');
@@ -283,5 +283,27 @@ describe('noise — daily-boundary seed keys on the RESUME day (iv, v)', () => {
     expect(monOffset).not.toBe(tueOffset); // per-day seed component
     const otherInstall = jitterBoundary(BASE_MS, boundarySeedKey(mon, key), ENTROPY + 1);
     expect(monOffset).not.toBe(otherInstall); // per-install seed component
+  });
+});
+
+describe('noise — the beat band and the rest stride are tempo specs', () => {
+  const at = (pace: number, depth = 1): TempoSource => tempoSource({ current: () => ({ ...REFERENCE_TEMPO, pace, depth }) });
+
+  test("a local beat is one draw of the reference pause.retry band around its base", () => {
+    const reference = referenceTempoSource();
+    for (const cls of ['local-beat', 'sub-cadence'] as const) {
+      const beat = noisify(cls, BASE_MS, mulberry32(5)) as DelayPolicy;
+      const twin = mulberry32(5);
+      for (let i = 0; i < 200; i += 1) expect(beat.sample(Math.random)).toBe(reference.policy('pause.retry', { baseMs: BASE_MS }).sample(twin));
+    }
+  });
+
+  test('the rest stride is one walk.rest-every draw at the tempo in force; a deeper session rests less often', () => {
+    const deep = at(1, 1.4);
+    const rng = mulberry32(21);
+    const twin = mulberry32(21);
+    for (let i = 0; i < 200; i += 1) expect(nextRestStride(rng, deep)).toBe(deep.policy('walk.rest-every').sample(twin));
+    const strides = new Set(Array.from({ length: 400 }, () => nextRestStride(rng, deep)));
+    expect(Math.min(...strides)).toBeGreaterThan(NOISE.LIST_WALK_REST_EVERY_MIN);
   });
 });

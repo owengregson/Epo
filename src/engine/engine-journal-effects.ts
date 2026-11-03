@@ -16,8 +16,6 @@ import type { FailureKind } from './recovery';
 export interface EngineJournalContext {
   readonly deps: EngineDeps & EngineTempo;
   readonly sweepCadence: SweepCadence;
-  /** The owed inter-action deadline, re-read from the store after a read that may accept requests. */
-  actionDelayDeadline: number | null;
   superseded(token: AbortController): boolean;
   noteProgress(phase: string): void;
   engineWait(key: EngineWaitKey, policyOrMs: DelayPolicy | number): Promise<WaitResult>;
@@ -45,7 +43,6 @@ export async function followbackBeforeSweep(ctx: EngineJournalContext, token: Ab
   const result = await followback.check({ requireFresh: reentry?.requiresCensus(now) ?? false,
     freshSinceAt: reentry?.snapshot().reconciliationStartedAt ?? undefined });
   if (ctx.superseded(token)) return 'aborted';
-  ctx.actionDelayDeadline = ctx.deps.store.getActionDelayDeadline();
   if (result.deferred === 'reconciliation-progress') {
     ctx.noteProgress('relationships-reconciling'); // no park: the visitor paces reads
     return 'idle';

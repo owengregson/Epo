@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import type { InstagramTab } from '@/adapter/tab';
 import type { PushContract, PushMethod } from '@/ipc/contract';
 import { Foundation, type FoundationDeps } from '@/main/foundation-wiring';
+import type { BuiltGraph } from '@/main/services/graph-types';
 import type { IgSessionPort } from '@/main/services/ig-session';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { ChainTargetView, EpoStatus, PruneStatus } from '@/types';
@@ -150,4 +151,17 @@ export function foundationStore(f: Foundation): KnowledgeStore {
   const graph = session.current();
   if (graph === null) throw new Error('foundationStore: no graph (not built?)');
   return graph.store;
+}
+
+/**
+ * Park a Foundation's loop for the rest of its plan-day, whatever the hour: build the graph and fill today's
+ * ledger to the plan's hard ceiling, so a started loop parks exactly to the boundary and does no tab work.
+ */
+export async function parkedForTheDay(f: Foundation): Promise<void> {
+  if (!(await f.ensureBuilt())) throw new Error('parkedForTheDay: ensureBuilt refused (no session?)');
+  const graph = (f as unknown as { session: { current(): BuiltGraph | null } }).session.current();
+  if (graph === null) throw new Error('parkedForTheDay: no graph');
+  const now = Date.now();
+  const ceiling = graph.plan.service.view(now).plan.ceilings.day;
+  for (let i = 0; i < ceiling; i += 1) graph.store.recordAction(`parked-${i}`, 'follow', 'ok', now);
 }

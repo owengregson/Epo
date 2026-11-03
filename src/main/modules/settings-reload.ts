@@ -3,14 +3,19 @@
  * config changed, so a protection or seed edit no longer rescans the whole queue.
  */
 import type { BuiltGraph } from '@/main/services/graph-types';
+import type { EffectiveSettings } from '@/settings/effective';
+import type { Touched } from '@/settings/ops';
 import {
   type Settings, toChainConfig, toChurnConfig, toFollowbackConfig, toPruneConfig, toRateGovernorConfig,
   toScannerConfig, toScorerConfig,
 } from '@/settings/settings';
 import * as logger from '@/utils/logger';
 
+/** A saved revision as the reload reads it: the effective records and what the change touched. */
+export interface ReloadEvent { readonly prev: EffectiveSettings; readonly next: EffectiveSettings; readonly touched: ReadonlySet<Touched> }
+
 /** Reload what changed between two v1 views of the settings; returns the components reloaded. */
-export function reloadChanged(g: BuiltGraph, prev: Settings, next: Settings): string[] {
+export function reloadChanged(g: BuiltGraph, prev: Settings, next: Settings, e: ReloadEvent): string[] {
   const moved = <T>(f: (s: Settings) => T): boolean => JSON.stringify(f(prev)) !== JSON.stringify(f(next));
   const reloaded: string[] = [];
   const reload = (name: string, run: () => void): void => {
@@ -18,7 +23,9 @@ export function reloadChanged(g: BuiltGraph, prev: Settings, next: Settings): st
     reloaded.push(name);
   };
   if (moved(toRateGovernorConfig)) reload('rate', () => g.rate.applyConfig(toRateGovernorConfig(next)));
-  if (moved(toChurnConfig)) reload('churn', () => g.churn.applyConfig(toChurnConfig(next)));
+  // A protection edit re-applies the unfollow rules at once, the engine running or stopped (spec §7.4).
+  const churnMoved = JSON.stringify(toChurnConfig(e.prev)) !== JSON.stringify(toChurnConfig(e.next));
+  if (churnMoved || e.touched.has('protection')) reload('churn', () => g.churn.applyConfig(toChurnConfig(e.next)));
   if (moved(toScannerConfig) || moved(toScorerConfig)) {
     reload('scanner', () => g.scanner.applyConfig(toScannerConfig(next), toScorerConfig(next)));
   }

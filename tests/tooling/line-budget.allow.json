@@ -3,11 +3,11 @@
   "allow": [
     {
       "file": "src/main/foundation-wiring.ts",
-      "lines": 1408
+      "lines": 1392
     },
     {
       "file": "src/engine/prune-engine.ts",
-      "lines": 1127
+      "lines": 1108
     },
     {
       "file": "src/kernel/derive.ts",
@@ -15,7 +15,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 958
+      "lines": 949
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -23,7 +23,7 @@
     },
     {
       "file": "src/livetest/steps.ts",
-      "lines": 727
+      "lines": 723
     },
     {
       "file": "src/adapter/actor.ts",
@@ -43,7 +43,7 @@
     },
     {
       "file": "src/engine/churn-scheduler.ts",
-      "lines": 456
+      "lines": 452
     },
     {
       "file": "src/engine/target-pipeline.ts",
@@ -51,15 +51,15 @@
     },
     {
       "file": "src/main/foundation-reads.ts",
-      "lines": 410
-    },
-    {
-      "file": "src/main/services/graph-builder.ts",
-      "lines": 363
+      "lines": 404
     },
     {
       "file": "src/rim/follower-acquisition.ts",
       "lines": 359
+    },
+    {
+      "file": "src/main/services/graph-builder.ts",
+      "lines": 357
     },
     {
       "file": "src/types.ts",
@@ -71,7 +71,7 @@
     },
     {
       "file": "src/engine/recovery.ts",
-      "lines": 340
+      "lines": 339
     },
     {
       "file": "src/kernel/policy.ts",

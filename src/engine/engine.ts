@@ -15,7 +15,6 @@ import type { WaitResult } from '../timing/delay-manager';
 import { mulberry32 } from '../timing/noise';
 import { type DelayPolicy, type Rng, TIMED_OUT, withTimeout } from '../timing/primitives';
 import { WaitRunner } from '../timing/wait-runner';
-import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
 import { absurd } from './absurd';
 import { queuedCountFor } from './decisions';
@@ -27,11 +26,12 @@ import {
   ENGINE_WAIT_CLASS,
   type EngineParkReason,
   type EngineWaitKey,
+  idleBaseMs,
   parkReasonFor,
 } from './engine-waits';
 import { FactGatherer, type FactSources, type Facts, type FeedCandidate } from './facts';
 import { type HaltReason, haltReasonKey } from './halt-reason';
-import { LegacyPacer, type Pacer, PlanPacer } from './pacers';
+import { cleanupCooldown } from './plan-mix';
 import type { EngineTempo } from './plan-port';
 import type {
   CurrentTarget,
@@ -55,9 +55,6 @@ import { TargetPipeline } from './target-pipeline';
 // Engine may wait un-interruptibly.
 export type { SleepFn } from '../timing/primitives';
 export { sleep as defaultSleep } from '../timing/primitives';
-
-/** How long an iteration idles when nothing is due yet (the final gate). */
-export const ENGINE_IDLE_MS = ENGINE_TIMING.IDLE_MS;
 
 /** Bounds of the short jittered pause ending every branch that issued IG traffic. */
 export const REFILL_PACING_MIN_MS = ENGINE_TIMING.REFILL_PACING_MIN_MS;
@@ -144,24 +141,11 @@ export class Engine {
    */
   private readonly recovery: RecoverySupervisor;
 
-  /**
-   * Deadline (epoch ms) of the inter-action paced delay still OWED, or null.
-   * Armed the moment an action completes and disarmed only when the delay fully
-   * elapses, so a pause, a stop, or a quit resumes the REMAINDER rather than
-   * acting immediately. Mirrored to store meta `action_delay_deadline_at` on
-   * every change and hydrated at construction; being absolute, time spent closed
-   * counts against it.
-   */
-  private actionDelayDeadline: number | null = null;
-
   /** The chain target being worked and its bounded refill cycle. */
   private readonly targets: TargetPipeline;
 
-  /** The plan, or undefined in legacy mode (see {@link EngineDeps.pacing}). */
-  private readonly pacing?: EnginePacing;
-
-  /** The pacing model in force — the loop never branches on which one. */
-  private readonly pacer: Pacer;
+  /** The plan: the one pacing model (see {@link EngineDeps.pacing}). */
+  private readonly pacing: EnginePacing;
 
   /**
    * The per-tick fact snapshot the rules decide over ({@link PROGRAM}). Sources
@@ -176,14 +160,12 @@ export class Engine {
   /** The woven prune-unfollow feed (a no-op feed when weaving is off). */
   private readonly unfollowFeed: EngineUnfollowFeed;
 
-  /** Randomness for the weave interleave draw; injectable for deterministic tests. */
-  private readonly rng: () => number;
   /** Per-install noise entropy (see {@link EngineDeps.installEntropy}). */
   private readonly installEntropy: number;
 
   /**
-   * The DEDICATED timing-noise rng — NEVER {@link rng}. Noise must not consume the
-   * seeded engine stream, or every downstream draw shifts
+   * The DEDICATED timing-noise rng — never a seeded decision stream. Noise must not consume a
+   * seeded stream, or every downstream draw shifts
    * (`docs/adr/0204-timing-noise.md`). Seeded from the install entropy ⊕
    * construction time.
    */
@@ -233,16 +215,10 @@ export class Engine {
     });
     this.sweepCadence = deps.sweepCadence;
     this.settings = deps.settings;
+    // GATING is pure (`pacingVerdict` over the plan's facts); the gap is armed at dispatch and owed
+    // in the store (`action_delay_deadline_at`), so a pause, a stop or a quit serves its remainder.
     this.pacing = deps.pacing;
-    // The pacing model is chosen ONCE: the composition root injects the plan
-    // only for the organic model. GATING is pure (`pacingVerdict` over facts);
-    // only the post-action gap needs the model object.
-    this.pacer = deps.pacing === undefined ? new LegacyPacer(deps.rate) : new PlanPacer(deps.pacing);
     this.unfollowFeed = deps.unfollowFeed;
-    this.rng = deps.rng ?? launchStream('engine/engine');
-    // Hydrate the owed inter-action delay from the store so an app relaunch
-    // resumes the remaining wait rather than acting on the first step.
-    this.actionDelayDeadline = deps.store.getActionDelayDeadline();
     // The ladder hydrates its own durable state (store meta `recovery_state`) —
     // a relaunch mid-hold serves the REMAINDER.
     this.recovery = new RecoverySupervisor({
@@ -273,12 +249,9 @@ export class Engine {
     return {
       deps: this.deps,
       recovery: this.recovery,
-      pacer: this.pacer,
       unfollowFeed: this.unfollowFeed,
       actionsFailingHalt: ACTIONS_FAILING_HALT,
       sweepCadence: this.sweepCadence,
-      get actionDelayDeadline() { return engine.actionDelayDeadline; },
-      set actionDelayDeadline(at) { engine.actionDelayDeadline = at; },
       get refillSinceAction() { return engine.refillSinceAction; },
       set refillSinceAction(v) { engine.refillSinceAction = v; },
       get lastActionAt() { return engine.lastActionAt; },
@@ -286,6 +259,7 @@ export class Engine {
       stateNow: () => this.stateNow(),
       superseded: (token) => this.superseded(token),
       engineWait: (key, policyOrMs) => this.engineWait(key, policyOrMs),
+      idleWait: (now) => this.idleWait(now),
       enterRecovery: (token, kind) => this.enterRecovery(token, kind),
       noteProgress: (phase) => this.noteProgress(phase),
       healIncidentWindow: (incident) => this.healIncidentWindow(incident),
@@ -457,13 +431,12 @@ export class Engine {
       state: this.engineState,
       lastStep: this.lastStep,
       lastSentinel: this.lastSentinel,
-      lastActionAt: this.lastActionAt,
+      lastActionAt: this.lastActionAt ?? this.deps.store.feed.lastSettledMutationAt(), // a relaunch shows the last settled write
       sessionStartedAt: this.sessionStartedAt,
       // The live wait's deadline when one is pending; otherwise the OWED
       // deadline a pause/offline hold interrupted (so the countdown survives a
       // hold and reflects the remainder that will be served on resume).
-      nextActionAt:
-        this.waits.nextDeadline('engine:action-delay') ?? this.actionDelayDeadline,
+      nextActionAt: this.waits.nextDeadline('engine:action-delay') ?? this.owedDeadline(),
       parkedUntil: this.park?.until ?? null,
       parkReason: this.park?.reason ?? null,
       online: this.online,
@@ -581,7 +554,7 @@ export class Engine {
       case 'advance-chain':
         return this.advanceChain(effect.target);
       case 'idle':
-        await this.engineWait('engine:idle', ENGINE_IDLE_MS);
+        await this.idleWait(this.deps.clock.now());
         return 'idle';
       default:
         return absurd(effect);
@@ -612,7 +585,7 @@ export class Engine {
         this.lastSentinel = status;
       },
       selectPruneCandidate: (now) => this.selectPruneCandidate(now),
-      rng: () => this.rng(),
+      cleanupCooldown: (now) => cleanupCooldown({ lastHalt: this.lastHalt, ladder: this.recoverySnapshot() }, now),
     });
   }
 
@@ -642,7 +615,7 @@ export class Engine {
       return 'advanced-chain';
     }
     if (advance.retryAt !== undefined) {
-      await this.engineWait('engine:idle', Math.min(ENGINE_IDLE_MS, Math.max(1, advance.retryAt - this.deps.clock.now())));
+      await this.idleWait(this.deps.clock.now(), [advance.retryAt]);
       return 'idle';
     }
     this.targets.markRevived(current.pk);
@@ -652,6 +625,24 @@ export class Engine {
       return 'advanced-chain';
     }
     return this.halt({ kind: 'chain-exhausted' });
+  }
+
+  /**
+   * The idle beat (spec §5.16): until the earliest FUTURE event the loop knows of — the open session's
+   * close, the next session, the owed deadline, the refill's reopening, `extra` — bounded by the
+   * `beat.transient` base (the staleness bound) and floored at two perception frames.
+   */
+  private idleWait(now: number, extra: readonly number[] = []): Promise<WaitResult> {
+    const view = this.pacing.view(now);
+    const open = view.open === null ? null : (view.sessions[view.open.idx]?.closesAt ?? null);
+    const events = [view.nextSessionAt, open, this.deps.store.getActionDelayDeadline(), this.targets.refillAvailableAt(), ...extra];
+    return this.engineWait('engine:idle', idleBaseMs(now, events, tempoOrReference(this.deps.tempo).base('beat.transient')));
+  }
+
+  /** The deadline the last dispatch armed, while it is still owed. */
+  private owedDeadline(): number | null {
+    const at = this.deps.store.getActionDelayDeadline();
+    return at !== null && at > this.deps.clock.now() ? at : null;
   }
 
   /** The next woven prune-unfollow candidate, or null (see `prune-feed.ts`). */

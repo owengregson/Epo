@@ -222,12 +222,10 @@ export interface EngineDeps {
   enricher: EngineEnricher;
   settings: Settings;
   /**
-   * The plan (spec §5.15). When injected, the loop parks where the plan says
-   * (sessions, the day done) and arms the plan's reference gap; when absent, the
-   * legacy active-hours + operating-rate metronome runs unchanged. The composition
-   * root injects it only when `Settings.pacingModel === 'organic'`.
+   * The plan (spec §5.15): the one pacing model. The loop parks exactly where the plan says
+   * (sessions, the day done, the rolling hour) and serves the deadline the dispatch armed.
    */
-  pacing?: EnginePacing;
+  pacing: EnginePacing;
   /**
    * The woven prune-unfollow feed. Injected by the composition root (the
    * PruneEngine); the loop weaves its candidates into the action stream only in the

@@ -11,6 +11,7 @@ import { ReentrySupervisor } from '@/engine/reentry';
 import type { SystemClock } from '@/governors/clock';
 import type { ReadBudget } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
+import type { TempoSource } from '@/kernel/tempo';
 import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
 import { managedRelationships } from '@/rim/managed-relationships';
 import type { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
@@ -47,6 +48,8 @@ export interface FollowbackWiring {
   liveOwnFollowers: AdapterBackedOwnFollowersSource | null;
   /** The plan's plan-day boundary (spec §4.4). */
   dayClock: PlanDayClock;
+  /** The plan-backed tempo: the drawer's waits and step pauses follow the session (spec §5.11). */
+  tempo?: TempoSource;
 }
 
 /** The follow-back watcher over the notifications feed and the managed-relationship reads. */
@@ -69,6 +72,7 @@ export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): Followba
     store,
     abortSignal: driverSignal,
     reporter: d.reporter,
+    tempo: w.tempo,
   });
   const followback = new FollowbackWatcher({
     signal: driverSignal,

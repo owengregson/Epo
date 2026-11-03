@@ -5,7 +5,6 @@
  * built Foundation pushing the real feed when a write settles; and the resume target riding the status.
  */
 
-import { PRUNE_SCAN_FRESH_MS } from '@/engine/prune-engine';
 import { type FrontierSource, SourceFrontier, type SourceFrontierSnapshot } from '@/engine/source-frontier';
 import type { PlanDayClock } from '@/kernel/plan';
 import type { BuiltGraph } from '@/main/services/graph-types';
@@ -21,6 +20,8 @@ afterAll(cleanupMainHarness);
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
+/** The plan's census freshness the sources are handed (its patience wait: the default four days). */
+const CENSUS_FRESH_MS = 4 * 86_400_000;
 const NOW = 1_800_000_000_000 - (1_800_000_000_000 % DAY) + 10 * HOUR;
 
 const utcDays: PlanDayClock = {
@@ -50,7 +51,7 @@ function sources(over: { now?: () => number; incidents?: { at: number; reason: s
   return liveSources(
     { store, ownPk: 'own', pruneEngine: { status: () => prune } },
     () => ({ incidents: over.incidents ?? [] }),
-    { planDay: utcDays, now: over.now ?? (() => NOW) },
+    { planDay: utcDays, censusFreshMs: () => CENSUS_FRESH_MS, now: over.now ?? (() => NOW) },
   );
 }
 
@@ -82,15 +83,15 @@ test("the feed reads the graph's store and keeps its view while only the clock m
 
 test('the expiry is the next plan-day roll, or the census freshness end when that comes first', () => {
   expect(sources().expiresAt()).toBe(utcDays.window(NOW).endsAt);
-  const scanAt = NOW - PRUNE_SCAN_FRESH_MS + HOUR;
-  expect(sources({ prune: { scanReady: true, scanAt } }).expiresAt()).toBe(scanAt + PRUNE_SCAN_FRESH_MS + 1);
+  const scanAt = NOW - CENSUS_FRESH_MS + HOUR;
+  expect(sources({ prune: { scanReady: true, scanAt } }).expiresAt()).toBe(scanAt + CENSUS_FRESH_MS + 1);
   expect(sources({ prune: { scanReady: false, scanAt } }).expiresAt()).toBe(utcDays.window(NOW).endsAt);
 });
 
 test('a census still runnable past its end is re-checked at the next push; a spent one declares nothing', () => {
-  expect(censusFreshEnd({ scanReady: true, scanAt: NOW - PRUNE_SCAN_FRESH_MS - 5 }, NOW)).toBe(NOW + 1);
-  expect(censusFreshEnd({ scanReady: true, scanAt: null }, NOW)).toBeNull();
-  expect(censusFreshEnd({ scanReady: false, scanAt: NOW }, NOW)).toBeNull();
+  expect(censusFreshEnd({ scanReady: true, scanAt: NOW - CENSUS_FRESH_MS - 5 }, NOW, CENSUS_FRESH_MS)).toBe(NOW + 1);
+  expect(censusFreshEnd({ scanReady: true, scanAt: null }, NOW, CENSUS_FRESH_MS)).toBeNull();
+  expect(censusFreshEnd({ scanReady: false, scanAt: NOW }, NOW, CENSUS_FRESH_MS)).toBeNull();
 });
 
 test("the recovery ladder's open episode, else its last one, reads as slowed down; a resume and a quit come from the runtime", () => {

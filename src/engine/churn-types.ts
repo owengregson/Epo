@@ -37,9 +37,10 @@ export type ChurnActionOutcome = {
    *    throttling (`feedback_required` / 429 in the response; status
    *    `'blocked'`: record-neutral, but DEFINITIVE — the engines back off at
    *    once instead of proving a blocked streak against the wall).
+   *  - `'unverified'` — dispatched, and Instagram showed nothing (spec §11.1 F7): a park and a breaker step.
    * Absent when the cause is unknown or ordinary.
    */
-  cause?: 'tab-unhealthy' | 'drift' | 'rate-limited' | 'local-policy';
+  cause?: 'tab-unhealthy' | 'drift' | 'rate-limited' | 'local-policy' | 'unverified';
   /**
    * True when a tab failure landed AFTER the click was dispatched but BEFORE
    * post-state verification — the action may have LANDED on Instagram. The

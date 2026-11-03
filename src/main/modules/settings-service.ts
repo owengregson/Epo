@@ -18,7 +18,7 @@ import { type SettingsPlanPreview, settingsPlanPreview } from '@/settings/plan-p
 import type { ResolvedParams } from '@/settings/resolve';
 import type { Settings } from '@/settings/v1/settings-v1-types';
 import {
-  carryOf, opsFromV1Partial, refusedState, stampsFor, toV1Settings, type V1Bookkeeping, withStamps,
+  opsFromV1Partial, refusedState, stampsFor, toV1Settings, type V1Bookkeeping, withStamps,
 } from '@/settings/v1-adapter';
 import { applyNotes, buildView, overrideConflicts, previewChanges } from '@/settings/view';
 import type { SettingsOp, SettingsPreviewResult, SettingsSaveResult } from '@/shared/settings-ops';
@@ -230,7 +230,7 @@ export class SettingsService {
 
   private announce(event: SettingsChangeEvent): void {
     const g = this.d.graph?.() ?? null;
-    if (g !== null) reloadChanged(g, toV1Settings(event.prev, this.doc, null), toV1Settings(event.next, this.doc, null));
+    if (g !== null) reloadChanged(g, toV1Settings(event.prev, this.doc, null), toV1Settings(event.next, this.doc, null), event);
     for (const fn of this.listeners) {
       try {
         fn(event);
@@ -258,13 +258,6 @@ export class SettingsService {
     if (t.ops.length > 0) {
       const r = this.apply(t.ops, 'user');
       if (r.kind !== 'saved') throw new Error(`settings not saved: ${r.kind === 'refused' ? r.reason : 'write failed'}: ${r.detail}`);
-    }
-    if (Object.keys(t.carry).length > 0) {
-      if (this.refused !== null) throw new Error(`settings not saved: migration-pending: ${this.refused.detail}`);
-      // The legacy pacer still reads these until it is deleted: carried in the document, never an op.
-      const written = this.commit({ ...this.doc, rev: this.doc.rev + 1, legacyCarry: { ...carryOf(this.effective()), ...t.carry } },
-        'user', new Set<Touched>(['prefs']));
-      if (!written.ok) throw new Error(`settings not saved: write failed: ${written.detail}`);
     }
     return this.resolveSettings();
   }

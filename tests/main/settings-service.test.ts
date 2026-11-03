@@ -129,13 +129,13 @@ test('with the port, the save note says re-planned exactly when the plan intent 
   expect(seed.kind === 'saved' && seed.applies).toEqual([]);
 });
 
-test("the legacy pacer's knobs ride in the document while it reads them; active hours move the quiet hours", async () => {
+test("an old renderer's write of the retired pacer's knobs is dropped; active hours still move the quiet hours", async () => {
   const { svc, m, pushed } = service();
-  await svc.updateSettings({ pacingModel: 'legacy', activeHoursStart: 8, activeHoursEnd: 8 });
-  expect(svc.resolveSettings()).toMatchObject({ pacingModel: 'legacy', activeHoursStart: 8, activeHoursEnd: 8 });
+  await svc.updateSettings({ pacingModel: 'legacy', minDelayMinutes: 9, activeHoursStart: 8, activeHoursEnd: 8 });
+  expect(svc.resolveSettings()).toMatchObject({ pacingModel: 'organic', minDelayMinutes: 3, activeHoursStart: 0, activeHoursEnd: 0 });
   expect(svc.view().intent.quietHours).toEqual({ kind: 'none' });
-  expect(JSON.parse(m.data.get(F.v2) ?? '{}').legacyCarry).toMatchObject({ pacingModel: 'legacy', activeHoursEnd: 8 });
-  expect(pushed.length).toBe(2);
+  expect(JSON.parse(m.data.get(F.v2) ?? '{}')).not.toHaveProperty('legacyCarry');
+  expect(pushed.length).toBe(1);
 });
 
 test('run stamps belong to the bound account: another account starts without them, unowned ones go to the first', async () => {

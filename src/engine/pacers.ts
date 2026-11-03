@@ -1,47 +1,16 @@
 /**
- * The pacing models, behind one port.
- *
- * Gating is a PURE function of facts: {@link pacingVerdict} answers "may I act
- * now, and if not, what park does this model demand?" without awaiting,
- * sleeping or reading a clock — the conductor's `pacing` rule turns its
- * `ParkSpec` into the single wait the step performs. The plan model parks
- * exactly where the plan says; the post-action gap still needs an object.
- *
- * See `docs/adr/0202-pacing-models.md` for why both models exist, and
- * `docs/adr/0901-delete-the-legacy-pacer.md` for the deletion list: the legacy
- * model is confined to {@link legacyVerdict} + {@link LegacyPacer} in this file
- * and the one `pacing` rule, so removing it is a local edit plus settings.
+ * The plan's pacing gate (ADR 0607, spec §5.16): a PURE verdict over the plan's facts — the day
+ * done, a closed session, a full rolling hour and a spent read allowance each park exactly until the
+ * instant the plan names. The gap between actions is armed at dispatch by the mutation cadence and
+ * served by the action step; nothing here draws one. ADR 0901 (the legacy pacer's deletion) is executed.
  */
 
-import { drawGapMs, type PlanIntent, velocityWakeAt } from '../kernel/plan';
-import { ENGINE as ENGINE_TIMING } from '../timing/config';
-import { clamp, logNormal } from '../timing/distributions';
-import { absurd } from './absurd';
-import { msUntilActiveWindow } from './decisions';
-import type { ClockFacts, LedgerFacts, PacingFacts } from './facts';
+import type { ClockFacts, PacingFacts } from './facts';
 import type { PlanFacts } from './plan-port';
-import type { EnginePacing, EngineRate } from './ports';
 import type { ParkSpec } from './rules';
 
 /** Exactly the facts a pacing verdict may read. */
-export type PacingInputs = { clock: ClockFacts; ledger: LedgerFacts; pacing: PacingFacts };
-
-/**
- * The park this model demands now, or null to proceed. PURE — the caller
- * performs the wait, so a burst is unrepresentable and the model can be
- * property-tested without a clock.
- */
-export function pacingVerdict(f: PacingInputs): ParkSpec | null {
-  const pacing = f.pacing;
-  switch (pacing.model) {
-    case 'plan':
-      return planVerdict(f.clock, f.ledger, pacing);
-    case 'legacy':
-      return legacyVerdict(f.clock, f.ledger, pacing.activeHoursStart);
-    default:
-      return absurd(pacing);
-  }
-}
+export type PacingInputs = { clock: ClockFacts; pacing: PacingFacts };
 
 /** The step each plan park reports. */
 const PARK_STEP = {
@@ -52,83 +21,11 @@ const PARK_STEP = {
 } as const satisfies Record<NonNullable<PlanFacts['park']>['key'], ParkSpec['step']>;
 
 /**
- * The plan model: the plan's own parks, exact (the day done, a closed session), then the
- * ledger-backed rolling-hour backstop. Sessions subsume active hours: none is placed overnight.
+ * The park the plan demands now, or null to proceed. PURE — the caller performs the wait, so a burst is
+ * unrepresentable and the gate can be property-tested without a clock.
  */
-function planVerdict(clock: ClockFacts, ledger: LedgerFacts, p: PlanFacts & { readonly hourlyCap: number }): ParkSpec | null {
-  if (p.park !== null) {
-    return { key: p.park.key, delay: Math.max(0, p.park.until - clock.now), step: PARK_STEP[p.park.key] };
-  }
-  if (ledger.actionsInLastHour >= p.hourlyCap) {
-    return {
-      key: 'engine:velocity-park',
-      delay: clamp(
-        logNormal(ENGINE_TIMING.VELOCITY_PARK_MEDIAN_MS, ENGINE_TIMING.VELOCITY_PARK_SIGMA),
-        ENGINE_TIMING.VELOCITY_PARK_MIN_MS,
-        ENGINE_TIMING.VELOCITY_PARK_MAX_MS,
-      ),
-      step: 'waited-session',
-    };
-  }
-  return null;
-}
-
-/** The legacy model: a flat active-hours window plus an operating-rate metronome. */
-function legacyVerdict(clock: ClockFacts, ledger: LedgerFacts, activeHoursStart: number): ParkSpec | null {
-  if (!ledger.withinActiveHours) {
-    return {
-      key: 'engine:active-hours-park',
-      delay: msUntilActiveWindow(clock.now, activeHoursStart),
-      step: 'waited-active-hours',
-    };
-  }
-  // The operating rate is the real daily stop; the hard ceiling is the
-  // uncrossable backstop behind it.
-  if (ledger.atHardCeiling || ledger.atOperatingRate) {
-    return {
-      key: 'engine:daily-ceiling-park',
-      delay: ledger.msUntilCycleReset,
-      step: 'waited-ceiling',
-    };
-  }
-  return null;
-}
-
-/**
- * The stateful half of a pacing model: record the action just performed and
- * return the gap owed before the next one. Called exactly once per action,
- * immediately after it lands.
- */
-export interface Pacer {
-  noteAction(at: number, kind: 'follow' | 'unfollow'): number;
-}
-
-/**
- * The gap after an action at time-scale 1 (spec §5.13 S1, pace unchanged): a full rolling hour waits
- * until it has room plus the floor, else today's planner draw over the reference shape, excited by
- * the trailing hour (the action just taken included).
- */
-export function referenceGapMs(intent: PlanIntent, recent: readonly number[], at: number, rng: () => number): number {
-  const shape = intent.gap;
-  const wake = velocityWakeAt(recent, intent.hourlyCap, at);
-  if (wake !== null) return Math.max(shape.floorMs, wake - at + shape.floorMs);
-  return drawGapMs(shape, recent, at, () => rng());
-}
-
-/** The plan: its reference gap at time-scale 1, drawn over the ledger's trailing hour. */
-export class PlanPacer implements Pacer {
-  constructor(private readonly plan: EnginePacing) {}
-
-  noteAction(at: number, _kind: 'follow' | 'unfollow'): number {
-    return this.plan.gapAfter(at);
-  }
-}
-
-/** Legacy: the rate governor's jittered metronome. */
-export class LegacyPacer implements Pacer {
-  constructor(private readonly rate: EngineRate) {}
-
-  noteAction(_at: number, _kind: 'follow' | 'unfollow'): number {
-    return this.rate.nextDelayMs();
-  }
+export function pacingVerdict(f: PacingInputs): ParkSpec | null {
+  const park = f.pacing.park;
+  if (park === null) return null;
+  return { key: park.key, delay: Math.max(0, park.until - f.clock.now), step: PARK_STEP[park.key] };
 }

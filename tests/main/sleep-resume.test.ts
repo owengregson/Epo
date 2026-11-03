@@ -14,7 +14,7 @@
 
 import type { InstagramTab } from '@/adapter/tab';
 import type { Foundation } from '@/main/foundation-wiring';
-import { cleanupMainHarness, makeFakeTab, newFoundation } from '../kit/main-harness';
+import { cleanupMainHarness, makeFakeTab, newFoundation, parkedForTheDay } from '../kit/main-harness';
 
 afterAll(cleanupMainHarness);
 
@@ -92,9 +92,9 @@ describe('suspend freezes cleanly; resume runs the ordered wake sequence', () =>
         connectivity.push('probe');
       },
     });
-    // A zero-width active-hours window parks the legacy loop immediately —
-    // state stays 'running' on a long `engine:` wait, with no tab traffic.
-    await f.updateSettings({ activeHoursStart: 8, activeHoursEnd: 8, pacingModel: 'legacy' });
+    // The plan parks the loop for the day (its ceiling reached) — state stays
+    // 'running' on a long `engine:` wait, with no tab traffic.
+    await parkedForTheDay(f);
     return f;
   }
 

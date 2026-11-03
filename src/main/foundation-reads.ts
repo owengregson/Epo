@@ -8,6 +8,8 @@
  * the store's single-boundary rule is preserved.
  */
 
+import { RUNTIME_POLICY } from '@/kernel/runtime-policy';
+import type { OutcomeWindow } from '@/store/repos/analytics';
 import {
   type AccountState,
   compareByScoreDesc,
@@ -20,23 +22,15 @@ import {
 } from '@/store/types';
 import { MS_PER_DAY } from '@/timing/units';
 import {
-  type ChainTargetDetail, type ChainTargetView,
-  CONVERSION_VERDICT_MIN,
-  GRAPH_NODE_STATUSES,
-  type GraphHub,
-  type GraphNodeStatus,
-  type GraphSnapshot,
-  type QueueListResult,
-  type QueueRow,
-  RUNWAY_CAP_DAYS,
-  type TargetYield,
+  type ChainTargetDetail, type ChainTargetView, CONVERSION_VERDICT_MIN, GRAPH_NODE_STATUSES, type GraphHub, type GraphNodeStatus,
+  type GraphSnapshot, type QueueListResult, type QueueRow, RUNWAY_CAP_DAYS, type TargetYield,
 } from '@/types';
 
 /** The narrow slice of `KnowledgeStore` the chain projection reads. */
 export interface ChainReadStore {
   listTargets(): Target[];
   getAccount(pk: string): AccountState | null;
-  targetYield(targetPk: string, ownPk: string): TargetYield;
+  targetYield(targetPk: string, ownPk: string, outcome: OutcomeWindow): TargetYield;
 }
 
 /** The narrow slice of `KnowledgeStore` the queue projection reads. */
@@ -46,17 +40,17 @@ export interface QueueReadStore {
 }
 
 /** Default cap on rows returned per queue tab (the rest are flagged truncated). */
-export const QUEUE_ROW_CAP = 100;
+export const QUEUE_ROW_CAP = RUNTIME_POLICY.QUEUE_ROW_CAP;
 
 /**
- * Every chain target, in the store's chain order, each augmented with its account
- * username and its on-demand yield (follow-back rate, pool size, overlap).
+ * Every chain target, in the store's chain order, each augmented with its account username and its
+ * on-demand yield (follow-back rate, pool size, overlap) classified in the follow-back window (law L7).
  */
-export function shapeChainList(store: ChainReadStore, ownPk: string): ChainTargetView[] {
+export function shapeChainList(store: ChainReadStore, ownPk: string, outcome: OutcomeWindow): ChainTargetView[] {
   return store.listTargets().map((t) => ({
     ...t,
     username: store.getAccount(t.accountPk)?.username ?? null,
-    yield: store.targetYield(t.accountPk, ownPk),
+    yield: store.targetYield(t.accountPk, ownPk, outcome),
   }));
 }
 
@@ -68,19 +62,19 @@ export function shapeChainList(store: ChainReadStore, ownPk: string): ChainTarge
 export interface TargetDetailReadStore {
   getTarget(pk: string): Target | null;
   getAccount(pk: string): AccountState | null;
-  targetYield(targetPk: string, ownPk: string): TargetYield;
+  targetYield(targetPk: string, ownPk: string, outcome: OutcomeWindow): TargetYield;
   targetFunnel(targetPk: string): TargetFunnelRead;
   followbackTimingFor(targetPk: string): FollowbackTiming;
   followActionCountSince(sinceMs: number): number;
 }
 
 /** How far back the realized follow pace looks (action_ledger window, days). */
-export const RUNWAY_RATE_WINDOW_DAYS = 7;
+export const RUNWAY_RATE_WINDOW_DAYS = RUNTIME_POLICY.RUNWAY_RATE_WINDOW_DAYS;
 
 /** Inputs the detail shaper cannot read from the store. */
 export interface TargetDetailOpts {
-  /** Epoch ms "now" — anchors the realized-pace window. */
-  now: number;
+  /** Epoch ms "now" (anchors the realized-pace window) and the follow-back wait the yield classifies in (law L7). */
+  now: number; followbackWindowMs: number;
   /** Today's planned volume — the pace fallback before any follow history exists. */
   plannedToday: number;
 }
@@ -115,7 +109,7 @@ export function shapeTargetDetail(
   if (target === null) return null;
   const acc = store.getAccount(targetPk);
 
-  const y = store.targetYield(targetPk, ownPk);
+  const y = store.targetYield(targetPk, ownPk, { windowMs: opts.followbackWindowMs, now: opts.now });
   const f = store.targetFunnel(targetPk);
   const timing = store.followbackTimingFor(targetPk);
 

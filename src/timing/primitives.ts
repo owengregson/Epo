@@ -1,14 +1,19 @@
 /**
  * Timing primitives — the ONE home for sleep and delay-shape math.
  *
- * Pure and dependency-free (no Node, no Electron), so both the main process and
- * the renderer import from here. Every delay computation in the app is one of
- * these four policy shapes; composing them (see `scaled`) replaces the formula
- * forks that used to live in rate-governor / prune-engine / followers-page-reader.
+ * No Electron; a draw with no rng handed in takes a launch stream from the
+ * entropy root (spec §20.4). A delay is a `DelayPolicy`: fixed, uniform, or a
+ * tempo key's drawn policy (the plan's tempo, spec §5.11); the legacy pacer's
+ * jittered band and its prune scaling retired with the cadence switch (§5.13).
  */
+
+import { launchStream } from '../utils/entropy';
 
 /** Injectable randomness — `Math.random`-shaped, deterministic in tests. */
 export type Rng = () => number;
+
+/** The stream a draw takes when its caller hands no rng. */
+const defaultDraws: Rng = launchStream('timing/sample');
 
 /**
  * An interruptible sleep signature: resolves after `ms` OR as soon as `signal`
@@ -39,37 +44,8 @@ export function uniform(minMs: number, maxMs: number): DelayPolicy {
   return { kind: 'uniform', sample: (rng) => Math.round(min + rng() * (max - min)) };
 }
 
-/**
- * THE paced delay: a base uniformly in [min,max], then a symmetric
- * ± `jitterPercent` of that base. Consumes the rng TWICE (base, then jitter) —
- * the exact formula and draw order the RateGovernor has always used, so
- * deterministic tests seeded against the old code still hold.
- */
-export function jittered(minMs: number, maxMs: number, jitterPercent: number): DelayPolicy {
-  // Jitter is clamped to ±95% so the draw can never collapse to (or below)
-  // zero — a 100% jitter setting would otherwise turn the inter-action pace
-  // into an immediate fire. The result keeps a floor of 5% of the lower bound.
-  const j = Math.min(95, Math.max(0, jitterPercent));
-  return {
-    kind: 'jittered',
-    sample: (rng) => {
-      const base = minMs + rng() * (maxMs - minMs);
-      const jitter = base * (j / 100) * (rng() * 2 - 1);
-      return Math.max(0, Math.round(base + jitter));
-    },
-  };
-}
-
-/** Scale another policy's draw by `factor` (prune runs growth's delay × 1/3). */
-export function scaled(inner: DelayPolicy, factor: number): DelayPolicy {
-  return {
-    kind: `scaled(${inner.kind})`,
-    sample: (rng) => Math.round(inner.sample(rng) * factor),
-  };
-}
-
 /** Draw once from a policy — or pass a plain number through unchanged. */
-export function sample(policyOrMs: DelayPolicy | number, rng: Rng = Math.random): number {
+export function sample(policyOrMs: DelayPolicy | number, rng: Rng = defaultDraws): number {
   return typeof policyOrMs === 'number' ? policyOrMs : policyOrMs.sample(rng);
 }
 

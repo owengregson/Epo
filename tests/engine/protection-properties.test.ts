@@ -64,8 +64,7 @@ function churnRig(r: Rules, fresh: Map<string, Facts4>, rotateMutuals = true) {
   const clock = new FakeClock(T0);
   const rig = new ProtectionRig(clock);
   applyRules(rig, r);
-  const rate = new RateGovernor(store, clock, { dailyHardCeiling: 1000, dailyOperatingRate: 1000, minDelayMs: 0,
-    maxDelayMs: 0, jitterPercent: 0, activeHoursStart: 0, activeHoursEnd: 24 });
+  const rate = new RateGovernor(store, clock, { dailyHardCeiling: 1000 });
   const actions = new FakeActions();
   const presses: string[] = [];
   const violations: string[] = [];

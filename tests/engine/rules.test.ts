@@ -63,27 +63,23 @@ const rec = (state: FollowRecord['state']): FollowRecord => ({
 
 const arbLedger: fc.Arbitrary<LedgerFacts> = fc.record({
   atHardCeiling: fc.boolean(),
-  atOperatingRate: fc.boolean(),
-  withinActiveHours: fc.boolean(),
-  msUntilCycleReset: fc.integer({ min: 0, max: 86_400_000 }),
   actionsInLastHour: fc.integer({ min: 0, max: 200 }),
 });
 
 /** The plan's facts with an open session and nothing refused (the plan model's "may act"). */
 const OPEN_PLAN = {
-  model: 'plan', hourlyCap: 999, sessionOpen: true, park: null,
+  sessionOpen: true, park: null,
   admits: { follow: true, unfollow: true, accept: true, explore: true }, mix: 'normal', probation: false,
   reads: { exploreLeft: 0, reconcileLeft: 0 }, checkDue: false, checkLight: false, censusDue: false,
 } as const satisfies PacingFacts;
 
 const arbPacing: fc.Arbitrary<PacingFacts> = fc.oneof(
-  fc.record({ model: fc.constant('legacy' as const), activeHoursStart: fc.integer({ min: 0, max: 23 }) }),
   fc.constant<PacingFacts>(OPEN_PLAN),
   fc.record({
     until: fc.integer({ min: 0, max: 2_000_000_000 }),
-    key: fc.constantFrom('engine:session-park' as const, 'engine:daily-ceiling-park' as const),
-    hourlyCap: fc.integer({ min: 0, max: 60 }),
-  }).map(({ until, key, hourlyCap }): PacingFacts => ({ ...OPEN_PLAN, sessionOpen: false, hourlyCap, park: { key, until } })),
+    key: fc.constantFrom('engine:session-park' as const, 'engine:daily-ceiling-park' as const,
+      'engine:velocity-park' as const, 'engine:read-budget-park' as const),
+  }).map(({ until, key }): PacingFacts => ({ ...OPEN_PLAN, sessionOpen: key === 'engine:velocity-park', park: { key, until } })),
 );
 
 const arbQueue: fc.Arbitrary<QueueFacts> = fc.record({
@@ -401,7 +397,7 @@ describe('the precedence property', () => {
           lifecycle: { aborted: false, halted: false },
           sentinel: { status: 'ok' },
           recovery: { ...facts.recovery, phase: 'inactive' },
-          ledger: { ...facts.ledger, atHardCeiling: false, withinActiveHours: true, atOperatingRate: false },
+          ledger: { ...facts.ledger, atHardCeiling: false },
           pacing: OPEN_PLAN,
           target: { current: { pk: 't1', username: 'targetone' } },
           cadence: { sweepDue: false, overdue: [] },
@@ -432,13 +428,7 @@ describe('prune-run rules', () => {
       clock: { now: 1_000 },
       sentinel: { status: 'ok' },
       recovery: { phase: 'inactive', holdRemainingMs: 0 },
-      ledger: {
-        atHardCeiling: false,
-        atOperatingRate: false,
-        withinActiveHours: true,
-        msUntilCycleReset: 0,
-        actionsInLastHour: 0,
-      },
+      ledger: { atHardCeiling: false, actionsInLastHour: 0 },
       pacing: OPEN_PLAN,
       target: { current: null },
       queue: { queuedForTarget: 0, lowWaterCandidates: 0, targetExhausted: false },

@@ -2,47 +2,65 @@
  * The plan wiring (ADR 0607, spec §5.13 S1): the plan service, the single writer of the day plan,
  * over the store and the live settings; its plan-backed day clock (the one boundary every day
  * counter reads); the loop's plan port; the plan and Boost status contributors; and the settings
- * preview port. The pace is unchanged: the reference tempo and the reference gap stay in force.
+ * preview port; the cadence, the read budget and the plan-backed tempo the whole graph runs on.
  */
 
 import type { EngineWaitKey } from '@/engine/engine-waits';
 import { journalBlocks } from '@/engine/journal';
-import { referenceGapMs } from '@/engine/pacers';
-import type { EnginePlanPacing } from '@/engine/plan-port';
-import type { Clock, SystemClock } from '@/governors/clock';
+import type { EnginePlan } from '@/engine/plan-port';
+import type { PrunePlan } from '@/engine/prune-types';
+import { UnconfirmedBreaker } from '@/engine/unconfirmed-breaker';
+import type { Clock } from '@/governors/clock';
 import { projectBoost } from '@/governors/plan-boost';
 import { projectPlan } from '@/governors/plan-projection';
 import { PlanService } from '@/governors/plan-service';
 import { RateGovernor, type RateGovernorConfig, type RatePlan } from '@/governors/rate-governor';
-import { ReadBudget } from '@/governors/read-budget';
+import { ReadBudget, type ReadBudgetConfig } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
-import { MS_PER_HOUR } from '@/kernel/units';
+import type { TempoSource } from '@/kernel/tempo';
 import { PlanControl } from '@/main/modules/plan-control';
+import type { EffectiveSettings } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
 import { toReadAllowance } from '@/settings/read-allowance';
-import { NEVER_PAUSED } from '@/shared/surface-gate';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DelayManager } from '@/timing/delay-manager';
-import { launchStream } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import type { GraphBuildDeps, GraphPlan, StatusContributor, WiringParts } from './graph-types';
+import { createMutationCadence, type MutationCadence } from './mutation-cadence';
 import { lastMutationBefore, planDemand } from './plan-demand';
+import { surfaceGateOf } from './surface-wiring';
 
-/** The durable read budget; its limits re-derive from the live settings on every read. */
-export function wireReadBudget(
-  store: KnowledgeStore,
-  clock: SystemClock,
-  d: Pick<GraphBuildDeps, 'resolveSettings'>,
-): ReadBudget {
-  return new ReadBudget({ store, clock, limits: () => toReadAllowance(d.resolveSettings()) });
+/**
+ * The durable read budget's limits on every read (spec §5.8 layer 1): the plan-day totals from the live
+ * settings and the plan's own census sizing, the plan-day window they reset at (the trailing-24 h
+ * backstop binds as well), and the plan's explore sub-limit for the day.
+ */
+export function planReadLimits(service: Pick<PlanService, 'view'>, effective: () => EffectiveSettings, now: number): ReadBudgetConfig {
+  const view = service.view(now);
+  return { ...toReadAllowance(effective(), view.plan.demand), window: view.window,
+    explore: { profiles: view.plan.reads.explore, pages: view.plan.reads.explorePages } };
 }
 
 /** What the plan wiring hands the graph: the graph's plan, the loop's plan port and the rate governor over it. */
 export interface PlanWiring extends GraphPlan {
-  /** The loop's plan, for the session-paced model only (the legacy metronome keeps none). */
-  readonly pacing: EnginePlanPacing | undefined;
+  /** The loop's plan: the one pacing model (spec §5.13 S2). */
+  readonly pacing: EnginePlan;
+  /** The unconfirmed-actions breaker every automatic writer feeds (spec §11.1 F7). */
+  readonly breaker: UnconfirmedBreaker;
   /** The rate governor counting against the plan's day and volume. */
   rateGovernor(cfg: RateGovernorConfig): RateGovernor;
+  /** The plan's cadence: the admission before every visit and the deadline armed at dispatch. */
+  readonly cadence: MutationCadence;
+  /** The plan's next session start (a park slot), or null when none remains before the boundary. */
+  nextSessionAt(now: number): number | null;
+  /** The open session's start and planned unfollows, or null between sessions (spec §9.7). */
+  reviewBound(now: number): { readonly since: number; readonly planned: number } | null;
+  /** The plan's face toward cleanup: the run's admission, its gap, the breaker, the day's cleanup. */
+  readonly prunePlan: PrunePlan;
+  /** The durable read budget on the plan's plan-day limits. */
+  readonly readBudget: ReadBudget;
+  /** The plan-backed tempo (spec §5.9, §5.11): every Instagram-facing wait, dwell and gesture follows the session. */
+  readonly tempo: TempoSource;
 }
 
 /** The loop's waits a re-plan can move: the plan's own parks. */
@@ -55,6 +73,8 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   const effective = () => host.settings.effective();
   const installEntropy = store.installEntropy();
   let control: PlanControl | null = null;
+  const breaker = new UnconfirmedBreaker();
+  const gate = surfaceGateOf(store);
   const service = new PlanService({
     store,
     clock,
@@ -65,12 +85,13 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     lastMutationBefore: (t) => lastMutationBefore(store, t),
     // Outside following actions from the own-header log (spec §9.10): charged to the ceiling, increases only.
     outsideSince: (since) => store.growth.outsideSince(since),
-    // The engine still arms the shared delay itself; the plan's deadline arrives with the cadence switch.
-    deadline: () => null,
+    // The shared deadline the cadence arms at dispatch: an automatic write waits it out (spec §5.13 S2).
+    deadline: () => store.getActionDelayDeadline(),
     journal: { blocks: (pk, exceptIntentId) => journalBlocks(pk, store.effectIntents.unsettledFor(pk), exceptIntentId) },
     runIntent: () => host.runIntent(),
-    unconfirmed: () => null,
-    surfaceGate: NEVER_PAUSED,
+    unconfirmed: () => breaker.held(clock.now()),
+    // The real gate of this store's graph, read at each ask (the plan mix and the admission).
+    surfaceGate: gate,
     onChanged: () => control?.changed(),
   }, { log: logger });
   const wake = (): void => {
@@ -81,40 +102,68 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   });
   const triggers = control;
   host.settings.setPlanPort(service);
-  host.settings.setCapabilities({ plan: true });
+  // The plan's tempo is in force (every key's site enabled) and the Boost commands reach the plan.
+  host.settings.setCapabilities({ plan: true, tempo: true, boost: true });
   triggers.start();
   // The legacy planner's phase is migrated by the plan's first write; its snapshot is retired.
   if (store.getPlanState() !== null && store.getPacingState() !== null) store.setPacingState(null);
-  const gapRng = launchStream('main/plan-gap');
-  const enginePlan: EnginePlanPacing = {
+  const cadence = createMutationCadence({ plan: service, store });
+  const enginePlan: EnginePlan = {
     view: (now) => service.view(now),
     ensureIfProvisional: (now) => {
       const view = service.view(now);
       return view.provisional ? service.ensure(now) : view;
     },
     wake,
-    gapAfter: (at) => referenceGapMs(toPlanIntent(effective()), store.recentMutationTimes(at - MS_PER_HOUR), at, gapRng),
+    velocityParkUntil: (now) => cadence.velocityParkUntil(now),
+    practiced: (at) => {
+      cadence.armPractice(at);
+    },
+    // A trip holds the kind for the rest of this session: until the next one starts, or the boundary.
+    noteOutcome: (kind, unverified, at) => {
+      const view = service.view(at);
+      return breaker.note(kind, unverified, at, view.nextSessionAt ?? view.window.endsAt);
+    },
+    paused: (activity) => gate.paused(activity),
   };
   const dayClock = service.planDayClock();
-  const ratePlan: RatePlan = {
-    day: dayClock,
-    volume: (now) => {
-      const view = service.view(now);
-      return { planned: Math.max(view.plan.volume.drawn, view.plan.volume.planned), remaining: view.remaining };
+  const ratePlan: RatePlan = { day: dayClock };
+  const prunePlan: PrunePlan = {
+    preflight: (now, pk) => cadence.preflight('unfollow', 'cleanup-run', now, { pk }),
+    practiced: (now) => {
+      cadence.armPractice(now);
     },
+    noteOutcome: (unverified, now) => enginePlan.noteOutcome('unfollow', unverified, now),
+    cleanupToday: (now) => {
+      const view = service.view(now);
+      return { done: view.used.unfollow, limit: view.plan.kinds.unfollow };
+    },
+    censusFreshMs: () => service.snapshot(clock.now()).intent.patienceWaitMs,
+    dayWindow: (now) => dayClock.window(now),
   };
   return {
     service,
     dayClock,
-    pacing: d.settings.pacingModel === 'organic' ? enginePlan : undefined,
-    rateGovernor: (cfg) => new RateGovernor(store, clock, cfg, launchStream('governors/rate-governor'), ratePlan),
+    cadence,
+    breaker,
+    prunePlan,
+    readBudget: new ReadBudget({ store, clock, limits: () => planReadLimits(service, effective, clock.now()) }),
+    tempo: service.tempo(),
+    nextSessionAt: (now) => service.view(now).nextSessionAt,
+    reviewBound: (now) => {
+      const open = service.view(now).open;
+      const s = open === null ? undefined : service.view(now).plan.sessions[open.idx];
+      return s === undefined ? null : { since: s.startAt, planned: s.mix.unfollow };
+    },
+    pacing: enginePlan,
+    rateGovernor: (cfg) => new RateGovernor(store, clock, cfg, ratePlan),
     resumed: () => triggers.resumed(),
     demandChanged: () => triggers.demandChanged(),
     boostActive: () => service.view(clock.now()).boost !== null,
     dispose: () => {
       triggers.dispose();
       host.settings.setPlanPort(null);
-      host.settings.setCapabilities({ plan: false });
+      host.settings.setCapabilities({ plan: false, tempo: false, boost: false });
     },
   };
 }
@@ -153,8 +202,15 @@ function boostContributor(plan: GraphPlan, store: KnowledgeStore, d: Pick<GraphB
   };
 }
 
+/** `EpoStatus.actionsUnconfirmed`: the kind the breaker holds back and its streak, or null (spec §11.1 F7). */
+function unconfirmedContributor(breaker: UnconfirmedBreaker): StatusContributor {
+  return { name: 'actionsUnconfirmed', contribute: (_graph, now) => ({ actionsUnconfirmed: breaker.held(now) }) };
+}
+
 /** The plan wiring's startup steps and status contributors. */
-export function planWiringParts(plan: GraphPlan, reads: ReadBudget, store: KnowledgeStore,
-  d: Pick<GraphBuildDeps, 'plan'>): WiringParts {
-  return { startupSteps: [], statusContributors: [planContributor(plan, reads), boostContributor(plan, store, d)] };
+export function planWiringParts(plan: GraphPlan & { readonly breaker?: UnconfirmedBreaker }, reads: ReadBudget,
+  store: KnowledgeStore, d: Pick<GraphBuildDeps, 'plan'>): WiringParts {
+  const contributors = [planContributor(plan, reads), boostContributor(plan, store, d)];
+  if (plan.breaker !== undefined) contributors.push(unconfirmedContributor(plan.breaker));
+  return { startupSteps: [], statusContributors: contributors };
 }
