@@ -19,15 +19,12 @@
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { PruneCensusRecord } from '../store/knowledge-store';
-import { actionGap } from '../timing/action-gap';
 import { PRUNE } from '../timing/config';
 import { DelayManager, type WaitResult } from '../timing/delay-manager';
 import { mulberry32, type WaitClass } from '../timing/noise';
 import {
   type DelayPolicy,
   type Rng,
-  sample,
-  scaled,
   sleep as timingSleep,
 } from '../timing/primitives';
 import { MS_PER_DAY } from '../timing/units';
@@ -35,10 +32,12 @@ import { WaitRunner } from '../timing/wait-runner';
 import * as log from '../utils/logger';
 import { censusAuthority } from './census-authority';
 import type { ChurnActionOutcome } from './churn-scheduler';
-import { pruneCycleStart, pruneDailyPlan } from './decisions';
 import { type HaltReason, haltReasonKey } from './halt-reason';
 import { journaledMutation } from './journaled-mutation';
 import { decidePruneCandidate } from './prune-candidate';
+import { nextFeedCandidate, type PruneFeedContext } from './prune-feed';
+import { PrunePacing } from './prune-pacing';
+import { assertFetchComplete, assertScanCoverage } from './prune-scan-guards';
 import { filterPruneCandidates } from './prune-whitelist';
 
 /**
@@ -54,7 +53,7 @@ export function pruneDue(scheduleDays: number, lastRunAt: number | null, now: nu
   return now - lastRunAt >= scheduleDays * MS_PER_DAY;
 }
 
-import type { PruneCandidate, PruneConfig, PruneEngineDeps, PruneScanEstimates, PruneScanFetch, PruneScanOpts, PruneState, PruneStatus } from './prune-types';
+import type { PruneCandidate, PruneConfig, PruneEngineDeps, PruneScanEstimates, PruneScanOpts, PruneState, PruneStatus } from './prune-types';
 
 export type { PruneCandidate, PruneChurnActions, PruneConfig, PruneEngineDeps, PruneOwnFollowers, PruneOwnFollowing, PruneScanEstimates, PruneScanFetch, PruneScanOpts, PruneSentinel, PruneState, PruneStatus } from './prune-types';
 
@@ -94,15 +93,8 @@ export const PRUNE_CONSECUTIVE_FAIL_HALT = 4;
  */
 export const PRUNE_CONSECUTIVE_BLOCK_HALT = 3;
 
-/**
- * Prune unfollows run at a THIRD of the growth engine's paced inter-action
- * pace: the same jittered min/max/jitter draw, scaled by this factor. Pruning is
- * a deliberate, user-invoked bulk cleanup, so it moves ~3× faster than growth's
- * follow cadence while still spacing every unfollow (never a burst). Only the
- * inter-action delay is scaled — the scan pacing and the blocked/budget park are
- * unaffected.
- */
-export const PRUNE_DELAY_FACTOR = PRUNE.DELAY_FACTOR;
+// The paced inter-unfollow scale lives with the pacing; re-exported for its old consumers.
+export { PRUNE_DELAY_FACTOR } from './prune-pacing';
 
 /**
  * How long a completed scan's candidate set stays runnable for a 2-step run.
@@ -197,6 +189,10 @@ export class PruneEngine {
   /** Once true, `nextCandidate` returns null (growth keeps running); reset on a new scan. */
   private feedHalted = false;
   private lastOutcome: ChurnActionOutcome | null = null;
+  /** The run's gates, plan and paced delay (see `prune-pacing.ts`). */
+  private readonly pacing: PrunePacing;
+  /** The feed selection's view of this engine (see `prune-feed.ts`). */
+  private readonly feed: PruneFeedContext;
   lastActionOutcome(): ChurnActionOutcome | null { return this.lastOutcome ? { ...this.lastOutcome } : null; }
 
   constructor(deps: PruneEngineDeps) {
@@ -225,6 +221,17 @@ export class PruneEngine {
     });
     this.cfg = deps.cfg;
     this.lastRunAt = deps.lastRunAt ?? null;
+    this.pacing = new PrunePacing({
+      deps,
+      cfg: () => this.cfg,
+      rng: this.rng,
+      stateNow: () => this.stateNow(),
+      owe: (deadline) => {
+        this.owedActionDeadline = deadline;
+      },
+      pruneWait: (key, ms) => this.pruneWait(key, ms),
+    });
+    this.feed = this.feedContext();
 
     // Rehydrate the durable scan snapshot (same pattern as growth's
     // adoptActiveTargetFromStore): the census counts and any not-yet-visited
@@ -282,6 +289,21 @@ export class PruneEngine {
       });
       this.emitStatus();
     }
+  }
+
+  /** One view of this engine for the feed selection; the accessors read live state. */
+  private feedContext(): PruneFeedContext {
+    const engine = this;
+    return {
+      deps: this.deps,
+      get cfg() { return engine.cfg; },
+      get feedHalted() { return engine.feedHalted; },
+      get pendingCandidates() { return engine.pendingCandidates; },
+      hasFreshScan: () => this.hasFreshScan(),
+      atDailyCap: (now) => this.atDailyCap(now),
+      followsUsNow: (pk) => this.followsUsNow(pk),
+      visitCandidate: (cand) => this.visitCandidate(cand),
+    };
   }
 
   /** Whether a fresh, complete scan is cached and runnable right now. */
@@ -471,21 +493,11 @@ export class PruneEngine {
           continue;
         }
 
-        // Gate 0 — active hours: stop at the window's edge (also prevents the
-        // midnight rollover from re-opening the daily cap mid-run).
-        if (this.deps.withinActiveHours && !this.deps.withinActiveHours()) {
-          truncated = 'active-hours';
-          log.info('prune: outside active hours, stopping run');
-          break;
-        }
-
-        // Gate 1 — the prune-own daily cap (durable) AND the per-run bound.
-        // Both gate on the cycle PLAN (a fluctuating draw just under the
-        // configured limit) so no two days stop at the exact same number.
-        const plan = this.dailyPlan();
-        if (this.dailyDone() >= plan || actedThisRun >= plan) {
-          truncated = 'cap';
-          log.info('prune: daily cap reached, stopping run', { plan, limit: this.cfg.dailyLimit });
+        // Gates 0 and 1 — active hours, then the daily cap and the per-run bound
+        // (`prune-pacing.ts`): a stop here truncates the run, remainder runnable.
+        const stop = this.pacing.stopReason(actedThisRun);
+        if (stop !== null) {
+          truncated = stop;
           break;
         }
 
@@ -577,15 +589,7 @@ export class PruneEngine {
         this.upNextCandidate = candidates[index] ?? null;
         this.emitStatus();
 
-        // THE paced delay between actions (min/max from config, jittered). A
-        // pause that landed DURING the action defers it instead: the deadline
-        // is owed and served on resume by the gate — never paced while parked.
-        const delayMs = this.nextDelayMs();
-        if (this.stateNow() === 'paused') {
-          this.owedActionDeadline = this.deps.clock.now() + delayMs;
-          continue;
-        }
-        await this.pruneWait('prune:action-delay', delayMs);
+        await this.pacing.paceNext();
       }
     } catch (e) {
       // A newer generation owns the candidate set and the state: a stale loop
@@ -728,10 +732,10 @@ export class PruneEngine {
       candidates: this.candidateCount,
       unfollowed: this.unfollowedThisRun,
       remaining: this.remaining,
-      dailyDone: this.dailyDone(),
+      dailyDone: this.pacing.dailyDone(),
       // The PLAN, not the configured limit — the meter's denominator must be
       // the number today actually stops at, or it would stick just short.
-      dailyLimit: this.dailyPlan(),
+      dailyLimit: this.pacing.dailyPlan(),
       lastRunAt: this.lastRunAt,
       lastSentinel: this.lastSentinel,
       haltReason: this.haltReason,
@@ -762,42 +766,12 @@ export class PruneEngine {
 
   /** Whether the prune daily cap is reached (all unfollows look alike to IG). */
   atDailyCap(_now: number): boolean {
-    return this.dailyDone() >= this.dailyPlan();
+    return this.pacing.dailyDone() >= this.pacing.dailyPlan();
   }
 
-  /**
-   * The next actionable unfollow, or null. Pure selection over the fresh census: skips
-   * (permanently, consuming them) any whitelisted / followed-back-since / no-username
-   * candidate, and returns null when the feed is halted, no fresh scan exists, or the
-   * daily cap is hit. Does NOT consume the returned candidate — that happens in
-   * {@link reportUnfollowOutcome} via {@link executeUnfollow}.
-   */
+  /** The next actionable unfollow, or null (see `prune-feed.ts`). */
   nextCandidate(now: number): { pk: string; username: string } | null {
-    if (this.feedHalted || !this.hasFreshScan() || this.atDailyCap(now)) return null;
-    const pending = this.pendingCandidates;
-    if (pending === null) return null;
-    while (pending.length > 0) {
-      const cand = pending[0];
-      // The SAME pure decision the standalone run uses (`prune-candidate.ts`).
-      const verdict = decidePruneCandidate({
-        candidate: cand,
-        whitelist: this.cfg.whitelist,
-        followsUsNow: this.followsUsNow(cand.pk),
-      });
-      if (verdict.do === 'unfollow') return { pk: verdict.pk, username: verdict.username };
-      // A permanent skip for this census: drop it and move on. `remaining`
-      // tracks the ACTIONABLE census (whitelist already excluded at scan
-      // time), so a whitelisted skip consumes the durable row WITHOUT
-      // spending an actionable slot — decrementing here would zero the count
-      // while actionable candidates still exist.
-      pending.shift();
-      if (verdict.reason === 'whitelisted') {
-        this.deps.store.consumePruneScanCandidate(cand.pk);
-      } else {
-        this.visitCandidate(cand);
-      }
-    }
-    return null;
+    return nextFeedCandidate(this.feed, now);
   }
 
   /** What the LIVE graph says about `pk → us` right now (PRINCIPLES §2). */
@@ -950,7 +924,7 @@ export class PruneEngine {
     }
     // A truncated FOLLOWING walk yields a smaller candidate set (safe direction)
     // but also a wrong census — refuse it the same way. Fail loud, never guess.
-    this.assertFetchComplete('following', followingFetch);
+    assertFetchComplete('following', followingFetch);
     this.scanPhase = 'followers';
     this.emitStatus();
 
@@ -970,13 +944,13 @@ export class PruneEngine {
     // truncated followers walk silently converts real followers into unfollow
     // candidates. The walk's own completeness verdict is authoritative — the
     // header-count heuristic below is only a second net.
-    this.assertFetchComplete('followers', followersFetch);
+    assertFetchComplete('followers', followersFetch);
 
     // Census coverage guard (second net): when the profile header's own counts
     // are known, a scraped list far short of them still fails the scan.
     const ownStats = this.deps.store.getAccount(this.deps.ownPk);
-    this.assertScanCoverage('following', followingPks.length, ownStats?.following ?? null);
-    this.assertScanCoverage('followers', followerSet.size, ownStats?.followers ?? null);
+    assertScanCoverage('following', followingPks.length, ownStats?.following ?? null);
+    assertScanCoverage('followers', followerSet.size, ownStats?.followers ?? null);
 
     // Feed the whole census back into the shared graph BEFORE computing candidates
     // (the two systems enrich each other): our-follow edges are healed
@@ -1125,77 +1099,6 @@ export class PruneEngine {
 
   // --- Internals -------------------------------------------------------------------
 
-  /**
-   * Throw when a whole-list scrape covered too little of the known list size.
-   * `known` comes from our own profile header (observed during this very scan);
-   * null/small values skip the check — tiny accounts and ghost-follower drift
-   * make exact matches meaningless, so the guard only catches gross truncation
-   * (e.g. 38 scraped of ~3200 known). 85% margin: the header count runs a
-   * little ahead of the real list (deactivated/deleted accounts stay counted).
-   */
-  /**
-   * Throw when a whole-list walk did not verify genuine completion. The walk's
-   * `complete` flag is computed with care (end-of-list claims are probed one
-   * page past the end) and is the ONLY trustworthy census signal — the header
-   * count can be unknown (a failed own-stats refresh) exactly when throttling
-   * is also truncating walks, which is when a partial census is most dangerous.
-   */
-  private assertFetchComplete(phase: 'following' | 'followers', fetch: PruneScanFetch): void {
-    if (fetch.complete) return;
-    // Shape drift gets its own honest, user-facing wording: the walk fetched
-    // pages Instagram no longer serves in a shape this build can read, so the
-    // scan FAILS (the previous complete census is restored by the caller) —
-    // never a completed empty census that would mark every follower "lost".
-    if (fetch.reason === 'shape-mismatch') {
-      throw new Error(
-        `prune: ${phase} walk incomplete (shape-mismatch) — ` +
-          "Instagram's interface appears to have changed; check for an Epo update. " +
-          'The scan failed and the previous census is retained.',
-      );
-    }
-    throw new Error(
-      `prune: ${phase} walk incomplete (${fetch.reason}, ${fetch.pks.length} pks) — ` +
-        'aborting so a partial census never drives unfollows',
-    );
-  }
-
-  private assertScanCoverage(phase: 'following' | 'followers', scraped: number, known: number | null): void {
-    if (known === null || known < 50) return;
-    if (scraped >= known * 0.85) {
-      // A complete walk that still lands under the header figure is GHOSTS:
-      // deactivated/deleted accounts stay in the profile count but Instagram
-      // never returns them in the list — the scraped list is the real one.
-      if (scraped < known) {
-        log.info('prune: scraped list below header count (deactivated-account ghosts)', {
-          phase,
-          scraped,
-          known,
-          ghosts: known - scraped,
-        });
-      }
-      return;
-    }
-    throw new Error(
-      `prune: ${phase} scan incomplete — scraped ${scraped} of ~${known} known; ` +
-        'aborting so a partial census never drives unfollows',
-    );
-  }
-
-  /** The current active-hours cycle start (growth's boundary, or local midnight). */
-  private cycleStart(): number {
-    return pruneCycleStart(this.deps.clock.now(), this.deps.cycleStartMs);
-  }
-
-  /** Prune-ledger rows since the active-hours cycle start — the durable daily-cap count. */
-  private dailyDone(): number {
-    return this.deps.store.pruneCountSince(this.cycleStart());
-  }
-
-  /** Today's planned prune volume (a per-cycle draw just under `dailyLimit`). */
-  private dailyPlan(): number {
-    return pruneDailyPlan(this.cfg.dailyLimit, this.cycleStart());
-  }
-
   /** Terminal stop, with the reason recorded on the status surface as a string. */
   private halt(reason: HaltReason): void {
     const key = haltReasonKey(reason);
@@ -1230,21 +1133,6 @@ export class PruneEngine {
     this.lastProgressEmitAt = now;
     this.emitStatus();
   }
-
-  /**
-   * The inter-action delay between unfollows: the paced uniform [min,max]
-   * draw ± jitterPercent (the growth engine's pace), then scaled to a THIRD
-   * ({@link PRUNE_DELAY_FACTOR}) so pruning runs ~3× faster while still spacing
-   * every action.
-   */
-  private nextDelayMs(): number {
-    const { minDelayMs, maxDelayMs, jitterPercent } = this.cfg;
-    return sample(
-      scaled(actionGap(minDelayMs, maxDelayMs, jitterPercent), PRUNE_DELAY_FACTOR),
-      this.rng,
-    );
-  }
-
   /**
    * Wait under a namespaced key through the ONE gate ({@link WaitRunner}),
    * linked to this run's abort token — `stop()` wakes any in-flight wait

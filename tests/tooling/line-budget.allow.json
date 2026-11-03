@@ -7,7 +7,7 @@
     },
     {
       "file": "src/engine/prune-engine.ts",
-      "lines": 1262
+      "lines": 1150
     },
     {
       "file": "src/kernel/derive.ts",
@@ -15,7 +15,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 978
+      "lines": 972
     },
     {
       "file": "src/adapter/actor.ts",

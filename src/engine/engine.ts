@@ -46,6 +46,7 @@ import type {
   StepResult,
   SweepCadence,
 } from './ports';
+import { selectWovenCandidate } from './prune-feed';
 import { ReconciliationRunner } from './reconciliation-runner';
 import { type FailureKind, type RecoveryIncident, RecoverySupervisor } from './recovery';
 import { healIncidentWindow } from './recovery-healer';
@@ -667,16 +668,9 @@ export class Engine {
     return this.halt({ kind: 'chain-exhausted' });
   }
 
-  /**
-   * The next woven prune-unfollow candidate, or null. Only in the organic model with
-   * `weaveEnabled`, a feed injected, and the prune daily cap not hit. Pure selection —
-   * consumes only leading skips (whitelisted / followed-back-since / no-username).
-   */
+  /** The next woven prune-unfollow candidate, or null (see `prune-feed.ts`). */
   private selectPruneCandidate(now: number): FeedCandidate | null {
-    if (this.pacing === undefined || !this.settings.weaveEnabled) return null;
-    const feed = this.unfollowFeed;
-    if (feed.atDailyCap(now)) return null;
-    return feed.nextCandidate(now);
+    return selectWovenCandidate({ pacing: this.pacing, settings: this.settings, unfollowFeed: this.unfollowFeed }, now);
   }
 
   // --- Recovery ladder (docs/adr/0201-recovery-ladder.md) ----------------------------
