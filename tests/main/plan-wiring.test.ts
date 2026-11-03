@@ -94,6 +94,21 @@ describe('the contributors', () => {
   });
 });
 
+describe('the journal port (spec §9.8)', () => {
+  test("only an account's own open write refuses its next one; the caller's own intent and other accounts pass", () => {
+    const s = store();
+    const plan = wire(s, planClock(T0));
+    const admits = (subject: { pk: string; intentId?: string }) => plan.service.view(T0).admits('unfollow', 'manual', subject);
+    const open = s.beginEffectIntent({ accountPk: 'x', username: 'xavier', action: 'unfollow', channel: 'manual', at: T0 });
+    expect(admits({ pk: 'x' })).toEqual({ ok: true });
+    s.markEffectDispatched(open.id, T0);
+    expect(admits({ pk: 'x' })).toEqual({ ok: false, reason: 'journal', until: null });
+    expect([admits({ pk: 'x', intentId: open.id }), admits({ pk: 'y' })]).toEqual([{ ok: true }, { ok: true }]);
+    s.markEffectUncertain(open.id, T0);
+    expect(admits({ pk: 'x' })).toEqual({ ok: false, reason: 'journal', until: null });
+  });
+});
+
 describe('the store reads', () => {
   test('the demand counts due lifecycle work, today follows, the stock and recent accepts', () => {
     const s = store();

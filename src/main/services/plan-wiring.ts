@@ -6,6 +6,7 @@
  */
 
 import type { EngineWaitKey } from '@/engine/engine-waits';
+import { journalBlocks } from '@/engine/journal';
 import { referenceGapMs } from '@/engine/pacers';
 import type { EnginePlanPacing } from '@/engine/plan-port';
 import type { Clock, SystemClock } from '@/governors/clock';
@@ -65,7 +66,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     outsideSince: () => 0,
     // The engine still arms the shared delay itself; the plan's deadline arrives with the cadence switch.
     deadline: () => null,
-    journal: { blocks: () => false },
+    journal: { blocks: (pk, exceptIntentId) => journalBlocks(pk, store.effectIntents.unsettledFor(pk), exceptIntentId) },
     runIntent: () => host.runIntent(),
     unconfirmed: () => null,
     surfaceGate: NEVER_PAUSED,
