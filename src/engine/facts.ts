@@ -21,6 +21,7 @@
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
+import type { ProtectionVerdict } from '../shared/unfollow-protection';
 import type { FollowRecord } from '../store/types';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import type { PlanFacts } from './plan-port';
@@ -110,7 +111,8 @@ export interface OverdueCadence {
 /** Due-by-timestamp work. */
 export interface CadenceFacts {
   sweepDue: boolean;
-  reconcile?: boolean;
+  /** A journal intent is due for its settlement read (spec §9.8). */
+  journalDue?: boolean;
   /**
    * Cadences whose deadline has passed. SEAM (wave B): fed by `chronos.due(now)`
    * before the first tick, so work that came due while the app was closed runs
@@ -151,8 +153,8 @@ export interface PruneFacts {
   candidate: { pk: string; username: string | null } | null;
   /** Whether the LIVE graph says this account follows us right now. */
   followsUsNow: boolean;
-  /** The whitelist as it stands NOW — re-derived per candidate, never at scan time. */
-  whitelist: readonly string[];
+  /** The protection verdict over the stored facts NOW (P10, spec §7.1): never the raw list. */
+  protection: ProtectionVerdict;
   atDailyCap: boolean;
 }
 

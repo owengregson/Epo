@@ -19,6 +19,8 @@ interface FollowbackDeps {
   followers?: FollowbackCensus;
   relationships?: FollowbackRelationships;
   signal?: () => AbortSignal | undefined;
+  /** The plan-day containing a moment (the `PlanDayClock` window), for the census's stock window. */
+  planDay?: (t: number) => { startsAt: number; endsAt: number };
 }
 
 /**
@@ -51,6 +53,7 @@ export class FollowbackWatcher {
   private readonly followers?: FollowbackCensus;
   private readonly relationships?: FollowbackRelationships;
   private readonly signal?: () => AbortSignal | undefined;
+  private readonly planDay?: FollowbackDeps['planDay'];
   /** The last check ended mid-sequence: the feed was read when the sequence began. */
   private continuing = false;
 
@@ -63,6 +66,7 @@ export class FollowbackWatcher {
     this.followers = deps.followers;
     this.relationships = deps.relationships;
     this.signal = deps.signal;
+    this.planDay = deps.planDay;
   }
 
   /** Swap the live config in place (used when Settings are updated at runtime). */
@@ -190,7 +194,7 @@ export class FollowbackWatcher {
         continue;
       }
       this.store.observe({ accountPk: acc.pk, observedAt: now, source: 'friend-requests', fields: { username: acc.username } });
-      this.store.observeOwnFollowerEvent(acc.pk, this.ownPk, now);
+      this.store.observeOwnFollowerEvent(acc.pk, this.ownPk, now, 'accept');
       const rec = this.store.getFollowRecord(acc.pk);
       if (rec !== null && canDetect(rec)) this.markFollowedBack(acc.pk, now, now, detected);
     }
@@ -232,7 +236,7 @@ export class FollowbackWatcher {
       if (stopped()) return interrupted();
       const observedAt = this.clock.now();
       const members = new Set(census.pks);
-      for (const pk of members) this.store.observeEdge(pk, this.ownPk, 'follows', true, observedAt);
+      for (const pk of members) this.store.observeEdge(pk, this.ownPk, 'follows', true, observedAt, { source: 'census' });
       const stats = this.store.getAccount(this.ownPk);
       const headerFresh = stats?.statsObservedAt !== undefined
         && stats.statsObservedAt >= startedAt - RELATIONSHIP_FRESH_MS && stats.statsObservedAt <= observedAt;
@@ -240,11 +244,13 @@ export class FollowbackWatcher {
         && members.size >= stats.followers * 0.98);
       if (census.complete && covered) {
         this.store.ingestScanCensus([], [...members], observedAt, {
-          authoritative: { followers: true, following: false },
+          authoritative: { followers: true, following: false }, planDay: this.planDay?.(observedAt),
         });
         // An absent edge need not exist yet. Write explicit absence for each managed record.
         for (const rec of currentCohort()) {
-          if (!members.has(rec.accountPk)) this.store.observeEdge(rec.accountPk, this.ownPk, 'follows', false, observedAt);
+          if (!members.has(rec.accountPk)) {
+            this.store.observeEdge(rec.accountPk, this.ownPk, 'follows', false, observedAt, { source: 'census' });
+          }
         }
       }
       consumeCurrent();

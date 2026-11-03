@@ -1,8 +1,10 @@
 import type { Clock } from '../governors/clock';
 import type { RateGovernor } from '../governors/rate-governor';
+import type { ParkSlots } from '../kernel/derive-parks';
+import type { ClickVerdict } from '../shared/click-verdict';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { FollowRecord, FollowState } from '../store/types';
-import { MS_PER_DAY } from '../timing/units';
+import type { ProtectionPort } from './protection-port';
 
 /**
  * The discriminated outcome of a single follow/unfollow attempt:
@@ -15,9 +17,12 @@ import { MS_PER_DAY } from '../timing/units';
  * - `'simulated'` — dry-run: no click happened. The lifecycle STATE still advances
  *                   (so dry-run exercises the machine) but no real edge/ledger row
  *                   is written, so dry-run never pollutes yield/overlap.
+ * - `'reviewed'`  — the click review consumed the work with `verdict` (spec §9.7); nothing pressed.
  */
 export type ChurnActionOutcome = {
-  status: 'ok' | 'failed' | 'blocked' | 'simulated';
+  status: 'ok' | 'failed' | 'blocked' | 'simulated' | 'reviewed';
+  /** The click review's verdict when `'reviewed'`; a local-policy block's `deferred` reason and until. */
+  verdict?: ClickVerdict;
   /** True when `ok` but no click happened — the button was already in the target
    *  state, so an external actor is responsible for the relationship. */
   alreadyInState?: boolean;
@@ -58,33 +63,19 @@ export interface ChurnActions {
 }
 
 /**
- * Lifecycle timers + retry cap for the churn state machine. All tunable in
- * Settings. NB: the post-follow-back HOLD is not here — `holdUntil` is stamped by the
- * FollowbackWatcher (its `holdAfterFollowbackMs`); the scheduler only honors the stamp.
+ * Lifecycle timers + retry cap for the churn state machine, projected from Settings
+ * by `toChurnConfig` (tests build it from `tests/kit/configs.ts`).
  */
 export interface ChurnConfig {
-  /** How long to wait for a follow-back before reclaiming the slot (default 4 days). */
+  /** How long to wait for a follow-back before reclaiming the slot. */
   maxWaitForFollowbackMs: number;
-  /** Failed follow/unfollow attempts tolerated before a record is abandoned (default 3). */
+  /** The hold a follow-back first seen at the click earns (the re-held verdict, spec §9.7). */
+  holdAfterFollowbackMs: number;
+  /** Failed follow/unfollow attempts tolerated before a record is abandoned. */
   maxRetries: number;
-  /**
-   * The bio keep-list (Settings `pruneBioFilterWords`): an account that
-   * FOLLOWS US BACK and whose bio contains any of these words/phrases
-   * (case-insensitive substring — see prune-bio-filter.ts) is never rotated
-   * out or unfollowed; it stays a kept mutual. Deliberately scoped to
-   * follow-backs only: a non-follower is pruned regardless of bio (both the
-   * one-shot prune run and the woven trickle feed).
-   */
-  bioKeepWords: string[];
-  relationshipFreshMs?: number;
+  /** False = "keep people who follow you back": a held mutual is never rotated out (spec §6.4, P2 off). */
+  rotateMutuals: boolean;
 }
-
-/** Design defaults. */
-export const CHURN_DEFAULTS: ChurnConfig = {
-  maxWaitForFollowbackMs: 4 * MS_PER_DAY,
-  maxRetries: 3,
-  bioKeepWords: [],
-};
 
 /** What one verb does to a record and the graph when its action verifies. */
 export interface VerbSpec {
@@ -106,9 +97,17 @@ export interface ChurnDeps {
   actions: ChurnActions;
   /** Our own account `pk`; when set, follow/unfollow are recorded as directed edges. */
   ownPk?: string;
-  cfg?: ChurnConfig;
+  cfg: ChurnConfig;
   pickQueued?: (records: FollowRecord[]) => FollowRecord | null;
   validateFollow?: (rec: FollowRecord, now: number) => Promise<boolean> | boolean;
   /** Whether `pk` has a follow request in flight (the requester seam); defaults to never. */
   hasActiveRequest?: (pk: string) => boolean;
+  /** The protection port (spec §7.4); a rig without it runs unconfigured (main always wires it). */
+  protection?: ProtectionPort;
+  /** Re-judges the kept records (spec §7.5); synced before every selection pass and on a reload. */
+  reconciler?: { sync(now: number): unknown };
+  /** Where a click-time park lands (default: local-midnight plan-days; main hands the wiring's). */
+  parkSlots?(): ParkSlots;
+  /** The open session's start and planned unfollows: the bound on reviews that press nothing (spec §9.7). */
+  reviewBound?(now: number): { readonly since: number; readonly planned: number } | null;
 }

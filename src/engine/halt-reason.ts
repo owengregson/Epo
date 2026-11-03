@@ -16,7 +16,6 @@ import { absurd } from './absurd';
 export type HaltReason =
   | { kind: 'runtime-error' }
   | { kind: 'identity-changed' }
-  | { kind: 'reconciliation-failed' }
   /** A verified auth block: only the user can repair the session. */
   | { kind: 'sentinel'; status: SentinelStatus }
   /** The chain found no next hop and the dead-end self-heal found nothing to revive. */
@@ -53,7 +52,6 @@ const SENTINEL_STATUSES = ['ok', 'challenge', 'logged-out', 'action-blocked'] as
 export const ALL_HALT_REASONS: readonly HaltReason[] = [
   { kind: 'runtime-error' },
   { kind: 'identity-changed' },
-  { kind: 'reconciliation-failed' },
   ...SENTINEL_STATUSES.map((status): HaltReason => ({ kind: 'sentinel', status })),
   { kind: 'chain-exhausted' },
   { kind: 'recovery-exhausted' },
@@ -72,7 +70,6 @@ export const ALL_HALT_REASONS: readonly HaltReason[] = [
 type ListedKind =
   | 'runtime-error'
   | 'identity-changed'
-  | 'reconciliation-failed'
   | 'sentinel'
   | 'chain-exhausted'
   | 'recovery-exhausted'
@@ -100,7 +97,6 @@ export function haltReasonKey(reason: HaltReason): string {
     case 'chain-exhausted':
     case 'runtime-error':
     case 'identity-changed':
-    case 'reconciliation-failed':
     case 'recovery-exhausted':
     case 'adapter-drift':
     case 'seed-missing':
@@ -134,7 +130,6 @@ function rateLimited(reason: HaltReason): boolean {
     case 'chain-exhausted':
     case 'runtime-error':
     case 'identity-changed':
-    case 'reconciliation-failed':
     case 'adapter-drift':
     case 'seed-missing':
     case 'seed-unresolved':

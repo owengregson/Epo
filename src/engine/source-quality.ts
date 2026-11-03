@@ -1,5 +1,6 @@
+import { followbackOutcome } from '../shared/followback-outcome';
 import type { KnowledgeStore } from '../store/knowledge-store';
-import { FOLLOW_STATES } from '../store/types';
+import { FOLLOW_STATES, type FollowRecord } from '../store/types';
 import { EXPLORATION_POLICY as POLICY } from './exploration-policy';
 
 export interface MatureYield {
@@ -14,7 +15,14 @@ export function priorYield(): MatureYield {
   return { mature: 0, successes: 0, pending: 0, censored: 0, rate: POLICY.priorRate };
 }
 
-/** One pass over the ledger for all sources, independent of how many hubs are ranked. */
+/** A record as the one classifier reads it (absent fields are null). */
+function outcomeOf(r: FollowRecord, windowMs: number, now: number) {
+  return followbackOutcome({ state: r.state, followedAt: r.followedAt ?? null, followedBackAt: r.followedBackAt ?? null,
+    followbackAfter: r.followbackAfter ?? null, followbackObservedAt: r.followbackObservedAt ?? null,
+    reconciledAt: r.reconciledAt ?? null, unfollowReason: r.unfollowReason ?? null }, windowMs, now);
+}
+
+/** One pass over the ledger for all sources, folding the one classifier (the UI's target yield folds it too). */
 export function matureYields(
   store: Pick<KnowledgeStore, 'followRecordsByState'>,
   now: number,
@@ -24,20 +32,17 @@ export function matureYields(
   for (const state of FOLLOW_STATES) {
     for (const record of store.followRecordsByState(state)) {
       if (record.followedAt === undefined) continue;
-      const horizon = record.followedAt + windowMs;
+      const outcome = outcomeOf(record, windowMs, now);
       const keys = record.targetPk === null ? [null] : [null, record.targetPk];
       for (const key of keys) {
         const cohort = cohorts.get(key) ?? priorYield();
         cohorts.set(key, cohort);
-        if (horizon > now) cohort.pending += 1;
-        // An unknown event time cannot establish which side of the horizon it occurred.
-        // A pre-existing follower cannot be attributed to this follow action either.
-        else if ((record.followedBackAt !== undefined && record.followedBackAt < record.followedAt) ||
-          (record.followedBackAt === undefined && (record.followbackObservedAt !== undefined ||
-            record.reconciledAt === undefined || record.reconciledAt < horizon))) cohort.censored += 1;
+        if (outcome === 'pending') cohort.pending += 1;
+        // A pre-existing follower cannot be attributed to this follow action: censored with the straddlers.
+        else if (outcome === 'censored' || outcome === 'excluded') cohort.censored += 1;
         else {
           cohort.mature += 1;
-          if (record.followedBackAt !== undefined && record.followedBackAt <= horizon) cohort.successes += 1;
+          if (outcome === 'success') cohort.successes += 1;
         }
       }
     }

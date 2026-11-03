@@ -306,7 +306,7 @@ export function GrowthChart({
           </Fragment>
         ) : (
           <text class="growth-ylab" x="185" y="60" text-anchor="middle">
-            {measuredFlat ? 'No net change in this window' : 'Awaiting follower data…'}
+            {measuredFlat ? 'No change in this range' : 'No follower history yet'}
           </text>
         )}
       </svg>

@@ -1,3 +1,4 @@
+import { SETTINGS_POLICY } from '../kernel/settings-policy';
 import { type AccountState, ratioOf } from '../store/types';
 
 /**
@@ -40,20 +41,15 @@ export interface ScorerConfig {
   mutualWeight: number;
 }
 
-/** Design defaults (v3 §3.2/§3.3). */
+/** The one declaration of the scorer's defaults: the settings policy's recommendations (spec §17.8). */
 export const SCORER_DEFAULTS: ScorerConfig = {
-  bandLow: 0.9,
-  bandHigh: 1.5,
-  peakLow: 1.0,
-  peakHigh: 1.2,
-  hardLow: 0.5,
-  hardHigh: 3.0,
-  minFollowers: 50,
-  maxFollowers: 20000,
-  privateBoost: 0.15,
-  bandEdgeScore: 0.6,
-  mutualCap: 20,
-  mutualWeight: 1.5,
+  ...SETTINGS_POLICY.RATIO_CURVE,
+  minFollowers: SETTINGS_POLICY.AUDIENCE_SIZE.everyday.min,
+  maxFollowers: SETTINGS_POLICY.AUDIENCE_SIZE.everyday.max,
+  privateBoost: SETTINGS_POLICY.PRIVATE_EDGE,
+  bandEdgeScore: SETTINGS_POLICY.RECOMMENDED.bandEdgeScore,
+  mutualCap: SETTINGS_POLICY.RECOMMENDED.mutualCap,
+  mutualWeight: SETTINGS_POLICY.RECOMMENDED.mutualWeight,
 };
 
 /** Clamp a number into the closed unit interval [0, 1]. */

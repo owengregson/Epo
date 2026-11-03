@@ -21,7 +21,7 @@ import { queuedCountFor } from './decisions';
 import { EXPLORATION_POLICY } from './exploration-policy';
 import type { FactSources, FeedCandidate } from './facts';
 import { sweepDue } from './facts-cadence';
-import { reconcileDue } from './facts-journal';
+import { journalDue } from './facts-journal';
 import { actionSource, pacingSource } from './facts-plan';
 import type {
   CurrentTarget,
@@ -75,7 +75,8 @@ export interface EngineFactDeps {
   actionsFailingHalt: number;
   yieldRefill?(): boolean;
   rotationReason?(): SourceVisitEndReason | null;
-  requiresReconciliation?(now: number): boolean;
+  /** Whether the journal step is wired (a settlement per due intent). */
+  settlesJournal?: boolean;
   refillAvailableAt?(): number;
 }
 
@@ -156,7 +157,7 @@ export function buildEngineFactSources(d: EngineFactDeps): FactSources {
         const { now } = await read('clock');
         return {
           sweepDue: sweepDue(d, now),
-          reconcile: reconcileDue(d, now),
+          journalDue: journalDue(d, now),
           // SEAM (wave B): `chronos.due(now)` fills this before the first tick.
           overdue: [],
         };

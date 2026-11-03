@@ -1,6 +1,8 @@
 import {
   ActionBlockedError,
+  ActionDeferredError,
   ActionRateLimitedError,
+  ActionReviewedError,
   AdapterStaleError,
   TabUnavailableError,
   TabUnresponsiveError,
@@ -198,4 +200,23 @@ test('an unclassified throw stays a plain failed (no cause)', async () => {
   const r = await actions.follow('bob');
   expect(r.status).toBe('failed');
   expect(r.cause).toBeUndefined();
+});
+
+test('a click review that consumed the work maps to reviewed, carrying its verdict (spec §9.7)', async () => {
+  const { actions, actor } = build({});
+  const verdict = { kind: 'protected', by: 'bio-word', match: 'cafe' } as const;
+  actor.unfollow = async () => {
+    throw new ActionReviewedError(verdict);
+  };
+  // Neither a deferral (which retries the same work) nor a failure: the scheduler settles the record.
+  expect(await actions.unfollow('bob')).toEqual({ status: 'reviewed', verdict });
+});
+
+test('a deferral before the visit is a local-policy block that carries its reason and until (spec §9.7)', async () => {
+  const { actions, actor } = build({});
+  actor.unfollow = async () => {
+    throw new ActionDeferredError('plan refused: hourly-cap', { reason: 'hourly-cap', until: 7_000 });
+  };
+  expect(await actions.unfollow('bob')).toEqual({ status: 'blocked', cause: 'local-policy',
+    verdict: { kind: 'deferred', reason: 'hourly-cap', until: 7_000 } });
 });

@@ -3,6 +3,7 @@ import { journaledMutation } from '@/engine/journaled-mutation';
 import { FakeClock } from '@/governors/clock';
 import type { RateGovernor } from '@/governors/rate-governor';
 import { setLevel } from '@/utils/logger';
+import { DEFAULT_CONFIGS } from '../kit/configs';
 import { kitStore } from '../kit/engine-harness';
 
 beforeAll(() => setLevel('error'));
@@ -17,7 +18,7 @@ test.each(['failed', 'thrown'] as const)('growth %s after dispatch stays uncerta
     if (failure === 'thrown') throw new Error('connection lost after dispatch');
     return { status: 'failed' as const, cause: 'drift' as const };
   });
-  const churn = new ChurnScheduler({ store, clock, ownPk: 'me', rate: {} as RateGovernor,
+  const churn = new ChurnScheduler({ store, clock, ownPk: 'me', rate: {} as RateGovernor, cfg: DEFAULT_CONFIGS.churn,
     actions: { follow, unfollow: async () => ({ status: 'ok' }) } });
   expect(await churn.execute(store.getFollowRecord('a')!)).toBe('blocked');
   expect(store.getFollowRecord('a')).toMatchObject({ state: 'queued', retryCount: 0 });
@@ -39,6 +40,10 @@ test.each(['manual', 'prune'] as const)('%s post-dispatch failed result is not a
   expect(await journaledMutation(deps)).toMatchObject({ status: 'blocked', unverifiedClick: true });
   expect(store.pendingEffectIntents()[0].state).toBe('uncertain');
   expect(store.actionCountSince(0) + store.pruneCountSince(0)).toBe(0);
-  await journaledMutation(deps);
+  // The same account gets a typed journal refusal; another account's write proceeds (spec §9.8, law L6).
+  expect(await journaledMutation(deps)).toMatchObject({ status: 'blocked', cause: 'local-policy',
+    verdict: { kind: 'deferred', reason: 'journal', until: null } });
   expect(unfollow).toHaveBeenCalledTimes(1);
+  await journaledMutation({ ...deps, accountPk: 'b', username: 'bob' });
+  expect(unfollow).toHaveBeenCalledTimes(2);
 });

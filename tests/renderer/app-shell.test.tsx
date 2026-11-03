@@ -2,12 +2,23 @@
  * @jest-environment jsdom
  * @jest-environment-options {"customExportConditions": [""]}
  *
- * The shell's behaviour: view routing (including the ⌘1–4 shortcuts), the
- * refusal→toast policy, and the one-shot Start watch. These are the two
- * subtlest blocks in the layer and the ones a decomposition must not change.
+ * The shell (spec §12.4, §13): five stages behind one stage bar, the menu's
+ * stage requests, the stage request to main, the shell services (Start without a
+ * starting account opens Settings at the field; Sign in shows Live first), one
+ * subscription per push channel, Graph laid out at boot, and Settings mounted
+ * only when opened — so nothing on it checks the starting account at launch.
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
+import { liveRevealedSignal, liveSlotSignal, pendingControlSignal } from '@/renderer/app/live-signals';
+import {
+  type ShellControls,
+  type ShellServices,
+  settingsTargetSignal,
+  stageSignal,
+  useShell,
+  useShellControls,
+} from '@/renderer/app/shell-context';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { Settings } from '@/types';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
@@ -15,27 +26,110 @@ import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-br
 const SEEDED: Settings = { ...DEFAULT_SETTINGS, seed: 'someone', tourCompletedAt: 1 };
 
 let bridge: FakeBridge;
+let services: ShellServices | null;
+let controls: ShellControls | null;
+
+/** Rendered in the Live stage's slot: a consumer inside the App's own providers. */
+function ServicesProbe(): null {
+  services = useShell();
+  controls = useShellControls();
+  return null;
+}
 
 beforeEach(() => {
   bridge = installFakeBridge(SEEDED);
+  services = null;
+  controls = null;
+  liveSlotSignal.value = <ServicesProbe />;
+  // jsdom has no IntersectionObserver; the interim settings projection chart observes its own visibility.
+  (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
 });
 
-/** Render the shell and wait for the mount-time settings/status pulls to land. */
 async function mountApp(): Promise<void> {
   render(<App />);
   await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'getSettings')).toBe(true));
   await act(async () => {});
 }
 
-const start = (): HTMLButtonElement => document.getElementById('btnStart') as HTMLButtonElement;
+const stageCalls = (): unknown[][] => bridge.calls.filter((c) => c[0] === 'setStage');
+const page = (mode: string): HTMLElement => document.querySelector(`[data-stage="${mode}"]`) as HTMLElement;
+const tab = (mode: string): HTMLButtonElement => document.querySelector(`[data-stage-tab="${mode}"]`) as HTMLButtonElement;
 
-describe('App — the shell subscribes once and mirrors pushes', () => {
-  it('subscribes to each push channel exactly once', async () => {
+describe('App — five stages behind one bar', () => {
+  it('labels the tabs Live · People · Graph · Prune · Settings, in the menu order', async () => {
     await mountApp();
-    expect(bridge.listenerCount('status')).toBeGreaterThan(0);
-    expect(bridge.listenerCount('pruneStatus')).toBe(1);
-    expect(bridge.listenerCount('log')).toBe(1);
-    expect(bridge.listenerCount('updateStatus')).toBe(1);
+    const labels = [...document.querySelectorAll('.stageseg button')].map((b) => b.textContent?.trim());
+    expect(labels).toEqual(['Live', 'People', 'Graph', 'Prune', 'Settings']);
+    expect(tab('settings').getAttribute('data-tip')).toMatch(/Settings · (⌘|Ctrl\+)5 or (⌘|Ctrl\+),/);
+  });
+
+  it('opens on Live and tells main, uncovered once revealed', async () => {
+    await mountApp();
+    expect(page('tab').hidden).toBe(false);
+    expect(stageCalls()).toContainEqual(['setStage', 'tab', false]);
+  });
+
+  it('keeps Live covered until the boot reveal', async () => {
+    liveRevealedSignal.value = false;
+    await mountApp();
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', true]);
+    await act(async () => {
+      liveRevealedSignal.value = true;
+    });
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', false]);
+  });
+
+  it('a tab press switches the stage and asks main for it', async () => {
+    await mountApp();
+    await act(async () => {
+      fireEvent.click(tab('people'));
+    });
+    expect(page('people').hidden).toBe(false);
+    expect(page('tab').hidden).toBe(true);
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'people', false]);
+  });
+
+  it('the menu’s stage requests switch stages, ⌘, included', async () => {
+    await mountApp();
+    await act(async () => bridge.emit('stageRequest', 'graph'));
+    expect(stageSignal.value).toBe('graph');
+    await act(async () => bridge.emit('stageRequest', 'settings'));
+    expect(page('settings').hidden).toBe(false);
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'settings', false]);
+  });
+
+  it('lays out Graph at boot but mounts Settings only when it is opened — no seed check at launch', async () => {
+    await mountApp();
+    expect(page('graph').querySelector('.graph-stage')).not.toBeNull();
+    expect(page('settings').childElementCount).toBe(0);
+    expect(page('people').childElementCount).toBe(0);
+    expect(bridge.calls.some((c) => c[0] === 'checkSeed')).toBe(false);
+    await act(async () => bridge.emit('stageRequest', 'settings'));
+    expect(page('settings').childElementCount).toBeGreaterThan(0);
+  });
+
+  it('a mounted stage stays mounted when another opens', async () => {
+    await mountApp();
+    await act(async () => bridge.emit('stageRequest', 'people'));
+    await act(async () => bridge.emit('stageRequest', 'graph'));
+    expect(page('people').childElementCount).toBeGreaterThan(0);
+    expect(page('people').hidden).toBe(true);
+  });
+});
+
+describe('App — the shell subscribes once', () => {
+  it('has exactly one listener per push channel, and none for the raw log', async () => {
+    await mountApp();
+    const channels = ['status', 'pruneStatus', 'updateStatus', 'chainList', 'settings', 'settingsFacts', 'feed',
+      'activity', 'stageRequest'] as const;
+    for (const channel of channels) {
+      expect({ channel, n: bridge.listenerCount(channel) }).toEqual({ channel, n: 1 });
+    }
+    expect(bridge.listenerCount('log')).toBe(0);
   });
 
   it('a pushed status drives .console[data-state] without any pull', async () => {
@@ -44,197 +138,74 @@ describe('App — the shell subscribes once and mirrors pushes', () => {
     expect(document.querySelector('.console')?.getAttribute('data-state')).toBe('running');
   });
 
-  it('a prune holding the tab takes over the transport (unified state)', async () => {
+  it('renders the tooltip layer outside the console column', async () => {
     await mountApp();
-    await act(async () => {
-      bridge.emit('pruneStatus', { ...bridge.data.pruneStatus, state: 'scanning' });
-    });
-    expect(document.querySelector('.console')?.getAttribute('data-state')).toBe('running');
-    // The trio now addresses the prune.
-    expect((document.getElementById('btnStop') as HTMLButtonElement).title).toBe('Stop the prune');
+    const tip = document.querySelector('.tip');
+    expect(tip).not.toBeNull();
+    expect(tip?.closest('.console')).toBeNull();
   });
 });
 
-describe('App — refusal→toast policy', () => {
-  it("a 'prune-running' refusal explains itself as info, not as a failure", async () => {
+describe('App — the shell services and controls', () => {
+  it('Start without a starting account opens Settings at that field and never calls the engine', async () => {
+    bridge.data.settings = { ...SEEDED, seed: '' };
     await mountApp();
-    bridge.stub('startEngine', () => idleStatus({ refusal: 'prune-running' }));
-    await act(async () => {
-      fireEvent.click(start());
-    });
-    const toast = await screen.findByText(/Start refused/);
-    expect(toast.textContent).toMatch(/a prune holds the tab/);
-    expect(toast.closest('.toast')?.getAttribute('data-kind')).toBe('info');
+    await act(async () => controls?.start());
+    expect(bridge.calls.some((c) => c[0] === 'startEngine')).toBe(false);
+    expect(stageSignal.value).toBe('settings');
+    expect(settingsTargetSignal.value).toEqual({ section: 'audience', focus: 'seed' });
   });
 
-  it('any other refusal surfaces the reason as an error toast', async () => {
+  it('Start with a starting account calls the engine, showing the pending control meanwhile', async () => {
     await mountApp();
-    bridge.stub('startEngine', () => idleStatus({ refusal: 'seed-missing' }));
-    await act(async () => {
-      fireEvent.click(start());
-    });
-    const toast = await screen.findByText('Start refused: seed-missing');
-    expect(toast.closest('.toast')?.getAttribute('data-kind')).toBe('error');
-  });
-
-  it('a rejected control reports the error message, not a silent revert', async () => {
-    await mountApp();
-    bridge.failNext('startEngine', 'ipc exploded');
-    await act(async () => {
-      fireEvent.click(start());
-    });
-    const toast = await screen.findByText('Start failed: ipc exploded');
-    expect(toast.closest('.toast')?.getAttribute('data-kind')).toBe('error');
-  });
-
-  it('a clean control result raises no toast at all', async () => {
-    await mountApp();
-    await act(async () => {
-      fireEvent.click(start());
-    });
-    await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'startEngine')).toBe(true));
+    let settle: (s: ReturnType<typeof idleStatus>) => void = () => {};
+    bridge.stub('startEngine', () => new Promise((resolve) => (settle = resolve)));
+    await act(async () => controls?.start());
+    expect(bridge.calls.some((c) => c[0] === 'startEngine')).toBe(true);
+    expect(pendingControlSignal.value).toBe('start');
+    await act(async () => settle(idleStatus()));
+    await waitFor(() => expect(pendingControlSignal.value).toBeNull());
     expect(document.querySelector('.toast')).toBeNull();
   });
 
-  it('Start without a seed prompts the seed field instead of calling the engine', async () => {
-    bridge.data.settings = { ...SEEDED, seed: '' };
+  it("a 'prune-running' refusal explains itself as info, any other as an error", async () => {
     await mountApp();
+    bridge.stub('startEngine', () => idleStatus({ refusal: 'prune-running' }));
+    await act(async () => controls?.start());
+    const info = await screen.findByText(/Start refused/);
+    expect(info.closest('.toast')?.getAttribute('data-kind')).toBe('info');
+
+    bridge.stub('startEngine', () => idleStatus({ refusal: 'seed-missing' }));
+    await act(async () => controls?.start());
+    const error = await screen.findByText('Start refused: seed-missing');
+    expect(error.closest('.toast')?.getAttribute('data-kind')).toBe('error');
+  });
+
+  it('Sign in shows Live first, then signs in', async () => {
+    bridge.data.status = idleStatus({ loggedIn: false });
+    await mountApp();
+    await act(async () => bridge.emit('stageRequest', 'graph'));
+    await act(async () => controls?.signIn());
+    const names = bridge.calls.map((c) => c[0]);
+    const login = names.lastIndexOf('login');
+    const live = bridge.calls.findIndex((c, i) => i < login && c[0] === 'setStage' && c[1] === 'tab');
+    expect(login).toBeGreaterThan(-1);
+    expect(live).toBeGreaterThan(-1);
+    expect(stageSignal.value).toBe('tab');
+  });
+
+  it('an open confirm covers the native views, then restores them', async () => {
+    await mountApp();
+    let answer: Promise<boolean> | undefined;
     await act(async () => {
-      fireEvent.click(start());
-    });
-    expect(bridge.calls.some((c) => c[0] === 'startEngine')).toBe(false);
-    expect(document.querySelector('#view-settings')?.className).toContain('active');
-  });
-});
-
-describe('App — the one-shot Start watch', () => {
-  it('the first pushed window park after Start says when work begins', async () => {
-    await mountApp();
-    await act(async () => {
-      fireEvent.click(start());
-    });
-    const until = new Date();
-    until.setHours(8, 5, 0, 0);
-    await act(async () => {
-      bridge.emit(
-        'status',
-        idleStatus({
-          state: 'running',
-          parkReason: 'active-hours',
-          parkedUntil: until.getTime(),
-        }),
-      );
-    });
-    expect((await screen.findByText(/^Started — first actions at/)).textContent).toContain('8:05');
-  });
-
-  it('fires at most once — a second park push does not re-toast', async () => {
-    await mountApp();
-    await act(async () => {
-      fireEvent.click(start());
-    });
-    const parked = idleStatus({
-      state: 'running',
-      parkReason: 'session',
-      parkedUntil: Date.now() + 3600_000,
-    });
-    await act(async () => bridge.emit('status', parked));
-    await act(async () => bridge.emit('status', { ...parked, parkedUntil: Date.now() + 7200_000 }));
-    expect(screen.getAllByText(/^Started — first actions at/)).toHaveLength(1);
-  });
-
-  it('an engine that simply goes to work disarms the watch silently', async () => {
-    await mountApp();
-    await act(async () => {
-      fireEvent.click(start());
-    });
-    await act(async () => bridge.emit('status', idleStatus({ state: 'running', lastStep: 'acted' })));
-    await act(async () =>
-      bridge.emit(
-        'status',
-        idleStatus({ state: 'running', parkReason: 'session', parkedUntil: Date.now() + 60_000 }),
-      ),
-    );
-    expect(screen.queryByText(/^Started — first actions at/)).toBeNull();
-  });
-
-  it('a halt right after Start disarms the watch (start refused or already over)', async () => {
-    await mountApp();
-    await act(async () => {
-      fireEvent.click(start());
-    });
-    await act(async () =>
-      bridge.emit('status', idleStatus({ state: 'halted', haltReason: 'seed-unresolved' })),
-    );
-    await act(async () =>
-      bridge.emit(
-        'status',
-        idleStatus({ state: 'running', parkReason: 'session', parkedUntil: Date.now() + 60_000 }),
-      ),
-    );
-    expect(screen.queryByText(/^Started — first actions at/)).toBeNull();
-  });
-
-  it('a park with no press behind it never toasts', async () => {
-    await mountApp();
-    await act(async () =>
-      bridge.emit(
-        'status',
-        idleStatus({ state: 'running', parkReason: 'active-hours', parkedUntil: Date.now() + 1000 }),
-      ),
-    );
-    expect(screen.queryByText(/^Started — first actions at/)).toBeNull();
-  });
-});
-
-describe('App — view routing', () => {
-  it('opens on Overview', async () => {
-    await mountApp();
-    expect(document.querySelector('#view-overview')?.className).toContain('active');
-  });
-
-  it('⌘2 jumps to Targets; a bare "2" does not', async () => {
-    await mountApp();
-    await act(async () => {
-      fireEvent.keyDown(window, { key: '2' });
-    });
-    expect(document.querySelector('#view-chain')?.className).not.toContain('active');
-    await act(async () => {
-      fireEvent.keyDown(window, { key: '2', metaKey: true });
-    });
-    expect(document.querySelector('#view-chain')?.className).toContain('active');
-  });
-
-  it('every view stays mounted so transient state survives a tab switch', async () => {
-    await mountApp();
-    for (const key of ['overview', 'chain', 'queues', 'settings']) {
-      expect(document.querySelector(`#view-${key}`)).not.toBeNull();
-    }
-  });
-
-  it("tells main which stage the window's right pane shows", async () => {
-    await mountApp();
-    expect(bridge.calls.filter((c) => c[0] === 'setStage')).toContainEqual([
-      'setStage',
-      'tab',
-      false,
-    ]);
-  });
-
-  it('an open confirm covers the native tab (it floats above any scrim), then restores it', async () => {
-    await mountApp();
-    await act(async () => bridge.emit('status', idleStatus({ state: 'running' })));
-    const stageCalls = (): unknown[][] => bridge.calls.filter((c) => c[0] === 'setStage');
-
-    await act(async () => {
-      fireEvent.click(document.getElementById('btnStop') as HTMLButtonElement);
+      answer = services?.confirm({ title: 'Sure?', body: 'Really.', confirm: 'Yes' });
     });
     expect(document.querySelector('.scrim')?.className).toContain('open');
     expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', true]);
-
     await act(async () => {
-      fireEvent.click(screen.getByText('Keep running'));
+      fireEvent.click(screen.getByText('Cancel'));
     });
+    await expect(answer).resolves.toBe(false);
     expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', false]);
   });
 });

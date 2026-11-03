@@ -1,5 +1,6 @@
-import { ActionAbortedError, ActionDeferredError } from '@/adapter/errors';
+import { ActionAbortedError } from '@/adapter/errors';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
+import { UNCONFIGURED_PROTECTION } from '@/engine/protection-port';
 import { REENTRY_POLICY, ReentrySupervisor } from '@/engine/reentry';
 import { FakeClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
@@ -7,6 +8,7 @@ import { ReadBudget } from '@/governors/read-budget';
 import { createMutationPolicy } from '@/main/services/mutation-policy';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
 import { DEFAULT_SETTINGS, type Settings, toRateGovernorConfig } from '@/settings/settings';
+import { compileProtection, type ProtectionIndex } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { readLimits } from '../kit/read-limits';
 import { openTestStore } from '../kit/store';
@@ -21,8 +23,10 @@ let controller: AbortController;
 let identity: boolean;
 let reciprocal: boolean | null;
 let visit: jest.Mock<Promise<ProfileVisit>, [string]>;
+let protection: ProtectionIndex;
 
 beforeEach(() => {
+  protection = UNCONFIGURED_PROTECTION;
   store = openTestStore(':memory:');
   store.setOwnPk('me');
   clock = new FakeClock(Date.UTC(2026, 9, 21, 12));
@@ -47,7 +51,7 @@ afterEach(() => store.close());
 
 function policy() {
   return createMutationPolicy({ store, clock, ownPk: 'me', ownUsername: 'me', rate, reentry, readBudget: budget,
-    profiles: () => ({ visit }), settings: () => settings, signal: () => controller.signal,
+    profiles: () => ({ visit }), settings: () => settings, protection: () => protection, signal: () => controller.signal,
     validateIdentity: async () => identity,
     followback: () => new FollowbackWatcher({ store, clock, ownPk: 'me',
       notifications: { fetchRecent: async () => ({ ok: true, events: [] }) } }),
@@ -58,7 +62,9 @@ test.each(['wrong-pk', 'stale', 'future', 'nan'] as const)('fresh target verific
   visit.mockResolvedValue({ ok: true, obs: { accountPk: kind === 'wrong-pk' ? 'changed-owner' : 'a', source: 'profile',
     observedAt: kind === 'stale' ? clock.now() - 1 : kind === 'future' ? clock.now() + 1 : kind === 'nan' ? NaN : clock.now(),
     fields: { username: 'alice' } }, viewer: { following: false, requested: false, followsUs: false } });
-  await expect(policy().prepareProfile('alice', 'a', 'follow')).rejects.toBeInstanceOf(ActionDeferredError);
+  // A consuming verdict (spec §9.7 steps 2 and 4): the record parks instead of re-offering the same visit.
+  await expect(policy().prepareProfile('alice', 'a', 'follow')).rejects.toMatchObject({
+    verdict: { kind: 'unavailable', evidence: kind === 'wrong-pk' ? 'renamed' : 'unreadable' } });
   expect(store.getEdge('a', 'me', 'follows')).toBeNull();
 });
 
@@ -83,31 +89,37 @@ test('queued candidates are rescored against the fresh profile before following'
   expect(store.getFollowRecord('a')).toMatchObject({ state: 'queued', score: 0 });
 });
 
-test.each(['target', 'retained-role'] as const)('%s protection is enforced for every unfollow caller', async (protection) => {
+test.each(['target', 'retained-role'] as const)('%s protection is enforced for every unfollow caller', async (kind) => {
   await visit('alice');
-  if (protection === 'target') store.addTarget({ accountPk: 'a', source: 'discovered', status: 'active', chainIndex: 0 });
+  if (kind === 'target') store.addTarget({ accountPk: 'a', source: 'discovered', status: 'active', chainIndex: 0 });
   else store.setRole('a', 'retained_target');
-  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toThrow('source is protected');
+  // A consuming verdict (spec §7.1), no longer a deferral that re-offers the same unfollow.
+  await expect(policy().prepareProfile('alice', 'a', 'unfollow'))
+    .rejects.toMatchObject({ verdict: { kind: 'protected', by: 'source', match: 'a' } });
 });
 
-test('unknown reciprocity blocks removal; a newly observed mutual earns a fresh hold', async () => {
+test('unknown reciprocity blocks removal; a newly observed mutual is re-held by the churn', async () => {
   store.upsertFollowRecord({ accountPk: 'a', targetPk: 'seed', state: 'unfollow_queued', retryCount: 0, followedAt: clock.now() - 7 * 86_400_000 });
   reciprocal = null;
-  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toThrow('unresolved');
+  await expect(policy().prepareProfile('alice', 'a', 'unfollow'))
+    .rejects.toMatchObject({ verdict: { kind: 'unavailable', evidence: 'unreadable' } });
   reciprocal = true;
-  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toThrow('new follow-back requires hold');
-  expect(store.getFollowRecord('a')).toMatchObject({ state: 'followed_back', followbackObservedAt: clock.now() });
-  expect(store.getFollowRecord('a')?.holdUntil).toBeGreaterThan(clock.now());
-  expect(store.getFollowRecord('a')?.followedBackAt).toBeUndefined();
+  // The verdict consumes the work; the churn's applyClickVerdict writes the hold (spec §9.7).
+  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toMatchObject({ verdict: { kind: 'reheld' } });
+  expect(store.getFollowRecord('a')?.state).toBe('unfollow_queued');
 });
 
-test('bio keep policy protects a due mutual, while a confirmed nonfollower can be removed', async () => {
+test('bio words protect at the click whether or not they follow back; without them a non-follower goes', async () => {
   store.upsertFollowRecord({ accountPk: 'a', targetPk: 'seed', state: 'unfollow_queued', retryCount: 0,
     followedBackAt: clock.now() - 1000, holdUntil: clock.now() - 1 });
+  protection = compileProtection({ accounts: [], words: [{ text: ' ARTIST ', addedAt: 0 }], wordMatch: 'anywhere',
+    keepVerified: false }, 'ready', 1);
+  const kept = { verdict: { kind: 'protected', by: 'bio-word', match: 'artist' } };
   reciprocal = true;
-  settings.pruneBioFilterWords = [' ARTIST '];
-  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toThrow('bio keep policy');
+  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toMatchObject(kept);
   reciprocal = false;
+  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toMatchObject(kept);
+  protection = UNCONFIGURED_PROTECTION;
   await expect(policy().prepareProfile('alice', 'a', 'unfollow')).resolves.toBeUndefined();
 });
 

@@ -1,47 +1,25 @@
 import type { Clock } from '../governors/clock';
+import { calendarPlanDayClock } from '../governors/plan-day-clock';
 import type { RateGovernor } from '../governors/rate-governor';
+import type { ParkSlots } from '../kernel/derive-parks';
+import type { ProtectionIndex } from '../shared/unfollow-protection';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { EffectIntent, FollowRecord } from '../store/types';
 import * as log from '../utils/logger';
 import { ChurnPick } from './churn-pick';
-import { CHURN_DEFAULTS, type ChurnActionOutcome, type ChurnActions, type ChurnConfig, type ChurnDeps, type VerbSpec } from './churn-types';
+import type { ChurnActionOutcome, ChurnActions, ChurnConfig, ChurnDeps, VerbSpec } from './churn-types';
+import { applyClickVerdict } from './click-verdict';
+import { journalBlocks, planDaySlots } from './journal';
 import { normalizeMutationOutcome } from './mutation-outcome';
-import { bioMatchesFilter } from './prune-bio-filter';
+import { keepingVerdictOf, keepRecord, keptStampFor, selectionVerdict } from './protection-gate';
+import { type ProtectionPort, unconfiguredProtection } from './protection-port';
 
 export type { ChurnActionOutcome, ChurnActions, ChurnConfig, ChurnDeps } from './churn-types';
-export { CHURN_DEFAULTS } from './churn-types';
 
 /**
- * Drives every `FollowRecord` through the churn lifecycle:
- *
- * ```
- * queued
- *   → (rate ok) FOLLOW ok        → pending_followback  (followedAt set)
- *   → (fail, retries left)         queued               (retryCount++)
- *   → (fail, retries exhausted)    abandoned
- * pending_followback
- *   → (now - followedAt ≥ maxWait) unfollow_queued      (no follow-back timeout — reclaim slot)
- * followed_back
- *   → (now ≥ holdUntil)            unfollow_queued      (hold elapsed; a bio
- *                                  keep-word match on a live mutual holds instead)
- * unfollow_queued
- *   → (rate ok) UNFOLLOW ok        unfollowed
- *   → (fail, retries left)         unfollow_queued      (retryCount++)
- *   → (fail, retries exhausted)    abandoned
- * ```
- *
- * The scheduler is split into three responsibilities so the Engine can pace
- * Instagram actions one at a time with a delay between each:
- *
- * - {@link advanceTimers} — the no-IG state transitions (timeouts + holds).
- * - {@link nextDue} — pick the single most-due record needing IG traffic.
- * - {@link execute} — perform that ONE record's action (no delay inside).
- *
- * Gating (hard ceiling / active hours) is the Engine's job: it decides *when* to
- * call these; the scheduler only decides *what* happens next and applies it. The
- * critical safety invariant (fixing the old silent-drop bug) is preserved: a
- * record is never discarded — if the Engine's gate is closed it simply never
- * calls {@link execute}, leaving the record in place.
+ * The churn lifecycle (queued → pending_followback → followed_back | unfollow_queued → unfollowed, kept on
+ * protection): {@link advanceTimers} moves records in the store, {@link nextDue} picks one with no head-of-line,
+ * {@link execute} performs that ONE action, verified at its click (spec §9.7); gating is the Engine's job.
  */
 export class ChurnScheduler {
   private readonly store: KnowledgeStore;
@@ -52,49 +30,34 @@ export class ChurnScheduler {
   private cfg: ChurnConfig;
   /** The due ranking and the unfollow gates (see `churn-pick.ts`). */
   private readonly pick: ChurnPick;
+  private readonly protection: ProtectionPort;
+  private readonly reconciler?: ChurnDeps['reconciler'];
   private readonly validateFollow?: ChurnDeps['validateFollow'];
+  /** Where a click-time park lands: the plan-day boundary's slots. */
+  private readonly parkSlots: () => ParkSlots;
   private consecutiveCleanup = 0;
   /**
-   * Consecutive `'failed'` action outcomes ACROSS records — the engine's
-   * systemic-breakage signal. A single dead/renamed account produces at most
-   * `maxRetries + 1` fails before it abandons; a broken input pipeline or a
-   * silently-drifted selector fails every record identically, forever. The
-   * engine reads this and enters the recovery ladder instead of burning the
-   * whole queue (and the daily ledger budget) on clicks that do nothing. Reset
-   * by any VERIFIED outcome (ok / already-in-state / simulated); `'blocked'` and
-   * the no-username paths are neutral — nothing was clicked.
+   * Consecutive `'failed'` outcomes ACROSS records: the systemic-breakage signal (one dead account fails
+   * at most `maxRetries + 1` times; a broken pipeline fails every record) that enters the recovery
+   * ladder. Reset by any VERIFIED outcome; blocked, reviewed and no-username paths are neutral.
    */
   private consecutiveFailures = 0;
-  /**
-   * How many of the current consecutive failures were DRIFT-caused
-   * (`AdapterStaleError` — the expected control is gone). The recovery ladder
-   * compares this to the failure window: a window that is ALL drift, with clean
-   * tab diagnostics, is drift evidence; anything mixed stays presumed
-   * rate-limited. Reset together with {@link consecutiveFailures}.
-   */
+  /** How many of those failures were DRIFT-caused: an all-drift window with clean tab diagnostics is drift evidence. */
   private consecutiveDriftFailures = 0;
-  /**
-   * Consecutive `'blocked'` outcomes ACROSS records — the rate-wall streak the
-   * recovery ladder enters on (mirrors the prune engine's consecutive-block
-   * breaker). Blocks are record-NEUTRAL (nothing was clicked, no retry burned);
-   * this window exists so a persistent wall is escalated instead of the same
-   * record being re-driven at full pace forever. Reset by any verified
-   * ok/simulated outcome.
-   */
+  /** Consecutive record-neutral `'blocked'` outcomes: the rate-wall streak the ladder enters on. */
   private consecutiveBlocked = 0;
-  /**
-   * The classification of the MOST RECENT blocked outcome (`null` for an
-   * ordinary sentinel/budget block, and after any verified outcome). The
-   * engine reads it to tell a definitive server refusal (`'rate-limited'`,
-   * which ladders up at once) from a streak it still has to prove.
-   */
+  /** The MOST RECENT block's cause (null for an ordinary block or after a verified outcome): a server refusal ladders up at once. */
   private lastBlockCause: ChurnActionOutcome['cause'] | null = null;
   private lastOutcome: ChurnActionOutcome | null = null;
   lastActionOutcome(): ChurnActionOutcome | null { return this.lastOutcome ? { ...this.lastOutcome } : null; }
-  /** Swap the live config in place (used when Settings are updated at runtime). */
+  /** Swap the live config in place (a settings reload), and re-judge the kept records against the live rules. */
   applyConfig(cfg: ChurnConfig): void {
     this.cfg = cfg;
+    this.reconciler?.sync(this.clock.now());
   }
+
+  /** The live protection state: anything but 'ready' pauses every automatic unfollow (spec §7.6). */
+  protectionState(): ProtectionIndex['state'] { return this.protection.index().state; }
 
   /** The three streak windows the recovery ladder reads, in one read. */
   streaks(): { failed: number; drift: number; blocked: number } {
@@ -124,76 +87,64 @@ export class ChurnScheduler {
     this.rate = deps.rate;
     this.actions = deps.actions;
     this.ownPk = deps.ownPk;
-    this.cfg = deps.cfg ?? CHURN_DEFAULTS;
+    this.cfg = deps.cfg;
+    this.protection = deps.protection ?? unconfiguredProtection(deps.clock);
+    this.reconciler = deps.reconciler;
+    const ownPk = deps.ownPk;
     this.pick = new ChurnPick({
       store: deps.store,
-      ownPk: deps.ownPk,
+      ownPk,
       cfg: () => this.cfg,
       consecutiveCleanup: () => this.consecutiveCleanup,
       pickQueued: deps.pickQueued,
-      hasActiveRequest: deps.hasActiveRequest ?? (() => false),
+      // Requesters are a live predicate (spec §9.9): an open `requests` edge into our account.
+      hasActiveRequest: deps.hasActiveRequest
+        ?? ((pk) => ownPk !== undefined && deps.store.getEdge(pk, ownPk, 'requests')?.status === 'active'),
+      unfollowsPaused: () => this.protection.index().state !== 'ready',
+      reviewBound: deps.reviewBound,
     });
     this.validateFollow = deps.validateFollow;
+    const dayClock = calendarPlanDayClock({ now: () => deps.clock.now() });
+    this.parkSlots = deps.parkSlots ?? ((): ParkSlots => planDaySlots(dayClock, deps.clock.now()));
   }
 
   /**
-   * Apply the timer-driven state transitions that need NO Instagram traffic:
-   *
-   * - `pending_followback` with `now - followedAt ≥ maxWaitForFollowbackMs`
-   *   → `unfollow_queued` (`unfollowDueAt = now`): no follow-back in time, reclaim the slot.
-   * - `followed_back` with `now ≥ holdUntil`
-   *   → `unfollow_queued` (`unfollowDueAt = now`): the hold elapsed.
-   *
-   * Cheap and side-effect-free beyond the store; makes zero calls to `actions`.
+   * Store-only transitions, protection first (spec §7.4, §9.7): P1 a wait past its end reclaims the slot unless
+   * a request or an open follower edge says otherwise; P2 a held mutual rotates out; P3/P4 a protected queued one is kept.
    */
   advanceTimers(now: number = this.clock.now()): void {
-    // No follow-back within the max wait → reclaim the slot.
+    this.reconciler?.sync(now);
+    const idx = this.protection.index();
     for (const rec of this.store.followRecordsByState('pending_followback')) {
-      if (this.pick.isRetained(rec.accountPk)) continue;
-      if (rec.followedAt === undefined) continue;
-      if (now - rec.followedAt >= this.cfg.maxWaitForFollowbackMs) {
-        const deadline = rec.followedAt + this.cfg.maxWaitForFollowbackMs;
-        if (this.ownPk !== undefined) {
-          const edge = this.store.getEdge(rec.accountPk, this.ownPk, 'follows');
-          if (edge?.status !== 'removed' || edge.lastConfirmedAt < deadline
-            || !this.pick.fresh(rec, now)) continue;
-        }
-        this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: deadline, unfollowReason: 'no-followback' });
-        log.info('churn: no follow-back within max wait, queuing unfollow', {
-          pk: rec.accountPk,
-        });
-      }
+      if (this.pick.isRetained(rec.accountPk) || rec.followedAt === undefined) continue;
+      if (now - rec.followedAt < this.cfg.maxWaitForFollowbackMs || this.stopsAtSelection(rec, idx, now)) continue;
+      if (this.pick.isRequester(rec.accountPk) || this.followsUs(rec.accountPk)) continue;
+      const deadline = rec.followedAt + this.cfg.maxWaitForFollowbackMs;
+      this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: deadline, unfollowReason: 'no-followback' });
+      log.info('churn: no follow-back within max wait, queuing unfollow', { pk: rec.accountPk });
     }
-    // Reciprocated and held long enough → time to unfollow — UNLESS the bio
-    // keep-list protects this mutual. The gate re-evaluates on every sweep
-    // (no state is rewritten), so editing the keep-words — or the follower
-    // unfollowing us — takes effect on the next pass.
-    for (const rec of this.store.followRecordsByState('followed_back')) {
-      if (this.pick.isRetained(rec.accountPk) || !this.pick.fresh(rec, now)) continue;
-      if (rec.holdUntil === undefined) continue;
-      if (now >= rec.holdUntil) {
-        if (this.bioKeepsFollower(rec.accountPk)) continue;
-        this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: rec.holdUntil, unfollowReason: 'hold-expired' });
-        log.info('churn: hold elapsed, queuing unfollow', { pk: rec.accountPk });
-      }
+    for (const rec of this.cfg.rotateMutuals ? this.store.followRecordsByState('followed_back') : []) {
+      if (this.pick.isRetained(rec.accountPk) || rec.holdUntil === undefined || now < rec.holdUntil) continue;
+      if (this.stopsAtSelection(rec, idx, now)) continue;
+      this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: rec.holdUntil, unfollowReason: 'hold-expired' });
+      log.info('churn: hold elapsed, queuing unfollow', { pk: rec.accountPk });
     }
+    for (const rec of this.store.followRecordsByState('unfollow_queued')) this.stopsAtSelection(rec, idx, now);
   }
 
-  /**
-   * Whether `pk` is protected from unfollows by the bio keep-list: they follow
-   * us back RIGHT NOW (the live graph edge — record state alone can be stale)
-   * and their stored bio contains a configured keep-word. A non-follower is
-   * NEVER protected — the keep-list means "mutuals I keep", not "skip these".
-   * Without `ownPk` (bare test rigs) the caller's record state stands in for
-   * the edge. An unobserved bio never matches (facts only, no fabrication).
-   */
-  private bioKeepsFollower(pk: string): boolean {
-    if (this.cfg.bioKeepWords.length === 0) return false;
-    if (this.ownPk !== undefined) {
-      const followsUs = this.store.getEdge(pk, this.ownPk, 'follows')?.status === 'active';
-      if (!followsUs) return false;
+  /** An open `pk → own` follower edge: the consistency step records that follow-back, never a timeout. */
+  private followsUs(pk: string): boolean {
+    return this.ownPk !== undefined && this.store.getEdge(pk, this.ownPk, 'follows')?.status === 'active';
+  }
+
+  /** Selection over stored facts: protected → kept, paused → held where it is. True when the unfollow stops here. */
+  private stopsAtSelection(rec: FollowRecord, idx: ProtectionIndex, now: number): boolean {
+    const v = selectionVerdict(this.store, rec.accountPk, idx);
+    if (v.kind === 'protected') {
+      keepRecord(this.store, rec, keptStampFor(v, now, rec.checkFailures ?? 0, this.protection));
+      log.info('churn: protected at selection, kept', { pk: rec.accountPk, by: v.by });
     }
-    return bioMatchesFilter(this.store.getAccount(pk)?.bio, this.cfg.bioKeepWords);
+    return v.kind === 'protected' || v.kind === 'paused';
   }
 
   /**
@@ -205,43 +156,21 @@ export class ChurnScheduler {
   }
 
   /**
-   * Perform exactly ONE record's Instagram action and apply its result. No delay is
-   * incurred here — the Engine paces between calls. `queued` records are followed;
-   * `unfollow_queued` records are unfollowed. Any other state is a no-op.
-   *
-   * On success: record the action in the ledger, transition the record, and (when
-   * `ownPk` is known) observe the directed edge. On failure: record the failed
-   * action and bump `retryCount`, abandoning once `maxRetries` is exceeded.
-   *
-   * Returns the attempt's outcome status so the Engine can route it: `'blocked'`
-   * gets a short park (never a full-pace re-drive of the same record) and feeds
-   * the recovery ladder's blocked streak; `'noop'` means nothing touched
-   * Instagram (non-actionable record, or a due record with no username whose
-   * retry was burned store-side).
+   * Perform ONE record's action and apply its result (the Engine paces): `queued` follows, `unfollow_queued`
+   * unfollows. `'blocked'` parks and feeds the ladder's streak; `'noop'` touched nothing on Instagram.
    */
   async execute(
     rec: FollowRecord,
     now: number = this.clock.now(),
   ): Promise<ChurnActionOutcome['status'] | 'noop'> {
     this.lastOutcome = null;
-    if (rec.state === 'queued') {
-      return this.executeFollow(rec, now);
-    }
-    if (rec.state === 'unfollow_queued') {
-      return this.executeUnfollow(rec, now);
-    }
-    log.warn('churn: execute called on a non-actionable record', {
-      pk: rec.accountPk,
-      state: rec.state,
-    });
+    if (rec.state === 'queued') return this.executeFollow(rec, now);
+    if (rec.state === 'unfollow_queued') return this.executeUnfollow(rec, now);
+    log.warn('churn: execute called on a non-actionable record', { pk: rec.accountPk, state: rec.state });
     return 'noop';
   }
 
-  /**
-   * Thin convenience for callers that want a single lifecycle step without the Engine:
-   * advance timers, take at most ONE due record, and execute it. The three methods above
-   * are the real API; this never loops over all records.
-   */
+  /** One lifecycle step without the Engine: advance timers, then execute at most ONE due record. */
   async tick(): Promise<void> {
     const now = this.clock.now();
     this.advanceTimers(now);
@@ -300,29 +229,16 @@ export class ChurnScheduler {
   }
 
   /**
-   * Unfollow one `unfollow_queued` record. The keep-list's moment-of-truth
-   * check comes first: a record can reach the queue before the person followed
-   * back (timeout path) or before the keep-word was configured — a protected
-   * mutual is re-held, never unfollowed.
+   * Unfollow one `unfollow_queued` record. Selection is judged once more right before the click
+   * (a rule may have arrived since it was queued): protected → kept, paused → untouched; the
+   * click itself verifies the fresh profile, exactly once (spec §9.7).
    */
   private async executeUnfollow(
     rec: FollowRecord,
     now: number,
   ): Promise<ChurnActionOutcome['status'] | 'noop'> {
-    if (this.pick.isRetained(rec.accountPk) || !this.pick.fresh(rec, now)) return 'noop';
-    if (this.bioKeepsFollower(rec.accountPk)) {
-      // The hold stamp is kept (or set due-now), so the sweep's own gate
-      // re-decides each pass: remove the keep-word later and rotation resumes.
-      this.store.upsertFollowRecord({
-        ...rec,
-        state: 'followed_back',
-        holdUntil: rec.holdUntil ?? now,
-      });
-      log.info('churn: due unfollow is a bio-protected mutual, re-holding', {
-        pk: rec.accountPk,
-      });
-      return 'noop';
-    }
+    if (this.pick.isRetained(rec.accountPk)) return 'noop';
+    if (this.stopsAtSelection(rec, this.protection.index(), now)) return 'noop';
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
       // Same starvation guard as the follow path: progress or abandon.
@@ -336,15 +252,13 @@ export class ChurnScheduler {
   private async performAttempt(
     rec: FollowRecord, verb: 'follow' | 'unfollow', username: string, now: number,
   ): Promise<ChurnActionOutcome['status']> {
-    const intent = this.store.beginEffectIntent({
-      accountPk: rec.accountPk, username, action: verb, channel: 'growth', at: now,
-    });
-    if (intent.state === 'dispatched' || intent.state === 'uncertain') {
-      // Only fresh, read-only recovery may settle an unknown previous mutation.
-      this.lastOutcome = { status: 'blocked', cause: 'local-policy', unverifiedClick: true };
+    // Only this account's own unsettled write blocks it (spec §9.8); selection passes such records over.
+    if (journalBlocks(rec.accountPk, this.store.effectIntents.unsettledFor(rec.accountPk))) {
+      this.lastOutcome = { status: 'blocked', cause: 'local-policy', verdict: { kind: 'deferred', reason: 'journal', until: null } };
       this.lastBlockCause = 'local-policy';
       return 'blocked';
     }
+    const intent = this.store.beginEffectIntent({ accountPk: rec.accountPk, username, action: verb, channel: 'growth', at: now });
     const outcome = await this.attempt(verb, rec, username, intent);
     return this.applyOutcome(rec, verb, username, outcome, this.clock.now(), intent);
   }
@@ -386,6 +300,7 @@ export class ChurnScheduler {
    *                    is external, without claiming a new action or its timing.
    *  - `'simulated'` — dry-run: the lifecycle advances, no edge, no ledger row.
    *  - `'failed'`    — ledger `fail` + retry/abandon.
+   *  - `'reviewed'`  — the click review consumed the work; the intent is cancelled (never dispatched).
    */
   private applyOutcome(
     rec: FollowRecord,
@@ -461,6 +376,19 @@ export class ChurnScheduler {
           at: now, result: 'fail', ledger: 'growth', record: this.retryRecord(rec, now),
         });
         return 'failed';
+
+      case 'reviewed': {
+        // The review consumed the work before any press: the intent is cancelled with the verdict's record.
+        const v = outcome.verdict;
+        const next = v === undefined ? rec : applyClickVerdict(rec, v, { now, holdMs: this.cfg.holdAfterFollowbackMs,
+          followbackAfter: rec.followedAt, slots: this.parkSlots() });
+        this.store.settleEffectIntent(intent.id, { at: now, result: 'cancelled', record: next === rec ? undefined : next });
+        // Protected or unreadable at the click → kept (spec §7.4); paused leaves it where it is.
+        const keeping = keepingVerdictOf(v);
+        if (keeping !== null) keepRecord(this.store, rec, keptStampFor(keeping, now, rec.checkFailures ?? 0, this.protection));
+        log.info(`churn: ${verb} reviewed at the click`, { pk, verdict: v?.kind ?? null });
+        return 'reviewed';
+      }
     }
   }
 

@@ -2,6 +2,9 @@ import type { SqliteDriver } from '../driver/driver';
 import { type FollowRecordRow, rowToFollowRecord } from '../rows';
 import { orNull } from '../sql-values';
 import type { FollowRecord, FollowState } from '../types';
+import { type KeptMove, keptCounts, keptPage, recheckDue, reviewKept } from './follow-records-kept';
+
+export type { KeptMove, KeptStampRow } from './follow-records-kept';
 
 /** What one call to {@link FollowRecordRepo.healAbandonedInWindow} did. */
 export interface HealResult {
@@ -144,6 +147,22 @@ export class FollowRecordRepo {
       .all() as Array<{ account_pk: string }>;
     return new Set(rows.map((r) => r.account_pk));
   }
+
+  /** Apply protection moves in ONE transaction and one mutation pulse (spec §7.5); returns how many moved. */
+  review(moves: readonly KeptMove[]): number {
+    const moved = moves.length === 0 ? 0 : reviewKept(this.db, moves);
+    if (moved > 0) this.changed();
+    return moved;
+  }
+
+  /** One page of kept records, the most recently kept first. */
+  kept(page: number, size: number): FollowRecord[] { return keptPage(this.db, page, size); }
+
+  /** How many records are kept, and how many of them for an unreadable fact. */
+  keptCounts(): { total: number; unreadable: number } { return keptCounts(this.db); }
+
+  /** Kept records whose re-check is due at `now`. */
+  recheckDue(now: number): FollowRecord[] { return recheckDue(this.db, now); }
 
   /**
    * The recovery requeue-healer's store half: requeue `abandoned` records whose

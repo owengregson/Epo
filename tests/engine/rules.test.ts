@@ -29,15 +29,20 @@ import {
   type Rule,
   type RuleVerdict,
 } from '@/engine/rules';
+import type { ProtectionVerdict } from '@/shared/unfollow-protection';
 import type { FollowRecord } from '@/store/types';
+
+const CLEAR: ProtectionVerdict = { kind: 'clear' };
+const PROTECTED: ProtectionVerdict = { kind: 'protected', by: 'account', match: 'c1' };
+const PAUSED: ProtectionVerdict = { kind: 'paused', state: 'needs-review' };
 
 const GROWTH_ORDER = [
   'aborted',
   'sentinel-auth',
   'recovery-hold',
   'sentinel-blocked',
-  'reconcile',
   'pacing',
+  'journal',
   'target',
   'followback',
   'rotate',
@@ -89,6 +94,7 @@ const arbQueue: fc.Arbitrary<QueueFacts> = fc.record({
 
 const arbCadence: fc.Arbitrary<CadenceFacts> = fc.record({
   sweepDue: fc.boolean(),
+  journalDue: fc.boolean(),
   overdue: fc.constant([]),
 });
 
@@ -118,7 +124,10 @@ const arbPrune: fc.Arbitrary<PruneFacts> = fc.record({
     { nil: null },
   ),
   followsUsNow: fc.boolean(),
-  whitelist: fc.constantFrom<readonly string[]>([], ['cand']),
+  protection: fc.constantFrom<ProtectionVerdict>(
+    { kind: 'clear' }, { kind: 'protected', by: 'account', match: 'c1' }, { kind: 'unknown', missing: 'bio' },
+    { kind: 'paused', state: 'needs-review' },
+  ),
   atDailyCap: fc.boolean(),
 });
 
@@ -344,6 +353,21 @@ describe('the precedence property', () => {
     );
   });
 
+  test('the journal never preempts the safety prefix or pacing, and settles before any other growth work', async () => {
+    const run: RunCtx = { mode: 'growth' };
+    const pacing = PROGRAM.growth.find((r) => r.id === 'pacing') as Rule;
+    await fc.assert(
+      fc.asyncProperty(arbFacts, async (facts) => {
+        const due: Facts = { ...facts, cadence: { ...facts.cadence, journalDue: true } };
+        const first = [...PROGRAM.safety, pacing].map((r) => r.decide(due, run)).find((v) => v != null);
+        const claim = await decide(due);
+        if (first !== undefined) expect(claim?.rule).not.toBe('journal');
+        else expect(claim).toEqual({ rule: 'journal', verdict: { do: 'run', effect: { id: 'settle-journal', now: due.clock.now } } });
+      }),
+      { numRuns: 400 },
+    );
+  });
+
   test('within the safety prefix, halt dominates run', async () => {
     const run: RunCtx = { mode: 'growth' };
     await fc.assert(
@@ -427,14 +451,14 @@ describe('prune-run rules', () => {
         lastBlockedCause: null,
         failingEntryThreshold: 8,
       },
-      prune: { candidate: null, followsUsNow: false, whitelist: [], atDailyCap: false },
+      prune: { candidate: null, followsUsNow: false, protection: CLEAR, atDailyCap: false },
     } satisfies Facts),
     ...over,
   });
 
   test('the daily cap closes the mode before any candidate is considered', async () => {
     const claim = await decide(
-      base({ prune: { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, whitelist: [], atDailyCap: true } }),
+      base({ prune: { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, protection: CLEAR, atDailyCap: true } }),
       'prune-run',
     );
     expect(claim?.rule).toBe('prune-cap');
@@ -443,7 +467,7 @@ describe('prune-run rules', () => {
 
   test('an actionable candidate becomes the ONE unfollow effect', async () => {
     const claim = await decide(
-      base({ prune: { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, whitelist: [], atDailyCap: false } }),
+      base({ prune: { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, protection: CLEAR, atDailyCap: false } }),
       'prune-run',
     );
     expect(claim?.verdict).toEqual({
@@ -452,11 +476,12 @@ describe('prune-run rules', () => {
     });
   });
 
-  test('the live-graph guard and the whitelist both yield instead of acting', async () => {
+  test('P10: the live-graph guard, protection and a paused index all yield instead of acting', async () => {
     for (const prune of [
-      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: true, whitelist: [], atDailyCap: false },
-      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, whitelist: ['cand'], atDailyCap: false },
-      { candidate: { pk: 'c1', username: null }, followsUsNow: false, whitelist: [], atDailyCap: false },
+      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: true, protection: CLEAR, atDailyCap: false },
+      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, protection: PROTECTED, atDailyCap: false },
+      { candidate: { pk: 'c1', username: 'cand' }, followsUsNow: false, protection: PAUSED, atDailyCap: false },
+      { candidate: { pk: 'c1', username: null }, followsUsNow: false, protection: CLEAR, atDailyCap: false },
     ]) {
       expect((await decide(base({ prune }), 'prune-run'))?.verdict).toEqual({ do: 'yield' });
     }

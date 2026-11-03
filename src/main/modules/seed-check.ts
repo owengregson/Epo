@@ -1,94 +1,191 @@
 /**
- * The seed precheck: one sentinel-gated profile VISIT through the shared tab
- * that tells whether a seed exists and whether its followers are visible.
+ * The seed check (spec §13): typed results, and never a visit nobody asked for. A handle the store saw
+ * within one weekly cycle of plan-days answers from the store; a busy tab queues the handle (the latest
+ * wins, logged) and it runs once when the tab owner frees the tab; a real visit takes a profile read permit.
  */
 
+import { ActionAbortedError } from '@/adapter/errors';
+import { calendarPlanDayClock } from '@/governors/plan-day-clock';
+import type { ReadPermit } from '@/governors/read-budget';
+import type { PlanDayClock } from '@/kernel/plan';
 import type { BuiltGraph } from '@/main/services/graph-types';
 import type { TabActivity } from '@/main/tab-activity';
-import type { SeedCheck } from '@/types';
+import type { ProfileVisit } from '@/rim/profile-visit-port';
+import type { SeedCheckResult, SeedQueueReason } from '@/shared/seed-check';
+import type { SeedStatus } from '@/shared/settings-facts';
+import { WEEKDAYS } from '@/shared/settings-intent';
+import { normalizeHandle } from '@/shared/unfollow-protection';
+import type { AccountState, EdgeType } from '@/store/types';
 import * as logger from '@/utils/logger';
 
 export interface SeedCheckDeps {
   /** The veil's hold registry (the visit holds `seed-check`). */
-  activity: TabActivity;
+  activity: Pick<TabActivity, 'with'>;
   /** Track the op so teardown drains it before closing the store. */
   trackManualOp<T>(run: () => Promise<T>): Promise<T>;
-  /** Ensure the graph is built and hand it back (`null` when not logged in). */
-  builtGraph(): Promise<BuiltGraph | null>;
-  /** Why a manual op may not touch the tab now (R3), or `null`. */
+  /** The open graph, or null while the session is closed (a check never builds one). */
+  graph(): BuiltGraph | null;
+  /** Why a manual op may not touch the tab now (R3), or null. */
   busyDriverReason(): string | null;
-  /** Mark the manual driver busy or free. */
   setManualDriving(on: boolean): void;
-  /** Restart growth when the user still wants it running. */
   resumeDesiredRun(): void;
+  /** The seed status moved (queued, checking, settled): the facts projection re-pushes. */
+  changed?(): void;
+  /** The plan-day boundary the freshness window counts in (the calendar day until the plan's clock swaps in). */
+  planDay?: Pick<PlanDayClock, 'window'>;
+  /** The profile read permit a visit takes (absent: the graph does not expose its read budget yet). */
+  readPermit?(graph: BuiltGraph): ReadPermit;
+  now?(): number;
 }
 
-export class SeedCheckService {
-  constructor(private readonly deps: SeedCheckDeps) {}
+/** What the seed status reads from the store. */
+export interface SeedStoreView {
+  readonly ownPk: string;
+  pkByUsername(username: string): string | null;
+  getAccount(pk: string): AccountState | null;
+  getEdge(srcPk: string, dstPk: string, type: EdgeType): { readonly status: 'active' | 'removed' } | null;
+}
 
-  /**
-   * One-shot read-only precheck of a seed username: whether it exists and whether
-   * its followers list is visible (public, or private and followed). One profile
-   * VISIT through the shared tab, sentinel-gated. Never throws across IPC.
-   */
-  async checkSeed(username: string): Promise<SeedCheck> {
-    // Veil: the seed check is a real profile visit — reading counts.
-    return this.deps.trackManualOp(() =>
-      this.deps.activity.with('seed-check', () => this.checkSeedHeld(username)),
-    );
+export const seedStoreView = (graph: BuiltGraph): SeedStoreView => ({
+  ownPk: graph.ownPk,
+  pkByUsername: (u) => graph.store.pkByUsername(u),
+  getAccount: (pk) => graph.store.getAccount(pk),
+  getEdge: (s, d, t) => graph.store.getEdge(s, d, t),
+});
+
+/** The tab owner's busy reasons as queue reasons. */
+const QUEUE_REASON: Readonly<Record<string, SeedQueueReason>> = {
+  'runtime-not-ready': 'runtime-blocked', offline: 'offline', starting: 'starting', 'manual-running': 'manual',
+  'engine-running': 'engine', 'prune-running': 'prune',
+};
+
+type Unreadable = Extract<SeedCheckResult, { kind: 'unreadable' }>['why'];
+
+export class SeedCheckService {
+  private queued: { readonly handle: string; readonly why: SeedQueueReason } | null = null;
+  private checking: string | null = null;
+  /** This session's evidence-backed verdict: the only source of `gone`. */
+  private gone: { readonly handle: string; readonly at: number; readonly evidence: 'profile-absent' | 'page-text' } | null = null;
+  private readonly planDay: Pick<PlanDayClock, 'window'>;
+  private readonly now: () => number;
+
+  constructor(private readonly d: SeedCheckDeps) {
+    this.planDay = d.planDay ?? calendarPlanDayClock();
+    this.now = d.now ?? Date.now;
   }
 
-  private async checkSeedHeld(username: string): Promise<SeedCheck> {
-    const graph = await this.deps.builtGraph();
-    if (graph === null) {
-      return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'not-logged-in' };
+  /** A check on explicit intent: from the store when fresh, queued while the tab is busy, else one visit. */
+  async check(raw: string): Promise<SeedCheckResult> {
+    const { handle, valid } = normalizeHandle(raw);
+    if (!valid) return { kind: 'invalid-handle' };
+    const graph = this.d.graph();
+    if (graph === null) return this.enqueue(handle, 'signed-out');
+    const stored = this.fromStore(seedStoreView(graph), handle);
+    if (stored !== null) {
+      if (this.queued?.handle === handle) this.queued = null;
+      return stored;
     }
-    // R3: refuse while a driver runs — a concurrent one-shot fetch competes with
-    // that driver's own IG traffic and its sentinel gating.
-    const busy = this.deps.busyDriverReason();
-    if (busy !== null) {
-      return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: busy };
-    }
-    this.deps.setManualDriving(true);
+    const busy = this.d.busyDriverReason();
+    if (busy !== null) return this.enqueue(handle, QUEUE_REASON[busy] ?? 'runtime-blocked');
+    const permit = this.d.readPermit?.(graph);
+    if (permit !== undefined && !permit.allowed) return this.enqueue(handle, 'read-budget');
+    if (this.queued?.handle === handle) this.queued = null;
+    this.checking = handle;
+    this.d.changed?.();
+    return this.d.trackManualOp(() => this.d.activity.with('seed-check', () => this.visit(graph, handle)));
+  }
+
+  /** The tab is free: a queued handle runs once (it queues again if the tab turned busy meanwhile). */
+  onTabFree(): void {
+    const q = this.queued;
+    if (q === null || this.checking !== null || this.d.busyDriverReason() !== null) return;
+    void this.check(q.handle).catch((e: unknown) => logger.error('seed check: the queued check failed', { error: String(e) }));
+  }
+
+  /** The seed status projection: this session's queue and verdict, else the store's last-known profile. */
+  status(store: SeedStoreView | null, raw: string): SeedStatus {
+    const { handle } = normalizeHandle(raw);
+    if (handle === '') return { kind: 'none' };
+    if (store === null) return { kind: 'loading' };
+    if (this.checking === handle) return { kind: 'checking', handle };
+    if (this.queued?.handle === handle) return { kind: 'queued', handle, why: this.queued.why };
+    if (this.gone?.handle === handle) return { kind: 'gone', handle, at: this.gone.at, evidence: this.gone.evidence };
+    const pk = store.pkByUsername(handle);
+    const account = pk === null ? null : store.getAccount(pk);
+    if (pk === null || account === null) return { kind: 'unseen', handle };
+    return {
+      kind: 'seen', handle, pk, currentUsername: account.username ?? handle, observedAt: account.statsObservedAt ?? account.lastSeenAt,
+      followers: account.followers ?? null, isPrivate: account.isPrivate ?? null,
+      followersVisible: account.isPrivate === undefined ? null : !account.isPrivate || this.followed(store, pk),
+    };
+  }
+
+  /** A stored profile observed within one weekly cycle of plan-days, with its privacy known. */
+  private fromStore(store: SeedStoreView, handle: string): SeedCheckResult | null {
+    const pk = store.pkByUsername(handle);
+    const a = pk === null ? null : store.getAccount(pk);
+    if (pk === null || a === null || a.isPrivate === undefined || a.statsObservedAt === undefined) return null;
+    if (a.statsObservedAt < this.freshSince()) return null;
+    return { kind: 'ok', pk, isPrivate: a.isPrivate, followersVisible: !a.isPrivate || this.followed(store, pk),
+      followers: a.followers ?? null, observedAt: a.statsObservedAt, fromStore: true };
+  }
+
+  /** The start of the plan-day a weekly cycle back: today and the six plan-days before it. */
+  private freshSince(): number {
+    let w = this.planDay.window(this.now());
+    for (let k = 1; k < WEEKDAYS.length; k++) w = this.planDay.window(w.startsAt - 1);
+    return w.startsAt;
+  }
+
+  /** A private account's followers show to an account that follows it (or asked to, today's rule). */
+  private followed(store: SeedStoreView, pk: string): boolean {
+    return store.getEdge(store.ownPk, pk, 'follows')?.status === 'active' || store.getEdge(store.ownPk, pk, 'requests')?.status === 'active';
+  }
+
+  private enqueue(handle: string, why: SeedQueueReason): SeedCheckResult {
+    this.queued = { handle, why };
+    logger.info('seed check: queued until the tab is free', { handle, why });
+    this.d.changed?.();
+    return { kind: 'queued', why };
+  }
+
+  private async visit(graph: BuiltGraph, handle: string): Promise<SeedCheckResult> {
+    this.d.setManualDriving(true);
     try {
-      const clean = username.trim().replace(/^@/, '');
-      if (!clean) return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'empty' };
-      if ((await graph.sentinel.check()) !== 'ok') {
-        return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'blocked' };
-      }
-      // One profile VISIT (`rim/profile-visit.ts`): the page's own client reads
-      // the profile and the observer has stored it — FACTS STREAM (PRINCIPLES
-      // §1) — by the time this resolves, adopted seed or not.
-      const visit = await graph.profiles.visit(clean);
-      if (!visit.ok) {
-        // A wall is IG blocking; `gone` is the page saying the profile is not
-        // available; a page that never answered is unknown, never "not found".
-        const reason =
-          visit.kind === 'walled' ? 'blocked' : visit.kind === 'gone' ? 'not-found' : 'error';
-        logger.warn('foundation.checkSeed: profile visit failed', { kind: visit.kind, reason, ...visit.detail });
-        return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason };
-      }
-      const isPrivate = visit.obs.fields.isPrivate === true;
-      // A private account's followers are viewable iff we follow it. The
-      // profile body carries the viewer-side flags, so a private seed no longer
-      // costs a `friendships/show` read (same rule as before: follow or request).
-      const followersVisible = isPrivate
-        ? visit.viewer.following === true || visit.viewer.requested === true
-        : true;
-      return {
-        ok: true,
-        exists: true,
-        followersVisible,
-        isPrivate,
-        reason: followersVisible ? undefined : 'private',
-      };
+      const sentinel = await graph.sentinel.check();
+      if (sentinel !== 'ok') return this.unreadable(handle, sentinel === 'challenge' ? 'challenge' : sentinel === 'logged-out' ? 'signed-out' : 'walled');
+      return this.settle(handle, await graph.profiles.visit(handle));
     } catch (e) {
-      // Only a genuinely unexpected exception (evaluate/tab failure) lands here.
-      logger.error('foundation.checkSeed: failed', { username, error: String(e) });
-      return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'error' };
+      if (e instanceof ActionAbortedError) return this.unreadable(handle, 'aborted');
+      logger.error('seed check: the visit failed', { handle, error: String(e) });
+      return { kind: 'unreadable', why: 'error' };
     } finally {
-      this.deps.setManualDriving(false);
-      this.deps.resumeDesiredRun();
+      this.checking = null;
+      this.d.setManualDriving(false);
+      this.d.resumeDesiredRun();
+      this.d.changed?.();
     }
+  }
+
+  private settle(handle: string, v: ProfileVisit): SeedCheckResult {
+    if (v.ok) {
+      if (this.gone?.handle === handle) this.gone = null;
+      const isPrivate = v.obs.fields.isPrivate === true;
+      return { kind: 'ok', pk: v.obs.accountPk, isPrivate, followers: v.obs.fields.followers ?? null, observedAt: v.obs.observedAt,
+        followersVisible: !isPrivate || v.viewer.following === true || v.viewer.requested === true, fromStore: false };
+    }
+    if (v.kind === 'gone') {
+      const evidence = v.evidence ?? 'page-text';
+      this.gone = { handle, at: this.now(), evidence };
+      logger.warn('seed check: the profile is not available', { handle, evidence });
+      return { kind: 'not-found', evidence, observedAt: this.gone.at };
+    }
+    return this.unreadable(handle, v.kind === 'walled' ? 'walled' : v.kind === 'unanswered' && v.detail.drift !== undefined ? 'drift'
+      : v.kind === 'unanswered' ? 'no-answer' : 'error');
+  }
+
+  private unreadable(handle: string, why: Unreadable): SeedCheckResult {
+    logger.warn('seed check: no verdict', { handle, why });
+    return { kind: 'unreadable', why };
   }
 }

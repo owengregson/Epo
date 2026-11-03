@@ -7,7 +7,7 @@
     },
     {
       "file": "src/engine/prune-engine.ts",
-      "lines": 1150
+      "lines": 1127
     },
     {
       "file": "src/kernel/derive.ts",
@@ -15,7 +15,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 961
+      "lines": 958
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -35,7 +35,7 @@
     },
     {
       "file": "src/store/knowledge-store.ts",
-      "lines": 592
+      "lines": 538
     },
     {
       "file": "src/capture/capture-harness.ts",
@@ -43,7 +43,7 @@
     },
     {
       "file": "src/engine/churn-scheduler.ts",
-      "lines": 528
+      "lines": 456
     },
     {
       "file": "src/engine/target-pipeline.ts",
@@ -55,7 +55,7 @@
     },
     {
       "file": "src/main/services/graph-builder.ts",
-      "lines": 364
+      "lines": 363
     },
     {
       "file": "src/rim/followers-page-reader.ts",

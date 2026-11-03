@@ -26,7 +26,7 @@ import {
 } from '@/adapter/activity-reporter';
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import type { EngineStatus } from '@/engine/engine';
-import { journaledMutation } from '@/engine/journaled-mutation';
+import { journaledMutation, refusalReason } from '@/engine/journaled-mutation';
 import type { PruneCandidate, PruneStatus } from '@/engine/prune-engine';
 import { SystemClock } from '@/governors/clock';
 import type { CursorObserver } from '@/interaction/input-driver';
@@ -44,7 +44,8 @@ import { PruneControl } from '@/main/modules/prune-control';
 import { PruneSchedule } from '@/main/modules/prune-schedule';
 import { SeedCheckService } from '@/main/modules/seed-check';
 import { GraphSession } from '@/main/modules/session';
-import { SettingsService } from '@/main/modules/settings-service';
+import { settingsFactsSource } from '@/main/modules/settings-facts';
+import { SettingsService, settingsBinding } from '@/main/modules/settings-service';
 import { createStartup } from '@/main/modules/startup-steps';
 import { composeStatus, type StatusContributor } from '@/main/modules/status-compose';
 import { DriverSignal } from '@/main/services/driver-signal';
@@ -75,7 +76,6 @@ import type {
   PruneScanResult,
   QueueListResult,
   ReadFollowersResult,
-  SeedCheck,
 } from '@/types';
 import * as logger from '@/utils/logger';
 
@@ -215,7 +215,8 @@ export class Foundation {
   /** The manual prune controls and the scheduled prune over them. */
   private readonly prune: PruneControl;
   private readonly pruneSchedule: PruneSchedule;
-  private readonly seed: SeedCheckService;
+  readonly seed: SeedCheckService;
+  readonly facts = settingsFactsSource(() => this.graph, () => this.settings, () => this.seed);
   /** The boot sequence (spec §12.8) and its graph-independent `boot` / `account` status contributors. */
   private readonly boot: BootSequencer;
   private readonly bootFields: readonly StatusContributor[];
@@ -263,7 +264,9 @@ export class Foundation {
     this.reporter = deps.activityReporter ?? NOOP_ACTIVITY_REPORTER;
     this.requestConnectivityCheck = deps.requestConnectivityCheck;
     this.projections = new Projections({ push: deps.push });
-    this.settings = new SettingsService({ userDataDir: deps.userDataDir, graph: () => this.graph });
+    this.settings = new SettingsService({ userDataDir: deps.userDataDir, now: () => Date.now(), graph: () => this.graph,
+      knowledgeDbExists: () => fs.existsSync(path.join(deps.userDataDir, IG_DB_FILE)), push: (view) => deps.push?.('settings', view) });
+    this.settings.onChange(() => this.projections.pushAll());
     this.session = new GraphSession({
       igSession: deps.igSession,
       build: (ownPk, ownUsername) => this.build(ownPk, ownUsername),
@@ -271,7 +274,6 @@ export class Foundation {
       onIdentityChanged: () => {
         this.blockRuntime('account-changed');
         this.lease.forgetHandoffs();
-        void this.updateSettings({ sweepLastRunAt: null, pruneLastRunAt: null });
       },
     });
     // The kernel binding rule (ADR 1007): everything declared over the session
@@ -282,8 +284,9 @@ export class Foundation {
         if (this.graph === graph && !this.disposing) graph.store.pruneRetainedLogs();
       }, { unref: true });
       graph.engine.setOnline(this.lastOnline);
+      this.settings.bindStore(settingsBinding(graph));
       this.projections.bind(graph.store, { status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock }) });
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock }), settingsFacts: () => this.facts.facts() });
     });
     this.session.session.onClose(() => {
       this.scheduler.stop('store:retention');
@@ -292,6 +295,7 @@ export class Foundation {
       // Before ANYTHING else in the teardown: late writes from draining ops
       // must not schedule a push into a closing store.
       this.projections.unbind();
+      this.settings.bindStore(null);
       // A prune or tour hand-off in flight has nothing to resume once the
       // graph is gone.
       this.lease.forgetHandoffs();
@@ -299,6 +303,7 @@ export class Foundation {
     this.activity = new TabActivity((active, holds) => {
       logger.info('foundation: tab activity', { active, holds });
       deps.onActivity?.(active, holds);
+      if (!active) this.seed.onTabFree();
     });
     this.prune = new PruneControl({ runtime: this.runtime, lease: this.lease, activity: this.activity,
       graph: () => this.graph, builtGraph: () => this.builtGraph(), online: () => this.lastOnline,
@@ -310,13 +315,13 @@ export class Foundation {
       builtGraph: () => this.builtGraph(), disposing: () => this.disposing,
       resolveSettings: () => this.resolveSettings(), updateSettings: (partial) => this.updateSettings(partial) });
     this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
-      builtGraph: () => this.builtGraph(), busyDriverReason: () => this.busyDriverReason(),
-      setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun() });
+      graph: () => this.graph, busyDriverReason: () => this.busyDriverReason(),
+      setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun(), changed: () => this.projections.pushAll() });
     ({ boot: this.boot, contributors: this.bootFields } = createStartup({ tab: this.tab, runtime: this.runtime,
       lease: this.lease, activity: this.activity, session: this.session, igSession: this.igSession,
       tabFirstLoad: deps.tabFirstLoad ?? Promise.resolve('ready'), disposing: () => this.disposing,
       blockRuntime: (reason) => this.blockRuntime(reason), startEngine: (opts) => this.startEngine(opts),
-      driverBusy: () => this.manualDriving || this.isEngineDriving(), pushStatus: () => this.pushStatus() }));
+      driverBusy: () => this.manualDriving || this.isEngineDriving(), pushStatus: () => this.pushStatus(), afterStartup: () => this.seed.onTabFree() }));
     // Tab health events (debugger detach, renderer gone/unresponsive, input
     // fallback): the tab reports, the Foundation owns the recovery policy.
     // Guarded — partially-shaped test tabs may not carry the callback seam.
@@ -502,7 +507,8 @@ export class Foundation {
         logger.error('foundation.restartFromSeed: loop rejected on stop', { error: String(e) });
       }
     }
-    await this.updateSettings({ seed: clean });
+    // A seed that did not save would restart the chain from the old one: refuse instead (the service logged why).
+    if (this.settings.apply([{ op: 'seed', handle: clean }], 'system').kind !== 'saved') return { ...this.builtStatus(), refusal: 'settings-not-saved' };
     if (!this.runtime.current(token) || !this.runtime.ready()) return { ...this.builtStatus(), refusal: 'runtime-intent-changed' };
     // Scrap the current session: every active target is retired ("Set aside when
     // you restarted"); queued records against them stop refilling.
@@ -689,7 +695,7 @@ export class Foundation {
       if (outcome.status === 'ok' && !outcome.alreadyInState) graph.noteMutation();
       return outcome.status === 'ok' || outcome.status === 'simulated'
         ? { ok: true, username }
-        : { ok: false, username, reason: outcome.status === 'blocked' ? 'blocked' : 'action-failed' };
+        : { ok: false, username, reason: refusalReason(outcome) };
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       logger.error('foundation.act: failed', { action, username, error: reason });
@@ -1144,13 +1150,13 @@ export class Foundation {
 
   private graphBuildDeps(): GraphBuildDeps {
     return {
-      tab: this.tab,
-      userDataDir: this.userDataDir,
+      tab: this.tab, userDataDir: this.userDataDir,
       dbFile: IG_DB_FILE,
       reporter: this.reporter, cursorObserver: this.cursorObserver,
       scheduler: this.scheduler,
       settings: this.resolveSettings(),
       resolveSettings: () => this.resolveSettings(),
+      protection: { index: () => this.settings.protection(), setCapabilities: (p) => this.settings.setCapabilities(p) },
       plan: { runIntent: () => this.runtime.snapshot().desired, settings: this.settings, pushStatus: () => this.pushStatus() },
       updateSettings: (partial) => {
         void this.updateSettings(partial);
@@ -1261,9 +1267,6 @@ export class Foundation {
     }
   }
 
-  /** The seed precheck: one sentinel-gated profile visit (see {@link SeedCheckService}). */
-  checkSeed(username: string): Promise<SeedCheck> { return this.seed.checkSeed(username); }
-
   /**
    * A capped page of follow_records in one lifecycle state, joined to accounts.
    * Empty (and untruncated) when not logged in. Never throws across IPC.
@@ -1304,9 +1307,6 @@ export class Foundation {
 
   /** The persisted settings (loaded lazily and cached; defaults on any failure). */
   getSettings(): Promise<Settings> { return this.settings.getSettings(); }
-
-  /** Reset every setting to its default (see {@link SettingsService.resetSettings}). */
-  resetSettings(): Promise<Settings> { return this.settings.resetSettings(); }
 
   /**
    * Wipe everything EXCEPT settings: tear down the graph, delete the knowledge DB

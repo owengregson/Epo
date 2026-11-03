@@ -22,7 +22,6 @@ import { SourceFrontier } from '@/engine/source-frontier';
 import { SystemClock } from '@/governors/clock';
 import { STORE_POLICY } from '@/kernel/store-policy';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
-import { reconcileEffects } from '@/rim/effect-reconciliation';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
@@ -45,7 +44,7 @@ import {
   noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry, wireSweepCadence,
 } from './reopen-wiring';
 import { surfaceWiringParts, wireSurface } from './surface-wiring';
-import { pruneUnfollowDeps, unfollowWiringParts, wireChurn, wireMutationPolicy } from './unfollow-wiring';
+import { journalSettler, pruneUnfollowDeps, unfollowWiringParts, wireChurn, wireMutationPolicy } from './unfollow-wiring';
 
 export type { BuiltGraph, GraphBuildDeps } from './graph-types';
 
@@ -243,7 +242,7 @@ export function buildGraph(
     reentry,
     validateIdentity: d.validateIdentity,
     onProgress: d.onProgress,
-    reconcileEffects: () => reconcileEffects({ store, profiles, ownPk, clock, readBudget, signal: driverSignal }),
+    settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget }),
     store,
     clock,
     rate,

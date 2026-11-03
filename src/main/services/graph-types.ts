@@ -31,6 +31,7 @@ import type {
 import type { StartupStep } from '@/shared/boot';
 import type { SettingsCapabilities } from '@/shared/settings-view';
 import type { StatusFields } from '@/shared/status-fields';
+import type { ProtectionIndex } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DelayManager } from '@/timing/delay-manager';
 import type { ScheduleManager } from '@/timing/schedule-manager';
@@ -145,6 +146,8 @@ export interface GraphBuildDeps {
   settings: Settings;
   /** Re-read of the live settings (the persisted cadence getters call this). */
   resolveSettings(): Settings;
+  /** The settings service's protection surface: the live index and the capability flags (spec §6.3, §7). */
+  protection: { index(): ProtectionIndex; setCapabilities(patch: Partial<SettingsCapabilities>): void };
   plan: PlanHost;
   /** Persist a settings patch (cadence timestamps, `pruneLastRunAt`). */
   updateSettings(partial: Partial<Settings>): void;

@@ -3,17 +3,18 @@
  * @jest-environment-options {"customExportConditions": [""]}
  *
  * The dev gallery (ADR 1006) is a review surface, not a test bed — but it
- * mounts every view against fixtures, so it rots the moment a view's props or
- * a Settings knob changes. This smoke test is the tripwire: it proves the
- * route mounts with no main process behind it, and that picking a scenario
- * actually moves the console — which is also a check that the cards are still
- * reading the shell's signals rather than props someone re-introduced.
+ * mounts the console column and every stage page against fixtures, so it rots
+ * the moment a page's props or a Settings knob changes. This smoke test is the
+ * tripwire: it proves the route mounts with no main process behind it, and that
+ * picking a scenario actually moves the console — which is also a check that
+ * the cards are still reading the shell's signals rather than props someone
+ * re-introduced.
  */
 import { act, fireEvent, render, within } from '@testing-library/preact';
 import { SCENARIOS } from '@/renderer/gallery/fixtures';
 import { Gallery, primeGallery } from '@/renderer/gallery/Gallery';
 
-/** The picker rail — scoped, because the nav carries the same view labels. */
+/** The picker rail — scoped, because the pages carry some of the same labels. */
 const rail = (): ReturnType<typeof within> =>
   within(document.querySelector('.gallery-rail') as HTMLElement);
 
@@ -46,9 +47,10 @@ describe('the ?gallery=1 route', () => {
     expect(document.querySelector('.console')?.getAttribute('data-state')).toBe('running');
   });
 
-  it('mounts every surface, including the stage-hosted prune page', async () => {
+  it('mounts every stage page beside the console column', async () => {
     await mountGallery();
-    for (const label of ['Targets', 'Queues', 'Settings', 'Prune']) {
+    expect(document.querySelector('[data-stage="people"]')).not.toBeNull();
+    for (const label of ['Settings', 'Prune']) {
       await act(async () => {
         fireEvent.click(rail().getByText(label));
       });

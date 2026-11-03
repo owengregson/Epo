@@ -19,11 +19,12 @@
 import { CHAIN_DEFAULTS, type ChainConfig, type DiscoveredTarget, type TargetDiscovery } from '@/engine/chain-controller';
 import { matureYields, observedOverlap, priorYield } from '@/engine/source-quality';
 import { type Clock, SystemClock } from '@/governors/clock';
+import { EXPLORATION_POLICY } from '@/kernel/exploration-policy';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import * as logger from '@/utils/logger';
 
 /** At most this many hubs are proposed per advance (the gate then filters). */
-const MAX_DISCOVERED = 5;
+const MAX_DISCOVERED = EXPLORATION_POLICY.maxDiscovered;
 
 export interface StoreBackedTargetDiscoveryDeps {
   store: KnowledgeStore;
@@ -72,7 +73,8 @@ export class StoreBackedTargetDiscovery implements TargetDiscovery {
       };
     });
     ranked.sort((a, b) => {
-      const utility = (d: DiscoveredTarget): number => d.projectedFollowBackRate * (1 - 0.5 * (d.overlap ?? 0.5));
+      const utility = (d: DiscoveredTarget): number =>
+        d.projectedFollowBackRate * (1 - EXPLORATION_POLICY.overlapWeight * (d.overlap ?? EXPLORATION_POLICY.unknownOverlap));
       return utility(b) - utility(a) || a.pk.localeCompare(b.pk);
     });
     const top = ranked.filter((hub) => hub.matureSamples === 0 || hub.projectedFollowBackRate >= gates.minFollowBackRate)

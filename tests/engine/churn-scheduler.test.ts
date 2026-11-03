@@ -530,7 +530,10 @@ test('an uncertain dispatched follow stays durable and cannot be replayed before
   actions.followStatus = undefined;
   actions.followUnverifiedClick = undefined;
   actions.followAlreadyInState = true;
-  await expect(sched.execute(sched.nextDue()!)).resolves.toBe('blocked');
+  // No head-of-line (spec §9.8): the blocked record is passed over, and a direct attempt is a journal deferral.
+  expect(sched.nextDue()).toBeNull();
+  await expect(sched.execute(store.getFollowRecord('uv')!)).resolves.toBe('blocked');
+  expect(sched.lastActionOutcome()?.verdict).toEqual({ kind: 'deferred', reason: 'journal', until: null });
   expect(actions.followCalls).toHaveLength(1);
   expect(store.getFollowRecord('uv')!.state).toBe('queued');
   // Fresh read-only recovery settles ownership, without inventing an exact success time.
@@ -564,76 +567,11 @@ test('uncertain writes reserve budget and never become a new failed attempt with
   actions.followUnverifiedClick = true;
   await sched.execute(sched.nextDue()!);
   actions.followStatus = 'failed';
-  await sched.execute(sched.nextDue()!);
+  expect(sched.nextDue()).toBeNull();
+  await sched.execute(store.getFollowRecord('fm')!);
   expect(actions.followCalls).toHaveLength(1);
   expect(store.getFollowRecord('fm')!.retryCount).toBe(0);
   expect(store.additionalMutationCountSince(0)).toBe(1);
 });
 
-// --- The bio keep-list: mutuals whose bio matches are never rotated out ------------
-// Scoped to accounts that FOLLOW US BACK — a non-follower is pruned regardless
-// of bio (that path lives in the PruneEngine, which ignores bios entirely).
-
-describe('bio keep-list (protects followed-back accounts only)', () => {
-  const seedBio = (store: KnowledgeStore, pk: string, bio: string): void =>
-    store.observe({ accountPk: pk, observedAt: T0, source: 'profile', fields: { bio } });
-
-  test('held rotation keeps a live mutual whose bio matches a keep-word (substring)', () => {
-    const { store, clock, sched } = makeHarness({ ownPk: OWN, cfg: { bioKeepWords: ['cal'] } });
-    seedUsername(store, '3', 'user3');
-    seedBio(store, '3', 'calpico gaming'); // match INSIDE a word counts
-    store.observeEdge('3', OWN, 'follows', true, T0); // follows us back NOW
-    store.upsertFollowRecord(
-      rec({ accountPk: '3', state: 'followed_back', followedBackAt: T0, holdUntil: T0 + 500 }),
-    );
-
-    clock.advance(500);
-    sched.advanceTimers();
-
-    expect(store.getFollowRecord('3')!.state).toBe('followed_back'); // kept, not queued
-  });
-
-  test('a keep-word does NOT protect an account that no longer follows us', () => {
-    const { store, clock, sched } = makeHarness({ ownPk: OWN, cfg: { bioKeepWords: ['cal'] } });
-    seedUsername(store, '4', 'user4');
-    seedBio(store, '4', 'cal | bay');
-    store.observeEdge('4', OWN, 'follows', false, T0); // they unfollowed since
-    store.upsertFollowRecord(
-      rec({ accountPk: '4', state: 'followed_back', followedBackAt: T0, holdUntil: T0 + 500 }),
-    );
-
-    clock.advance(500);
-    sched.advanceTimers();
-
-    expect(store.getFollowRecord('4')!.state).toBe('unfollow_queued');
-  });
-
-  test('a due unfollow that turns out to be a protected mutual is re-held, never clicked', async () => {
-    const { store, actions, sched } = makeHarness({ ownPk: OWN, cfg: { bioKeepWords: ['cal'] } });
-    seedUsername(store, '5', 'user5');
-    seedBio(store, '5', 'cal | bay');
-    // Timeout path queued them, then they followed back — the live edge wins.
-    store.observeEdge('5', OWN, 'follows', true, T0);
-    store.upsertFollowRecord(rec({ accountPk: '5', state: 'unfollow_queued', unfollowDueAt: T0 }));
-
-    await sched.tick();
-
-    expect(actions.unfollowCalls).toEqual([]);
-    expect(store.getFollowRecord('5')!.state).toBe('followed_back');
-  });
-
-  test('a non-matching bio keeps the normal rotation', () => {
-    const { store, clock, sched } = makeHarness({ ownPk: OWN, cfg: { bioKeepWords: ['cal'] } });
-    seedUsername(store, '6', 'user6');
-    seedBio(store, '6', 'photographer');
-    store.observeEdge('6', OWN, 'follows', true, T0);
-    store.upsertFollowRecord(
-      rec({ accountPk: '6', state: 'followed_back', followedBackAt: T0, holdUntil: T0 + 500 }),
-    );
-
-    clock.advance(500);
-    sched.advanceTimers();
-
-    expect(store.getFollowRecord('6')!.state).toBe('unfollow_queued');
-  });
-});
+// The bio keep-list became protection on every path, for everyone (spec §7.4): see churn-protection.test.ts.

@@ -19,6 +19,7 @@ import {
   ActionBlockedError,
   ActionDeferredError,
   ActionRateLimitedError,
+  ActionReviewedError,
   AdapterStaleError,
   TabUnavailableError,
   TabUnresponsiveError,
@@ -120,7 +121,12 @@ export class AdapterBackedChurnActions implements ChurnActions {
         logger.warn('rim.churn-actions: dispatched action has no verified result', { username, action, error: String(e) });
         return { status: 'blocked', cause: 'tab-unhealthy', unverifiedClick: true };
       }
-      if (e instanceof ActionDeferredError) return { status: 'blocked', cause: 'local-policy' };
+      // The review consumed the work (spec §9.7): the scheduler settles the record by the verdict.
+      if (e instanceof ActionReviewedError) return { status: 'reviewed', verdict: e.verdict };
+      // A deferral (a plan refusal, this account's journal, a wall) leaves the work for later; its reason travels.
+      if (e instanceof ActionDeferredError) {
+        return { status: 'blocked', cause: 'local-policy', verdict: { kind: 'deferred', reason: e.reason, until: e.until } };
+      }
       if (e instanceof ActionAbortedError) {
         // A user stop/pause interrupted the wait — NOT a failure and NOT
         // selector drift. 'blocked' leaves the record completely untouched
