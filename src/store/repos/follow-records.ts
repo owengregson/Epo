@@ -33,11 +33,14 @@ export class FollowRecordRepo {
           `INSERT INTO follow_records (
              account_pk, target_pk, state, followed_at, followed_back_at,
              hold_until, unfollow_due_at, retry_count, score, abandoned_at, healed_at,
-             reconciled_at, followback_observed_at, unfollow_reason, queued_at, decision_version
+             reconciled_at, followback_observed_at, unfollow_reason, queued_at, decision_version,
+             kept_reason, kept_match, kept_at, recheck_at, park_reason, check_failures, followback_after
            ) VALUES (
              @account_pk, @target_pk, @state, @followed_at, @followed_back_at,
              @hold_until, @unfollow_due_at, @retry_count, @score, @abandoned_at, @healed_at,
-             @reconciled_at, @followback_observed_at, @unfollow_reason, @queued_at, @decision_version
+             @reconciled_at, @followback_observed_at, @unfollow_reason, @queued_at, @decision_version,
+             @kept_reason, @kept_match, @kept_at, @recheck_at, @park_reason,
+             COALESCE(@check_failures, 0), @followback_after
            )
            ON CONFLICT(account_pk) DO UPDATE SET
              target_pk = excluded.target_pk,
@@ -58,7 +61,15 @@ export class FollowRecordRepo {
              followback_observed_at = excluded.followback_observed_at,
              unfollow_reason = excluded.unfollow_reason,
              queued_at = COALESCE(excluded.queued_at, follow_records.queued_at),
-             decision_version = excluded.decision_version`,
+             decision_version = excluded.decision_version,
+             kept_reason = excluded.kept_reason,
+             kept_match = excluded.kept_match,
+             kept_at = excluded.kept_at,
+             recheck_at = excluded.recheck_at,
+             park_reason = excluded.park_reason,
+             -- A write that does not state the count keeps the stored one.
+             check_failures = COALESCE(@check_failures, follow_records.check_failures),
+             followback_after = excluded.followback_after`,
         )
         .run({
           account_pk: r.accountPk,
@@ -77,6 +88,13 @@ export class FollowRecordRepo {
           unfollow_reason: orNull(r.unfollowReason),
           queued_at: orNull(r.queuedAt),
           decision_version: orNull(r.decisionVersion),
+          kept_reason: orNull(r.keptReason),
+          kept_match: orNull(r.keptMatch),
+          kept_at: orNull(r.keptAt),
+          recheck_at: orNull(r.recheckAt),
+          park_reason: orNull(r.parkReason),
+          check_failures: orNull(r.checkFailures),
+          followback_after: orNull(r.followbackAfter),
         });
     });
     this.changed();

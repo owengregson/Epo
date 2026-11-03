@@ -1,7 +1,6 @@
 /**
- * Shared cross-cutting types for Epo v3.
- * This module is the single source of truth for the IPC contract between the
- * main process and the renderer, plus the network-observation shape that the
+ * Shared cross-cutting types for Epo v3. This module is the single source of truth for the IPC
+ * contract between the main process and the renderer, plus the network-observation shape that the
  * embedded Instagram tab emits and the Adapter Reader (Task 7) consumes.
  *
  * It is imported by both the main process and the (browser) renderer, so it
@@ -199,9 +198,9 @@ export interface GrowthSeriesRead {
 
 /**
  * Every status a graph node can carry, in legend order. A node's `statuses`
- * entry indexes into this tuple. The first seven mirror the churn lifecycle
- * (`FollowState`); the last three describe relationship-only nodes that have
- * no follow record (organic followers, manual follows, and both at once).
+ * entry indexes into this tuple. The first seven and `kept` mirror the churn
+ * lifecycle (`FollowState`); `follows_you`, `you_follow` and `mutual` describe
+ * relationship-only nodes (organic followers, manual follows, and both at once).
  * `waiting` and `held` are the two TIMED statuses — their `progress` runs
  * 0..1 toward the follow-back timeout / the hold release.
  */
@@ -217,6 +216,7 @@ export const GRAPH_NODE_STATUSES = [
   'follows_you',
   'you_follow',
   'mutual',
+  'kept',
 ] as const;
 export type GraphNodeStatus = (typeof GRAPH_NODE_STATUSES)[number];
 
@@ -226,7 +226,7 @@ export interface GraphHub {
   username: string | null;
   kind: 'self' | 'target';
   /** Chain-target lifecycle when `kind` is 'target'; null for the self hub. */
-  targetStatus: 'active' | 'exhausted' | 'retained' | null;
+  targetStatus: 'active' | 'exhausted' | 'retained' | 'retired' | null;
   chainIndex: number | null;
   /** Nodes whose primary cluster is this hub (set by the shaper). */
   memberCount: number;

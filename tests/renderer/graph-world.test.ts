@@ -74,6 +74,7 @@ const NO_COUNTS: GraphSnapshot['counts'] = {
   follows_you: 0,
   you_follow: 0,
   mutual: 0,
+  kept: 0,
 };
 
 /** A node fixture: [pk, hub index, status index]. */

@@ -30,7 +30,7 @@ function snap(hubs: GraphHub[], nodes: Array<[string, number, number]>): GraphSn
     progress: new Float32Array(nodes.length).fill(-1),
     hubIndex: Int32Array.from(nodes.map((n) => n[1])),
     followers: Float64Array.from(nodes.map((n) => n[2])),
-    counts: { known: nodes.length, queued: 0, waiting: 0, held: 0, unfollow_queued: 0, unfollowed: 0, abandoned: 0, external: 0, follows_you: 0, you_follow: 0, mutual: 0 },
+    counts: { known: nodes.length, queued: 0, waiting: 0, held: 0, unfollow_queued: 0, unfollowed: 0, abandoned: 0, external: 0, follows_you: 0, you_follow: 0, mutual: 0, kept: 0 },
   };
 }
 

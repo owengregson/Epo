@@ -23,6 +23,7 @@ test('upsertFollowRecord round-trips all fields via getFollowRecord', () => {
     holdUntil: 300,
     unfollowDueAt: 400,
     retryCount: 2,
+    checkFailures: 0,
   });
   s.upsertFollowRecord(r);
   expect(s.getFollowRecord('10')).toEqual(r);

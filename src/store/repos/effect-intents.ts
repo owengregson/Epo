@@ -16,12 +16,15 @@ interface IntentRow {
   dispatched_at: number | null;
   settled_at: number | null;
   result: EffectIntent['result'];
+  attempts: number;
+  next_attempt_at: number | null;
 }
 
 const decode = (r: IntentRow): EffectIntent => ({
   id: r.id, accountPk: r.account_pk, username: r.username, action: r.action,
   channel: r.channel, state: r.state, createdAt: r.created_at,
   dispatchedAt: r.dispatched_at, settledAt: r.settled_at, result: r.result,
+  attempts: r.attempts, nextAttemptAt: r.next_attempt_at,
 });
 
 /** Write-ahead effects survive an acknowledgement loss. Settlement is idempotent. */
@@ -97,7 +100,7 @@ export class EffectIntentRepo {
   additionalCountSince(since: number): number {
     return (this.db.prepare(`SELECT COUNT(*) AS n FROM effect_intents WHERE
       (state IN ('dispatched','uncertain') AND COALESCE(dispatched_at, created_at) >= ?)
-      OR (state = 'settled' AND result IN ('external','cancelled')
+      OR (state = 'settled' AND result IN ('external','cancelled','expired')
           AND dispatched_at IS NOT NULL AND dispatched_at >= ? AND COALESCE(ledger, 'none') = 'none')
       OR (state = 'settled' AND action = 'accept-request' AND result IN ('ok','fail')
           AND COALESCE(ledger, 'none') = 'none' AND settled_at >= ?)`)

@@ -34,7 +34,8 @@ export interface AccountState {
   enrichFailedAt?: number;
   statsObservedAt?: number; statsSource?: Source; firstSeenAt: number; lastSeenAt: number;
 }
-export type EdgeType = 'follows';
+/** `requests`: an open follow request into our account (requester → own). */
+export type EdgeType = 'follows' | 'requests';
 export interface Edge {
   srcPk: string; dstPk: string; type: EdgeType;
   firstSeenAt: number; lastConfirmedAt: number; status: 'active' | 'removed';
@@ -46,7 +47,8 @@ export type FollowState =
   | 'unfollow_queued'      // hold elapsed OR no-followback timeout — ready to unfollow
   | 'unfollowed'           // terminal (success or reclaimed)
   | 'abandoned'            // terminal (retries exhausted)
-  | 'external';            // terminal — an external actor owns the relationship; Epo backs off
+  | 'external'             // terminal — an external actor owns the relationship; Epo backs off
+  | 'kept';                // protected or unreadable at review; non-blocking, re-checked later
 
 /**
  * Every churn lifecycle state, in pipeline order — the funnel's vocabulary.
@@ -62,6 +64,7 @@ export const FOLLOW_STATES = [
   'unfollowed',
   'abandoned',
   'external',
+  'kept',
 ] as const satisfies readonly FollowState[];
 
 /**
@@ -124,12 +127,27 @@ export interface FollowRecord {
    * healed again, even if it is later re-abandoned inside another window.
    */
   healedAt?: number;
+  /** Why the record is `kept`, the entry or word that matched, and when. */
+  keptReason?: KeptReason;
+  keptMatch?: string;
+  keptAt?: number;
+  /** Earliest next Instagram read of this record (kept re-checks and parks share it). */
+  recheckAt?: number;
+  parkReason?: 'unreachable' | 'unreadable';
+  /** Consecutive unreadable or unreachable observations; a stored record always carries it. */
+  checkFailures?: number;
+  /** Best lower bound on when the follow-back happened. */
+  followbackAfter?: number;
 }
+
+/** Why a record sits in `kept`: a protection rule matched, or a configured fact was unreadable. */
+export type KeptReason =
+  | 'account' | 'verified' | 'bio-word' | 'source' | 'unreadable-bio' | 'unreadable-verified';
 
 export type MutationAction = 'follow' | 'unfollow' | 'accept-request';
 export type EffectChannel = 'growth' | 'prune' | 'manual' | 'accept-request';
 export type EffectState = 'prepared' | 'dispatched' | 'uncertain' | 'settled';
-export type EffectResult = 'ok' | 'fail' | 'simulated' | 'external' | 'cancelled';
+export type EffectResult = 'ok' | 'fail' | 'simulated' | 'external' | 'cancelled' | 'expired';
 
 /** Durable write-ahead intent. A lost acknowledgement remains explicitly uncertain. */
 export interface EffectIntent {
@@ -143,6 +161,9 @@ export interface EffectIntent {
   dispatchedAt: number | null;
   settledAt: number | null;
   result: EffectResult | null;
+  /** Settlement attempts so far, and the earliest next one (null: none scheduled). */
+  attempts: number;
+  nextAttemptAt: number | null;
 }
 
 export interface EffectSettlement {
@@ -203,7 +224,7 @@ export interface GraphSourceRows {
 export interface Target {
   accountPk: string;
   source: 'seed' | 'discovered' | 'own_followers';
-  status: 'active' | 'exhausted' | 'retained';
+  status: 'active' | 'exhausted' | 'retained' | 'retired';
   chainIndex: number | null;
   /**
    * When the chain concluded this target's pool was drained (evidence-stamped
