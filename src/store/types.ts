@@ -166,6 +166,11 @@ export interface EffectIntent {
   nextAttemptAt: number | null;
 }
 
+/** The write budget spent since a moment, by kind and by who asked for it. */
+export interface MutationTally {
+  all: number; auto: number; manual: number; follow: number; unfollow: number; accept: number;
+}
+
 export interface EffectSettlement {
   at: number;
   result: EffectResult;

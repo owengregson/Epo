@@ -27,6 +27,14 @@ export const META_KEYS = {
   sourceFrontierState: 'source_frontier_state',
   lifecycleHealthState: 'lifecycle_health_state',
   readBudgetState: 'read_budget_state',
+  /** The day plan, its phase offset and the Boost window; raw JSON validated by the plan service. */
+  planState: 'plan_state',
+  /** The reopen frontiers; raw JSON owned by the frontier sweep. */
+  reopenState: 'reopen_state',
+  /** Set-once stamp of the follower change log's deterministic backfill. */
+  followerChangesBackfilledAt: 'follower_changes_backfilled_at',
+  /** The surface latency reservoir; raw JSON owned by the surface sink. */
+  surfaceMeter: 'surface_meter',
 } as const;
 
 export type MetaKey = keyof typeof META_KEYS;

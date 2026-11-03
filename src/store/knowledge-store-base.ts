@@ -13,15 +13,20 @@ import { AnalyticsRepo } from './repos/analytics';
 import { CensusRepo } from './repos/census';
 import { CursorRepo } from './repos/cursors';
 import { EffectIntentRepo } from './repos/effect-intents';
+import { FeedReadsRepo } from './repos/feed-reads';
 import { FollowRecordRepo } from './repos/follow-records';
 import { GrowthRepo } from './repos/growth';
 import { LedgerRepo } from './repos/ledgers';
 import { MetaRepo } from './repos/meta';
+import { ProtectionFactsRepo } from './repos/protection-facts';
 import { PruneScanRepo } from './repos/prune-scan';
 import { RelationshipRepo } from './repos/relationships';
+import { ReopenStateRepo } from './repos/reopen-state';
+import { SurfaceDriftRepo } from './repos/surface-drift';
 import { TargetRepo } from './repos/targets';
 import { assertSchema } from './schema/manifest';
 import { SpanSink } from './spans';
+import type { MutationTally } from './types';
 
 /** What every store needs before its first delegation; `KnowledgeStore` adds the reads and writes. */
 export class KnowledgeStoreBase {
@@ -30,23 +35,32 @@ export class KnowledgeStoreBase {
   protected readonly meta: MetaRepo;
   /** The two append-only action ledgers (`action_ledger`, `prune_ledger`). */
   protected readonly ledgers: LedgerRepo;
-  protected readonly effects: EffectIntentRepo;
+  /** The write-ahead journal (`effect_intents`); public so its owner adds methods without the facade. */
+  readonly effectIntents: EffectIntentRepo;
   /** The durable prune-scan snapshot and its unvisited candidate set. */
   protected readonly pruneScan: PruneScanRepo;
   /** Per-target followers-list resume cursors. */
   protected readonly cursors: CursorRepo;
   /** The poaching chain's targets table. */
   protected readonly targets: TargetRepo;
-  /** The churn lifecycle table (`follow_records`). */
-  protected readonly records: FollowRecordRepo;
+  /** The churn lifecycle table (`follow_records`); public for the same reason. */
+  readonly followRecords: FollowRecordRepo;
   /** The account projection and its append-only inputs. */
   protected readonly accounts: AccountRepo;
   /** The `edges` table plus the followers baseline. */
   protected readonly relationships: RelationshipRepo;
   /** Read-only analysis over the whole graph. */
   protected readonly analytics: AnalyticsRepo;
-  /** The own-follower growth reads (baseline-aware). */
-  protected readonly growth: GrowthRepo;
+  /** The own-follower growth reads (baseline-aware) and, later, the follower change log. */
+  readonly growth: GrowthRepo;
+  /** The reopen frontiers (`meta.reopen_state`). */
+  readonly reopen: ReopenStateRepo;
+  /** The live feed's read-only SQL. */
+  readonly feed: FeedReadsRepo;
+  /** Drift signatures, surface health and the latency meter. */
+  readonly surface: SurfaceDriftRepo;
+  /** The protection facts' read-only SQL. */
+  readonly protectionFacts: ProtectionFactsRepo;
   /** The two write paths that span several tables (reconcile, census ingest). */
   protected readonly census: CensusRepo;
   /** Durable timers and the span log (migration 12); consumed in wave B. */
@@ -76,16 +90,22 @@ export class KnowledgeStoreBase {
     this.pruneScan = new PruneScanRepo(this.db, changed);
     this.cursors = new CursorRepo(this.db);
     this.targets = new TargetRepo(this.db, changed);
-    this.records = new FollowRecordRepo(this.db, changed);
+    this.followRecords = new FollowRecordRepo(this.db, changed);
     this.accounts = new AccountRepo(this.db, changed);
     this.relationships = new RelationshipRepo(this.db, changed, this.meta);
-    this.effects = new EffectIntentRepo(this.db, { records: this.records, relationships: this.relationships, ledgers: this.ledgers, changed });
+    this.effectIntents = new EffectIntentRepo(this.db, {
+      records: this.followRecords, relationships: this.relationships, ledgers: this.ledgers, changed,
+    });
     this.pruneRetainedLogs();
     this.analytics = new AnalyticsRepo(this.db);
     this.growth = new GrowthRepo(this.db, () => this.relationships.baselineAt());
+    this.reopen = new ReopenStateRepo(this.db, this.meta, changed);
+    this.feed = new FeedReadsRepo(this.db);
+    this.surface = new SurfaceDriftRepo(this.db, this.meta, changed);
+    this.protectionFacts = new ProtectionFactsRepo(this.db);
     this.chronos = new Chronos(this.db, { now: this.now });
     this.spans = new SpanSink(this.db, { now: this.now, rng: this.rng });
-    this.census = new CensusRepo(this.db, this.accounts, this.records, this.relationships, this.meta);
+    this.census = new CensusRepo(this.db, this.accounts, this.followRecords, this.relationships, this.meta);
   }
 
   /**
@@ -97,6 +117,18 @@ export class KnowledgeStoreBase {
     this.ownPk = pk;
   }
 
+  // --- Plan state and the write-budget union (read by the plan service) ------------
+
+  /** The persisted day plan (`meta.plan_state`), unparsed; the plan service validates it. */
+  getPlanState(): string | null { return this.meta.get('planState'); }
+  setPlanState(raw: string | null): void { this.meta.set('planState', raw); }
+
+  /** The write budget spent since `since`, over the rate governor's ledger union. */
+  tallySince(since: number): MutationTally { return this.effectIntents.tallySince(since); }
+
+  /** When each write in {@link tallySince}'s union happened, oldest first. */
+  recentMutationTimes(since: number): readonly number[] { return this.effectIntents.mutationTimesSince(since); }
+
   // --- Mutation notifications (docs/PRINCIPLES.md §2 — the UI mirrors the graph) ----
 
   protected readonly mutationPulse = new MutationPulse();
@@ -105,7 +137,7 @@ export class KnowledgeStoreBase {
   onMutation(listener: () => void): () => void { return this.mutationPulse.subscribe(listener); }
   protected changed(): void { this.mutationPulse.changed(); }
 
-  pruneRetainedLogs(): void { this.accounts.pruneAppendOnlyLogs(); this.effects.pruneSettled(Date.now()); }
+  pruneRetainedLogs(): void { this.accounts.pruneAppendOnlyLogs(); this.effectIntents.pruneSettled(Date.now()); }
 
   close(): void {
     this.db.close();

@@ -195,35 +195,35 @@ export class KnowledgeStore extends KnowledgeStoreBase {
 
   /** Insert or fully replace a churn-lifecycle record, keyed on account_pk. */
   upsertFollowRecord(rec: FollowRecord): void {
-    this.records.upsert(rec);
+    this.followRecords.upsert(rec);
   }
 
   beginEffectIntent(input: {
     accountPk: string; username: string; action: MutationAction; channel: EffectChannel; at: number;
   }): EffectIntent {
-    const intent = this.effects.begin(input);
+    const intent = this.effectIntents.begin(input);
     this.changed();
     return intent;
   }
 
-  getEffectIntent(id: string): EffectIntent | null { return this.effects.get(id); }
-  pendingEffectIntents(): EffectIntent[] { return this.effects.pending(); }
+  getEffectIntent(id: string): EffectIntent | null { return this.effectIntents.get(id); }
+  pendingEffectIntents(): EffectIntent[] { return this.effectIntents.pending(); }
   markEffectDispatched(id: string, at: number): void {
-    this.effects.mark(id, 'dispatched', at);
+    this.effectIntents.mark(id, 'dispatched', at);
     this.changed();
   }
   markEffectUncertain(id: string, at: number): void {
-    this.effects.mark(id, 'uncertain', at);
+    this.effectIntents.mark(id, 'uncertain', at);
     this.changed();
   }
 
   /** No observer sees half a committed action; a failed write rolls back every component. */
   settleEffectIntent(id: string, outcome: EffectSettlement): boolean {
-    return this.mutationPulse.atomic(() => this.effects.settle(id, outcome));
+    return this.mutationPulse.atomic(() => this.effectIntents.settle(id, outcome));
   }
 
   additionalMutationCountSince(since: number): number {
-    return this.effects.additionalCountSince(since);
+    return this.effectIntents.additionalCountSince(since);
   }
 
   getLifecycleState(): string | null { return this.meta.get('lifecycleState'); }
@@ -236,21 +236,21 @@ export class KnowledgeStore extends KnowledgeStoreBase {
   setReadBudgetState(raw: string | null): void { this.meta.set('readBudgetState', raw); }
 
   getFollowRecord(accountPk: string): FollowRecord | null {
-    return this.records.get(accountPk);
+    return this.followRecords.get(accountPk);
   }
 
   followRecordsByState(state: FollowState): FollowRecord[] {
-    return this.records.byState(state);
+    return this.followRecords.byState(state);
   }
 
   /** Every follow_record not yet in a terminal state. */
   activeFollowRecords(): FollowRecord[] {
-    return this.records.active();
+    return this.followRecords.active();
   }
 
   /** All account_pks that already have a follow_record (for candidate exclusion). */
   followRecordPks(): Set<string> {
-    return this.records.pks();
+    return this.followRecords.pks();
   }
 
   /**
@@ -258,7 +258,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
    * excludes these so the two systems never fight over the same account.
    */
   activeFollowRecordPks(): Set<string> {
-    return this.records.activePks();
+    return this.followRecords.activePks();
   }
 
   /**
@@ -272,7 +272,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     cap: number;
     now: number;
   }): HealResult {
-    return this.records.healAbandonedInWindow(opts);
+    return this.followRecords.healAbandonedInWindow(opts);
   }
 
   /** src_pk of active `follows` edges pointing at the target (accounts that follow it). */
@@ -303,7 +303,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
    * Scorer ranks these.
    */
   candidatePksForTarget(targetPk: string): string[] {
-    const excluded = this.records.pks();
+    const excluded = this.followRecords.pks();
     const skipped = this.accounts.skippedPks();
     const followed = this.accountsWeFollow();
     return this.relationships
