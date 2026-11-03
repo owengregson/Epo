@@ -12,7 +12,7 @@ import { solveGapSpec, targetMeanMs } from './gap';
 import { z } from './seed';
 import type { PlanIntent, SessionTempo } from './types';
 
-/** The log-space spread of the pace draw: the band half-width at the central z, times consistency (.128 natural). */
+/** The log-space spread of the pace draw: the band half-width at the central z, times consistency (.128 at Typical). */
 export function paceSigma(consistencyScale: number): number {
   return (Math.log(1 + POLICY.BAND_HALF_WIDTH) / POLICY.DRAW_CENTRAL_Z) * Math.max(0, consistencyScale);
 }

@@ -1,6 +1,6 @@
 /**
  * Law L10 (spec §5.9, §5.11): session factors stay in the beat band; motion = pace^½; depth = 1/pace;
- * the pace spread follows consistency (.128 natural, .055 even, .207 varied); shape motion keys never
+ * the pace spread follows consistency (.128 Typical, .055 Even, .207 Varied); shape motion keys never
  * move; speed–accuracy keys fall with motion inside their guardrails; pace-up waits never shorten.
  */
 import fc from 'fast-check';
@@ -16,7 +16,7 @@ const seedArb = fc.integer({ min: 0, max: 0xffffffff }).map((e) => planSeed(e, '
 const intent = testIntent();
 
 describe('the pace draw', () => {
-  test('σ_pace per consistency: .128 natural, .055 even (clockwork), .207 varied (erratic)', () => {
+  test('σ_pace per consistency: .128 Typical, .055 Even, .207 Varied', () => {
     expect(paceSigma(SCALES.consistency.natural)).toBeCloseTo(0.128, 3);
     expect(paceSigma(SCALES.consistency.clockwork)).toBeCloseTo(0.055, 3);
     expect(paceSigma(SCALES.consistency.erratic)).toBeCloseTo(0.207, 3);
