@@ -10,13 +10,14 @@
  */
 import type { PruneStatus } from '@/engine/prune-engine';
 import { BOOST_OFF } from '@/main/ipc-plan';
-import { notBuiltFacts, notBuiltFeed } from '@/main/modules/not-built';
+import { notBuiltFacts, notBuiltFeed, notBuiltSurfaceReport } from '@/main/modules/not-built';
 import { transitionalView } from '@/main/modules/settings-transitional';
 import { resetShellSignals } from '@/renderer/app/shell-context';
 import { effectiveFromV1 } from '@/settings/effective';
 import type { FeedView } from '@/shared/feed';
 import type { SettingsFacts } from '@/shared/settings-facts';
 import type { SettingsView } from '@/shared/settings-view';
+import type { SurfaceReport } from '@/shared/surface-health';
 import type {
   ChainTargetView,
   EpoBridge,
@@ -121,6 +122,8 @@ export interface FakeBridgeData {
   settingsView: SettingsView;
   settingsFacts: SettingsFacts;
   feed: FeedView;
+  /** What the `surface:report` pull resolves with (the summary rides `status.surface`). */
+  surfaceReport: SurfaceReport;
 }
 
 export interface FakeBridge {
@@ -164,6 +167,7 @@ export function installFakeBridge(settings: Settings): FakeBridge {
       { plan: false, tempo: false, boost: false, protectionEverywhere: false }),
     settingsFacts: notBuiltFacts('loading'),
     feed: notBuiltFeed(0),
+    surfaceReport: notBuiltSurfaceReport(0),
   };
 
   /** Every promise-returning method routes through here: record, then resolve. */
@@ -249,6 +253,7 @@ export function installFakeBridge(settings: Settings): FakeBridge {
     setLogStream: (...a: unknown[]) => call('setLogStream', a, () => undefined),
     openLogFolder: (...a: unknown[]) => call('openLogFolder', a, () => undefined),
     updateStatus: (...a: unknown[]) => call('updateStatus', a, () => data.update),
+    surfaceReport: (...a: unknown[]) => call('surfaceReport', a, () => data.surfaceReport),
     on: (channel: string, cb: (p: never) => void) => subscribe(channel, cb),
     off: (channel: string, cb: (p: never) => void) => unsubscribe(channel, cb),
   } as unknown as EpoBridge;

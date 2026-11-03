@@ -15,6 +15,7 @@ import { bootFallbacks, bootHandlers } from '@/main/ipc-boot';
 import { liveFallbacks, liveHandlers } from '@/main/ipc-live';
 import { planFallbacks, planHandlers } from '@/main/ipc-plan';
 import { settingsFallbacks, settingsHandlers } from '@/main/ipc-settings';
+import { surfaceFallbacks, surfaceHandlers } from '@/main/ipc-surface';
 import { isStageMode } from '@/shared/stage-mode';
 import type { EpoStatus, StageMode, UpdateStatus } from '@/types';
 import * as logger from '@/utils/logger';
@@ -141,6 +142,7 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     ...planHandlers(),
     ...liveHandlers(currentUpdate),
     ...bootHandlers(),
+    ...surfaceHandlers(),
   };
 
   // A refused/failed control still owes the renderer a real status: the
@@ -182,6 +184,7 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     ...planFallbacks(),
     ...liveFallbacks(currentUpdate),
     ...bootFallbacks(),
+    ...surfaceFallbacks(),
   };
 
   return registerIpc(handlers, fallbacks);

@@ -10,7 +10,9 @@ import { bootFallbacks, bootHandlers } from '@/main/ipc-boot';
 import { liveFallbacks, liveHandlers } from '@/main/ipc-live';
 import { BOOST_OFF, planFallbacks, planHandlers } from '@/main/ipc-plan';
 import { settingsFallbacks, settingsHandlers } from '@/main/ipc-settings';
+import { surfaceFallbacks, surfaceHandlers } from '@/main/ipc-surface';
 import { isStageMode, STAGE_MODES } from '@/shared/stage-mode';
+import { SURFACE_AREAS, SURFACE_METERS } from '@/shared/surface-health';
 
 const VIEW = { rev: 3 };
 const SEED_OK = { ok: true, exists: true, followersVisible: true, isPrivate: false };
@@ -47,6 +49,16 @@ test('the Boost, live and boot rows', async () => {
   expect(await planFallbacks().endBoost()).toMatchObject({ kind: 'refused' });
   expect(await liveFallbacks(() => UPDATE).updateStatus()).toBe(UPDATE);
   expect(await bootFallbacks().bootRevealed()).toBeUndefined();
+});
+
+test('the surface row: the not-built report, every area unseen and nothing recorded', async () => {
+  for (const report of [await surfaceHandlers().surfaceReport(), await surfaceFallbacks().surfaceReport()]) {
+    expect(report.areas.map((a) => [a.area, a.state, a.lastReadAt])).toEqual(SURFACE_AREAS.map((a) => [a, 'unseen', null]));
+    expect(report.areas.every((a) => a.paused.length === 0 && Object.values(a.today).every((n) => n === 0))).toBe(true);
+    expect(report).toMatchObject({ surfaceId: '', changes: [], copyText: '' });
+    expect(report.meter).toEqual(Object.fromEntries(SURFACE_METERS.map((m) => [m, { n: 0, p50: null, p95: null }])));
+  }
+  expect(CHANNELS).toMatchObject({ surfaceReport: 'surface:report' });
 });
 
 test('the stage vocabulary is closed and the tab-visibility rows are gone', () => {

@@ -14,8 +14,8 @@
  * `EpoEventPayloads`, preload's subscription map and `main.ts`'s sends all
  * derive. See ADR 1008.
  *
- * Per-topic rows live in `contract-{settings,plan,live}.ts` and are spread in
- * here, so each channel string is still written exactly once.
+ * Per-topic rows live in `contract-{settings,plan,live,surface}.ts` and are
+ * spread in here, so each channel string is still written exactly once.
  *
  * Dependency-free by construction: type-only imports, plus frozen literals.
  * Imported by main, preload AND the renderer — so the boundary VALIDATORS live
@@ -54,6 +54,7 @@ import type {
 import { LIVE_CHANNELS, type LiveIpcContract } from './contract-live';
 import { PLAN_CHANNELS, type PlanIpcContract } from './contract-plan';
 import { SETTINGS_CHANNELS, type SettingsIpcContract } from './contract-settings';
+import { SURFACE_CHANNELS, type SurfaceIpcContract } from './contract-surface';
 
 /** A prune candidate as the candidates channel serves it, annotated by the protection predicate. */
 export interface PruneCandidateView extends PruneCandidate {
@@ -107,6 +108,7 @@ export const CHANNELS = {
   ...SETTINGS_CHANNELS,
   ...PLAN_CHANNELS,
   ...LIVE_CHANNELS,
+  ...SURFACE_CHANNELS,
 } as const;
 
 /** A renderer-callable bridge method name. */
@@ -116,7 +118,7 @@ export type BridgeMethod = keyof typeof CHANNELS;
 export type Channel = (typeof CHANNELS)[BridgeMethod];
 
 /** Argument tuple + result type per bridge method. */
-export interface IpcContract extends SettingsIpcContract, PlanIpcContract, LiveIpcContract {
+export interface IpcContract extends SettingsIpcContract, PlanIpcContract, LiveIpcContract, SurfaceIpcContract {
   /** Open Instagram in the embedded tab (login is performed by the user). */
   login: { req: []; res: EpoStatus };
   /** Read a target account's followers into the knowledge graph. */
