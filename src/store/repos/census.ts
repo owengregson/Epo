@@ -1,9 +1,12 @@
 import { MS_PER_DAY } from '../../timing/units';
 import * as logger from '../../utils/logger';
 import type { SqliteDriver } from '../driver/driver';
+import type { DayWindow } from '../folds/growth';
+import type { PruneCensusRecord } from '../knowledge-types';
 import type { FollowState } from '../types';
 import type { AccountRepo } from './accounts';
 import type { FollowRecordRepo } from './follow-records';
+import type { GrowthRepo } from './growth';
 import type { MetaRepo } from './meta';
 import type { RelationshipRepo } from './relationships';
 
@@ -11,16 +14,13 @@ import type { RelationshipRepo } from './relationships';
 export type ReconcileOutcome = 'noop' | 'dropped-queued' | 'dropped-held' | 'edge-only';
 
 /**
- * Own-follower edges first seen within this window before a census verdict are
- * treated as discoveries of that census's OWN walk: the followers walk streams
- * each row into the graph as it parses (docs/PRINCIPLES.md §1), minutes to
- * hours before the census runs, so by census time the walk's rows are
- * indistinguishable from event-observed edges by anything but age. On the
- * FIRST census those discoveries are pre-existing stock, never growth.
- * Generous: no complete walk spans a day; the cost of over-covering is one day
- * of pre-census event gains absorbed as stock, exactly once.
+ * How long before the first census's verdict an own-follower edge counts as its own walk's row
+ * (stock, never growth): one plan-day, the length of the window the caller passes. No complete walk
+ * spans one; a caller that passes none keeps one calendar day until the prune scan passes its plan-day.
  */
-const FIRST_CENSUS_STOCK_WINDOW_MS = MS_PER_DAY;
+function stockWindowMs(planDay: DayWindow | undefined): number {
+  return planDay === undefined ? MS_PER_DAY : planDay.endsAt - planDay.startsAt;
+}
 
 /** States in which we believe WE own the follow relationship. */
 /** Which side's ABSENCES a census proves; `true`/`false` speaks for both. */
@@ -40,7 +40,13 @@ export class CensusRepo {
     private readonly records: FollowRecordRepo,
     private readonly relationships: RelationshipRepo,
     private readonly meta: MetaRepo,
+    private readonly growth: Pick<GrowthRepo, 'dropStock'>,
   ) {}
+
+  /** When the last verified-complete census finished (the durable census predicate's anchor); null before one. */
+  lastCompleteAt(): number | null {
+    return this.meta.json<PruneCensusRecord>('pruneLastCensus')?.at ?? null;
+  }
 
   /**
    * Reconcile our OWN follow-status toward `pk` against a fresh observation,
@@ -127,7 +133,7 @@ export class CensusRepo {
     followingPks: string[],
     followerPks: string[],
     at: number,
-    opts?: { authoritative?: CensusAuthority },
+    opts?: { authoritative?: CensusAuthority; planDay?: DayWindow },
   ): void {
     const authority = opts?.authoritative ?? false;
     const proves =
@@ -139,7 +145,7 @@ export class CensusRepo {
       }
       for (const pk of followerPks) {
         if (pk === ownPk) continue;
-        this.relationships.observeEdge(pk, ownPk, 'follows', true, at);
+        this.relationships.observeEdge(pk, ownPk, 'follows', true, at, { source: 'census' });
       }
 
       if (proves.followers) {
@@ -147,7 +153,7 @@ export class CensusRepo {
         const followerSet = new Set(followerPks);
         for (const pk of this.relationships.activeFollowerPks(ownPk)) {
           if (pk === ownPk || followerSet.has(pk)) continue;
-          this.relationships.observeEdge(pk, ownPk, 'follows', false, at);
+          this.relationships.observeEdge(pk, ownPk, 'follows', false, at, { source: 'census' });
         }
       }
       if (proves.following) {
@@ -162,7 +168,7 @@ export class CensusRepo {
         }
       }
 
-      this.drawStockBoundary(ownPk, followerPks.length, at);
+      this.drawStockBoundary(ownPk, followerPks.length, at, stockWindowMs(opts?.planDay));
     });
   }
 
@@ -183,9 +189,9 @@ export class CensusRepo {
    * Later censuses skip all of this: the baseline is set-once, and a follower a
    * later census discovers is a genuine (event-less) gain on its census day.
    */
-  private drawStockBoundary(ownPk: string, followerCount: number, at: number): void {
+  private drawStockBoundary(ownPk: string, followerCount: number, at: number, windowMs: number): void {
     if (this.meta.get('followersCensusAt') !== null) return;
-    const stockWindowStart = at - FIRST_CENSUS_STOCK_WINDOW_MS;
+    const stockWindowStart = at - windowMs;
     let baselineAt = this.relationships.baselineAt();
     if (baselineAt === null) {
       const earliest = this.relationships.edgesFirstSeenBefore(ownPk, stockWindowStart);
@@ -197,7 +203,9 @@ export class CensusRepo {
         followers: followerCount,
       });
     }
-    this.relationships.redateStockOntoBaseline(ownPk, baselineAt, stockWindowStart, at);
+    // Its discoveries are stock in the change log too; exact event rows stay growth.
+    const stock = this.relationships.redateStockOntoBaseline(ownPk, baselineAt, stockWindowStart, at);
+    this.growth.dropStock(stock, stockWindowStart, at);
     this.meta.setOnce('followersCensusAt', String(at));
   }
 }
