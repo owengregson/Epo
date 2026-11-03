@@ -2,14 +2,13 @@
  * Instagram Adapter — Reader: the read pipeline over the bodies the tab already captured. It NEVER
  * touches the DOM and NEVER issues requests. `read()` is `readBody` (spec §10.2–10.3) with the
  * Reader's env (the document, the sink, the hint book); `observed` reads each observed response once.
- * An endpoint the document drives (`enforce`) is also read by the legacy extractors as a comparator;
- * one still in `observe` keeps its legacy parse below with the document beside it. Zero Instagram
- * literals here: they live behind the document and `SURFACE` (`versions/*`).
+ * The document drives every endpoint; the legacy extractors read its clean canonical bodies only as
+ * comparators (the reverse shadow). Zero Instagram literals here: they live in `versions/*`.
  */
 
-import { isShapeMismatch, SURFACE } from '@/adapter/ig-surface';
+import { SURFACE } from '@/adapter/ig-surface';
 import { ObservedReads, type ObservedReadsOpts } from '@/adapter/observed-reads';
-import { coerceBody, shadowDocument, shadowLegacy, warnUnexpected } from '@/adapter/reader-shadow';
+import { shadowLegacy } from '@/adapter/reader-shadow';
 import type { ProfileSeen } from '@/rim/profile-visit-port';
 import type { ObservedRelation } from '@/shared/observed-relation';
 import { admits } from '@/surface/read/admission';
@@ -22,7 +21,7 @@ import { type Decoded, decodeBody } from '@/surface/transport/decode';
 
 export type { EndpointKind, FollowEvent, FollowersListResult, FriendshipShowResult, ShowManyEntry } from '@/adapter/ig-surface';
 
-import type { EndpointKind, FollowersListResult, ProfileViewer } from '@/adapter/ig-surface';
+import type { EndpointKind, ProfileViewer } from '@/adapter/ig-surface';
 
 /** Which profile body a parse is reading — the two containers differ. */
 export type ProfileKind = Extract<EndpointKind, 'profile-info' | 'profile-graphql'>;
@@ -130,28 +129,6 @@ export class Reader {
     const viewer = !admitted || r === undefined ? UNKNOWN_VIEWER
       : { following: r.following, requested: r.outgoingRequest, followsUs: r.followedBy, incomingRequest: r.incomingRequest };
     return { obs, viewer, presence: p.presence, tier: read.tier, partial: read.partial };
-  }
-
-  // --- Legacy parses: the endpoints still in `observe`, each with the document read beside it ----------
-
-  /** STRICT followers page: the typed page, or `null` on drift (never the typed empty end-of-list page). */
-  parseFollowersListStrict(body: unknown, at: number, final: boolean | null = null): FollowersListResult | null {
-    return this.legacyList('followers-list', body, at, final);
-  }
-
-  /** STRICT following page (the followers shape; separate so a drift warning names the endpoint that broke). */
-  parseFollowingListStrict(body: unknown, at: number, final: boolean | null = null): FollowersListResult | null {
-    return this.legacyList('following-list', body, at, final);
-  }
-
-  private legacyList(kind: 'followers-list' | 'following-list', body: unknown, at: number,
-    final: boolean | null): FollowersListResult | null {
-    const json = coerceBody(body, kind);
-    const result = SURFACE.extractFollowersList(json, at, kind, final);
-    const legacy = isShapeMismatch(result) ? null : result;
-    shadowDocument(this.env, kind, body, { at, source: kind, final }, json);
-    if (legacy === null) warnUnexpected(kind, body);
-    return legacy;
   }
 
   /**

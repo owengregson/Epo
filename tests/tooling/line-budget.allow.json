@@ -58,16 +58,16 @@
       "lines": 363
     },
     {
-      "file": "src/rim/followers-page-reader.ts",
-      "lines": 361
-    },
-    {
       "file": "src/rim/follower-acquisition.ts",
       "lines": 359
     },
     {
       "file": "src/types.ts",
       "lines": 352
+    },
+    {
+      "file": "src/rim/followers-page-reader.ts",
+      "lines": 351
     },
     {
       "file": "src/engine/recovery.ts",
@@ -79,7 +79,7 @@
     },
     {
       "file": "src/rim/list-page-walker.ts",
-      "lines": 331
+      "lines": 330
     },
     {
       "file": "src/renderer/charts/GrowthChart.tsx",

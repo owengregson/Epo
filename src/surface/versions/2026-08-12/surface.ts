@@ -106,7 +106,7 @@ const listEndpoint = (
 ) =>
   defineEndpoint({
     kind,
-    mode: 'observe',
+    mode: 'enforce',
     match: { method: 'GET', url, ids: { targetPk } },
     response: ListPageBody,
     project: projectListPage,

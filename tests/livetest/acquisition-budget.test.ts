@@ -22,7 +22,7 @@ test('a one-round live test reads only one direct page and preserves its partial
     pages += 1;
     return {
       ok: true, status: 200, contentType: 'application/json',
-      json: followersBody([`person${pages}`], `cursor${pages}`, true),
+      json: followersBody([`${100 + pages}`], `cursor${pages}`, true),
     };
   };
   const harness = new LiveTestHarness(tab as unknown as InstagramTab);
@@ -37,7 +37,7 @@ test('a one-round live test reads only one direct page and preserves its partial
     expect(pages).toBe(1);
     expect(result).toMatchObject({ observed: 1, targetPk: '999', endReason: 'page-budget' });
     expect(graph.store.getScrapeCursor('999')).toBe('cursor1');
-    expect(graph.store.getEdge('person1', '999', 'follows')).not.toBeNull();
+    expect(graph.store.getEdge('101', '999', 'follows')).not.toBeNull();
   } finally {
     graph.store.close();
     jest.useRealTimers();

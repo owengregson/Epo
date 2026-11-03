@@ -129,48 +129,46 @@ describe('Reader.extractTargetPkFromFollowingUrl', () => {
   });
 });
 
-describe('Reader.parseFollowersListStrict / parseFollowingListStrict', () => {
-  test('the following-list body parses with the followers-list shape', () => {
-    const out = r.parseFollowingListStrict(followersPage1, AT);
-    expect(out?.observations).toHaveLength(12);
+describe('Reader.readListPage: one friendships page (the document drives both lists)', () => {
+  const page = (body: unknown, which: 'followers-list' | 'following-list' = 'followers-list') =>
+    r.readListPage(which, typeof body === 'string' ? { ok: true, json: JSON.parse(body), format: 'json', payloads: 1, final: null }
+      : { ok: true, json: body, format: 'json', payloads: 1, final: null }, AT);
+  const projection = (read: ReturnType<typeof page>) => (read.ok ? read.projection : null);
+
+  test('the following-list body reads with the followers-list shape', () => {
+    const out = projection(page(followersPage1, 'following-list'));
+    expect(out?.facts).toHaveLength(12);
     expect(out?.cursor).toBe('12');
     expect(out?.hasMore).toBe(true);
-    expect(out?.observations[0].accountPk).toBe('1000000002');
-    expect(out?.observations[0].source).toBe('following-list');
+    expect(out?.facts[0]).toMatchObject({ accountPk: '1000000002', source: 'following-list' });
   });
 
   test('extracts users, cursor and continuation from a real followers page', () => {
-    const out = r.parseFollowersListStrict(followersPage1, AT);
-    expect(out).not.toBeNull();
+    const read = page(followersPage1);
+    expect(read).toMatchObject({ ok: true, tier: 'canonical', partial: false });
+    const out = projection(read);
     if (out === null) return;
-    expect(out.observations).toHaveLength(12);
+    expect(out.facts).toHaveLength(12);
     expect(out.cursor).toBe('12');
     expect(out.hasMore).toBe(true);
     expect(out.continuation).toEqual({ kind: 'next', cursor: '12', form: 'offset' });
-    expect(out.quarantined).toBe(0);
+    expect(out.rowIssues).toEqual([]);
 
-    const first = out.observations[0];
-    expect(first.accountPk).toBe('1000000002');
-    expect(first.observedAt).toBe(AT);
-    expect(first.source).toBe('followers-list');
-    expect(first.fields).toEqual({
-      username: 'user_002',
-      isPrivate: true,
-      isVerified: false,
-    });
+    const first = out.facts[0];
+    expect(first).toMatchObject({ accountPk: '1000000002', observedAt: AT, source: 'followers-list' });
+    expect(first.fields).toEqual({ username: 'user_002', isPrivate: true, isVerified: false });
 
     // Every pk is a numeric string; usernames survive scrubbing.
-    for (const obs of out.observations) {
+    for (const obs of out.facts) {
       expect(obs.accountPk).toMatch(/^\d+$/);
       expect(obs.source).toBe('followers-list');
     }
-    expect(out.observations[1].accountPk).toBe('1000000006');
-    expect(out.observations[1].fields.username).toBe('user_004');
+    expect(out.facts[1]).toMatchObject({ accountPk: '1000000006', fields: { username: 'user_004' } });
   });
 
   test('the last page has no cursor and ends on the server flags', () => {
-    const out = r.parseFollowersListStrict(followersLast, AT);
-    expect(out?.observations).toHaveLength(3);
+    const out = projection(page(followersLast));
+    expect(out?.facts).toHaveLength(3);
     expect(out?.cursor).toBeNull();
     expect(out?.hasMore).toBe(false);
     expect(out?.continuation).toEqual({ kind: 'end', evidence: 'flags-false' });
@@ -178,38 +176,39 @@ describe('Reader.parseFollowersListStrict / parseFollowingListStrict', () => {
 
   test('more-pages detection: a cursor continues, a flag without one is drift, nothing is an end without evidence', () => {
     const users = [{ pk: '7', username: 'u7', is_private: false, is_verified: false }];
-    expect(r.parseFollowersListStrict({ users, big_list: true }, AT)).toMatchObject({
+    expect(projection(page({ users, big_list: true }))).toMatchObject({
       hasMore: true, cursor: null, continuation: { kind: 'drift', reason: 'more-without-cursor', key: 'big_list' },
     });
-    expect(r.parseFollowersListStrict({ users, next_max_id: '25' }, AT)).toMatchObject({ hasMore: true, cursor: '25' });
-    expect(r.parseFollowersListStrict({ users, next_max_id: 50 }, AT)).toMatchObject({ hasMore: true, cursor: '50' });
-    expect(r.parseFollowersListStrict({ users }, AT)).toMatchObject({
-      hasMore: false, continuation: { kind: 'end', evidence: 'no-flags' },
-    });
+    expect(projection(page({ users, next_max_id: '25' }))).toMatchObject({ hasMore: true, cursor: '25' });
+    expect(projection(page({ users, next_max_id: 50 }))).toMatchObject({ hasMore: true, cursor: '50' });
+    expect(projection(page({ users }))).toMatchObject({ hasMore: false, continuation: { kind: 'end', evidence: 'no-flags' } });
   });
 
-  test('rows that do not read are quarantined and counted, never silently dropped', () => {
-    const users = [{ pk: '7', username: 'u7' }, { username: 'no-id' }, 'not-a-row', { pk_id: '9' }];
-    expect(r.parseFollowersListStrict({ users, has_more: false }, AT)).toMatchObject({ quarantined: 3 });
+  test('a row that does not read is quarantined and counted; a page that mostly fails is unreadable', () => {
+    const good = Array.from({ length: 10 }, (_, i) => ({ pk: String(i + 1), username: `u${i + 1}` }));
+    expect(projection(page({ users: [...good, { username: 'no-id' }], has_more: false }))?.rowIssues).toHaveLength(1);
+    // An agreeing alias still reads the row (a normalized step), never a quarantine.
+    expect(page({ users: [...good, { pk_id: '99', username: 'u99' }], has_more: false })).toMatchObject({ ok: true, tier: 'normalized' });
+    const users = [{ pk: '7', username: 'u7' }, { username: 'no-id' }, 'not-a-row'];
+    expect(page({ users, has_more: false })).toMatchObject({ ok: false, kind: 'rows-unreadable', rows: 3, quarantined: 2 });
   });
 
   test('accepts a raw JSON string body', () => {
-    const out = r.parseFollowersListStrict(JSON.stringify(followersPage1), AT);
-    expect(out?.observations).toHaveLength(12);
+    const out = projection(page(JSON.stringify(followersPage1)));
+    expect(out?.facts).toHaveLength(12);
     expect(out?.cursor).toBe('12');
   });
 
-  test('a drifted body is null — never the typed EMPTY (end-of-list) shape', () => {
+  test('a drifted body is a typed failure — never the typed EMPTY (end-of-list) page', () => {
     // A SHAPE_MISMATCH collapsing to the empty page would let shape drift
     // originate an end-of-list claim (the fabricated-census bug).
-    expect(r.parseFollowersListStrict({ nope: true }, AT)).toBeNull();
-    expect(r.parseFollowingListStrict({ nope: true }, AT)).toBeNull();
+    expect(page({ nope: true })).toMatchObject({ ok: false, kind: 'mismatch' });
+    expect(page({ nope: true }, 'following-list')).toMatchObject({ ok: false, kind: 'mismatch' });
   });
 
-  test('a genuinely EMPTY page is a typed result, not null (drift stays distinguishable)', () => {
-    const out = r.parseFollowersListStrict({ users: [] }, AT);
-    expect(out).toEqual({ observations: [], cursor: null, hasMore: false,
-      continuation: { kind: 'end', evidence: 'no-flags' }, quarantined: 0 });
+  test('a genuinely EMPTY page is a read, not a failure (drift stays distinguishable)', () => {
+    expect(projection(page({ users: [] }))).toMatchObject({ facts: [], cursor: null, hasMore: false,
+      continuation: { kind: 'end', evidence: 'no-flags' }, rowIssues: [] });
   });
 });
 

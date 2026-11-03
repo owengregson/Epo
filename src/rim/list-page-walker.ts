@@ -67,6 +67,9 @@ export interface ListPageWalkerDeps {
 
 export type { WalkArgs, WalkResult } from './list-walk-types';
 
+/** The walk's own verdicts on a list (the page's drift reaches the sink with its read). */
+const WALK_DRIFT: ReadonlySet<StopDetail> = new Set(['cursor-veto', 'end-claim-false', 'no-continuation-evidence']);
+
 import type { WalkArgs, WalkResult } from './list-walk-types';
 
 export class ListPageWalker {
@@ -108,6 +111,7 @@ export class ListPageWalker {
     // The long-rest STRIDE is drawn, not fixed: the next breather lands after a fresh stride.
     let nextRestAtPage = sample(this.tempo.policy('walk.rest-every'), this.rng);
     const form = SURFACE.listForm(which);
+    const endpoint = which === 'following' ? 'following-list' : 'followers-list';
 
     // Live veil readout: an 'api' phase counting rows as they arrive; `maxNewPks` (when set)
     // is a real denominator, so the overlay draws a determinate bar.
@@ -190,21 +194,21 @@ export class ListPageWalker {
       pages += 1;
 
       const now = this.clock.now();
-      // A stream that is not final reads as drift: its rows count, its end never does.
-      const parsed = which === 'following' ? this.reader.parseFollowingListStrict(res.json, now, res.decoded.final)
-        : this.reader.parseFollowersListStrict(res.json, now, res.decoded.final);
-      if (parsed === null) {
-        // SHAPE DRIFT: the page fetched but no longer parses. It ends the walk INCOMPLETE;
-        // a drifted page can never originate or confirm an end-of-list claim.
+      // One read through the document; a stream that is not final is drift (its rows count, its end never does).
+      const read = this.reader.readListPage(endpoint, res.decoded, now);
+      if (!read.ok || read.projection.continuation === null) {
+        // SHAPE DRIFT: the page no longer reads, or most of its rows do not (the row majority). It ends the
+        // walk INCOMPLETE; a drifted page can never originate or confirm an end-of-list claim.
         reason = 'shape-mismatch';
-        logger.warn('rim.list-page-walker: page shape unrecognized, stopping walk', {
-          pk, which, pages, observed: observed.size,
-        });
+        if (!read.ok && read.kind === 'rows-unreadable') [stopDetail, quarantined] = ['rows-unreadable', quarantined + read.quarantined];
+        logger.warn('rim.list-page-walker: page unreadable, stopping walk', { pk, which, pages, observed: observed.size, stopDetail });
         break;
       }
+      const parsed = read.projection;
+      const continuation = read.projection.continuation;
       const sizeBefore = observed.size;
       const callerNewBefore = callerNewPks;
-      for (const obs of parsed.observations) {
+      for (const obs of parsed.facts) {
         if (!observed.has(obs.accountPk)) {
           // Newness to the CALLER must be judged BEFORE onObservation writes
           // the row's edge into the store, or every row would read as known.
@@ -219,22 +223,14 @@ export class ListPageWalker {
       }
       resumeCursor = parsed.cursor;
       this.onProgress?.('list-page-ingested');
-      rows += parsed.observations.length;
-      quarantined += parsed.quarantined;
-      lastPage = { rows: parsed.observations.length, continuation: parsed.continuation.kind };
+      rows += parsed.facts.length;
+      quarantined += parsed.rowIssues.length;
+      lastPage = { rows: parsed.facts.length, continuation: continuation.kind };
       // The caller's stop, once this page's rows are written and before any pacing sleep.
-      if (args.stopAfterPage?.(parsed.observations) === true) { reason = 'caller-stop'; break; }
-      // A page that mostly fails to read is drift, not a page with a few odd rows.
-      const pageRows = parsed.observations.length + parsed.quarantined;
-      if (parsed.observations.length < SURFACE_BOUNDS.rowMajority * pageRows) {
-        reason = 'shape-mismatch';
-        stopDetail = 'rows-unreadable';
-        logger.warn('rim.list-page-walker: most rows unreadable, stopping walk', { pk, which, pages, quarantined });
-        break;
-      }
+      if (args.stopAfterPage?.(parsed.facts) === true) { reason = 'caller-stop'; break; }
 
       const newThisPage = observed.size - sizeBefore;
-      const step = decideStep({ continuation: parsed.continuation, newRows: newThisPage }, state, form, rows,
+      const step = decideStep({ continuation, newRows: newThisPage }, state, form, rows,
         (n) => SURFACE.listEndProbeCursor(n));
       if (step.act === 'complete') {
         complete = true;
@@ -249,12 +245,15 @@ export class ListPageWalker {
         logger.warn('rim.list-page-walker: the list cannot be read to its end, stopping walk', {
           pk, which, pages, observed: observed.size, stopDetail,
         });
+        // The page's own drift reached the sink with its read; the walk's verdicts are reported here.
+        if (WALK_DRIFT.has(stopDetail)) this.reader.report({ endpoint, cls: stopDetail, path: '(walk)', detail: { pages } }, now);
         break;
       }
       if (state.probing && step.act === 'continue') {
         logger.warn('rim.list-page-walker: end-of-list claim was FALSE, following the server cursor', {
           pk, which, pages, recovered: newThisPage,
         });
+        this.reader.report({ endpoint, cls: 'end-claim-false', path: '(walk)', detail: { pages } }, now);
       }
 
       // Demand-driven stop (growth acquisition): the caller has the NEW pks it needs —

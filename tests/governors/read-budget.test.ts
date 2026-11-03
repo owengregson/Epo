@@ -92,7 +92,7 @@ test('list budget exhaustion streams paid-for rows, preserves resume cursor, and
   let calls = 0;
   tab.onEvaluate = () => {
     calls += 1;
-    return { ok: true, status: 200, contentType: 'application/json', json: followersBody(['p1', 'p2'], 'C1', true) };
+    return { ok: true, status: 200, contentType: 'application/json', json: followersBody(['101', '102'], 'C1', true) };
   };
   const reader = new Reader();
   const actor = new FakeActor();
@@ -106,7 +106,7 @@ test('list budget exhaustion streams paid-for rows, preserves resume cursor, and
   expect(result.retryAt).toBeGreaterThan(clock.now());
   expect(calls).toBe(1);
   expect(actor.openCalls).toBe(0);
-  expect(store.getEdge('p1', 'target', 'follows')).not.toBeNull();
+  expect(store.getEdge('101', 'target', 'follows')).not.toBeNull();
   expect(store.getScrapeCursor('target')).toBe('C1');
 });
 
