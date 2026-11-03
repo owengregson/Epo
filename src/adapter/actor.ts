@@ -13,7 +13,6 @@
  * fails loud instead of silently reporting success.
  */
 
-import { verdictToResult } from '@/adapter/action-result';
 import { type ActivityReporter, NOOP_ACTIVITY_REPORTER } from '@/adapter/activity-reporter';
 import * as listScroll from '@/adapter/actor-scroll';
 import { arbitrate } from '@/adapter/arbiter';
@@ -32,7 +31,8 @@ import * as logger from '@/utils/logger';
 import { ok, type Result } from '@/utils/result';
 import { prepareAction } from './action-admission';
 import type { ActorInteractor, ActorOptions, AdapterTab } from './actor-types';
-import { type ConfirmFlowOptions, confirmDefaults, confirmLayerBound, type LayerFlow, noteUnobserved, runFlow } from './unfollow-flow';
+import { type ConfirmFlowOptions, confirmDefaults, confirmLayerBound, type LayerFlow, noteUnobserved, runFlow,
+  settledResult } from './unfollow-flow';
 
 export type { ActorInteractor, ActorOptions, AdapterTab } from './actor-types';
 
@@ -624,7 +624,7 @@ export class Actor {
       probeBlock: () => this.probeBlock(f.op),
       now: () => Date.now(),
     });
-    return verdictToResult(verdict, f.op, f.username);
+    return settledResult(verdict, f.op, f.username);
   }
 
   /**

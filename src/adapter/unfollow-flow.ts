@@ -3,12 +3,14 @@
  * layer is located, paused on and pressed until Instagram answers; an exit that did not land is closed.
  */
 
+import { verdictToResult } from '@/adapter/action-result';
 import type { LocatedRect, LocateRectResult } from '@/adapter/ig-surface';
 import { SURFACE } from '@/adapter/ig-surface';
 import type { MutationWatch } from '@/adapter/mutation-watch';
 import type { ConfirmLocate, LayerReport, ProbeStateResult } from '@/adapter/page';
 import { pageCall } from '@/adapter/page-call';
 import { type SettleInteractor, settleAndPress } from '@/adapter/settle-press';
+import type { Verdict } from '@/adapter/verdict';
 import type { TempoSource } from '@/kernel/tempo';
 import { surface } from '@/surface/index';
 import { NO_SINK, type SurfaceSink } from '@/surface/sink';
@@ -147,6 +149,18 @@ export async function noteUnobserved(f: LayerFlow): Promise<void> {
 /** The top confirm layer on screen, with its markup on request. */
 const report = (f: LayerFlow, withMarkup: boolean): Promise<LayerReport | null> =>
   f.tab.evaluate<LayerReport | null>(layerScript(withMarkup));
+
+/**
+ * F7: after a dispatched press, `err` means Instagram showed nothing (unverified). A response it did send
+ * — a refusal, an `errors[]` body, an answer the DOM contradicts — is evidence and throws as a refusal.
+ */
+export function settledResult(verdict: Verdict, op: string, username: string): Result<{ clicked: boolean }> {
+  const result = verdictToResult(verdict, op, username);
+  if (!result.ok && verdict.kind === 'refused' && verdict.evidence.source !== 'dom') {
+    throw new ActionBlockedError(op, verdict.detail);
+  }
+  return result;
+}
 
 /** An exit after which a layer may still need closing: Instagram's own refusal, or a drifted control. */
 const leavesOnError = (e: unknown): boolean =>

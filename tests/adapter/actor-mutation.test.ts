@@ -8,7 +8,7 @@
  * lets the response decide; without one, the DOM path is unchanged.
  */
 import { Actor, type ActorInteractor, type AdapterTab } from '@/adapter/actor';
-import { ActionAbortedError, ActionRateLimitedError } from '@/adapter/errors';
+import { ActionAbortedError, ActionBlockedError, ActionRateLimitedError } from '@/adapter/errors';
 import type { LocateActionResult, LocatedRect, LocateRectResult } from '@/adapter/ig-surface';
 import { setLevel } from '@/utils/logger';
 import { FakeInteractor, NetworkTab, pageCall, ScriptedTab } from '../kit/tabs';
@@ -30,7 +30,7 @@ const THROTTLED = {
 };
 
 /** A Follow button that reads Following from the first post-click probe (the optimistic flip). */
-function scriptFollowFlow(tab: NetworkTab): void {
+function scriptFollowFlow(tab: NetworkTab, after: 'follow' | 'following' = 'following'): void {
   tab.on(pageCall('locateActionButton'), (): LocateActionResult => ({
     found: true,
     state: 'follow',
@@ -38,7 +38,7 @@ function scriptFollowFlow(tab: NetworkTab): void {
     needsConfirm: false,
     rect: RECT,
   }));
-  tab.on(pageCall('probeActionButton'), () => ({ found: true, state: 'following' }));
+  tab.on(pageCall('probeActionButton'), () => ({ found: true, state: after }));
   tab.on(pageCall('blockText'), () => '');
   // No confirm layer on screen: an unobserved window counts toward blindness (ADR 0308).
   tab.on(pageCall('confirmLayer'), () => ({ present: false }));
@@ -116,10 +116,10 @@ describe('follow — the mutation response arbitrates', () => {
     if (result.ok) expect(result.value.clicked).toBe(true);
   });
 
-  test('a refused mutation (unknown 4xx message) is a plain failed result, not a block', async () => {
+  test("a refused mutation (unknown 4xx message) is Instagram's refusal, never the unverified result (ADR 0308)", async () => {
     const tab = new NetworkTab();
     const h = new FakeInteractor();
-    scriptFollowFlow(tab);
+    scriptFollowFlow(tab, 'follow');
     h.onClick = () =>
       tab.emit({
         url: FOLLOW_URL,
@@ -127,9 +127,28 @@ describe('follow — the mutation response arbitrates', () => {
         body: { status: 'fail', message: 'Sorry, this user is not available' },
       });
 
+    const error = await build(tab, h).follow('someone').then(() => null, (e: unknown) => e);
+    expect(error).toBeInstanceOf(ActionBlockedError);
+    expect((error as ActionBlockedError).matchedText).toMatch(/not available/);
+  });
+
+  test('an errors[] response is evidence too: a refusal, never the unverified result', async () => {
+    const tab = new NetworkTab();
+    const h = new FakeInteractor();
+    scriptFollowFlow(tab, 'follow');
+    h.onClick = () => tab.emit({ url: FOLLOW_URL, status: 200, body: { errors: [{ message: 'unexpected' }] } });
+
+    await expect(build(tab, h).follow('someone')).rejects.toBeInstanceOf(ActionBlockedError);
+  });
+
+  test('no response, no refusal text and an unchanged header: the honest unverified result (an err)', async () => {
+    const tab = new NetworkTab();
+    const h = new FakeInteractor();
+    scriptFollowFlow(tab, 'follow');
+
     const result = await build(tab, h).follow('someone');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/not available/);
+    if (!result.ok) expect(result.reason).toMatch(/post-click state not confirmed/);
   });
 
   test('no mutation response inside the window → the DOM verification decides, as before', async () => {
