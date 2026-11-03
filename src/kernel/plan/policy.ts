@@ -7,8 +7,10 @@
 export const PLAN_BOUNDS = {
   /** Draws per gap-model estimate: about 1 % standard error on the mean gap, cheap enough to memoize per shape. */
   GAP_MODEL_DRAWS: 4096,
-  /** Bisection steps when the gap cap binds: 2^-24 of the bracket, far below a millisecond. */
+  /** Solver steps when the gap cap binds: 24 halvings already reach far below a millisecond. */
   GAP_SOLVE_ITERATIONS: 24,
+  /** The solve stops once its bracket's means differ by this share of the target: a tenth of the estimate's own error. */
+  GAP_SOLVE_TOLERANCE: 0.001,
   /** Bounded re-draws of a clamped log-normal before projecting onto the nearer bound: no probability spike at a bound. */
   CLAMP_REDRAWS: 4,
   /** A transition plan-day ends at the first new quiet minute at least this many hours after the old boundary. */

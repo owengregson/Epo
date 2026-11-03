@@ -10,6 +10,8 @@ import { fnv1a, mulberry32 } from '../rng';
 import type { PlanDayKey } from './types';
 
 const TWO_32 = 4294967296;
+// Module-local aliases: the draws run hot inside the plan's estimators.
+const { floor, log, sqrt } = Math;
 
 /** The plan-day's seed: the install entropy mixed with the day key. */
 export function planSeed(installEntropy: number, key: PlanDayKey): number {
@@ -18,7 +20,7 @@ export function planSeed(installEntropy: number, key: PlanDayKey): number {
 
 /** One uniform draw in (0, 1) at a coordinate; the same coordinate always draws the same value. */
 export function u(seed: number, ...coords: readonly (string | number)[]): number {
-  const k = Math.floor(mulberry32((seed ^ fnv1a(coords.join('|'))) >>> 0)() * TWO_32);
+  const k = floor(mulberry32((seed ^ fnv1a(coords.join('|'))) >>> 0)() * TWO_32);
   return (k + 0.5) / TWO_32;
 }
 
@@ -43,8 +45,8 @@ const tail = (q: number): number =>
 export function inverseNormal(p: number): number {
   if (!(p > 0)) return Number.NEGATIVE_INFINITY;
   if (!(p < 1)) return Number.POSITIVE_INFINITY;
-  if (p < P_LOW) return tail(Math.sqrt(-2 * Math.log(p)));
-  if (p > 1 - P_LOW) return -tail(Math.sqrt(-2 * Math.log(1 - p)));
+  if (p < P_LOW) return tail(sqrt(-2 * log(p)));
+  if (p > 1 - P_LOW) return -tail(sqrt(-2 * log(1 - p)));
   const q = p - 0.5;
   const r = q * q;
   return ((((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q) /

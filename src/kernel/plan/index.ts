@@ -3,6 +3,7 @@
  * boundary, the day law, the gap model, the session tempo and layout, the reads, the draw and Boost.
  */
 export * from './circadian';
+export * from './gap';
 export * from './policy';
 export * from './seed';
 export type * from './types';
