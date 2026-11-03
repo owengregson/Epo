@@ -110,10 +110,6 @@
       "lines": 313
     },
     {
-      "file": "src/surface/schema/surface.ts",
-      "lines": 313
-    },
-    {
       "file": "src/renderer/cards/settings/BehaviorCard.tsx",
       "lines": 312
     },
