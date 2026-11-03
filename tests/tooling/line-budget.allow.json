@@ -3,7 +3,7 @@
   "allow": [
     {
       "file": "src/main/foundation-wiring.ts",
-      "lines": 1934
+      "lines": 1437
     },
     {
       "file": "src/engine/prune-engine.ts",

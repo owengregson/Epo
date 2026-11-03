@@ -24,17 +24,12 @@ import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { TabUnresponsiveError } from '@/adapter/errors';
-import {
-  resolveOwnUsername as resolveUsernameFromTab,
-  usernameFromProfileUrl,
-} from '@/adapter/identity';
+import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import type { EngineStatus } from '@/engine/engine';
-import { isRateLimitHaltKey } from '@/engine/halt-reason';
 import { journaledMutation } from '@/engine/journaled-mutation';
-import { type PruneCandidate, type PruneStatus, pruneDue } from '@/engine/prune-engine';
+import type { PruneCandidate, PruneStatus } from '@/engine/prune-engine';
 import { SystemClock } from '@/governors/clock';
 import type { CursorObserver } from '@/interaction/input-driver';
 import {
@@ -45,7 +40,13 @@ import {
 } from '@/main/foundation-reads';
 import { notBuiltPruneStatus, notBuiltStatus } from '@/main/modules/not-built';
 import { Projections, type PushFn } from '@/main/modules/projections';
+import { PruneControl } from '@/main/modules/prune-control';
+import { PruneSchedule } from '@/main/modules/prune-schedule';
+import { SeedCheckService } from '@/main/modules/seed-check';
 import { GraphSession } from '@/main/modules/session';
+import { SettingsService } from '@/main/modules/settings-service';
+import { landingStep, resumeStep, runStep, type StartupStep } from '@/main/modules/startup-steps';
+import { composeStatus } from '@/main/modules/status-compose';
 import { DriverSignal } from '@/main/services/driver-signal';
 import {
   type BuiltGraph,
@@ -56,24 +57,9 @@ import type { IgSessionPort } from '@/main/services/ig-session';
 import { RuntimeCoordinator, type RuntimeSnapshot } from '@/main/services/runtime-coordinator';
 import { TabLease } from '@/main/services/tab-lease';
 import { TabActivity } from '@/main/tab-activity';
-import {
-  DEFAULT_SETTINGS,
-  loadSettings,
-  type Settings,
-  sanitizeSettings,
-  saveSettings,
-  toChainConfig,
-  toChurnConfig,
-  toFollowbackConfig,
-  toPacingConfig,
-  toPruneConfig,
-  toRateGovernorConfig,
-  toScannerConfig,
-  toScorerConfig,
-} from '@/settings/settings';
-import { ADAPTER, NOISE, PRUNE, RECOVERY, SCHEDULER, TAB } from '@/timing/config';
-import { pauseBeforePageRetry } from '@/timing/page-pacing';
-import { sample, sleep, TIMED_OUT, uniform, withTimeout } from '@/timing/primitives';
+import type { Settings } from '@/settings/settings';
+import { RECOVERY, SCHEDULER, TAB } from '@/timing/config';
+import { sleep, TIMED_OUT, uniform, withTimeout } from '@/timing/primitives';
 import { ScheduleManager } from '@/timing/schedule-manager';
 import { MS_PER_DAY } from '@/timing/units';
 import type {
@@ -93,7 +79,6 @@ import type {
 import * as logger from '@/utils/logger';
 
 const IG_DB_FILE = 'epo.db';
-const IG_SETTINGS_FILE = 'epo-settings.json';
 
 // Timing constants (username-resolve retry, prune park timeout, watcher cadence)
 // live in the shared registry: see `SCHEDULER.*` and `PRUNE.PARK_TIMEOUT_MS` in
@@ -222,15 +207,15 @@ export class Foundation {
   private preparation: AbortController | null = null;
   private readonly signals = new DriverSignal();
 
-  /**
-   * Bumped by every {@link stopPrune}. A prune scan/run request that was
-   * waiting on the lazy graph build compares this to the value it captured at
-   * entry — a mismatch means the user pressed Stop while the build was in
-   * flight, and the pending scan/run cancels instead of starting anyway.
-   */
-  private pruneStopEpoch = 0;
-  /** Settings cached once loaded, so `getSettings`/`updateSettings` share one copy. */
-  private settingsCache: Settings | null = null;
+  /** Settings load, cache, persist and live reload. */
+  private readonly settings: SettingsService;
+  /** The manual prune controls and the scheduled prune over them. */
+  private readonly prune: PruneControl;
+  private readonly pruneSchedule: PruneSchedule;
+  private readonly seed: SeedCheckService;
+  /** The startup steps, run as the Foundation always ran them. */
+  private readonly landing: StartupStep;
+  private readonly resume: StartupStep;
   /**
    * In-flight MANUAL operations (read-followers, follow/unfollow-one,
    * seed-check). Teardown awaits these before closing the store — an
@@ -275,6 +260,7 @@ export class Foundation {
     this.reporter = deps.activityReporter ?? NOOP_ACTIVITY_REPORTER;
     this.requestConnectivityCheck = deps.requestConnectivityCheck;
     this.projections = new Projections({ push: deps.push });
+    this.settings = new SettingsService({ userDataDir: deps.userDataDir, graph: () => this.graph });
     this.session = new GraphSession({
       igSession: deps.igSession,
       build: (ownPk, ownUsername) => this.build(ownPk, ownUsername),
@@ -317,6 +303,23 @@ export class Foundation {
       logger.info('foundation: tab activity', { active, holds });
       deps.onActivity?.(active, holds);
     });
+    this.prune = new PruneControl({ runtime: this.runtime, lease: this.lease, activity: this.activity,
+      graph: () => this.graph, builtGraph: () => this.builtGraph(), online: () => this.lastOnline,
+      manualDriving: () => this.manualDriving, abortPreparation: () => this.preparation?.abort(),
+      prepareMutation: (graph) => this.prepareMutation(graph), resumeDesiredRun: () => this.resumeDesiredRun(),
+      notBuiltPruneStatus: () => this.notBuiltPruneStatus() });
+    this.pruneSchedule = new PruneSchedule({ control: this.prune, runtime: this.runtime, lease: this.lease,
+      scheduler: this.scheduler, disposeSignal: this.disposeAbort.signal, graph: () => this.graph,
+      builtGraph: () => this.builtGraph(), disposing: () => this.disposing,
+      resolveSettings: () => this.resolveSettings(), updateSettings: (partial) => this.updateSettings(partial) });
+    this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
+      builtGraph: () => this.builtGraph(), busyDriverReason: () => this.busyDriverReason(),
+      setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun() });
+    this.landing = landingStep({ tab: this.tab, runtime: this.runtime, lease: this.lease, activity: this.activity,
+      disposing: () => this.disposing, ensureBuilt: () => this.ensureBuilt(), graph: () => this.graph });
+    this.resume = resumeStep({ runtime: this.runtime, lease: this.lease, igSession: this.igSession,
+      disposing: () => this.disposing, blockRuntime: (reason) => this.blockRuntime(reason),
+      startEngine: (opts) => this.startEngine(opts) });
     // Tab health events (debugger detach, renderer gone/unresponsive, input
     // fallback): the tab reports, the Foundation owns the recovery policy.
     // Guarded — partially-shaped test tabs may not carry the callback seam.
@@ -386,79 +389,8 @@ export class Foundation {
     return this.status();
   }
 
-  /**
-   * Land the tab on the user's OWN profile — the app's default page. Waits for
-   * the lazy graph (i.e. a logged-in session) within a bounded poll, then runs
-   * as a proper tracked activity: the Actor locates the nav profile-avatar
-   * link and the Interactor moves the cursor to it and clicks with native
-   * input events (an in-page `a.click()` is ignored by the SPA — verified
-   * live), retrying once. Fire-and-forget from startup/login; every failure
-   * mode resolves quietly (a cosmetic landing must never break startup).
-   */
-  async landOnOwnProfile(): Promise<void> {
-    if (!this.runtime.ready()) return;
-    // Intro tour on screen: the landing (a build + a cursor-driven click) is
-    // exactly the kind of self-starting work the hold parks. Remember it was
-    // requested; setTourHold(false) runs it.
-    if (this.lease.tourHeld()) {
-      this.lease.deferProfileLanding();
-      return;
-    }
-    // Bounded graph retry; builds may navigate, so space each attempt afresh.
-    for (let i = 0; i < ADAPTER.PROFILE_LAND_ATTEMPTS; i++) {
-      if (this.disposing) return;
-      if (await this.ensureBuilt()) break;
-      if (i === ADAPTER.PROFILE_LAND_ATTEMPTS - 1) {
-        logger.info('foundation: not logged in, profile landing skipped');
-        return;
-      }
-      await pauseBeforePageRetry(ADAPTER.PROFILE_LAND_RETRY_MS, this.disposeAbort.signal);
-    }
-    const graph = this.graph;
-    if (graph === null || this.disposing) return;
-    // Never contend with an active driver for the tab.
-    if (this.lease.owner() !== null) return;
-
-    const target = graph.ownUsername ?? null;
-    const onProfile = (): boolean => {
-      const u = usernameFromProfileUrl(this.tab.currentUrl());
-      return u !== null && (target === null || u === target);
-    };
-    if (onProfile()) return;
-
-    await this.activity.with('open-profile', async () => {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (this.disposing || this.lease.owner() !== null) return;
-        let clicked = false;
-        try {
-          clicked = await graph.actor.clickOwnProfileLink();
-        } catch (e) {
-          // The rail link navigates IN-PAGE: the route change can start before
-          // the release is acknowledged, which the input queue reports as
-          // post-click UNCERTAINTY (live 2026-10-08). The URL decides, as for
-          // any click; every other failure ends the landing.
-          if (!(e instanceof TabUnresponsiveError && e.phase === 'post-click')) {
-            logger.warn('foundation: profile landing click failed', { error: String(e) });
-            return;
-          }
-          clicked = true;
-        }
-        if (clicked) {
-          for (let i = 0; i < ADAPTER.NAV_SETTLE_ROUNDS; i++) {
-            await sleep(ADAPTER.NAV_SETTLE_MS, this.disposeAbort.signal);
-            if (onProfile()) {
-              logger.info('foundation: landed on own profile', { username: target });
-              return;
-            }
-          }
-          logger.warn('foundation: profile click did not navigate, retrying', { attempt });
-        }
-        // The URL poll stays exact; only another page attempt gets a fresh beat.
-        if (attempt === 0) await pauseBeforePageRetry(ADAPTER.PROFILE_LAND_RETRY_MS, this.disposeAbort.signal);
-      }
-      logger.warn('foundation: could not land on own profile');
-    });
-  }
+  /** Land the tab on the user's own profile, the default page (see {@link landingStep}). */
+  landOnOwnProfile(): Promise<void> { return runStep(this.landing, this.disposeAbort.signal); }
 
   // -------------------------------------------------------------------------
   // Engine controls (build-if-needed)
@@ -611,206 +543,20 @@ export class Foundation {
   // Auto-prune controls (Phase 5) — same tab/rim, mutually exclusive with growth
   // -------------------------------------------------------------------------
 
-  /**
-   * The PERSISTED scan's not-yet-visited candidates (raw census — the renderer
-   * filters against the live whitelist), so the candidates list auto-populates
-   * from saved data on app launch instead of sitting empty until a fresh scan.
-   * Empty when not logged in or no snapshot exists. Never throws across IPC.
-   */
-  async pruneCandidates(): Promise<PruneCandidate[]> {
-    const graph = await this.builtGraph();
-    if (graph === null) return [];
-    try {
-      return graph.store.getPruneScan()?.remaining ?? [];
-    } catch (e) {
-      logger.error('foundation.pruneCandidates: failed', { error: String(e) });
-      return [];
-    }
-  }
-
-  async scanPrune(): Promise<PruneScanResult> {
-    // Veil: held from IPC entry — the lazy build's navigations and the dialog
-    // work all drive the tab, not just the post-first-status stretch.
-    return this.activity.with('prune-scan', () => this.scanPruneHeld());
-  }
-
-  private async scanPruneHeld(): Promise<PruneScanResult> {
-    const empty = { following: 0, followers: 0, candidates: [] };
-    const epoch = this.pruneStopEpoch;
-    const graph = await this.builtGraph();
-    if (graph === null) {
-      return { ok: false, reason: 'not-logged-in', ...empty };
-    }
-    // A stop that landed while the graph was still building must cancel this
-    // pending scan — pre-build there is no engine to stop, so the stop is
-    // recorded as an epoch bump and honored here instead of being lost.
-    if (this.pruneStopEpoch !== epoch) {
-      logger.info('foundation.scanPrune: cancelled by stop during build');
-      return { ok: false, reason: 'stopped', ...empty };
-    }
-    const refusal = this.pruneRefusalReason();
-    if (refusal !== null) {
-      logger.warn('foundation.scanPrune: refused', { reason: refusal });
-      return { ok: false, reason: refusal, ...empty };
-    }
-    // Claim the driver token first (blocks a concurrent growth start/resume or a
-    // second prune), then borrow the tab: pause the growth engine if it is
-    // running and wait for it to park before scanning.
-    const leaseToken = this.lease.claim('prune');
-    try {
-      if (!(await this.acquireTabForPrune())) {
-        return { ok: false, reason: 'growth-busy', ...empty };
-      }
-      if (!this.runtime.ready() || this.pruneStopEpoch !== epoch) return { ok: false, reason: 'stopped', ...empty };
-      const scan = graph.pruneEngine.scan();
-      graph.prunePromise = scan.then(() => {}, () => {});
-      const result = await scan;
-      return result.aborted ? { ok: false, reason: 'scan-incomplete', ...result } : { ok: true, ...result };
-    } catch (e) {
-      logger.error('foundation.scanPrune: failed', { error: String(e) });
-      return { ok: false, reason: String(e), ...empty };
-    } finally {
-      if (this.lease.owns('prune', leaseToken)) {
-        this.lease.release('prune', leaseToken);
-        this.releaseTabAfterPrune();
-      }
-    }
-  }
-
-  /** Prepare current knowledge under the borrowed lease, then start pruning. */
-  async startPrune(): Promise<PruneControlResult> {
-    // Veil: held from IPC entry; on a successful launch the hold transfers to
-    // the fire-and-forget run (released when the run settles), and every
-    // refusal path releases it on the way out.
-    this.activity.hold('prune-run');
-    let transferredToRun = false;
-    try {
-      const epoch = this.pruneStopEpoch;
-      const graph = await this.builtGraph();
-      if (graph === null) {
-        return { ok: false, reason: 'not-logged-in', status: this.notBuiltPruneStatus() };
-      }
-      // Mirror scanPrune: a stop during the build cancels this pending run.
-      if (this.pruneStopEpoch !== epoch) {
-        logger.info('foundation.startPrune: cancelled by stop during build');
-        return { ok: false, reason: 'stopped', status: graph.pruneEngine.status() };
-      }
-      const refusal = this.pruneRefusalReason();
-      if (refusal !== null) {
-        logger.warn('foundation.startPrune: refused', { reason: refusal });
-        return { ok: false, reason: refusal, status: graph.pruneEngine.status() };
-      }
-      const leaseToken = this.lease.claim('prune');
-      // Borrow the tab BEFORE the run starts: pause a running growth engine and
-      // await its park. Await here (not inside the fire-and-forget run) so the
-      // caller's result reflects a clean hand-off; the UI's run spinner covers it.
-      if (!(await this.acquireTabForPrune())) {
-        this.lease.release('prune');
-        return { ok: false, reason: 'growth-busy', status: graph.pruneEngine.status() };
-      }
-      if (!this.runtime.ready() || this.pruneStopEpoch !== epoch) {
-        this.lease.release('prune');
-        this.releaseTabAfterPrune();
-        return { ok: false, reason: 'stopped', status: graph.pruneEngine.status() };
-      }
-      if (!await this.prepareMutation(graph) || this.pruneStopEpoch !== epoch) {
-        this.lease.release('prune', leaseToken);
-        this.releaseTabAfterPrune();
-        return { ok: false, reason: 'reconciliation-incomplete', status: graph.pruneEngine.status() };
-      }
-      const run = graph.pruneEngine
-        .run()
-        .catch((e: unknown) => {
-          logger.error('foundation: prune run errored', { error: String(e) });
-        })
-        .finally(() => {
-          if (this.lease.owns('prune', leaseToken)) {
-            this.lease.release('prune', leaseToken);
-            this.releaseTabAfterPrune();
-          }
-          this.activity.release('prune-run');
-        });
-      graph.prunePromise = run;
-      transferredToRun = true;
-      return { ok: true, status: graph.pruneEngine.status() };
-    } finally {
-      if (!transferredToRun) this.activity.release('prune-run');
-    }
-  }
-
-  /**
-   * Stop an active prune scan/run: aborts in-flight sleeps between actions AND
-   * breaks a mid-scan scroll loop between rounds, so `scanPrune`/`startPrune`
-   * resolve promptly and the tab is left clean.
-   */
-  async stopPrune(): Promise<PruneStatus> {
-    // Recorded even when no engine exists yet: a scan/run request awaiting the
-    // graph build checks this epoch and cancels itself instead of starting.
-    this.pruneStopEpoch += 1;
-    if (this.lease.owner() === 'prune') this.preparation?.abort();
-    if (this.graph === null) return this.notBuiltPruneStatus();
-    this.graph.pruneEngine.stop();
-    return this.graph.pruneEngine.status();
-  }
-
-  /**
-   * Pause an active prune run between unfollows. The run keeps every claim it
-   * holds — the tab driver token and a growth pause it performed — so growth
-   * stays excluded until the run is resumed and completes, or is stopped.
-   */
-  async pausePrune(): Promise<PruneStatus> {
-    if (this.graph === null) return this.notBuiltPruneStatus();
-    this.graph.pruneEngine.pause();
-    return this.graph.pruneEngine.status();
-  }
-
-  /** Resume a paused prune run (the owed inter-action delay is served first). */
-  async resumePrune(): Promise<PruneStatus> {
-    if (this.graph === null) return this.notBuiltPruneStatus();
-    this.graph.pruneEngine.resume();
-    return this.graph.pruneEngine.status();
-  }
-
+  /** The persisted scan's candidates (see {@link PruneControl.pruneCandidates}). */
+  pruneCandidates(): Promise<PruneCandidate[]> { return this.prune.pruneCandidates(); }
+  /** Scan the own lists for prune candidates (see {@link PruneControl.scanPrune}). */
+  scanPrune(): Promise<PruneScanResult> { return this.prune.scanPrune(); }
+  /** Prepare, then start a prune run (see {@link PruneControl.startPrune}). */
+  startPrune(): Promise<PruneControlResult> { return this.prune.startPrune(); }
+  /** Stop an active prune scan/run (see {@link PruneControl.stopPrune}). */
+  stopPrune(): Promise<PruneStatus> { return this.prune.stopPrune(); }
+  /** Pause an active prune run between unfollows. */
+  pausePrune(): Promise<PruneStatus> { return this.prune.pausePrune(); }
+  /** Resume a paused prune run. */
+  resumePrune(): Promise<PruneStatus> { return this.prune.resumePrune(); }
   /** The prune status projection; a settings-seeded idle status before build. */
-  async pruneStatus(): Promise<PruneStatus> {
-    if (this.graph === null) return this.notBuiltPruneStatus();
-    return this.graph.pruneEngine.status();
-  }
-
-  /**
-   * Why a prune scan/run may not start now. Since Phase 5's tab hand-off, a
-   * running growth engine no longer blocks prune — prune PAUSES it and resumes
-   * it after (see {@link acquireTabForPrune}) — so the only hard refusal is that
-   * a prune scan/run already holds the driver token (`prune-running`). Null when
-   * clear. (A stuck-mid-step growth engine that won't park in time yields a
-   * separate `growth-busy` refusal at acquire time, not here.)
-   */
-  private pruneRefusalReason(): string | null {
-    if (!this.runtime.ready()) return 'runtime-not-ready';
-    if (!this.lastOnline) return 'offline';
-    if (this.manualDriving) return 'manual-running';
-    if (this.lease.owner() === 'prune') return 'prune-running';
-    return null;
-  }
-
-  /**
-   * Borrow the shared tab for a prune (see {@link TabLease.borrowFromGrowth}).
-   * Caller must already hold the `'prune'` driver token.
-   */
-  private async acquireTabForPrune(): Promise<boolean> {
-    if (this.graph === null) return false;
-    return this.lease.borrowFromGrowth('prune', this.graph.engine, PRUNE.PARK_TIMEOUT_MS);
-  }
-
-  /** Hand the tab back after a prune. Idempotent — both exit paths call it. */
-  private releaseTabAfterPrune(): void {
-    if (!this.runtime.ready() || this.runtime.snapshot().desired !== 'running') {
-      this.lease.forgetHandoffs();
-      return;
-    }
-    this.lease.returnToGrowth('prune', this.graph?.engine ?? null);
-    this.resumeDesiredRun();
-  }
+  pruneStatus(): Promise<PruneStatus> { return this.prune.pruneStatus(); }
 
   private resumeDesiredRun(): void {
     if (this.disposing || !this.runtime.wantsRun() || this.lease.owner() !== null || this.manualDriving || this.graph?.engine.status().state !== 'idle') return;
@@ -1064,7 +810,7 @@ export class Foundation {
     this.blockRuntime(reason);
     this.lease.forgetHandoffs();
     this.preparation?.abort();
-    this.pruneStopEpoch++;
+    this.prune.cancelPending();
     this.graph?.engine.stop();
     this.graph?.pruneEngine.stop();
   }
@@ -1083,18 +829,8 @@ export class Foundation {
     this.runtime.record('intentional-shutdown');
   }
 
-  async restoreRuntimeIntent(): Promise<void> {
-    if (!this.runtime.wantsRun() || this.disposing || this.lease.tourHeld()) return;
-    const token = this.runtime.token();
-    const expected = this.runtime.snapshot().accountPk;
-    const actual = await this.igSession.readCookie('ds_user_id');
-    if (actual === null || expected !== actual) {
-      this.blockRuntime(actual === null ? 'login-required' : 'account-changed');
-      return;
-    }
-    this.runtime.record('process-recovery-start');
-    await this.startEngine({ automaticToken: token });
-  }
+  /** Resume a running intent a crash left behind (see {@link resumeStep}). */
+  restoreRuntimeIntent(): Promise<void> { return runStep(this.resume, this.disposeAbort.signal); }
 
   /** Passive identity admission avoids tearing down a graph from inside its
    * own engine await. The next explicit build performs the bounded teardown. */
@@ -1128,20 +864,7 @@ export class Foundation {
   }
 
   /** Durable maintenance gets a bounded handoff from continuous growth. */
-  startScheduledPruneWatcher(intervalMs = SCHEDULER.AUTO_PRUNE_CHECK_MS): void {
-    // Idempotency + the never-hold-the-process-open unref both come from the
-    // ScheduleManager (`every` is a per-key no-op while the loop lives).
-    // `immediate` (docs/PRINCIPLES.md §3 — schedules are durable): work that
-    // came due WHILE THE APP WAS CLOSED runs at launch, not one interval later
-    // (the due-check reads the persisted `pruneLastRunAt`, and the safety
-    // gates — logged in, tab free, active hours — still all apply).
-    this.scheduler.every(
-      'prune:auto-watcher',
-      intervalMs,
-      () => this.maybeRunScheduledPrune(),
-      { unref: true, immediate: true },
-    );
-  }
+  startScheduledPruneWatcher(intervalMs?: number): void { this.pruneSchedule.startScheduledPruneWatcher(intervalMs); }
 
   /** Observe useful progress; intentional waits and offline periods are exempt. */
   startEngineStepWatchdog(intervalMs = RECOVERY.STEP_WATCHDOG_CHECK_MS): void {
@@ -1267,7 +990,7 @@ export class Foundation {
     const graph = this.graph;
     const state = graph?.engine.status().state ?? null;
     graph?.pruneEngine.stop();
-    this.pruneStopEpoch += 1;
+    this.prune.cancelPending();
     logger.warn('foundation: system suspend — freezing', {
       engineState: state,
       activeDriver: this.lease.owner(),
@@ -1397,106 +1120,8 @@ export class Foundation {
     }
   }
 
-  /**
-   * Why the scheduled prune must stay off the tab right now, or null when it
-   * is clear. A rate wall frees the tab but launching a census walk into the
-   * same wall deepens the block, so the prune waits out:
-   *
-   *  - a recent rate-limit-classified HALT ({@link isRateLimitHalt} — the
-   *    growth engine's own vocabulary, so the set cannot drift from what it
-   *    emits), and
-   *  - a LIVE recovery ladder that has classified at least one rate-limited
-   *    failure: the halt only lands after every rung is spent, and the whole
-   *    hold before it is exactly when a census walk must not run.
-   */
-  private pruneRateCooldown(graph: BuiltGraph): Record<string, unknown> | null {
-    const halt = graph.engine.lastHaltInfo();
-    if (
-      halt !== null &&
-      isRateLimitHaltKey(halt.reason) &&
-      graph.clock.now() - halt.at < RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS
-    ) {
-      return {
-        haltReason: halt.reason,
-        haltAt: halt.at,
-        cooldownMs: RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS,
-      };
-    }
-    const ladder = graph.engine.recoverySnapshot();
-    const rateLimitedEntries = ladder.kindTally['rate-limited'] ?? 0;
-    if ((ladder.phase === 'holding' || ladder.phase === 'probing') && rateLimitedEntries > 0) {
-      return { recoveryPhase: ladder.phase, attempt: ladder.attempt, rateLimitedEntries };
-    }
-    return null;
-  }
-
-  /**
-   * One scheduled-prune check: start a run iff it is due and safe. A RUNNING
-   * growth engine is no longer a blocker — {@link startPrune} pauses it for the
-   * hand-off and resumes it when the prune finishes — so the only gates left are
-   * "not already driving the tab" (no active prune) and "inside active hours".
-   */
-  private async maybeRunScheduledPrune(): Promise<void> {
-    if (this.disposing || this.lease.tourHeld() || this.pruneRefusalReason() !== null) return;
-    const token = this.runtime.token();
-    const graph = await this.builtGraph();
-    if (graph === null) return;
-    const cooldown = this.pruneRateCooldown(graph);
-    if (cooldown !== null) {
-      logger.info('foundation: scheduled prune skipped — rate-limit cool-down', cooldown);
-      return;
-    }
-    const settings = this.resolveSettings();
-    if (!pruneDue(settings.pruneScheduleDays, settings.pruneLastRunAt, graph.clock.now())) {
-      return;
-    }
-    // Re-check the driver token after the await: never contend with a prune that
-    // started in the meantime. (Growth running is fine — startPrune hands it off.)
-    if (this.pruneRefusalReason() !== null) return;
-    if (!graph.rate.withinActiveHours()) return;
-
-    // Launch jitter (timing-noise layer): the 30-min due-poll is LOCAL (no IG
-    // traffic on the tick), but launching the moment the tick lands put every
-    // scheduled prune on a half-hour-aligned grid. Hold a uniform slice —
-    // interruptible by dispose — then RE-RUN the safety gates: the world may
-    // have changed during a hold this long.
-    const launchHoldMs = sample(uniform(0, NOISE.PRUNE_LAUNCH_JITTER_MAX_MS));
-    logger.info('foundation: scheduled prune due, holding jittered launch slot', {
-      launchHoldMs,
-    });
-    await sleep(launchHoldMs, this.disposeAbort.signal);
-    if (this.disposing || this.lease.tourHeld() || this.pruneRefusalReason() !== null || !this.runtime.current(token) || this.graph !== graph) return;
-    if (!graph.rate.withinActiveHours()) return;
-    // A manual prune may have started AND completed during the hold — its
-    // fresh lastRunAt makes the schedule no longer due.
-    {
-      const s = this.resolveSettings();
-      if (!pruneDue(s.pruneScheduleDays, s.pruneLastRunAt, graph.clock.now())) return;
-    }
-    const cooldownAfterHold = this.pruneRateCooldown(graph);
-    if (cooldownAfterHold !== null) {
-      logger.info(
-        'foundation: scheduled prune skipped after hold — rate-limit cool-down',
-        cooldownAfterHold,
-      );
-      return;
-    }
-
-    logger.info('foundation: scheduled prune due, auto-starting', {
-      scheduleDays: settings.pruneScheduleDays,
-      lastRunAt: settings.pruneLastRunAt,
-      growthState: graph.engine.status().state,
-      weave: settings.weaveEnabled && settings.pacingModel === 'organic',
-    });
-    // Organic + weave: SCAN and enqueue — the growth loop drains the census woven into
-    // its own sessions (no separate bulk driver). Otherwise: the legacy bulk run.
-    if (settings.weaveEnabled && settings.pacingModel === 'organic') {
-      const res = await this.scanPrune();
-      if (res.ok) void this.updateSettings({ pruneLastRunAt: graph.clock.now() });
-      return;
-    }
-    void this.startPrune();
-  }
+  /** One scheduled-prune check (see {@link PruneSchedule.maybeRunScheduledPrune}). */
+  private maybeRunScheduledPrune(): Promise<void> { return this.pruneSchedule.maybeRunScheduledPrune(); }
 
   /** Drain manual operations before closing their store; disposal aborts their waits. */
   private async drainManualOps(): Promise<void> {
@@ -1646,71 +1271,8 @@ export class Foundation {
     }
   }
 
-  /**
-   * One-shot read-only precheck of a seed username: whether it exists and whether
-   * its followers list is visible (public, or private and followed). One profile
-   * VISIT through the shared tab, sentinel-gated. Never throws across IPC.
-   */
-  async checkSeed(username: string): Promise<SeedCheck> {
-    // Veil: the seed check is a real profile visit — reading counts.
-    return this.trackManualOp(() =>
-      this.activity.with('seed-check', () => this.checkSeedHeld(username)),
-    );
-  }
-
-  private async checkSeedHeld(username: string): Promise<SeedCheck> {
-    const graph = await this.builtGraph();
-    if (graph === null) {
-      return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'not-logged-in' };
-    }
-    // R3: refuse while a driver runs — a concurrent one-shot fetch competes with
-    // that driver's own IG traffic and its sentinel gating.
-    const busy = this.busyDriverReason();
-    if (busy !== null) {
-      return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: busy };
-    }
-    this.manualDriving = true;
-    try {
-      const clean = username.trim().replace(/^@/, '');
-      if (!clean) return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'empty' };
-      if ((await graph.sentinel.check()) !== 'ok') {
-        return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'blocked' };
-      }
-      // One profile VISIT (`rim/profile-visit.ts`): the page's own client reads
-      // the profile and the observer has stored it — FACTS STREAM (PRINCIPLES
-      // §1) — by the time this resolves, adopted seed or not.
-      const visit = await graph.profiles.visit(clean);
-      if (!visit.ok) {
-        // A wall is IG blocking; `gone` is the page saying the profile is not
-        // available; a page that never answered is unknown, never "not found".
-        const reason =
-          visit.kind === 'walled' ? 'blocked' : visit.kind === 'gone' ? 'not-found' : 'error';
-        logger.warn('foundation.checkSeed: profile visit failed', { kind: visit.kind, reason, ...visit.detail });
-        return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason };
-      }
-      const isPrivate = visit.obs.fields.isPrivate === true;
-      // A private account's followers are viewable iff we follow it. The
-      // profile body carries the viewer-side flags, so a private seed no longer
-      // costs a `friendships/show` read (same rule as before: follow or request).
-      const followersVisible = isPrivate
-        ? visit.viewer.following === true || visit.viewer.requested === true
-        : true;
-      return {
-        ok: true,
-        exists: true,
-        followersVisible,
-        isPrivate,
-        reason: followersVisible ? undefined : 'private',
-      };
-    } catch (e) {
-      // Only a genuinely unexpected exception (evaluate/tab failure) lands here.
-      logger.error('foundation.checkSeed: failed', { username, error: String(e) });
-      return { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'error' };
-    } finally {
-      this.manualDriving = false;
-      this.resumeDesiredRun();
-    }
-  }
+  /** The seed precheck: one sentinel-gated profile visit (see {@link SeedCheckService}). */
+  checkSeed(username: string): Promise<SeedCheck> { return this.seed.checkSeed(username); }
 
   /**
    * A capped page of follow_records in one lifecycle state, joined to accounts.
@@ -1751,26 +1313,10 @@ export class Foundation {
   }
 
   /** The persisted settings (loaded lazily and cached; defaults on any failure). */
-  async getSettings(): Promise<Settings> {
-    return this.resolveSettings();
-  }
+  getSettings(): Promise<Settings> { return this.settings.getSettings(); }
 
-  /**
-   * Reset all settings to their defaults (knowledge data + IG session are kept),
-   * persist, and — when built — reload the live engine configs.
-   */
-  async resetSettings(): Promise<Settings> {
-    const s: Settings = { ...DEFAULT_SETTINGS };
-    this.settingsCache = s;
-    try {
-      saveSettings(this.settingsFilePath(), s);
-    } catch (e) {
-      logger.error('foundation.resetSettings: persist failed', { error: String(e) });
-    }
-    if (this.graph !== null) this.reloadConfigs(s);
-    logger.info('foundation: settings reset to defaults');
-    return s;
-  }
+  /** Reset every setting to its default (see {@link SettingsService.resetSettings}). */
+  resetSettings(): Promise<Settings> { return this.settings.resetSettings(); }
 
   /**
    * Wipe everything EXCEPT settings: tear down the graph, delete the knowledge DB
@@ -1828,54 +1374,11 @@ export class Foundation {
     return s;
   }
 
-  /**
-   * Merge a partial into settings, persist atomically, and — when the engine is
-   * built — reload every derived component config live so the change takes effect
-   * without a restart. When not built, the merge is only persisted (§5).
-   */
-  async updateSettings(partial: Partial<Settings>): Promise<Settings> {
-    // Sanitize AFTER the merge: IPC payloads are unvalidated renderer input, and
-    // a hand-edited settings file already passed through the same clamps at load.
-    const next: Settings = sanitizeSettings({ ...this.resolveSettings(), ...partial });
-    this.settingsCache = next;
-    try {
-      saveSettings(this.settingsFilePath(), next);
-    } catch (e) {
-      logger.error('foundation.updateSettings: persist failed', { error: String(e) });
-    }
-    if (this.graph !== null) this.reloadConfigs(next);
-    return next;
-  }
+  /** Merge, persist and live-reload a settings partial (see {@link SettingsService.updateSettings}). */
+  updateSettings(partial: Partial<Settings>): Promise<Settings> { return this.settings.updateSettings(partial); }
 
-  /** Push the new Settings into every live component's config (no rebuild). */
-  private reloadConfigs(s: Settings): void {
-    const g = this.graph;
-    if (g === null) return;
-    g.rate.applyConfig(toRateGovernorConfig(s));
-    g.churn.applyConfig(toChurnConfig(s));
-    g.scanner.applyConfig(toScannerConfig(s), toScorerConfig(s));
-    g.followback.applyConfig(toFollowbackConfig(s));
-    g.chain.applyConfig(toChainConfig(s));
-    g.pruneEngine.applyConfig(toPruneConfig(s));
-    // Organic pacing knobs update live (gap/velocity/volume); a legacy↔organic model
-    // switch takes effect on the next graph build (the planner is a construction-time dep).
-    g.pacing?.applyConfig(toPacingConfig(s));
-    g.churnActions.setDryRun(s.dryRun);
-    g.engine.applySettings(s);
-    logger.info('foundation: settings reloaded into live engine configs');
-  }
-
-  /** Load settings once from disk (merged over defaults) and cache the result. */
-  private resolveSettings(): Settings {
-    if (this.settingsCache === null) {
-      this.settingsCache = loadSettings(this.settingsFilePath());
-    }
-    return this.settingsCache;
-  }
-
-  private settingsFilePath(): string {
-    return path.join(this.userDataDir, IG_SETTINGS_FILE);
-  }
+  /** The cached settings, loaded once from disk (see {@link SettingsService.resolveSettings}). */
+  private resolveSettings(): Settings { return this.settings.resolveSettings(); }
 
   // -------------------------------------------------------------------------
   // Identity resolution
@@ -1921,7 +1424,7 @@ export class Foundation {
     // Only called when `this.graph` is set (post-build).
     const graph = this.graph;
     if (graph === null) return this.notBuiltStatus(true);
-    return { ...graph.engine.status(), loggedIn: true, runtime: this.runtimeSnapshot() };
+    return composeStatus({ ...graph.engine.status(), loggedIn: true, runtime: this.runtimeSnapshot() }, [], graph, graph.clock.now());
   }
 
   private notBuiltPruneStatus(): PruneStatus {
