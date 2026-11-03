@@ -1856,3 +1856,17 @@ describe('Engine — the unconfirmed-actions breaker (spec §11.1 F7)', () => {
     expect(pacing.noteOutcome('unfollow', true, h.clock.now())).toBe(1);
   });
 });
+
+describe('Engine — lastActionAt survives a relaunch (spec §15.3)', () => {
+  test("before this run acts, the status shows the store's last settled write", async () => {
+    const h = makeHarness();
+    expect(h.engine.status().lastActionAt).toBeNull();
+    const intent = h.store.beginEffectIntent({ accountPk: 'a', username: 'a', action: 'follow', channel: 'growth', at: T0 - HOUR });
+    h.store.markEffectDispatched(intent.id, T0 - HOUR);
+    h.store.settleEffectIntent(intent.id, { at: T0 - HOUR, result: 'ok', ledger: 'growth' });
+    expect(h.engine.status().lastActionAt).toBe(T0 - HOUR);
+    h.churn.due = [rec({ accountPk: 'b' })];
+    await h.engine.stepOnce();
+    expect(h.engine.status().lastActionAt).toBe(T0);
+  });
+});

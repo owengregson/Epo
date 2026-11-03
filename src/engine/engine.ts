@@ -431,7 +431,7 @@ export class Engine {
       state: this.engineState,
       lastStep: this.lastStep,
       lastSentinel: this.lastSentinel,
-      lastActionAt: this.lastActionAt,
+      lastActionAt: this.lastActionAt ?? this.deps.store.feed.lastSettledMutationAt(), // a relaunch shows the last settled write
       sessionStartedAt: this.sessionStartedAt,
       // The live wait's deadline when one is pending; otherwise the OWED
       // deadline a pause/offline hold interrupted (so the countdown survives a
