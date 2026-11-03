@@ -12,7 +12,7 @@ import type { SentinelStatus } from '@/adapter/ig-surface';
 import { Reader } from '@/adapter/reader';
 import { FakeClock } from '@/governors/clock';
 import { MOTION } from '@/kernel/motion-policy';
-import { ProfileObserver } from '@/rim/profile-observer';
+import { admitOwnCounts, ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { clamp, logNormal } from '@/timing/distributions';
@@ -246,5 +246,54 @@ describe('visits are paced like a person browsing (live 2026-11-02: ten back to 
     await visitor.visit('a');
     ac.abort();
     await expect(visitor.visit('b')).rejects.toBeInstanceOf(ActionAbortedError);
+  });
+});
+
+describe('the read behind a visit: presence, the count pair, our own counts (spec §10.3, §10.4)', () => {
+  test('a visit carries which decision-bearing fields the body held, and how it was read', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/user_8/'] = () =>
+      serve(tab, profileBody('8', 'user_8', { following: false, outgoing_request: false, followed_by: false }));
+    const visit = await visitor.visit('user_8');
+    expect(visit.ok && { presence: visit.presence, tier: visit.tier, partial: visit.partial }).toEqual({
+      presence: { counts: 'read', bio: 'read', isPrivate: 'read', isVerified: 'read', relationship: 'read' },
+      tier: 'canonical',
+      partial: false,
+    });
+  });
+
+  test('a partial count pair stores the profile without any count (I5)', async () => {
+    const { tab, visitor } = setup();
+    const { following_count: _drop, ...user } = profileBody('9', 'user_9').data.user;
+    tab.pages['https://www.instagram.com/user_9/'] = () => serve(tab, { data: { user } });
+    const visit = await visitor.visit('user_9');
+    expect(visit.ok && visit.presence?.counts).toBe('partial');
+    expect(store.getAccount('9')).toMatchObject({ username: 'user_9' });
+    expect(store.getAccount('9')?.followers ?? null).toBeNull();
+    expect(store.getAccount('9')?.following ?? null).toBeNull();
+  });
+
+  test('our own counts come only from a canonical or normalized, complete read', () => {
+    const obs = { accountPk: '1', observedAt: 5, source: 'profile' as const, fields: { username: 'me', followers: 3, following: 4 } };
+    expect(admitOwnCounts(obs, { tier: 'canonical', partial: false }, '1')).toBe(obs);
+    expect(admitOwnCounts(obs, { tier: 'normalized', partial: false }, '1')).toBe(obs);
+    expect(admitOwnCounts(obs, { tier: 'recovered', partial: false }, '1').fields).toMatchObject({ followers: undefined, following: undefined });
+    expect(admitOwnCounts(obs, { tier: 'canonical', partial: true }, '1').fields.followers).toBeUndefined();
+    expect(admitOwnCounts(obs, { tier: 'recovered', partial: true }, '2')).toBe(obs);
+  });
+
+  test("a null relationship reads as the viewer's own only on our own record (I10)", async () => {
+    const tab = new PageTab();
+    tab.on(marker('"control":"profile-unavailable"'), () => ({ found: false }));
+    const observer = new ProfileObserver({ tab, reader: new Reader(), store, clock: new FakeClock(1_000), ownPk: '1' });
+    observer.start();
+    const visitor = new TabProfileVisitor({ tab, observer, sentinel: { check: async () => 'ok' }, waitMs: 20, pollMs: 1,
+      sleep: async () => {} });
+    tab.pages['https://www.instagram.com/me/'] = () => serve(tab, profileBody('1', 'me'));
+    tab.pages['https://www.instagram.com/other/'] = () => serve(tab, profileBody('2', 'other'));
+    const self = await visitor.visit('me');
+    const other = await visitor.visit('other');
+    expect(self.ok && self.presence?.relationship).toBe('self');
+    expect(other.ok && other.presence?.relationship).toBe('null');
   });
 });

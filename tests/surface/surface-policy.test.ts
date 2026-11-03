@@ -13,6 +13,7 @@ test('SURFACE_BOUNDS holds the Appendix D.1 values and the list walk fetch retry
     maxSignaturesPerEndpoint: 200, sampleMaxBytes: 16_384, samplesPerDay: 12, healthRetentionDays: 30,
     driftRetentionDays: 90, meterReservoir: 128, unmatchedPostsKept: 12, logHeadChars: 80, envelopeHeadChars: 256,
     requestBodyMaxBytes: 65_536, scrubCountDigits: 2, scrubCountFloor: 100, listWalkFetchRetries: 1,
+    timeFloorMs: Date.UTC(2010, 0, 1),
   });
 });
 

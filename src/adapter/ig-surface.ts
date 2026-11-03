@@ -31,6 +31,7 @@ import type {
   StaleComponent,
 } from '@/adapter/surface-types';
 import type { EndpointKind } from '@/surface/schema/endpoints';
+import type { ProfilePresence } from '@/surface/schema/projection';
 
 // The envelope, mutation and result types live in sibling modules that import
 // nothing from here; re-exported so every consumer keeps one import site.
@@ -138,6 +139,8 @@ export interface IgSurface {
   extractProfileInfo(body: unknown, at: number): Observation | null | ShapeMismatch;
   /** The viewer-side flags of a profile body, each read by presence (`null` when absent). */
   extractProfileViewer(body: unknown): ProfileViewer;
+  /** Which decision-bearing profile fields were read; `viewerPk` tells a null relationship's owner. */
+  extractProfilePresence(body: unknown, viewerPk: string | null): ProfilePresence | null;
   /** Parse the batched relationship map. `SHAPE_MISMATCH` on unexpected shape. */
   extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch;
   /**

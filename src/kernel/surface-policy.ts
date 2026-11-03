@@ -47,4 +47,6 @@ export const SURFACE_BOUNDS = {
   scrubCountFloor: 100,
   /** A failed list page is retried once on its cursor; the next failure ends the walk, never as an end. */
   listWalkFetchRetries: 1,
+  /** Event times before 2010-01-01 UTC are a unit error, never a date (I9). */
+  timeFloorMs: 1_262_304_000_000,
 } as const;

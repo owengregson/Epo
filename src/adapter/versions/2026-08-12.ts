@@ -29,6 +29,7 @@ import {
   extractFollowersList,
   extractFriendshipShow,
   extractProfileInfo,
+  extractProfilePresence,
   extractProfileViewer,
   extractShowMany,
 } from '@/adapter/versions/2026-08-12.extractors';
@@ -190,6 +191,7 @@ export const SURFACE_2026_08_12: IgSurface = {
 
   extractFollowersList,
   extractProfileInfo,
+  extractProfilePresence,
   extractProfileViewer,
   extractShowMany,
   extractFriendshipShow,

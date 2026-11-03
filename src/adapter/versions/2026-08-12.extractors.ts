@@ -23,12 +23,26 @@ import type {
 import { activityFeedRoot, followRequestsPage } from '@/adapter/versions/2026-08-12.notifications';
 import type { Observation } from '@/store/types';
 import { continuationOf } from '@/surface/read/continuation';
+import {
+  type CountKeys,
+  readBool,
+  readCountPair,
+  readRelationshipPresence,
+  readTextPresence,
+} from '@/surface/read/fields';
 import { readRelationship } from '@/surface/read/relationship';
+import type { ProfilePresence } from '@/surface/schema/projection';
 import { CONTINUATION } from '@/surface/versions/2026-08-12/continuation-decl';
 import { JSON_PATHS } from '@/surface/versions/2026-08-12/literals';
 
 /** Every relationship flag is read by presence: a renamed key is unknown, never `false`. */
 const REL = JSON_PATHS.relationship;
+/** The profile's count keys, read as one atomic pair. */
+const COUNT_KEYS: CountKeys = {
+  followers: JSON_PATHS.profileUser.followersCount,
+  following: JSON_PATHS.profileUser.followingCount,
+  mutuals: JSON_PATHS.profileUser.mutualCount,
+};
 
 export function extractFollowersList(
   raw: unknown,
@@ -106,6 +120,9 @@ export function extractProfileInfo(body: unknown, at: number): Observation | nul
   // the GraphQL body sends a string `pk`. Either spelling is the same id.
   const pk = asStringId(user[p.id]) ?? asStringId(user[p.altId]);
   if (pk === null) return SHAPE_MISMATCH;
+  // I5: the counts are an atomic pair — a partial pair stores no stat, a digit string is retyped.
+  const pair = readCountPair(user, COUNT_KEYS);
+  const counts = pair === null || 'issue' in pair ? null : pair;
 
   return {
     accountPk: pk,
@@ -115,13 +132,36 @@ export function extractProfileInfo(body: unknown, at: number): Observation | nul
       username: typeof user[p.username] === 'string'
         ? (user[p.username] as string)
         : undefined,
-      followers: asCount(getPath(user, p.followersCount)),
-      following: asCount(getPath(user, p.followingCount)),
-      mutuals: asCount(getPath(user, p.mutualCount)),
+      followers: counts?.followers,
+      following: counts?.following,
+      mutuals: counts?.mutuals,
       isPrivate: asBool(user[p.isPrivate]),
       isVerified: asBool(user[p.isVerified]),
       bio: typeof user[p.biography] === 'string' ? (user[p.biography] as string) : undefined,
     },
+  };
+}
+
+/**
+ * The profile read's presence per decision-bearing field (spec §10.3): whether the count pair,
+ * the bio and the flags were read, and whether a null relationship is the viewer's own record.
+ */
+export function extractProfilePresence(body: unknown, viewerPk: string | null): ProfilePresence | null {
+  const user = profileUserOf(body);
+  if (user === null || isShapeMismatch(user)) return null;
+  const p = JSON_PATHS.profileUser;
+  const pair = readCountPair(user, COUNT_KEYS);
+  const flag = (key: string) => {
+    const b = readBool(user, key);
+    return 'value' in b ? 'read' : b.presence;
+  };
+  return {
+    counts: pair === null ? 'absent' : !('issue' in pair) ? 'read' : pair.issue.kind === 'counts-partial' ? 'partial' : 'invalid',
+    bio: readTextPresence(user, p.biography),
+    isPrivate: flag(p.isPrivate),
+    isVerified: flag(p.isVerified),
+    relationship: readRelationshipPresence(user, p.friendshipStatus,
+      asStringId(user[p.id]) ?? asStringId(user[p.altId]), viewerPk),
   };
 }
 

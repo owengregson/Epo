@@ -20,6 +20,31 @@ export interface FollowEvent {
 /** How a read was located (spec §10.2): the declared form, a declared alternate, or recovered. */
 export type Tier = 'canonical' | 'normalized' | 'recovered';
 
+/** A value's JSON type, `absent` when the key is missing (issues name types, never values). */
+export type JsonType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'null' | 'absent';
+export type FieldIssueKind = 'expected-absent' | 'unexpected-null' | 'invalid' | 'counts-partial' | 'id-conflict'
+  | 'id-space' | 'unsafe-number' | 'time-range' | 'enum-novel';
+/** One field a reader refused: where (a path pattern), why, and what type arrived. */
+export interface FieldIssue {
+  readonly path: string;
+  readonly kind: FieldIssueKind;
+  readonly got?: JsonType;
+}
+
+/** Whether a field was read, and if not, why (spec §10.3). */
+export type Presence = 'read' | 'absent' | 'null' | 'invalid' | 'partial' | 'withheld';
+/** A profile read's presence per decision-bearing field. */
+export interface ProfilePresence {
+  /** `read` only for a valid count pair. */
+  readonly counts: Presence;
+  /** `read` covers '' and text; `null` is an explicit null. */
+  readonly bio: Presence;
+  readonly isPrivate: Presence;
+  readonly isVerified: Presence;
+  /** `self` only when the viewer reads their own record (I10). */
+  readonly relationship: Presence | 'self';
+}
+
 /**
  * A viewer-side relationship fact. Every flag is read by presence: `null` means the key was
  * absent (unknown), never `false` (spec §10.4).

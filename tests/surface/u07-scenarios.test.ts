@@ -3,11 +3,15 @@
  * make, and what Epo must do with it. A renamed relationship key never becomes "we do not follow".
  */
 import { Reader } from '@/adapter/reader';
+import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
+import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
+import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import { RelationshipReconciler } from '@/rim/relationship-reconciler';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import { RECOVERY } from '@/timing/config';
 import { setLevel } from '@/utils/logger';
-import { mkProfileGraphqlResp, mkResp } from '../kit/fakes';
+import { FakeSentinel, mkProfileGraphqlResp, mkResp } from '../kit/fakes';
 import { openTestStore } from '../kit/store';
 
 beforeAll(() => setLevel('error'));
@@ -80,5 +84,37 @@ describe('U07 relationship rows: an absent key is unknown, never "not following"
   test.each(CONTROL.map((r) => [r.id, r] as const))('control %s: both keys present and false drop it', async (_id, row) => {
     await reconciler.ingest(respOf(row));
     expect(store.getFollowRecord(PK)?.state).toBe('external');
+  });
+});
+
+describe('U07 count rows: the counts are one pair, and a count-less read ends the pass', () => {
+  const user = (counts: Record<string, unknown>) => ({ data: { user: { pk: PK, username: 'subject', ...counts } } });
+
+  test('P2 a digit-string count is retyped and stored with its sibling', () => {
+    const obs = reader.parseProfileInfo(user({ follower_count: '1200', following_count: 4 }), T0, 'profile-graphql');
+    expect(obs?.fields).toMatchObject({ followers: 1200, following: 4 });
+  });
+
+  test('P3 a moved count stores no stat at all, so a stale sibling never looks fresh', () => {
+    const obs = reader.parseProfileInfo(user({ edge_followed_by: { count: 1200 }, following_count: 4 }), T0, 'profile-graphql');
+    expect(obs?.fields.followers).toBeUndefined();
+    expect(obs?.fields.following).toBeUndefined();
+  });
+
+  test('P3 profile reads without counts count in the enricher streak: the pass ends early', async () => {
+    const visited: string[] = [];
+    const visitor: ProfileVisitor = {
+      visit: async (username) => {
+        visited.push(username);
+        return { ok: true, obs: { accountPk: username, observedAt: T0, source: 'profile', fields: { username } },
+          viewer: { following: null, requested: null, followsUs: null },
+          presence: { counts: 'partial', bio: 'read', isPrivate: 'read', isVerified: 'read', relationship: 'read' } };
+      },
+    };
+    const enricher = new AdapterBackedProfileEnricher({ visitor, store, sentinel: new FakeSentinel() as unknown as Sentinel,
+      clock: new FakeClock(T0), sleep: async () => {} });
+    const usernames = Array.from({ length: RECOVERY.BLOCKED_STREAK_ENTRY + 3 }, (_, i) => `u${i}`);
+    expect(await enricher.enrich(usernames)).toBe(0);
+    expect(visited).toHaveLength(RECOVERY.BLOCKED_STREAK_ENTRY);
   });
 });

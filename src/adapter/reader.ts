@@ -30,6 +30,7 @@ import {
 } from '@/adapter/reader-shadow';
 import type { ObservedRelation } from '@/shared/observed-relation';
 import type { Observation } from '@/store/types';
+import type { ProfilePresence } from '@/surface/schema/projection';
 
 // Re-export the stable result types so existing consumers keep one import site.
 export type {
@@ -196,6 +197,11 @@ export class Reader {
    */
   profileViewer(body: unknown, kind: ProfileKind = 'profile-graphql'): ProfileViewer {
     return SURFACE.extractProfileViewer(coerceBody(body, kind));
+  }
+
+  /** Which decision-bearing fields a profile body carried (`viewerPk` names a null relationship's owner). */
+  profilePresence(body: unknown, kind: ProfileKind, viewerPk: string | null): ProfilePresence | null {
+    return SURFACE.extractProfilePresence(coerceBody(body, kind), viewerPk);
   }
 
   /** Parse the batched relationship map (`reader-relationships.ts`). */
