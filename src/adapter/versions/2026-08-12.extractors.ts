@@ -20,7 +20,7 @@ import type {
   ProfileViewer,
   ShowManyEntry,
 } from '@/adapter/surface-types';
-import { activityFeedRoot, followRequestsPage } from '@/adapter/versions/2026-08-12.notifications';
+import { activityFeedRoot, feedPendingRows, followRequestsPage } from '@/adapter/versions/2026-08-12.notifications';
 import type { Observation } from '@/store/types';
 import { continuationOf } from '@/surface/read/continuation';
 import {
@@ -44,6 +44,25 @@ const COUNT_KEYS: CountKeys = {
   mutuals: JSON_PATHS.profileUser.mutualCount,
 };
 
+/** One list user row as an observation, or `null` when the row does not read (no record, no id). */
+function listRowOf(entry: unknown, at: number, source: Observation['source']): Observation | null {
+  if (!isRecord(entry)) return null;
+  const p = JSON_PATHS.followersList;
+  const pk = asStringId(entry[p.userPk]);
+  if (pk === null) return null;
+  const username = entry[p.userName];
+  return { accountPk: pk, observedAt: at, source, fields: {
+    username: typeof username === 'string' ? username : undefined,
+    isPrivate: asBool(entry[p.isPrivate]),
+    isVerified: asBool(entry[p.isVerified]),
+  } };
+}
+
+/** The feed's side list of pending requesters: each readable row, as presence — never a complete set. */
+export function extractFeedPendingPreview(body: unknown, at: number): Observation[] {
+  return feedPendingRows(body).flatMap((entry) => listRowOf(entry, at, 'friend-requests') ?? []);
+}
+
 export function extractFollowersList(
   raw: unknown,
   at: number,
@@ -52,28 +71,9 @@ export function extractFollowersList(
   const body = source === 'friend-requests' ? followRequestsPage(raw) : raw;
   if (!isRecord(body)) return SHAPE_MISMATCH;
 
-  const p = JSON_PATHS.followersList;
-  const users = getPath(body, p.users);
+  const users = getPath(body, JSON_PATHS.followersList.users);
   if (!Array.isArray(users)) return SHAPE_MISMATCH;
-
-  const observations: Observation[] = [];
-  for (const entry of users) {
-    if (!isRecord(entry)) continue;
-    const pk = asStringId(entry[p.userPk]);
-    if (pk === null) continue;
-    observations.push({
-      accountPk: pk,
-      observedAt: at,
-      source,
-      fields: {
-        username: typeof entry[p.userName] === 'string'
-          ? (entry[p.userName] as string)
-          : undefined,
-        isPrivate: asBool(entry[p.isPrivate]),
-        isVerified: asBool(entry[p.isVerified]),
-      },
-    });
-  }
+  const observations = users.flatMap((entry) => listRowOf(entry, at, source) ?? []);
 
   // A present cursor ALWAYS means another page; without one, the declared more-flags decide,
   // and a flag set with no cursor is drift — never an end (spec §10.4).

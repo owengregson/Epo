@@ -26,6 +26,7 @@ import type {
 import { pageCall as callPage } from '@/adapter/page-call';
 import {
   extractActivityFeed,
+  extractFeedPendingPreview,
   extractFollowersList,
   extractFriendshipShow,
   extractProfileInfo,
@@ -196,6 +197,7 @@ export const SURFACE_2026_08_12: IgSurface = {
   extractShowMany,
   extractFriendshipShow,
   extractActivityFeed,
+  extractFeedPendingPreview,
 
   matchMutation,
   extractMutationVerdict,

@@ -155,6 +155,8 @@ export interface IgSurface {
    * recent follows).
    */
   extractActivityFeed(body: unknown): FollowEvent[] | ShapeMismatch;
+  /** The feed body's side list of pending requesters, row by row, at its declared place only. */
+  extractFeedPendingPreview(body: unknown, at: number): Observation[];
 
   // --- Mutations (the action button's own requests) ------------------------
   /**

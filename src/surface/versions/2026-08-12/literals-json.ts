@@ -73,6 +73,8 @@ export const JSON_PATHS = {
   },
   /** The GraphQL feed nests the REST inbox body (stories unchanged) here. */
   activityFeedGraphql: 'data.xdt_activity_inbox',
+  /** The feed's side list of pending requesters (a few rows; never the complete set). */
+  activityFeedPendingPreview: 'data.xdt_api__v1__friendships__pending.users',
   /** The GraphQL follow-requests panel: a connection of the list endpoints' user rows. */
   followRequestsGraphql: {
     edges: 'data.xdt_friendships_pending_users.users.edges',

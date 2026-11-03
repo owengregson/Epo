@@ -215,26 +215,21 @@ export class Reader {
   }
 
   /**
-   * Parse the incoming follow-requests page (`friendships/pending/` — the
-   * followers-list shape) into observations labelled with their own
-   * provenance. Typed empty result on no-match.
+   * STRICT parse of the follow-requests panel (the list shape, REST or a GraphQL connection):
+   * `null` on a shape mismatch, never the typed empty page — an unreadable panel must never
+   * read as "nobody asked to follow you" (spec §10.4).
    */
-  parsePendingRequests(body: unknown, at: number): FollowersListResult {
-    const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false,
-      continuation: { kind: 'end', evidence: 'no-flags' }, quarantined: 0 };
-    const result = SURFACE.extractFollowersList(
-      coerceBody(body, 'friend-requests'),
-      at,
-      'friend-requests',
-    );
+  parseRequestsStrict(body: unknown, at: number): FollowersListResult | null {
+    const result = SURFACE.extractFollowersList(coerceBody(body, 'friend-requests'), at, 'friend-requests');
     const legacy = isShapeMismatch(result) ? null : result;
-    shadowRead('friend-requests', body, at, 'friend-requests', legacy === null,
-      compareList(legacy));
-    if (legacy === null) {
-      warnUnexpected('friend-requests', body);
-      return empty;
-    }
+    shadowRead('friend-requests', body, at, 'friend-requests', legacy === null, compareList(legacy));
+    if (legacy === null) warnUnexpected('friend-requests', body);
     return legacy;
+  }
+
+  /** The feed body's side list of pending requesters, row by row (never the complete set). */
+  feedPendingPreview(body: unknown, at: number): Observation[] {
+    return SURFACE.extractFeedPendingPreview(coerceBody(body, 'activity-feed'), at);
   }
 
   /**
