@@ -13,6 +13,7 @@
  * All constants live in the NOISE group of `timing/config.ts`.
  */
 
+import { fnv1a, mulberry32 } from '../kernel/rng';
 import { NOISE } from './config';
 import { clamp, logNormal, normal01 } from './distributions';
 import type { DelayPolicy, Rng } from './primitives';
@@ -44,30 +45,11 @@ export type WaitClass =
   | 'exact';
 
 /**
- * Deterministic small PRNG (mulberry32) — mirrors `timing/cycle-plan.ts`:
- * seeded, NOT Math.random, so a value derived from stable seed material
- * (day key ⊕ wait key ⊕ install entropy) survives a mid-park restart (§3).
+ * The seeded PRNG (mulberry32) and key hash (FNV-1a) live in the kernel; seeded,
+ * never Math.random, so a value derived from stable seed material (day key ⊕
+ * wait key ⊕ install entropy) survives a mid-park restart (§3).
  */
-export function mulberry32(seed: number): Rng {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** FNV-1a 32-bit string hash — turns a seed key into mulberry32 seed material. */
-export function hashSeedKey(key: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < key.length; i += 1) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
+export { fnv1a as hashSeedKey, mulberry32 };
 
 /**
  * The seed key a daily-boundary jitter draw is stable UNDER: the LOCAL day the
@@ -90,7 +72,7 @@ export function boundarySeedKey(resumeAtMs: number, waitKey: string): string {
  * mid-park restart, but different per day, per key, and per install.
  */
 export function jitterBoundary(baseMs: number, seedKey: string, installEntropy: number): number {
-  const seed = (hashSeedKey(seedKey) ^ Math.imul(installEntropy >>> 0, 0x9e3779b1)) >>> 0;
+  const seed = (fnv1a(seedKey) ^ Math.imul(installEntropy >>> 0, 0x9e3779b1)) >>> 0;
   const u = mulberry32(seed)();
   return baseMs + Math.max(1, Math.round(u * NOISE.DAILY_BOUNDARY_JITTER_MAX_MS));
 }
