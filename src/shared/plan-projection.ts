@@ -61,9 +61,15 @@ export interface PlanProjection {
   };
 }
 
+/** The pace factors past which a session reads as relaxed or quick (the kernel's PLAN_BOUNDS.PACE_WORDS). */
+export interface PaceWords {
+  readonly RELAXED_ABOVE: number;
+  readonly QUICK_BELOW: number;
+}
+
 /** A session's pace factor as a word: a slower-than-reference session reads `relaxed`. */
-export function paceLabel(pace: number): PaceWord {
-  if (pace > 1.15) return 'relaxed';
-  if (pace < 0.87) return 'quick';
+export function paceLabel(pace: number, words: PaceWords): PaceWord {
+  if (pace > words.RELAXED_ABOVE) return 'relaxed';
+  if (pace < words.QUICK_BELOW) return 'quick';
   return 'normal';
 }

@@ -353,8 +353,6 @@
     {"key":"src/settings/v1/settings-v1-rules.ts :: RULES :: num :: 7","class":"GEOM","reason":"the frozen v1 settings format (spec §16.4): what older builds read, never edited"},
     {"key":"src/settings/v1/settings-v1-rules.ts :: RULES :: num :: 90","class":"GEOM","reason":"the frozen v1 settings format (spec §16.4): what older builds read, never edited"},
     {"key":"src/settings/v1/settings-v1.ts :: saveSettings :: JSON.stringify :: 2","class":"GEOM","reason":"the frozen v1 settings format (spec §16.4): what older builds read, never edited"},
-    {"key":"src/shared/plan-projection.ts :: paceLabel :: if :: 0.87","class":"PENDING","stream":"PC","reason":"PC: no spec §17 row names this value; derive it in src/kernel, inject it, or argue it GEOM"},
-    {"key":"src/shared/plan-projection.ts :: paceLabel :: if :: 1.15","class":"PENDING","stream":"PC","reason":"PC: no spec §17 row names this value; derive it in src/kernel, inject it, or argue it GEOM"},
     {"key":"src/shared/projections.ts :: CONVERSION_VERDICT_MIN :: CONVERSION_VERDICT_MIN :: 20","class":"PENDING","stream":"lead","reason":"lead: a display threshold with no spec §17 row; the lead names its home"},
     {"key":"src/shared/projections.ts :: RUNWAY_CAP_DAYS :: RUNWAY_CAP_DAYS :: 90","class":"PENDING","stream":"lead","reason":"lead: a display threshold with no spec §17 row; the lead names its home"},
     {"key":"src/shared/settings-intent.ts :: MAX_DAYS_OFF :: MAX_DAYS_OFF :: 6","class":"PENDING","stream":"SC","reason":"SC: no spec §17 row names this value; derive it in src/kernel, inject it, or argue it GEOM"},
