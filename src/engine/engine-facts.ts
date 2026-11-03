@@ -17,11 +17,12 @@ import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
 import type { Settings } from '../settings/settings';
 import type { KnowledgeStore } from '../store/knowledge-store';
-import { PATTERN } from '../timing/config';
-import { MS_PER_HOUR } from '../timing/units';
 import { queuedCountFor } from './decisions';
 import { EXPLORATION_POLICY } from './exploration-policy';
 import type { FactSources, FeedCandidate } from './facts';
+import { sweepDue } from './facts-cadence';
+import { reconcileDue } from './facts-journal';
+import { actionSource, pacingSource } from './facts-plan';
 import type {
   CurrentTarget,
   EngineChurn,
@@ -117,36 +118,7 @@ export function buildEngineFactSources(d: EngineFactDeps): FactSources {
       }),
     },
 
-    pacing: {
-      staleAfterMs: 0,
-      gather: async (read) => {
-        const { now } = await read('clock');
-        const settings = d.settings();
-        const planner = d.pacing;
-        if (planner === undefined) {
-          return {
-            model: 'legacy' as const,
-            sessionOpen: true,
-            nextSessionStartAt: now,
-            hourlyVelocityCap: settings.hourlyVelocityCap,
-            activeHoursStart: settings.activeHoursStart,
-          };
-        }
-        // The planner's own clock advances only when the hard ceiling is not
-        // already closing the day — a ceiling park must not consume session
-        // time it never used.
-        const { atHardCeiling } = await read('ledger');
-        if (!atHardCeiling) planner.advance(now);
-        const sessionOpen = planner.isSessionOpen(now);
-        return {
-          model: 'organic' as const,
-          sessionOpen,
-          nextSessionStartAt: sessionOpen ? now : planner.nextSessionStartAt(now),
-          hourlyVelocityCap: settings.hourlyVelocityCap,
-          activeHoursStart: settings.activeHoursStart,
-        };
-      },
-    },
+    pacing: pacingSource(d),
 
     target: {
       staleAfterMs: 0,
@@ -183,34 +155,15 @@ export function buildEngineFactSources(d: EngineFactDeps): FactSources {
       gather: async (read) => {
         const { now } = await read('clock');
         return {
-          sweepDue: d.sweepCadence.isDue(now, d.settings().followbackSweepHours * MS_PER_HOUR),
-          reconcile: d.requiresReconciliation?.(now) ?? false,
+          sweepDue: sweepDue(d, now),
+          reconcile: reconcileDue(d, now),
           // SEAM (wave B): `chronos.due(now)` fills this before the first tick.
           overdue: [],
         };
       },
     },
 
-    action: {
-      staleAfterMs: 0,
-      gather: async (read) => {
-        const { now } = await read('clock');
-        const due = d.churn.nextDue(now);
-        const pruneCandidate = d.selectPruneCandidate(now);
-        const unfollowFraction = Math.min(
-          d.settings().maxUnfollowFractionPerSession,
-          PATTERN.MAX_UNFOLLOW_FRACTION_PER_SESSION,
-        );
-        // The interleave draw is taken HERE — exactly when both streams have
-        // work and the lifecycle record is not itself an unfollow — so the
-        // decision stays pure and the seeded stream keeps its order.
-        const weaveDraw =
-          due !== null && pruneCandidate !== null && due.state !== 'unfollow_queued'
-            ? d.rng()
-            : null;
-        return { due, pruneCandidate, weaveDraw, unfollowFraction };
-      },
-    },
+    action: actionSource(d),
 
     streaks: {
       staleAfterMs: 0,
