@@ -16,9 +16,11 @@
  * Layering: `src/kernel/**` imports nothing from the rest of `src/`.
  */
 
+import { CENSUS_POLICY } from './census-policy';
 import { EXPLORATION_POLICY } from './exploration-policy';
 import { EMPIRICAL } from './fundamentals';
 import { BOUNDS } from './policy';
+import { BOUNDS_REENTRY } from './reentry-policy';
 
 const HOURS_PER_DAY = 24;
 const MS_PER_DAY = HOURS_PER_DAY * 3_600_000;
@@ -86,5 +88,63 @@ export function deriveReadAllowance(d: ReadDemand): ReadAllowance {
     listPages: BOUNDS.RIM.LIST_WALK_MAX_PAGES + explorationPages,
     explorationPages,
     notifications: Math.ceil(HOURS_PER_DAY / d.followbackSweepHours) + d.sessionsPerDayMax,
+  };
+}
+
+// ── The plan-day allowance (ADR 0607, spec §5.8 layer 1) ──────────────────────────────
+// The plan core lands it beside the rolling-day allowance above; the read budget switches to it
+// when the plan-day window, the trailing backstop and the `use` tags are wired.
+
+/** The plan-day allowance's inputs: the live limits plus the plan's check, census and frontier terms. */
+export interface PlanReadDemand {
+  readonly dailyHardCeiling: number;
+  readonly dailyPlanSize: number;
+  readonly sessionsPerDayMax: number;
+  /** Mid-session checks a plan-day can need (replaces the sweep cadence). */
+  readonly checksPerDayMax: number;
+  /** One complete census: the header-relative followers walk plus the following list. */
+  readonly censusPagesMax: number;
+  /** Head walks: the launch catch-up plus one per session start. */
+  readonly frontierPages: number;
+}
+
+/** Totals enforced per plan-day AND over any trailing 24 h (spec §3 deviation 3). */
+export interface PlanReadAllowance {
+  readonly profiles: number;
+  /** Click-time verification always fits: non-verify profile debits stay ≤ profiles − this. */
+  readonly verifyReserve: number;
+  readonly explorationProfiles: number;
+  readonly listPages: number;
+  readonly explorationPages: number;
+  readonly notifications: number;
+}
+
+/** Census followers pages for a header of `followers` at `rowsPerPage` (+ the first page and the end probe). */
+export function censusFollowerPages(followers: number, rowsPerPage: number): number {
+  const rows = Math.max(rowsPerPage, BOUNDS_REENTRY.MIN_ROWS_PER_PAGE);
+  return Math.ceil((Math.max(0, followers) * (1 + EMPIRICAL.ORDINARY_DUPLICATE_PAGE_RATE.value)) / rows) + 2;
+}
+
+/** A complete census walk's followers pages: header-relative, bounded; an unknown header keeps today's 200. */
+export function censusPagesMax(header: { readonly followers: number | null }, rowsPerPage: number | null, fallbackRows: number): number {
+  if (header.followers === null) return BOUNDS.RIM.LIST_WALK_MAX_PAGES;
+  return Math.min(censusFollowerPages(header.followers, rowsPerPage ?? fallbackRows), CENSUS_POLICY.maxWalkPages);
+}
+
+/** The head-walk term: the launch catch-up plus one head walk per session start. */
+export function frontierPages(sessionsPerDayMax: number): number {
+  return (1 + Math.max(0, sessionsPerDayMax)) * BOUNDS_REENTRY.FRONTIER_PAGES_MAX;
+}
+
+/** D6 per plan-day: profiles as today plus the verify reserve; pages = exploration + census + frontier. */
+export function derivePlanReadAllowance(d: PlanReadDemand): PlanReadAllowance {
+  const legacy = deriveReadAllowance({ ...d, followbackSweepHours: HOURS_PER_DAY });
+  return {
+    profiles: legacy.profiles,
+    verifyReserve: d.dailyHardCeiling,
+    explorationProfiles: legacy.explorationProfiles,
+    listPages: legacy.explorationPages + d.censusPagesMax + d.frontierPages,
+    explorationPages: legacy.explorationPages,
+    notifications: d.sessionsPerDayMax + d.checksPerDayMax,
   };
 }

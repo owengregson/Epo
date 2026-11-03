@@ -21,9 +21,14 @@
       "reason": "the sidebar's one Boost control and the Settings Boost section read this copy deck"
     },
     {
-      "module": "src/governors/plan-day-clock.ts",
+      "module": "src/governors/plan-projection.ts",
       "stream": "PR",
-      "reason": "plan-wiring.ts, the one swap site, hands the plan-day clock to every day-keyed consumer (UD, RO, PH, LD); the first of them to merge wires this default and removes the entry"
+      "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
+    },
+    {
+      "module": "src/settings/plan-intent.ts",
+      "stream": "PR",
+      "reason": "plan-wiring.ts feeds the plan service toPlanIntent(effective()); the settings core wraps it for the PlanPreviewPort fingerprint"
     }
   ]
 }
