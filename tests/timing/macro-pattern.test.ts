@@ -4,7 +4,8 @@ import { automaticDayMax } from '@/kernel/plan/volume';
 import { createMutationCadence } from '@/main/services/mutation-cadence';
 import { NOISE } from '@/timing/config';
 import { boundarySeedKey, cadenceFactor, jitterBoundary } from '@/timing/noise';
-import { jittered, sample } from '@/timing/primitives';
+import { sample } from '@/timing/primitives';
+import { legacyJittered } from '../kit/legacy-pacer-oracle';
 import { memoryPlanStore, planDeps, testIntent } from '../kit/plan';
 
 /**
@@ -89,7 +90,7 @@ function simulateLegacy(seed: number): number[] {
     }
     events.push(t);
     perDay.set(k, count + 1);
-    t += sample(jittered(180_000, 420_000, 30), rng);
+    t += sample(legacyJittered(180_000, 420_000, 30), rng);
   }
   return events;
 }
