@@ -11,7 +11,6 @@ import {
   toChainConfig,
   toChurnConfig,
   toFollowbackConfig,
-  toPacingConfig,
   toPruneConfig,
   toRateGovernorConfig,
   toScannerConfig,
@@ -29,30 +28,6 @@ afterEach(() => {
 });
 
 describe('organic pacing settings', () => {
-  test('toPacingConfig maps display units to the planner config', () => {
-    const s: Settings = {
-      ...DEFAULT_SETTINGS,
-      dailyOperatingRate: 30,
-      dailyVolumeVariancePct: 20,
-      restDayChancePct: 10,
-      sessionsPerDayMin: 2,
-      sessionsPerDayMax: 5,
-      gapMedianSeconds: 100,
-      gapFloorSeconds: 50,
-      hourlyVelocityCap: 18,
-    };
-    const c = toPacingConfig(s);
-    expect(c.dailyMeanActions).toBe(30);
-    expect(c.dailyHardCeiling).toBe(s.dailyHardCeiling);
-    expect(c.dayVolumeSigma).toBeCloseTo(0.2, 6);
-    expect(c.restDayProbability).toBeCloseTo(0.1, 6);
-    expect(c.sessionsPerDayMin).toBe(2);
-    expect(c.sessionsPerDayMax).toBe(5);
-    expect(c.gapMedianMs).toBe(100_000);
-    expect(c.gapFloorMs).toBe(50_000);
-    expect(c.maxActionsPerRollingHour).toBe(18);
-  });
-
   test('sanitize clamps and orders the new knobs, and degrades a bad pacingModel to the default', () => {
     const file = path.join(dir, 's.json');
     saveSettings(file, {

@@ -13,8 +13,9 @@ import {
   queuedCountFor,
   unenrichedUsernames,
 } from '@/engine/decisions';
+import { PATTERN } from '@/kernel/derive';
+import { automaticDayMax } from '@/kernel/plan';
 import type { AccountState, FollowRecord, FollowState } from '@/store/types';
-import { cyclePlan } from '@/timing/cycle-plan';
 import { startOfLocalDay } from '@/timing/units';
 
 const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({
@@ -187,10 +188,13 @@ describe('prune cap boundary', () => {
     expect(pruneCycleStart(now, () => cycleStart)).toBe(cycleStart);
   });
 
-  test('the daily plan is the per-cycle draw, stable within a cycle', () => {
+  test('the daily plan is the automatic-day band under the limit, stable within a plan-day', () => {
     const cycleStart = startOfLocalDay(now);
-    expect(pruneDailyPlan(50, cycleStart)).toBe(cyclePlan(50, cycleStart));
     expect(pruneDailyPlan(50, cycleStart)).toBe(pruneDailyPlan(50, cycleStart));
-    expect(pruneDailyPlan(50, cycleStart)).toBeLessThanOrEqual(50);
+    const days = Array.from({ length: 60 }, (_, d) => pruneDailyPlan(50, cycleStart + d * 86_400_000));
+    expect(Math.max(...days)).toBeLessThanOrEqual(automaticDayMax(50));
+    expect(Math.min(...days)).toBeGreaterThanOrEqual(Math.round(50 * PATTERN.CYCLE_PLAN_MIN_FRACTION));
+    expect(new Set(days).size).toBeGreaterThan(1);
+    expect(pruneDailyPlan(5, cycleStart)).toBe(5);
   });
 });

@@ -1,11 +1,6 @@
 {
   "pending": [
     {
-      "module": "src/governors/plan-projection.ts",
-      "stream": "PR",
-      "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
-    },
-    {
       "module": "src/renderer/live/CompatibilityNotice.tsx",
       "stream": "SB",
       "reason": "the live column shows the compatibility line and wires its Details to the panel"

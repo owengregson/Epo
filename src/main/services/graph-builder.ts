@@ -20,7 +20,6 @@ import {
 import { Scanner } from '@/engine/scanner';
 import { SourceFrontier } from '@/engine/source-frontier';
 import { SystemClock } from '@/governors/clock';
-import { RateGovernor } from '@/governors/rate-governor';
 import { STORE_POLICY } from '@/kernel/store-policy';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
@@ -40,7 +39,7 @@ import { DelayManager } from '@/timing/delay-manager';
 import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import { liveWiringParts } from './live-wiring';
-import { planWiringParts, wirePacing, wireReadBudget } from './plan-wiring';
+import { planWiringParts, wirePlan, wireReadBudget } from './plan-wiring';
 import {
   noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry, wireSweepCadence,
 } from './reopen-wiring';
@@ -70,8 +69,8 @@ export function buildGraph(
   // from a single registry.
   const delays = new DelayManager({ clock });
   const { settings, driverSignal } = d;
-
-  const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
+  const plan = wirePlan(store, clock, ownPk, delays, d);
+  const rate = plan.rateGovernor(toRateGovernorConfig(settings));
 
   // Interactor: every Actor click/scroll becomes native input events
   // (sendInputEvent) shaped by the motion profile; the tab is the one Electron
@@ -84,15 +83,16 @@ export function buildGraph(
     observer: d.cursorObserver,
   });
 
-  const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, rate, reentry, readBudget,
+  const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, rate, reentry, readBudget, dayClock: plan.dayClock,
     profiles: () => profiles, followback: () => followback });
 
   // The adapter owns the single Actor + Sentinel instances the whole rim shares;
   // the Reader is pure and held directly.
+  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub, sink } = wireSurface({ tab: d.tab, store, ownPk, clock, day: plan.dayClock });
   const adapter = new InstagramAdapter(d.tab, {
     interactor,
     abortSignal: driverSignal,
-    reporter: d.reporter,
+    reporter: d.reporter, sink, // an unrecognized confirm layer reaches the surface sink
     beforeMutation: policy.beforeMutation,
     prepareProfile: policy.prepareProfile,
   });
@@ -102,7 +102,6 @@ export function buildGraph(
   });
   const actor = adapter.actor;
   const sentinel = adapter.sentinel;
-  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub } = wireSurface({ tab: d.tab, store, ownPk, clock });
   const profiles = new TabProfileVisitor({
     tab: d.tab,
     observer: profileObserver,
@@ -194,7 +193,7 @@ export function buildGraph(
     minPoolSize: settings.minPoolSize,
   });
 
-  const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings });
+  const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock: plan.dayClock });
   prepareReentry(reentry, clock);
   const scanner = new Scanner({
     store,
@@ -202,7 +201,7 @@ export function buildGraph(
     cfg: toScannerConfig(settings),
   });
   const followback = wireFollowback(d, { store, clock, ownPk, ownUsername, settings, readBudget, policy,
-    adapter, reader, sentinel, profiles, liveOwnFollowers });
+    adapter, reader, sentinel, profiles, liveOwnFollowers, dayClock: plan.dayClock });
 
   // Live discovery over the already-harvested graph: propose the biggest
   // enriched PUBLIC hubs inside the exhausted target's audience, projected at
@@ -221,8 +220,6 @@ export function buildGraph(
   });
 
   const sweepCadence = wireSweepCadence(d);
-
-  const pacing = wirePacing(store, settings);
 
   // Woven prune feed: the growth loop drains unfollows from the PruneEngine's
   // scanned census, interleaved with its follows. The PruneEngine is built
@@ -245,7 +242,7 @@ export function buildGraph(
     reentry,
     validateIdentity: d.validateIdentity,
     onProgress: d.onProgress,
-    settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget }),
+    settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget, dayClock: plan.dayClock }),
     store,
     clock,
     rate,
@@ -258,7 +255,7 @@ export function buildGraph(
     enricher,
     settings,
     delays,
-    pacing,
+    pacing: plan.pacing,
     unfollowFeed,
     sweepCadence,
     installEntropy,
@@ -327,12 +324,12 @@ export function buildGraph(
     // start, not calendar midnight.
     cycleStartMs: (now: number): number => rate.cycleStartMs(now),
     onStatus: (s) => d.onPruneStatus(s),
-    ...pruneUnfollowDeps(d, { settings, policy, ownUsername }),
+    ...pruneUnfollowDeps(d, { settings, policy, ownUsername, dayClock: plan.dayClock }),
   });
   // Back the woven-feed adapter now that the PruneEngine exists.
   pruneEngineRef = pruneEngine;
   // Once per build: a rebuild or account switch starts from a fresh list, never a duplicate.
-  const parts = [planWiringParts(), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts()];
+  const parts = [planWiringParts(plan, readBudget, store, d), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts({ frontier })];
 
   return {
     prepareMutation: policy.prepareMutation,
@@ -359,7 +356,7 @@ export function buildGraph(
     scanner,
     followback,
     chain,
-    pacing,
+    plan,
     startupSteps: parts.flatMap((p) => p.startupSteps),
     statusContributors: parts.flatMap((p) => p.statusContributors),
   };

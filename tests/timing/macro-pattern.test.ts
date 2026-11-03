@@ -1,18 +1,18 @@
-import type { CircadianProfile } from '@/timing/circadian';
-import { intensityAt } from '@/timing/circadian';
+import { referenceGapMs } from '@/engine/pacers';
+import { PlanService } from '@/governors/plan-service';
+import { intensityAt } from '@/kernel/plan/circadian';
+import { automaticDayMax } from '@/kernel/plan/volume';
 import { NOISE } from '@/timing/config';
 import { boundarySeedKey, cadenceFactor, jitterBoundary } from '@/timing/noise';
 import { jittered, sample } from '@/timing/primitives';
-import {
-  SessionPlanner,
-  type SessionPlannerConfig,
-} from '@/timing/session-planner';
+import { memoryPlanStore, planDeps, testIntent } from '../kit/plan';
 
 /**
  * The acceptance test for "the timeline looks like organic data" (plan §8): drive the
- * real SessionPlanner across a simulated month and assert the emitted action timeline is
- * bimodal-log-normal, circadian, velocity-safe, and — crucially — HIGHER ENTROPY and less
- * regular than the legacy flat metronome (the signature bot detectors key on).
+ * real plan service across a simulated month — act while a session is open and the day's
+ * volume remains, then wait the plan's reference gap — and assert the emitted timeline is
+ * bimodal-log-normal, circadian, velocity-safe, inside the day law, and less regular than
+ * the legacy flat metronome.
  */
 
 const mulberry32 = (seed: number) => (): number => {
@@ -22,60 +22,36 @@ const mulberry32 = (seed: number) => (): number => {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 
-const PROFILE: CircadianProfile = {
-  bumps: [
-    { centerHour: 8.0, amplitude: 0.45, widthHours: 1.6 },
-    { centerHour: 13.0, amplitude: 0.5, widthHours: 2.0 },
-    { centerHour: 18.0, amplitude: 1.0, widthHours: 3.0 },
-  ],
-  overnightFloor: 0.015,
-  dayOfWeekWeights: [0.9, 1.0, 1.08, 1.08, 1.0, 1.02, 0.92],
-  weekendShiftHours: 1.4,
-  phaseOffsetHours: 0,
-};
-
-const CFG: SessionPlannerConfig = {
-  dailyMeanActions: 25,
-  dailyHardCeiling: 40,
-  dayVolumeSigma: 0.28,
-  restDayProbability: 0.08,
-  restDayMaxFraction: 0.15,
-  sessionsPerDayMin: 3,
-  sessionsPerDayMax: 6,
-  gapMedianMs: 95_000,
-  gapSigma: 0.75,
-  gapFloorMs: 45_000,
-  gapCapMs: 8 * 60_000,
-  hawkesAlpha: 0.35,
-  hawkesTauMs: 90_000,
-  maxActionsPerRollingHour: 22,
-};
-
+const INTENT = testIntent();
 const DAYS = 30;
 const MS_PER_HOUR = 3_600_000;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
 const START = new Date(2026, 0, 4, 0, 0).getTime(); // Sunday midnight
 
-/** Drive the planner: act while a session is open, jump to the next session otherwise. */
-function simulateOrganic(seed: number): number[] {
-  const p = new SessionPlanner({ rng: mulberry32(seed), profile: PROFILE, cfg: CFG });
+/** Drive the plan: act while a session is open and volume remains, jump to the next session otherwise. */
+function simulatePlan(seed: number): { events: number[]; days: Map<string, number>; phase: number } {
+  const store = memoryPlanStore();
+  const clock = { t: START };
+  const plan = new PlanService(planDeps(store, clock, { intent: () => INTENT, installEntropy: seed }));
+  const rng = mulberry32(seed);
   const events: number[] = [];
+  const days = new Map<string, number>();
   const end = START + DAYS * MS_PER_DAY;
   let t = START;
-  let guard = 0;
-  while (t < end && guard < 2_000_000) {
-    guard += 1;
-    p.advance(t);
-    if (p.isSessionOpen(t)) {
-      p.recordAction(t, 'follow');
+  for (let guard = 0; t < end && guard < 200_000; guard += 1) {
+    clock.t = t;
+    const view = plan.ensure(t);
+    if (view.open !== null && view.used.auto < Math.max(view.plan.volume.drawn, view.plan.volume.planned)) {
+      store.mutations.push({ at: t, kind: 'follow', auto: true });
       events.push(t);
-      t += p.nextActionGapMs(t);
+      days.set(view.window.key, (days.get(view.window.key) ?? 0) + 1);
+      t += referenceGapMs(INTENT, store.recentMutationTimes(t - MS_PER_HOUR), t, rng);
     } else {
-      const next = p.nextSessionStartAt(t);
+      const next = view.nextSessionAt ?? view.window.endsAt;
       t = next > t ? next : t + 60_000;
     }
   }
-  return events;
+  return { events, days, phase: plan.snapshot(START).state.phaseOffsetHours };
 }
 
 /** The legacy metronome for comparison: jittered 3–7 min within 8:00–22:00, 25/day. */
@@ -137,24 +113,25 @@ function gapEntropy(gaps: number[]): number {
   return h;
 }
 
-describe('macro-pattern — organic timeline over 30 simulated days', () => {
-  const events = simulateOrganic(2026);
+describe("macro-pattern — the plan's timeline over 30 simulated days", () => {
+  const { events, days, phase } = simulatePlan(2026);
   const gaps = diffs(events);
   const legacyEvents = simulateLegacy(2026);
   const legacyGaps = diffs(legacyEvents);
+  const P0 = INTENT.operatingRate;
 
-  test('delivers ~the configured daily mean on average (distributed, not exactly 25×30)', () => {
+  test("delivers the day law's mean (a draw under the target), never a day above the automatic maximum", () => {
     const perDayMean = events.length / DAYS;
-    // Realized mean tracks the configured mean (25) within ~15% after rest days.
-    expect(perDayMean).toBeGreaterThan(25 * 0.85);
-    expect(perDayMean).toBeLessThan(25 * 1.15);
+    expect(perDayMean).toBeGreaterThan(P0 * 0.6);
+    expect(perDayMean).toBeLessThan(P0 * 0.95);
+    expect(Math.max(...days.values())).toBeLessThanOrEqual(automaticDayMax(P0));
   });
 
   test('inter-event gaps are bimodal: a within-session cluster AND a between-session cluster', () => {
     const withinShare = gaps.filter((g) => g < 5 * 60_000).length / gaps.length;
     const betweenShare = gaps.filter((g) => g > 30 * 60_000).length / gaps.length;
-    expect(withinShare).toBeGreaterThan(0.15);
-    expect(betweenShare).toBeGreaterThan(0.1);
+    expect(withinShare).toBeGreaterThan(0.5);
+    expect(betweenShare).toBeGreaterThan(0.08);
   });
 
   test('the gap distribution is heavy-tailed (a few gaps ≫ the median)', () => {
@@ -166,7 +143,7 @@ describe('macro-pattern — organic timeline over 30 simulated days', () => {
     const hourCounts = new Array(24).fill(0);
     for (const e of events) hourCounts[new Date(e).getHours()] += 1;
     const anchor = new Date(2026, 0, 5, 0, 30).getTime();
-    const intens = Array.from({ length: 24 }, (_, h) => intensityAt(anchor + h * MS_PER_HOUR, PROFILE));
+    const intens = Array.from({ length: 24 }, (_, h) => intensityAt(anchor + h * MS_PER_HOUR, INTENT.shape, phase));
     const mc = mean(hourCounts);
     const mi = mean(intens);
     let num = 0;
@@ -183,26 +160,20 @@ describe('macro-pattern — organic timeline over 30 simulated days', () => {
   });
 
   test('daily volume genuinely varies day to day', () => {
-    const perDay = new Map<string, number>();
-    for (const e of events) {
-      const d = new Date(e);
-      const k = `${d.getMonth()}-${d.getDate()}`;
-      perDay.set(k, (perDay.get(k) ?? 0) + 1);
-    }
-    const counts = [...perDay.values()];
+    const counts = [...days.values()];
     expect(cv(counts)).toBeGreaterThan(0.15);
-    expect(counts.some((c) => c < 25 * 0.4)).toBe(true); // some quiet days
+    expect(counts.some((c) => c < P0 * 0.4)).toBe(true); // some light days
   });
 
   test('velocity safety: never exceeds the rolling-hour cap, never below the floor', () => {
-    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(CFG.gapFloorMs);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(INTENT.gap.floorMs);
     let maxInHour = 0;
     for (let i = 0; i < events.length; i++) {
       let n = 0;
       for (let j = i; j >= 0 && events[i] - events[j] < MS_PER_HOUR; j--) n++;
       maxInHour = Math.max(maxInHour, n);
     }
-    expect(maxInHour).toBeLessThanOrEqual(CFG.maxActionsPerRollingHour);
+    expect(maxInHour).toBeLessThanOrEqual(INTENT.hourlyCap);
   });
 
   test('anti-regularity: higher gap entropy and less fixed-timer regularity than the legacy metronome', () => {

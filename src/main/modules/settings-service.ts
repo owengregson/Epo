@@ -8,25 +8,25 @@ import { kernelCatalog } from '@/kernel/catalog';
 import type { BuiltGraph } from '@/main/services/graph-types';
 import { migrationBasis, type PlanMath } from '@/settings/basis';
 import { DEFAULT_DOC, type SettingsDocV2 } from '@/settings/doc';
-import { type EffectiveSettings, effectiveFrom, effectiveFromV1 } from '@/settings/effective';
+import { type EffectiveSettings, effectiveFrom } from '@/settings/effective';
 import { migrateV1 } from '@/settings/migrate-v1';
 import { type ChangedV1, olderVersionOffer, readChangedV1 } from '@/settings/older-version';
 import { applyOps, type OpsCtx, type Touched } from '@/settings/ops';
 import { NODE_SETTINGS_FS, readSettings, SETTINGS_FILES, type SettingsFs, type WriteResult, writeSettings } from '@/settings/persist';
 import { KERNEL_PLAN_MATH } from '@/settings/plan-math';
 import { type SettingsPlanPreview, settingsPlanPreview } from '@/settings/plan-preview-port';
-import { type ResolvedParams, resolveParams } from '@/settings/resolve';
+import type { ResolvedParams } from '@/settings/resolve';
 import type { Settings } from '@/settings/v1/settings-v1-types';
 import {
   carryOf, opsFromV1Partial, refusedState, stampsFor, toV1Settings, type V1Bookkeeping, withStamps,
 } from '@/settings/v1-adapter';
 import { applyNotes, buildView, overrideConflicts, previewChanges } from '@/settings/view';
-import { WEEKDAYS } from '@/shared/settings-intent';
 import type { SettingsOp, SettingsPreviewResult, SettingsSaveResult } from '@/shared/settings-ops';
 import type { BasisResult, SettingsCapabilities, SettingsHealth, SettingsView } from '@/shared/settings-view';
-import { compileProtection, type ProtectionIndex } from '@/shared/unfollow-protection';
+import type { ProtectionIndex } from '@/shared/unfollow-protection';
 import * as logger from '@/utils/logger';
 import { ProtectionLinker, type SettingsStoreBinding } from './protection-linker';
+import { resolveDoc, type SettingsCore, SettingsDerived } from './settings-derived';
 import { reloadChanged } from './settings-reload';
 
 export { type SettingsStoreBinding, settingsBinding } from './protection-linker';
@@ -67,10 +67,10 @@ export class SettingsService {
   private store: SettingsStoreBinding | null = null;
   /** The first account bound in this process: the owner of run stamps a migration carried without one. */
   private firstPk: string | null = null;
-  private memo: { key: string; resolved: ResolvedParams; effective: EffectiveSettings; index: ProtectionIndex; view: SettingsView } | null = null;
   private readonly listeners = new Set<(e: SettingsChangeEvent) => void>();
   private readonly fs: SettingsFs;
   private readonly math: PlanMath;
+  private readonly derived: SettingsDerived;
   /** The v1 file an older build rewrote after the migration (its additions are offered back), read at launch. */
   private readonly older: ChangedV1 | null;
   private readonly linker = new ProtectionLinker({ settings: this, now: () => this.d.now() });
@@ -78,6 +78,7 @@ export class SettingsService {
   constructor(private readonly d: SettingsServiceDeps) {
     this.fs = d.fs ?? NODE_SETTINGS_FS;
     this.math = d.math ?? KERNEL_PLAN_MATH;
+    this.derived = new SettingsDerived(this.math);
     const plan = readSettings(this.fs, d.userDataDir, { knowledgeDbExists: d.knowledgeDbExists(), now: d.now() });
     const opened: Opened = plan.kind === 'migrate' ? this.migrate(plan.raw, plan.mtimeMs, plan.health, plan.review)
       : { doc: reviewed(plan.kind === 'doc' ? plan.doc : DEFAULT_DOC, plan.review), health: plan.health, refused: null };
@@ -107,39 +108,26 @@ export class SettingsService {
     return { doc: state.doc, health: { kind: 'migration-refused', detail }, refused: { v1: state.v1, detail } };
   }
 
-  private resolveFor(doc: SettingsDocV2): ResolvedParams {
-    return resolveParams({ intent: doc.intent, overrides: doc.overrides, plan: this.capabilities.plan, math: this.math });
-  }
+  private resolveFor(doc: SettingsDocV2): ResolvedParams { return resolveDoc(doc, this.capabilities.plan, this.math); }
 
-  /** Everything derived from the document, computed once per revision, capabilities, health and port. */
-  private derived() {
-    const key = JSON.stringify([this.doc.rev, this.capabilities, this.health, this.doc.app.mode, this.doc.app.dismissedNotices]);
-    if (this.memo?.key !== key) {
-      const resolved = this.resolveFor(this.doc);
-      const effective = this.refused === null ? effectiveFrom(this.doc, resolved) : effectiveFromV1(this.refused.v1);
-      const index = compileProtection(this.doc.protection, this.doc.protectionState, this.doc.rev);
-      const week = this.capabilities.plan && this.planPreview !== null
-        ? this.planPreview.previewDays(effective, this.d.now(), WEEKDAYS.length) : null;
-      const view = buildView({ doc: this.doc, health: this.health, capabilities: this.capabilities, resolved, effective, math: this.math, week,
-        older: olderVersionOffer(this.doc, this.older, this.d.now()) });
-      this.memo = { key, resolved, effective, index, view };
-    }
-    return this.memo;
-  }
+  /** Resolved params, effective settings and protection: upstream of the plan, so they never draw its week. */
+  private core(): SettingsCore { return this.derived.core({ doc: this.doc, refused: this.refused, plan: this.capabilities.plan }); }
 
-  view(): SettingsView { return this.derived().view; }
-  effective(): EffectiveSettings { return this.derived().effective; }
-  protection(): ProtectionIndex { return this.derived().index; }
+  view(): SettingsView {
+    return this.derived.view(this.core(), { capabilities: this.capabilities, health: this.health, preview: this.planPreview,
+      older: this.older, now: this.d.now() });
+  }
+  effective(): EffectiveSettings { return this.core().effective; }
+  protection(): ProtectionIndex { return this.core().index; }
   app(): { readonly tourCompletedAt: number | null } { return { tourCompletedAt: this.doc.app.tourCompletedAt }; }
   basis(): BasisResult { return { kind: 'ok', rows: kernelCatalog() }; }
   setCapabilities(patch: Partial<SettingsCapabilities>): void { this.capabilities = { ...this.capabilities, ...patch }; }
   planPort(): PlanPreviewPort | null { return this.port; }
 
-  /** The plan wiring registers its preview port (null withdraws it); the `plan` flag stays its own to set. */
+  /** The plan wiring registers its preview port (null withdraws it; it keys the view only); `plan` stays its own to set. */
   setPlanPort(port: PlanPreviewPort | null): void {
     this.port = port;
     this.planPreview = port === null ? null : settingsPlanPreview(port);
-    this.memo = null;
   }
 
   /** Graph OPEN binds the store (its account owns the run stamps); CLOSE passes null. */
@@ -169,13 +157,13 @@ export class SettingsService {
       this.doc = r.doc;
       return { kind: 'saved', view: this.view(), adjustments: r.adjustments, conflicts: [], applies: [], inverse: r.inverse };
     }
-    const before = this.derived();
+    const before = this.core();
     const written = this.commit({ ...r.doc, rev: this.doc.rev + 1 }, origin, r.touched);
     if (!written.ok) return { kind: 'not-saved', view: this.view(), detail: written.detail };
-    const after = this.derived();
+    const after = this.core();
     const replanned = this.planPreview === null ? null
       : this.planPreview.fingerprint(before.effective) !== this.planPreview.fingerprint(after.effective);
-    return { kind: 'saved', view: after.view, adjustments: r.adjustments, conflicts: overrideConflicts(before.resolved, after.resolved),
+    return { kind: 'saved', view: this.view(), adjustments: r.adjustments, conflicts: overrideConflicts(before.resolved, after.resolved),
       applies: applyNotes(before.resolved, after.resolved, this.capabilities.plan, replanned), inverse: r.inverse };
   }
 
@@ -183,7 +171,7 @@ export class SettingsService {
   preview(ops: readonly SettingsOp[]): SettingsPreviewResult {
     const r = applyOps(this.doc, ops, this.opsCtx('user'));
     if (r.kind === 'refused') return { kind: 'unavailable' };
-    const before = this.derived();
+    const before = this.core();
     const resolved = this.resolveFor(r.doc);
     const effective = effectiveFrom(r.doc, resolved);
     const view = buildView({ doc: r.doc, health: this.health, capabilities: this.capabilities, resolved, effective, math: this.math, week: null });
@@ -264,7 +252,7 @@ export class SettingsService {
 
   /** An old renderer's partial as keyed ops; a failure throws so the old UI shows "Not saved". */
   async updateSettings(partial: Partial<Settings>): Promise<Settings> {
-    const t = opsFromV1Partial(partial, this.resolveSettings(), this.derived().resolved);
+    const t = opsFromV1Partial(partial, this.resolveSettings(), this.core().resolved);
     if (t.dropped.length > 0) logger.warn('settings: dropped writes of knobs v2 derives or no longer has', { dropped: t.dropped });
     if (Object.keys(t.bookkeeping).length > 0) this.recordBookkeeping(t.bookkeeping);
     if (t.ops.length > 0) {

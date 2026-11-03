@@ -16,11 +16,15 @@ import type {
 } from '@/engine/prune-engine';
 import type { Scanner } from '@/engine/scanner';
 import type { SystemClock } from '@/governors/clock';
+import type { PlanService } from '@/governors/plan-service';
+import type { PlanPreviewPort } from '@/governors/plan-types';
 import type { RateGovernor } from '@/governors/rate-governor';
 import type { CursorObserver } from '@/interaction/input-driver';
+import type { PlanDayClock } from '@/kernel/plan';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { FollowerAcquisition } from '@/rim/types';
+import type { EffectiveSettings } from '@/settings/effective';
 import type {
   Settings,
 } from '@/settings/settings';
@@ -31,7 +35,6 @@ import type { ProtectionIndex } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DelayManager } from '@/timing/delay-manager';
 import type { ScheduleManager } from '@/timing/schedule-manager';
-import type { SessionPlanner } from '@/timing/session-planner';
 
 /** One source of status fields beyond the engine's own, read on every composed status. */
 export interface StatusContributor {
@@ -43,6 +46,32 @@ export interface StatusContributor {
 export interface WiringParts {
   readonly startupSteps: readonly StartupStep[];
   readonly statusContributors: readonly StatusContributor[];
+}
+
+/** The graph's plan (spec §5.13): the single writer of the day plan and its one plan-day boundary. */
+export interface GraphPlan {
+  readonly service: PlanService;
+  readonly dayClock: PlanDayClock;
+  /** The machine woke: the plan and its next edge are re-read from the wall clock. */
+  resumed(): void;
+  /** A census completed: the remainder re-plans its demand. */
+  demandChanged(): void;
+  /** True while a Boost window is open (a prune waits for it). */
+  boostActive(): boolean;
+  /** Stop the plan's triggers and withdraw what the graph registered (the graph is closing). */
+  dispose(): void;
+}
+
+/** The composition root's plan surface (spec §5.6, §8.2): run intent, the live settings and a status push. */
+export interface PlanHost {
+  runIntent(): 'running' | 'stopped' | 'paused';
+  readonly settings: {
+    effective(): EffectiveSettings;
+    onChange(fn: () => void): () => void;
+    setPlanPort(port: PlanPreviewPort | null): void;
+    setCapabilities(patch: Partial<SettingsCapabilities>): void;
+  };
+  pushStatus(): void;
 }
 
 /** The lazily-built dependency graph, cached once `ownPk` is resolvable. */
@@ -90,8 +119,7 @@ export interface BuiltGraph {
   scanner: Scanner;
   followback: FollowbackWatcher;
   chain: ChainController;
-  /** The organic pacing planner, present only when `Settings.pacingModel === 'organic'`. */
-  pacing: SessionPlanner | undefined;
+  plan: GraphPlan;
   /** Every wiring module's startup steps, aggregated once per build (a rebuild never duplicates one). */
   startupSteps: readonly StartupStep[];
   /** Every wiring module's status contributors, aggregated once per build. */
@@ -120,6 +148,7 @@ export interface GraphBuildDeps {
   resolveSettings(): Settings;
   /** The settings service's protection surface: the live index and the capability flags (spec §6.3, §7). */
   protection: { index(): ProtectionIndex; setCapabilities(patch: Partial<SettingsCapabilities>): void };
+  plan: PlanHost;
   /** Persist a settings patch (cadence timestamps, `pruneLastRunAt`). */
   updateSettings(partial: Partial<Settings>): void;
   /** The ACTIVE driver's run token; adapter/rim waits link to it so stop() interrupts. */

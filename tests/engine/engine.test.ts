@@ -12,7 +12,6 @@ import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import {
   ENGINE_IDLE_MS,
   ENRICH_BATCH_SIZE,
-  type EnginePacing,
   type EngineUnfollowFeed,
   MAX_ENRICH_PASSES_PER_CYCLE,
   REFILL_PACING_MAX_MS,
@@ -28,6 +27,7 @@ import {
   rec,
   T0,
 } from '../kit/engine-harness';
+import { FakePlan as FakePacing } from '../kit/harness-plan';
 
 // --- Tests ---------------------------------------------------------------------------
 
@@ -661,7 +661,7 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     await new Promise((r) => setTimeout(r, 0));
     // Exactly ONE recorded action: the new generation's own. A stale step that
     // also recorded would double-drive the planner and clobber the deadline.
-    expect(pacing.recorded.filter((x) => x.kind === 'follow')).toHaveLength(1);
+    expect(pacing.gaps).toHaveLength(1);
 
     h.engine.stop();
     await started;
@@ -1215,44 +1215,7 @@ describe('Engine — status projection', () => {
   });
 });
 
-// --- Organic pacing model (SessionPlanner-driven) ---------------------------------
-
-class FakePacing implements EnginePacing {
-  open = true;
-  gapMs = 4 * 60_000;
-  target = 25;
-  sessions = 1;
-  recorded: Array<{ at: number; kind: string }> = [];
-  advanceCalls = 0;
-  constructor(private readonly nextStart: number) {}
-  advance(): void {
-    this.advanceCalls += 1;
-  }
-  isSessionOpen(): boolean {
-    return this.open;
-  }
-  sessionEndsAt(now: number): number | null {
-    return this.open ? now + this.gapMs : null;
-  }
-  nextSessionStartAt(): number {
-    return this.nextStart;
-  }
-  nextActionGapMs(): number {
-    return this.gapMs;
-  }
-  recordAction(now: number, kind: 'follow' | 'unfollow' | 'read-burst'): void {
-    this.recorded.push({ at: now, kind });
-  }
-  dailyTarget(): number {
-    return this.target;
-  }
-  sessionsToday(): number {
-    return this.sessions;
-  }
-  serialize(): unknown {
-    return { fake: true, recorded: this.recorded.length };
-  }
-}
+// --- The plan model (the plan service paces the organic model) -----------------------
 
 describe('Engine — organic pacing model', () => {
   test('parks with waited-session when no session is open, taking no action', async () => {
@@ -1264,11 +1227,11 @@ describe('Engine — organic pacing model', () => {
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('waited-session');
-    expect(pacing.advanceCalls).toBeGreaterThan(0);
+    expect(pacing.ensures).toBeGreaterThan(0);
     expect(h.churn.executed).toEqual([]); // the gate returns before any action
   });
 
-  test('acts inside a session, records a follow, and arms the planner gap (not nextDelayMs)', async () => {
+  test("acts inside a session and arms the plan's reference gap (not nextDelayMs)", async () => {
     const pacing = new FakePacing(T0);
     pacing.gapMs = 4 * 60_000;
     const h = makeHarness({ pacing });
@@ -1278,23 +1241,24 @@ describe('Engine — organic pacing model', () => {
 
     expect(result).toBe('acted');
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
-    expect(pacing.recorded).toEqual([{ at: T0, kind: 'follow' }]);
-    expect(h.sleep.calls).toEqual([4 * 60_000]); // the planner's gap, not the legacy DELAY_MS
+    expect(pacing.gaps).toEqual([T0]);
+    expect(h.sleep.calls).toEqual([4 * 60_000]); // the plan's gap, not the legacy DELAY_MS
   });
 
-  test('records an unfollow kind for a due unfollow_queued record', async () => {
+  test('a due unfollow arms the same gap after it lands', async () => {
     const pacing = new FakePacing(T0);
     const h = makeHarness({ pacing });
     h.churn.due = [rec({ accountPk: 'u', state: 'unfollow_queued' })];
 
     await h.engine.stepOnce();
 
-    expect(pacing.recorded).toEqual([{ at: T0, kind: 'unfollow' }]);
+    expect(pacing.gaps).toEqual([T0]);
   });
 
   test('velocity backstop parks the loop when the trailing-hour ledger is at the cap', async () => {
     const pacing = new FakePacing(T0);
-    const h = makeHarness({ pacing, settings: { hourlyVelocityCap: 3 } });
+    pacing.hourCap = 3;
+    const h = makeHarness({ pacing });
     h.store.recordAction('x', 'follow', 'ok', T0 - 10 * 60_000);
     h.store.recordAction('y', 'follow', 'ok', T0 - 20 * 60_000);
     h.store.recordAction('z', 'follow', 'ok', T0 - 30 * 60_000);
@@ -1306,14 +1270,24 @@ describe('Engine — organic pacing model', () => {
     expect(h.churn.executed).toEqual([]);
   });
 
-  test('persists the planner snapshot to store meta after a step', async () => {
+  test('writes no planner snapshot: the plan service is the one writer of the day', async () => {
     const pacing = new FakePacing(T0);
     const h = makeHarness({ pacing });
     h.churn.due = [rec({ accountPk: 'a' })];
 
     await h.engine.stepOnce();
 
-    expect(h.store.getPacingState()).not.toBeNull();
+    expect(h.store.getPacingState()).toBeNull();
+  });
+
+  test("the day's volume spent parks to the next plan-day, not the next session", async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    pacing.usedAuto = pacing.target;
+    const h = makeHarness({ pacing });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    expect(await h.engine.stepOnce()).toBe('waited-ceiling');
+    expect(h.churn.executed).toEqual([]);
   });
 
   test('status carries the pacing projection in organic mode', () => {
@@ -1383,8 +1357,8 @@ describe('Engine — woven prune feed', () => {
 
     expect(result).toBe('acted');
     expect(feed.executed).toEqual([{ pk: 'p1', username: 'prunee' }]);
-    expect(pacing.recorded).toEqual([{ at: T0, kind: 'unfollow' }]);
-    expect(h.sleep.calls).toEqual([4 * 60_000]); // the planner gap
+    expect(pacing.gaps).toEqual([T0]);
+    expect(h.sleep.calls).toEqual([4 * 60_000]); // the plan's gap
   });
 
   test('does not weave when weaveEnabled is false', async () => {
@@ -1422,7 +1396,7 @@ describe('Engine — woven prune feed', () => {
 
     expect(result).toBe('idle');
     expect(feed.executed.length).toBe(1); // attempted
-    expect(pacing.recorded).toEqual([]); // nothing recorded on a block
+    expect(pacing.gaps).toEqual([]); // no gap armed on a block
   });
 
   test('interleaves: both available and rng below the cap picks the prune unfollow', async () => {

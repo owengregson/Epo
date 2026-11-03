@@ -1,10 +1,12 @@
+import type { PlanDayClock } from '../kernel/plan';
+import { automaticDayMax } from '../kernel/plan/volume';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { actionGap } from '../timing/action-gap';
-import { cyclePlan } from '../timing/cycle-plan';
 import { sample } from '../timing/primitives';
-import { MS_PER_HOUR, startOfLocalDay } from '../timing/units';
+import { MS_PER_HOUR } from '../timing/units';
 import { launchStream } from '../utils/entropy';
 import type { Clock } from './clock';
+import { calendarPlanDayClock } from './plan-day-clock';
 
 export interface RateGovernorConfig {
   dailyHardCeiling: number;
@@ -16,86 +18,83 @@ export interface RateGovernorConfig {
   activeHoursEnd: number;
 }
 
+/** The plan the governor counts against (the plan service in production; spec §5.13 S1). */
+export interface RatePlan {
+  /** The one plan-day boundary every day counter reads. */
+  readonly day: PlanDayClock;
+  /** The plan-day's automatic volume V (today's law, spec §5.4) and the automatic work it still holds (§5.7). */
+  volume(now: number): { readonly planned: number; readonly remaining: number };
+}
+
 /**
  * Enforces the durable daily action cap. Every count comes from the store's
  * `action_ledger`, so limits survive restart (fixing the old in-memory-cap bug).
+ * The day is the plan's: its boundary and its volume. With no plan wired the day
+ * is the calendar's and the volume its automatic-day maximum.
  */
 export class RateGovernor {
+  private readonly day: PlanDayClock;
+
   constructor(
     private readonly store: KnowledgeStore,
     private readonly clock: Clock,
     private cfg: RateGovernorConfig,
     private readonly rng: () => number = launchStream('governors/rate-governor'),
-  ) {}
+    private readonly plan: RatePlan | null = null,
+  ) {
+    this.day = plan?.day ?? calendarPlanDayClock({ now: () => clock.now() });
+  }
 
   /** Swap the live config in place (used when Settings are updated at runtime). */
   applyConfig(cfg: RateGovernorConfig): void {
     this.cfg = cfg;
   }
 
-  /**
-   * The moment the CURRENT active-hours cycle began: the most recent occurrence
-   * of `activeHoursStart` o'clock. The daily budget belongs to an active-hours
-   * CYCLE, not the calendar day — an overnight window's post-midnight tail
-   * (e.g. 11→3: work done at 00:30) keeps counting against the cycle it belongs
-   * to, and the counter resets the moment a fresh window opens instead of at
-   * midnight. A degenerate `start === end` window falls back to local midnight.
-   */
+  /** The current plan-day's start: the one boundary every day counter shares (spec §4.4). */
+  dayStart(now: number = this.clock.now()): number {
+    return this.day.window(now).startsAt;
+  }
+
+  /** The plan-day start under the name the prune engine and the store reads still use. */
   cycleStartMs(now: number = this.clock.now()): number {
-    const { activeHoursStart: start, activeHoursEnd: end } = this.cfg;
-    if (start === end) return startOfLocalDay(now);
-    const d = new Date(now);
-    d.setHours(start, 0, 0, 0);
-    if (d.getTime() > now) {
-      // The start hour hasn't arrived yet today — the cycle opened yesterday.
-      d.setDate(d.getDate() - 1);
-      d.setHours(start, 0, 0, 0); // re-normalize across a DST-shifted date change
-    }
-    return d.getTime();
+    return this.dayStart(now);
   }
 
-  /** ms until the NEXT cycle start — when {@link actionsToday} resets. */
+  /** ms until the NEXT plan-day starts — when {@link actionsToday} resets. */
   msUntilCycleReset(now: number = this.clock.now()): number {
-    const { activeHoursStart: start, activeHoursEnd: end } = this.cfg;
-    const d = new Date(this.cycleStartMs(now));
-    d.setDate(d.getDate() + 1);
-    d.setHours(start === end ? 0 : start, 0, 0, 0);
-    return Math.max(1, d.getTime() - now);
+    return Math.max(1, this.day.window(now).endsAt - now);
   }
 
   /**
-   * Durable count of REAL Instagram actions recorded in the CURRENT active-hours
-   * cycle (see {@link cycleStartMs}), across BOTH ledgers (growth's
-   * action_ledger + prune's ok/fail rows) — the account has one write budget,
-   * whichever driver spends it. Survives restart.
+   * Durable count of REAL Instagram actions recorded in the CURRENT plan-day,
+   * across BOTH ledgers (growth's action_ledger + prune's ok/fail rows) and the
+   * unsettled intents — the account has one write budget, whichever driver
+   * spends it. Survives restart.
    */
   actionsToday(): number {
-    const since = this.cycleStartMs();
+    const since = this.dayStart();
     return this.store.actionCountSince(since) + this.store.realPruneActionCountSince(since)
       + this.store.additionalMutationCountSince(since);
   }
 
   /**
-   * The volume PLANNED for the current cycle: a deterministic per-cycle draw
-   * just under the operating rate (see timing/cycle-plan.ts), so the amount
-   * done per day fluctuates instead of landing on the exact configured number
-   * every day. The operating rate and hard ceiling stay the fixed limits; this
-   * is where a normal day actually stops.
+   * The automatic volume the plan holds for today: a plan-day draw under the
+   * operating rate, so the amount done per day fluctuates instead of landing on
+   * the configured number. The hard ceiling stays the fixed limit.
    */
   plannedToday(): number {
-    return cyclePlan(this.cfg.dailyOperatingRate, this.cycleStartMs());
+    return this.plan?.volume(this.clock.now()).planned ?? automaticDayMax(this.cfg.dailyOperatingRate);
   }
 
-  /** Headroom left against today's plan, never below zero. */
+  /** The automatic work left today: the plan's own remainder, never below zero. */
   remainingToday(): number {
+    if (this.plan !== null) return this.plan.volume(this.clock.now()).remaining;
     return Math.max(0, this.plannedToday() - this.actionsToday());
   }
 
   /**
    * Real IG actions (both ledgers) in the trailing hour — the durable, restart-safe
-   * velocity signal. The organic pacing model is velocity-sensitive (detection keys on
-   * actions/minute, not just actions/day), so the engine gates on this independently of
-   * the planner's in-memory ring as a second, ledger-backed net.
+   * velocity signal the engine gates on as a ledger-backed net.
    */
   actionsInLastHour(now: number = this.clock.now()): number {
     const since = now - MS_PER_HOUR;
@@ -104,9 +103,8 @@ export class RateGovernor {
   }
 
   /**
-   * True once today's actions reach the cycle's PLAN (a fluctuating draw just
-   * under the user's operating rate). The engine treats this as "done for
-   * today" (parks to the next cycle); the hard ceiling below stays the
+   * True once today's actions reach the plan's automatic volume. The engine
+   * treats this as "done for today"; the hard ceiling below stays the
    * uncrossable backstop with headroom for manual actions.
    */
   atOperatingRate(): boolean {

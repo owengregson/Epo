@@ -9,8 +9,8 @@ import type { Sentinel } from '@/adapter/sentinel';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { ReentrySupervisor } from '@/engine/reentry';
 import type { SystemClock } from '@/governors/clock';
-import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { ReadBudget } from '@/governors/read-budget';
+import type { PlanDayClock } from '@/kernel/plan';
 import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
 import { managedRelationships } from '@/rim/managed-relationships';
 import type { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
@@ -45,14 +45,15 @@ export interface FollowbackWiring {
   sentinel: Sentinel;
   profiles: TabProfileVisitor;
   liveOwnFollowers: AdapterBackedOwnFollowersSource | null;
+  /** The plan's plan-day boundary (spec §4.4). */
+  dayClock: PlanDayClock;
 }
 
 /** The follow-back watcher over the notifications feed and the managed-relationship reads. */
 export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): FollowbackWatcher {
   const { store, clock, ownPk, ownUsername, settings, readBudget, policy, adapter, reader, sentinel,
-    profiles, liveOwnFollowers } = w;
+    profiles, liveOwnFollowers, dayClock } = w;
   const driverSignal = d.driverSignal;
-  const dayClock = calendarPlanDayClock({ now: () => clock.now() });
   // Follow-back detection reads the NOTIFICATIONS feed (one click on the bell,
   // one observed news-inbox response) — cheap enough for the hourly default
   // cadence. Sentinel-gated; a stop() interrupts the response wait.
@@ -85,7 +86,6 @@ export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): Followba
       },
     } : undefined,
     cfg: toFollowbackConfig(settings),
-    // Local-midnight plan-days until the plan's own clock is swapped in at plan-wiring.ts.
     planDay: (t) => dayClock.window(t),
   });
   return followback;

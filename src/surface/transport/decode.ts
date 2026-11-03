@@ -5,22 +5,9 @@
  */
 
 import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
+import type { TransportDecl } from '@/surface/schema/decls';
 
-/** A surface version's transport keys (`versions/<capture>/transport-decl.ts`). */
-export interface TransportDecl {
-  readonly jsonGuards: readonly string[];
-  /** Dotted path of the streaming final flag; `false` on the last payload makes the body partial. */
-  readonly finalFlagPath: string | null;
-  /** Incremental payload keys: `{path, data}` merges, `{path, items}` appends, `list` wraps parts. */
-  readonly incremental: { readonly path: string; readonly data: string; readonly items: string; readonly list: string;
-    readonly errors: string };
-  /** The form field naming a GraphQL operation (read only with the optional request-field capture). */
-  readonly formOpKey: string;
-  readonly rootFieldHeader: string;
-  readonly friendlyNameHeader: string;
-  /** Media types whose 2xx body is data (anything else on an API URL is a wall or not data). */
-  readonly parseableMime: RegExp;
-}
+export type { TransportDecl } from '@/surface/schema/decls';
 
 export type Decoded =
   | { readonly ok: true; readonly json: unknown; readonly format: 'json' | 'guarded' | 'ndjson' | 'multipart';

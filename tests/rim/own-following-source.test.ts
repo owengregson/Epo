@@ -43,8 +43,8 @@ const buildSource = (): { source: AdapterBackedOwnFollowingSource; actor: FakeAc
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
 
   const pages: TabResponse[] = [
-    mkResp(followingUrl('42'), followersBody(['a', 'b'], 'C1', true)), // on open
-    mkResp(followingUrl('42', 'C1'), followersBody(['c'], 'C2', true)), // scroll 1
+    mkResp(followingUrl('42'), followersBody(['11', '12'], 'C1', true)), // on open
+    mkResp(followingUrl('42', 'C1'), followersBody(['13'], 'C2', true)), // scroll 1
     mkResp(followingUrl('42', 'C2'), followersBody([], 'C2', true)), // scroll 2: no new
     mkResp(followingUrl('42', 'C2'), followersBody([], 'C2', true)), // scroll 3: no new → stop
   ];
@@ -69,12 +69,12 @@ test('fetchAllPks opens the FOLLOWING dialog (never followers) and yields every 
 
   const { pks } = await source.fetchAllPks();
 
-  expect([...pks].sort()).toEqual(['a', 'b', 'c']);
+  expect([...pks].sort()).toEqual(['11', '12', '13']);
   expect(actor.openFollowingCalls).toBe(1);
   expect(actor.openCalls).toBe(0); // the followers dialog was never opened
   // Every parsed following profile became a stored account row (usernames the
   // PruneEngine reads back when composing candidates).
-  for (const pk of ['a', 'b', 'c']) {
+  for (const pk of ['11', '12', '13']) {
     expect(store.getAccount(pk)?.username).toBe(`u${pk}`);
   }
 });
@@ -85,8 +85,8 @@ test('a followers-list response is ignored while the following dialog drives the
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
   actor.onOpen = () => {
     // A stray followers page (e.g. cached traffic) must not be ingested.
-    tab.emit(mkResp(followersUrl('42'), followersBody(['stray'], null, false)));
-    tab.emit(mkResp(followingUrl('42'), followersBody(['real'], null, false)));
+    tab.emit(mkResp(followersUrl('42'), followersBody(['91'], null, false)));
+    tab.emit(mkResp(followingUrl('42'), followersBody(['92'], null, false)));
   };
 
   const source = new AdapterBackedOwnFollowingSource({
@@ -98,8 +98,8 @@ test('a followers-list response is ignored while the following dialog drives the
   });
 
   const { pks } = await source.fetchAllPks();
-  expect(pks).toEqual(['real']);
-  expect(store.getAccount('stray')).toBeNull();
+  expect(pks).toEqual(['92']);
+  expect(store.getAccount('91')).toBeNull();
 });
 
 test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape', async () => {
@@ -118,10 +118,10 @@ test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape'
     rng: () => 0.5,
   });
   let n = 0;
-  actor.onOpen = () => tab.emit(mkResp(followingUrl('42'), followersBody(['a'], 'C', true)));
+  actor.onOpen = () => tab.emit(mkResp(followingUrl('42'), followersBody(['11'], 'C', true)));
   actor.onScroll = () => {
     n += 1;
-    tab.emit(mkResp(followingUrl('42', `C${n}`), followersBody([`s${n}`], `C${n}`, true)));
+    tab.emit(mkResp(followingUrl('42', `C${n}`), followersBody([`${50 + n}`], `C${n}`, true)));
   };
 
   const source = new AdapterBackedOwnFollowingSource({
@@ -141,17 +141,17 @@ test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape'
 
   // Pacing reached the reader: every wait is the deterministic midpoint draw.
   expect(sleeps).toEqual([2_000, 2_000, 2_000]);
-  expect([...pks].sort()).toEqual(['a', 's1', 's2']);
+  expect([...pks].sort()).toEqual(['11', '51', '52']);
 
   // And an immediate stop reaches the reader too: no scroll, no wait.
   stop = true;
   actor.scrollCalls = 0;
   sleeps.length = 0;
-  actor.onOpen = () => tab.emit(mkResp(followingUrl('42'), followersBody(['z'], null, false)));
+  actor.onOpen = () => tab.emit(mkResp(followingUrl('42'), followersBody(['36'], null, false)));
   const { pks: stopped } = await source.fetchAllPks({ shouldStop: () => stop });
   expect(actor.scrollCalls).toBe(0);
   expect(sleeps).toEqual([]);
-  expect(stopped).toEqual(['z']); // the open-page capture is still returned
+  expect(stopped).toEqual(['36']); // the open-page capture is still returned
 });
 
 test('fetchAllPks threads onProgress into the scrape (live mid-scan counts)', async () => {
@@ -210,18 +210,18 @@ describe('direct list-page walker fast path', () => {
 
   test('a wired walker pages the API directly — the FOLLOWING dialog is never opened', async () => {
     const { source, actor } = buildWithWalker([
-      okEnv(followersBody(['a', 'b'], 'C1', true)),
-      okEnv(followersBody(['c'], null, false)),
+      okEnv(followersBody(['11', '12'], 'C1', true)),
+      okEnv(followersBody(['13'], null, false)),
       okEnv(followersBody([], null, false)), // the walker's end-verification probe
     ]);
 
     const { pks } = await source.fetchAllPks();
 
-    expect([...pks].sort()).toEqual(['a', 'b', 'c']);
+    expect([...pks].sort()).toEqual(['11', '12', '13']);
     expect(actor.openFollowingCalls).toBe(0); // no dialog, no scrolling
     expect(actor.scrollCalls).toBe(0);
     // The walked profiles still become stored account rows (prune usernames).
-    for (const pk of ['a', 'b', 'c']) {
+    for (const pk of ['11', '12', '13']) {
       expect(store.getAccount(pk)?.username).toBe(`u${pk}`);
     }
   });
@@ -231,11 +231,11 @@ describe('direct list-page walker fast path', () => {
       { ok: false, status: 429, contentType: 'text/html', textHead: 'wall' },
     ]);
     actor.onOpen = () =>
-      tab.emit(mkResp(followingUrl('42'), followersBody(['d'], null, false)));
+      tab.emit(mkResp(followingUrl('42'), followersBody(['14'], null, false)));
 
     const { pks } = await source.fetchAllPks();
 
-    expect(pks).toEqual(['d']); // the dialog path produced the census
+    expect(pks).toEqual(['14']); // the dialog path produced the census
     expect(actor.openFollowingCalls).toBe(1);
   });
 });
@@ -247,7 +247,7 @@ test('every parsed row reconciles the we-follow edge IMMEDIATELY — a stopped w
   const actor = new FakeActor();
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
   actor.onOpen = () =>
-    tab.emit(mkResp(followingUrl('42'), followersBody(['a', 'b'], 'C1', true)));
+    tab.emit(mkResp(followingUrl('42'), followersBody(['11', '12'], 'C1', true)));
 
   store.setOwnPk('me-pk');
   const source = new AdapterBackedOwnFollowingSource({
@@ -264,7 +264,7 @@ test('every parsed row reconciles the we-follow edge IMMEDIATELY — a stopped w
   expect(res.complete).toBe(false);
 
   // The knowledge already paid for is in the graph anyway: accounts AND edges.
-  for (const pk of ['a', 'b']) {
+  for (const pk of ['11', '12']) {
     expect(store.getAccount(pk)?.username).toBe(`u${pk}`);
     expect(store.getEdge('me-pk', pk, 'follows')?.status).toBe('active');
   }
@@ -275,11 +275,11 @@ test('a following row for a still-QUEUED candidate heals the drift on sight (ext
   const actor = new FakeActor();
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
   actor.onOpen = () =>
-    tab.emit(mkResp(followingUrl('42'), followersBody(['q'], null, false)));
+    tab.emit(mkResp(followingUrl('42'), followersBody(['27'], null, false)));
 
   store.setOwnPk('me-pk');
   // A queued candidate we ALREADY follow (externally) — the row must drop it.
-  store.upsertFollowRecord({ accountPk: 'q', targetPk: null, state: 'queued', retryCount: 0 });
+  store.upsertFollowRecord({ accountPk: '27', targetPk: null, state: 'queued', retryCount: 0 });
 
   const source = new AdapterBackedOwnFollowingSource({
     pageReader,
@@ -291,5 +291,5 @@ test('a following row for a still-QUEUED candidate heals the drift on sight (ext
   });
   await source.fetchAllPks({ shouldStop: () => true });
 
-  expect(store.getFollowRecord('q')!.state).toBe('external');
+  expect(store.getFollowRecord('27')!.state).toBe('external');
 });

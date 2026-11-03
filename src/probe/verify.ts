@@ -6,10 +6,11 @@
  *     profile, the target, and a username that does not exist → ok / ok / gone;
  *  2. the notifications drawer through the production Actor (settle-then-press):
  *     open, Follows filter, Follow-requests panel (NOTHING is confirmed), close —
- *     with the activity-feed and pending-requests bodies parsed by the Reader;
+ *     with the activity-feed and pending-requests bodies read by the Reader;
  *  3. the rail's own-profile link (settle-then-press) lands on our profile.
  *
- * The observer writes to a no-op store: the probe never touches the real graph.
+ * The observer writes to a no-op store and every read reports to a `MemorySink`, whose tallies and
+ * drift (paths and classes, never values) close `verify.json`: the probe never touches the real graph.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -26,32 +27,36 @@ import { SystemClock } from '@/governors/clock';
 import { TrafficRecorder } from '@/probe/recorder';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
+import type { SurfaceRead } from '@/surface/read/types';
+import { MemorySink } from '@/surface/sink';
 import { sleep } from '@/timing/primitives';
 import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 
 const settle = (): Promise<void> => sleep(5000 + cryptoUniform() * 3000);
 
+/** A drawer read as the probe records it: its tier and counts, or its typed failure. */
+const readSummary = (read: SurfaceRead): Record<string, unknown> =>
+  read.ok
+    ? { tier: read.tier, partial: read.partial, followEvents: read.projection.events.length, rows: read.projection.facts.length,
+        continuation: read.projection.continuation?.kind ?? null }
+    : { failure: read.kind };
+
 export async function verifyProbe(tab: InstagramTab, out: string): Promise<void> {
   const target = process.env.EPO_PROBE_TARGET?.trim() ?? '';
   if (target === '') throw new Error('EPO_PROBE_TARGET (a public account we follow) is required');
-  const reader = new Reader();
+  const sink = new MemorySink();
+  const reader = new Reader({ sink });
   const result: Record<string, unknown> = {};
   const observer = new ProfileObserver({ tab, reader, store: { observe: () => {} }, clock: new SystemClock() });
   const stopObserver = observer.start();
-  // Every body the drawer fetches, parsed by the production Reader.
+  // Every body the drawer fetches, read once by the production Reader.
   const drawer: Array<Record<string, unknown>> = [];
   const stopDrawer = tab.onResponse((resp) => {
     const kind = reader.kindOf(resp);
     if (kind !== 'activity-feed' && kind !== 'friend-requests') return;
-    resp.getBody().then(
-      (body) => {
-        const parsed =
-          kind === 'activity-feed'
-            ? { followEvents: reader.parseActivityFeedStrict(body)?.length ?? 'SHAPE_MISMATCH' }
-            : { rows: reader.parseRequestsStrict(body, Date.now())?.observations.length ?? 'SHAPE_MISMATCH' };
-        drawer.push({ kind, method: resp.method, status: resp.status, ...parsed });
-      },
+    reader.observed.read(resp)?.then(
+      ({ read }) => drawer.push({ kind, method: resp.method, status: resp.status, ...readSummary(read) }),
       (e: unknown) => drawer.push({ kind, error: String(e) }),
     );
   });
@@ -97,6 +102,9 @@ export async function verifyProbe(tab: InstagramTab, out: string): Promise<void>
     rec?.stop();
     writeFileSync(path.join(out, 'traffic.json'), JSON.stringify(rec?.exchanges ?? [], null, 2), 'utf8');
     result.drawerBodies = drawer;
+    const health = sink.snapshot();
+    result.surface = { tallies: health.tallies,
+      drift: health.drift.map(({ signal }) => ({ endpoint: signal.endpoint, cls: signal.cls, path: signal.path })) };
     writeFileSync(path.join(out, 'verify.json'), JSON.stringify(result, null, 2), 'utf8');
   }
 }

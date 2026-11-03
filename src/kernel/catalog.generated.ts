@@ -128,7 +128,7 @@ export const KERNEL_GUARDS: Readonly<Partial<Record<string, string>>> = {
   "SESSION.SESSION_BOUNDARY_MS": "A gap larger than this counts as a new session (Catledge & Pitkow 1995 / GA4 default).",
   "SESSION.HAWKES_ALPHA": "Exponential self-excitation kernel: sub-critical branching ratio n≈α<1 (Hawkes).",
   "PATTERN.REST_DAY_MAX_FRACTION": "A rest day is near-zero, not exactly zero.",
-  "PATTERN.CYCLE_PLAN_MIN_FRACTION": "Band for the per-cycle volume plan (timing/cycle-plan.ts): each active-hours cycle draws its day plan uniformly in [MIN, MAX] × the configured cap.",
+  "PATTERN.CYCLE_PLAN_MIN_FRACTION": "The automatic-day band (kernel/plan/volume.ts): each plan-day draws its band uniformly in [MIN, MAX] × the operating rate, and V never exceeds it.",
   "PATTERN.CYCLE_PLAN_MIN_CAP": "Below this cap the rounding granularity makes an under-shoot a no-op or brutal.",
   "PATTERN.MAX_UNFOLLOW_FRACTION_PER_SESSION": "Keep any single session from being unfollow-dominated (a mix within a burst).",
   "UPDATER.CHECK_INTERVAL_MS": "Update-feed check cadence; the launch check covers work due while closed.",

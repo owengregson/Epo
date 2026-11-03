@@ -125,3 +125,23 @@ describe('the feed', () => {
     expect(read.pendingPreview).toEqual([]);
   });
 });
+
+describe('a moved container is read from its new place (C2, spec §10.6), never as a complete set', () => {
+  const marked = (pk: string) => ({ node: { pk, id: pk, username: `user_${pk}`, friendship_status: { incoming_request: true } } });
+  const ten = ['21', '22', '23', '24', '25', '26', '27', '28', '29', '30'];
+
+  test('requester rows under a renamed container: rows flow, the pending set is never complete', () => {
+    const read = requests({ data: { xdt_friendships_pending_users_v2: { users: { edges: ten.map(marked) } } } });
+    expect(read).toMatchObject({ tier: 'recovered', requests: { pendingComplete: false } });
+    expect(read.requests.rows.map((o) => o.accountPk)).toEqual(ten);
+    expect(read.failure).toBeUndefined();
+  });
+
+  test('feed stories under a renamed container: the follow events only, no side list', () => {
+    const story = { story_type: 101, args: { profile_id: '42', profile_name: 'u42', text: 'u42 started following you.' } };
+    const read = readDrawerBody({ kind: 'activity-feed', body: { data: { xdt_activity_inbox_v2: { new_stories: [story], old_stories: [] },
+      xdt_api__v1__friendships__pending: { users: [{ pk: '51', username: 'u51' }] } } } }, ctx);
+    expect(read).toMatchObject({ tier: 'recovered', pendingPreview: [] });
+    expect(read.events?.map((e) => e.pk)).toEqual(['42']);
+  });
+});

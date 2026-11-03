@@ -69,13 +69,22 @@ const arbLedger: fc.Arbitrary<LedgerFacts> = fc.record({
   actionsInLastHour: fc.integer({ min: 0, max: 200 }),
 });
 
-const arbPacing: fc.Arbitrary<PacingFacts> = fc.record({
-  model: fc.constantFrom<'organic' | 'legacy'>('organic', 'legacy'),
-  sessionOpen: fc.boolean(),
-  nextSessionStartAt: fc.integer({ min: 0, max: 2_000_000_000 }),
-  hourlyVelocityCap: fc.integer({ min: 0, max: 60 }),
-  activeHoursStart: fc.integer({ min: 0, max: 23 }),
-});
+/** The plan's facts with an open session and nothing refused (the plan model's "may act"). */
+const OPEN_PLAN = {
+  model: 'plan', hourlyCap: 999, sessionOpen: true, park: null,
+  admits: { follow: true, unfollow: true, accept: true, explore: true }, mix: 'normal', probation: false,
+  reads: { exploreLeft: 0, reconcileLeft: 0 }, checkDue: false, checkLight: false, censusDue: false,
+} as const satisfies PacingFacts;
+
+const arbPacing: fc.Arbitrary<PacingFacts> = fc.oneof(
+  fc.record({ model: fc.constant('legacy' as const), activeHoursStart: fc.integer({ min: 0, max: 23 }) }),
+  fc.constant<PacingFacts>(OPEN_PLAN),
+  fc.record({
+    until: fc.integer({ min: 0, max: 2_000_000_000 }),
+    key: fc.constantFrom('engine:session-park' as const, 'engine:daily-ceiling-park' as const),
+    hourlyCap: fc.integer({ min: 0, max: 60 }),
+  }).map(({ until, key, hourlyCap }): PacingFacts => ({ ...OPEN_PLAN, sessionOpen: false, hourlyCap, park: { key, until } })),
+);
 
 const arbQueue: fc.Arbitrary<QueueFacts> = fc.record({
   queuedForTarget: fc.integer({ min: 0, max: 500 }),
@@ -393,7 +402,7 @@ describe('the precedence property', () => {
           sentinel: { status: 'ok' },
           recovery: { ...facts.recovery, phase: 'inactive' },
           ledger: { ...facts.ledger, atHardCeiling: false, withinActiveHours: true, atOperatingRate: false },
-          pacing: { ...facts.pacing, model: 'organic', sessionOpen: true, hourlyVelocityCap: 999 },
+          pacing: OPEN_PLAN,
           target: { current: { pk: 't1', username: 'targetone' } },
           cadence: { sweepDue: false, overdue: [] },
           queue: { queuedForTarget: 5, lowWaterCandidates: 0, targetExhausted: false },
@@ -430,13 +439,7 @@ describe('prune-run rules', () => {
         msUntilCycleReset: 0,
         actionsInLastHour: 0,
       },
-      pacing: {
-        model: 'organic',
-        sessionOpen: true,
-        nextSessionStartAt: 0,
-        hourlyVelocityCap: 99,
-        activeHoursStart: 0,
-      },
+      pacing: OPEN_PLAN,
       target: { current: null },
       queue: { queuedForTarget: 0, lowWaterCandidates: 0, targetExhausted: false },
       cadence: { sweepDue: false, overdue: [] },

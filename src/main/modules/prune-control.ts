@@ -33,7 +33,7 @@ export interface PruneControlDeps {
   resumeDesiredRun(): void;
   /** The settings-seeded idle prune status before the graph exists. */
   notBuiltPruneStatus(): PruneStatus;
-  /** True while an Explore Boost window is open; always false until wired. */
+  /** True while an Explore Boost window is open; defaults to the live graph's plan. */
   boostActive?: () => boolean;
 }
 
@@ -51,7 +51,7 @@ export class PruneControl {
   private pruneStopEpoch = 0;
 
   constructor(deps: PruneControlDeps) {
-    this.deps = { ...deps, boostActive: deps.boostActive ?? (() => false) };
+    this.deps = { ...deps, boostActive: deps.boostActive ?? (() => deps.graph()?.plan.boostActive() ?? false) };
     this.lease = deps.lease;
     this.runtime = deps.runtime;
     this.activity = deps.activity;
@@ -120,6 +120,7 @@ export class PruneControl {
       const scan = graph.pruneEngine.scan();
       graph.prunePromise = scan.then(() => {}, () => {});
       const result = await scan;
+      if (!result.aborted) graph.plan.demandChanged();
       return result.aborted ? { ok: false, reason: 'scan-incomplete', ...result } : { ok: true, ...result };
     } catch (e) {
       logger.error('foundation.scanPrune: failed', { error: String(e) });

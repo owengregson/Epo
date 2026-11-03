@@ -6,7 +6,6 @@ export {
   toChainConfig,
   toChurnConfig,
   toFollowbackConfig,
-  toPacingConfig,
   toPruneConfig,
   toRateGovernorConfig,
   toScannerConfig,
