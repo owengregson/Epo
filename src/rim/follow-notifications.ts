@@ -1,52 +1,36 @@
 /**
- * AdapterBackedFollowNotifications — the follow-back watcher's live
- * notifications source.
- *
- * Instead of paging our whole followers list, the watcher reads Instagram
- * through its own "who followed me?" surface: click the NOTIFICATIONS control in
- * the nav rail, let the activity drawer fire its news-inbox fetch, and parse
- * the "started following you" events out of the observed response — one
- * click, one request, so the check is cheap enough to run hourly.
- *
- * PRIVATE-ACCOUNT REQUESTS (same drawer session): a private account's
- * follow-backs arrive as follow REQUESTS, which never show as "started
- * following you" until accepted. When `acceptRequests` is on, the pass also
- * clicks the drawer's "Follow requests" entry, observes the
- * friendships/pending response (every requester row is stored immediately —
- * facts stream, docs/PRINCIPLES.md §1), and accepts each request through the
- * real Confirm buttons — bounded per check, paced, and verified per click
- * (the head row must change before the next accept counts).
- *
- * A sentinel block, an unlocatable control, or a response that never arrives
- * is a TYPED failure (`ok: false` + reason), never an empty success — an
- * empty feed must remain distinguishable from a failed read.
+ * The notifications drawer's pass (spec §9.4): one read since the watermark. Every fresh event, undated
+ * event and requester reaches the caller as its body parses (docs/PRINCIPLES.md §1); the Follows chip is
+ * pressed once it is ready; the drawer scrolls only while the watermark is unreached; the requests panel
+ * opens only to accept or to verify. A failure is typed, never an empty success.
  */
 
 import { type ActivityReporter, NOOP_ACTIVITY_REPORTER } from '@/adapter/activity-reporter';
 import type { Actor } from '@/adapter/actor';
-import type { LocateConfirmRequestResult } from '@/adapter/ig-surface';
-import type { FollowEvent, Reader } from '@/adapter/reader';
+import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
+import type { FollowEvent, Observation } from '@/adapter/surface-types';
 import type { ReadBudget } from '@/governors/read-budget';
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
-import { awaitCaptured, captureFeed } from '@/rim/feed-capture';
+import { CLOCK_TOLERANCE_MS } from '@/kernel/tempo-policy';
+import { awaitCaptured, type CaptureState, captureFeed } from '@/rim/feed-capture';
+import type {
+  AcceptedFollowRequest, FeedFailure, FeedPassOptions, FeedReadResult, FeedSource, NotificationsActor,
+} from '@/rim/feed-source';
+import { advanceWatermark, classifyBody, eventKey, type FeedWatermark, gapOf, reached } from '@/rim/feed-watermark';
 import type { RimTab } from '@/rim/types';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
 import { sample, sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
-import { acceptRequests as acceptPendingRequests } from './request-acceptance';
+import { acceptRequests } from './request-acceptance';
 
-export type { FollowEvent } from '@/adapter/reader';
+export type { FollowEvent } from '@/adapter/surface-types';
+export type {
+  AcceptedFollowRequest, FeedFailure, FeedPanel, FeedPassOptions, FeedReadResult, FeedRequester, FeedSource, NotificationsActor,
+} from '@/rim/feed-source';
 
-/** One follow request this pass ACCEPTED (they follow us as of now). */
-export interface AcceptedFollowRequest {
-  /** Resolved from the pending-list rows / store; null when unresolvable. */
-  pk: string | null;
-  username: string;
-}
-
-/** The outcome of one notifications pass. `events`/`accepted` meaningful when ok. */
+/** The watcher's result shape, until the frontier sweep replaces the watcher's check. */
 export interface FollowNotificationsResult {
   ok: boolean;
   events: FollowEvent[];
@@ -54,28 +38,6 @@ export interface FollowNotificationsResult {
   reason?: string;
   retryAt?: number;
   pendingRequestPks?: string[];
-}
-
-/** The port the follow-back watcher consumes (tests inject a scripted fake). */
-export interface FollowNotificationsSource {
-  fetchRecent(opts?: { acceptRequests?: boolean }): Promise<FollowNotificationsResult>;
-}
-
-/** The slice of the Actor this source drives. */
-export interface NotificationsActor {
-  clickNotifications(): Promise<boolean>;
-  /** Soft niceties inside the open drawer — a `false` result is never fatal. */
-  clickNotificationsFollowsFilter(): Promise<boolean>;
-  clickNotificationsClose(): Promise<boolean>;
-  scrollNotificationsList(): Promise<boolean>;
-  clickFollowRequestsEntry(): Promise<boolean>;
-  confirmNextFollowRequest(onDispatch?: (username: string | null) => void | Promise<void>): Promise<{
-    clicked: boolean;
-    username: string | null;
-    remaining: number;
-  }>;
-  /** Read the requests panel's head WITHOUT clicking — the accept-progress probe. */
-  probeFollowRequestHead(): Promise<LocateConfirmRequestResult>;
 }
 
 export interface FollowNotificationsDeps {
@@ -87,11 +49,11 @@ export interface FollowNotificationsDeps {
   actor: NotificationsActor | Actor;
   reader: Reader;
   sentinel: Sentinel;
-  /** When supplied, pending-request rows are stored as they parse (§1). */
+  /** The accept journal (intents per request) and the pending-row facts. */
   store?: KnowledgeStore;
-  /** How long to wait for an observed response after a click (default 10 s). */
+  /** How long to wait for an observed response after a click (default: the D4 deadline). */
   responseWaitMs?: number;
-  /** How long an accept click may take to visibly consume its row (default 4 s). */
+  /** How long an accept click may take to visibly consume its row. */
   acceptVerifyMs?: number;
   /** Injected for tests; defaults to a real `setTimeout` sleep. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -101,160 +63,210 @@ export interface FollowNotificationsDeps {
   reporter?: ActivityReporter;
   /** The tempo the drawer's waits and step pauses resolve from (default: the reference tempo). */
   tempo?: TempoSource;
+  /** Local time (default `Date.now`). */
+  now?: () => number;
 }
 
-export class AdapterBackedFollowNotifications implements FollowNotificationsSource {
-  private readonly readBudget?: ReadBudget;
-  private readonly ownPk?: string;
-  private readonly canAccept?: () => Promise<boolean>;
-  private readonly onAccepted?: () => void;
-  private readonly tab: RimTab;
+/** Why a pass that opened the drawer read no feed body. */
+function noBody(s: CaptureState): FeedFailure {
+  if (s.feedWalled) return 'walled';
+  if (s.feedDrift) return 'feed-shape-drift';
+  return s.sawFeed ? 'body-unreadable' : 'no-response';
+}
+
+/** What one pass has handed over so far: dedupe keys, the fresh events, the requester rows by source. */
+class PassTally {
+  readonly handed = new Set<string>();
+  readonly merged = new Set<string>();
+  readonly requesters = new Set<string>();
+  readonly fresh: FollowEvent[] = [];
+  readonly sibling = new Set<string>();
+  readonly panel = new Map<string, string>();
+  panelRead = false;
+  panelComplete = false;
+  oldest: number | null = null;
+}
+
+export class AdapterBackedFollowNotifications implements FeedSource {
+  private readonly d: FollowNotificationsDeps;
   private readonly actor: NotificationsActor;
-  private readonly reader: Reader;
-  private readonly sentinel: Sentinel;
-  private readonly store?: KnowledgeStore;
   private readonly responseWaitMs: number;
-  private readonly acceptVerifyMs: number;
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-  private readonly abortSignal?: () => AbortSignal | undefined;
   private readonly reporter: ActivityReporter;
   private readonly tempo: TempoSource;
+  private readonly now: () => number;
 
   constructor(deps: FollowNotificationsDeps) {
-    this.readBudget = deps.readBudget;
-    this.ownPk = deps.ownPk;
-    this.canAccept = deps.canAccept;
-    this.onAccepted = deps.onAccepted;
-    this.tab = deps.tab;
+    this.d = deps;
     this.actor = deps.actor;
-    this.reader = deps.reader;
-    this.sentinel = deps.sentinel;
-    this.store = deps.store;
     this.responseWaitMs = deps.responseWaitMs ?? RIM.NOTIFICATIONS_WAIT_MS;
-    this.acceptVerifyMs = deps.acceptVerifyMs ?? RIM.ACCEPT_VERIFY_MS;
     this.sleep = deps.sleep ?? sleep;
-    this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
     this.tempo = tempoOrReference(deps.tempo);
+    this.now = deps.now ?? Date.now;
   }
 
-  async fetchRecent(opts?: { acceptRequests?: boolean }): Promise<FollowNotificationsResult> {
-    const permit = this.readBudget?.consume('notification', 'reconciliation');
-    if (permit && !permit.allowed) {
-      return { ok: false, events: [], accepted: [], reason: 'read-budget', retryAt: permit.resumeAt ?? undefined };
-    }
-    const status = await this.sentinel.check();
+  async fetchSince(w: FeedWatermark | null, o: FeedPassOptions): Promise<FeedReadResult> {
+    const permit = this.d.readBudget?.consume('notification', 'reconciliation', 1, o.use);
+    if (permit && !permit.allowed) return { ok: false, reason: 'read-budget', retryAt: permit.resumeAt ?? undefined, opened: false };
+    const status = await this.d.sentinel.check();
     if (status !== 'ok') {
-      logger.warn('rim.follow-notifications: sentinel non-ok, skipping check', { status });
-      return { ok: false, events: [], accepted: [], reason: `sentinel:${status}` };
+      logger.warn('rim.follow-notifications: sentinel non-ok, skipping the pass', { status });
+      return { ok: false, reason: `sentinel:${status}`, opened: false };
     }
-
     this.reporter.report({ kind: 'page', op: { op: 'check-notifications' } });
     try {
-      return await this.fetchRecentHeld(opts?.acceptRequests === true);
+      return await this.pass(w, o);
     } finally {
       this.reporter.clear();
     }
   }
 
-  private async fetchRecentHeld(acceptRequests: boolean): Promise<FollowNotificationsResult> {
-    const { captured, seenEvents, pendingReads, unsubscribe } = captureFeed({
-      tab: this.tab,
-      reader: this.reader,
-      store: this.store,
+  /** The watcher's read until the frontier sweep replaces it: one pass with no watermark, collected. */
+  async fetchRecent(opts?: { acceptRequests?: boolean }): Promise<FollowNotificationsResult> {
+    const events: FollowEvent[] = [];
+    const accepted: AcceptedFollowRequest[] = [];
+    const requesters = new Set<string>();
+    const r = await this.fetchSince(null, { use: 'check', signal: this.d.abortSignal?.() ?? new AbortController().signal,
+      panel: opts?.acceptRequests === true ? { mode: 'accept', allowed: RIM.REQUEST_ACCEPT_CAP } : null,
+      onEvent: (e) => events.push(e), onUndated: (e) => events.push(e),
+      onRequester: (q) => { requesters.add(q.pk); this.d.store?.observe(q.observation); },
+      onAccepted: (a) => accepted.push({ pk: a.pk, username: a.username }) });
+    if (!r.ok) return { ok: false, events: [], accepted: [], reason: r.reason, retryAt: r.retryAt };
+    return { ok: true, events, accepted, pendingRequestPks: [...requesters].filter((pk) => !accepted.some((a) => a.pk === pk)),
+      retryAt: this.d.store?.getActionDelayDeadline() ?? undefined };
+  }
+
+  private async pass(w: FeedWatermark | null, o: FeedPassOptions): Promise<FeedReadResult> {
+    const readAt = this.now();
+    const t = new PassTally();
+    const once = (key: string, seen: Set<string>): boolean => {
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    };
+    const requester = (obs: Observation, into: 'sibling' | 'panel'): void => {
+      const username = obs.fields.username;
+      if (typeof username !== 'string') return;
+      if (into === 'sibling') t.sibling.add(obs.accountPk);
+      else t.panel.set(username.toLowerCase(), obs.accountPk);
+      if (once(obs.accountPk, t.requesters)) o.onRequester({ pk: obs.accountPk, username, observation: obs });
+    };
+    const cap = captureFeed({ tab: this.d.tab, reader: this.d.reader, now: this.now }, {
+      onFeed: (events, preview) => {
+        const c = classifyBody(events, w, readAt, CLOCK_TOLERANCE_MS);
+        if (c.oldestAtMs !== null) t.oldest = t.oldest === null ? c.oldestAtMs : Math.min(t.oldest, c.oldestAtMs);
+        for (const e of events) t.merged.add(eventKey(e));
+        for (const e of c.fresh) {
+          if (!once(eventKey(e), t.handed)) continue;
+          t.fresh.push(e);
+          o.onEvent(e);
+        }
+        for (const e of c.undated) if (once(eventKey(e), t.handed)) o.onUndated(e);
+        for (const r of preview) requester(r, 'sibling');
+      },
+      onRequests: (rows, complete) => {
+        t.panelRead = true;
+        t.panelComplete = complete;
+        for (const r of rows) requester(r, 'panel');
+      },
     });
-
+    const { signal } = o;
+    const fail = (reason: FeedFailure): FeedReadResult => ({ ok: false, reason, opened: true });
     try {
-      const clicked = await this.actor.clickNotifications();
-      if (!clicked) {
+      if (!await this.actor.clickNotifications()) {
         logger.warn('rim.follow-notifications: notifications control not located, skipping');
-        return { ok: false, events: [], accepted: [], reason: 'control-not-located' };
+        return { ok: false, reason: 'control-not-located', opened: false };
       }
-      const signal = this.abortSignal?.();
-
-      // Narrow the feed to follow events with the drawer's own filter — a soft
-      // nicety (the JSON parse filters by story type regardless of the UI filter).
-      await this.stepPause(signal);
-      const filtered = await this.actor.clickNotificationsFollowsFilter();
-      if (!filtered) {
-        logger.debug('rim.follow-notifications: Follows filter not present, reading full feed');
+      const deadline = this.now() + this.responseWaitMs;
+      const wait = (done: () => boolean, until = deadline): Promise<void> => awaitCaptured(done, cap.pendingReads,
+        { signal, deadline: until, now: this.now, pollMs: RIM.NOTIFICATIONS_POLL_MS, sleep: this.sleep });
+      await wait(() => cap.state.feedBodies > 0 || cap.state.feedDrift || cap.state.feedWalled);
+      if (signal.aborted) return fail('aborted');
+      if (cap.state.feedBodies === 0) {
+        logger.warn('rim.follow-notifications: no readable feed body after the open', { ...cap.state });
+        return fail(noBody(cap.state));
       }
-
-      // A drifted page also unblocks the wait: the response ARRIVED, so there is
-      // nothing left to wait for — but only a well-formed page may count as data.
-      await this.awaitCaptured(() => captured.events !== null || captured.feedDrift, pendingReads, signal);
-
-      if (signal?.aborted) return { ok: false, events: [], accepted: [], reason: 'aborted' };
-      if (captured.events === null) {
-        if (captured.feedDrift) {
-          // Every observed feed body shape-mismatched: follow-back detection is
-          // BROKEN by an IG change, not quiet — surface a loud, typed failure
-          // (an empty success here would silently disable detection).
-          logger.warn('rim.follow-notifications: activity feed shape drifted, failing check');
-          return { ok: false, events: [], accepted: [], reason: 'feed-shape-drift' };
-        }
-        logger.warn('rim.follow-notifications: no activity-feed response after click', {
-          sawResponse: captured.sawInbox,
-          waitedMs: this.responseWaitMs,
-        });
-        return {
-          ok: false,
-          events: [],
-          accepted: [],
-          reason: captured.sawInbox ? 'body-unreadable' : 'no-response',
-        };
-      }
-
-      // Bounded deepening: scroll the drawer list to pull older feed pages
-      // (covers a backlog after downtime). Each round waits briefly for a new
-      // page; a round that yields no NEW events ends the walk early.
-      for (let round = 0; round < RIM.NOTIFICATIONS_SCROLL_ROUNDS; round++) {
-        if (signal?.aborted) break;
-        const before = seenEvents.size;
-        const scrolled = await this.actor.scrollNotificationsList();
-        if (!scrolled) break; // list fits or already bottomed
+      const filtered = await this.pressFollows(cap.state, wait, deadline, signal);
+      // Older bodies only while the watermark is unreached; a round that adds nothing ends it.
+      for (let round = 0; round < RIM.NOTIFICATIONS_SCROLL_ROUNDS && !reached(w, t.oldest); round++) {
+        if (signal.aborted) break;
+        const before = t.merged.size;
+        if (!await this.actor.scrollNotificationsList()) break;
         await this.sleep(sample(this.tempo.policy('scroll.wait.drawer')), signal);
-        await Promise.all(pendingReads.splice(0));
-        if (seenEvents.size === before) break; // no older page / nothing new
+        await Promise.all(cap.pendingReads.splice(0));
+        if (t.merged.size === before) break;
       }
-      const events = captured.events;
-
-      // --- Follow requests (private accounts) — same drawer session ---------
-      const accepted: AcceptedFollowRequest[] = [];
-      if (acceptRequests && !signal?.aborted) {
-        await this.stepPause(signal);
-        const entered = await this.actor.clickFollowRequestsEntry();
-        if (entered) {
-          await this.awaitCaptured(() => captured.pendingPks !== null, pendingReads, signal);
-          await acceptPendingRequests({ actor: this.actor, store: this.store, ownPk: this.ownPk,
-            canAccept: this.canAccept, onAccepted: this.onAccepted, acceptVerifyMs: this.acceptVerifyMs,
-            sleep: this.sleep, tempo: this.tempo }, captured.pendingPks ?? new Map(), accepted, signal);
-        } else {
-          logger.debug('rim.follow-notifications: no Follow requests entry (nothing pending)');
-        }
-      }
-
-      logger.info('rim.follow-notifications: pass complete', {
-        events: events.length,
-        accepted: accepted.length,
-      });
-      const acceptedPks = new Set(accepted.map((r) => r.pk));
-      const pendingRequestPks = [...(captured.pendingPks?.values() ?? [])].filter((pk) => !acceptedPks.has(pk));
-      return { ok: true, events, accepted, pendingRequestPks,
-        retryAt: this.store?.getActionDelayDeadline() ?? undefined };
+      if (signal.aborted) return fail('aborted');
+      const accepted = await this.openPanel(o, cap.state, t.panel, wait, signal);
+      const gap = gapOf(w, t.oldest);
+      const requesters = t.panelRead
+        ? { count: t.panel.size, source: 'panel' as const, complete: t.panelComplete }
+        : { count: t.sibling.size, source: t.sibling.size > 0 ? 'sibling' as const : 'none' as const, complete: false };
+      logger.info('rim.follow-notifications: pass complete', { bodies: cap.state.feedBodies, fresh: t.fresh.length,
+        filtered, gap: gap !== null, requesters: requesters.count, source: requesters.source, accepted });
+      return { ok: true, next: advanceWatermark(w, t.fresh, readAt, filtered, gap), bodies: cap.state.feedBodies,
+        filtered, fresh: t.fresh.length, requesters, accepted };
     } finally {
-      unsubscribe();
-      // Leave the drawer through its own X control — so the tab is
-      // genuinely neutral for whatever acts next; fall back to toggling the
-      // bell when no close control is found. Best-effort: every subsequent
-      // operation begins with a `goto` that resets the SPA anyway.
-      try {
-        await this.sleep(sample(this.tempo.policy('drawer.close-settle')), this.abortSignal?.());
-        const closed = await this.actor.clickNotificationsClose();
-        if (!closed) await this.actor.clickNotifications();
-      } catch (e) {
-        logger.debug('rim.follow-notifications: drawer close skipped', { error: String(e) });
-      }
+      cap.unsubscribe();
+      await this.close();
+    }
+  }
+
+  /** Press the Follows chip once it is ready, then wait for the body it filters (one D4 deadline). */
+  private async pressFollows(s: CaptureState, wait: (done: () => boolean) => Promise<void>, deadline: number,
+    signal: AbortSignal): Promise<boolean> {
+    let pressed = false;
+    let before = s.feedBodies;
+    while (!pressed && this.now() < deadline && !signal.aborted) {
+      await this.attemptPause(signal);
+      // Any body that lands from the press on is the filtered one.
+      before = s.feedBodies;
+      pressed = await this.actor.clickNotificationsFollowsFilter();
+    }
+    if (!pressed) {
+      logger.info('rim.follow-notifications: Follows filter not ready, reading the full feed');
+      return false;
+    }
+    await wait(() => s.feedBodies > before);
+    if (s.feedBodies > before) return true;
+    logger.info('rim.follow-notifications: no body after the Follows filter, reading the full feed');
+    return false;
+  }
+
+  /** The requests panel, for an accept pass or a verification read; returns the accepts. */
+  private async openPanel(o: FeedPassOptions, s: CaptureState, rows: Map<string, string>,
+    wait: (done: () => boolean, until?: number) => Promise<void>, signal: AbortSignal): Promise<number> {
+    const p = o.panel;
+    if (p === null || signal.aborted || (p.mode === 'accept' && p.allowed <= 0)) return 0;
+    await this.stepPause(signal);
+    if (!await this.actor.clickFollowRequestsEntry()) {
+      logger.debug('rim.follow-notifications: no Follow requests entry (nothing pending)');
+      return 0;
+    }
+    await wait(() => s.requestBodies > 0 || s.requestsFailure === 'requests-walled', this.now() + this.responseWaitMs);
+    if (p.mode === 'verify' || s.requestBodies === 0) return 0;
+    let accepted = 0;
+    try {
+      const { store, ownPk, canAccept, onAccepted } = this.d;
+      await acceptRequests({ actor: this.actor, store, ownPk, canAccept, onAccepted, cap: p.allowed,
+        acceptVerifyMs: this.d.acceptVerifyMs ?? RIM.ACCEPT_VERIFY_MS, sleep: this.sleep, tempo: this.tempo, now: this.now }, rows, (a) => {
+        accepted += 1;
+        o.onAccepted?.({ ...a, at: this.now() });
+      }, signal);
+    } catch (e) {
+      logger.warn('rim.follow-notifications: the accept pass ended early', { error: String(e), accepted });
+    }
+    return accepted;
+  }
+
+  /** Leave the drawer through its own X control (the bell when none); every next operation navigates anyway. */
+  private async close(): Promise<void> {
+    try {
+      await this.sleep(sample(this.tempo.policy('drawer.close-settle')), this.d.abortSignal?.());
+      if (!await this.actor.clickNotificationsClose()) await this.actor.clickNotifications();
+    } catch (e) {
+      logger.debug('rim.follow-notifications: drawer close skipped', { error: String(e) });
     }
   }
 
@@ -263,12 +275,9 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     if (this.tempo.enabled('ui.step-pause')) await this.sleep(sample(this.tempo.policy('ui.step-pause')), signal);
   }
 
-  /** Bounded poll for an observed response (interruptible by a stop()). */
-  private awaitCaptured(
-    done: () => boolean,
-    pendingReads: Promise<void>[],
-    signal: AbortSignal | undefined,
-  ): Promise<void> {
-    return awaitCaptured(done, pendingReads, signal, this.responseWaitMs, (ms, s) => this.sleep(ms, s));
+  /** Before each chip attempt: the step pause, or one response poll while it is off. */
+  private async attemptPause(signal: AbortSignal): Promise<void> {
+    if (this.tempo.enabled('ui.step-pause')) await this.stepPause(signal);
+    else await this.sleep(RIM.NOTIFICATIONS_POLL_MS, signal);
   }
 }

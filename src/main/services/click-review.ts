@@ -109,7 +109,7 @@ export function createClickReview(d: ClickReviewDeps) {
       const seen = await visit(username, expectedPk, token);
       const now = seen.obs.observedAt;
       d.onProgress?.('mutation-profile-verified');
-      if (seen.viewer.followsUs !== null) store.observeEdge(expectedPk, ownPk, 'follows', seen.viewer.followsUs, now);
+      if (seen.viewer.followsUs !== null) store.observeEdge(expectedPk, ownPk, 'follows', seen.viewer.followsUs, now, { source: 'visit' });
       if (action === 'unfollow') return unfollowReview(username, expectedPk, seen, now);
       const account = store.getAccount(expectedPk);
       const rec = store.getFollowRecord(expectedPk);
