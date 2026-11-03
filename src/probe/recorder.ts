@@ -13,6 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import type { WebContents } from 'electron';
 import { SURFACE } from '@/adapter/ig-surface';
+import { decodeBody } from '@/surface/transport/decode';
 
 export interface Exchange {
   n: number;
@@ -32,6 +33,10 @@ export interface Exchange {
   status?: number;
   mime?: string;
   shape?: unknown;
+  /** How the body was framed (plain, guarded, streamed, multipart), as the production decoder read it. */
+  format?: string;
+  /** The streaming final flag, when the body carried one. */
+  final?: boolean | null;
   textHead?: string;
   body?: string;
   failed?: string;
@@ -53,21 +58,6 @@ function shapeOf(v: unknown, depth = 0): unknown {
   return v === null ? null : typeof v;
 }
 
-/** A body as JSON: plain, `for (;;);`-guarded, or newline-delimited (GraphQL @defer). */
-function parseBody(text: string): unknown {
-  const t = text.replace(/^for \(;;\);/, '').trim();
-  try {
-    return JSON.parse(t);
-  } catch {
-    const parts = t.split(/\r?\n/).filter((l) => l.trim().startsWith('{'));
-    if (parts.length < 2) return undefined;
-    try {
-      return parts.map((p) => JSON.parse(p) as unknown);
-    } catch {
-      return undefined;
-    }
-  }
-}
 
 function formOf(raw: string): { form: Record<string, string>; formKeys: string[] } {
   const form: Record<string, string> = {};
@@ -171,11 +161,15 @@ export class TrafficRecorder {
           },
         );
       if (got === null) return;
-      const json = parseBody(got);
-      if (json === undefined) {
+      // The production decoder: a guarded, streamed or multipart body reads exactly as Epo reads it.
+      const decoded = decodeBody(got, SURFACE.transport);
+      if (!decoded.ok) {
         ex.textHead = got.slice(0, 300);
         return;
       }
+      const json = decoded.json;
+      ex.format = decoded.format;
+      ex.final = decoded.final;
       ex.shape = shapeOf(json);
       ex.body = `${String(ex.n).padStart(3, '0')}-${ex.path.replace(/[^a-z0-9]+/gi, '_').slice(0, 60)}.json`;
       writeFileSync(path.join(this.bodies, ex.body), JSON.stringify(json, null, 2), 'utf8');

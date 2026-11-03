@@ -29,7 +29,13 @@ export const countsUnread = (seen: Pick<ProfileSeen, 'presence'>): boolean =>
 /** A profile visit's typed outcome (see `profile-visit.ts` for each kind). */
 export type ProfileVisit =
   | ({ ok: true } & ProfileSeen)
-  | { ok: false; kind: 'gone' | 'walled' | 'unanswered' | 'tab'; detail: Record<string, unknown> };
+  | {
+      ok: false;
+      kind: 'gone' | 'walled' | 'unanswered' | 'tab';
+      detail: Record<string, unknown>;
+      /** What proved `gone`: Instagram's own empty profile body, or only the page's text. */
+      evidence?: 'profile-absent' | 'page-text';
+    };
 
 /** Reads a profile by VISITING it — composes no request. */
 export interface ProfileVisitor {

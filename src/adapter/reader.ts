@@ -31,6 +31,7 @@ import {
 import type { ObservedRelation } from '@/shared/observed-relation';
 import type { Observation } from '@/store/types';
 import type { ProfilePresence } from '@/surface/schema/projection';
+import { type GraphqlOutcome, graphqlEnvelope } from '@/surface/transport/graphql';
 
 // Re-export the stable result types so existing consumers keep one import site.
 export type {
@@ -198,6 +199,24 @@ export class Reader {
   /** Which decision-bearing fields a profile body carried (`viewerPk` names a null relationship's owner). */
   profilePresence(body: unknown, kind: ProfileKind, viewerPk: string | null): ProfilePresence | null {
     return SURFACE.extractProfilePresence(coerceBody(body, kind), viewerPk);
+  }
+
+  /**
+   * A profile body's GraphQL envelope (spec §10.5): a wall, errors without the profile (to wait
+   * out), errors beside it (partial), or plain data. Never "gone".
+   */
+  profileEnvelope(body: unknown, kind: ProfileKind): GraphqlOutcome {
+    const json = coerceBody(body, kind);
+    const read = (): boolean => {
+      const r = SURFACE.extractProfileInfo(json, 0);
+      return r !== null && !isShapeMismatch(r);
+    };
+    return graphqlEnvelope(json, read, SURFACE.graphql, SURFACE.mutationRefusalSignatures);
+  }
+
+  /** Whether the body is Instagram saying the profile is gone: its declared container present and null. */
+  profileAbsent(body: unknown, kind: ProfileKind): boolean {
+    return SURFACE.extractProfileInfo(coerceBody(body, kind), 0) === null;
   }
 
   /** Parse the batched relationship map (`reader-relationships.ts`). */

@@ -180,8 +180,13 @@ export const projectProfileGraphql = (
 ): Projection => {
   const out = emptyProjection();
   const user = body.data.user;
-  if (user === null || user === undefined) {
+  // Only an explicit null is Instagram saying "gone"; a missing `user` is drift (spec §10.4).
+  if (user === null) {
     out.absent = true;
+    return out;
+  }
+  if (user === undefined) {
+    out.rowIssues.push({ index: 0, path: 'data.user', message: 'profile container carries no user' });
     return out;
   }
   projectProfileUser(user, ctx, out);

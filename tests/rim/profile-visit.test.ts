@@ -168,6 +168,58 @@ describe('typed non-ok outcomes', () => {
   });
 });
 
+describe('outcome precedence: evidence decides, never a guess (spec §10.4, U10 F5)', () => {
+  const unavailable = (tab: PageTab, found: boolean) => {
+    tab.scripts.length = 0;
+    tab.on(marker('"control":"profile-unavailable"'), () => (found ? { found: true, rect: { x: 1, y: 1, width: 9, height: 9 } } : { found: false }));
+  };
+
+  test('a throttle body answering the visit is walled by the body, never gone', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { user: null }, errors: [{ message: 'e', summary: 'Try Again Later' }] });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'walled', detail: { via: 'body', family: 'rate-limited' } });
+  });
+
+  test('{data:{user:null}} with errors is a wall to wait out, never "gone"', async () => {
+    const { tab, visitor } = setup();
+    unavailable(tab, true);
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { user: null }, errors: [{ message: 'unknown' }] });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'walled', detail: { via: 'body', family: 'server-error' } });
+  });
+
+  test('an HTTP wall on the profile query is walled by the response', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/x/'] = () =>
+      tab.emit({ requestId: 'w', url: GRAPHQL, status: 429, mimeType: 'text/html', requestHeaders: PROFILE_QUERY, body: '<html>' });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'walled', detail: { via: 'body', family: 'rate-limited', status: 429 } });
+  });
+
+  test('a clean {data:{user:null}} is gone on the profile-absent evidence', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { user: null }, extensions: { is_final: true } });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'gone', evidence: 'profile-absent' });
+  });
+
+  test('an unavailable page with no body is gone on page text only', async () => {
+    const { tab, visitor } = setup();
+    unavailable(tab, true);
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'gone', evidence: 'page-text' });
+  });
+
+  test('a drifted body outranks the page text: unanswered with the drift, never gone', async () => {
+    const { tab, visitor } = setup();
+    unavailable(tab, true);
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { profile_v2: { pk: '1' } } });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'unanswered', detail: { drift: 'mismatch' } });
+  });
+
+  test('a stream that is not final never reads as gone', async () => {
+    const { tab, visitor } = setup();
+    tab.pages['https://www.instagram.com/x/'] = () => serve(tab, { data: { user: null }, extensions: { is_final: false } });
+    expect(await visitor.visit('x')).toMatchObject({ ok: false, kind: 'unanswered', detail: { drift: 'incomplete-stream' } });
+  });
+});
+
 describe('the observer alone (passive harvest, PRINCIPLES §1)', () => {
   test('every profile body the tab loads is written, armed or not', async () => {
     const { tab } = setup();

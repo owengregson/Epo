@@ -102,14 +102,14 @@ function profileUserOf(body: unknown): Record<string, unknown> | null | ShapeMis
     const user = getPath(body, path);
     if (isRecord(user)) return user;
   }
-  // Neither container held a record. A container that is PRESENT but empty is
-  // the "gone" answer; a body carrying no container at all is drift. The
-  // GraphQL container is the parent of its `user` leaf, derived from the same
-  // path rather than spelled a second time.
-  const graphqlParent = at.graphql.slice(0, at.graphql.lastIndexOf('.'));
-  const present =
-    at.info in (body as Record<string, unknown>) || isRecord(getPath(body, graphqlParent));
-  return present ? null : SHAPE_MISMATCH;
+  // Neither container held a record. Only a container PRESENT and explicitly null is the "gone"
+  // answer (spec §10.4); a missing `user` key, or no container at all, is drift. The GraphQL
+  // container is the parent of its `user` leaf, derived from the same path.
+  const explicitNull = (parent: unknown, key: string): boolean =>
+    isRecord(parent) && Object.hasOwn(parent, key) && parent[key] === null;
+  const cut = at.graphql.lastIndexOf('.');
+  const gone = explicitNull(body, at.info) || explicitNull(getPath(body, at.graphql.slice(0, cut)), at.graphql.slice(cut + 1));
+  return gone ? null : SHAPE_MISMATCH;
 }
 
 export function extractProfileInfo(body: unknown, at: number): Observation | null | ShapeMismatch {
