@@ -31,9 +31,11 @@ export type AudienceSize = (typeof AUDIENCE_SIZES)[number];
 
 /** Sun..Sat, the kernel's weekly-weights order; the UI renders Mon-first. */
 export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+/** The week's days by `DayOfWeek` index. */
+export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
-/** Seven days off is Stop, not a plan (the settings policy's `MAX_DAYS_OFF`). */
-export const MAX_DAYS_OFF = 6;
+/** Seven days off is Stop, not a plan: all but one day (the settings policy's `MAX_DAYS_OFF`). */
+export const MAX_DAYS_OFF = WEEKDAYS.length - 1;
 
 /** Local wall-clock minutes in [0, 1440) on the 30-minute grid; may wrap midnight; start ≠ end. */
 export type QuietHours =

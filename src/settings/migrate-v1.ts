@@ -4,35 +4,23 @@
  * rows only slow down; both lists come raw, every item counted; a broken post-condition refuses.
  */
 import { createHash } from 'node:crypto';
-import { SETTINGS_POLICY } from '@/kernel/settings-policy';
+import { SETTINGS_GUARDS, SETTINGS_POLICY } from '@/kernel/settings-policy';
+import { MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
 import type { AudienceSize, CleanupLevel, Intent, QuietHours } from '@/shared/settings-intent';
 import type { ParamValue, RatioCurve } from '@/shared/settings-model';
 import type { ParamKey } from '@/shared/settings-params';
+import type { MigrationBasis } from './basis';
 import { DEFAULT_DOC, type MigrationNote, type OverrideEntry, type SettingsDocV2 } from './doc';
+import { type EffectiveSettings, effectiveFrom } from './effective';
 import { migrateAccountList, migrateWordList } from './migrate-v1-lists';
+import { PARAM_SPECS } from './params';
 import type { ResolvedPattern } from './pattern-map';
+import type { ResolvedParams } from './resolve';
 import { v1Derived } from './v1/derive-v1';
 import { DEFAULT_SETTINGS, migrateLegacyPattern, sanitizeSettings } from './v1/settings-v1';
 import type { Settings } from './v1/settings-v1-types';
 
-/** The v2 recommendations the slower-only and bucket rows compare against (the settings core supplies them). */
-export interface MigrationBasis {
-  /** The recommended effective typical gap at pace 1 (seconds). */
-  gapTypicalSeconds(intent: Intent): number;
-  /** The recommended effective gap floor at pace 1 (seconds). */
-  gapMinimumSeconds(intent: Intent): number;
-  /** The briskest check spacing an override may ask for (hours). */
-  readonly checksEveryHoursMin: number;
-  readonly audienceSize: Readonly<Record<AudienceSize, { readonly min: number; readonly max: number }>>;
-  /** The 'likely' follow-back curve. */
-  readonly likelyCurve: RatioCurve;
-  /** The private-account edge `preferPrivate` adds. */
-  readonly privateEdge: number;
-  /** The highest refill threshold that still has an effect. */
-  readonly refillMax: number;
-  /** The interim recommendations while the plan port is not registered. */
-  readonly interim: { readonly cleanupPerDay: number; readonly censusEveryDays: number; readonly checksEveryHours: number };
-}
+export type { MigrationBasis } from './basis';
 
 export interface MigrateOptions {
   readonly now: number;
@@ -41,6 +29,8 @@ export interface MigrateOptions {
   /** The v1 file's modification time, recorded with its digest for the union-only re-import. */
   readonly mtimeMs: number | null;
   readonly basis: MigrationBasis;
+  /** Resolves a document's parameters: given, the effective record must equal v1 on every retained knob. */
+  readonly resolve?: (doc: SettingsDocV2) => ResolvedParams;
 }
 
 export type MigrationOutcome =
@@ -57,17 +47,21 @@ const DERIVED_ROWS: ReadonlyArray<readonly [ParamKey, keyof ResolvedPattern]> = 
   ['unfollow.holdDays', 'holdAfterFollowbackDays'],
 ];
 
+const MINUTES_PER_HOUR = MS_PER_HOUR / MS_PER_MINUTE;
+
 const CURVE_KEYS = ['hardLow', 'bandLow', 'peakLow', 'peakHigh', 'bandHigh', 'hardHigh'] as const;
+
+/** v1's active hours as quiet hours: the default window is derived; [start, end) active is [end, start) quiet. */
+export function quietHoursOfActive(start: number, end: number): QuietHours {
+  if (start === DEFAULT_SETTINGS.activeHoursStart && end === DEFAULT_SETTINGS.activeHoursEnd) return { kind: 'derived' };
+  return start === end ? { kind: 'none' } : { kind: 'custom', startMinute: end * MINUTES_PER_HOUR, endMinute: start * MINUTES_PER_HOUR };
+}
 
 function quietHoursFrom(v1: Settings, notes: MigrationNote[]): QuietHours {
   const { activeHoursStart: start, activeHoursEnd: end } = v1;
-  if (start === DEFAULT_SETTINGS.activeHoursStart && end === DEFAULT_SETTINGS.activeHoursEnd) {
-    notes.push({ kind: 'quiet-hours-derived' });
-    return { kind: 'derived' };
-  }
-  notes.push({ kind: 'quiet-hours-from-active-hours', start, end });
-  // The active window [start, end) becomes the quiet window [end, start); an empty one has none.
-  return start === end ? { kind: 'none' } : { kind: 'custom', startMinute: end * 60, endMinute: start * 60 };
+  const quiet = quietHoursOfActive(start, end);
+  notes.push(quiet.kind === 'derived' ? { kind: 'quiet-hours-derived' } : { kind: 'quiet-hours-from-active-hours', start, end });
+  return quiet;
 }
 
 function cleanupFrom(v1: Settings, notes: MigrationNote[]): CleanupLevel {
@@ -159,7 +153,8 @@ export function migrateV1(raw: string, opts: MigrateOptions): MigrationOutcome {
       basis.interim.cleanupPerDay);
   }
   if (v1.pruneScheduleDays > 0 && v1.pruneScheduleDays !== basis.interim.censusEveryDays) {
-    set('unfollow.censusEveryDays', clamped('unfollow.censusEveryDays', v1.pruneScheduleDays, 1, 30),
+    const { min, max } = SETTINGS_GUARDS.censusEveryDays;
+    set('unfollow.censusEveryDays', clamped('unfollow.censusEveryDays', v1.pruneScheduleDays, min, max),
       basis.interim.censusEveryDays);
   }
   // The scan band becomes a walk.page factor over the v1 default band (the walk.page reference), slower
@@ -184,9 +179,7 @@ export function migrateV1(raw: string, opts: MigrateOptions): MigrationOutcome {
   if (seed !== normalizeSeed(typeof parsed.seed === 'string' ? parsed.seed : '')) reasons.push('seed');
   if (reasons.length > 0) return { kind: 'refused', reasons };
 
-  return {
-    kind: 'migrated',
-    doc: {
+  const doc: SettingsDocV2 = {
       ...DEFAULT_DOC,
       intent,
       seed,
@@ -208,6 +201,62 @@ export function migrateV1(raw: string, opts: MigrateOptions): MigrationOutcome {
         pacingModel: v1.pacingModel, minDelayMinutes: v1.minDelayMinutes, maxDelayMinutes: v1.maxDelayMinutes,
         jitterPercent: v1.jitterPercent, activeHoursStart: v1.activeHoursStart, activeHoursEnd: v1.activeHoursEnd,
       },
-    },
   };
+  if (opts.resolve === undefined) return { kind: 'migrated', doc };
+  const pinned = pinChained(v1, doc, opts.resolve, now);
+  const broken = effectiveMismatches(v1, pinned, opts.resolve(pinned), notes);
+  return broken.length > 0 ? { kind: 'refused', reasons: broken } : { kind: 'migrated', doc: pinned };
+}
+
+/**
+ * v2 derives some numbers from the EFFECTIVE upstreams (a hand-set daily volume moves the recommended
+ * ceiling); a v1 value that matched its old derivation keeps itself as an override, so behaviour is kept.
+ */
+function pinChained(v1: Settings, doc: SettingsDocV2, resolve: (d: SettingsDocV2) => ResolvedParams, now: number): SettingsDocV2 {
+  let d = doc;
+  for (let pass = 0; pass < RETAINED.length; pass += 1) {
+    const r = resolve(d);
+    const e = effectiveFrom(d, r);
+    const drift = RETAINED.find(([knob, key]) => typeof v1[knob] === 'number' && e[knob] !== v1[knob]
+      && d.overrides[key] === undefined && PARAM_SPECS[key].kind === 'int' && within(v1[knob] as number, r[key].bounds));
+    if (drift === undefined) return d;
+    const [knob, key] = drift;
+    d = { ...d, overrides: { ...d.overrides, [key]: { value: v1[knob] as number, setAt: now, basis: r[key].recommended } } };
+  }
+  return d;
+}
+
+const within = (v: number, b: { readonly min: number; readonly max: number }): boolean => v >= b.min && v <= b.max;
+
+/** v1 knobs whose meaning v2 keeps, and the parameter that now holds each. */
+const RETAINED: ReadonlyArray<readonly [keyof Settings & keyof EffectiveSettings, ParamKey]> = [
+  ['dailyOperatingRate', 'pace.dailyVolume'], ['dailyHardCeiling', 'pace.dailyCeiling'], ['dailyPlanSize', 'pace.candidateBuffer'],
+  ['dailyVolumeVariancePct', 'pace.dayVariation'], ['restDayChancePct', 'pace.restDayChance'],
+  ['sessionsPerDayMin', 'sessions.perDayMin'], ['sessionsPerDayMax', 'sessions.perDayMax'], ['hourlyVelocityCap', 'pace.hourlyCap'],
+  ['maxWaitForFollowbackDays', 'unfollow.waitDays'], ['holdAfterFollowbackDays', 'unfollow.holdDays'], ['maxRetries', 'unfollow.attempts'],
+  ['lowWaterCandidates', 'explore.refillBelow'], ['minFollowBackRate', 'explore.moveOnRate'], ['minPoolSize', 'explore.moveOnPool'],
+  ['privateBoost', 'audience.privateBoost'], ['minFollowers', 'audience.followerRange'], ['maxFollowers', 'audience.followerRange'],
+  ...CURVE_KEYS.map((k) => [k, 'audience.ratioCurve'] as const), ['followbackSweepHours', 'checks.everyHours'],
+  ['pruneDailyLimit', 'unfollow.cleanupPerDay'],
+];
+
+/**
+ * The effective-equality post-condition (spec §6.10): the migrated document's effective record equals the
+ * v1-sanitized object on every retained knob, except the documented exceptions — a value the new bounds
+ * clamp (a `value-clamped` note is added) and a faster value that was dropped with its notice.
+ */
+function effectiveMismatches(v1: Settings, doc: SettingsDocV2, r: ResolvedParams, notes: MigrationNote[]): string[] {
+  const e = effectiveFrom(doc, r);
+  const noted = (key: ParamKey): boolean => notes.some((n) => 'key' in n && n.key === key);
+  const out: string[] = [];
+  for (const [knob, key] of RETAINED) {
+    if (e[knob] === v1[knob] || (knob === 'followbackSweepHours' && notes.some((n) => n.kind === 'faster-value-dropped' && n.key === 'checksEveryHours'))) continue;
+    const outside = typeof v1[knob] === 'number' && !within(v1[knob] as number, r[key].bounds);
+    if ((outside || r[key].override?.clamped === true) && typeof v1[knob] === 'number' && typeof e[knob] === 'number') {
+      if (!noted(key)) notes.push({ kind: 'value-clamped', key, from: v1[knob] as number, to: e[knob] as number });
+      continue;
+    }
+    if (!noted(key)) out.push(`effective:${knob}`);
+  }
+  return out;
 }

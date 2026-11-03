@@ -1,4 +1,5 @@
-import { SCANNER_DEFAULTS, Scanner } from '@/engine/scanner';
+import { Scanner } from '@/engine/scanner';
+import { EXPLORATION_POLICY } from '@/kernel/exploration-policy';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { AccountFields } from '@/store/types';
 import { openTestStore } from '../kit/store';
@@ -130,8 +131,11 @@ test('an account already having a follow_record is not re-queued', () => {
   expect(store.getFollowRecord('already')!.state).toBe('pending_followback');
 });
 
-test('default plan size is 25', () => {
-  expect(SCANNER_DEFAULTS.dailyPlanSize).toBe(25);
+test('unconfigured, a target yields at most one source queue (no defaults table of its own)', () => {
+  for (let i = 0; i < EXPLORATION_POLICY.queuedPerSource + 5; i += 1) {
+    seedFollower(`peak${i}`, { followers: 1000, following: 1100, isPrivate: true });
+  }
+  expect(scanner().planTarget(TARGET).queued).toHaveLength(EXPLORATION_POLICY.queuedPerSource);
 });
 
 // --- rescoreQueued: backfill for records queued before score persistence ------------

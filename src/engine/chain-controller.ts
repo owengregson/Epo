@@ -1,4 +1,5 @@
 import { type Clock, SystemClock } from '../governors/clock';
+import { SETTINGS_POLICY } from '../kernel/settings-policy';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { info } from '../utils/logger';
 import { EXPLORATION_POLICY } from './exploration-policy';
@@ -44,8 +45,10 @@ export interface ChainConfig {
   minPoolSize: number;
 }
 
-/** Design defaults (§3.5): projected follow-back rate ≥ 0.15 AND pool size ≥ 300. */
-export const CHAIN_DEFAULTS: ChainConfig = { minFollowBackRate: 0.15, minPoolSize: 300 };
+/** The one declaration of the chain gates' defaults: the settings policy's recommendations (spec §17.8). */
+export const CHAIN_DEFAULTS: ChainConfig = {
+  minFollowBackRate: SETTINGS_POLICY.RECOMMENDED.minFollowBackRate, minPoolSize: SETTINGS_POLICY.RECOMMENDED.minPoolSize,
+};
 
 /** The outcome of advancing the chain by one hop. */
 export interface AdvanceResult {
@@ -190,7 +193,7 @@ export class ChainController {
       frontier.offer(candidate.pk, 'discovered');
     }
     // A fallback is a second source of alternatives, not a choice made only once a chain dies.
-    if (frontier.snapshot().sources.filter((s) => s.status === 'ready' || s.status === 'working').length < 3) {
+    if (frontier.snapshot().sources.filter((s) => s.status === 'ready' || s.status === 'working').length < EXPLORATION_POLICY.refillBelowLiveSources) {
       const own = this.ownFollowers.candidates ? await this.ownFollowers.candidates(this.cfg.minPoolSize) : [await this.ownFollowers.pick(this.cfg.minPoolSize)];
       for (const pk of own) if (pk !== null) frontier.offer(pk, 'own_followers');
     }

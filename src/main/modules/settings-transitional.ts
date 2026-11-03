@@ -1,7 +1,7 @@
 /**
- * The transitional Settings v2 surface over today's v1 file: the protection the new predicate compiles from
- * the v1 lists, and the view the settings channel serves until the settings core computes it from the v2
- * document. Every number here is today's derivation; the settings core replaces the previews.
+ * @transitional — F2b's interim view over a v1 settings object. Production serves the v2 view now; only
+ * the old renderer's test bridge (`tests/kit/render-bridge.ts`) still builds its settings view here, and
+ * this module is deleted once that bridge reads the v2 view.
  */
 import { derivePattern, EMPIRICAL } from '@/kernel';
 import { deriveReadAllowance } from '@/kernel/derive-reads';
@@ -120,3 +120,4 @@ export function transitionalView(s: Settings, e: EffectiveSettings, rev: number,
     app: { tourCompletedAt: s.tourCompletedAt },
   };
 }
+

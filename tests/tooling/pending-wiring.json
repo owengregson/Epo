@@ -1,16 +1,6 @@
 {
   "pending": [
     {
-      "module": "src/settings/doc-rules.ts",
-      "stream": "SC",
-      "reason": "the settings service coerces epo-settings-v2.json through these rules when it reads the document"
-    },
-    {
-      "module": "src/settings/migrate-v1.ts",
-      "stream": "SC",
-      "reason": "the settings service runs the v1 migration at construction, with the kernel-derived basis"
-    },
-    {
       "module": "src/renderer/settings/SettingsStage.tsx",
       "stream": "SU",
       "reason": "the Settings stage replaces its body and the stage host mounts it"
@@ -26,9 +16,9 @@
       "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
     },
     {
-      "module": "src/settings/plan-intent.ts",
-      "stream": "PR",
-      "reason": "plan-wiring.ts feeds the plan service toPlanIntent(effective()); the settings core wraps it for the PlanPreviewPort fingerprint"
+      "module": "src/main/modules/settings-transitional.ts",
+      "stream": "SC",
+      "reason": "deleted, not wired: production serves the v2 view; only tests/kit/render-bridge.ts (lead) still builds its view here, and SC or SU deletes the module once the bridge reads the v2 view"
     },
     {
       "module": "src/renderer/settings/compatibility/CompatibilityPanel.tsx",

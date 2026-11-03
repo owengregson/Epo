@@ -4,9 +4,10 @@
  * bounds apply at resolve time); the table is `satisfies`-linked to the document, so no field goes uncoerced.
  */
 import { SETTINGS_POLICY } from '@/kernel/settings-policy';
+import { MS_PER_DAY, MS_PER_MINUTE } from '@/kernel/units';
 import {
   ACTIVITY_LEVELS, AUDIENCE_FOCUSES, AUDIENCE_SIZES, CAUTIONS, CLEANUP_LEVELS, CONSISTENCIES, DAY_SHAPES,
-  type DayOfWeek, type Intent, MAX_DAYS_OFF, MUTUAL_POLICIES, PATIENCES, type QuietHours, RHYTHMS, WEEKLY_SHAPES,
+  type DayOfWeek, type Intent, MAX_DAYS_OFF, MUTUAL_POLICIES, PATIENCES, type QuietHours, RHYTHMS, WEEKDAYS, WEEKLY_SHAPES,
 } from '@/shared/settings-intent';
 import type { KeepWord, ParamValue, ProtectedAccount, ProtectionSettings } from '@/shared/settings-model';
 import { T2_PARAM_KEYS, TEMPO_PARAM_KEYS } from '@/shared/settings-params';
@@ -33,8 +34,10 @@ const listOf = <T>(item: (v: unknown) => T | null): Rule<readonly T[]> => (raw, 
   return ok(kept, raw.length - kept.length);
 };
 
-const GRID_MINUTES = 30;
-const snap = (m: number): number => ((Math.round(m / GRID_MINUTES) * GRID_MINUTES) % 1440 + 1440) % 1440;
+const GRID_MINUTES = SETTINGS_POLICY.QUIET_GRID_MINUTES;
+const MINUTES_PER_DAY = MS_PER_DAY / MS_PER_MINUTE;
+const snap = (m: number): number =>
+  ((Math.round(m / GRID_MINUTES) * GRID_MINUTES) % MINUTES_PER_DAY + MINUTES_PER_DAY) % MINUTES_PER_DAY;
 const quietHours: Rule<QuietHours> = (raw, fb) => {
   if (!isObj(raw)) return ok(fb, raw === undefined ? 0 : 1);
   if (raw.kind === 'derived' || raw.kind === 'none') return ok({ kind: raw.kind });
@@ -47,13 +50,13 @@ const quietHours: Rule<QuietHours> = (raw, fb) => {
   return ok(fb, 1);
 };
 const daysOff: Rule<readonly DayOfWeek[]> = (raw, fb) => {
-  const listed = listOf((v): DayOfWeek | null => (Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 6 ? (v as DayOfWeek) : null))(raw, fb);
+  const listed = listOf((v): DayOfWeek | null => (Number.isInteger(v) && (v as number) >= 0 && (v as number) < WEEKDAYS.length ? (v as DayOfWeek) : null))(raw, fb);
   const unique = [...new Set(listed.value)].sort();
   const value = unique.length > MAX_DAYS_OFF ? fb : unique;
   return ok(value, listed.dropped + (listed.value.length - unique.length) + (value === fb && unique.length > 0 ? 1 : 0));
 };
 
-const INTENT_RULES = {
+export const INTENT_RULES = {
   activity: oneOf(ACTIVITY_LEVELS), caution: oneOf(CAUTIONS), rhythm: oneOf(RHYTHMS), consistency: oneOf(CONSISTENCIES),
   dayShape: oneOf(DAY_SHAPES), weeklyShape: oneOf(WEEKLY_SHAPES), quietHours, daysOff, patience: oneOf(PATIENCES),
   mutuals: oneOf(MUTUAL_POLICIES), cleanup: oneOf(CLEANUP_LEVELS), audienceFocus: oneOf(AUDIENCE_FOCUSES),
@@ -73,9 +76,10 @@ function record<T extends object>(rules: { [K in keyof T]: Rule<T[K]> }, raw: un
   return ok(out, dropped);
 }
 
+const RANGE_KEYS = ['min', 'max'] as const;
 const isParamValue = (v: unknown): v is ParamValue =>
   isNum(v) || typeof v === 'boolean' || (isObj(v) && (
-    (Object.keys(v).length === 2 && isNum(v.min) && isNum(v.max)) ||
+    (Object.keys(v).length === RANGE_KEYS.length && RANGE_KEYS.every((k) => isNum(v[k]))) ||
     ['hardLow', 'bandLow', 'peakLow', 'peakHigh', 'bandHigh', 'hardHigh'].every((k) => isNum(v[k]))));
 const PARAM_KEYS = new Set<string>([...T2_PARAM_KEYS, ...TEMPO_PARAM_KEYS]);
 const overrides: Rule<SettingsDocV2['overrides']> = (raw, fb) => {
@@ -113,7 +117,7 @@ const structured = <T>(test: (v: unknown) => boolean): Rule<T | null> =>
   (raw, fb) => (raw === null || test(raw) ? ok(raw as T | null) : ok(fb, raw === undefined ? 0 : 1));
 
 export const DOC_RULES = {
-  v: (raw) => ok(2 as const, raw === 2 ? 0 : 1),
+  v: (raw) => ok(SETTINGS_POLICY.DOC_VERSION, raw === SETTINGS_POLICY.DOC_VERSION ? 0 : 1),
   rev: nonNegInt,
   intent: (raw, fb) => record(INTENT_RULES, raw, fb),
   seed: str,

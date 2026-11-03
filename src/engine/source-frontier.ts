@@ -181,14 +181,14 @@ export class SourceFrontier {
     const recent = [...new Set([...state.recentFollowSources].reverse())].slice(0, POLICY.maxSources);
     const candidates = state.sources.filter((source) => source.pk !== excludePk && source.resumeAt <= now &&
       this.deps.store.getAccount(source.pk)?.username !== undefined);
-    if (candidates.length < 2) return candidates[0] ?? null;
+    if (candidates.length < POLICY.rankMinCandidates) return candidates[0] ?? null;
     const exploration = (state.totalFollows + 1) % Math.round(1 / POLICY.explorationFraction) === 0;
     const yields = matureYields(this.deps.store, now, this.deps.outcomeWindowMs?.());
     const utility = new Map(candidates.map((source) => {
       const quality = (yields.get(source.pk) ?? priorYield()).rate;
-      const overlap = observedOverlap(this.deps.store, source.pk, recent) ?? 0.5;
+      const overlap = observedOverlap(this.deps.store, source.pk, recent) ?? POLICY.unknownOverlap;
       const share = state.recentFollowSources.filter((pk) => pk === source.pk).length / Math.max(1, state.recentFollowSources.length);
-      return [source.pk, quality * (1 - 0.5 * overlap) - share * 0.1];
+      return [source.pk, quality * (1 - POLICY.overlapWeight * overlap) - share * POLICY.sharePenalty];
     }));
     candidates.sort((a, b) => {
       if (exploration && a.totalFollows !== b.totalFollows) return a.totalFollows - b.totalFollows;
@@ -214,7 +214,7 @@ export class SourceFrontier {
     }
     let sources = [...bySource.keys()];
     const counts = (pk: string): number => state.recentFollowSources.filter((p) => p === pk).length;
-    if (sources.length >= 3 && state.recentFollowSources.length >= POLICY.followsPerVisit) {
+    if (sources.length >= POLICY.shareMinSources && state.recentFollowSources.length >= POLICY.followsPerVisit) {
       const under = sources.filter((pk) => counts(pk) / state.recentFollowSources.length < POLICY.sourceShare);
       if (under.length > 0) sources = under;
     }
