@@ -168,6 +168,8 @@ export const GRAPHQL_FRIENDLY_NAME_HEADER = 'x-fb-friendly-name';
 export const GRAPHQL_MUTATION_NAME = /mutation/i;
 export const GRAPHQL_UNFOLLOW_NAME = /unfollow/i;
 export const GRAPHQL_FOLLOW_NAME = /follow/i;
+/** The relationship family an unrecognised mutation name must belong to before it may reveal a wall. */
+export const MUTATION_CANDIDATE_FAMILY = /follow|friend|relationship/i;
 
 // JSON paths, DOM contact points and signals live in sibling modules,
 // re-exported here so every consumer keeps one import site.

@@ -17,8 +17,6 @@
     {"key":"src/adapter/mutation-classify.ts :: classifyMutationWith :: if :: 500","class":"GEOM","reason":"an HTTP status code (protocol)"},
     {"key":"src/adapter/mutation-classify.ts :: classifyMutationWith :: ok2xx :: 200","class":"GEOM","reason":"an HTTP status code (protocol)"},
     {"key":"src/adapter/mutation-classify.ts :: classifyMutationWith :: ok2xx :: 300","class":"GEOM","reason":"an HTTP status code (protocol)"},
-    {"key":"src/adapter/mutation-watch.ts :: MutationWatch.classify :: raw.slice :: 120","class":"GEOM","reason":"an excerpt length for a log or diagnostic line"},
-    {"key":"src/adapter/mutation-watch.ts :: UNMATCHED_POSTS_KEPT :: UNMATCHED_POSTS_KEPT :: 12","class":"PENDING","stream":"PP","reason":"PP: becomes SURFACE_BOUNDS.unmatchedPostsKept (spec §17.8)"},
     {"key":"src/adapter/page/dom.ts :: AIM_GRID :: AIM_GRID :: 8","class":"GEOM","reason":"in-page DOM geometry: rect thresholds, aim grid, probe fractions (spec §17.8)"},
     {"key":"src/adapter/page/dom.ts :: centreOf :: x :: 2","class":"GEOM","reason":"in-page DOM geometry: rect thresholds, aim grid, probe fractions (spec §17.8)"},
     {"key":"src/adapter/page/dom.ts :: centreOf :: y :: 2","class":"GEOM","reason":"in-page DOM geometry: rect thresholds, aim grid, probe fractions (spec §17.8)"},

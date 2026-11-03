@@ -174,6 +174,8 @@ export interface IgSurface {
    * friendly-name header. `null` for reads and everything else.
    */
   matchMutation(req: MutationRequest): MutationMatch | null;
+  /** An unrecognised relationship-family mutation: it may reveal a wall, never a success. */
+  mutationCandidate(req: MutationRequest): boolean;
   /** The server's verdict from a mutation body; `SHAPE_MISMATCH` when unreadable. */
   extractMutationVerdict(body: unknown, kind?: MutationKind): MutationVerdict | ShapeMismatch;
   /**

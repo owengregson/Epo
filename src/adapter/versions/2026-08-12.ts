@@ -34,7 +34,7 @@ import {
   extractProfileViewer,
   extractShowMany,
 } from '@/adapter/versions/2026-08-12.extractors';
-import { extractMutationVerdict, matchMutation } from '@/adapter/versions/2026-08-12.mutations';
+import { extractMutationVerdict, matchMutation, mutationCandidate } from '@/adapter/versions/2026-08-12.mutations';
 import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
 import { routeObserved } from '@/surface/read/route';
 import { CONTINUATION } from '@/surface/versions/2026-08-12/continuation-decl';
@@ -42,7 +42,6 @@ import {
   AVATAR_ALT_RE,
   BODY_MIME_PARSEABLE,
   FOLLOWING_LIST_ORDER,
-  GRAPHQL_FRIENDLY_NAME_HEADER,
   IG_APP_ID,
   LIST_PAGE_COUNT,
   PATHS,
@@ -193,6 +192,7 @@ export const SURFACE_2026_08_12: IgSurface = {
   extractFeedPendingPreview,
 
   matchMutation,
+  mutationCandidate,
   extractMutationVerdict,
   mutationRefusalSignatures: MUTATION_REFUSAL_SIGNATURES,
 

@@ -235,6 +235,7 @@ export interface PruneEngineDeps {
    * progress estimates and an inert census coverage guard. A failed required
    * refresh aborts this census, preserving the previous complete observation.
    */
+  // biome-ignore lint/suspicious/noConfusingVoidType: a wired refresh resolves the header or (as wired today) nothing.
   refreshOwnStats?: () => Promise<OwnHeader | void>;
   /**
    * Active-hours gate, re-checked between unfollows: a run started in the
