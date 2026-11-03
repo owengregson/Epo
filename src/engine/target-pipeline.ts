@@ -29,6 +29,7 @@ import {
   type StepResult,
 } from './ports';
 import type { FailureKind } from './recovery';
+import { peekResumeTarget } from './resume-target';
 import type { SourceFrontier, SourceVisitEndReason } from './source-frontier';
 import { acquisitionFailureBackoff, reviveRecentExhausted } from './target-recovery';
 
@@ -143,30 +144,15 @@ export class TargetPipeline {
    * chain), if any. Free — no IG traffic. Returns whether a target was adopted.
    */
   adoptActiveTargetFromStore(): boolean {
-    const resume = this.deps.frontier?.snapshot().currentTargetPk;
-    if (resume && this.deps.store.getTarget(resume)) {
-      this.adoptTarget(resume);
-      return true;
-    }
-    if (this.deps.frontier !== undefined) {
-      const ready = this.deps.frontier.next();
-      if (ready === null) return false;
-      const existing = this.deps.store.getTarget(ready.pk);
-      if (existing === null) this.deps.store.addTarget({ accountPk: ready.pk, source: ready.source,
+    const pick = peekResumeTarget(this.deps);
+    if (pick === null) return false;
+    if (pick.ready !== undefined) {
+      const existing = pick.ready.existing;
+      if (existing === null) this.deps.store.addTarget({ accountPk: pick.pk, source: pick.ready.source,
         status: 'active', chainIndex: this.deps.store.nextChainIndex() });
-      else if (existing.status === 'exhausted') this.deps.store.setTargetStatus(ready.pk, 'active');
-      this.adoptTarget(ready.pk);
-      return true;
+      else if (existing.status === 'exhausted') this.deps.store.setTargetStatus(pick.pk, 'active');
     }
-    const active = this.deps.store.listTargets().filter((t) => t.status === 'active');
-    if (active.length === 0) return false;
-    const front = active.reduce((best, t) => {
-      const bi = best.chainIndex ?? -1;
-      const ti = t.chainIndex ?? -1;
-      if (ti !== bi) return ti > bi ? t : best;
-      return t.accountPk < best.accountPk ? t : best; // deterministic tie-break
-    });
-    this.adoptTarget(front.accountPk);
+    this.adoptTarget(pick.pk);
     return true;
   }
 
