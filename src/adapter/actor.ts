@@ -14,10 +14,7 @@
  */
 
 import { verdictToResult } from '@/adapter/action-result';
-import {
-  type ActivityReporter,
-  NOOP_ACTIVITY_REPORTER,
-} from '@/adapter/activity-reporter';
+import { type ActivityReporter, NOOP_ACTIVITY_REPORTER } from '@/adapter/activity-reporter';
 import * as listScroll from '@/adapter/actor-scroll';
 import { arbitrate } from '@/adapter/arbiter';
 import {
@@ -35,6 +32,7 @@ import type {
 import { SURFACE } from '@/adapter/ig-surface';
 import { MutationWatch } from '@/adapter/mutation-watch';
 import { settleAndPress } from '@/adapter/settle-press';
+import { ADAPTER_BOUNDS } from '@/kernel/adapter-bounds';
 import { SURFACE_METER, type SurfaceMetric } from '@/surface/meter';
 import { ADAPTER } from '@/timing/config';
 import { sleep } from '@/timing/primitives';
@@ -338,7 +336,7 @@ export class Actor {
     });
 
     let lastMissing: 'dialog' | typeof statLabel = 'dialog';
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < ADAPTER_BOUNDS.OPEN_LIST_ATTEMPTS; attempt++) {
       await this.tab.goto(SURFACE.profileUrl(targetUsername));
 
       const clicked = await this.waitFor<ClickResult>(

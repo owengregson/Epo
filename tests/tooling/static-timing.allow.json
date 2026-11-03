@@ -1,6 +1,5 @@
 {
   "allow": [
-    {"key":"src/adapter/actor.ts :: Actor.openListDialog :: for :: 2","class":"PENDING","stream":"CF","reason":"CF: becomes ADAPTER.OPEN_LIST_ATTEMPTS (spec §17.8)"},
     {"key":"src/adapter/actor.ts :: Actor.probeBlock :: text.slice :: 200","class":"GEOM","reason":"an excerpt length for a log or diagnostic line"},
     {"key":"src/adapter/actor.ts :: Actor.rectUsable :: cx :: 2","class":"GEOM","reason":"on-screen rect geometry: the 2 px usable threshold and centres (spec §17.8)"},
     {"key":"src/adapter/actor.ts :: Actor.rectUsable :: cy :: 2","class":"GEOM","reason":"on-screen rect geometry: the 2 px usable threshold and centres (spec §17.8)"},
