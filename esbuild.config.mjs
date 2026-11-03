@@ -78,16 +78,17 @@ bundle('surface-lab', ['src/surface-lab/main.ts'], 'dist/surface-lab', nodeOptio
 
 // Renderer (dashboard console). The entry imports `styles/index.css`, so esbuild
 // bundles the CSS graph into a sibling `index.css`. Icons are inline SVG paths
-// (`ui/icons.ts`), so no webfont is bundled — no CDN, no font requests, CSP-safe.
-// `target` is the Chromium the installed Electron ships — the only browser this
-// bundle ever runs in — read from `build/targets.generated.json`.
+// (`ui/icons.ts`), never a webfont. The one bundled face (Inter Variable, OFL,
+// `src/renderer/fonts/`) is emitted as a file beside `index.css` — no CDN, CSP
+// `font-src 'self'`. `target` is the Chromium the installed Electron ships — the
+// only browser this bundle ever runs in — read from `build/targets.generated.json`.
 bundle('renderer', ['src/renderer/index.tsx'], 'dist/renderer', {
   platform: 'browser',
   target: TARGETS.chrome,
   format: 'iife',
   jsx: 'automatic',
   jsxImportSource: 'preact',
-  loader: { '.tsx': 'tsx', '.ts': 'ts' },
+  loader: { '.tsx': 'tsx', '.ts': 'ts', '.woff2': 'file' },
 });
 
 /** Files copied verbatim, not bundled: the renderer shell and the overlay page. */

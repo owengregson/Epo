@@ -3,7 +3,15 @@
  * replaces the stage pane. Deliberately minimal: everything to the LEFT of it
  * is the real console drawing on the real tokens, and this file must never
  * influence it. Nothing here is reachable without the query flag.
+ *
+ * The direction boards bring their own sheets; every rule targets board-only
+ * classes (`db-*`, `dx-*`), so the app's own markup never matches them.
  */
+
+@import "../gallery/direction/board.css";
+@import "../gallery/direction/sidebar.css";
+@import "../gallery/direction/stage.css";
+@import "../gallery/direction/launch.css";
 
 .gallery-rail {
   display: flex;
