@@ -46,6 +46,7 @@ import { decideStep } from '@/rim/list-walk-end';
 import type { RimTab } from '@/rim/types';
 import { RIM } from '@/timing/config';
 import { sample, sleep, uniform } from '@/timing/primitives';
+import { launchStream } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 
 export interface ListPageWalkerDeps {
@@ -89,7 +90,7 @@ export class ListPageWalker {
     this.reader = deps.reader;
     this.clock = deps.clock ?? new SystemClock();
     this.sleepFn = deps.sleep ?? sleep;
-    this.rng = deps.rng ?? Math.random;
+    this.rng = deps.rng ?? launchStream('rim/list-page-walker');
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
     this.tempo = tempoOrReference(deps.tempo);
@@ -283,8 +284,7 @@ export class ListPageWalker {
         endConfirmed = true;
         reason = 'no-more-pages';
         logger.info('rim.list-page-walker: end-of-list verified (probe found nothing new)', {
-          pk,
-          which,
+          pk, which,
           pages,
           observed: observed.size,
         });

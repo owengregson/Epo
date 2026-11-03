@@ -26,6 +26,7 @@ import type { ProfileExpectation } from '@/rim/profile-observer';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
 import { ADAPTER } from '@/timing/config';
 import { type Rng, type SleepFn, sample, sleep } from '@/timing/primitives';
+import { launchStream } from '@/utils/entropy';
 
 export interface TabProfileVisitorDeps {
   tab: Navigable;
@@ -62,7 +63,7 @@ export class TabProfileVisitor implements ProfileVisitor {
     this.waitMs = deps.waitMs ?? ADAPTER.POLL_TIMEOUT_MS;
     this.pollMs = deps.pollMs ?? ADAPTER.POLL_INTERVAL_MS;
     this.sleep = deps.sleep ?? sleep;
-    this.rng = deps.rng ?? Math.random;
+    this.rng = deps.rng ?? launchStream('rim/profile-visit');
     this.now = deps.now ?? Date.now;
     this.tempo = tempoOrReference(deps.tempo);
   }

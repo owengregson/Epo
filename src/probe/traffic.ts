@@ -20,10 +20,11 @@ import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { type Exchange, TrafficRecorder } from '@/probe/recorder';
 import { sleep } from '@/timing/primitives';
+import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 
 /** A person-paced settle after each step: 5–8 s. */
-const settle = (): Promise<void> => sleep(5000 + Math.random() * 3000);
+const settle = (): Promise<void> => sleep(5000 + cryptoUniform() * 3000);
 
 /** The Actor's controls, read in place (each is a local DOM query). */
 async function domCheck(tab: InstagramTab, names: string[]): Promise<Record<string, unknown>> {

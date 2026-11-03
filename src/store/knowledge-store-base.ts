@@ -5,7 +5,7 @@
 import { Chronos } from './chronos';
 import type { SqliteDriver } from './driver/driver';
 import { openDatabase } from './driver/index';
-import type { KnowledgeStoreOptions } from './knowledge-types';
+import { type KnowledgeStoreOptions, noInjectedRng } from './knowledge-types';
 import { runMigrations } from './migrations';
 import { MutationPulse } from './mutation-pulse';
 import { AccountRepo } from './repos/accounts';
@@ -80,7 +80,7 @@ export class KnowledgeStoreBase {
 
   constructor(dbPath: string, opts: StoreOpenOptions) {
     this.now = opts.now ?? Date.now;
-    this.rng = opts.rng ?? Math.random;
+    this.rng = opts.rng ?? noInjectedRng;
     this.policy = opts.policy;
     // The driver applies WAL + `synchronous = FULL` + `foreign_keys = ON`, then
     // proves them with a round-trip self-test — it throws rather than hand back

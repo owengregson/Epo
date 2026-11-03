@@ -20,6 +20,7 @@
  */
 
 import type { SqliteDriver, SqlValue } from './driver/driver';
+import { noInjectedRng } from './knowledge-types';
 import { SPANS } from './schema/manifest';
 import { decodeRow, type RowOf, upsertSql } from './schema/tables';
 import type { StorePolicy } from './types';
@@ -119,7 +120,7 @@ export class SpanSink {
     opts: SpanSinkOptions,
   ) {
     this.now = opts.now ?? Date.now;
-    this.rng = opts.rng ?? Math.random;
+    this.rng = opts.rng ?? noInjectedRng;
     this.policy = opts.policy;
   }
 

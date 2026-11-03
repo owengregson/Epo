@@ -29,7 +29,12 @@ export interface PruneCensusRecord {
 export interface KnowledgeStoreOptions {
   /** Wall clock; defaults to `Date.now`. */
   now?: () => number;
-  /** Uniform [0,1) source; defaults to `Math.random`. */
+  /** Uniform [0,1) source for install entropy and span ids; main injects the entropy root. */
   rng?: () => number;
+}
+
+/** The store owns no randomness: without an injected `rng`, a draw refuses loudly. */
+export function noInjectedRng(): number {
+  throw new Error('store: no rng injected (the composition root passes the entropy root)');
 }
 

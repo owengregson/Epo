@@ -27,9 +27,10 @@ import { TrafficRecorder } from '@/probe/recorder';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import { sleep } from '@/timing/primitives';
+import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 
-const settle = (): Promise<void> => sleep(5000 + Math.random() * 3000);
+const settle = (): Promise<void> => sleep(5000 + cryptoUniform() * 3000);
 
 export async function verifyProbe(tab: InstagramTab, out: string): Promise<void> {
   const target = process.env.EPO_PROBE_TARGET?.trim() ?? '';
@@ -77,7 +78,7 @@ export async function verifyProbe(tab: InstagramTab, out: string): Promise<void>
     result.ownUsername = own;
     await step('visit-own', async () => summary(await visitor.visit(own)));
     await step('visit-target', async () => summary(await visitor.visit(target)));
-    const nx = `epo_nx_${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 8)}`;
+    const nx = `epo_nx_${cryptoUniform().toString(36).slice(2, 10)}${cryptoUniform().toString(36).slice(2, 8)}`;
     await step('visit-nonexistent', async () => summary(await visitor.visit(nx)));
     await step('home', () => tab.goto(IG_HOME_URL));
     await step('drawer-open', () => actor.clickNotifications());

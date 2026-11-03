@@ -3,6 +3,7 @@ import { actionGap } from '../timing/action-gap';
 import { cyclePlan } from '../timing/cycle-plan';
 import { sample } from '../timing/primitives';
 import { MS_PER_HOUR, startOfLocalDay } from '../timing/units';
+import { launchStream } from '../utils/entropy';
 import type { Clock } from './clock';
 
 export interface RateGovernorConfig {
@@ -24,7 +25,7 @@ export class RateGovernor {
     private readonly store: KnowledgeStore,
     private readonly clock: Clock,
     private cfg: RateGovernorConfig,
-    private readonly rng: () => number = Math.random,
+    private readonly rng: () => number = launchStream('governors/rate-governor'),
   ) {}
 
   /** Swap the live config in place (used when Settings are updated at runtime). */

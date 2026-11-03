@@ -91,7 +91,6 @@ const RULES = [
   { file: /^src\/store\/schema\//, context: /[.]key$/, as: G('a primary-key column position in the table manifest') },
   { file: /^src\/store\/driver\/self-test\.ts$/, as: G('round-trip values of the driver durability self-test') },
   { file: /^src\/store\/spans\.ts$/, scope: /^(enc|SpanSink\.mint)$/, as: G('Crockford base-32 span ids: the radix and digit widths') },
-  { file: /^src\/store\/(spans|repos\/accounts|repos\/effect-intents)\.ts$/, as: P('F2b', 'STORE_POLICY injection (spec §14 C24) replaces the retention and span-ring numbers') },
   { file: /^src\/store\/repos\/analytics\.ts$/, as: G('median index arithmetic (halving), numeric') },
   { file: /^src\/surface\/meter\.ts$/, scope: /^RESERVOIR$/, as: P('PH', 'the latency reservoir size becomes a SURFACE_BOUNDS entry (spec §10.9)') },
   { file: /^src\/surface\/meter\.ts$/, as: G('quantile definitions (p50, p95), numeric') },
@@ -140,7 +139,7 @@ const OWNERS = [
   [/^src\/engine\/(source-quality|sweep-plan|frontier-sweep|followback-[a-z]+|facts-cadence|engine-sweep-effects|ports|reentry|reconcile-followback-cohort|managed-relationships)\.ts$/, 'RO'],
   [/^src\/rim\/(feed-watermark|followers-head|following-check|feed-capture|follow-notifications|request-acceptance|walk-own-list|effect-reconciliation|managed-relationships)\.ts$/, 'RO'],
   [/^src\/main\/(services\/reopen-wiring|modules\/catch-up)\.ts$/, 'RO'],
-  [/^src\/surface\/versions\/[^/]+\/scrub-shapes\.ts$/, 'PH'],
+  [/^src\/surface\/(lab\/|versions\/[^/]+\/scrub-shapes\.ts$)/, 'PH'],
   [/^src\/surface\/versions\/[^/]+\/(controls|literals-dom)\.ts$/, 'CF'],
   [/^src\/surface\/(read|transport|recovery|schema|versions)\//, 'PP'],
   [/^src\/surface\/(index|parse|health|shadow)\.ts$/, 'PP'],
@@ -161,6 +160,9 @@ const OWNERS = [
   [/^src\/(store\/repos\/feed-reads|shared\/(feed|update-status)|engine\/resume-target)\.ts$/, 'LD'],
   [/^src\/shared\/brand-mark\.ts$/, 'TK'],
   [/^src\/shared\/(posture|attention)\.ts$/, 'SB'],
+  [/^src\/(probe\/|capture\/classify\.ts$)/, 'PP'],
+  [/^src\/surface-lab\//, 'PH'],
+  [/^src\/tools\/readme\/live-charts\.ts$/, 'PR'],
 ];
 
 /** The stream that owns `file` after Phase F; frozen Phase F files and unlisted ones go to the lead. */
@@ -171,20 +173,27 @@ const TIME_WORDS = new Set(['ms', 'timeout', 'sleep', 'wait', 'delay', 'settle',
 const saysTime = (...names) =>
   names.some((n) => n.split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/).some((w) => TIME_WORDS.has(w.toLowerCase())));
 
+/** A rule that excuses (GEOM, HARNESS) covers only literals unless it names its kind. */
 const matches = (rule, f) =>
   (rule.file === undefined || rule.file.test(f.file)) &&
-  (rule.kind === undefined || rule.kind === f.kind) &&
+  (rule.kind === undefined ? rule.as.class === 'PENDING' || f.kind === 'literal' : rule.kind === f.kind) &&
   (rule.scope === undefined || rule.scope.test(f.scope)) &&
   (rule.context === undefined || rule.context.test(f.context)) &&
   (rule.text === undefined || rule.text.test(f.text)) &&
   !(rule.guard && saysTime(f.scope, f.context));
 
+const FALLBACK = {
+  literal: 'no spec §17 row names this value; derive it in src/kernel, inject it, or argue it GEOM',
+  prior: 'read this prior through a TempoSource (src/kernel/tempo), never directly',
+  random: 'draw from a launch stream of the entropy root (src/utils/entropy.ts) instead',
+};
+
 /** `{class, stream?, reason}` for one finding (`{file, scope, context, text, kind}`). */
 export function classify(f) {
   const harness = HARNESS_ROOTS.find(([re]) => re.test(f.file));
-  if (harness) return { class: 'HARNESS', reason: `harness: ${harness[1]} is dev-only; its values never reach production` };
+  if (harness && f.kind === 'literal') {
+    return { class: 'HARNESS', reason: `harness: ${harness[1]} is dev-only; its values never reach production` };
+  }
   const rule = RULES.find((r) => matches(r, f)) ?? FAMILIES.find((r) => matches(r, f));
-  if (rule) return { ...rule.as };
-  const owner = ownerOf(f.file);
-  return P(owner, 'no spec §17 row names this value; derive it in src/kernel, inject it, or argue it GEOM');
+  return rule ? { ...rule.as } : P(ownerOf(f.file), FALLBACK[f.kind]);
 }

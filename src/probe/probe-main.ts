@@ -26,6 +26,7 @@ import { ListPageWalker } from '@/rim/list-page-walker';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import { sleep } from '@/timing/primitives';
+import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 
 bootstrapApp();
@@ -185,7 +186,7 @@ async function windowExperiment(tab: InstagramTab, ownPk: string): Promise<void>
     // The PRODUCTION page request, with the one extra parameter spliced in.
     const script = SURFACE.listPageScript(ownPk, 'following', maxId === null ? null : String(maxId));
     const res = await fetchJson(tab, script.replace("/following/?count=50'", `/following/?count=50${extra}'`));
-    await sleep(1500 + Math.random() * 1500);
+    await sleep(1500 + cryptoUniform() * 1500);
     return res.ok ? (res.json as Record<string, unknown>) : null;
   };
   let extra = param === '' || param === 'rank' ? '' : `&${param}`;

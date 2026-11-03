@@ -4,6 +4,7 @@
  * survives unless tests/tooling/static-timing.allow.json lists it with a class and a reason.
  */
 import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as derive from '@/kernel/derive';
 import { MOTION } from '@/kernel/motion-policy';
@@ -211,4 +212,71 @@ describe('scope', () => {
       expect(scan.files.some((f) => f.startsWith(`src/${dir}/`))).toBe(true);
     },
   );
+});
+
+const allow = (JSON.parse(fs.readFileSync(path.join(__dirname, 'static-timing.allow.json'), 'utf8')) as { allow: Entry[] })
+  .allow;
+const HARNESS_CODE = /^src\/(probe|livetest|capture|inspect|tools|surface-lab)\//;
+const STREAMS = new Set(['PC', 'PR', 'SC', 'SU', 'UD', 'RO', 'PP', 'PH', 'CF', 'BL', 'LD', 'TK', 'SH', 'SB', 'lead']);
+const PRUNE = 'run `node scripts/gen-static-timing-allow.mjs` (it prunes, never adds)';
+
+/** Jest's `expect` takes no message, so the fix rides in the diff. */
+const withHint = (offenders: string[], hint: string): string[] => (offenders.length === 0 ? [] : [hint, ...offenders]);
+const found = new Map<string, number[]>();
+for (const f of scan.tree) found.set(f.key, [...(found.get(f.key) ?? []), f.line]);
+const listed = new Map(allow.map((e) => [e.key, e.count ?? 1] as const));
+const fileOf = (e: Entry): string => e.key.split(' :: ')[0];
+/** Math.random and prior reads (`GROUP.key`) are never excused; only a numeric literal can be. */
+const isLiteral = (e: Entry): boolean => !/^(Math[.]random|[A-Z_]+[.][A-Za-z_]+)$/.test(e.key.split(' :: ')[3]);
+
+describe('the tree against static-timing.allow.json', () => {
+  test('every finding is listed', () => {
+    const unlisted = [...found]
+      .filter(([key, lines]) => lines.length > (listed.get(key) ?? 0))
+      .map(([key, lines]) => `${key} (${lines.length} found, ${listed.get(key) ?? 0} listed; line ${lines.join(', ')})`);
+    const hint = 'Derive the value in src/kernel or draw it from a TempoSource; a new entry is a stop-and-ask to the lead.';
+    expect(withHint(unlisted, hint)).toEqual([]);
+  });
+
+  test('every entry still matches, so the list only shrinks', () => {
+    const stale = allow
+      .filter((e) => (found.get(e.key)?.length ?? 0) < (e.count ?? 1))
+      .map((e) => `${e.key}: ${found.get(e.key)?.length ?? 0} found, ${e.count ?? 1} listed`);
+    expect(withHint(stale, `A literal left: ${PRUNE}.`)).toEqual([]);
+  });
+
+  test('entries are sorted and unique, with a four-part key, a class and a reason', () => {
+    const keys = allow.map((e) => e.key);
+    expect(keys).toEqual([...new Set(keys)].sort());
+    const malformed = allow.filter(
+      (e) =>
+        e.key.split(' :: ').length !== 4 ||
+        !['GEOM', 'HARNESS', 'PENDING'].includes(e.class) ||
+        e.reason.length < 20 ||
+        (e.count !== undefined && !(Number.isInteger(e.count) && e.count > 1)),
+    );
+    expect(malformed).toEqual([]);
+  });
+
+  test("a harness's literals are HARNESS, and HARNESS is only a harness's literals", () => {
+    const wrong = allow.filter((e) => {
+      const harnessLiteral = HARNESS_CODE.test(fileOf(e)) && isLiteral(e);
+      const registry = e.key.startsWith('src/timing/config.ts :: HARNESS :: ') && isLiteral(e);
+      return harnessLiteral !== (e.class === 'HARNESS') && !(registry && e.class === 'HARNESS');
+    });
+    expect(wrong).toEqual([]);
+  });
+
+  test('every PENDING entry names the stream that removes it; no other class names one', () => {
+    const wrong = allow.filter((e) =>
+      e.class === 'PENDING'
+        ? !(e.stream !== undefined && STREAMS.has(e.stream) && e.reason.startsWith(`${e.stream}: `))
+        : e.stream !== undefined,
+    );
+    expect(wrong).toEqual([]);
+  });
+
+  test('Math.random and prior reads are never excused, only pending', () => {
+    expect(allow.filter((e) => !isLiteral(e) && e.class !== 'PENDING')).toEqual([]);
+  });
 });

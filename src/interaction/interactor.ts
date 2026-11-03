@@ -14,6 +14,7 @@ import {
 } from '@/interaction/motion-profile';
 import { type MotionPolicy, type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import { sleep as defaultSleep, type SleepFn } from '@/timing/primitives';
+import { launchStream } from '@/utils/entropy';
 
 export type { ElementRect, Point } from '@/interaction/motion-profile';
 
@@ -48,7 +49,7 @@ export class Interactor {
 
   constructor(private readonly deps: InteractorDeps) {
     this.driver = deps.driver;
-    this.rng = deps.rng ?? Math.random;
+    this.rng = deps.rng ?? launchStream('interaction/interactor');
     this.sleep = deps.sleep ?? defaultSleep;
     this.tempo = tempoOrReference(deps.tempo);
     const start = this.tempo.gesture().policy;
