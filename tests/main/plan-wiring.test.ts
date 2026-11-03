@@ -120,6 +120,8 @@ describe('the store reads', () => {
     s.upsertFollowRecord({ accountPk: 'q', targetPk: null, state: 'unfollow_queued', retryCount: 0 });
     s.upsertFollowRecord({ accountPk: 'p1', targetPk: null, state: 'pending_followback', retryCount: 0, followedAt: window.endsAt - wait - 1 });
     s.upsertFollowRecord({ accountPk: 'p2', targetPk: null, state: 'pending_followback', retryCount: 0, followedAt: window.endsAt });
+    // A wait that ends on the boundary is due on the next plan-day: the window is [startsAt, endsAt).
+    s.upsertFollowRecord({ accountPk: 'p3', targetPk: null, state: 'pending_followback', retryCount: 0, followedAt: window.endsAt - wait });
     s.recordAction('f', 'follow', 'ok', window.startsAt + 1);
     const d = planDemand(s, settings, 'ME', window, clock.now());
     expect(d.lifecycleDueByDayEnd).toBe(2);
@@ -146,9 +148,33 @@ describe('the store reads', () => {
       retryCount: 0, keptReason: 'unreadable-bio', recheckAt });
     kept('k1', window.endsAt - MS_PER_MINUTE);
     kept('k2', window.endsAt + MS_PER_HOUR);
+    kept('k3', window.endsAt);
     const d = planDemand(s, effectiveFromV1(DEFAULT_SETTINGS), 'ME', window, T0);
     expect([d.outsideToday, d.pendingRequests, d.protectedReeval]).toEqual([3, 2, 1]);
     expect(plan.service.view(T0).used.outside).toBe(3);
+  });
+
+  test("the journal's due intents and the followers head's page size come from the store", () => {
+    const s = store();
+    s.setOwnPk('ME');
+    const plan = wire(s, planClock(T0));
+    const window = plan.service.view(T0).window;
+    const begin = (pk: string) => s.beginEffectIntent({ accountPk: pk, username: pk, action: 'unfollow', channel: 'manual', at: T0 });
+    const dispatched = (pk: string): string => {
+      const { id } = begin(pk);
+      s.markEffectDispatched(id, T0);
+      return id;
+    };
+    begin('prepared'); // nothing was pressed: no settlement read is owed
+    dispatched('due');
+    s.effectIntents.park(dispatched('later-today'), { attempts: 1, nextAttemptAt: window.endsAt - MS_PER_HOUR }, null);
+    s.effectIntents.park(dispatched('next-day'), { attempts: 1, nextAttemptAt: window.endsAt }, null);
+    s.settleEffectIntent(dispatched('settled'), { at: T0, result: 'ok', ledger: 'none' });
+    const demand = () => planDemand(s, effectiveFromV1(DEFAULT_SETTINGS), 'ME', window, T0);
+    expect([demand().journalPending, demand().census.rowsPerPage]).toEqual([2, null]);
+    s.reopen.set({ v: 1, feed: null, requests: null, lastSweep: null, lastCatchUp: null, following: null,
+      head: { walkedAt: T0, rowsPerPage: 12, order: { verdict: 'newest-first', pairs: 3, ordered: 3, at: T0 }, contiguous: true } });
+    expect(demand().census.rowsPerPage).toBe(12);
   });
 
   test('the last write before an instant is exact, looks back past a day, and is null with no ledger', () => {

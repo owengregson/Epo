@@ -12,10 +12,12 @@ import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
 
 /** The store slice the demand reads. */
-export type DemandStore = Pick<KnowledgeStore, 'followRecordsByState' | 'tallySince' | 'pendingEffectIntents'
+export type DemandStore = Pick<KnowledgeStore, 'followRecordsByState' | 'tallySince'
   | 'pruneScanRemainingCount' | 'getAccount' | 'getPruneCensus' | 'activeRequestPks'> & {
   readonly followRecords: Pick<KnowledgeStore['followRecords'], 'recheckDue'>;
   readonly growth: Pick<KnowledgeStore['growth'], 'outsideSince'>;
+  readonly effectIntents: Pick<KnowledgeStore['effectIntents'], 'due'>;
+  readonly reopen: Pick<KnowledgeStore['reopen'], 'get'>;
 };
 
 /** How many lifecycle unfollows are due by `t`: the queued ones and the timers that expire by then. */
@@ -29,27 +31,30 @@ function lifecycleDueBy(store: DemandStore, s: EffectiveSettings, t: number): nu
 }
 
 /**
- * The demand at `now` for the plan-day `window`: the kept records whose re-read falls in it, the outside
- * following actions charged to it (increases only), and the open follow requests into the account.
+ * The demand at `now` for the plan-day `window`: the work due before it ends (the journal's settlement reads,
+ * the kept re-checks), the outside following actions charged to it (increases only), the open follow requests
+ * into the account, and the followers head's measured page size (null before the first walk).
  */
 export function planDemand(store: DemandStore, s: EffectiveSettings, ownPk: string, window: PlanDayWindow,
   now: number): PlanDemand {
   const own = store.getAccount(ownPk);
   const census = store.getPruneCensus();
+  // The window is [startsAt, endsAt): its last instant is the one before the next plan-day begins.
+  const last = window.endsAt - 1;
   // A trailing week of plan-days, as whole days: an average, never a boundary.
   const weekAgo = window.startsAt - WEEKLY_CYCLE * MS_PER_DAY;
   return {
-    lifecycleDueByDayEnd: lifecycleDueBy(store, s, window.endsAt),
+    lifecycleDueByDayEnd: lifecycleDueBy(store, s, last),
     lifecycleBacklog: lifecycleDueBy(store, s, now),
     pruneStock: store.pruneScanRemainingCount(),
-    protectedReeval: store.followRecords.recheckDue(window.endsAt).length,
-    journalPending: store.pendingEffectIntents().length,
+    protectedReeval: store.followRecords.recheckDue(last).length,
+    journalPending: store.effectIntents.due(last).length,
     followsDoneToday: store.tallySince(window.startsAt).follow,
     outsideToday: store.growth.outsideSince(window.startsAt),
     pendingRequests: store.activeRequestPks().length,
     acceptsRecent: (store.tallySince(weekAgo).accept - store.tallySince(window.startsAt).accept) / WEEKLY_CYCLE,
     ownHeader: { followers: own?.followers ?? null, following: own?.following ?? null },
-    census: { lastCompleteAt: census?.at ?? null, rowsPerPage: null },
+    census: { lastCompleteAt: census?.at ?? null, rowsPerPage: store.reopen.get()?.head?.rowsPerPage ?? null },
   };
 }
 
