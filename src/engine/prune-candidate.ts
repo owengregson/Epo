@@ -68,8 +68,9 @@ const WAIT_OUT: ReadonlySet<string> = new Set(['deadline', 'hourly-cap', 'probat
 const END_RUN: ReadonlySet<string> = new Set(['day-done', 'ceiling', 'read-budget', 'session-closed', 'surface-paused',
   'kind-spent', 'deferred-by-boost', 'quiet-hours', 'day-off', 'unconfirmed']);
 
-/** How a run treats a typed pre-visit deferral; null for any other outcome (the blocked park applies). */
+/** How a run treats a refusal judged before the visit; null for any other outcome (the blocked park applies). */
 export function pruneDeferral(v: ClickVerdict | undefined): PruneDeferral | null {
+  if (v?.kind === 'protection-paused') return { do: 'end', reason: 'protection-paused' };
   if (v?.kind !== 'deferred') return null;
   if (v.reason === 'journal') return { do: 'pass' };
   if (WAIT_OUT.has(v.reason) && v.until !== null) return { do: 'wait', until: v.until };

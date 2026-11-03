@@ -51,6 +51,15 @@ test.each(['day-done', 'ceiling', 'read-budget', 'session-closed', 'surface-paus
     h.store.close();
   });
 
+test('a refusal whose instant already passed takes the ordinary blocked park, never a wait-free spin', async () => {
+  const h = build({ following: [OWN_PK, '1'], followers: [] });
+  script(h, { u1: [deferred('deadline', T0 - 1)] });
+  await h.engine.run();
+  expect(h.churn.unfollows).toEqual(['u1', 'u1']);
+  expect(h.sleeps[0]).toBeGreaterThan(0);
+  h.store.close();
+});
+
 test('a journal-blocked candidate is passed over, never marked visited, and handed back for a later pass', async () => {
   const h = build({ following: [OWN_PK, '1', '2', '3'], followers: [] });
   script(h, { u2: [deferred('journal', null)] });
@@ -67,6 +76,7 @@ test('the classifier: wait out a known instant, pass over the journal, end on th
   expect(pruneDeferral({ kind: 'deferred', reason: 'journal', until: null })).toEqual({ do: 'pass' });
   expect(pruneDeferral({ kind: 'deferred', reason: 'walled', until: null })).toBeNull();
   expect(pruneDeferral({ kind: 'deferred', reason: 'shared mutation delay still owed', until: null })).toBeNull();
+  expect(pruneDeferral({ kind: 'protection-paused', state: 'needs-review' })).toEqual({ do: 'end', reason: 'protection-paused' });
   expect(pruneDeferral({ kind: 'reheld' })).toBeNull();
   expect(pruneDeferral(undefined)).toBeNull();
 });

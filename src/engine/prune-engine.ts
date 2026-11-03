@@ -507,12 +507,12 @@ export class PruneEngine {
         }
 
         const outcome = await this.journaledUnfollow(cand.pk, verdict.username);
-        // Judged before any visit, a refusal never marks the candidate visited (spec §9.7).
-        const deferral = outcome.verdict?.kind === 'protection-paused' ? { do: 'end' as const, reason: 'protection-paused' }
-          : pruneDeferral(outcome.verdict);
+        // Judged before any visit, a refusal never marks the candidate visited (spec §9.7); a past instant takes the park.
+        const deferral = pruneDeferral(outcome.verdict);
         if (deferral?.do === 'end') { truncated = deferral.reason; break; }
         if (deferral?.do === 'pass') { passed.push(cand); index += 1; continue; }
-        if (deferral?.do === 'wait') { await this.pruneWait('prune:action-delay', deferral.until - this.deps.clock.now()); continue; }
+        const owed = deferral?.do === 'wait' ? deferral.until - this.deps.clock.now() : 0;
+        if (owed > 0) { await this.pruneWait('prune:action-delay', owed); continue; }
         if (outcome.status === 'blocked') {
           if (outcome.cause === 'rate-limited') {
             // Instagram's own response refused the unfollow as throttling — definitive: halt now, remainder runnable.
