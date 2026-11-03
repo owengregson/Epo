@@ -3,7 +3,15 @@
  * replaces the stage pane. Deliberately minimal: everything to the LEFT of it
  * is the real console drawing on the real tokens, and this file must never
  * influence it. Nothing here is reachable without the query flag.
+ *
+ * The direction boards bring their own sheets; every rule targets board-only
+ * classes (`db-*`, `dx-*`), so the app's own markup never matches them.
  */
+
+@import "../gallery/direction/board.css";
+@import "../gallery/direction/sidebar.css";
+@import "../gallery/direction/stage.css";
+@import "../gallery/direction/launch.css";
 
 .gallery-rail {
   display: flex;
@@ -18,10 +26,8 @@
 
 .gallery-rail__h {
   margin-top: var(--sp-3);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   color: var(--faint);
 }
 
@@ -33,7 +39,7 @@
   margin-top: auto;
   padding-top: var(--sp-4);
   max-width: 34ch;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   line-height: 1.5;
   color: var(--faint);
 }
@@ -41,4 +47,13 @@
 .gallery-rail__note code {
   font-family: var(--mono);
   color: var(--muted);
+}
+
+/* The gallery's view stage stands in for the console's .stage (shell.css): an
+   absolutely placed view fills it, never the whole column over the masthead. */
+.gallery .viewstage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }

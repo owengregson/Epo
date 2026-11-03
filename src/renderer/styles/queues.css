@@ -30,10 +30,10 @@
   border-radius: var(--r-sm);
   color: var(--muted);
   transition:
-    color 0.18s,
-    background 0.18s,
-    border-color 0.18s,
-    box-shadow 0.18s;
+    color var(--dur-1),
+    background var(--dur-1),
+    border-color var(--dur-1),
+    box-shadow var(--dur-1);
 }
 .qstage:hover {
   color: var(--silver);
@@ -53,16 +53,14 @@
   box-shadow: var(--elev-2);
 }
 .qstage .n {
-  font-size: var(--fs-fluid-stat);
+  font-size: var(--fs-lead);
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1.1;
 }
 .qstage .l {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-micro);
   font-weight: 700;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
   margin-top: var(--sp-0);
 }
 .qflow {
@@ -73,7 +71,7 @@
   padding: 0 var(--sp-0);
 }
 .qflow .icon {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
 }
 .qsum {
   display: flex;
@@ -81,7 +79,7 @@
   gap: var(--sp-2);
   padding: 0 var(--sp-0);
   margin-bottom: var(--sp-3);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   color: var(--faint);
   letter-spacing: 0.02em;
 }
@@ -98,7 +96,7 @@
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-4);
-  transition: background 0.15s;
+  transition: background var(--dur-1);
 }
 .qr:hover {
   background: rgba(255, 255, 255, 0.02);
@@ -121,7 +119,7 @@
   border: 1px solid var(--border-strong);
   display: grid;
   place-items: center;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   font-weight: 700;
   color: var(--silver);
 }
@@ -137,7 +135,7 @@
 }
 .qr-top .handle {
   font-weight: 600;
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   color: var(--text);
   letter-spacing: -0.01em;
   min-width: 0;
@@ -150,10 +148,8 @@
 }
 .priv,
 .ready {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-micro);
   font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
   padding: var(--sp-0) var(--sp-2);
   border-radius: var(--r-pill);
   background: var(--chip-bg);
@@ -175,7 +171,7 @@
   align-items: center;
   gap: var(--sp-2);
   margin-top: var(--sp-1);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   color: var(--faint);
   min-width: 0;
 }
@@ -202,7 +198,7 @@
   background: var(--grad-meter-brass);
 }
 .qlist {
-  animation: qfade 0.3s var(--ease);
+  animation: qfade var(--dur-3) var(--ease);
 }
 @keyframes qfade {
   from {

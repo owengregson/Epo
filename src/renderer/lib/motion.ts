@@ -13,8 +13,24 @@ export function prefersReducedMotion(): boolean {
   );
 }
 
+/** The presentation timings, one rule over perception (design/motion-scale.ts). */
+export {
+  BOOT_UI,
+  BREATH_MS,
+  CHART_DEFAULT_DAYS,
+  DUR,
+  PERCEPTION_MS,
+  STAGGER_MS,
+} from '@/renderer/design/motion-scale';
+
 /** Canonical easing curve (matches the CSS `--ease` token). */
 export const EASE = 'cubic-bezier(0.22, 0.9, 0.28, 1)';
+
+/** Arrivals and settles (matches `--ease-out`). */
+export const EASE_OUT = 'cubic-bezier(0.16, 1, 0.3, 1)';
+
+/** Loops and slides (matches `--ease-in-out`). */
+export const EASE_IN_OUT = 'cubic-bezier(0.65, 0, 0.35, 1)';
 
 /**
  * How long the `.entering` / `.exiting` classes are held after a view swap.
