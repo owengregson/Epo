@@ -46,10 +46,6 @@
       "lines": 552
     },
     {
-      "file": "src/adapter/ig-surface.ts",
-      "lines": 546
-    },
-    {
       "file": "src/capture/capture-harness.ts",
       "lines": 537
     },

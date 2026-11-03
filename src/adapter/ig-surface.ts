@@ -11,19 +11,56 @@
  * everything else in the app stays untouched.
  */
 
+import {
+  classifyEnvelopeWith,
+  type EnvelopeClassification,
+  type FetchEnvelope,
+} from '@/adapter/envelope';
+import { classifyMutationWith, type MutationClassification } from '@/adapter/mutation-classify';
+import type { MutationKind, MutationMatch, MutationRequest, MutationVerdict } from '@/adapter/mutation-types';
+import type { ShapeMismatch } from '@/adapter/parse-helpers';
 import type {
-  MutationKind,
-  MutationMatch,
-  MutationRequest,
-  MutationVerdict,
-} from '@/adapter/mutation-types';
-import { isShapeMismatch, type ShapeMismatch } from '@/adapter/parse-helpers';
-import type { Observation } from '@/store/types';
+  BlockSignature,
+  EndpointIds,
+  FollowEvent,
+  FollowersListResult,
+  FriendshipShowResult,
+  Observation,
+  ShowManyEntry,
+  StaleComponent,
+} from '@/adapter/surface-types';
 
+// The envelope, mutation and result types live in sibling modules that import
+// nothing from here; re-exported so every consumer keeps one import site.
+export {
+  asFetchEnvelope,
+  type EnvelopeClassification,
+  type EnvelopeKind,
+  envelopeLooksLikeHtml,
+  type FetchEnvelope,
+} from '@/adapter/envelope';
+export type { MutationClassification, MutationOutcomeKind } from '@/adapter/mutation-classify';
+export type { MutationKind, MutationMatch, MutationRequest, MutationVerdict } from '@/adapter/mutation-types';
 // Re-export the shape-mismatch sentinel as part of the stable surface (it is
 // defined in `parse-helpers.ts` so version modules can import it at runtime
 // without a module cycle).
 export { isShapeMismatch, SHAPE_MISMATCH, type ShapeMismatch } from '@/adapter/parse-helpers';
+export type {
+  BlockSignature,
+  EndpointIds,
+  FollowEvent,
+  FollowersListResult,
+  FriendshipShowResult,
+  LocateActionResult,
+  LocateConfirmRequestResult,
+  LocatedRect,
+  LocateRectResult,
+  LocateScrollResult,
+  ProfileViewer,
+  SentinelStatus,
+  ShowManyEntry,
+  StaleComponent,
+} from '@/adapter/surface-types';
 
 /** The endpoint kinds the surface knows how to route. */
 export type EndpointKind =
@@ -39,315 +76,22 @@ export type EndpointKind =
   | 'activity-feed';
 
 /**
- * The uniform result EVERY in-page fetch script resolves to. In page context
- * the script checks `r.ok` and the content type and never lets `r.json()`
- * reject on an HTML/error body:
- *
- *  - JSON 2xx              → `{ ok: true,  status, contentType, json }`
- *  - non-JSON / non-ok     → `{ ok: false, status, contentType, textHead }`
- *  - network error / throw → `{ ok: false, status: 0, contentType: '', textHead: String(err) }`
- */
-export interface FetchEnvelope {
-  ok: boolean;
-  status: number;
-  contentType: string;
-  json?: unknown;
-  /** First 256 chars of a non-JSON body (or the error string). */
-  textHead?: string;
-  /** The response's final URL (after redirects) — lets callers spot login/challenge walls. */
-  finalUrl?: string;
-}
-
-/** Narrow an unknown `evaluate` result to a {@link FetchEnvelope}, else `null`. */
-export function asFetchEnvelope(value: unknown): FetchEnvelope | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const v = value as Record<string, unknown>;
-  if (typeof v.ok !== 'boolean') return null;
-  if (typeof v.status !== 'number') return null;
-  if (typeof v.contentType !== 'string') return null;
-  return value as unknown as FetchEnvelope;
-}
-
-/** Whether a (failed) envelope looks like an HTML wall rather than an API body. */
-export function envelopeLooksLikeHtml(env: FetchEnvelope): boolean {
-  if (env.contentType.toLowerCase().includes('text/html')) return true;
-  const head = env.textHead ?? '';
-  return head.trimStart().startsWith('<');
-}
-
-/**
- * The failure family a read-side {@link FetchEnvelope} belongs to — the
- * classification the recovery ladder keys off. Version-agnostic: it reads the
- * envelope's NUMBERS here and delegates every pattern to the active `SURFACE`
- * (block signatures live only in `src/adapter/versions/*`).
- */
-export type EnvelopeKind = 'ok' | 'rate-limited' | 'auth' | 'gone' | 'network' | 'drift-suspect';
-
-/** A classified envelope: the failure family plus the matched wall's status. */
-export interface EnvelopeClassification {
-  kind: EnvelopeKind;
-  /** The sentinel status of the wall signature `finalUrl` matched, when one did. */
-  wall?: SentinelStatus;
-}
-
-/**
- * Classify a fetch envelope into its failure family:
- *
- *  - `ok`            — a 2xx JSON body; nothing to recover from.
- *  - `auth`          — `finalUrl` matched a logged-out/challenge wall: the SESSION
- *                      is the problem (terminal, exactly like the sentinel path).
- *  - `rate-limited`  — HTTP 429/5xx, an `action-blocked` wall signature (URL or
- *                      refusal BODY), or an HTML page where an API body belongs.
- *  - `network`       — status 0: the fetch never reached Instagram.
- *  - `gone`          — a JSON 404: the resource genuinely does not exist.
- *  - `drift-suspect` — none of the above: an unrecognized refusal shape.
- *
- * Ambiguity deliberately defaults TOWARD `rate-limited`: waiting out a wall is
- * cheap and reversible; declaring drift (or fabricating an empty fact) is not.
+ * Classify a fetch envelope into its failure family against the active
+ * surface's signatures (see `classifyEnvelopeWith` in `envelope.ts`).
  */
 export function classifyEnvelope(env: FetchEnvelope): EnvelopeClassification {
-  if (env.ok) return { kind: 'ok' };
-  // A wall names itself by its final URL or, on a JSON refusal, by its body.
-  const wall =
-    SURFACE.blockSignatures.find((sig) => sig.pattern.test(env.finalUrl ?? '')) ??
-    SURFACE.mutationRefusalSignatures.find((sig) => sig.pattern.test(env.textHead ?? ''));
-  if (wall !== undefined) {
-    return {
-      kind: wall.status === 'logged-out' || wall.status === 'challenge' ? 'auth' : 'rate-limited',
-      wall: wall.status,
-    };
-  }
-  if (env.status === 429 || env.status >= 500) return { kind: 'rate-limited' };
-  if (env.status === 0) return { kind: 'network' };
-  if (envelopeLooksLikeHtml(env)) return { kind: 'rate-limited' };
-  if (env.status === 404) return { kind: 'gone' };
-  return { kind: 'drift-suspect' };
-}
-
-// ---------------------------------------------------------------------------
-// Follow / unfollow MUTATIONS — the response is the arbiter of an action.
-//
-// The web client flips the header button OPTIMISTICALLY when it is pressed and
-// snaps it back when the server refuses; a throttled follow shows no page-level
-// error at all. So the DOM alone can report a phantom success (the flip was seen)
-// or an anonymous failure (the snap-back was seen). The mutation's HTTP status +
-// body carry the real verdict, and the Actor arms a watch on them BEFORE the click.
-// ---------------------------------------------------------------------------
-
-export type {
-  MutationKind,
-  MutationMatch,
-  MutationRequest,
-  MutationVerdict,
-} from '@/adapter/mutation-types';
-
-/**
- * The failure family of a mutation response:
- *
- *  - `ok`            — 2xx with an ok verdict: the action landed.
- *  - `rate-limited`  — the server refused the action as throttling
- *                      (`feedback_required` / "Try Again Later" / spam flag /
- *                      HTTP 429 or 5xx): back off, the record is untouched.
- *  - `auth`          — a checkpoint / login wall: the SESSION is the problem.
- *  - `refused`       — an ordinary refusal (unknown message, 404): a real
- *                      failed attempt for THIS account.
- *  - `drift-suspect` — contradictory or unreadable: the DOM decides instead.
- */
-export type MutationOutcomeKind = 'ok' | 'rate-limited' | 'auth' | 'refused' | 'drift-suspect';
-
-export interface MutationClassification {
-  kind: MutationOutcomeKind;
-  /** Human-readable detail (the server's own words when it gave any). */
-  detail: string;
-  /** The sentinel status of the refusal signature that matched, when one did. */
-  wall?: SentinelStatus;
+  return classifyEnvelopeWith(env, SURFACE);
 }
 
 /**
- * Classify a mutation response. Version-agnostic: reads the NUMBERS here and
- * delegates every pattern to the active `SURFACE`'s refusal signatures.
- * Ambiguity deliberately defaults TOWARD `rate-limited` (waiting is cheap and
- * reversible) — except a 2xx that cannot be read, which is `drift-suspect`
- * so an unreadable body is never claimed as a success.
+ * Classify a mutation response against the active surface's refusal
+ * signatures (see `classifyMutationWith` in `mutation-classify.ts`).
  */
 export function classifyMutationResponse(
   httpStatus: number,
   verdict: MutationVerdict | ShapeMismatch,
 ): MutationClassification {
-  const ok2xx = httpStatus >= 200 && httpStatus < 300;
-  if (isShapeMismatch(verdict)) {
-    if (httpStatus === 401 || httpStatus === 403) {
-      return { kind: 'auth', detail: `HTTP ${httpStatus} (unreadable body)` };
-    }
-    if (httpStatus === 404) return { kind: 'refused', detail: 'HTTP 404 (unreadable body)' };
-    if (ok2xx) return { kind: 'drift-suspect', detail: `HTTP ${httpStatus} with an unreadable body` };
-    return { kind: 'rate-limited', detail: `HTTP ${httpStatus} (unreadable body)` };
-  }
-  if (verdict.verdict === 'ok') {
-    return ok2xx
-      ? { kind: 'ok', detail: verdict.result ?? 'ok' }
-      : { kind: 'drift-suspect', detail: `ok verdict on HTTP ${httpStatus}` };
-  }
-  const text = [verdict.message, verdict.feedbackText]
-    .filter((s): s is string => s !== null && s !== '')
-    .join(' — ');
-  const detail = text !== '' ? text : `HTTP ${httpStatus} fail`;
-  const signature = SURFACE.mutationRefusalSignatures.find((sig) => sig.pattern.test(text));
-  if (signature !== undefined) {
-    const kind =
-      signature.status === 'logged-out' || signature.status === 'challenge' ? 'auth' : 'rate-limited';
-    return { kind, detail, wall: signature.status };
-  }
-  if (verdict.spam) return { kind: 'rate-limited', detail, wall: 'action-blocked' };
-  if (httpStatus === 429 || httpStatus >= 500) return { kind: 'rate-limited', detail };
-  if (httpStatus === 401 || httpStatus === 403) return { kind: 'auth', detail };
-  return { kind: 'refused', detail };
-}
-
-/** Sentinel classification of the tab / a response URL. */
-export type SentinelStatus = 'ok' | 'action-blocked' | 'challenge' | 'logged-out';
-
-/**
- * A labelled block/challenge/logged-out signature: each pattern carries the
- * status it maps to.
- */
-export interface BlockSignature {
-  pattern: RegExp;
-  status: SentinelStatus;
-}
-
-/** The DOM contact points the Actor can find stale (for `AdapterStaleError`). */
-export type StaleComponent =
-  | 'action-button'
-  | 'unfollow-confirm'
-  | 'followers-stat'
-  | 'following-stat'
-  | 'notifications-link'
-  | 'dialog';
-
-/** One "started following you" event parsed from the activity feed. */
-export interface FollowEvent {
-  /** The follower's pk. */
-  pk: string;
-  /** The follower's username when the feed carries it. */
-  username: string | null;
-  /** Event time in epoch MS when the feed carries it (feeds report seconds). */
-  atMs: number | null;
-}
-
-/** Result of parsing one paginated followers page. */
-export interface FollowersListResult {
-  observations: Observation[];
-  /** Resume cursor for the next page; `null` when there is no next page. */
-  cursor: string | null;
-  hasMore: boolean;
-}
-
-/** One relationship row from the batched shape (carries no followed-by). */
-export interface ShowManyEntry {
-  pk: string;
-  following: boolean;
-  /**
-   * TRUE when we have a PENDING follow request to this (private) account.
-   * `following` is FALSE while a request awaits acceptance, so "do we own this
-   * relationship" is `following || outgoingRequest` — never `following` alone.
-   */
-  outgoingRequest: boolean;
-  isPrivate?: boolean;
-}
-
-/** A profile body's viewer-side flags (`friendship_status`); `null` where the body is silent. */
-export interface ProfileViewer {
-  following: boolean | null;
-  requested: boolean | null;
-  followsUs: boolean | null;
-}
-
-/** The single-relationship shape — both directions known. */
-export interface FriendshipShowResult {
-  pk: string;
-  following: boolean;
-  /** `followedBy` => THEY follow us (the follow-back signal). */
-  followedBy: boolean;
-  /** TRUE while our follow request to a private account awaits acceptance. */
-  outgoingRequest: boolean;
-  isPrivate?: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Locate-script results. A locate script searches for a control and returns its
-// viewport bounding rect (getBoundingClientRect) WITHOUT clicking — the
-// Interactor then performs the click/scroll with native input events.
-// ---------------------------------------------------------------------------
-
-/** A viewport bounding rect as the locate scripts report it (CSS px). */
-export interface LocatedRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-/** Result of a plain locate script (confirm control, stat controls). */
-export interface LocateRectResult {
-  found: boolean;
-  rect?: LocatedRect;
-  /** The exposed part of `rect` when part of it is covered — where a press can land. */
-  aim?: LocatedRect;
-  /**
-   * True when the control was found by a script's SELF-RECOVERY pass (a deep
-   * text scan) after its primary role-marked search went blind — the control
-   * was on screen, just not where the primary anchors expected. The Actor
-   * warns on it: a persistent fallback is an early drift signal for the
-   * primary anchors, caught while the operation still succeeds.
-   */
-  fallback?: boolean;
-}
-
-/** Locate result for the follow-requests Confirm control: rect + WHO it accepts. */
-export interface LocateConfirmRequestResult {
-  found: boolean;
-  rect?: LocatedRect;
-  /** Username parsed from the row's profile link; null when unresolvable. */
-  username?: string | null;
-  /** How many Confirm controls the panel currently shows (progress signal). */
-  remaining?: number;
-}
-
-/** The action button's state + rect, plus whether the op would press it. */
-export interface LocateActionResult {
-  found: boolean;
-  state?: 'follow' | 'follow-back' | 'following' | 'requested';
-  /** Whether the op would click this button (the Interactor then performs it). */
-  wouldClick?: boolean;
-  needsConfirm?: boolean;
-  rect?: LocatedRect;
-}
-
-/** A scroll container's rect + metrics (the Interactor wheels it). */
-export interface LocateScrollResult {
-  found: boolean;
-  rect?: LocatedRect;
-  scrollTop?: number;
-  scrollHeight?: number;
-  clientHeight?: number;
-  /**
-   * A viewport point inside the scroll container that is NOT over a username
-   * link, avatar, or follow button (probed via `elementFromPoint`). Wheeling
-   * here scrolls the LIST rather than triggering Instagram's hover-preview card,
-   * which would otherwise overlay a row and swallow the wheel events. Absent
-   * when no safe spot was found (a dense list) — the Interactor then falls back
-   * to its default interior entry point.
-   */
-  safePoint?: { x: number; y: number };
-}
-
-/** Ids a surface can pull out of an endpoint URL (the bodies often carry none). */
-export interface EndpointIds {
-  /** Subject pk of a single-relationship URL. */
-  pk?: string;
-  /** Target pk of a followers-list URL. */
-  targetPk?: string;
+  return classifyMutationWith(httpStatus, verdict, SURFACE.mutationRefusalSignatures);
 }
 
 /**
