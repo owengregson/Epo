@@ -2,6 +2,7 @@ import { type JSX } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { ConfirmHost } from '@/renderer/app/ConfirmHost';
 import { liveRevealedSignal, liveSlotSignal } from '@/renderer/app/live-signals';
+import { PopoverHost } from '@/renderer/app/PopoverHost';
 import { StageBar } from '@/renderer/app/StageBar';
 import { StageHost } from '@/renderer/app/StageHost';
 import {
@@ -139,8 +140,9 @@ export function App(): JSX.Element {
           </div>
         </div>
         {/* Shell-level layers: outside .console (whose overflow would clip them),
-            so a tooltip, a confirm's scrim or the tour covers the whole window. */}
+            so a tooltip, a popover, a confirm's scrim or the tour covers the whole window. */}
         <TooltipHost />
+        <PopoverHost />
         <ConfirmHost {...confirmCtl.state} onClose={confirmCtl.close} />
         <Tour open={tour.open} onClose={tour.closeTour} setStage={showStage} />
       </div>
