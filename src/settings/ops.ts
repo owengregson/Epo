@@ -1,7 +1,8 @@
 /**
  * The one write vocabulary (spec §6.7, Appendix B.5): `applyOps(doc, ops, ctx)` applies ops atomically, in
  * order, coercing each to its nearest safe value (ADR 0103) and returning the ops that undo it. Pure: no
- * persist, no clock read (`ctx.now`). The migration and older-version imports are the service's own.
+ * persist, no clock read (`ctx.now`). The migration is the service's own; the older-version import applies the
+ * offer the service read from the v1 file (`ctx.olderVersion`).
  */
 import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import { type Intent, type IntentKey, MAX_DAYS_OFF } from '@/shared/settings-intent';
@@ -10,6 +11,7 @@ import type { Adjustment, SettingsOp } from '@/shared/settings-ops';
 import type { ParamKey, SectionId } from '@/shared/settings-params';
 import { type OverrideEntry, RECOMMENDED_INTENT, type SettingsDocV2 } from './doc';
 import { INTENT_RULES } from './doc-rules';
+import type { OlderVersionOffer } from './older-version';
 import { applyProtectionOp } from './ops-protection';
 import { ALL_PARAM_KEYS, PARAM_SPECS } from './params';
 import { fitsKind } from './params-spec';
@@ -23,6 +25,8 @@ export interface OpsCtx {
   recommended(doc: SettingsDocV2, key: ParamKey): ParamValue;
   /** A refused migration: only the migration and ui ops apply; protection cannot be acknowledged. */
   readonly migrationPending: boolean;
+  /** What an older build added to the v1 lists since the document read them (none when absent). */
+  readonly olderVersion?: OlderVersionOffer | null;
 }
 
 export type Refusal = { readonly kind: 'refused'; readonly reason: 'invalid' | 'migration-pending' | 'protection-not-migrated'; readonly detail: string };
@@ -47,7 +51,7 @@ const refuse = (reason: Refusal['reason'], detail: string): Refusal => ({ kind: 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 const normalizeSeed = (s: string): string => s.trim().replace(/^@/, '').trim();
 const SYSTEM_ONLY = new Set<SettingsOp['op']>(['protect-link', 'consume-bookkeeping']);
-const SERVICE_OPS = new Set<SettingsOp['op']>(['migration', 'import-older-version']);
+const SERVICE_OPS = new Set<SettingsOp['op']>(['migration']);
 
 /** Apply `ops` atomically: every op applies, or none does (the first refusal is returned). */
 export function applyOps(doc: SettingsDocV2, ops: readonly SettingsOp[], ctx: OpsCtx): OpsResult {
@@ -113,7 +117,14 @@ function applyOne(d: SettingsDocV2, op: SettingsOp, ctx: OpsCtx): Step | Refusal
       return { doc: { ...d, migration }, touched: ['app'], inverse: [] };
     }
     case 'reset': return resetStep(d, op.scope.kind === 'recommended' ? null : op.scope.section);
-    case 'migration': case 'import-older-version':
+    case 'import-older-version': {
+      const offer = ctx.olderVersion ?? null;
+      if (offer === null) return refuse('invalid', 'the older version added nothing to import');
+      const step = applyProtectionOp(d.protection, { op: 'protect-restore', accounts: offer.accounts, words: offer.words }, ctx.now);
+      const migration = d.migration === null ? null : { ...d.migration, fromV1: offer.from };
+      return { doc: { ...d, protection: step.protection, migration }, touched: ['protection', 'app'], inverse: step.inverse };
+    }
+    case 'migration':
       return refuse('invalid', `${op.op} applies alone, through the settings service`);
   }
 }

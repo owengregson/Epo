@@ -13,6 +13,7 @@ import type {
 import type { PlanMath } from './basis';
 import type { SettingsDocV2 } from './doc';
 import type { EffectiveSettings } from './effective';
+import type { OlderVersionOffer } from './older-version';
 import { ALL_PARAM_KEYS, PARAM_SPECS } from './params';
 import { type ParamSpec, sameValue } from './params-spec';
 import { toReadAllowance } from './read-allowance';
@@ -28,6 +29,8 @@ export interface ViewInput {
   readonly math: PlanMath;
   /** The week ahead from the plan's preview port (null until the plan capability is on). */
   readonly week: readonly PlanPreviewDay[] | null;
+  /** What an older build added to the v1 lists since the document read them. */
+  readonly older?: OlderVersionOffer | null;
 }
 
 /** The intent choice each derived row follows, for its "Why this number?" chain. */
@@ -82,6 +85,10 @@ function notices(i: ViewInput, stale: number): SettingsNotice[] {
     add(`migration:${kind}${key}`, 'info', kind, data as SettingsNotice['data']);
   }
   if (stale > 0) add('overrides:stale', 'info', 'override-stale', { count: stale });
+  const older = i.older ?? null;
+  if (older !== null) {
+    add(`older-version:${older.from.sha256}`, 'info', 'older-version-changed', { accounts: older.accounts.length, words: older.words.length });
+  }
   return out;
 }
 

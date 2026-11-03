@@ -10,7 +10,8 @@ import { migrationBasis, type PlanMath } from '@/settings/basis';
 import { DEFAULT_DOC, type SettingsDocV2 } from '@/settings/doc';
 import { type EffectiveSettings, effectiveFrom, effectiveFromV1 } from '@/settings/effective';
 import { migrateV1 } from '@/settings/migrate-v1';
-import { applyOps, type Touched } from '@/settings/ops';
+import { type ChangedV1, olderVersionOffer, readChangedV1 } from '@/settings/older-version';
+import { applyOps, type OpsCtx, type Touched } from '@/settings/ops';
 import { NODE_SETTINGS_FS, readSettings, SETTINGS_FILES, type SettingsFs, type WriteResult, writeSettings } from '@/settings/persist';
 import { KERNEL_PLAN_MATH } from '@/settings/plan-math';
 import { type SettingsPlanPreview, settingsPlanPreview } from '@/settings/plan-preview-port';
@@ -70,6 +71,8 @@ export class SettingsService {
   private readonly listeners = new Set<(e: SettingsChangeEvent) => void>();
   private readonly fs: SettingsFs;
   private readonly math: PlanMath;
+  /** The v1 file an older build rewrote after the migration (its additions are offered back), read at launch. */
+  private readonly older: ChangedV1 | null;
   private readonly linker = new ProtectionLinker({ settings: this, now: () => this.d.now() });
 
   constructor(private readonly d: SettingsServiceDeps) {
@@ -79,6 +82,7 @@ export class SettingsService {
     const opened: Opened = plan.kind === 'migrate' ? this.migrate(plan.raw, plan.mtimeMs, plan.health, plan.review)
       : { doc: reviewed(plan.kind === 'doc' ? plan.doc : DEFAULT_DOC, plan.review), health: plan.health, refused: null };
     ({ doc: this.doc, health: this.health, refused: this.refused } = opened);
+    this.older = readChangedV1(this.fs, d.userDataDir, this.doc.migration);
   }
 
   /** Migrate a raw v1 file; a refusal keeps v1's own numbers, lists and practice mode in memory. */
@@ -116,7 +120,8 @@ export class SettingsService {
       const index = compileProtection(this.doc.protection, this.doc.protectionState, this.doc.rev);
       const week = this.capabilities.plan && this.planPreview !== null
         ? this.planPreview.previewDays(effective, this.d.now(), WEEKDAYS.length) : null;
-      const view = buildView({ doc: this.doc, health: this.health, capabilities: this.capabilities, resolved, effective, math: this.math, week });
+      const view = buildView({ doc: this.doc, health: this.health, capabilities: this.capabilities, resolved, effective, math: this.math, week,
+        older: olderVersionOffer(this.doc, this.older, this.d.now()) });
       this.memo = { key, resolved, effective, index, view };
     }
     return this.memo;
@@ -157,8 +162,7 @@ export class SettingsService {
   /** Apply ops through the one writer: persist first; a failed write changes nothing at all. */
   apply(ops: readonly SettingsOp[], origin: 'user' | 'system'): SettingsSaveResult {
     if (ops.length === 1 && ops[0].op === 'migration') return this.recover(ops[0].action);
-    const r = applyOps(this.doc, ops, { origin, now: this.d.now(), migrationPending: this.refused !== null,
-      recommended: (doc, key) => this.resolveFor(doc)[key].recommended });
+    const r = applyOps(this.doc, ops, this.opsCtx(origin));
     if (r.kind === 'refused') return { kind: 'refused', reason: r.reason, detail: r.detail, view: this.view() };
     if (this.refused !== null) {
       // While a migration is refused nothing is written: the mode switch lives in memory.
@@ -177,8 +181,7 @@ export class SettingsService {
 
   /** What the ops would do: pure — nothing persists, nothing is pushed, the plan is not touched. */
   preview(ops: readonly SettingsOp[]): SettingsPreviewResult {
-    const r = applyOps(this.doc, ops, { origin: 'user', now: this.d.now(), migrationPending: this.refused !== null,
-      recommended: (doc, key) => this.resolveFor(doc)[key].recommended });
+    const r = applyOps(this.doc, ops, this.opsCtx('user'));
     if (r.kind === 'refused') return { kind: 'unavailable' };
     const before = this.derived();
     const resolved = this.resolveFor(r.doc);
@@ -186,6 +189,11 @@ export class SettingsService {
     const view = buildView({ doc: r.doc, health: this.health, capabilities: this.capabilities, resolved, effective, math: this.math, week: null });
     return { kind: 'ok', view, changes: previewChanges(this.doc, r.doc, before.resolved, resolved),
       conflicts: overrideConflicts(before.resolved, resolved), adjustments: r.adjustments };
+  }
+
+  private opsCtx(origin: 'user' | 'system'): OpsCtx {
+    return { origin, now: this.d.now(), migrationPending: this.refused !== null, olderVersion: olderVersionOffer(this.doc, this.older, this.d.now()),
+      recommended: (doc, key) => this.resolveFor(doc)[key].recommended };
   }
 
   /** The recovery ops of a refused migration, and the deliberate re-migration (spec §6.6, §6.10). */

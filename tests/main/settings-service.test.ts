@@ -151,3 +151,28 @@ test('run stamps belong to the bound account: another account starts without the
   bind('A');
   expect(svc.resolveSettings().pruneLastRunAt).toBe(9);
 });
+
+test('lists an older build added after the migration are offered back union-only: add them, or ignore them', () => {
+  const v1 = (accounts: string[], words: string[]) =>
+    JSON.stringify({ ...DEFAULT_SETTINGS, pruneWhitelist: accounts, pruneBioFilterWords: words });
+  const files = Object.fromEntries(service({ [F.v1]: v1(['alice', 'bob'], ['art']) }).m.data);
+  files[F.v1] = v1(['alice', 'carol', 'dave'], ['art', 'travel']);
+  const relaunch = () => {
+    const m = memoryFs(files, 2);
+    return { m, svc: new SettingsService({ userDataDir: '/u', fs: m.fs, knowledgeDbExists: () => true, math: FAKE_PLAN_MATH,
+      now: () => 2_000, push: () => {} }) };
+  };
+  const { svc, m } = relaunch();
+  const notice = svc.view().notices.find((n) => n.kind === 'older-version-changed');
+  expect(notice).toMatchObject({ tone: 'info', data: { accounts: 2, words: 1 }, dismissible: true });
+  expect(svc.apply([{ op: 'import-older-version' }], 'user')).toMatchObject({ kind: 'saved', view: { rev: 2 } });
+  const saved = JSON.parse(m.data.get(F.v2) ?? '{}');
+  expect(saved.protection.accounts.map((a: { username: string }) => a.username)).toEqual(['alice', 'bob', 'carol', 'dave']);
+  expect(saved.protection.words.map((w: { text: string }) => w.text)).toEqual(['art', 'travel']);
+  expect(svc.view().notices.some((n) => n.kind === 'older-version-changed')).toBe(false);
+  expect(svc.apply([{ op: 'import-older-version' }], 'user')).toMatchObject({ kind: 'refused', reason: 'invalid' });
+
+  const ignored = relaunch().svc;
+  expect(ignored.apply([{ op: 'dismiss-notice', id: notice?.id ?? '' }], 'user')).toMatchObject({ kind: 'saved' });
+  expect(ignored.view().notices.some((n) => n.kind === 'older-version-changed')).toBe(false);
+});

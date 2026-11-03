@@ -130,3 +130,18 @@ test('protect-link takes the pk for its username and follows a rename', () => {
   expect(renamed.protection.accounts[0]).toMatchObject({ pk: '42', username: 'anna.new', formerUsernames: ['anna'], linkedAt: 9 });
   expect(applied(applyOps(renamed, [{ op: 'protect-link', pk: '42', username: 'anna.new', at: 12 }], sys))).toEqual(renamed);
 });
+
+test('the older-version import adds the offer union-only, records the file as read, and undoes to the lists before', () => {
+  const carol = { pk: null, username: 'carol', linkedAt: null, formerUsernames: [], addedAt: 9, source: 'older-version', valid: true } as const;
+  const offer = { from: { mtimeMs: 6, sha256: 'abc' }, accounts: [carol], words: [{ text: 'travel', addedAt: 9 }] };
+  const base = { ...docOf(), migration: { at: 1, fromV1: { mtimeMs: 5, sha256: 'old' }, notes: [], bookkeeping: null } };
+  const op: SettingsOp = { op: 'import-older-version' };
+  const r = applyOps(base, [op], ctx({ olderVersion: offer }));
+  if (r.kind !== 'applied') throw new Error(`refused: ${r.detail}`);
+  expect(r.doc.protection.accounts).toContainEqual(carol);
+  expect(r.doc.protection.words.map((w) => w.text)).toContain('travel');
+  expect(r.doc.migration?.fromV1).toEqual(offer.from);
+  expect(applied(applyOps(r.doc, r.inverse, ctx())).protection).toEqual(base.protection);
+  expect(applyOps(base, [op], ctx())).toMatchObject({ kind: 'refused', reason: 'invalid' });
+  expect(applyOps(base, [op], ctx({ olderVersion: offer, migrationPending: true }))).toMatchObject({ kind: 'refused', reason: 'migration-pending' });
+});

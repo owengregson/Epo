@@ -26,7 +26,9 @@ wholesale (a lost update between two windows), and re-derived every number on sa
 5. **Migration** (spec §6.10) runs once, from the raw v1 text: overrides only where v1 differs from the frozen v1
    derivation, timing rows only slower, both lists raw with every item counted, and an effective-equality
    post-condition. A refusal keeps serving v1's own numbers and lists, carries practice mode, pauses unfollows and
-   writes nothing until a recovery op.
+   writes nothing until a recovery op. When an older build rewrites v1 later, the file's `{mtimeMs, sha256}` shows it
+   at launch, and only its additions to the two lists are offered back (`import-older-version`, or a dismissed
+   notice). Removals made there never apply.
 6. **Keyed list ops** (`protect-add`/`protect-remove`/`word-add`/…) replace whole-list writes.
 7. **Transitional**: until the old Settings UI is deleted, `getSettings/updateSettings/resetSettings` go through a v1
    adapter (`toV1Settings`, `opsFromV1Partial`); a failed save rejects so the old UI shows "Not saved".
