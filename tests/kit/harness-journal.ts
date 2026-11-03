@@ -1,10 +1,41 @@
 /**
- * The engine kit's mutation-effect fakes: scripted churn and prune actions and
- * the no-op woven unfollow feed. Re-exported by `engine-harness.ts`.
+ * The engine kit's mutation-effect fakes: scripted churn and prune actions, the
+ * no-op woven unfollow feed, and a protection rig. Re-exported by `engine-harness.ts`.
  */
 
 import type { ChurnActionOutcome, ChurnActions } from '@/engine/churn-scheduler';
 import type { EngineUnfollowFeed } from '@/engine/engine';
+import { createProtectionPort, type ProtectionPort } from '@/engine/protection-port';
+import type { Clock } from '@/governors/clock';
+import { calendarPlanDayClock } from '@/governors/plan-day-clock';
+import type { ProtectionSettings, ProtectionState } from '@/shared/settings-model';
+import { compileProtection } from '@/shared/unfollow-protection';
+
+/** A live protection index a test edits in place, behind a real port on local-midnight plan-days. */
+export class ProtectionRig {
+  settings: ProtectionSettings = { accounts: [], words: [], wordMatch: 'anywhere', keepVerified: false };
+  state: ProtectionState = 'ready';
+  rev = 1;
+  readonly port: ProtectionPort;
+  constructor(clock: Clock) {
+    this.port = createProtectionPort({
+      index: () => compileProtection(this.settings, this.state, this.rev),
+      clock, dayClock: calendarPlanDayClock({ now: () => clock.now() }),
+    });
+  }
+  private edit(over: Partial<ProtectionSettings>): this {
+    this.settings = { ...this.settings, ...over };
+    this.rev += 1;
+    return this;
+  }
+  words(...texts: string[]): this { return this.edit({ words: texts.map((text) => ({ text, addedAt: 0 })) }); }
+  verified(on = true): this { return this.edit({ keepVerified: on }); }
+  account(pk: string, username: string): this {
+    return this.edit({ accounts: [...this.settings.accounts,
+      { pk, username, linkedAt: 1, formerUsernames: [], addedAt: 1, source: 'you', valid: true }] });
+  }
+  pause(state: Exclude<ProtectionState, 'ready'>): this { this.state = state; this.rev += 1; return this; }
+}
 
 /** Scripted prune churn actions: per-username outcomes, defaulting to a verified ok. */
 export class FakePruneActions {

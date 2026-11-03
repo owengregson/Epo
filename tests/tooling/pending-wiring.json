@@ -29,11 +29,6 @@
       "module": "src/surface/sink.ts",
       "stream": "PH",
       "reason": "surface-wiring.ts swaps the production sink in for NO_SINK and the read pipeline reports to it"
-    },
-    {
-      "module": "src/engine/protection-reconciler.ts",
-      "stream": "UD",
-      "reason": "unfollow-wiring.ts builds the reconciler beside the protection port and runs its graph-open pass (UD step 3)"
     }
   ]
 }

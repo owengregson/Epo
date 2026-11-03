@@ -1,12 +1,14 @@
 import type { Clock } from '../governors/clock';
 import type { RateGovernor } from '../governors/rate-governor';
+import type { ProtectionIndex } from '../shared/unfollow-protection';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { EffectIntent, FollowRecord } from '../store/types';
 import * as log from '../utils/logger';
 import { ChurnPick } from './churn-pick';
 import { CHURN_DEFAULTS, type ChurnActionOutcome, type ChurnActions, type ChurnConfig, type ChurnDeps, type VerbSpec } from './churn-types';
 import { normalizeMutationOutcome } from './mutation-outcome';
-import { bioMatchesFilter } from './prune-bio-filter';
+import { keepRecord, keptStampFor, selectionVerdict } from './protection-gate';
+import { type ProtectionPort, unconfiguredProtection } from './protection-port';
 
 export type { ChurnActionOutcome, ChurnActions, ChurnConfig, ChurnDeps } from './churn-types';
 export { CHURN_DEFAULTS } from './churn-types';
@@ -22,8 +24,9 @@ export { CHURN_DEFAULTS } from './churn-types';
  * pending_followback
  *   → (now - followedAt ≥ maxWait) unfollow_queued      (no follow-back timeout — reclaim slot)
  * followed_back
- *   → (now ≥ holdUntil)            unfollow_queued      (hold elapsed; a bio
- *                                  keep-word match on a live mutual holds instead)
+ *   → (now ≥ holdUntil)            unfollow_queued      (hold elapsed; never with mutuals kept)
+ * pending_followback | followed_back | unfollow_queued
+ *   → (protected at selection)     kept                 (spec §7.4; non-blocking, re-judged)
  * unfollow_queued
  *   → (rate ok) UNFOLLOW ok        unfollowed
  *   → (fail, retries left)         unfollow_queued      (retryCount++)
@@ -52,6 +55,8 @@ export class ChurnScheduler {
   private cfg: ChurnConfig;
   /** The due ranking and the unfollow gates (see `churn-pick.ts`). */
   private readonly pick: ChurnPick;
+  private readonly protection: ProtectionPort;
+  private readonly reconciler?: ChurnDeps['reconciler'];
   private readonly validateFollow?: ChurnDeps['validateFollow'];
   private consecutiveCleanup = 0;
   /**
@@ -91,9 +96,10 @@ export class ChurnScheduler {
   private lastBlockCause: ChurnActionOutcome['cause'] | null = null;
   private lastOutcome: ChurnActionOutcome | null = null;
   lastActionOutcome(): ChurnActionOutcome | null { return this.lastOutcome ? { ...this.lastOutcome } : null; }
-  /** Swap the live config in place (used when Settings are updated at runtime). */
+  /** Swap the live config in place (a settings reload), and re-judge the kept records against the live rules. */
   applyConfig(cfg: ChurnConfig): void {
     this.cfg = cfg;
+    this.reconciler?.sync(this.clock.now());
   }
 
   /** The three streak windows the recovery ladder reads, in one read. */
@@ -125,6 +131,8 @@ export class ChurnScheduler {
     this.actions = deps.actions;
     this.ownPk = deps.ownPk;
     this.cfg = deps.cfg ?? CHURN_DEFAULTS;
+    this.protection = deps.protection ?? unconfiguredProtection(deps.clock);
+    this.reconciler = deps.reconciler;
     this.pick = new ChurnPick({
       store: deps.store,
       ownPk: deps.ownPk,
@@ -132,68 +140,47 @@ export class ChurnScheduler {
       consecutiveCleanup: () => this.consecutiveCleanup,
       pickQueued: deps.pickQueued,
       hasActiveRequest: deps.hasActiveRequest ?? (() => false),
+      unfollowsPaused: () => this.protection.index().state !== 'ready',
     });
     this.validateFollow = deps.validateFollow;
   }
 
   /**
-   * Apply the timer-driven state transitions that need NO Instagram traffic:
-   *
-   * - `pending_followback` with `now - followedAt ≥ maxWaitForFollowbackMs`
-   *   → `unfollow_queued` (`unfollowDueAt = now`): no follow-back in time, reclaim the slot.
-   * - `followed_back` with `now ≥ holdUntil`
-   *   → `unfollow_queued` (`unfollowDueAt = now`): the hold elapsed.
-   *
-   * Cheap and side-effect-free beyond the store; makes zero calls to `actions`.
+   * The store-only transitions, with zero calls to `actions` — protection first (spec §7.4):
+   * P1 a `pending_followback` past the wait reclaims its slot; P2 a `followed_back` past its hold
+   * rotates out (never with mutuals kept); P3/P4 a queued unfollow a rule now protects is kept.
    */
   advanceTimers(now: number = this.clock.now()): void {
-    // No follow-back within the max wait → reclaim the slot.
+    this.reconciler?.sync(now);
+    const idx = this.protection.index();
     for (const rec of this.store.followRecordsByState('pending_followback')) {
-      if (this.pick.isRetained(rec.accountPk)) continue;
-      if (rec.followedAt === undefined) continue;
-      if (now - rec.followedAt >= this.cfg.maxWaitForFollowbackMs) {
-        const deadline = rec.followedAt + this.cfg.maxWaitForFollowbackMs;
-        if (this.ownPk !== undefined) {
-          const edge = this.store.getEdge(rec.accountPk, this.ownPk, 'follows');
-          if (edge?.status !== 'removed' || edge.lastConfirmedAt < deadline
-            || !this.pick.fresh(rec, now)) continue;
-        }
-        this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: deadline, unfollowReason: 'no-followback' });
-        log.info('churn: no follow-back within max wait, queuing unfollow', {
-          pk: rec.accountPk,
-        });
+      if (this.pick.isRetained(rec.accountPk) || rec.followedAt === undefined) continue;
+      if (now - rec.followedAt < this.cfg.maxWaitForFollowbackMs || this.stopsAtSelection(rec, idx, now)) continue;
+      const deadline = rec.followedAt + this.cfg.maxWaitForFollowbackMs;
+      if (this.ownPk !== undefined) {
+        const edge = this.store.getEdge(rec.accountPk, this.ownPk, 'follows');
+        if (edge?.status !== 'removed' || edge.lastConfirmedAt < deadline || !this.pick.fresh(rec, now)) continue;
       }
+      this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: deadline, unfollowReason: 'no-followback' });
+      log.info('churn: no follow-back within max wait, queuing unfollow', { pk: rec.accountPk });
     }
-    // Reciprocated and held long enough → time to unfollow — UNLESS the bio
-    // keep-list protects this mutual. The gate re-evaluates on every sweep
-    // (no state is rewritten), so editing the keep-words — or the follower
-    // unfollowing us — takes effect on the next pass.
-    for (const rec of this.store.followRecordsByState('followed_back')) {
-      if (this.pick.isRetained(rec.accountPk) || !this.pick.fresh(rec, now)) continue;
-      if (rec.holdUntil === undefined) continue;
-      if (now >= rec.holdUntil) {
-        if (this.bioKeepsFollower(rec.accountPk)) continue;
-        this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: rec.holdUntil, unfollowReason: 'hold-expired' });
-        log.info('churn: hold elapsed, queuing unfollow', { pk: rec.accountPk });
-      }
+    for (const rec of this.cfg.rotateMutuals ? this.store.followRecordsByState('followed_back') : []) {
+      if (this.pick.isRetained(rec.accountPk) || rec.holdUntil === undefined || now < rec.holdUntil) continue;
+      if (this.stopsAtSelection(rec, idx, now) || !this.pick.fresh(rec, now)) continue;
+      this.store.upsertFollowRecord({ ...rec, state: 'unfollow_queued', unfollowDueAt: rec.holdUntil, unfollowReason: 'hold-expired' });
+      log.info('churn: hold elapsed, queuing unfollow', { pk: rec.accountPk });
     }
+    for (const rec of this.store.followRecordsByState('unfollow_queued')) this.stopsAtSelection(rec, idx, now);
   }
 
-  /**
-   * Whether `pk` is protected from unfollows by the bio keep-list: they follow
-   * us back RIGHT NOW (the live graph edge — record state alone can be stale)
-   * and their stored bio contains a configured keep-word. A non-follower is
-   * NEVER protected — the keep-list means "mutuals I keep", not "skip these".
-   * Without `ownPk` (bare test rigs) the caller's record state stands in for
-   * the edge. An unobserved bio never matches (facts only, no fabrication).
-   */
-  private bioKeepsFollower(pk: string): boolean {
-    if (this.cfg.bioKeepWords.length === 0) return false;
-    if (this.ownPk !== undefined) {
-      const followsUs = this.store.getEdge(pk, this.ownPk, 'follows')?.status === 'active';
-      if (!followsUs) return false;
+  /** Selection over stored facts: protected → kept, paused → held where it is. True when the unfollow stops here. */
+  private stopsAtSelection(rec: FollowRecord, idx: ProtectionIndex, now: number): boolean {
+    const v = selectionVerdict(this.store, rec.accountPk, idx);
+    if (v.kind === 'protected') {
+      keepRecord(this.store, rec, keptStampFor(v, now, rec.checkFailures ?? 0, this.protection));
+      log.info('churn: protected at selection, kept', { pk: rec.accountPk, by: v.by });
     }
-    return bioMatchesFilter(this.store.getAccount(pk)?.bio, this.cfg.bioKeepWords);
+    return v.kind === 'protected' || v.kind === 'paused';
   }
 
   /**
@@ -300,29 +287,16 @@ export class ChurnScheduler {
   }
 
   /**
-   * Unfollow one `unfollow_queued` record. The keep-list's moment-of-truth
-   * check comes first: a record can reach the queue before the person followed
-   * back (timeout path) or before the keep-word was configured — a protected
-   * mutual is re-held, never unfollowed.
+   * Unfollow one `unfollow_queued` record. Selection is judged once more right before the click
+   * (a rule may have arrived since it was queued): protected → kept, paused → untouched; the
+   * click itself judges the fresh profile.
    */
   private async executeUnfollow(
     rec: FollowRecord,
     now: number,
   ): Promise<ChurnActionOutcome['status'] | 'noop'> {
     if (this.pick.isRetained(rec.accountPk) || !this.pick.fresh(rec, now)) return 'noop';
-    if (this.bioKeepsFollower(rec.accountPk)) {
-      // The hold stamp is kept (or set due-now), so the sweep's own gate
-      // re-decides each pass: remove the keep-word later and rotation resumes.
-      this.store.upsertFollowRecord({
-        ...rec,
-        state: 'followed_back',
-        holdUntil: rec.holdUntil ?? now,
-      });
-      log.info('churn: due unfollow is a bio-protected mutual, re-holding', {
-        pk: rec.accountPk,
-      });
-      return 'noop';
-    }
+    if (this.stopsAtSelection(rec, this.protection.index(), now)) return 'noop';
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
       // Same starvation guard as the follow path: progress or abandon.

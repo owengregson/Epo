@@ -1152,14 +1152,14 @@ export class Foundation {
 
   private graphBuildDeps(): GraphBuildDeps {
     return {
-      tab: this.tab,
-      userDataDir: this.userDataDir,
+      tab: this.tab, userDataDir: this.userDataDir,
       dbFile: IG_DB_FILE,
       reporter: this.reporter,
       cursorObserver: this.cursorObserver,
       scheduler: this.scheduler,
       settings: this.resolveSettings(),
       resolveSettings: () => this.resolveSettings(),
+      protection: { index: () => this.settings.protection(), setCapabilities: (p) => this.settings.setCapabilities(p) },
       updateSettings: (partial) => {
         void this.updateSettings(partial);
       },
