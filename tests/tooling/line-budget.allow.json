@@ -30,12 +30,12 @@
       "lines": 731
     },
     {
-      "file": "src/store/knowledge-store.ts",
-      "lines": 686
-    },
-    {
       "file": "src/adapter/tab.ts",
       "lines": 646
+    },
+    {
+      "file": "src/store/knowledge-store.ts",
+      "lines": 591
     },
     {
       "file": "src/engine/churn-scheduler.ts",
