@@ -31,11 +31,12 @@ export function nextFeedCandidate(f: PruneFeedContext, now: number): { pk: strin
   if (f.feedHalted || !f.hasFreshScan() || f.atDailyCap(now)) return null;
   const pending = f.pendingCandidates;
   if (pending === null) return null;
+  const unsettled = f.deps.store.effectIntents.pending();
   let i = 0;
   while (i < pending.length) {
     const cand = pending[i];
     // No head-of-line (spec §9.8): the account waits for its journal, the feed moves on.
-    if (journalBlocks(cand.pk, f.deps.store.effectIntents.unsettledFor(cand.pk))) {
+    if (journalBlocks(cand.pk, unsettled)) {
       i += 1;
       continue;
     }

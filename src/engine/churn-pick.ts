@@ -50,21 +50,18 @@ export class ChurnPick {
    * never one parked ahead, one with its own write unsettled, or a retained or requesting unfollow.
    */
   nextDue(now: number, kind?: 'follow' | 'unfollow'): FollowRecord | null {
-    const queued = kind === 'unfollow' ? []
-      : this.store.followRecordsByState('queued').filter((r) => r.score !== 0 && this.open(r, now));
+    const unsettled = this.store.effectIntents.pending();
+    // Neither parked until later nor blocked by its own unsettled write.
+    const open = (r: FollowRecord): boolean => (r.recheckAt ?? now) <= now && !journalBlocks(r.accountPk, unsettled);
+    const queued = kind === 'unfollow' ? [] : this.store.followRecordsByState('queued').filter((r) => r.score !== 0 && open(r));
     const chosenFollow = this.pickQueued ? this.pickQueued(queued) : queued.sort(compareByScoreDesc)[0] ?? null;
     if (kind === 'follow') return chosenFollow;
     const unfollows = !this.unfollowsOffered(now) ? [] : this.store.followRecordsByState('unfollow_queued')
-      .filter((r) => this.open(r, now) && !this.isRetained(r.accountPk) && !this.isRequester(r.accountPk));
+      .filter((r) => open(r) && !this.isRetained(r.accountPk) && !this.isRequester(r.accountPk));
     if (unfollows.length > 0 && (kind === 'unfollow' || this.consecutiveCleanup < 2 || chosenFollow === null)) {
       return unfollows.sort(byUnfollowDue)[0];
     }
     return kind === 'unfollow' ? null : chosenFollow;
-  }
-
-  /** Neither parked until later nor blocked by its own unsettled write. */
-  private open(rec: FollowRecord, now: number): boolean {
-    return (rec.recheckAt ?? now) <= now && !journalBlocks(rec.accountPk, this.store.effectIntents.unsettledFor(rec.accountPk));
   }
 
   /**
