@@ -3,24 +3,16 @@
  * from its signals and main the window title and Dock badge from the same function. `POSTURE_RULES` is the
  * precedence table: the first rule that holds names the kind.
  */
+import { type Attention, type AttentionAction, classifyBlock } from './attention';
 import type { BootView } from './boot';
+
+export type { Attention, AttentionAction } from './attention';
 
 export type PostureKind =
   | 'starting-up' | 'data-unavailable' | 'signed-out' | 'needs-attention' | 'sleeping' | 'reconnecting'
   | 'offline' | 'cleaning-up' | 'catching-up' | 'starting' | 'paused' | 'needs-seed' | 'stopped'
   | 'taking-a-break' | 'day-off' | 'done-for-today' | 'pacing' | 'retrying' | 'resting' | 'working';
 export type PostureTone = 'live' | 'calm' | 'idle' | 'hold' | 'alert';
-
-/** What an attention asks of the user; the attention module classifies every raw block key. */
-export type AttentionAction =
-  | 'start' | 'show-live' | 'choose-seed' | 'check-update' | 'open-prune' | 'diagnostics' | 'restart-app' | 'wait';
-export interface Attention {
-  /** A known block key, or 'unknown' (the raw key is never the sentence). */
-  readonly key: string;
-  readonly raw: string;
-  readonly action: AttentionAction;
-  readonly blocksSchedules: boolean;
-}
 
 export type PrimaryControl =
   | 'start' | 'starting' | 'pause' | 'resume' | 'sign-in' | 'set-up' | 'pause-cleanup' | 'resume-cleanup'
@@ -144,7 +136,7 @@ const HEADLINE: Readonly<Record<PostureKind, string>> = {
   'starting-up': 'Starting up', 'data-unavailable': "Can't open data", 'signed-out': 'Signed out',
   'needs-attention': 'Needs attention', sleeping: 'Sleeping', reconnecting: 'Reconnecting', offline: 'Offline',
   'cleaning-up': 'Pruning', 'catching-up': 'Catching up', starting: 'Starting', paused: 'Paused',
-  'needs-seed': "Let's set up", stopped: 'Stopped', 'taking-a-break': 'Taking a break', 'day-off': 'Day off',
+  'needs-seed': 'Get set up', stopped: 'Stopped', 'taking-a-break': 'Taking a break', 'day-off': 'Day off',
   'done-for-today': 'Done for today', pacing: 'Pacing', retrying: 'Retrying soon', resting: 'Resting',
   working: 'Working',
 };
@@ -152,9 +144,6 @@ const HEADLINE: Readonly<Record<PostureKind, string>> = {
 export function postureHeadline(kind: PostureKind): string {
   return HEADLINE[kind];
 }
-
-/** An unclassified block: neutral, Diagnostics as the action; the attention module refines it. */
-const unclassified = (raw: string): Attention => ({ key: 'unknown', raw, action: 'diagnostics', blocksSchedules: true });
 
 const ATTENTION_PRIMARY: Readonly<Record<AttentionAction, PrimaryControl>> = {
   start: 'start', 'show-live': 'show-live', 'choose-seed': 'choose-seed', 'check-update': 'check-update',
@@ -171,14 +160,16 @@ const countdown = (from: number | null, to: number | null, toward: Countdown['to
 export function derivePosture(
   input: PostureInput,
   now: number,
-  classify: (raw: string) => Attention = unclassified,
+  classify: (raw: string) => Attention = classifyBlock,
 ): Posture {
   const s = input.status;
   // A status not yet known reads as starting up: no later row can be judged without one.
   const kind = s === null ? 'starting-up' : (POSTURE_RULES.find((r) => r.when(input, s))?.kind ?? 'working');
-  const live = s !== null && (s.state === 'running' || s.state === 'paused');
+  // Stop also cancels a Start that is still on its way (queued behind the startup sequence, or pressed).
+  const stoppable = (s !== null && (s.state === 'running' || s.state === 'paused'))
+    || input.boot?.startup.startQueued === true || input.pending === 'start';
   let primary: PrimaryControl = null;
-  let secondary: Posture['secondary'] = live ? 'stop' : null;
+  let secondary: Posture['secondary'] = stoppable ? 'stop' : null;
   let attention: Attention | null = null;
   let timer: Countdown | null = null;
   let explain: ExplainTopic | null = null;
@@ -191,7 +182,7 @@ export function derivePosture(
     case 'needs-attention': {
       attention = classify(s?.runtime?.blockedReason ?? s?.haltReason ?? 'unknown');
       primary = ATTENTION_PRIMARY[attention.action];
-      secondary = primary === 'start' ? null : 'start';
+      secondary = primary === 'start' || attention.action === 'wait' ? null : 'start';
       break;
     }
     case 'sleeping': primary = s?.runtime?.desired === 'running' ? 'pause' : null; break;
@@ -224,11 +215,13 @@ export function derivePosture(
       timer = countdown(last, parked, 'resume', now);
       break;
     case 'retrying': primary = 'pause'; explain = 'retrying'; timer = countdown(last, parked, 'retry', now); break;
-    case 'working': primary = 'pause'; timer = countdown(last, s?.nextActionAt ?? null, 'next-step', now); break;
+    case 'working':
+      // While an op is in flight the ring shows the step itself, not a stale deadline.
+      primary = 'pause';
+      timer = input.liveOpInFlight ? null : countdown(last, s?.nextActionAt ?? null, 'next-step', now);
+      break;
   }
-  if (attention === null && input.unconfirmed !== null) {
-    attention = { key: 'actions-unconfirmed', raw: 'actions-unconfirmed', action: 'wait', blocksSchedules: false };
-  }
+  if (attention === null && input.unconfirmed !== null) attention = classify('actions-unconfirmed');
   const busy = kind === 'starting-up' || kind === 'reconnecting' || kind === 'catching-up' || kind === 'starting'
     || (kind === 'working' && timer === null);
   return {
