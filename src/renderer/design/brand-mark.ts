@@ -5,7 +5,9 @@
  * in the edge (a bright top highlight over a satin body, a shadowed lower edge).
  *
  * The shape is locked: only its scale and position ever change. The favicon in
- * `src/renderer/index.html` carries a copy that a test pins to this module.
+ * `src/renderer/index.html` is `brandMarkSvg()` as a data URI, pinned byte for
+ * byte by a test. It lives here, not in `src/shared/`: the static-timing gate
+ * scans `src/shared` and these numbers would need allow-list entries there.
  */
 
 /** One rectangle of the mask, in viewBox units; `keep` paints it, otherwise it cuts. */
@@ -81,3 +83,27 @@ export const BRAND_MARK: BrandMark = {
     },
   },
 };
+
+const LAYER_IDS = { body: 'epoBody', shadow: 'epoShadow', highlight: 'epoHi' } as const;
+const LAYER_ORDER = ['body', 'shadow', 'highlight'] as const;
+
+const rectSvg = (r: MarkRect): string =>
+  `<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}"${r.r > 0 ? ` rx="${r.r}" ry="${r.r}"` : ''} fill="${r.keep ? '#fff' : '#000'}"/>`;
+
+const stopSvg = (s: MarkStop): string =>
+  `<stop offset="${s.offset}%" stop-color="${s.color}"${s.opacity === 1 ? '' : ` stop-opacity="${s.opacity}"`}/>`;
+
+/** The mark as one standalone SVG document: the favicon's only source. */
+export function brandMarkSvg(): string {
+  const n = BRAND_MARK.size;
+  const gradients = LAYER_ORDER.map((k) => {
+    const l = BRAND_MARK.layers[k];
+    return `<linearGradient id="${LAYER_IDS[k]}" x1="0" y1="${l.y1}" x2="0" y2="${l.y2}" gradientUnits="userSpaceOnUse">${l.stops.map(stopSvg).join('')}</linearGradient>`;
+  }).join('');
+  const fills = LAYER_ORDER.map((k) => `<rect width="${n}" height="${n}" fill="url(#${LAYER_IDS[k]})"/>`).join('');
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="${n}" viewBox="0 0 ${n} ${n}" fill="none" role="img" aria-label="Epo">` +
+    `<defs><mask id="epoCut" maskUnits="userSpaceOnUse" x="0" y="0" width="${n}" height="${n}">${BRAND_MARK.mask.map(rectSvg).join('')}</mask>${gradients}</defs>` +
+    `<g mask="url(#epoCut)">${fills}</g></svg>`
+  );
+}

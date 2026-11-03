@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { render } from '@testing-library/preact';
 import { h } from 'preact';
-import { BRAND_MARK, type MarkLayer } from '@/renderer/design/brand-mark';
+import { BRAND_MARK, brandMarkSvg, type MarkLayer } from '@/renderer/design/brand-mark';
 import { EpoMark } from '@/renderer/ui/EpoMark';
 
 interface Geometry {
@@ -52,6 +52,11 @@ describe('the brand mark (L-MARK)', () => {
     const b64 = /href="data:image\/svg\+xml;base64,([^"]+)"/.exec(INDEX_HTML)?.[1] ?? '';
     const svg = new DOMParser().parseFromString(Buffer.from(b64, 'base64').toString('utf8'), 'image/svg+xml');
     expect(read(svg.documentElement)).toEqual(expected());
+  });
+
+  it('the favicon is generated from the geometry, byte for byte (no hand-edited copy)', () => {
+    const href = /href="(data:image\/svg\+xml;base64,[^"]+)"/.exec(INDEX_HTML)?.[1];
+    expect(href).toBe(`data:image/svg+xml;base64,${Buffer.from(brandMarkSvg(), 'utf8').toString('base64')}`);
   });
 
   it('every mark drawn inline in index.html (the splash, once it lands) is the mark', () => {
