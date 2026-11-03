@@ -76,3 +76,20 @@ committed.
   deny-list's is a fixture that keeps a handle.
 - **Counters in `meta` instead of a table.** The 1-hour window the health card wants
   needs history. Deferred to wave B rather than decided by the cheaper option.
+
+## Amendment — 2026-11-02: persisted health, a novelty baseline, scrubbed samples (ADR 0806)
+
+Drift is now persisted per account: migration 16's `surface_drift` (one signature per surface × endpoint ×
+class × path pattern; types, operation names and counts, never a value) and `surface_health` (read tallies per
+plan-day × endpoint), written only by the production sink in `src/main/services/surface-health-sink.ts`, plus
+the latency reservoirs in `meta.surface_meter` (a corrupt value starts the meter cold, with a warn). The
+in-memory `SurfaceHealth` is superseded by `MemorySink` for tests, the probe and the live test. Area states
+and the surface gate derive from these rows (`src/surface/health-view.ts`), so a pause survives a restart and
+lifts only when clean canonical reads resolve it. Novelty is checked against `NOVELTY_BASELINE`, the union of
+the corpus manifests' `novelKeys`; the 2026-11-02 corpus (probe bodies ingested through the production
+router, `tests/fixtures/surface/2026-11-02/`) joins the re-scrubbed 2026-08-12 bodies, whose id aliases now
+agree. The scrubber gains `count` (two significant digits at or above 100) and `time` (shifted into a
+synthetic window) classes. A signature's first sighting may keep one sample (at most twelve per plan-day,
+≤ 16 KiB): allow-list scrubbed, rows cut to the sampled few, held to the structural leak rules of
+`src/surface/lab/structural-leak.ts` (the same rules the corpus leak test runs), dropped if any rule still
+fires. Samples stay local; Copy report masks every digit run of six or more.

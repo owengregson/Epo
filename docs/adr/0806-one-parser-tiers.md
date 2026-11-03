@@ -40,6 +40,22 @@ never subtracts them.**
    back text for any parseable 2xx and is decoded once.
 6. **Evidence.** "Gone" needs the declared container explicitly null, no GraphQL errors and a final body; a visit's
    outcome follows the evidence it saw (wall body, drift, Instagram's empty body, page text, deadline).
+7. **Drift is persisted, per account, by one writer** (parse health). The production sink
+   (`main/services/surface-health-sink.ts`) alone writes `surface_drift` (one row per surface × endpoint × class × path
+   pattern: types, operation names and counts, never a value), `surface_health` (read tallies per plan-day ×
+   endpoint) and `meta.surface_meter`. Tallies flush on the push throttle's trailing edge, at a plan-day roll and at
+   teardown; a signature lands at once, with at most one scrubbed, leak-checked sample. Learned hints become
+   consistent after `driftConfirmThreshold()` distinct witnessed subjects with no contradiction and never promote.
+8. **Area states and the surface gate are derived** (`surface/health-view.ts`). Unfollows and relationship reads pause
+   on recovered or relationship-key-absent profiles, unfollows on an absent bio or verified badge, pruning on any
+   drifted list page and exploration once `driftConfirmThreshold()` drifted pages were seen, follow-back decisions on
+   unreadable requests. The gate reads before any read is spent and lifts when clean canonical reads resolve the
+   signatures behind a pause, so it survives restarts and never spins.
+9. **Compatibility, not a rate limit.** `status.surface` rides the status push; the compatibility panel pulls
+   `surface:report` on each revision; Copy report carries scrubbed samples and masks every digit run of six or more.
+10. **The corpus is real and scrubbed.** The 2026-11-02 probe bodies are ingested through the production router and
+    the 2026-08-12 bodies re-scrubbed (agreeing id aliases, rounded counts, shifted times); both pass the structural
+    and differential leak checks before commit, and their manifests' `novelKeys` are the novelty baseline.
 
 ## Consequences
 
