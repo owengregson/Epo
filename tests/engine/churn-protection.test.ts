@@ -6,6 +6,7 @@
 import { CHURN_DEFAULTS, type ChurnConfig, ChurnScheduler } from '@/engine/churn-scheduler';
 import { FakeClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
+import type { ClickVerdict } from '@/shared/click-verdict';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
 import { rec as baseRecord, FakeActions, kitStore, T0 } from '../kit/engine-harness';
@@ -152,6 +153,47 @@ describe('P3/P4 — the queued unfollow', () => {
     expect(actions.unfollowCalls).toEqual([]);
     expect(actions.followCalls).toEqual(['userf']);
     expect(store.getFollowRecord('u')?.state).toBe('unfollow_queued');
+  });
+});
+
+describe('P3 at the click — the review consumes the work', () => {
+  const reviewed = (actions: FakeActions, verdict: ClickVerdict): void => {
+    actions.unfollow = async (username: string) => {
+      actions.unfollowCalls.push(username);
+      return { status: 'reviewed', verdict };
+    };
+  };
+
+  test('protected on the fresh profile → kept by its rule; the intent is cancelled, never dispatched', async () => {
+    const { store, actions, sched } = build();
+    profile(store, '1');
+    store.upsertFollowRecord(rec({ accountPk: '1', state: 'unfollow_queued', unfollowDueAt: T0 }));
+    reviewed(actions, { kind: 'protected', by: 'bio-word', match: 'cafe' });
+    expect(await sched.execute(store.getFollowRecord('1') as FollowRecord)).toBe('reviewed');
+    expect(store.getFollowRecord('1')).toMatchObject({ state: 'kept', keptReason: 'bio-word', keptMatch: 'cafe' });
+    expect(store.pendingEffectIntents()).toEqual([]);
+    expect(store.actionCountSince(0)).toBe(0);
+  });
+
+  test('an unreadable bio → kept unreadable with a plan-paced re-check; never unfollowed', async () => {
+    const { store, clock, actions, sched } = build();
+    profile(store, '1');
+    store.upsertFollowRecord(rec({ accountPk: '1', state: 'unfollow_queued', unfollowDueAt: T0, checkFailures: 1 }));
+    reviewed(actions, { kind: 'protection-unknown', missing: 'bio' });
+    await sched.execute(store.getFollowRecord('1') as FollowRecord);
+    const got = store.getFollowRecord('1');
+    expect(got).toMatchObject({ state: 'kept', keptReason: 'unreadable-bio', checkFailures: 2 });
+    expect(Math.round(((got?.recheckAt ?? 0) - clock.now()) / 86_400_000)).toBe(2);
+  });
+
+  test('paused at the click → the record is left as it is', async () => {
+    const { store, actions, sched } = build();
+    profile(store, '1');
+    store.upsertFollowRecord(rec({ accountPk: '1', state: 'unfollow_queued', unfollowDueAt: T0 }));
+    reviewed(actions, { kind: 'protection-paused', state: 'unavailable' });
+    expect(await sched.execute(store.getFollowRecord('1') as FollowRecord)).toBe('reviewed');
+    expect(store.getFollowRecord('1')?.state).toBe('unfollow_queued');
+    expect(store.pendingEffectIntents()).toEqual([]);
   });
 });
 

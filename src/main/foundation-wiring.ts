@@ -703,7 +703,7 @@ export class Foundation {
       if (outcome.status === 'ok' && !outcome.alreadyInState) graph.noteMutation();
       return outcome.status === 'ok' || outcome.status === 'simulated'
         ? { ok: true, username }
-        : { ok: false, username, reason: outcome.status === 'blocked' ? 'blocked' : 'action-failed' };
+        : { ok: false, username, reason: outcome.verdict?.kind ?? (outcome.status === 'blocked' ? 'blocked' : 'action-failed') };
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       logger.error('foundation.act: failed', { action, username, error: reason });

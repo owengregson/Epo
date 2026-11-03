@@ -5,6 +5,7 @@
  */
 import { PruneEngine } from '@/engine/prune-engine';
 import { FakeClock } from '@/governors/clock';
+import type { ClickVerdict } from '@/shared/click-verdict';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeListSource, FakePruneActions, FakeSentinel, kitStore, OWN_PK, PRUNE_CFG, T0 } from '../kit/engine-harness';
 import { ProtectionRig } from '../kit/harness-journal';
@@ -113,6 +114,45 @@ describe('P7 — the woven feed', () => {
     rig.pause('unavailable');
     expect(engine.nextCandidate(clock.now())).toBeNull();
     expect(store.getPruneScan()?.remaining.map((c) => c.pk)).toEqual(['a', 'b']);
+  });
+});
+
+describe('P5–P7 at the click — the review consumes, never parks', () => {
+  const reviewOn = (churn: FakePruneActions, by: Record<string, ClickVerdict>): void => {
+    churn.unfollow = async (username: string) => {
+      churn.unfollows.push(username);
+      const verdict = by[username];
+      return verdict === undefined ? { status: 'ok' } : { status: 'reviewed', verdict };
+    };
+  };
+
+  test('protected or unreadable at the click: skipped and marked visited, no ledger row, no park', async () => {
+    const { store, churn, engine } = build([OWN_PK, '1', '2', '3']);
+    reviewOn(churn, { u1: { kind: 'protected', by: 'bio-word', match: 'cafe' }, u2: { kind: 'protection-unknown', missing: 'bio' } });
+    await engine.run();
+    expect(churn.unfollows).toEqual(['u1', 'u2', 'u3']);
+    expect(store.pruneCountSince(0)).toBe(1);
+    expect(store.getPruneScan()?.remaining ?? []).toEqual([]);
+    expect(engine.status().state).toBe('done');
+  });
+
+  test('paused at the click: the run stops and the candidate stays unvisited', async () => {
+    const { store, churn, engine } = build([OWN_PK, '1', '2']);
+    reviewOn(churn, { u1: { kind: 'protection-paused', state: 'needs-review' } });
+    await engine.run();
+    expect(churn.unfollows).toEqual(['u1']);
+    expect(store.getPruneScan()?.remaining.map((c) => c.pk)).toEqual(['1', '2']);
+    expect(engine.status()).toMatchObject({ state: 'done', scanReady: true });
+  });
+
+  test('the woven feed consumes a protected review; a paused one keeps the candidate', async () => {
+    const { store, churn, engine, clock } = build(['a', 'b']);
+    await engine.scan();
+    reviewOn(churn, { ua: { kind: 'protection-paused', state: 'unavailable' }, ub: { kind: 'protected', by: 'account', match: 'b' } });
+    expect(await engine.executeUnfollow({ pk: 'a', username: 'ua' }, clock.now())).toBe('reviewed');
+    expect(store.getPruneScan()?.remaining.map((c) => c.pk)).toEqual(['a', 'b']);
+    expect(await engine.executeUnfollow({ pk: 'b', username: 'ub' }, clock.now())).toBe('reviewed');
+    expect(store.getPruneScan()?.remaining.map((c) => c.pk)).toEqual(['a']);
   });
 });
 

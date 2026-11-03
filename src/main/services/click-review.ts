@@ -1,10 +1,10 @@
 /**
- * The click review: before an action's click, one fresh profile visit proves
- * the identity, re-checks eligibility and settles the current relationship.
+ * The click review: before an action's click, one fresh profile visit proves the identity,
+ * re-checks eligibility, judges protection on the fresh fields and settles the current relationship.
  */
 
-import { ActionAbortedError, ActionDeferredError } from '@/adapter/errors';
-import { bioMatchesFilter } from '@/engine/prune-bio-filter';
+import { ActionAbortedError, ActionDeferredError, ActionReviewedError } from '@/adapter/errors';
+import { freshSubject } from '@/engine/protection-gate';
 import { scoreCandidate } from '@/engine/scorer';
 import type { Clock } from '@/governors/clock';
 import type { Admission } from '@/governors/plan-types';
@@ -12,7 +12,9 @@ import type { ReadBudget } from '@/governors/read-budget';
 import type { MutationKind, Writer } from '@/kernel/plan';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import { type Settings, toScorerConfig } from '@/settings/settings';
+import { protectionClickVerdict } from '@/shared/click-verdict';
 import { NEVER_PAUSED, type SurfaceGate } from '@/shared/surface-gate';
+import { type ProtectionIndex, protectionVerdict } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 
 export interface ClickReviewDeps {
@@ -22,6 +24,8 @@ export interface ClickReviewDeps {
   readBudget: ReadBudget;
   profiles(): ProfileVisitor;
   settings(): Settings;
+  /** The live protection index (the settings service's): every unfollow is judged on it (spec §7). */
+  protection(): ProtectionIndex;
   signal(): AbortSignal | undefined;
   onProgress?(phase: string): void;
   /** The identity and run-token check every write repeats. */
@@ -51,6 +55,11 @@ export function createClickReview(d: ClickReviewDeps) {
       if (action === 'unfollow' && (d.surfaceGate ?? NEVER_PAUSED).paused('unfollows')) {
         throw new ActionDeferredError('surface paused: unfollows', { reason: 'surface-paused', until: null });
       }
+      // A paused index refuses any unfollow whatever the subject, so it is judged before a read is spent.
+      const paused = d.protection();
+      if (action === 'unfollow' && paused.state !== 'ready') {
+        throw new ActionReviewedError({ kind: 'protection-paused', state: paused.state });
+      }
       const permit = readBudget.consume('profile', 'reconciliation');
       if (!permit.allowed) throw new ActionDeferredError('profile read budget exhausted');
       const started = clock.now();
@@ -70,10 +79,15 @@ export function createClickReview(d: ClickReviewDeps) {
         throw new ActionDeferredError('profile no longer eligible');
       }
       if (action !== 'unfollow') return;
-      if (store.getTarget(expectedPk) || account?.role === 'retained_target') throw new ActionDeferredError('source is protected');
+      // Step 5: protection on THIS body's own fields (never the folded row), before any follow-back logic.
+      const verdict = protectionClickVerdict(protectionVerdict(freshSubject(seen.obs, username), d.protection()));
+      if (verdict !== null) throw new ActionReviewedError(verdict);
+      // Step 6: a source or the starting account is kept, a consuming verdict rather than a retried deferral.
+      if (store.getTarget(expectedPk) || account?.role === 'retained_target') {
+        throw new ActionReviewedError({ kind: 'protected', by: 'source', match: expectedPk });
+      }
       if (seen.viewer.followsUs === null) throw new ActionDeferredError('reciprocal relationship unresolved');
       if (!seen.viewer.followsUs) return;
-      if (bioMatchesFilter(account?.bio, d.settings().pruneBioFilterWords)) throw new ActionDeferredError('mutual is protected by bio keep policy');
       if (rec?.state === 'unfollow_queued' && rec.followbackObservedAt === undefined && rec.followedBackAt === undefined) {
         store.upsertFollowRecord({ ...rec, state: 'followed_back', followbackObservedAt: now,
           holdUntil: now + d.settings().holdAfterFollowbackDays * 86_400_000, reconciledAt: now });

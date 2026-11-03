@@ -3,6 +3,7 @@
  * observation's own fields (the click), and the moves into and out of `kept`.
  */
 
+import type { ClickVerdict } from '../shared/click-verdict';
 import {
   type ProtectionIndex, type ProtectionSubject, type ProtectionVerdict, protectionVerdict,
 } from '../shared/unfollow-protection';
@@ -76,6 +77,12 @@ export function annotatedRows<T extends PruneSubject>(store: { getAccount(pk: st
   idx: ProtectionIndex, rows: readonly T[]): AnnotatedCandidate<T>[] {
   const rules = ignoringPause(idx);
   return rows.map((c) => annotateCandidate(c, selectionVerdict(store, c.pk, rules)));
+}
+
+/** The keeping verdict a click verdict carries (protected / protection-unknown), else null. */
+export function keepingVerdictOf(v: ClickVerdict | undefined): KeepingVerdict | null {
+  if (v?.kind === 'protected') return { kind: 'protected', by: v.by, match: v.match };
+  return v?.kind === 'protection-unknown' ? { kind: 'unknown', missing: v.missing } : null;
 }
 
 /** A rule match keeps for good (until the rules change); an unreadable fact is read again on the plan's back-off. */

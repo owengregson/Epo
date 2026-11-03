@@ -127,23 +127,14 @@ export class PruneEngine {
   private lastRunAt: number | null;
   private lastSentinel: SentinelStatus | null = null;
   /**
-   * The RAW candidate census from the last COMPLETE scan (following − followers
-   * − self − growth-managed, protection NOT applied), cached for a 2-step run
-   * for a 2-step run. The actionable set is derived from it against the LIVE
-   * protection at consumption time, so rule edits take effect instantly —
-   * adding a rule hides rows, removing one restores them — with no re-scan.
-   * Cleared once consumed or when it ages out. Null means "no runnable scan —
-   * Run is locked".
+   * The RAW census of the last COMPLETE scan (following − followers − self − growth-managed, protection
+   * NOT applied), runnable for a 2-step run; the actionable set derives from it against the LIVE protection
+   * at consumption time (no re-scan). Null means "no runnable scan — Run is locked".
    */
   private pendingCandidates: PruneCandidate[] | null = null;
   /** Clock time the pending candidate set was captured; drives freshness. */
   private pendingScanAt: number | null = null;
-  /**
-   * The last COMPLETE census (durable mirror of `store.getPruneCensus()`):
-   * replaced only when a scan verifiably finishes, so an aborted/failed scan
-   * and a run that consumes the candidate rows all leave it standing — the
-   * display truth the census tiles anchor on.
-   */
+  /** The last COMPLETE census (durable): replaced only when a scan verifiably finishes; the tiles' display truth. */
   private lastCensus: PruneCensusRecord | null = null;
   /** Clock time of the last THROTTLED mid-scan progress emission. */
   private lastProgressEmitAt = 0;
@@ -519,7 +510,10 @@ export class PruneEngine {
         }
 
         const outcome = await this.journaledUnfollow(cand.pk, verdict.username);
-        const _now = this.deps.clock.now();
+        if (outcome.verdict?.kind === 'protection-paused') {
+          truncated = 'protection-paused'; // judged before any visit: the candidate stays unvisited
+          break;
+        }
         if (outcome.status === 'blocked') {
           if (outcome.cause === 'rate-limited') {
             // Instagram's own response refused the unfollow as throttling —
@@ -546,10 +540,11 @@ export class PruneEngine {
           await this.pruneWait('prune:park', tempoOrReference(this.deps.tempo).base('park.blocked'));
           continue;
         }
+        // A click review (protected / unreadable) consumes the candidate after its visit: no ledger row.
         consecutiveBlocked = 0;
         this.visitCandidate(cand);
         index += 1;
-        actedThisRun += 1;
+        if (outcome.status !== 'reviewed') actedThisRun += 1;
         switch (outcome.status) {
           case 'ok':
             // Verified transition: heal our own-follow edge and record the prune.
@@ -790,6 +785,8 @@ export class PruneEngine {
       this.emitStatus();
       return 'blocked';
     }
+    // A paused index is judged before any visit: the feed yields and the candidate stays.
+    if (outcome.verdict?.kind === 'protection-paused') return 'reviewed';
     this.feedConsecutiveBlocked = 0;
     this.dropFromPending(cand);
     this.visitCandidate(cand);

@@ -7,7 +7,7 @@ import * as log from '../utils/logger';
 import { ChurnPick } from './churn-pick';
 import { CHURN_DEFAULTS, type ChurnActionOutcome, type ChurnActions, type ChurnConfig, type ChurnDeps, type VerbSpec } from './churn-types';
 import { normalizeMutationOutcome } from './mutation-outcome';
-import { keepRecord, keptStampFor, selectionVerdict } from './protection-gate';
+import { keepingVerdictOf, keepRecord, keptStampFor, selectionVerdict } from './protection-gate';
 import { type ProtectionPort, unconfiguredProtection } from './protection-port';
 
 export type { ChurnActionOutcome, ChurnActions, ChurnConfig, ChurnDeps } from './churn-types';
@@ -60,39 +60,16 @@ export class ChurnScheduler {
   private readonly validateFollow?: ChurnDeps['validateFollow'];
   private consecutiveCleanup = 0;
   /**
-   * Consecutive `'failed'` action outcomes ACROSS records — the engine's
-   * systemic-breakage signal. A single dead/renamed account produces at most
-   * `maxRetries + 1` fails before it abandons; a broken input pipeline or a
-   * silently-drifted selector fails every record identically, forever. The
-   * engine reads this and enters the recovery ladder instead of burning the
-   * whole queue (and the daily ledger budget) on clicks that do nothing. Reset
-   * by any VERIFIED outcome (ok / already-in-state / simulated); `'blocked'` and
-   * the no-username paths are neutral — nothing was clicked.
+   * Consecutive `'failed'` outcomes ACROSS records: the systemic-breakage signal (one dead account fails
+   * at most `maxRetries + 1` times; a broken pipeline fails every record) that enters the recovery
+   * ladder. Reset by any VERIFIED outcome; blocked, reviewed and no-username paths are neutral.
    */
   private consecutiveFailures = 0;
-  /**
-   * How many of the current consecutive failures were DRIFT-caused
-   * (`AdapterStaleError` — the expected control is gone). The recovery ladder
-   * compares this to the failure window: a window that is ALL drift, with clean
-   * tab diagnostics, is drift evidence; anything mixed stays presumed
-   * rate-limited. Reset together with {@link consecutiveFailures}.
-   */
+  /** How many of those failures were DRIFT-caused: an all-drift window with clean tab diagnostics is drift evidence. */
   private consecutiveDriftFailures = 0;
-  /**
-   * Consecutive `'blocked'` outcomes ACROSS records — the rate-wall streak the
-   * recovery ladder enters on (mirrors the prune engine's consecutive-block
-   * breaker). Blocks are record-NEUTRAL (nothing was clicked, no retry burned);
-   * this window exists so a persistent wall is escalated instead of the same
-   * record being re-driven at full pace forever. Reset by any verified
-   * ok/simulated outcome.
-   */
+  /** Consecutive record-neutral `'blocked'` outcomes: the rate-wall streak the ladder enters on. */
   private consecutiveBlocked = 0;
-  /**
-   * The classification of the MOST RECENT blocked outcome (`null` for an
-   * ordinary sentinel/budget block, and after any verified outcome). The
-   * engine reads it to tell a definitive server refusal (`'rate-limited'`,
-   * which ladders up at once) from a streak it still has to prove.
-   */
+  /** The MOST RECENT block's cause (null for an ordinary block or after a verified outcome): a server refusal ladders up at once. */
   private lastBlockCause: ChurnActionOutcome['cause'] | null = null;
   private lastOutcome: ChurnActionOutcome | null = null;
   lastActionOutcome(): ChurnActionOutcome | null { return this.lastOutcome ? { ...this.lastOutcome } : null; }
@@ -360,6 +337,7 @@ export class ChurnScheduler {
    *                    is external, without claiming a new action or its timing.
    *  - `'simulated'` — dry-run: the lifecycle advances, no edge, no ledger row.
    *  - `'failed'`    — ledger `fail` + retry/abandon.
+   *  - `'reviewed'`  — the click review consumed the work; the intent is cancelled (never dispatched).
    */
   private applyOutcome(
     rec: FollowRecord,
@@ -435,6 +413,15 @@ export class ChurnScheduler {
           at: now, result: 'fail', ledger: 'growth', record: this.retryRecord(rec, now),
         });
         return 'failed';
+
+      case 'reviewed': {
+        this.store.settleEffectIntent(intent.id, { at: now, result: 'cancelled' });
+        // Protected or unreadable at the click → kept (spec §7.4); paused leaves it where it is.
+        const keeping = keepingVerdictOf(outcome.verdict);
+        if (keeping !== null) keepRecord(this.store, rec, keptStampFor(keeping, now, rec.checkFailures ?? 0, this.protection));
+        log.info(`churn: ${verb} reviewed at the click`, { pk, verdict: outcome.verdict?.kind ?? null });
+        return 'reviewed';
+      }
     }
   }
 

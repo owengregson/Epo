@@ -51,6 +51,7 @@ export function wireMutationPolicy(d: GraphBuildDeps, w: MutationPolicyWiring): 
   const driverSignal = d.driverSignal;
   const policy = createMutationPolicy({ store, ownPk, ownUsername, clock, rate, reentry, readBudget,
     profiles: w.profiles, followback: w.followback, settings: d.resolveSettings,
+    protection: () => d.protection.index(),
     signal: driverSignal, validateIdentity: d.validateIdentity, onProgress: d.onProgress });
   return policy;
 }

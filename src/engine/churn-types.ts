@@ -1,5 +1,6 @@
 import type { Clock } from '../governors/clock';
 import type { RateGovernor } from '../governors/rate-governor';
+import type { ClickVerdict } from '../shared/click-verdict';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { FollowRecord, FollowState } from '../store/types';
 import { MS_PER_DAY } from '../timing/units';
@@ -16,9 +17,12 @@ import type { ProtectionPort } from './protection-port';
  * - `'simulated'` — dry-run: no click happened. The lifecycle STATE still advances
  *                   (so dry-run exercises the machine) but no real edge/ledger row
  *                   is written, so dry-run never pollutes yield/overlap.
+ * - `'reviewed'`  — the click review consumed the work with `verdict` (spec §9.7); nothing pressed.
  */
 export type ChurnActionOutcome = {
-  status: 'ok' | 'failed' | 'blocked' | 'simulated';
+  status: 'ok' | 'failed' | 'blocked' | 'simulated' | 'reviewed';
+  /** The click review's verdict, when `status` is `'reviewed'`. */
+  verdict?: ClickVerdict;
   /** True when `ok` but no click happened — the button was already in the target
    *  state, so an external actor is responsible for the relationship. */
   alreadyInState?: boolean;
