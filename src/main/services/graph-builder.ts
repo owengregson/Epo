@@ -329,7 +329,7 @@ export function buildGraph(
   // Back the woven-feed adapter now that the PruneEngine exists.
   pruneEngineRef = pruneEngine;
   // Once per build: a rebuild or account switch starts from a fresh list, never a duplicate.
-  const parts = [planWiringParts(plan, readBudget, store, d), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts()];
+  const parts = [planWiringParts(plan, readBudget, store, d), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts({ frontier })];
 
   return {
     prepareMutation: policy.prepareMutation,

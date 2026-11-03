@@ -3,13 +3,14 @@
  * merge #18): the build hands the plan's day clock to the unfollow wiring (protection, the policy's and the
  * journal's park slots, churn and its reconciler, the prune's protection), the follow-back watcher, the
  * surface wiring and the live sources; the seed check reads the open graph's clock. The calendar clock
- * survives only as a default no production path takes.
+ * survives only as a default no production path takes. The resume target peeks through the engine's frontier.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createEngine } from '@/engine/engine';
 import type { Foundation } from '@/main/foundation-wiring';
 import type { BuiltGraph } from '@/main/services/graph-builder';
-import { liveSources } from '@/main/services/live-wiring';
+import { liveSources, liveWiringParts } from '@/main/services/live-wiring';
 import { wireFollowback } from '@/main/services/reopen-wiring';
 import { wireSurface } from '@/main/services/surface-wiring';
 import { journalSettler, pruneUnfollowDeps, wireChurn, wireMutationPolicy } from '@/main/services/unfollow-wiring';
@@ -30,7 +31,11 @@ jest.mock('@/main/services/surface-wiring', () => {
 });
 jest.mock('@/main/services/live-wiring', () => {
   const actual = jest.requireActual<typeof import('@/main/services/live-wiring')>('@/main/services/live-wiring');
-  return { ...actual, liveSources: jest.fn(actual.liveSources) };
+  return { ...actual, liveSources: jest.fn(actual.liveSources), liveWiringParts: jest.fn(actual.liveWiringParts) };
+});
+jest.mock('@/engine/engine', () => {
+  const actual = jest.requireActual<typeof import('@/engine/engine')>('@/engine/engine');
+  return { ...actual, createEngine: jest.fn(actual.createEngine) };
 });
 
 const open: Foundation[] = [];
@@ -69,6 +74,13 @@ test("a built graph hands the plan's day clock to every day-keyed consumer", asy
     live: handed(liveSources)[2]?.planDay,
   };
   expect(Object.entries(clocks).filter(([, clock]) => clock !== day).map(([consumer]) => consumer)).toEqual([]);
+});
+
+test("the resume target peeks through the engine's own frontier, so the status shows the pick a start adopts", async () => {
+  await built();
+  const engineFrontier = handed(createEngine)[0].frontier;
+  expect(engineFrontier).toBeDefined();
+  expect(handed(liveWiringParts)[0]?.frontier).toBe(engineFrontier);
 });
 
 test("the seed check's freshness counts in the open graph's plan-days", async () => {
