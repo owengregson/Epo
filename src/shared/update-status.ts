@@ -28,6 +28,6 @@ export interface UpdateStatus {
   percent: number | null;
   /** Human-readable failure, only when state === 'error'. */
   error: string | null;
-  /** When the last check finished (epoch ms); absent or null before the first. */
-  checkedAt?: number | null;
+  /** When the last check finished (epoch ms); null before the first. */
+  checkedAt: number | null;
 }

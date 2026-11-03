@@ -44,17 +44,17 @@ const text = (selector: string): string =>
 const ticker = (selector: string): string | null =>
   document.querySelector(`${selector} .nt`)?.getAttribute('aria-label') ?? null;
 
-describe('The console column mirrors the status stream', () => {
-  it("the Actions-today readout follows every push, and doesn't wait for a pull", async () => {
+describe('The live column mirrors the status stream', () => {
+  it("today's net followers follow every push, and don't wait for a pull", async () => {
     await mountApp();
     const pulls = () => bridge.calls.filter((c) => c[0] === 'status').length;
     const before = pulls();
 
-    await act(async () => bridge.emit('status', idleStatus({ state: 'running', actionsToday: 4 })));
-    expect(ticker('#view-overview .hero-today')).toBe('4');
+    await act(async () => bridge.emit('status', idleStatus({ state: 'running', netToday: 4 })));
+    expect(ticker('[data-zone="results"]')).toBe('+4');
 
-    await act(async () => bridge.emit('status', idleStatus({ state: 'running', actionsToday: 11 })));
-    expect(ticker('#view-overview .hero-today')).toBe('11');
+    await act(async () => bridge.emit('status', idleStatus({ state: 'running', netToday: 11 })));
+    expect(ticker('[data-zone="results"]')).toBe('+11');
     expect(pulls()).toBe(before); // pushed, never polled
   });
 });

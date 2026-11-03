@@ -48,7 +48,7 @@ const RESPONSES: Record<string, unknown> = {
   graphSnapshot: null,
   pruneCandidates: [],
   checkSeed: { ok: true, exists: true, followersVisible: true, isPrivate: false },
-  checkForUpdate: { state: 'idle', mode: 'notify', current: '0.0.0', version: null, percent: null, error: null },
+  checkForUpdate: { state: 'idle', mode: 'notify', current: '0.0.0', version: null, percent: null, error: null, checkedAt: null },
 };
 
 /** Install the fixture bridge on `window.epo`. Idempotent. */

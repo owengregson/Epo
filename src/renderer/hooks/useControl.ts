@@ -1,46 +1,42 @@
 import { useCallback, useState } from 'preact/hooks';
-import type { ToastKind } from '@/renderer/hooks/useToasts';
+import type { ToastAction, ToastKind } from '@/renderer/hooks/useToasts';
+import { clearReason, noteFailure, noteRefusal } from '@/renderer/sidebar/reason-line';
+
+/** The shell's toast pusher (an action, such as Stop's Undo, is optional). */
+export type ToastPush = (kind: ToastKind, message: string, action?: ToastAction) => void;
 
 export interface ControlRunner {
   /** Name of the in-flight control ('start' | 'pauseResume' | 'stop' | …), else null. */
   pending: string | null;
   /** Run one bridge control, showing pending and reporting how it ended. */
   run(name: string, label: string, fn: () => Promise<unknown>): Promise<void>;
+  /** The shell's toasts, for the one control that confirms with an action (Stop's Undo). */
+  toast: ToastPush;
 }
 
 /**
- * The shell's IPC error policy for engine/prune controls.
- *
- * A control REFUSAL is not an IPC rejection — it comes back as a normal status
- * carrying `refusal` (e.g. a prune holds the tab), so a refused control looks
- * exactly like a successful one on the wire. Reading it here is what keeps a
- * refused button from spinning and reverting with no feedback.
+ * The shell's policy for engine and prune controls (spec §12.2): a control REFUSAL is not an IPC rejection —
+ * it comes back as a normal status carrying `refusal` (e.g. a prune holds the tab). Its typed key becomes
+ * the Now zone's reason line in plain words (never a raw-key toast); a rejected call says it did not work.
+ * Pressing a control clears the previous line.
  */
-export function useControl(toast: (kind: ToastKind, message: string) => void): ControlRunner {
+export function useControl(toast: ToastPush): ControlRunner {
   const [pending, setPending] = useState<string | null>(null);
 
-  const run = useCallback(
-    async (name: string, label: string, fn: () => Promise<unknown>): Promise<void> => {
-      setPending(name);
-      try {
-        const res = await fn();
-        const refusal =
-          typeof res === 'object' && res !== null && 'refusal' in res
-            ? (res as { refusal?: string }).refusal
-            : undefined;
-        if (refusal === 'prune-running') {
-          toast('info', `${label} refused — a prune holds the tab; it resumes growth when done.`);
-        } else if (refusal !== undefined) {
-          toast('error', `${label} refused: ${refusal}`);
-        }
-      } catch (e) {
-        toast('error', `${label} failed: ${e instanceof Error ? e.message : String(e)}`);
-      } finally {
-        setPending(null);
-      }
-    },
-    [toast],
-  );
+  const run = useCallback(async (name: string, _label: string, fn: () => Promise<unknown>): Promise<void> => {
+    setPending(name);
+    clearReason();
+    try {
+      const res = await fn();
+      const refusal =
+        typeof res === 'object' && res !== null && 'refusal' in res ? (res as { refusal?: string }).refusal : undefined;
+      if (refusal !== undefined) noteRefusal(refusal);
+    } catch {
+      noteFailure();
+    } finally {
+      setPending(null);
+    }
+  }, []);
 
-  return { pending, run };
+  return { pending, run, toast };
 }

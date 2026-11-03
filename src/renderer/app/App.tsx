@@ -12,7 +12,6 @@ import {
   type ShellServices,
   settingsTargetSignal,
   stageSignal,
-  transportSignal,
 } from '@/renderer/app/shell-context';
 import { showStage, useProvideShellControls } from '@/renderer/app/shell-services';
 import { TooltipHost } from '@/renderer/app/TooltipHost';
@@ -31,8 +30,8 @@ import { useUpdateStatus } from '@/renderer/hooks/useUpdateStatus';
 import { useUpdateToasts } from '@/renderer/hooks/useUpdateToasts';
 import { PeoplePage } from '@/renderer/pages/PeoplePage';
 import { SettingsStage } from '@/renderer/settings/SettingsStage';
+import { Sidebar } from '@/renderer/sidebar/Sidebar';
 import { Tour } from '@/renderer/tour/Tour';
-import { OverviewView } from '@/renderer/views/OverviewView';
 import { PruneView } from '@/renderer/views/PruneView';
 
 /** The interim Settings stage's navigation: the old console views map onto stages. */
@@ -94,26 +93,8 @@ export function App(): JSX.Element {
     <ShellContext.Provider value={services}>
       <ShellControlsContext.Provider value={controls}>
       <div class="shell">
-        {/* The console column; data-state carries the unified posture (a prune
-            holding the tab reads as running). Its zones are the tour's anchors. */}
-        <div class="console" data-state={transportSignal.value.state} data-tour="now today results feed">
-          <div class="viewstage">
-            <section class="view active" id="view-overview">
-              <OverviewView pending={control.pending} onLogin={controls.signIn} />
-            </section>
-          </div>
-          {/* Mounted even when empty, so the live region exists before its first toast. */}
-          <div class="toasts" role="status" aria-live="polite">
-            {toasts.toasts.map((t) => (
-              <div key={t.id} class="toast" data-kind={t.kind}>
-                <span class="toast__msg">{t.message}</span>
-                <button class="toast__close" type="button" aria-label="Dismiss" onClick={() => toasts.dismiss(t.id)}>
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* The live column: its zones are the tour's anchors, its toasts dock above its footer. */}
+        <Sidebar toasts={toasts} update={updateStatus} />
         <div class="stagepane">
           <StageBar stage={stage} onSelect={showStage} graphCount={graphBoard.snapshot?.pks.length ?? null} />
           <div class="stagepane-body" data-tour="stagebody">
