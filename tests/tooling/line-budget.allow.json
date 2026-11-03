@@ -70,10 +70,6 @@
       "lines": 352
     },
     {
-      "file": "src/timing/session-planner.ts",
-      "lines": 344
-    },
-    {
       "file": "src/engine/recovery.ts",
       "lines": 340
     },

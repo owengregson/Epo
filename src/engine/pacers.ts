@@ -13,6 +13,7 @@
  * and the one `pacing` rule, so removing it is a local edit plus settings.
  */
 
+import { drawGapMs, type PlanIntent, velocityWakeAt } from '../kernel/plan';
 import { ENGINE as ENGINE_TIMING } from '../timing/config';
 import { clamp, logNormal } from '../timing/distributions';
 import { absurd } from './absurd';
@@ -100,6 +101,18 @@ function legacyVerdict(clock: ClockFacts, ledger: LedgerFacts, activeHoursStart:
  */
 export interface Pacer {
   noteAction(at: number, kind: 'follow' | 'unfollow'): number;
+}
+
+/**
+ * The gap after an action at time-scale 1 (spec §5.13 S1, pace unchanged): a full rolling hour waits
+ * until it has room plus the floor, else today's planner draw over the reference shape, excited by
+ * the trailing hour (the action just taken included).
+ */
+export function referenceGapMs(intent: PlanIntent, recent: readonly number[], at: number, rng: () => number): number {
+  const shape = intent.gap;
+  const wake = velocityWakeAt(recent, intent.hourlyCap, at);
+  if (wake !== null) return Math.max(shape.floorMs, wake - at + shape.floorMs);
+  return drawGapMs(shape, recent, at, () => rng());
 }
 
 /** The plan: its reference gap at time-scale 1, drawn over the ledger's trailing hour. */

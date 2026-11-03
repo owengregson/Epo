@@ -6,6 +6,7 @@
  */
 
 import type { EngineWaitKey } from '@/engine/engine-waits';
+import { referenceGapMs } from '@/engine/pacers';
 import type { EnginePlanPacing } from '@/engine/plan-port';
 import type { Clock, SystemClock } from '@/governors/clock';
 import { projectBoost } from '@/governors/plan-boost';
@@ -13,7 +14,6 @@ import { projectPlan } from '@/governors/plan-projection';
 import { PlanService } from '@/governors/plan-service';
 import { RateGovernor, type RateGovernorConfig, type RatePlan } from '@/governors/rate-governor';
 import { ReadBudget } from '@/governors/read-budget';
-import { drawGapMs, type PlanIntent, velocityWakeAt } from '@/kernel/plan';
 import { MS_PER_HOUR } from '@/kernel/units';
 import { PlanControl } from '@/main/modules/plan-control';
 import { toPlanIntent } from '@/settings/plan-intent';
@@ -33,18 +33,6 @@ export function wireReadBudget(
   d: Pick<GraphBuildDeps, 'resolveSettings'>,
 ): ReadBudget {
   return new ReadBudget({ store, clock, limits: () => toReadAllowance(d.resolveSettings()) });
-}
-
-/**
- * The gap after an action at time-scale 1 (spec §5.13 S1, pace unchanged): a full rolling hour waits
- * until it has room plus the floor, else today's planner draw over the reference shape, excited by
- * the trailing hour (the action just taken included).
- */
-export function referenceGapMs(intent: PlanIntent, recent: readonly number[], at: number, rng: () => number): number {
-  const shape = intent.gap;
-  const wake = velocityWakeAt(recent, intent.hourlyCap, at);
-  if (wake !== null) return Math.max(shape.floorMs, wake - at + shape.floorMs);
-  return drawGapMs(shape, recent, at, () => rng());
 }
 
 /** What the plan wiring hands the graph: the graph's plan, the loop's plan port and the rate governor over it. */

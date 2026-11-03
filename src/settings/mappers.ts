@@ -5,8 +5,6 @@ import type { PruneConfig } from '../engine/prune-engine';
 import type { ScannerConfig } from '../engine/scanner';
 import { SCORER_DEFAULTS, type ScorerConfig } from '../engine/scorer';
 import type { RateGovernorConfig } from '../governors/rate-governor';
-import { PATTERN, SESSION } from '../timing/config';
-import type { SessionPlannerConfig } from '../timing/session-planner';
 import { MS_PER_DAY, MS_PER_MINUTE } from '../timing/units';
 import type { Settings } from './v1/settings-v1-types';
 
@@ -77,31 +75,6 @@ export function toChainConfig(s: Settings): ChainConfig {
   return {
     minFollowBackRate: s.minFollowBackRate,
     minPoolSize: s.minPoolSize,
-  };
-}
-
-/**
- * Project the SessionPlanner's config out of Settings (organic pacing model). The
- * user-facing knobs (mean volume, variance, sessions/day, gap median/floor, velocity
- * cap) come from Settings; the anti-fingerprint internals (gap σ, tail cap, Hawkes
- * kernel) are registry constants — one home per kind of value.
- */
-export function toPacingConfig(s: Settings): SessionPlannerConfig {
-  return {
-    dailyMeanActions: s.dailyOperatingRate,
-    dailyHardCeiling: s.dailyHardCeiling,
-    dayVolumeSigma: s.dailyVolumeVariancePct / 100,
-    restDayProbability: s.restDayChancePct / 100,
-    restDayMaxFraction: PATTERN.REST_DAY_MAX_FRACTION,
-    sessionsPerDayMin: s.sessionsPerDayMin,
-    sessionsPerDayMax: s.sessionsPerDayMax,
-    gapMedianMs: s.gapMedianSeconds * 1000,
-    gapSigma: SESSION.GAP_SIGMA,
-    gapFloorMs: s.gapFloorSeconds * 1000,
-    gapCapMs: SESSION.GAP_CAP_MS,
-    hawkesAlpha: SESSION.HAWKES_ALPHA,
-    hawkesTauMs: SESSION.HAWKES_TAU_MS,
-    maxActionsPerRollingHour: s.hourlyVelocityCap,
   };
 }
 
