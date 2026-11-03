@@ -10,7 +10,7 @@ import {
   MAX_DAYS_OFF, MUTUAL_POLICIES, PATIENCES, RHYTHMS, WEEKLY_SHAPES,
 } from '@/shared/settings-intent';
 import type { SettingsOp } from '@/shared/settings-ops';
-import { T2_PARAM_KEYS } from '@/shared/settings-params';
+import { T2_PARAM_KEYS, TEMPO_PARAM_KEYS } from '@/shared/settings-params';
 
 const MINUTE = z.number().int().min(0).max(1439);
 const QUIET_HOURS = z.union([
@@ -33,7 +33,7 @@ const INTENT_OP = z.union([
 const FINITE = z.number().finite();
 const CURVE = z.object({ hardLow: FINITE, bandLow: FINITE, peakLow: FINITE, peakHigh: FINITE, bandHigh: FINITE, hardHigh: FINITE });
 const PARAM_VALUE = z.union([FINITE, z.boolean(), z.object({ min: FINITE, max: FINITE }), CURVE]);
-const PARAM_KEY = z.enum(T2_PARAM_KEYS);
+const PARAM_KEY = z.enum([...T2_PARAM_KEYS, ...TEMPO_PARAM_KEYS]);
 const USERNAME = z.string().max(64);
 const PK = z.string().regex(/^\d{1,25}$/);
 const WORD = z.string().max(100);

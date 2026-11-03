@@ -49,6 +49,13 @@ test('garbage is dropped and counted, field by field', () => {
   expect(c.dropped).toBe(10);
 });
 
+test('a tempo override is a parameter like any other; the two keys other parameters set are not', () => {
+  const tempo = { 'tempo.walk.page': { value: 1.5, setAt: 5, basis: 1 }, 'tempo.check.spacing': { value: 2, setAt: 5, basis: 1 } };
+  const c = coerceDoc({ ...DEFAULT_DOC, overrides: tempo });
+  expect(c.value.overrides).toEqual({ 'tempo.walk.page': { value: 1.5, setAt: 5, basis: 1 } });
+  expect(c.dropped).toBe(1);
+});
+
 test('an unknown protection state reads as needs-review, never ready', () => {
   expect(coerceDoc({ ...DEFAULT_DOC, protectionState: 'fine' }).value.protectionState).toBe('needs-review');
   expect(coerceDoc({ ...DEFAULT_DOC, protectionState: undefined }).value.protectionState).toBe('needs-review');

@@ -1,7 +1,10 @@
 /**
  * The Advanced parameter vocabulary (spec §6.5, Appendix B.4): the catalog's
- * keys, sections, kinds, units, risk and when a change applies. Pure, no imports.
+ * keys, sections, kinds, units, risk and when a change applies. Pure; imports only its tempo keys.
  */
+import { TEMPO_PARAM_KEYS } from './settings-params-tempo';
+
+export { TEMPO_PARAM_KEYS };
 
 export const T2_PARAM_KEYS = [
   'pace.dailyVolume', 'pace.dailyCeiling', 'pace.hourlyCap', 'pace.dayVariation', 'pace.restDayChance',
@@ -14,7 +17,8 @@ export const T2_PARAM_KEYS = [
   'explore.moveOnRate', 'explore.moveOnPool', 'explore.refillBelow',
 ] as const;
 
-export type ParamKey = (typeof T2_PARAM_KEYS)[number];
+/** A T2 parameter or a `tempo.<key>` override (a slower-only factor). */
+export type ParamKey = (typeof T2_PARAM_KEYS)[number] | (typeof TEMPO_PARAM_KEYS)[number];
 
 export type SectionId =
   | 'pace' | 'schedule' | 'audience' | 'unfollow' | 'protection' | 'boost' | 'app'

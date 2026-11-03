@@ -9,7 +9,7 @@ import {
   type DayOfWeek, type Intent, MAX_DAYS_OFF, MUTUAL_POLICIES, PATIENCES, type QuietHours, RHYTHMS, WEEKLY_SHAPES,
 } from '@/shared/settings-intent';
 import type { KeepWord, ParamValue, ProtectedAccount, ProtectionSettings } from '@/shared/settings-model';
-import { T2_PARAM_KEYS } from '@/shared/settings-params';
+import { T2_PARAM_KEYS, TEMPO_PARAM_KEYS } from '@/shared/settings-params';
 import { DEFAULT_DOC, type OverrideEntry, RECOMMENDED_INTENT, type SettingsDocV2 } from './doc';
 
 /** A repaired value and how many pieces of the input were dropped to get it. */
@@ -77,7 +77,7 @@ const isParamValue = (v: unknown): v is ParamValue =>
   isNum(v) || typeof v === 'boolean' || (isObj(v) && (
     (Object.keys(v).length === 2 && isNum(v.min) && isNum(v.max)) ||
     ['hardLow', 'bandLow', 'peakLow', 'peakHigh', 'bandHigh', 'hardHigh'].every((k) => isNum(v[k]))));
-const PARAM_KEYS = new Set<string>(T2_PARAM_KEYS);
+const PARAM_KEYS = new Set<string>([...T2_PARAM_KEYS, ...TEMPO_PARAM_KEYS]);
 const overrides: Rule<SettingsDocV2['overrides']> = (raw, fb) => {
   if (!isObj(raw)) return ok(fb, raw === undefined ? 0 : 1);
   const out: Record<string, OverrideEntry> = {};
