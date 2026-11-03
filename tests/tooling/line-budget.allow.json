@@ -78,16 +78,16 @@
       "lines": 410
     },
     {
-      "file": "src/types.ts",
-      "lines": 383
-    },
-    {
       "file": "src/rim/followers-page-reader.ts",
       "lines": 366
     },
     {
       "file": "src/rim/follower-acquisition.ts",
       "lines": 362
+    },
+    {
+      "file": "src/types.ts",
+      "lines": 352
     },
     {
       "file": "src/timing/session-planner.ts",
