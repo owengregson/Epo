@@ -3,6 +3,7 @@ import { ReadBudget } from '@/governors/read-budget';
 import { managedRelationships } from '@/rim/managed-relationships';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
 import { kitStore } from '../kit/engine-harness';
+import { readLimits } from '../kit/read-limits';
 
 function fixture() {
   const store = kitStore();
@@ -12,7 +13,7 @@ function fixture() {
     viewer: { followsUs: false, following: true, requested: false } };
   const visit = jest.fn(async () => response);
   const progress = jest.fn();
-  const reader = managedRelationships({ clock, readBudget: new ReadBudget({ store, clock, cfg: { profiles: 1 } }),
+  const reader = managedRelationships({ clock, readBudget: new ReadBudget({ store, clock, limits: readLimits({ profiles: 1 }) }),
     profiles: { visit }, signal: () => signal.signal, onProgress: progress });
   return { reader, visit, progress, response: (r: ProfileVisit) => { response = r; },
     replaceRun: () => { signal = new AbortController(); } };

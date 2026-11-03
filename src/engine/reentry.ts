@@ -24,9 +24,15 @@ export interface ReentrySnapshot {
   timezoneOffset: number;
 }
 
+type Reason = NonNullable<ReentrySnapshot['reason']>;
+/** Returns whose per-record timers cannot be trusted, so every managed relationship is re-read. */
+const CENSUS_REASONS: ReadonlySet<Reason> = new Set<Reason>(['clock-change', 'legacy-state']);
+
 /** Restore knowledge before resuming decisions. Missed days never create action quota. */
 export class ReentrySupervisor {
   private state: ReentrySnapshot;
+  /** The deadline of the engine's current hold. In-process only: a restart cannot claim closed time. */
+  private holdingUntil: number | null = null;
   private readonly store: Pick<KnowledgeStore,
     'getLifecycleState' | 'setLifecycleState' | 'activeFollowRecords' | 'pendingEffectIntents'>;
   private readonly clock: Clock;
@@ -63,7 +69,7 @@ export class ReentrySupervisor {
   }
 
   prepare(now: number = this.clock.now()): ReentrySnapshot {
-    const last = this.state.lastActiveAt;
+    const last = this.lastPresentAt(now);
     const gap = last === null ? 0 : now - last;
     let reason: ReentrySnapshot['reason'] = null;
     if (this.store.pendingEffectIntents().some((i) => i.state !== 'prepared')) reason = 'uncertain-effects';
@@ -75,8 +81,10 @@ export class ReentrySupervisor {
       if (this.state.phase !== 'reconcile' || this.state.reconciliationStartedAt === null || reason === 'clock-change') {
         this.state.reconciliationStartedAt = now;
       }
+      // A census still owed survives a later absence: only a completed census settles it.
+      const owesCensus = this.state.phase === 'reconcile' && this.state.reason !== null && CENSUS_REASONS.has(this.state.reason);
       this.state.phase = 'reconcile';
-      this.state.reason = reason;
+      if (!owesCensus || CENSUS_REASONS.has(reason)) this.state.reason = reason;
       this.state.absentMs = Math.max(this.state.absentMs, Math.max(0, gap));
       this.state.probationActions = 0;
       this.state.nextProbationActionAt = null;
@@ -91,11 +99,42 @@ export class ReentrySupervisor {
   requiresReconciliation(now: number = this.clock.now()): boolean {
     if (this.state.phase !== 'reconcile'
       && this.store.pendingEffectIntents().some((i) => i.state !== 'prepared')) this.prepare(now);
-    const last = this.state.lastActiveAt;
+    const last = this.lastPresentAt(now);
     if (last !== null && (now - last > REENTRY_POLICY.reconcileAfterMs
       || now < last - REENTRY_POLICY.clockToleranceMs
       || new Date(now).getTimezoneOffset() !== this.state.timezoneOffset)) this.prepare(now);
     return this.state.phase === 'reconcile';
+  }
+
+  /**
+   * Whether this return re-reads EVERY managed relationship. Only when the
+   * per-record timers cannot be trusted (a clock change, history from before
+   * the journal). An absence reconciles what its timers made due: the watcher
+   * demands fresh evidence for each of those, and every mutation re-reads its
+   * profile at the click. Live 2026-11-02 a census per return (one visit per
+   * managed record) spent the whole read allowance before any growth.
+   */
+  requiresCensus(now: number = this.clock.now()): boolean {
+    return this.requiresReconciliation(now) && this.state.reason !== null && CENSUS_REASONS.has(this.state.reason);
+  }
+
+  /**
+   * The engine chose to stay idle until `until` (a session break, active
+   * hours, a ceiling, a backoff). That is presence, not absence: the process
+   * stays in control. Live 2026-11-02 an overnight session park counted as
+   * "away", so every resume re-ran the return check and restarted probation.
+   */
+  holdUntil(until: number): void {
+    this.holdingUntil = until;
+  }
+
+  /** The hold ended (elapsed or interrupted). Time PAST its deadline (a machine asleep) is still away. */
+  endHold(now: number): void {
+    const present = this.lastPresentAt(now);
+    this.holdingUntil = null;
+    if (present === null || present === this.state.lastActiveAt) return;
+    this.state.lastActiveAt = present;
+    this.persist();
   }
 
   noteReconciled(result: { outcome: 'complete' | 'partial' | 'failed' }, now: number): void {
@@ -144,5 +183,10 @@ export class ReentrySupervisor {
   }
 
   snapshot(): ReentrySnapshot { return { ...this.state }; }
+  private lastPresentAt(now: number): number | null {
+    const last = this.state.lastActiveAt;
+    if (last === null || this.holdingUntil === null) return last;
+    return Math.max(last, Math.min(now, this.holdingUntil));
+  }
   private persist(): void { this.store.setLifecycleState(JSON.stringify(this.state)); }
 }

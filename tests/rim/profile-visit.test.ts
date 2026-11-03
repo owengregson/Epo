@@ -237,7 +237,7 @@ describe('visits are paced like a person browsing (live 2026-11-02: ten back to 
   });
 
   test('a stop during the dwell ends the visit before any navigation', async () => {
-    let t = 0;
+    const t = 0;
     const ac = new AbortController();
     const waits: number[] = [];
     const visitor = paced(() => t, waits, () => 0.5, () => ac.signal);

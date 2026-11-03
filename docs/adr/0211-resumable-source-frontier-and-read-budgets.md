@@ -87,3 +87,41 @@ read-reserve isolation, transport switching, and passive-traffic watchdog races.
 The deterministic 100-action simulation proves scheduling concentration under
 available candidates; it does not measure real-world conversion, relevance or
 Instagram availability. Those require observed mature outcomes after deployment.
+
+## Amendment — 2026-11-02: the allowance derives from the live limits (kernel D6)
+
+The hardcoded ceilings (80 profiles / 40 exploration, 200 pages / 24
+exploration, 24 notifications) sat outside the ADR 0605 tiers and ignored the
+pattern knobs. Live, a 98-a-day ceiling ran against 80 profile visits, so the
+plan could never be delivered and reconciliation alone could starve growth.
+The owner's rule: no hardcoded limit; everything goes through the limit system.
+
+`deriveReadAllowance` (`src/kernel/derive-reads.ts`) sizes reads from the
+same live `Settings` limits the pattern knobs derive (or the owner set):
+
+| Ceiling | Derivation |
+| --- | --- |
+| profiles | verify `dailyHardCeiling` + reconcile `⌈dailyHardCeiling × (1 + ORDINARY_FAIL_RATE)⌉` + exploration |
+| exploration profiles | `⌈dailyPlanSize / queuedPerSource⌉` slices × (`profilesPerSlice` + `sourceOpenReads`) |
+| list pages | `LIST_WALK_MAX_PAGES` + exploration pages |
+| exploration pages | slices × (`pagesPerSlice` + `sourceOpenReads`) |
+| notifications | `⌈24 / followbackSweepHours⌉` + `sessionsPerDayMax` |
+| window | one day |
+
+- Every mutation reads its profile at the click (ADR 0212), and every follow
+  comes due once for a relationship check. An unverified click is re-observed
+  once more, at the ordinary failure rate.
+- Exploration stays a sub-limit, so it can never spend the reserve that
+  verifies and reconciles.
+- `ReadBudget` reads `limits()` on every check (`toReadAllowance(resolveSettings())`),
+  so a settings change moves the allowance at once. It exports no defaults.
+- The exploration policy moved into the kernel (`src/kernel/exploration-policy.ts`,
+  tier 1 with a guard line per entry). `src/engine/exploration-policy.ts`
+  re-exports it.
+
+Laws (`tests/kernel/derive-reads.test.ts`): at every persona × activity ×
+sweep point, the non-exploration reserve covers `2 × ceiling`, exploration
+covers the plan size, a full census walk fits, and every sweep can read the
+feed. Every ceiling is non-decreasing in the activity knob. On the live install
+(ceiling 98, plan size 90, hourly sweeps, ≤4 sessions) the allowance is 415
+profiles (189 exploration), 227 pages (27 exploration) and 28 notifications.

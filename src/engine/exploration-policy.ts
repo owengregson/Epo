@@ -1,20 +1,2 @@
-/** Initial product policy, not empirically calibrated limits. Shared by all exploration paths. */
-export const EXPLORATION_POLICY = {
-  maxSources: 5,
-  followsPerVisit: 20,
-  profilesPerSlice: 20,
-  pagesPerSlice: 2,
-  rowsPerSlice: 100,
-  queuedPerSource: 10,
-  emptySlicesBeforeDefer: 2,
-  explorationFraction: 0.2,
-  sourceShare: 0.4,
-  shareWindow: 100,
-  lowYieldRevisitMs: 24 * 60 * 60 * 1000,
-  endedRevisitMs: 7 * 24 * 60 * 60 * 1000,
-  profileFreshMs: 7 * 24 * 60 * 60 * 1000,
-  enrichmentRetryMs: 7 * 24 * 60 * 60 * 1000,
-  priorRate: 0.15,
-  priorWeight: 20,
-  outcomeWindowMs: 4 * 24 * 60 * 60 * 1000,
-} as const;
+/** Shim: the exploration policy lives in the kernel (tier 1) so the read allowance can derive from it. */
+export { EXPLORATION_POLICY } from '@/kernel/exploration-policy';

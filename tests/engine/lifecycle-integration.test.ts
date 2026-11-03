@@ -10,6 +10,7 @@ import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { DelayManager } from '@/timing/delay-manager';
 import { setLevel } from '@/utils/logger';
 import { kitStore, testDeps } from '../kit/engine-harness';
+import { readLimits } from '../kit/read-limits';
 
 const DAY = 86_400_000;
 const START = Date.UTC(2026, 9, 1, 12);
@@ -192,7 +193,7 @@ test('effect reconciliation honors the durable read budget without touching a pr
   const f = fixture();
   const intent = f.store.beginEffectIntent({ accountPk: 'old', username: 'old', action: 'follow', channel: 'growth', at: f.clock.now() });
   f.store.markEffectUncertain(intent.id, f.clock.now());
-  const readBudget = new ReadBudget({ store: f.store, clock: f.clock, cfg: { profiles: 1 } });
+  const readBudget = new ReadBudget({ store: f.store, clock: f.clock, limits: readLimits({ profiles: 1 }) });
   readBudget.consume('profile', 'exploration');
   const profiles: ProfileVisitor = { visit: jest.fn() };
   expect(await reconcileEffects({ store: f.store, clock: f.clock, ownPk: 'me', profiles, readBudget }))

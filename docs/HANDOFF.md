@@ -1,5 +1,52 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-02 (read allowance derived, not hardcoded) —** Owner: "it
+> shouldnt be hardcoded everything should be via our dynamic limit system."
+> `ReadBudget`'s 80/40/200/24/24 defaults are gone. Kernel D6
+> (`src/kernel/derive-reads.ts`, ADR 0211 amended) derives every ceiling from
+> the live `Settings` limits: daily ceiling, plan size, sweep cadence and
+> sessions. The governor reads `limits()` on every check, so settings changes
+> apply at once. `EXPLORATION_POLICY` moved into the kernel (the engine file
+> is a shim). Tests build budgets with `tests/kit/read-limits.ts`. Live
+> install: 415 profile visits a day (189 exploration), 227 list pages, 28
+> notification reads. That covers the 98-a-day ceiling, which 80 never could.
+
+> **2026-11-02 (latest — "it didn't do anything all day") —** The log showed
+> two return checks (25 profile visits each), then `holding {reason:
+> reconcile-backoff}` until the next morning, and no follows all day. The live
+> `lifecycle_state` showed `phase: reconcile, reason: absence`, with the epoch
+> stamped at the 14:16 session resume, although the engine had run all night.
+> Three defects compounded:
+>
+> 1. **The engine's own holds counted as absence.** `lastActiveAt` moved only
+>    on progress, so any park over 1 h looked like the owner had left. That
+>    covers the overnight session park, active hours, ceilings and long idle
+>    beats. Every resume re-ran the return check and reset return probation,
+>    so probation could never finish.
+> 2. **Every return was a census.** `requireFresh` re-read EVERY managed
+>    record, one visit each (55 here), against an 80-visit rolling allowance
+>    that per-follow verification also draws from. Two returns spent the day.
+> 3. **A known reopen time was noised as a retry.** The budget wait went
+>    through `retry-backoff` (0.5–2×), so 11.5 h became 19.9 h, and the
+>    caption said "couldn't read follow-backs".
+>
+> FIXES (ADR 0212 amended):
+>
+> - Every engine wait brackets `reentry.holdUntil(deadline)` /
+>   `endHold(now)`. A hold is presence up to its deadline. Time slept PAST
+>   the deadline, a stop, or a restart mid-hold is still away. This is
+>   in-process only.
+> - `reentry.requiresCensus()` is true only for `clock-change` /
+>   `legacy-state`, and a later absence cannot downgrade an owed census. An
+>   absence reconciles what its timers made due.
+> - A budget deferral parks as `engine:read-budget-park` (`daily-boundary`:
+>   never before the reopen, ≤ 40 min after), reason `read-budget`, caption
+>   "profile-read allowance used · resumes …".
+>
+> On the live DB the next start needs 0 visits: all 32 due records carry
+> evidence from the last day. The spent allowance reopens from ~01:52 local
+> as the morning's debits age out.
+
 > **2026-11-02 (later — relationship checks burst through profiles) —** During
 > "checking relationships after N days away" the follow-back reconciliation
 > visited ten profiles back to back with no gap, parked ~30 s, reopened the

@@ -53,15 +53,10 @@ import {
 } from '@/rim/relationship-reconciler';
 import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
 import { patternCircadianProfile } from '@/settings/pattern-map';
+import { toReadAllowance } from '@/settings/read-allowance';
 import {
-  toChainConfig,
-  toChurnConfig,
-  toFollowbackConfig,
-  toPacingConfig,
-  toPruneConfig,
-  toRateGovernorConfig,
-  toScannerConfig,
-  toScorerConfig,
+  toChainConfig, toChurnConfig, toFollowbackConfig, toPacingConfig,
+  toPruneConfig, toRateGovernorConfig, toScannerConfig, toScorerConfig,
 } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { samplePhaseOffset } from '@/timing/circadian';
@@ -87,7 +82,7 @@ export function buildGraph(
   const clock = new SystemClock();
   const frontier = new SourceFrontier({ store, clock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
   const reentry = new ReentrySupervisor({ store, clock });
-  const readBudget = new ReadBudget({ store, clock });
+  const readBudget = new ReadBudget({ store, clock, limits: () => toReadAllowance(d.resolveSettings()) });
   // The shared wait owner: growth and prune wait through ONE DelayManager
   // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
   // from a single registry.

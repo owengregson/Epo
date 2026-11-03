@@ -77,3 +77,29 @@ mutation paths. Process and browser recovery are specified separately in ADR
 checks validate input/render transport, not Instagram's remote behavior or
 multi-day unattended reliability. The retained observation log and settled
 intent history are bounded; unresolved intents and outcome evidence remain.
+
+## Amendment — 2026-11-02: holds are presence; a return reconciles what is due
+
+Live, a running engine did nothing for a day. The return supervisor moved
+`lastActiveAt` only on progress, so the engine's own overnight session park
+read as an absence. Each resume then ran a full census: every managed record
+re-read by a profile visit (55), against the 80-visit rolling allowance. Two
+censuses spent it, and return probation restarted at every session.
+
+- **A hold the engine chose is presence.** Every engine wait brackets
+  `holdUntil(deadline)` / `endHold(now)`. Presence extends to the deadline;
+  time slept past it, a stop, or a restart mid-hold is still away (the hold is
+  in-process state). "A gap longer than one hour" now means a gap in
+  presence, not in progress.
+- **An absence reconciles what its timers made due.** The census
+  (`requireFresh`) is owed only when the timers themselves cannot be trusted:
+  a clock or timezone change, or history from before the journal. A later
+  absence cannot downgrade an owed census. After an absence, the watcher
+  still demands fresh evidence for every obligation its timer made due
+  (expired waits, expired holds, queued unfollows). Every mutation re-reads
+  its profile at the click. A record inside its timers drives no decision,
+  so re-reading it only spends allowance.
+- **A spent allowance is a schedule, not a retry.** A budget deferral parks
+  until the allowance's known reopen time, with a positive-only offset. It
+  does not use the retry park's 0.5–2× noise, which stretched an 11.5 h wait
+  to 19.9 h. It surfaces as `read-budget`, not as a failed follow-back read.

@@ -21,6 +21,7 @@ export type EngineWaitKey =
   | 'engine:velocity-park'
   | 'engine:enrich-backoff'
   | 'engine:reconcile-backoff'
+  | 'engine:read-budget-park'
   | 'engine:prune-park'
   | 'engine:blocked-park'
   | 'engine:idle'
@@ -39,6 +40,8 @@ export const ENGINE_WAIT_CLASS = {
   'engine:daily-ceiling-park': 'daily-boundary',
   'engine:enrich-backoff': 'retry-backoff',
   'engine:reconcile-backoff': 'retry-backoff',
+  // The allowance reopens at a KNOWN time: never wake before it, never stretch it 2×.
+  'engine:read-budget-park': 'daily-boundary',
   'engine:prune-park': 'retry-backoff',
   'engine:blocked-park': 'retry-backoff',
   'engine:idle': 'local-beat',
@@ -64,6 +67,8 @@ export type EngineParkReason =
   | 'enrich-backoff'
   /** The follow-back reconciliation could not read its evidence (e.g. the notifications feed). */
   | 'reconcile-backoff'
+  /** The rolling profile-read allowance is spent; it reopens at a known time. */
+  | 'read-budget'
   | 'recovery';
 
 /**
@@ -79,6 +84,7 @@ const PARK_REASON_BY_KEY = new Map<EngineWaitKey, EngineParkReason>([
   ['engine:velocity-park', 'velocity'],
   ['engine:enrich-backoff', 'enrich-backoff'],
   ['engine:reconcile-backoff', 'reconcile-backoff'],
+  ['engine:read-budget-park', 'read-budget'],
   ['engine:recovery-hold', 'recovery'],
 ]);
 

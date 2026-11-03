@@ -219,6 +219,7 @@ export class Engine {
         // delay publishes too, so the countdown shows the real deadline; the
         // remaining short keys stay quiet to avoid doubling every step's push.
         onRegistered: (key, deadline, park) => {
+          this.deps.reentry?.holdUntil(deadline); // a hold the engine chose is presence, never absence
           if (park !== null) {
             this.park = { reason: park, until: deadline };
             log.info('engine: holding', {
@@ -231,8 +232,8 @@ export class Engine {
           }
         },
         onSettled: (_key, park) => {
-          // The hold is over however the wait ended (elapsed, pause, offline,
-          // stop); the step's own status emit publishes the cleared state.
+          // Over however it ended (elapsed, pause, offline, stop); the step's status emit publishes the clear.
+          this.deps.reentry?.endHold(this.deps.clock.now());
           if (park !== null) this.park = null;
         },
       },
@@ -553,7 +554,7 @@ export class Engine {
         this.actionDelayDeadline = this.deps.store.getActionDelayDeadline();
         if (result.outcome === 'halt') return this.halt({ kind: 'reconciliation-failed' });
         if (result.outcome === 'progress') this.noteProgress('relationships-reconciling'); // no park: the visitor paces reads
-        if (result.outcome === 'wait') await this.engineWait('engine:reconcile-backoff', result.delayMs);
+        if (result.outcome === 'wait') await this.engineWait(result.reason === 'read-budget' ? 'engine:read-budget-park' : 'engine:reconcile-backoff', result.delayMs);
         if (result.outcome !== 'complete') return 'idle';
         const at = this.deps.clock.now();
         this.sweepCadence.markRun(at);

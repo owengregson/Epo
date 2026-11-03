@@ -72,6 +72,14 @@ describe('park hold copy — plain reason + real resume time', () => {
       parkCaption('reconcile-backoff', t('2026-08-12T14:32:00'), t('2026-08-12T14:22:00'), 12, 40),
     ).toBe("couldn't read follow-backs · retrying 14:32");
   });
+
+  it('read-budget: a spent allowance is pacing with a known reopen time, not a failure (live 2026-11-02)', () => {
+    expect(parkHeadline('read-budget')).toBe('Pacing');
+    expect(parkGlyph('read-budget')).toBe('gauge-high');
+    expect(
+      parkCaption('read-budget', t('2026-08-13T01:52:00'), t('2026-08-12T14:22:00'), 0, 40),
+    ).toBe('profile-read allowance used · resumes tomorrow 1:52');
+  });
 });
 
 describe('holdChipText — the countdown chip beside a hold', () => {

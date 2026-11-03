@@ -63,6 +63,7 @@ export function parkHeadline(reason: ParkReason): string {
     case 'daily-ceiling':
       return 'Plan done';
     case 'velocity':
+    case 'read-budget':
       return 'Pacing';
     case 'enrich-backoff':
     case 'reconcile-backoff':
@@ -79,6 +80,7 @@ export function parkGlyph(reason: ParkReason): string {
     case 'daily-ceiling':
       return 'calendar-check';
     case 'velocity':
+    case 'read-budget':
       return 'gauge-high';
     case 'enrich-backoff':
     case 'reconcile-backoff':
@@ -111,6 +113,8 @@ export function parkCaption(
       return `easing off this hour · resumes ${at}`;
     case 'reconcile-backoff':
       return `couldn't read follow-backs · retrying ${at}`;
+    case 'read-budget':
+      return `profile-read allowance used · resumes ${at}`;
     case 'recovery':
       // Fallback when the status carries no recovery detail (attempt numbers
       // live in `recoveryHoldCaption`, preferred by the card).

@@ -434,6 +434,8 @@ export interface EngineHarnessOpts {
   delays?: (deps: DelayManagerDeps) => DelayManager;
   /** seed the store BEFORE engine construction (e.g. a persisted deadline) */
   preseedStore?: (store: KnowledgeStore) => void;
+  /** the return supervisor, built over the harness store + clock (absent → none) */
+  reentry?: (deps: { store: KnowledgeStore; clock: FakeClock }) => EngineDeps['reentry'];
 }
 
 export interface EngineHarness {
@@ -450,6 +452,7 @@ export interface EngineHarness {
   events: string[];
   statuses: EngineStatus[];
   halts: string[];
+  reentry: EngineDeps['reentry'];
   engine: Engine;
 }
 
@@ -500,11 +503,13 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
     store.addTarget({ accountPk: 't1', source: 'seed', status: 'active', chainIndex: 0 });
   }
   opts.preseedStore?.(store);
+  const reentry = opts.reentry?.({ store, clock });
 
   const engine = new Engine(
     testDeps({
       store,
       clock,
+      reentry,
       rate: new RateGovernor(store, clock, rateCfg, () => 0),
       sentinel,
       churn,
@@ -540,6 +545,7 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
     events,
     statuses,
     halts,
+    reentry,
     engine,
   };
 };

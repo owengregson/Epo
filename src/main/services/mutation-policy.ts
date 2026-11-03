@@ -130,7 +130,8 @@ export function createMutationPolicy(d: MutationPolicyDeps) {
       const result = await reconcileEffects({ store, profiles: d.profiles(), ownPk, clock, readBudget, signal: d.signal });
       if (result.outcome !== 'complete' || !current() || !await active()) return false;
       if (reentry.requiresReconciliation(clock.now())) {
-        const checked = await d.followback().check({ requireFresh: true, freshSinceAt: reentry.snapshot().reconciliationStartedAt ?? undefined });
+        const checked = await d.followback().check({ requireFresh: reentry.requiresCensus(clock.now()),
+          freshSinceAt: reentry.snapshot().reconciliationStartedAt ?? undefined });
         if (checked.outcome !== 'complete' || !current() || !await active()) return false;
         reentry.noteReconciled(checked, clock.now());
       }

@@ -14,3 +14,9 @@ test('a reconciliation wait surfaces as its own long-park reason', () => {
 test('enrichment walls keep their own reason', () => {
   expect(parkReasonFor('engine:enrich-backoff')).toBe('enrich-backoff');
 });
+
+test('a spent read allowance parks as itself, until its known reopen time (never a 2× retry stretch)', () => {
+  expect(parkReasonFor('engine:read-budget-park')).toBe('read-budget');
+  // Positive-only boundary offset: never wakes before the window reopens.
+  expect(ENGINE_WAIT_CLASS['engine:read-budget-park']).toBe('daily-boundary');
+});

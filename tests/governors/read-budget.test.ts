@@ -9,6 +9,7 @@ import { ListPageWalker } from '@/rim/list-page-walker';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeActor, FakeSentinel, FakeTab, followersBody } from '../kit/fakes';
+import { readLimits } from '../kit/read-limits';
 
 let store: KnowledgeStore;
 let clock: FakeClock;
@@ -16,11 +17,11 @@ beforeEach(() => { store = new KnowledgeStore(':memory:'); clock = new FakeClock
 afterEach(() => store.close());
 
 test('read reservations survive a restart and expire only after their rolling window', () => {
-  let budget = new ReadBudget({ store, clock, cfg: { profiles: 2, windowMs: 1000 } });
+  let budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 2, windowMs: 1000 }) });
   expect(budget.consume('profile').allowed).toBe(true);
   clock.advance(100);
   expect(budget.consume('profile').allowed).toBe(true);
-  budget = new ReadBudget({ store, clock, cfg: { profiles: 2, windowMs: 1000 } });
+  budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 2, windowMs: 1000 }) });
   expect(budget.consume('profile')).toEqual({ allowed: false, resumeAt: 1_001_000 });
   clock.advance(900);
   expect(budget.consume('profile').allowed).toBe(true);
@@ -28,7 +29,7 @@ test('read reservations survive a restart and expire only after their rolling wi
 });
 
 test('optional exploration cannot consume the reconciliation reserve or bypass the global ceiling', () => {
-  const budget = new ReadBudget({ store, clock, cfg: { listPages: 4, explorationPages: 2 } });
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ listPages: 4, explorationPages: 2 }) });
   expect(budget.consume('list-page', 'exploration', 2).allowed).toBe(true);
   expect(budget.consume('list-page', 'exploration').allowed).toBe(false);
   expect(budget.consume('list-page', 'reconciliation', 2).allowed).toBe(true);
@@ -37,12 +38,22 @@ test('optional exploration cannot consume the reconciliation reserve or bypass t
 });
 
 test('enrichment cannot spend profiles reserved for fresh mutation identity and recovery, even after restart', () => {
-  let budget = new ReadBudget({ store, clock });
-  expect(budget.consume('profile', 'exploration', 40).allowed).toBe(true);
-  budget = new ReadBudget({ store, clock });
+  const { profiles, explorationProfiles } = readLimits()();
+  let budget = new ReadBudget({ store, clock, limits: readLimits() });
+  expect(budget.consume('profile', 'exploration', explorationProfiles).allowed).toBe(true);
+  budget = new ReadBudget({ store, clock, limits: readLimits() });
   expect(budget.consume('profile', 'exploration').allowed).toBe(false);
-  expect(budget.consume('profile', 'reconciliation', 40).allowed).toBe(true);
+  expect(budget.consume('profile', 'reconciliation', profiles - explorationProfiles).allowed).toBe(true);
   expect(budget.consume('profile', 'reconciliation').allowed).toBe(false);
+});
+
+test('the allowance is read live: a settings change moves the ceiling without a restart', () => {
+  let ceiling = 1;
+  const budget = new ReadBudget({ store, clock, limits: () => readLimits({ profiles: ceiling })() });
+  expect(budget.consume('profile', 'reconciliation').allowed).toBe(true);
+  expect(budget.consume('profile', 'reconciliation').allowed).toBe(false);
+  ceiling = 2;
+  expect(budget.consume('profile', 'reconciliation').allowed).toBe(true);
 });
 
 test('generated attempted reservations never exceed the same finite budget after arbitrary restarts', () => {
@@ -50,7 +61,7 @@ test('generated attempted reservations never exceed the same finite budget after
     store.setReadBudgetState(null);
     let permitted = 0;
     for (const count of counts) {
-      const budget = new ReadBudget({ store, clock, cfg: { profiles: 20 } });
+      const budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 20 }) });
       if (budget.consume('profile', 'exploration', count).allowed) permitted += count;
     }
     expect(permitted).toBeLessThanOrEqual(20);
@@ -58,7 +69,7 @@ test('generated attempted reservations never exceed the same finite budget after
 });
 
 test('enrichment reserves before visiting and a spent budget stops without claiming a wall', async () => {
-  const budget = new ReadBudget({ store, clock, cfg: { profiles: 1 } });
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 1 }) });
   const visited: string[] = [];
   const enricher = new AdapterBackedProfileEnricher({ store, clock, readBudget: budget,
     sentinel: new FakeSentinel() as unknown as Sentinel, sleep: async () => {}, paceMs: 0,
@@ -75,7 +86,7 @@ test('enrichment reserves before visiting and a spent budget stops without claim
 });
 
 test('list budget exhaustion streams paid-for rows, preserves resume cursor, and never falls back', async () => {
-  const budget = new ReadBudget({ store, clock, cfg: { explorationPages: 1 } });
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ explorationPages: 1 }) });
   const tab = new FakeTab();
   let calls = 0;
   tab.onEvaluate = () => {
@@ -99,7 +110,7 @@ test('list budget exhaustion streams paid-for rows, preserves resume cursor, and
 });
 
 test('dialog transport uses the same budget and cannot bypass a spent direct-read allowance', async () => {
-  const budget = new ReadBudget({ store, clock, cfg: { explorationPages: 1 } });
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ explorationPages: 1 }) });
   budget.consume('list-page', 'exploration');
   const actor = new FakeActor();
   const reader = new FollowersPageReader({ tab: new FakeTab(), reader: new Reader(), actor, clock, readBudget: budget });
@@ -111,7 +122,7 @@ test('dialog transport uses the same budget and cannot bypass a spent direct-rea
 });
 
 test('a zero-read refusal does not erase or refresh an aged source cursor', async () => {
-  const budget = new ReadBudget({ store, clock, cfg: { explorationPages: 1 } });
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ explorationPages: 1 }) });
   budget.consume('list-page', 'exploration');
   const tab = new FakeTab();
   const reader = new Reader();

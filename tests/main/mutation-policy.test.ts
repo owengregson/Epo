@@ -8,6 +8,7 @@ import { createMutationPolicy } from '@/main/services/mutation-policy';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
 import { DEFAULT_SETTINGS, type Settings, toRateGovernorConfig } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
+import { readLimits } from '../kit/read-limits';
 
 let store: KnowledgeStore;
 let clock: FakeClock;
@@ -28,7 +29,7 @@ beforeEach(() => {
     dailyHardCeiling: 100, dailyOperatingRate: 100, activeHoursStart: 0, activeHoursEnd: 0 };
   rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
   jest.spyOn(rate, 'nextDelayMs').mockReturnValue(1000);
-  budget = new ReadBudget({ store, clock });
+  budget = new ReadBudget({ store, clock, limits: readLimits() });
   reentry = new ReentrySupervisor({ store, clock });
   reentry.prepare();
   controller = new AbortController();
@@ -173,7 +174,7 @@ test.each(['gone', 'wrong-pk', 'stale', 'missing-counts'] as const)('own-header 
 
 test('own-header success is fresh and budget deferral carries a restart-stable retry time', async () => {
   expect(await policy().refreshOwnStats()).toEqual({ ok: true });
-  budget.consume('profile', 'reconciliation', 79);
+  budget.consume('profile', 'reconciliation', readLimits()().profiles - 1); // the rest of the derived allowance
   const calls = visit.mock.calls.length;
   expect(await policy().refreshOwnStats()).toEqual({ ok: false, reason: 'read-budget', retryAt: clock.now() + 86_400_000 });
   expect(visit).toHaveBeenCalledTimes(calls);
@@ -181,7 +182,7 @@ test('own-header success is fresh and budget deferral carries a restart-stable r
 
 test('manual identity resolution spends the same durable profile allowance and refuses after exhaustion', async () => {
   expect(await policy().resolveIdentity('new-person')).toBe('a');
-  budget.consume('profile', 'reconciliation', 79);
+  budget.consume('profile', 'reconciliation', readLimits()().profiles - 1); // the rest of the derived allowance
   expect(await policy().resolveIdentity('another-person')).toBeNull();
   expect(visit).toHaveBeenCalledTimes(1);
 });
