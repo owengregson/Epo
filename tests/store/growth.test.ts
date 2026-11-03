@@ -30,6 +30,13 @@ describe('the change log', () => {
     expect(s.growth.latestOwnHeader()).toEqual({ at: 2_000, followers: 11, following: 20 });
   });
 
+  test('a store listener hears the observation once, with its header row already written', () => {
+    const seen: (number | null)[] = [];
+    s.onMutation(() => seen.push(s.growth.latestOwnHeader()?.at ?? null));
+    ownHeader(4_000, 1, 2);
+    expect(seen).toEqual([4_000]);
+  });
+
   test('a transition at or before the baseline is stock and writes nothing', () => {
     expect(s.growth.onTransition('A', 1, 50, 100, 'list', 100)).toBeNull();
     expect(s.growth.onTransition('A', 1, 50, 200, 'list', 200)).toEqual(expect.any(Number));

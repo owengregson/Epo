@@ -66,10 +66,10 @@ export class KnowledgeStore extends KnowledgeStoreBase {
    * the single write path that keeps the event log and projection consistent.
    */
   observe(obs: Observation): void {
-    this.db.transaction(() => {
+    this.mutationPulse.atomic(() => this.db.transaction(() => {
       this.accounts.observe(obs);
       this.noteOwnHeader(obs);
-    });
+    }));
   }
 
   /** Upsert a directed edge; an own-follower transition also writes its dated change row (ADR 0704). */
