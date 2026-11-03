@@ -64,7 +64,10 @@ export class KnowledgeStore extends KnowledgeStoreBase {
    * the single write path that keeps the event log and projection consistent.
    */
   observe(obs: Observation): void {
-    this.accounts.observe(obs);
+    this.db.transaction(() => {
+      this.accounts.observe(obs);
+      this.noteOwnHeader(obs);
+    });
   }
 
   /** Upsert a directed edge, dating first/last seen and its active/removed status. */
@@ -345,12 +348,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.meta.number('actionDelayDeadlineAt');
   }
 
-  /**
-   * Persist the SessionPlanner's durable snapshot (raw JSON) so the organic pacing
-   * model resumes exactly across a restart (docs/PRINCIPLES.md §3): the day's target, session
-   * plan, owed within-session state, and the trailing-hour action ring all survive.
-   * `null` clears it. Opaque to the store — the planner owns the shape.
-   */
+  /** The SessionPlanner's durable snapshot (raw JSON, PRINCIPLES §3); `null` clears it; the planner owns the shape. */
   setPacingState(raw: string | null): void {
     this.meta.set('pacingState', raw);
   }
@@ -361,13 +359,8 @@ export class KnowledgeStore extends KnowledgeStoreBase {
   }
 
   /**
-   * The per-install noise entropy (meta `install_entropy`): one random 32-bit
-   * value drawn ON FIRST ACCESS and persisted, so every timing-noise seed
-   * derived from it (daily-boundary wake offsets, the engines' noise rngs) is
-   * different per install but stable across relaunches (a mid-park
-   * restart re-derives the same jittered wake). Upgraded installs with no
-   * stored value draw-and-persist cleanly here; a corrupted value is replaced
-   * with a fresh draw, loudly.
+   * The per-install noise entropy: one 32-bit value drawn on first access and persisted, so every
+   * seed derived from it differs per install but holds across relaunches; a corrupt value is redrawn, loudly.
    */
   installEntropy(): number {
     const raw = this.meta.get('installEntropy');
@@ -382,13 +375,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return drawn;
   }
 
-  /**
-   * Persist the recovery ladder's durable state (raw JSON: attempt, holdUntil,
-   * enteredAt, kindTally) so a relaunch mid-hold serves the REMAINDER of the
-   * absolute deadline instead of forgetting the wall it was backing off from
-   * (docs/PRINCIPLES.md §3 — schedules are durable). `null` clears it. Opaque to
-   * the store — the RecoverySupervisor owns the shape.
-   */
+  /** The recovery ladder's durable state (raw JSON; a relaunch mid-hold serves the remainder); `null` clears it. */
   setRecoveryState(raw: string | null): void {
     this.meta.set('recoveryState', raw);
   }
@@ -398,14 +385,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.meta.get('recoveryState');
   }
 
-  /**
-   * Persist the last CLOSED recovery incident (raw JSON: the window
-   * [enteredAt, resolvedAt], attempts, kind tally, and — once the engine's
-   * requeue-healer has run — the heal outcome). Written by the
-   * RecoverySupervisor at ladder reset, the proof moment that the failure
-   * window was systemic-and-over; amended by the engine after healing. `null`
-   * clears it. Opaque to the store — recovery.ts owns the shape.
-   */
+  /** The last CLOSED recovery incident (raw JSON, owned by recovery.ts; the healer amends it); `null` clears it. */
   setRecoveryLastIncident(raw: string | null): void {
     this.meta.set('recoveryLastIncident', raw);
   }
@@ -415,26 +395,14 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.meta.get('recoveryLastIncident');
   }
 
-  /**
-   * The moment follower measurement began — the first follow-back sweep or the
-   * first complete census, whichever ran first — or `null` before either.
-   * Everything first seen AT or BEFORE this moment is pre-existing STOCK — the
-   * net-growth series only counts edge events strictly after it.
-   */
+  /** The moment follower measurement began (null before it); everything at or before it is stock. */
   followersBaselineAt(): number | null {
     return this.relationships.baselineAt();
   }
 
   /**
-   * Establish the followers baseline at `at` if none exists yet (set-once; a
-   * later call never moves it). Called at the top of every follow-back sweep
-   * (`FollowbackWatcher.check`) and by every {@link observeOwnFollowerEvent},
-   * so the FIRST moment follower collection begins stamps the stock/growth
-   * boundary — without this, weeks of event-observed followers would be
-   * erased retroactively by a late first prune scan (whose census would stamp
-   * the baseline after the fact and re-classify every prior gain as stock).
-   * When a census genuinely IS the first collection, {@link ingestScanCensus}
-   * stamps the baseline itself.
+   * Establish the followers baseline at `at` if none exists (set-once): the first moment collection
+   * begins stamps the stock/growth boundary, so a late first census never re-classifies earlier gains.
    */
   ensureFollowersBaseline(at: number): void {
     this.relationships.ensureBaseline(at);
@@ -450,11 +418,8 @@ export class KnowledgeStore extends KnowledgeStoreBase {
   }
 
   /**
-   * Ingest a full auto-prune scan census into the shared graph, so a scan also
-   * enriches the growth engine. Additive by default; `authoritative` (a census
-   * whose walks both reported genuine completion) also heals the negative side
-   * — see {@link CensusRepo.ingest}. One transaction; self always skipped; a
-   * no-op with the standard warn when the own pk is unset.
+   * Ingest a full prune-scan census into the shared graph; `authoritative` (per side) also heals the
+   * negative side ({@link CensusRepo.ingest}). One transaction; a warned no-op while the own pk is unset.
    */
   ingestScanCensus(
     followingPks: string[],
