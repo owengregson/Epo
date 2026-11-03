@@ -29,6 +29,11 @@
       "module": "src/settings/plan-intent.ts",
       "stream": "PR",
       "reason": "plan-wiring.ts feeds the plan service toPlanIntent(effective()); the settings core wraps it for the PlanPreviewPort fingerprint"
+    },
+    {
+      "module": "src/main/modules/feed-projection.ts",
+      "stream": "LD",
+      "reason": "live-wiring.ts binds shapeFeed as the projections' feed source, next to the expiry timer that re-pushes it at the plan-day roll"
     }
   ]
 }
