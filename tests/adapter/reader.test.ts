@@ -9,6 +9,7 @@ import profileGraphql1 from '../fixtures/adapter/profile-graphql-1.json';
 import profileInfo1 from '../fixtures/adapter/profile-info-1.json';
 import profileInfo2 from '../fixtures/adapter/profile-info-2.json';
 import showMany from '../fixtures/adapter/show-many.json';
+import { mkResp } from '../kit/fakes';
 import { PROFILE_QUERY, readAs } from '../kit/surface';
 
 const r = new Reader();
@@ -289,83 +290,76 @@ describe('Reader.profileSeen: the viewer flags', () => {
   });
 });
 
-describe('Reader.parseShowMany', () => {
+describe('Reader.read: the batched relationship map (the document drives it)', () => {
+  const rows = (body: unknown) => {
+    const read = readAs(r, 'show-many', body, { at: AT });
+    return read.ok ? read.projection.relationships : null;
+  };
+
   test('maps friendship_statuses to per-pk following flags', () => {
-    const out = r.parseShowMany(showMany, AT);
+    const out = rows(showMany) ?? [];
     expect(out).toHaveLength(12);
-
     const byPk = new Map(out.map((e) => [e.pk, e]));
+    // This shape carries NO followed_by direction: unknown (null), never false.
     expect(byPk.get('1000000001')).toEqual({
-      pk: '1000000001',
-      following: true,
-      outgoingRequest: false,
-      incomingRequest: false,
-      isPrivate: true,
+      pk: '1000000001', following: true, outgoingRequest: false, followedBy: null, incomingRequest: false, isPrivate: true,
     });
-    expect(byPk.get('1000000002')!.following).toBe(false);
-
-    const followingCount = out.filter((e) => e.following).length;
-    expect(followingCount).toBe(5);
-    // This shape carries NO followed_by information.
-    for (const e of out) {
-      expect(e).not.toHaveProperty('followedBy');
-    }
+    expect(byPk.get('1000000002')?.following).toBe(false);
+    expect(out.filter((e) => e.following).length).toBe(5);
+    expect(out.every((e) => e.followedBy === null)).toBe(true);
   });
 
-  test('no-match body -> empty array', () => {
-    expect(r.parseShowMany({ nope: true }, AT)).toEqual([]);
+  test('a body that is not the map is drift, never an empty map', () => {
+    expect(readAs(r, 'show-many', { nope: true }, { at: AT })).toMatchObject({ ok: false, kind: 'mismatch' });
   });
 
   test('a renamed key reads as unknown (null), never as false', () => {
-    const out = r.parseShowMany({ friendship_statuses: { '5': { is_following: true, outgoing_request: false } } }, AT);
-    expect(out).toEqual([{ pk: '5', following: null, outgoingRequest: false, incomingRequest: null, isPrivate: undefined }]);
+    expect(rows({ friendship_statuses: { '5': { is_following: true, outgoing_request: false } } })).toEqual([
+      { pk: '5', following: null, outgoingRequest: false, followedBy: null, incomingRequest: null, isPrivate: undefined },
+    ]);
   });
 });
 
-describe('Reader.parseFriendshipShow', () => {
+describe('Reader.read: the single relationship (the document drives it)', () => {
+  const row = (body: unknown, pk: string) => {
+    const read = readAs(r, 'friendship-show', body, { at: AT, pk });
+    return read.ok ? read.projection.relationships[0] : null;
+  };
+
   test('reads both directions; followedBy comes from followed_by', () => {
-    const out = r.parseFriendshipShow(friendshipShowPrivate, AT, '999');
-    expect(out).toEqual({
-      pk: '999',
-      following: true,
-      followedBy: true,
-      outgoingRequest: false,
-      incomingRequest: false,
-      isPrivate: true,
+    expect(row(friendshipShowPrivate, '999')).toEqual({
+      pk: '999', following: true, followedBy: true, outgoingRequest: false, incomingRequest: false, isPrivate: true,
     });
   });
 
   test('public account variant', () => {
-    const out = r.parseFriendshipShow(friendshipShowPublic, AT, '1000000042');
-    expect(out?.followedBy).toBe(true);
-    expect(out?.isPrivate).toBe(false);
-    expect(out?.pk).toBe('1000000042');
+    expect(row(friendshipShowPublic, '1000000042')).toMatchObject({ pk: '1000000042', followedBy: true, isPrivate: false });
   });
 
-  test('no-match body -> null (unparsed is NOT "no relationship")', () => {
+  test('a body that is not a relationship is drift (unparsed is NOT "no relationship")', () => {
     // An error body ({"status":"fail"}-style) must never parse to all-false:
     // a false "we do not follow them" fact terminates held records downstream.
-    expect(r.parseFriendshipShow({ nope: true }, AT, '42')).toBeNull();
+    expect(readAs(r, 'friendship-show', { nope: true }, { at: AT, pk: '42' })).toMatchObject({ ok: false, kind: 'mismatch' });
   });
 
   test('a pending private-account request reads as outgoingRequest', () => {
-    const out = r.parseFriendshipShow(
-      { following: false, followed_by: false, outgoing_request: true, is_private: true },
-      AT,
-      '77',
-    );
-    expect(out?.following).toBe(false);
-    expect(out?.outgoingRequest).toBe(true);
+    expect(row({ following: false, followed_by: false, outgoing_request: true, is_private: true }, '77'))
+      .toMatchObject({ following: false, outgoingRequest: true });
   });
 });
 
-describe('Reader.relationshipFacts', () => {
+describe('Reader.relationshipFacts(read)', () => {
   const SHOW_MANY_URL = 'https://i.instagram.com/api/v1/friendships/show_many/';
   const SHOW_URL = 'https://www.instagram.com/api/v1/friendships/show/999/';
   const PROFILE_URL = 'https://www.instagram.com/api/v1/users/1000000003/info/';
+  /** One observed response's facts, read the way the reconciler reads it. */
+  const factsOf = async (url: string, body: unknown) => {
+    const seen = await r.observed.read(mkResp(url, body), AT);
+    return seen === null ? null : r.relationshipFacts(seen.read);
+  };
 
-  test('show-many → one fact per entry, weFollow from following', () => {
-    const facts = r.relationshipFacts(SHOW_MANY_URL, showMany, AT);
+  test('show-many → one fact per entry, weFollow from following', async () => {
+    const facts = (await factsOf(SHOW_MANY_URL, showMany)) ?? [];
     expect(facts).toHaveLength(12);
     const byPk = new Map(facts.map((f) => [f.pk, f.weFollow]));
     expect(byPk.get('1000000001')).toBe(true);
@@ -373,20 +367,17 @@ describe('Reader.relationshipFacts', () => {
     expect(facts.filter((f) => f.weFollow)).toHaveLength(5);
   });
 
-  test('friendship-show → single fact keyed by the URL pk', () => {
-    expect(r.relationshipFacts(SHOW_URL, friendshipShowPrivate, AT)).toEqual([
-      { pk: '999', weFollow: true },
-    ]);
+  test('friendship-show → single fact keyed by the URL pk', async () => {
+    expect(await factsOf(SHOW_URL, friendshipShowPrivate)).toEqual([{ pk: '999', weFollow: true }]);
   });
 
-  test('friendship-show with following and outgoing_request both false → weFollow false', () => {
+  test('friendship-show with following and outgoing_request both false → weFollow false', async () => {
     const body = { following: false, followed_by: true, outgoing_request: false, status: 'ok' };
-    expect(r.relationshipFacts(SHOW_URL, body, AT)).toEqual([{ pk: '999', weFollow: false }]);
+    expect(await factsOf(SHOW_URL, body)).toEqual([{ pk: '999', weFollow: false }]);
   });
 
-  test('friendship-show with following:false but no outgoing_request → no fact (unknown)', () => {
-    const body = { following: false, followed_by: true, status: 'ok' };
-    expect(r.relationshipFacts(SHOW_URL, body, AT)).toEqual([]);
+  test('friendship-show with following:false but no outgoing_request → no fact (unknown)', async () => {
+    expect(await factsOf(SHOW_URL, { following: false, followed_by: true, status: 'ok' })).toEqual([]);
   });
 
   test('the observed GraphQL profile → fact from pk + friendship_status', () => {
@@ -408,15 +399,13 @@ describe('Reader.relationshipFacts', () => {
     expect(r.relationshipFacts(readAs(r, 'profile-graphql', flagless, { at: AT }, PROFILE_QUERY))).toEqual([]);
   });
 
-  test('accepts a raw JSON string body', () => {
-    expect(r.relationshipFacts(SHOW_MANY_URL, JSON.stringify(showMany), AT)).toHaveLength(12);
+  test('accepts a raw JSON string body', async () => {
+    expect(await factsOf(SHOW_MANY_URL, JSON.stringify(showMany))).toHaveLength(12);
   });
 
-  test('non-relationship endpoints and unrelated URLs → []', () => {
-    expect(
-      r.relationshipFacts('https://www.instagram.com/api/v1/news/inbox/', {}, AT),
-    ).toEqual([]);
-    expect(r.relationshipFacts('https://example.com/', showMany, AT)).toEqual([]);
+  test('non-relationship endpoints carry no facts; an unrelated URL is no read at all', async () => {
+    expect(await factsOf('https://www.instagram.com/api/v1/news/inbox/', { new_stories: [], old_stories: [] })).toEqual([]);
+    expect(await factsOf('https://example.com/', showMany)).toBeNull();
   });
 });
 

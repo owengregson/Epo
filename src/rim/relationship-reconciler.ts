@@ -21,6 +21,7 @@ import type { Clock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
 import type { ObservedRelation } from '@/shared/observed-relation';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { SurfaceRead } from '@/surface/read/types';
 import type { TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
 
@@ -59,34 +60,20 @@ export class RelationshipReconciler {
    */
   async ingest(resp: TabResponse): Promise<void> {
     const at = this.clock.now();
-    if (this.reader.kindOf(resp) === 'profile-graphql') {
-      // The profile body is read once for every consumer; its facts are minted from that read.
-      const observed = this.reader.observed.read(resp, at);
-      if (observed === null) return;
-      try {
-        this.apply(this.reader.relationshipFacts((await observed).read), at);
-      } catch (e) {
-        logger.warn('rim.relationship-reconciler: profile body unavailable, skipping', { url: resp.url, error: String(e) });
-      }
-      return;
-    }
-    let body: string;
+    // One read per response, shared with every other consumer of the body; facts are minted from it.
+    const observed = this.reader.observed.read(resp, at);
+    if (observed === null) return;
+    let read: SurfaceRead;
     try {
-      body = await resp.getBody();
+      read = (await observed).read;
     } catch (e) {
-      logger.warn('rim.relationship-reconciler: body unavailable, skipping', {
-        url: resp.url,
-        error: String(e),
-      });
+      logger.warn('rim.relationship-reconciler: body unavailable, skipping', { url: resp.url, error: String(e) });
       return;
     }
     try {
-      this.apply(this.reader.relationshipFacts(resp.url, body, at, this.friendlyNameOf(resp)), at);
+      this.apply(this.reader.relationshipFacts(read), at);
     } catch (e) {
-      logger.warn('rim.relationship-reconciler: reconciliation failed', {
-        url: resp.url,
-        error: String(e),
-      });
+      logger.warn('rim.relationship-reconciler: reconciliation failed', { url: resp.url, error: String(e) });
     }
   }
 

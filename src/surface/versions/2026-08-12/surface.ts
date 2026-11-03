@@ -144,7 +144,7 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
   endpoints: [
     defineEndpoint({
       kind: 'friendship-show',
-      mode: 'observe',
+      mode: 'enforce',
       match: { method: 'GET', url: URLS.friendshipShow, ids: { pk: URLS.friendshipShowPk } },
       response: FriendshipShowBody,
       project: projectFriendshipShow,
@@ -152,7 +152,7 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
     }),
     defineEndpoint({
       kind: 'show-many',
-      mode: 'observe',
+      mode: 'enforce',
       match: { method: 'POST', url: URLS.showMany },
       response: ShowManyBody,
       project: projectShowMany,

@@ -9,7 +9,6 @@
 
 import { isShapeMismatch, SURFACE } from '@/adapter/ig-surface';
 import { ObservedReads, type ObservedReadsOpts } from '@/adapter/observed-reads';
-import * as relationships from '@/adapter/reader-relationships';
 import { coerceBody, shadowDocument, shadowLegacy, warnUnexpected } from '@/adapter/reader-shadow';
 import type { ProfileSeen } from '@/rim/profile-visit-port';
 import type { ObservedRelation } from '@/shared/observed-relation';
@@ -23,7 +22,7 @@ import { type Decoded, decodeBody } from '@/surface/transport/decode';
 
 export type { EndpointKind, FollowEvent, FollowersListResult, FriendshipShowResult, ShowManyEntry } from '@/adapter/ig-surface';
 
-import type { EndpointKind, FollowersListResult, FriendshipShowResult, ProfileViewer, ShowManyEntry } from '@/adapter/ig-surface';
+import type { EndpointKind, FollowersListResult, ProfileViewer } from '@/adapter/ig-surface';
 
 /** Which profile body a parse is reading — the two containers differ. */
 export type ProfileKind = Extract<EndpointKind, 'profile-info' | 'profile-graphql'>;
@@ -111,12 +110,8 @@ export class Reader {
   }
 
   /** The relationship facts a read may feed the reconciler: presence-complete and admitted only. */
-  relationshipFacts(read: SurfaceRead): ObservedRelation[];
-  /** Legacy form: routed by URL and parsed by the endpoint's extractor (`reader-relationships.ts`). */
-  relationshipFacts(url: string, body: unknown, at: number, friendlyName?: string): ObservedRelation[];
-  relationshipFacts(a: SurfaceRead | string, body?: unknown, at = 0, friendlyName?: string): ObservedRelation[] {
-    if (typeof a === 'string') return relationships.relationshipFacts(this, a, body, at, friendlyName);
-    return a.ok ? mintObserved(a, a.projection.relationships) : [];
+  relationshipFacts(read: SurfaceRead): ObservedRelation[] {
+    return read.ok ? mintObserved(read, read.projection.relationships) : [];
   }
 
   /**
@@ -159,18 +154,12 @@ export class Reader {
     return legacy;
   }
 
-  /** Parse the batched relationship map (`reader-relationships.ts`). */
-  parseShowMany(body: unknown, at: number): ShowManyEntry[] {
-    return relationships.parseShowMany(this.env, body, at);
-  }
-
-  /** Parse the single relationship shape; `null` when unparsed (`reader-relationships.ts`). */
-  parseFriendshipShow(body: unknown, at: number, pk: string): FriendshipShowResult | null {
-    return relationships.parseFriendshipShow(this.env, body, at, pk);
-  }
-
-  /** Whether this response's endpoint carries viewer-side relationship facts. */
+  /**
+   * Whether this response's endpoint carries viewer-side relationship facts — the only bodies worth
+   * the reconciler's read (`profile-info` has no `friendship_status`; the GraphQL profile does).
+   */
   relationshipBearing(url: string, friendlyName?: string): boolean {
-    return relationships.relationshipBearing(this, url, friendlyName);
+    const kind = this.matchEndpoint(url, friendlyName);
+    return kind === 'show-many' || kind === 'friendship-show' || kind === 'profile-graphql';
   }
 }
