@@ -47,34 +47,41 @@ export interface FollowersListResult {
   hasMore: boolean;
 }
 
-/** One relationship row from the batched shape (carries no followed-by). */
+/**
+ * One relationship row from the batched shape (carries no followed-by). Each flag is read by
+ * presence: `null` means its key was absent (unknown), never `false` (spec §10.4).
+ */
 export interface ShowManyEntry {
   pk: string;
-  following: boolean;
+  following: boolean | null;
   /**
    * TRUE when we have a PENDING follow request to this (private) account.
    * `following` is FALSE while a request awaits acceptance, so "do we own this
    * relationship" is `following || outgoingRequest` — never `following` alone.
    */
-  outgoingRequest: boolean;
+  outgoingRequest: boolean | null;
+  incomingRequest: boolean | null;
   isPrivate?: boolean;
 }
 
-/** A profile body's viewer-side flags (`friendship_status`); `null` where the body is silent. */
+/** A profile body's viewer-side flags (`friendship_status`), each `null` where the body is silent. */
 export interface ProfileViewer {
   following: boolean | null;
   requested: boolean | null;
   followsUs: boolean | null;
+  /** TRUE while THEIR follow request to us is open; absent or `null` = unknown. */
+  incomingRequest?: boolean | null;
 }
 
-/** The single-relationship shape — both directions known. */
+/** The single-relationship shape — both directions, each flag `null` where its key is absent. */
 export interface FriendshipShowResult {
   pk: string;
-  following: boolean;
+  following: boolean | null;
   /** `followedBy` => THEY follow us (the follow-back signal). */
-  followedBy: boolean;
+  followedBy: boolean | null;
   /** TRUE while our follow request to a private account awaits acceptance. */
-  outgoingRequest: boolean;
+  outgoingRequest: boolean | null;
+  incomingRequest: boolean | null;
   isPrivate?: boolean;
 }
 

@@ -17,11 +17,16 @@ import type {
   FollowEvent,
   FollowersListResult,
   FriendshipShowResult,
+  ProfileViewer,
   ShowManyEntry,
 } from '@/adapter/surface-types';
 import { activityFeedRoot, followRequestsPage } from '@/adapter/versions/2026-08-12.notifications';
 import type { Observation } from '@/store/types';
+import { readRelationship } from '@/surface/read/relationship';
 import { JSON_PATHS } from '@/surface/versions/2026-08-12/literals';
+
+/** Every relationship flag is read by presence: a renamed key is unknown, never `false`. */
+const REL = JSON_PATHS.relationship;
 
 export function extractFollowersList(
   raw: unknown,
@@ -124,28 +129,14 @@ export function extractProfileInfo(body: unknown, at: number): Observation | nul
 }
 
 /**
- * The viewer-side flags. Carried by the GraphQL profile body only —
- * `/users/<pk>/info/` omits `friendship_status` entirely, so these answer
- * `null` (UNKNOWN) for a fetched profile and the caller reads
- * `friendships/show/<pk>/` when it needs the relationship.
+ * The viewer-side flags, each read by presence. Carried by the GraphQL profile body only —
+ * `/users/<pk>/info/` omits `friendship_status` entirely, so every flag answers `null` (UNKNOWN).
  */
-function profileViewerFlag(body: unknown, path: string): boolean | null {
+export function extractProfileViewer(body: unknown): ProfileViewer {
   const user = profileUserOf(body);
-  if (user === null || isShapeMismatch(user)) return null;
-  const v = getPath(user, path);
-  return typeof v === 'boolean' ? v : null;
-}
-
-export function extractProfileFollowedByViewer(body: unknown): boolean | null {
-  return profileViewerFlag(body, JSON_PATHS.profileUser.followedByViewer);
-}
-
-export function extractProfileRequestedByViewer(body: unknown): boolean | null {
-  return profileViewerFlag(body, JSON_PATHS.profileUser.requestedByViewer);
-}
-
-export function extractProfileFollowsViewer(body: unknown): boolean | null {
-  return profileViewerFlag(body, JSON_PATHS.profileUser.followsViewer);
+  const fs = user === null || isShapeMismatch(user) ? null : user[JSON_PATHS.profileUser.friendshipStatus];
+  const r = readRelationship(isRecord(fs) ? fs : {}, REL, '');
+  return { following: r.following, requested: r.outgoingRequest, followsUs: r.followedBy, incomingRequest: r.incomingRequest };
 }
 
 export function extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch {
@@ -158,14 +149,10 @@ export function extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch 
   const out: ShowManyEntry[] = [];
   for (const [pk, status] of Object.entries(statuses)) {
     if (!isRecord(status)) continue;
-    out.push({
-      pk,
-      following: status[p.following] === true,
-      // A pending request to a private account: `following` is false but the
-      // relationship is OURS — consumers must not read it as "not following".
-      outgoingRequest: status[p.outgoingRequest] === true,
-      isPrivate: asBool(status[p.isPrivate]),
-    });
+    // A pending request to a private account (`outgoing_request`) is OUR relationship
+    // too; this shape carries no followed-by direction.
+    const { following, outgoingRequest, incomingRequest } = readRelationship(status, REL, pk);
+    out.push({ pk, following, outgoingRequest, incomingRequest, isPrivate: asBool(status[p.isPrivate]) });
   }
   return out;
 }
@@ -178,16 +165,10 @@ export function extractFriendshipShow(body: unknown, pk: string): FriendshipShow
   // FALSE "we do not follow them" fact that flows into the reconciler and
   // terminates held records. The interface contract demands SHAPE_MISMATCH so
   // "no relationship" and "unparsed" stay distinguishable.
-  if (typeof body[p.following] !== 'boolean' && typeof body[p.followedBy] !== 'boolean') {
+  if (typeof body[REL.following] !== 'boolean' && typeof body[REL.followedBy] !== 'boolean') {
     return SHAPE_MISMATCH;
   }
-  return {
-    pk,
-    following: body[p.following] === true,
-    followedBy: body[p.followedBy] === true,
-    outgoingRequest: body[p.outgoingRequest] === true,
-    isPrivate: asBool(body[p.isPrivate]),
-  };
+  return { ...readRelationship(body, REL, pk), isPrivate: asBool(body[p.isPrivate]) };
 }
 
 /**

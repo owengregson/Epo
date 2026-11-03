@@ -99,7 +99,8 @@ describe('a profile visit reads the body the page fetched', () => {
     expect(visit.ok).toBe(true);
     if (!visit.ok) return;
     expect(visit.obs.accountPk).toBe('503');
-    expect(visit.viewer).toEqual({ following: true, requested: false, followsUs: true });
+    // `incoming_request` is absent from this body: unknown, never false.
+    expect(visit.viewer).toEqual({ following: true, requested: false, followsUs: true, incomingRequest: null });
     const acc = store.getAccount('503');
     expect(acc?.followers).toBe(781);
     expect(acc?.following).toBe(796);
@@ -113,7 +114,7 @@ describe('a profile visit reads the body the page fetched', () => {
 
     const visit = await visitor.visit('me');
 
-    expect(visit.ok && visit.viewer).toEqual({ following: null, requested: null, followsUs: null });
+    expect(visit.ok && visit.viewer).toEqual({ following: null, requested: null, followsUs: null, incomingRequest: null });
   });
 
   test("another profile's body never answers the visit (it is still harvested)", async () => {

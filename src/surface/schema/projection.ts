@@ -17,14 +17,22 @@ export interface FollowEvent {
   atMs: number | null;
 }
 
-/** A viewer-side relationship fact: do WE own a follow/pending request to `pk`. */
+/** How a read was located (spec §10.2): the declared form, a declared alternate, or recovered. */
+export type Tier = 'canonical' | 'normalized' | 'recovered';
+
+/**
+ * A viewer-side relationship fact. Every flag is read by presence: `null` means the key was
+ * absent (unknown), never `false` (spec §10.4).
+ */
 export interface RelationshipFact {
   pk: string;
-  following: boolean;
+  following: boolean | null;
   /** TRUE while our follow request to a private account awaits acceptance. */
-  outgoingRequest: boolean;
-  /** `followedBy` => THEY follow us. `null` when the shape carries no direction. */
+  outgoingRequest: boolean | null;
+  /** `followedBy` => THEY follow us. */
   followedBy: boolean | null;
+  /** TRUE while THEIR follow request to us awaits our answer. */
+  incomingRequest: boolean | null;
   isPrivate?: boolean;
 }
 

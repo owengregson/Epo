@@ -26,6 +26,7 @@ import type {
   FollowersListResult,
   FriendshipShowResult,
   Observation,
+  ProfileViewer,
   ShowManyEntry,
   StaleComponent,
 } from '@/adapter/surface-types';
@@ -135,12 +136,8 @@ export interface IgSurface {
    * is genuinely absent; `SHAPE_MISMATCH` when a user is present but unreadable.
    */
   extractProfileInfo(body: unknown, at: number): Observation | null | ShapeMismatch;
-  /** Whether the viewer already follows this profile; `null` when absent. */
-  extractProfileFollowedByViewer(body: unknown): boolean | null;
-  /** Whether the viewer has a PENDING follow request to this profile; `null` when absent. */
-  extractProfileRequestedByViewer(body: unknown): boolean | null;
-  /** Whether this profile follows the viewer (`followed_by`); `null` when absent. */
-  extractProfileFollowsViewer(body: unknown): boolean | null;
+  /** The viewer-side flags of a profile body, each read by presence (`null` when absent). */
+  extractProfileViewer(body: unknown): ProfileViewer;
   /** Parse the batched relationship map. `SHAPE_MISMATCH` on unexpected shape. */
   extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch;
   /**

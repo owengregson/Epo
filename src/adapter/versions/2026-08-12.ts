@@ -28,10 +28,8 @@ import {
   extractActivityFeed,
   extractFollowersList,
   extractFriendshipShow,
-  extractProfileFollowedByViewer,
-  extractProfileFollowsViewer,
   extractProfileInfo,
-  extractProfileRequestedByViewer,
+  extractProfileViewer,
   extractShowMany,
 } from '@/adapter/versions/2026-08-12.extractors';
 import { extractMutationVerdict, matchMutation } from '@/adapter/versions/2026-08-12.mutations';
@@ -190,10 +188,8 @@ export const SURFACE_2026_08_12: IgSurface = {
   },
 
   extractFollowersList,
-  extractProfileRequestedByViewer,
   extractProfileInfo,
-  extractProfileFollowedByViewer,
-  extractProfileFollowsViewer,
+  extractProfileViewer,
   extractShowMany,
   extractFriendshipShow,
   extractActivityFeed,

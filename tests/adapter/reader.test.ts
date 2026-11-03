@@ -285,11 +285,14 @@ describe('Reader.profileViewer', () => {
     data: { user: { pk: '1', friendship_status: friendship } },
   });
 
-  test('all three directions from the GraphQL body (private followers visible when following)', () => {
-    expect(r.profileViewer(gql({ following: true, outgoing_request: false, followed_by: true }))).toEqual({
-      following: true,
-      requested: false,
-      followsUs: true,
+  test('every direction from the GraphQL body (private followers visible when following)', () => {
+    const fs = { following: true, outgoing_request: false, followed_by: true, incoming_request: true };
+    expect(r.profileViewer(gql(fs))).toEqual({ following: true, requested: false, followsUs: true, incomingRequest: true });
+  });
+
+  test('each flag is read by presence: an absent key is null, never false', () => {
+    expect(r.profileViewer(gql({ following: false, followed_by: false }))).toEqual({
+      following: false, requested: null, followsUs: false, incomingRequest: null,
     });
   });
 
@@ -305,6 +308,7 @@ describe('Reader.profileViewer', () => {
       following: null,
       requested: null,
       followsUs: null,
+      incomingRequest: null,
     });
   });
 
@@ -325,6 +329,7 @@ describe('Reader.parseShowMany', () => {
       pk: '1000000001',
       following: true,
       outgoingRequest: false,
+      incomingRequest: false,
       isPrivate: true,
     });
     expect(byPk.get('1000000002')!.following).toBe(false);
@@ -340,6 +345,11 @@ describe('Reader.parseShowMany', () => {
   test('no-match body -> empty array', () => {
     expect(r.parseShowMany({ nope: true }, AT)).toEqual([]);
   });
+
+  test('a renamed key reads as unknown (null), never as false', () => {
+    const out = r.parseShowMany({ friendship_statuses: { '5': { is_following: true, outgoing_request: false } } }, AT);
+    expect(out).toEqual([{ pk: '5', following: null, outgoingRequest: false, incomingRequest: null, isPrivate: undefined }]);
+  });
 });
 
 describe('Reader.parseFriendshipShow', () => {
@@ -350,6 +360,7 @@ describe('Reader.parseFriendshipShow', () => {
       following: true,
       followedBy: true,
       outgoingRequest: false,
+      incomingRequest: false,
       isPrivate: true,
     });
   });
@@ -400,9 +411,14 @@ describe('Reader.relationshipFacts', () => {
     ]);
   });
 
-  test('friendship-show with following:false → weFollow false', () => {
-    const body = { following: false, followed_by: true, status: 'ok' };
+  test('friendship-show with following and outgoing_request both false → weFollow false', () => {
+    const body = { following: false, followed_by: true, outgoing_request: false, status: 'ok' };
     expect(r.relationshipFacts(SHOW_URL, body, AT)).toEqual([{ pk: '999', weFollow: false }]);
+  });
+
+  test('friendship-show with following:false but no outgoing_request → no fact (unknown)', () => {
+    const body = { following: false, followed_by: true, status: 'ok' };
+    expect(r.relationshipFacts(SHOW_URL, body, AT)).toEqual([]);
   });
 
   test('the observed GraphQL profile → fact from pk + friendship_status', () => {
@@ -452,7 +468,8 @@ describe('SURFACE.extractFriendshipShow shape-mismatch sentinel', () => {
       pk: '42',
       following: false,
       followedBy: false,
-      outgoingRequest: false,
+      outgoingRequest: null,
+      incomingRequest: null,
       isPrivate: undefined,
     });
   });

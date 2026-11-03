@@ -26,6 +26,7 @@ export {
   type Projection,
   type RelationshipFact,
   type RowIssue,
+  type Tier,
 } from '@/surface/schema/projection';
 
 // ---------------------------------------------------------------------------

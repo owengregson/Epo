@@ -28,6 +28,7 @@ import {
   shadowRead,
   warnUnexpected,
 } from '@/adapter/reader-shadow';
+import type { ObservedRelation } from '@/shared/observed-relation';
 import type { Observation } from '@/store/types';
 
 // Re-export the stable result types so existing consumers keep one import site.
@@ -216,12 +217,7 @@ export class Reader {
    * has none; `null` when absent). `following` makes a PRIVATE account's followers readable.
    */
   profileViewer(body: unknown, kind: ProfileKind = 'profile-graphql'): ProfileViewer {
-    const json = coerceBody(body, kind);
-    return {
-      following: SURFACE.extractProfileFollowedByViewer(json),
-      requested: SURFACE.extractProfileRequestedByViewer(json),
-      followsUs: SURFACE.extractProfileFollowsViewer(json),
-    };
+    return SURFACE.extractProfileViewer(coerceBody(body, kind));
   }
 
   /** Parse the batched relationship map (`reader-relationships.ts`). */
@@ -285,13 +281,8 @@ export class Reader {
     return relationships.relationshipBearing(this, url, friendlyName);
   }
 
-  /** Viewer-side relationship facts from a response body (`reader-relationships.ts`). */
-  relationshipFacts(
-    url: string,
-    body: unknown,
-    at: number,
-    friendlyName?: string,
-  ): Array<{ pk: string; weFollow: boolean }> {
+  /** Viewer-side relationship facts, presence-gated and minted (`reader-relationships.ts`). */
+  relationshipFacts(url: string, body: unknown, at: number, friendlyName?: string): ObservedRelation[] {
     return relationships.relationshipFacts(this, url, body, at, friendlyName);
   }
 }
