@@ -20,7 +20,6 @@ import {
 import { Scanner } from '@/engine/scanner';
 import { SourceFrontier } from '@/engine/source-frontier';
 import { SystemClock } from '@/governors/clock';
-import { RateGovernor } from '@/governors/rate-governor';
 import { STORE_POLICY } from '@/kernel/store-policy';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { reconcileEffects } from '@/rim/effect-reconciliation';
@@ -72,7 +71,7 @@ export function buildGraph(
   const delays = new DelayManager({ clock });
   const { settings, driverSignal } = d;
   const plan = wirePlan(store, clock, ownPk, delays, d);
-  const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
+  const rate = plan.rateGovernor(toRateGovernorConfig(settings));
 
   // Interactor: every Actor click/scroll becomes native input events
   // (sendInputEvent) shaped by the motion profile; the tab is the one Electron

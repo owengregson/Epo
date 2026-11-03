@@ -10,6 +10,7 @@ import type { Clock, SystemClock } from '@/governors/clock';
 import { projectBoost } from '@/governors/plan-boost';
 import { projectPlan } from '@/governors/plan-projection';
 import { PlanService } from '@/governors/plan-service';
+import { RateGovernor, type RateGovernorConfig, type RatePlan } from '@/governors/rate-governor';
 import { ReadBudget } from '@/governors/read-budget';
 import { PlanControl } from '@/main/modules/plan-control';
 import { patternCircadianProfile } from '@/settings/pattern-map';
@@ -61,9 +62,11 @@ function wirePacing(store: KnowledgeStore, settings: Settings): SessionPlanner |
     : undefined;
 }
 
-/** What the plan wiring hands the graph: the graph's plan, plus the session planner it still runs. */
+/** What the plan wiring hands the graph: the graph's plan, the rate governor over it, and the session planner it still runs. */
 export interface PlanWiring extends GraphPlan {
   readonly pacing: SessionPlanner | undefined;
+  /** The rate governor counting against the plan's day and volume. */
+  rateGovernor(cfg: RateGovernorConfig): RateGovernor;
 }
 
 /** The loop's waits a re-plan can move: the plan's own parks. */
@@ -105,10 +108,19 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   host.settings.setPlanPort(service);
   host.settings.setCapabilities({ plan: true });
   triggers.start();
+  const dayClock = service.planDayClock();
+  const ratePlan: RatePlan = {
+    day: dayClock,
+    volume: (now) => {
+      const view = service.view(now);
+      return { planned: Math.max(view.plan.volume.drawn, view.plan.volume.planned), remaining: view.remaining };
+    },
+  };
   return {
     service,
-    dayClock: service.planDayClock(),
+    dayClock,
     pacing: wirePacing(store, d.settings),
+    rateGovernor: (cfg) => new RateGovernor(store, clock, cfg, launchStream('governors/rate-governor'), ratePlan),
     resumed: () => triggers.resumed(),
     demandChanged: () => triggers.demandChanged(),
     boostActive: () => service.view(clock.now()).boost !== null,

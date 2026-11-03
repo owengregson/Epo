@@ -10,6 +10,7 @@
  */
 
 import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
+import { pruneDailyPlan } from '@/engine/decisions';
 import type { SleepFn } from '@/engine/engine';
 import {
   PRUNE_CONSECUTIVE_FAIL_HALT,
@@ -23,7 +24,6 @@ import {
 } from '@/engine/prune-engine';
 import { FakeClock } from '@/governors/clock';
 import { NOISE } from '@/timing/config';
-import { cyclePlan } from '@/timing/cycle-plan';
 import {
   makePruneHarness as build,
   PRUNE_CFG as CFG,
@@ -882,7 +882,7 @@ describe('PruneEngine — per-cycle plan (fluctuates just under the daily limit)
       cfg: { dailyLimit: 50 },
       cycleStartMs: () => CYCLE_START,
     });
-    const plan = cyclePlan(50, CYCLE_START);
+    const plan = pruneDailyPlan(50, CYCLE_START);
     expect(plan).toBeLessThan(50);
     for (let i = 0; i < plan - 1; i += 1) h.store.recordPruneAction(`p${i}`, 'ok', h.clock.now());
     expect(h.engine.atDailyCap(h.clock.now())).toBe(false);
@@ -897,7 +897,7 @@ describe('PruneEngine — per-cycle plan (fluctuates just under the daily limit)
       cfg: { dailyLimit: 50 },
       cycleStartMs: () => CYCLE_START,
     });
-    expect(h.engine.status().dailyLimit).toBe(cyclePlan(50, CYCLE_START));
+    expect(h.engine.status().dailyLimit).toBe(pruneDailyPlan(50, CYCLE_START));
   });
 });
 

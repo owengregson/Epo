@@ -8,9 +8,17 @@ import { ACTIVITY, dailyHardCeiling, PATTERN } from '@/kernel/derive';
 import { planSeed } from '@/kernel/plan/seed';
 import { automaticDayMax, bandDay, dayLawQuantiles, drawVolume } from '@/kernel/plan/volume';
 import { mulberry32 } from '@/kernel/rng';
-import { cyclePlan } from '@/timing/cycle-plan';
 import { normal01 } from '@/timing/distributions';
 import { CONSISTENCIES, testIntent } from '../../kit/plan';
+
+/** The legacy per-cycle plan, verbatim (its module retired once the plan drew the day). */
+function cyclePlan(cap: number, cycleStartMs: number): number {
+  if (cap < PATTERN.CYCLE_PLAN_MIN_CAP) return Math.max(1, Math.round(cap));
+  const seed = Math.imul(Math.floor(cycleStartMs / 60_000) >>> 0, 0x9e3779b1) ^ Math.imul(cap, 0x85ebca6b);
+  const u = mulberry32(seed)();
+  const { CYCLE_PLAN_MIN_FRACTION: lo, CYCLE_PLAN_MAX_FRACTION: hi } = PATTERN;
+  return Math.min(cap - 1, Math.max(1, Math.round(cap * (lo + u * (hi - lo)))));
+}
 
 /** Today's realized automatic day: the planner's volume capped by the cycle plan. */
 function legacyDay(p0: number, ceiling: number, sigma: number, restP: number, rng: () => number, cycleAt: number): number {
