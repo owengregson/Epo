@@ -13,15 +13,14 @@
  */
 
 import { z } from 'zod';
-import type { EndpointKind } from '@/surface/schema/endpoints';
+import type { EndpointKind, PiiKind } from '@/surface/schema/endpoints';
 import {
   ActivityStory,
   ListPageBody,
   ListUserRow,
-  type PiiKind,
   ProfileUser,
   ShowManyStatus,
-} from '@/surface/schema/endpoints';
+} from '@/surface/versions/2026-08-12/schemas';
 
 /** One node of a schema's shape. */
 export interface ShapeNode {

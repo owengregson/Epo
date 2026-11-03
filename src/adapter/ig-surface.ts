@@ -29,6 +29,7 @@ import type {
   ShowManyEntry,
   StaleComponent,
 } from '@/adapter/surface-types';
+import type { EndpointKind } from '@/surface/schema/endpoints';
 
 // The envelope, mutation and result types live in sibling modules that import
 // nothing from here; re-exported so every consumer keeps one import site.
@@ -62,18 +63,8 @@ export type {
   StaleComponent,
 } from '@/adapter/surface-types';
 
-/** The endpoint kinds the surface knows how to route. */
-export type EndpointKind =
-  | 'followers-list'
-  | 'following-list'
-  | 'friend-requests'
-  | 'show-many'
-  | 'friendship-show'
-  /** `/api/v1/users/<pk>/info/` — what Epo fetches for a profile. */
-  | 'profile-info'
-  /** The GraphQL profile query Instagram's own client fires; OBSERVED only. */
-  | 'profile-graphql'
-  | 'activity-feed';
+/** The endpoint kinds the surface knows how to route (one declaration, the document's). */
+export type { EndpointKind } from '@/surface/schema/endpoints';
 
 /**
  * Classify a fetch envelope into its failure family against the active

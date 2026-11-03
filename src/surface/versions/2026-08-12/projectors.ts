@@ -10,6 +10,8 @@
  */
 
 import type { z } from 'zod';
+import { emptyProjection, type ProjectCtx, type Projection, type RowIssue } from '@/surface/schema/surface';
+import { JSON_PATHS } from '@/surface/versions/2026-08-12/literals';
 import {
   type ActivityFeedStories,
   type FriendshipShowBody,
@@ -20,9 +22,7 @@ import {
   type ProfileUser,
   type ShowManyBody,
   ShowManyStatus,
-} from '@/surface/schema/endpoints';
-import { emptyProjection, type ProjectCtx, type Projection, type RowIssue } from '@/surface/schema/surface';
-import { JSON_PATHS } from '@/surface/versions/2026-08-12/literals';
+} from '@/surface/versions/2026-08-12/schemas';
 
 // ---------------------------------------------------------------------------
 // Row helpers — the ONLY place a projector reaches into a row
