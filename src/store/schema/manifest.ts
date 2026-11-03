@@ -1,5 +1,5 @@
 /**
- * The tables themselves — every column of all fourteen, declared once.
+ * The tables themselves — every column of every table, declared once.
  *
  * `./tables.ts` is the ALGEBRA (column constructors, codecs, `ddl()`,
  * `upsertSql()`, `driftOf()`); this file is the DECLARATION it operates on.
@@ -23,6 +23,8 @@
 
 import type { SqliteDriver } from '../driver/driver';
 import type { EdgeType, EnrichmentLevel, FollowState, Source, Target } from '../types';
+import { FOLLOWER_CHANGES, OWN_COUNTS } from './growth-log-migration';
+import { SURFACE_DRIFT, SURFACE_HEALTH } from './surface-tables';
 import { col, driftOf, type TableDef, table } from './tables';
 
 /** Append-only event log: the source of truth projections are folded from. */
@@ -96,6 +98,14 @@ export const FOLLOW_RECORDS = table('follow_records', {
   unfollow_reason: col.optText(),
   queued_at: col.optInt(),
   decision_version: col.optText(),
+  // Migration 14: the kept state, the shared re-check columns, parks and follow-back dating.
+  kept_reason: col.optText(),
+  kept_match: col.optText(),
+  kept_at: col.optInt(),
+  recheck_at: col.optInt(),
+  park_reason: col.optText(),
+  check_failures: col.int().def('0'),
+  followback_after: col.optInt(),
 });
 
 export const EFFECT_INTENTS = table('effect_intents', {
@@ -110,6 +120,8 @@ export const EFFECT_INTENTS = table('effect_intents', {
   settled_at: col.optInt(),
   result: col.optText(),
   ledger: col.optText(),
+  attempts: col.int().def('0'),
+  next_attempt_at: col.optInt(),
 });
 
 /** Nodes of the chain. Yield stats are computed on demand, never stored. */
@@ -236,6 +248,10 @@ export const TABLES: readonly TableDef[] = [
   TIMERS,
   SPANS,
   EFFECT_INTENTS,
+  OWN_COUNTS,
+  FOLLOWER_CHANGES,
+  SURFACE_DRIFT,
+  SURFACE_HEALTH,
 ];
 
 /**
