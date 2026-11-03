@@ -9,12 +9,7 @@
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Settings } from '../settings/settings';
-import type { FollowRecord } from '../store/types';
-import {
-  ENGINE as ENGINE_TIMING,
-  PRUNE as PRUNE_TIMING,
-  RECOVERY as RECOVERY_TIMING,
-} from '../timing/config';
+import { ENGINE as ENGINE_TIMING } from '../timing/config';
 import type { WaitResult } from '../timing/delay-manager';
 import { mulberry32 } from '../timing/noise';
 import {
@@ -28,7 +23,10 @@ import { WaitRunner } from '../timing/wait-runner';
 import * as log from '../utils/logger';
 import { absurd } from './absurd';
 import { queuedCountFor } from './decisions';
+import { actChurn, actWovenUnfollow, type EngineActionContext, performAction } from './engine-actions';
 import { buildEngineFactSources } from './engine-facts';
+import { type EngineJournalContext, reconcileBeforeSweep } from './engine-journal-effects';
+import { completeFollowbackSweep, type EngineSweepContext } from './engine-sweep-effects';
 import {
   ENGINE_WAIT_CLASS,
   type EngineParkReason,
@@ -90,11 +88,8 @@ export { ENGINE_WAIT_CLASS } from './engine-waits';
 // re-exported so consumers may import them from either module.
 export * from './ports';
 
-/** What one action attempt produced: the verb that landed (so the pacer can be
- *  told and the delay armed), or a StepResult that ends the iteration outright. */
-type ActionOutcome =
-  | { kind: 'follow' | 'unfollow'; step?: undefined }
-  | { kind?: undefined; step: StepResult };
+/** What the effect steps run against: one view of the Engine for every extracted step. */
+type EngineEffectContext = EngineActionContext & EngineJournalContext & EngineSweepContext;
 
 export class Engine {
   private readonly health: RuntimeHealth;
@@ -198,6 +193,9 @@ export class Engine {
    */
   private readonly noiseRng: Rng;
 
+  /** The context the extracted effect steps run against (see {@link effectContext}). */
+  private readonly ctx: EngineEffectContext;
+
   constructor(deps: EngineDeps) {
     this.deps = deps;
     this.reconciliation = new ReconciliationRunner(deps);
@@ -272,6 +270,35 @@ export class Engine {
       halt: (reason) => this.halt(reason),
     });
     this.facts = new FactGatherer(this.buildFactSources(), deps.clock);
+    this.ctx = this.effectContext();
+  }
+
+  /** One view of the Engine for `engine-actions.ts` and the sweep effects; the accessors write through. */
+  private effectContext(): EngineEffectContext {
+    const engine = this;
+    return {
+      deps: this.deps,
+      recovery: this.recovery,
+      pacer: this.pacer,
+      unfollowFeed: this.unfollowFeed,
+      actionsFailingHalt: ACTIONS_FAILING_HALT,
+      reconciliation: this.reconciliation,
+      sweepCadence: this.sweepCadence,
+      get actionDelayDeadline() { return engine.actionDelayDeadline; },
+      set actionDelayDeadline(at) { engine.actionDelayDeadline = at; },
+      get refillSinceAction() { return engine.refillSinceAction; },
+      set refillSinceAction(v) { engine.refillSinceAction = v; },
+      get lastActionAt() { return engine.lastActionAt; },
+      set lastActionAt(at) { engine.lastActionAt = at; },
+      stateNow: () => this.stateNow(),
+      superseded: (token) => this.superseded(token),
+      engineWait: (key, policyOrMs) => this.engineWait(key, policyOrMs),
+      enterRecovery: (token, kind) => this.enterRecovery(token, kind),
+      noteProgress: (phase) => this.noteProgress(phase),
+      healIncidentWindow: (incident) => this.healIncidentWindow(incident),
+      halt: (reason) => this.halt(reason),
+      pacingSleep: () => this.pacingSleep(),
+    };
   }
 
   /** Swap the Engine's own settings-derived knobs at runtime (seed, active-hours,
@@ -548,33 +575,20 @@ export class Engine {
         return this.enterRecovery(token, effect.kind);
       case 'bootstrap-seed-target':
         return this.targets.bootstrapSeedTarget();
-      case 'sweep-followback': {
-        const result = await this.reconciliation.run(effect.now, () => this.superseded(token));
-        if (result.outcome === 'aborted') return 'aborted';
-        this.actionDelayDeadline = this.deps.store.getActionDelayDeadline();
-        if (result.outcome === 'halt') return this.halt({ kind: 'reconciliation-failed' });
-        if (result.outcome === 'progress') this.noteProgress('relationships-reconciling'); // no park: the visitor paces reads
-        if (result.outcome === 'wait') await this.engineWait(result.reason === 'read-budget' ? 'engine:read-budget-park' : 'engine:reconcile-backoff', result.delayMs);
-        if (result.outcome !== 'complete') return 'idle';
-        const at = this.deps.clock.now();
-        this.sweepCadence.markRun(at);
-        this.deps.churn.advanceTimers(at);
-        this.noteProgress('relationships-reconciled');
-        await this.pacingSleep();
-        return 'swept-followback';
-      }
+      case 'sweep-followback':
+        return (await reconcileBeforeSweep(this.ctx, effect.now, token)) ?? completeFollowbackSweep(this.ctx);
       case 'refill-pool': {
         this.refillSinceAction = true;
         const result = await this.targets.refillPool(effect.target, token);
         return result;
       }
       case 'churn-action':
-        return this.performAction(effect.now, token, (actAt) =>
-          this.actChurn(effect.record, actAt, token),
+        return performAction(this.ctx, effect.now, token, (actAt) =>
+          actChurn(this.ctx, effect.record, actAt, token),
         );
       case 'woven-unfollow':
-        return this.performAction(effect.now, token, (actAt) =>
-          this.actWovenUnfollow(effect.candidate, actAt, token),
+        return performAction(this.ctx, effect.now, token, (actAt) =>
+          actWovenUnfollow(this.ctx, effect.candidate, actAt, token),
         );
       case 'advance-chain':
         return this.advanceChain(effect.target);
@@ -616,136 +630,6 @@ export class Engine {
   }
 
   /**
-   * THE one Instagram action per iteration — a growth/lifecycle churn action
-   * or, in the organic model with prune woven in, an interleaved prune unfollow
-   * drawn from the SAME stream. Returns null when neither stream has work.
-   */
-  private async performAction(
-    now: number,
-    token: AbortController,
-    act: (actAt: number) => Promise<ActionOutcome>,
-  ): Promise<StepResult> {
-    const probationUntil = this.deps.reentry?.mutationWaitUntil(now);
-    if (probationUntil !== null && probationUntil !== undefined) {
-      await this.engineWait('engine:action-delay', probationUntil - now);
-      return 'idle';
-    }
-    // Pay down an OWED remainder first (armed by a previous action whose delay a
-    // pause/offline aborted). Interruptible: a fresh pause during the remainder
-    // leaves the deadline armed and parks without acting.
-    if (this.actionDelayDeadline !== null) {
-      const remaining = this.actionDelayDeadline - now;
-      if (remaining > 0) {
-        const res = await this.engineWait('engine:action-delay', remaining);
-        // Aborted with the remainder still owed: NOTHING was acted on — report
-        // 'idle' so lastStep/lastActionAt stay truthful.
-        if (!res.completed) return 'idle';
-      }
-      this.setActionDeadline(null);
-    }
-
-    const actAt = this.deps.clock.now();
-    this.refillSinceAction = false;
-    const outcome = await act(actAt);
-    if (outcome.kind === undefined) return outcome.step;
-
-    this.lastActionAt = actAt;
-    // Arm the delay deadline BEFORE waiting: if a pause/stop/quit lands during
-    // the action (or the wait), the persisted deadline survives so the next
-    // resume — or app launch — serves the remainder.
-    this.setActionDeadline(Math.max(this.deps.store.getActionDelayDeadline() ?? 0,
-      actAt + this.pacer.noteAction(actAt, outcome.kind)));
-    if (this.stateNow() !== 'paused' && !this.superseded(token)) {
-      const remaining = (this.actionDelayDeadline ?? 0) - this.deps.clock.now();
-      const res = await this.engineWait('engine:action-delay', remaining);
-      if (res.completed) this.setActionDeadline(null);
-    }
-    return 'acted';
-  }
-
-  /** One woven prune unfollow: the feed owns the ledger row + edge reconcile. */
-  private async actWovenUnfollow(
-    cand: FeedCandidate,
-    actAt: number,
-    token: AbortController,
-  ): Promise<ActionOutcome> {
-    const status = await this.unfollowFeed.executeUnfollow(cand, actAt);
-    // A stop()+start() landed during the await: the new generation owns pacing
-    // now — bail before recording, arming, or serving anything.
-    if (this.superseded(token)) return { step: 'aborted' };
-    const detail = this.unfollowFeed.lastActionOutcome?.();
-    if (status === 'blocked') {
-      if (detail?.cause === 'rate-limited') return { step: await this.enterRecovery(token, 'rate-limited') };
-      // The journal retains unresolved effects; no failed attempt consumes the candidate.
-      await this.engineWait('engine:prune-park', PRUNE_TIMING.PARK_MS);
-      return { step: 'idle' };
-    }
-    if (status === 'ok' && !detail?.alreadyInState) {
-      this.deps.reentry?.noteAction(actAt);
-      this.noteProgress('mutation-verified');
-    }
-    return { kind: 'unfollow' };
-  }
-
-  /** One lifecycle churn action, with the ladder's breakers on its outcome. */
-  private async actChurn(
-    rec: FollowRecord,
-    actAt: number,
-    token: AbortController,
-  ): Promise<ActionOutcome> {
-    const outcome = await this.deps.churn.execute(rec, actAt);
-    // A stop()+start() landed during the await: the superseded step's owed gap
-    // is dropped rather than allowed to overwrite the new run's deadline.
-    if (this.superseded(token)) return { step: 'aborted' };
-
-    if (outcome === 'blocked') {
-      if (this.deps.churn.lastBlockedCause() === 'local-policy') {
-        await this.engineWait('engine:idle', ENGINE_IDLE_MS);
-        return { step: 'idle' };
-      }
-      // Nothing was clicked and the record is untouched. Re-driving the SAME
-      // record at full pace hammers the wall invisibly — park briefly instead,
-      // and ladder up once the streak (or IG's own verdict) proves a wall.
-      this.recovery.noteOutcome('rate-limited');
-      const blockedStreak = this.deps.churn.streaks().blocked;
-      if (this.deps.churn.lastBlockedCause() === 'rate-limited') {
-        // A definitive server refusal: every further attempt deepens the block.
-        log.warn('engine: Instagram refused the action as rate-limited — entering recovery', {
-          blockedStreak,
-        });
-        return { step: await this.enterRecovery(token, 'rate-limited') };
-      }
-      if (blockedStreak >= RECOVERY_TIMING.BLOCKED_STREAK_ENTRY) {
-        return { step: await this.enterRecovery(token, 'rate-limited') };
-      }
-      log.info('engine: action blocked — short park before the next attempt', { blockedStreak });
-      await this.engineWait('engine:blocked-park', PRUNE_TIMING.PARK_MS);
-      return { step: 'idle' };
-    }
-
-    // Systemic-breakage breaker: when every action fails identically across
-    // records the problem is the machinery, so enter the ladder instead of
-    // burning the queue on clicks that do nothing. An ALL-drift window carries
-    // drift evidence; anything ambiguous is presumed rate-limited.
-    const { failed, drift } = this.deps.churn.streaks();
-    if (failed >= this.recovery.failingEntryThreshold(ACTIONS_FAILING_HALT)) {
-      const kind: FailureKind = drift >= failed ? 'drift' : 'rate-limited';
-      return { step: await this.enterRecovery(token, kind) };
-    }
-    if ((outcome === 'ok' && !this.deps.churn.lastActionOutcome?.()?.alreadyInState) || outcome === 'simulated') {
-      this.noteProgress(outcome === 'ok' ? 'mutation-verified' : 'simulation-completed');
-      if (outcome === 'ok') {
-        this.deps.reentry?.noteAction(actAt);
-        if (rec.state === 'queued') this.deps.frontier?.noteFollow(rec.targetPk, actAt);
-      }
-      // Only a verified new mutation clears the recovery incident.
-      const incident = this.recovery.noteRecovered();
-      if (incident !== null) this.healIncidentWindow(incident);
-    }
-    return { kind: rec.state === 'unfollow_queued' ? 'unfollow' : 'follow' };
-  }
-
-  /**
    * Advance past a spent target. On a dead end, one self-heal pass first:
    * re-verify the most recently exhausted target — an exhaustion stamped during
    * a rate-wall/drift window is absence of evidence. The CURRENT target just
@@ -781,15 +665,6 @@ export class Engine {
       return 'advanced-chain';
     }
     return this.halt({ kind: 'chain-exhausted' });
-  }
-
-  /**
-   * Set the owed inter-action deadline in memory AND the store in one move —
-   * the durable mirror is what lets an app relaunch resume the remaining wait.
-   */
-  private setActionDeadline(at: number | null): void {
-    this.actionDelayDeadline = at;
-    this.deps.store.setActionDelayDeadline(at);
   }
 
   /**

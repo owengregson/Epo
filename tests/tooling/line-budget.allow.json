@@ -10,12 +10,12 @@
       "lines": 1262
     },
     {
-      "file": "src/engine/engine.ts",
-      "lines": 1103
-    },
-    {
       "file": "src/kernel/derive.ts",
       "lines": 994
+    },
+    {
+      "file": "src/engine/engine.ts",
+      "lines": 978
     },
     {
       "file": "src/adapter/actor.ts",
