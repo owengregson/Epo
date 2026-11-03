@@ -4,18 +4,18 @@
  * classes get their cadence de-synchronized here: daily boundaries wake a
  * restart-stable random offset PAST the configured o'clock (never before it),
  * watcher cadences stretch/shrink per run, retry backoffs draw log-normal
- * around their base, and local beats are a `pause.retry` draw at the tempo in force. Without
+ * around their base, and local beats are a `pause.retry` draw around their base. Without
  * this, every default install woke at exactly `activeHoursStart:00:00.000`,
  * resumed daily-ceiling parks on the same o'clock instant, and swept
  * notifications on a bare hourly grid.
  *
  * Pure and dependency-free (no Node, no Electron), like `distributions.ts`.
  * The constants live in the NOISE group of `timing/config.ts`; the beat band and the
- * rest stride are the session tempo's (`pause.retry`, `walk.rest-every`).
+ * rest stride are tempo specs (`pause.retry`, `walk.rest-every`).
  */
 
 import { fnv1a, mulberry32 } from '../kernel/rng';
-import { type TempoSource, tempoOrReference } from '../kernel/tempo';
+import { referenceTempoSource, type TempoSource, tempoOrReference } from '../kernel/tempo';
 import { NOISE } from './config';
 import { clamp, logNormal, normal01 } from './distributions';
 import type { DelayPolicy, Rng } from './primitives';
@@ -79,6 +79,9 @@ export function jitterBoundary(baseMs: number, seedKey: string, installEntropy: 
   return baseMs + Math.max(1, Math.round(u * NOISE.DAILY_BOUNDARY_JITTER_MAX_MS));
 }
 
+/** The beat band's source: the reference tempo, whatever the session (see {@link noisify}). */
+const BEAT: TempoSource = referenceTempoSource();
+
 /** A log-normal factor around 1, bounded by re-draw — `clamp` in factor space. */
 function boundedFactor(rng: Rng, sigma: number, min: number, max: number): number {
   return clamp({ kind: 'logNormalFactor', sample: (r) => Math.exp(sigma * normal01(r)) }, min, max)
@@ -108,8 +111,9 @@ export function nextRestStride(rng: Rng, tempo?: TempoSource): number {
  * unchanged; every other class returns a policy whose draws vary:
  *
  *  - 'retry-backoff'  → clamp(logNormal(base, BACKOFF_SIGMA), 0.5×, 2.0×)
- *  - 'local-beat' / 'sub-cadence' → a `pause.retry` draw around base at `tempo`
- *    (uniform(base × 0.7, base × 1.45) at the reference)
+ *  - 'local-beat' / 'sub-cadence' → the reference `pause.retry` band around base,
+ *    uniform(base × 0.7, base × 1.45): the base already follows the plan, and a brisk
+ *    session never shortens a failure beat (`beat.transient` is pace-up, spec §5.11)
  *  - 'watcher-cadence' → base × cadenceFactor
  *  - 'daily-boundary' → base + uniform(1, DAILY_BOUNDARY_JITTER_MAX_MS)
  *    (the UNSEEDED shape — callers needing restart stability use
@@ -121,7 +125,7 @@ export function nextRestStride(rng: Rng, tempo?: TempoSource): number {
  * byte-identical), so callers pass a DEDICATED noise rng and may hand the
  * policy to a DelayManager without perturbing its rng either.
  */
-export function noisify(cls: WaitClass, base: DelayPolicy | number, rng: Rng, tempo?: TempoSource): DelayPolicy | number {
+export function noisify(cls: WaitClass, base: DelayPolicy | number, rng: Rng): DelayPolicy | number {
   if (cls === 'exact') return base;
   const drawBase: () => number = typeof base === 'number' ? () => base : () => base.sample(rng);
   let draw: () => number;
@@ -137,11 +141,9 @@ export function noisify(cls: WaitClass, base: DelayPolicy | number, rng: Rng, te
       };
       break;
     case 'local-beat':
-    case 'sub-cadence': {
-      const beat = tempoOrReference(tempo);
-      draw = () => beat.policy('pause.retry', { baseMs: drawBase() }).sample(rng);
+    case 'sub-cadence':
+      draw = () => BEAT.policy('pause.retry', { baseMs: drawBase() }).sample(rng);
       break;
-    }
     case 'watcher-cadence':
       draw = () => Math.round(drawBase() * cadenceFactor(rng));
       break;

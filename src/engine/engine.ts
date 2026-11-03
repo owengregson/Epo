@@ -184,7 +184,7 @@ export class Engine {
       delays,
       clock: deps.clock,
       classes: ENGINE_WAIT_CLASS,
-      noiseRng: this.noiseRng, tempo: deps.tempo,
+      noiseRng: this.noiseRng,
       installEntropy: this.installEntropy,
       parkReason: parkReasonFor,
       signal: () => this.runAbort.signal,

@@ -11,23 +11,30 @@
 import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import {
   ENRICH_BATCH_SIZE,
+  Engine,
   type EngineUnfollowFeed,
   MAX_ENRICH_PASSES_PER_CYCLE,
   REFILL_PACING_MAX_MS,
   REFILL_PACING_MIN_MS,
 } from '@/engine/engine';
+import { FakeClock } from '@/governors/clock';
 import { referenceTempoSource } from '@/kernel/tempo';
 import type { AccountFields, FollowRecord } from '@/store/types';
 import { ENGINE, NOISE, RECOVERY } from '@/timing/config';
+import { DelayManager } from '@/timing/delay-manager';
 import {
   DELAY_MS,
+  FakeChurn,
+  FakeSentinel,
   type EngineHarness as Harness,
   HOUR,
   makeEngineHarness as makeHarness,
   rec,
   T0,
+  testDeps,
 } from '../kit/engine-harness';
 import { FakePlan as FakePacing } from '../kit/harness-plan';
+import { fixedTempo } from '../kit/tempo';
 
 // --- Tests ---------------------------------------------------------------------------
 
@@ -1113,6 +1120,27 @@ describe('Engine — f9: per-step resilience', () => {
 
     expect(await h.engine.stepOnce()).toBe('acted'); // the next step proceeds normally
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
+  });
+
+  test("a brisk session never shortens the transient backoff below today's band (beat.transient is pace-up)", async () => {
+    const clock = new FakeClock(T0);
+    const sentinel = new FakeSentinel();
+    const churn = new FakeChurn([]);
+    const sleeps: number[] = [];
+    const engine = new Engine({ ...testDeps({ clock, sentinel, churn,
+      delays: new DelayManager({ clock, sleep: async (ms) => { sleeps.push(ms); } }) }), tempo: fixedTempo(0.7) });
+    const backoffs: number[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      churn.due = [rec({ accountPk: `a${i}` })];
+      sentinel.failNext = 1;
+      const before = sleeps.length;
+      expect(await engine.stepOnce()).toBe('idle');
+      backoffs.push(...sleeps.slice(before));
+      // A healthy step between failures: a run of failures is the runtime-error halt, not a backoff.
+      await engine.stepOnce();
+    }
+    expect(backoffs).toHaveLength(40);
+    expect(Math.min(...backoffs)).toBeGreaterThanOrEqual(ENGINE_IDLE_MS * NOISE.BEAT_MIN_FACTOR);
   });
 
   test('a VERIFIED sentinel block still halts — resilience does not mask real blocks', async () => {
