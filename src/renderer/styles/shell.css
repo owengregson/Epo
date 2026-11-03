@@ -84,12 +84,12 @@
   opacity: 0;
   pointer-events: none;
   transition:
-    opacity 0.3s,
-    border-color 0.3s;
+    opacity var(--dur-3),
+    border-color var(--dur-3);
 }
 .console[data-state="running"] .logo-mark::after {
   opacity: 1;
-  animation: markPulse 2.6s var(--ease) infinite;
+  animation: markPulse var(--breath) var(--ease) infinite;
 }
 .console[data-state="paused"] .logo-mark::after {
   opacity: 0.65;
@@ -118,23 +118,20 @@
 .head-text .tagline {
   font-size: var(--fs-caption);
   font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
   color: var(--faint);
   margin-top: var(--sp-0);
   white-space: nowrap;
 }
 
-/* shared soft pulse (ticker beacon; also reused by the native veil dot) */
-@keyframes pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(216, 221, 227, 0.35);
-  }
-  70% {
-    box-shadow: 0 0 0 7px rgba(216, 221, 227, 0);
-  }
+/* The ticker beacon breathes: an opacity loop on the compositor, never a
+   box-shadow pulse (ADR 0405). 2.2 s is the second breath of spec §12.7. */
+@keyframes beaconBreath {
+  0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(216, 221, 227, 0);
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
   }
 }
 
@@ -163,11 +160,11 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   transition:
-    color 0.15s,
-    border-color 0.15s,
-    background 0.15s,
-    transform 0.06s,
-    opacity 0.15s;
+    color var(--dur-1),
+    border-color var(--dur-1),
+    background var(--dur-1),
+    transform var(--dur-1),
+    opacity var(--dur-1);
 }
 .tbtn .icon {
   flex: 0 0 auto;
@@ -240,15 +237,15 @@
   padding: var(--sp-2) var(--sp-1);
   border-radius: var(--r);
   transition:
-    color 0.18s,
-    background 0.18s,
-    border-color 0.18s,
-    box-shadow 0.18s;
+    color var(--dur-1),
+    background var(--dur-1),
+    border-color var(--dur-1),
+    box-shadow var(--dur-1);
 }
 .nav button .icon {
   font-size: var(--fs-lead);
   opacity: 0.75;
-  transition: opacity 0.18s;
+  transition: opacity var(--dur-1);
 }
 .nav button:hover {
   color: var(--silver);
@@ -289,7 +286,7 @@
   z-index: 2; /* the incoming view reveals over the outgoing one */
 }
 .view.entering {
-  animation: viewIn 0.34s var(--ease) both;
+  animation: viewIn var(--dur-3) var(--ease) both;
 }
 /* The outgoing view stays painted while it fades, so a tab swap can begin its
    fade-out the instant the new view starts entering (immediate crossfade) rather
@@ -297,7 +294,7 @@
 .view.exiting {
   display: block;
   z-index: 1;
-  animation: viewOut 0.17s ease-in both;
+  animation: viewOut var(--dur-1) ease-in both;
 }
 @keyframes viewIn {
   from {
@@ -346,7 +343,7 @@
   border-radius: 50%;
   background: var(--live);
   flex: 0 0 6px;
-  animation: pulse 2.2s var(--ease) infinite;
+  animation: beaconBreath 2.2s var(--ease-in-out) infinite;
 }
 .console:not([data-state="running"]) .ticker .beacon {
   background: var(--faint);
@@ -380,7 +377,7 @@
   font-weight: 700;
 }
 .ticker .tline.swap {
-  animation: tswap 0.5s var(--ease);
+  animation: tswap var(--dur-4) var(--ease);
 }
 @keyframes tswap {
   0% {
@@ -430,7 +427,7 @@
   box-shadow: var(--elev-5);
   font-size: var(--fs-body);
   color: var(--silver);
-  animation: toastIn 0.24s var(--ease) both;
+  animation: toastIn var(--dur-2) var(--ease) both;
 }
 .toast[data-kind="error"] {
   border-color: var(--danger-border);
@@ -524,7 +521,7 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  transition: color 0.15s;
+  transition: color var(--dur-1);
 }
 .stageseg button:hover {
   color: var(--silver);
@@ -539,7 +536,7 @@
 .stageseg button .icon {
   font-size: 10px;
   color: var(--faint);
-  transition: color 0.15s;
+  transition: color var(--dur-1);
 }
 .stageseg button:hover .icon,
 .stageseg button.active .icon {
@@ -553,7 +550,7 @@
   font-size: var(--fs-caption);
   font-weight: 500;
   letter-spacing: 0;
-  transition: color 0.15s;
+  transition: color var(--dur-1);
 }
 .stageseg button.active .stageseg-aux {
   color: var(--silver);
@@ -576,7 +573,7 @@
   border: 1px solid var(--border-hover);
   box-shadow: var(--elev-1);
   transform: translateX(calc(var(--seg-i, 0) * (100% + 2px)));
-  transition: transform 0.26s var(--ease, ease);
+  transition: transform var(--dur-2) var(--ease, ease);
   pointer-events: none;
 }
 
@@ -603,5 +600,5 @@
 }
 .stage-view.active {
   display: block;
-  animation: viewIn 0.34s var(--ease, ease) both;
+  animation: viewIn var(--dur-3) var(--ease, ease) both;
 }

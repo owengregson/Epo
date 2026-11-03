@@ -148,6 +148,40 @@ describe('L-TOKENS: every token a stylesheet reads is declared', () => {
   });
 });
 
+/** The sheets this stream restyled onto the rungs (the feature sheets belong to their streams). */
+const RESTYLED = ['base', 'controls', 'shell', 'graph', 'chain', 'queues', 'prune', 'overview', 'tour', 'gallery'].map(
+  (n) => `${n}.css`,
+);
+
+describe('the restyle (spec §12.6–12.7, ADR 0405)', () => {
+  const restyled = (): Array<{ file: string; css: string }> => sheets().filter((s) => RESTYLED.includes(s.file));
+
+  test('no uppercase and no caps tracking: sentence case everywhere', () => {
+    for (const { file, css } of restyled()) {
+      expect({ file, uppercase: /text-transform:\s*uppercase/.test(css) }).toEqual({ file, uppercase: false });
+      const tracking = [...css.matchAll(/letter-spacing:\s*(0?\.\d+)em/g)].map((m) => Number(m[1])).filter((v) => v >= 0.04);
+      expect({ file, tracking }).toEqual({ file, tracking: [] });
+    }
+  });
+
+  test('every transition and animation runs on a duration token (L-MOTION in the sheets)', () => {
+    // Kept on purpose: 0s, the reduced-motion 0.01ms, the busy spinner's turn, the Live dot's 2.2 s breath.
+    const allowed = new Set(['0s', '0.01ms', '2s', '2.2s']);
+    for (const { file, css } of restyled()) {
+      const literals = [...css.matchAll(/(?:transition|animation)(?:-duration)?\s*:([^;{}]*);/g)].flatMap((m) =>
+        [...(m[1] as string).matchAll(/(?<![\w.-])\d*\.?\d+m?s\b/g)].map((x) => x[0]),
+      );
+      expect({ file, off: literals.filter((l) => !allowed.has(l)) }).toEqual({ file, off: [] });
+    }
+  });
+
+  test('the box-shadow pulse is gone: loops animate opacity on the compositor', () => {
+    const shell = restyled().find((s) => s.file === 'shell.css')?.css ?? '';
+    const keyframes = [...shell.matchAll(/@keyframes\s+([\w-]+)\s*\{([\s\S]*?)\n\}/g)];
+    for (const [, name, body] of keyframes) expect({ name, shadow: /box-shadow/.test(body as string) }).toEqual({ name, shadow: false });
+  });
+});
+
 describe('the bundled face (spec §12.6)', () => {
   const styles = path.join(__dirname, '..', '..', 'src', 'renderer', 'styles');
   const fonts = readFileSync(path.join(styles, 'fonts.css'), 'utf8');

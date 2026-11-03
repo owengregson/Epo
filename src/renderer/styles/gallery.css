@@ -28,8 +28,6 @@
   margin-top: var(--sp-3);
   font-size: var(--fs-caption);
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   color: var(--faint);
 }
 
@@ -49,4 +47,13 @@
 .gallery-rail__note code {
   font-family: var(--mono);
   color: var(--muted);
+}
+
+/* The gallery's view stage stands in for the console's .stage (shell.css): an
+   absolutely placed view fills it, never the whole column over the masthead. */
+.gallery .viewstage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }

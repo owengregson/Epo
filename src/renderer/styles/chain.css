@@ -38,8 +38,6 @@
 }
 .chain-link span {
   font-size: var(--fs-caption);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
   font-weight: 700;
 }
 .cn-body {
@@ -73,8 +71,6 @@
   padding: 0 var(--sp-0) var(--sp-3);
   font-size: var(--fs-small);
   font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
   color: var(--faint);
 }
 .view-h .icon {
@@ -129,7 +125,6 @@
   box-shadow: none;
   color: var(--faint);
   font-size: var(--fs-small);
-  letter-spacing: 0.04em;
 }
 .crumb-sep {
   color: var(--faint);

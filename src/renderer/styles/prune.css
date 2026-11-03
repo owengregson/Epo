@@ -87,7 +87,7 @@
   display: block;
   height: 100%;
   min-width: 2px;
-  transition: width 0.5s var(--ease);
+  transition: width var(--dur-4) var(--ease);
 }
 .pcomp-seg + .pcomp-seg {
   border-left: 1px solid rgba(0, 0, 0, 0.5);

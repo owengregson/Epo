@@ -29,7 +29,7 @@
   stroke: var(--silver);
   stroke-width: 4;
   stroke-linecap: round;
-  transition: stroke-dashoffset 1s linear;
+  transition: stroke-dashoffset var(--dur-5) linear;
 }
 .hn-ring .glyph {
   position: absolute;
@@ -61,8 +61,6 @@
 .hn-cap {
   font-size: var(--fs-caption);
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   color: var(--faint);
   margin-top: var(--sp-1);
 }
@@ -82,8 +80,6 @@
 .hero-what .hw-k {
   font-size: var(--fs-caption);
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   color: var(--faint);
   flex: 0 0 auto;
 }
@@ -268,7 +264,7 @@
    place() at e >= 1. Reduced motion drops the fade with the rest. */
 .growth-proj-g {
   opacity: 0;
-  transition: opacity 0.3s var(--ease);
+  transition: opacity var(--dur-3) var(--ease);
 }
 .growth-proj-g.on {
   opacity: 1;
@@ -336,7 +332,6 @@
   width: 38px;
   flex: 0 0 38px;
   font-weight: 700;
-  letter-spacing: 0.05em;
 }
 .log .lv.info {
   color: var(--silver);
@@ -391,4 +386,36 @@
   .hero-next {
     gap: var(--sp-3);
   }
+}
+
+/* ---------- the console: instruments, not boxes (ADR 0405) ----------
+   One raised surface (the raised card) sits on the column background; every
+   other card is a zone separated by a hairline, and the stat cells lose their
+   wells, so the column reads as one calm instrument rather than a card stack. */
+.console .card:not(.raised) {
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  margin-bottom: 0;
+}
+.console .card.raised + .card:not(.raised) {
+  margin-top: var(--sp-3);
+}
+.console .stat {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: var(--sp-1) 0;
+}
+/* One raised surface per column: a later raised card reads as a zone too. */
+.console .card.raised ~ .card.raised {
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  margin-bottom: 0;
 }

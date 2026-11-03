@@ -30,10 +30,10 @@
   border-radius: var(--r-sm);
   color: var(--muted);
   transition:
-    color 0.18s,
-    background 0.18s,
-    border-color 0.18s,
-    box-shadow 0.18s;
+    color var(--dur-1),
+    background var(--dur-1),
+    border-color var(--dur-1),
+    box-shadow var(--dur-1);
 }
 .qstage:hover {
   color: var(--silver);
@@ -61,8 +61,6 @@
 .qstage .l {
   font-size: var(--fs-micro);
   font-weight: 700;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
   margin-top: var(--sp-0);
 }
 .qflow {
@@ -98,7 +96,7 @@
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-4);
-  transition: background 0.15s;
+  transition: background var(--dur-1);
 }
 .qr:hover {
   background: rgba(255, 255, 255, 0.02);
@@ -152,8 +150,6 @@
 .ready {
   font-size: var(--fs-micro);
   font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
   padding: var(--sp-0) var(--sp-2);
   border-radius: var(--r-pill);
   background: var(--chip-bg);
@@ -202,7 +198,7 @@
   background: var(--grad-meter-brass);
 }
 .qlist {
-  animation: qfade 0.3s var(--ease);
+  animation: qfade var(--dur-3) var(--ease);
 }
 @keyframes qfade {
   from {
