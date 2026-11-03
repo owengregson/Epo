@@ -186,6 +186,9 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     this.changed();
   }
 
+  /** When the last verified-complete census finished, or null (the plan's census predicate reads it). */
+  censusLastCompleteAt(): number | null { return this.census.lastCompleteAt(); }
+
   /** The persisted last-complete census, or null when no scan ever completed. */
   getPruneCensus(): PruneCensusRecord | null {
     return this.meta.json<PruneCensusRecord>('pruneLastCensus');
@@ -330,12 +333,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
 
   // --- Durable meta (migration 5, via MetaRepo) ------------------------------------
 
-  /**
-   * Persist the inter-action paced-delay deadline (epoch ms) so the pacing
-   * survives an app restart: a relaunch resumes the remaining wait instead of
-   * acting immediately (same contract as pause/resume, but durable). `null`
-   * clears it (the delay fully elapsed).
-   */
+  /** The inter-action delay deadline (epoch ms), durable so a relaunch serves the remaining wait; `null` clears it. */
   setActionDelayDeadline(at: number | null): void {
     this.meta.setNumber('actionDelayDeadlineAt', at);
   }
@@ -422,7 +420,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     followingPks: string[],
     followerPks: string[],
     at: number,
-    opts?: { authoritative?: CensusAuthority },
+    opts?: { authoritative?: CensusAuthority; planDay?: { startsAt: number; endsAt: number } },
   ): void {
     if (this.ownPk === null) {
       this.warnOwnPkUnset('ingestScanCensus');
@@ -496,11 +494,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.ownPk === null ? 0 : this.growth.netFollowersSince(sinceMs, this.ownPk);
   }
 
-  /**
-   * LIVE relationship counts from the graph as it stands right now (docs/
-   * PRINCIPLES.md §2): they tick DURING a prune scan because every row's edge
-   * streams as it parses. Zeroes until {@link setOwnPk}.
-   */
+  /** LIVE relationship counts (PRINCIPLES §2: they tick during a scan as rows stream); zeroes until setOwnPk. */
   relationshipCounts(): RelationshipCounts {
     return this.ownPk === null
       ? { following: 0, followers: 0, notFollowingBack: 0 }

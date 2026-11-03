@@ -19,6 +19,8 @@ interface FollowbackDeps {
   followers?: FollowbackCensus;
   relationships?: FollowbackRelationships;
   signal?: () => AbortSignal | undefined;
+  /** The plan-day containing a moment (the `PlanDayClock` window), for the census's stock window. */
+  planDay?: (t: number) => { startsAt: number; endsAt: number };
 }
 
 /**
@@ -51,6 +53,7 @@ export class FollowbackWatcher {
   private readonly followers?: FollowbackCensus;
   private readonly relationships?: FollowbackRelationships;
   private readonly signal?: () => AbortSignal | undefined;
+  private readonly planDay?: FollowbackDeps['planDay'];
   /** The last check ended mid-sequence: the feed was read when the sequence began. */
   private continuing = false;
 
@@ -63,6 +66,7 @@ export class FollowbackWatcher {
     this.followers = deps.followers;
     this.relationships = deps.relationships;
     this.signal = deps.signal;
+    this.planDay = deps.planDay;
   }
 
   /** Swap the live config in place (used when Settings are updated at runtime). */
@@ -240,7 +244,7 @@ export class FollowbackWatcher {
         && members.size >= stats.followers * 0.98);
       if (census.complete && covered) {
         this.store.ingestScanCensus([], [...members], observedAt, {
-          authoritative: { followers: true, following: false },
+          authoritative: { followers: true, following: false }, planDay: this.planDay?.(observedAt),
         });
         // An absent edge need not exist yet. Write explicit absence for each managed record.
         for (const rec of currentCohort()) {

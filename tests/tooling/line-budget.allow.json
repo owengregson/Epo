@@ -35,7 +35,7 @@
     },
     {
       "file": "src/store/knowledge-store.ts",
-      "lines": 544
+      "lines": 538
     },
     {
       "file": "src/capture/capture-harness.ts",

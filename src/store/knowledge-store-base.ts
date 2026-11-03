@@ -5,7 +5,7 @@
 import { Chronos } from './chronos';
 import type { SqliteDriver } from './driver/driver';
 import { openDatabase } from './driver/index';
-import { type KnowledgeStoreOptions, noInjectedRng, type PruneCensusRecord } from './knowledge-types';
+import { type KnowledgeStoreOptions, noInjectedRng } from './knowledge-types';
 import { runMigrations } from './migrations';
 import { MutationPulse } from './mutation-pulse';
 import { AccountRepo } from './repos/accounts';
@@ -100,7 +100,7 @@ export abstract class KnowledgeStoreBase {
     this.accounts = new AccountRepo(this.db, changed);
     this.relationships = new RelationshipRepo(this.db, changed, this.meta, {
       ownPk: () => this.ownPk,
-      gainFloor: () => this.meta.json<PruneCensusRecord>('pruneLastCensus')?.at ?? this.relationships.baselineAt(),
+      gainFloor: () => this.census.lastCompleteAt() ?? this.relationships.baselineAt(),
       transition: (pk, delta, lo, hi, source, at) => this.growth.onTransition(pk, delta, lo, hi, source, at),
       narrowGain: (pk, exactAt) => this.growth.narrowLatestGainContaining(pk, exactAt),
     });
