@@ -8,6 +8,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { Actor } from '@/adapter/actor';
 import type { InstagramTab } from '@/adapter/tab';
 import { SourceFrontier } from '@/engine/source-frontier';
 import type { Foundation } from '@/main/foundation-wiring';
@@ -75,6 +76,27 @@ test('an equal username confirms without a rebuild; an inconclusive read leaves 
   await booted(unsure);
   expect((await unsure.status()).account).toEqual({ username: 'owen', confirmed: false });
   await unsure.dispose();
+});
+
+test('L-BOOT: before the reveal the tab sees the landing press and its URL wait, never a navigation', async () => {
+  let url = 'https://www.instagram.com/';
+  const press = jest.spyOn(Actor.prototype, 'clickOwnProfileLink').mockImplementation(async () => {
+    url = 'https://www.instagram.com/owen/';
+    return true;
+  });
+  const { tab, calls } = profileTab('owen', { currentUrl: () => url });
+  const { foundation: f } = newFoundation({ tab });
+  const booting = f.startBoot();
+  for (let i = 0; i < 200 && (await f.status()).boot?.ig === 'pending'; i++) await flush();
+  const view = (await f.status()).boot;
+  expect(view).toMatchObject({ phase: 'ready', ig: 'ready', startup: { done: false } });
+  expect(press).toHaveBeenCalledTimes(1);
+  expect(calls.filter((c) => c.startsWith('goto') || c === 'show')).toEqual([]);
+  expect((await f.status()).account).toEqual({ username: 'owen', confirmed: true });
+  f.bootRevealed();
+  await booting;
+  press.mockRestore();
+  await f.dispose();
 });
 
 test('the passive identity read only evaluates: no navigation, no press', async () => {

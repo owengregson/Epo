@@ -785,6 +785,7 @@ export class Foundation {
     this.projections.unbind();
     this.disposeAbort.abort();
     this.scheduler.dispose();
+    this.boot.dispose();
     await this.teardownGraph();
     this.projections.dispose();
     logger.info('foundation disposed');
@@ -821,10 +822,8 @@ export class Foundation {
     this.runtime.record('intentional-shutdown');
   }
 
-  /** The startup sequence (spec §12.8): main runs it once IPC answers; resolves when its lease is released. */
+  /** The startup sequence (spec §12.8), run once IPC answers, until its lease is released; then the reveal. */
   startBoot(): Promise<void> { return this.boot.start(); }
-
-  /** The renderer's intro ended: the remaining startup steps run (see {@link BootSequencer.revealed}). */
   bootRevealed(): void { this.boot.revealed(); }
 
   /** Passive identity admission avoids tearing down a graph from inside its
