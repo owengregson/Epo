@@ -24,11 +24,6 @@
       "module": "src/settings/migrate-v1.ts",
       "stream": "SC",
       "reason": "the settings service runs the v1 migration at construction, with the kernel-derived basis"
-    },
-    {
-      "module": "src/settings/effective.ts",
-      "stream": "F2b step 10",
-      "reason": "the re-typed settings service serves effective() from today's v1 settings"
     }
   ]
 }

@@ -1,10 +1,14 @@
 /**
  * The settings service: loads, caches, persists and live-reloads the v1
- * settings file for the Foundation, so every reader shares one copy.
+ * settings file for the Foundation, so every reader shares one copy. Its v2
+ * surface (spec §6.9) runs on these v1 internals until the settings core
+ * replaces them: `effective()`, `protection()` (the new predicate over the v1
+ * lists), `view()` and the capability flags each wiring site sets.
  */
 
 import * as path from 'node:path';
 import type { BuiltGraph } from '@/main/services/graph-types';
+import { type EffectiveSettings, effectiveFromV1 } from '@/settings/effective';
 import {
   DEFAULT_SETTINGS,
   loadSettings,
@@ -20,7 +24,10 @@ import {
   toScannerConfig,
   toScorerConfig,
 } from '@/settings/settings';
+import type { SettingsCapabilities, SettingsView } from '@/shared/settings-view';
+import { compileProtection, type ProtectionIndex } from '@/shared/unfollow-protection';
 import * as logger from '@/utils/logger';
+import { protectionFromV1, transitionalView } from './settings-transitional';
 
 const IG_SETTINGS_FILE = 'epo-settings.json';
 
@@ -36,6 +43,10 @@ export class SettingsService {
   /** Settings cached once loaded, so `getSettings`/`updateSettings` share one copy. */
   private settingsCache: Settings | null = null;
   private readonly listeners = new Set<(s: Settings) => void>();
+  /** +1 on every applied change: the revision the compiled protection and the view carry. */
+  private rev = 0;
+  private capabilities: SettingsCapabilities = { plan: false, tempo: false, boost: false, protectionEverywhere: false };
+  private compiled: { readonly rev: number; readonly index: ProtectionIndex } | null = null;
 
   constructor(private readonly deps: SettingsServiceDeps) {
     this.userDataDir = deps.userDataDir;
@@ -57,6 +68,29 @@ export class SettingsService {
   /** The persisted settings (loaded lazily and cached; defaults on any failure). */
   async getSettings(): Promise<Settings> {
     return this.resolveSettings();
+  }
+
+  /** What the engine consumes: every number as the v1 file resolves it. */
+  effective(): EffectiveSettings {
+    return effectiveFromV1(this.resolveSettings());
+  }
+
+  /** The new protection predicate's index over today's v1 lists, compiled once per revision. */
+  protection(): ProtectionIndex {
+    if (this.compiled === null || this.compiled.rev !== this.rev) {
+      this.compiled = { rev: this.rev, index: compileProtection(protectionFromV1(this.resolveSettings()), 'ready', this.rev) };
+    }
+    return this.compiled.index;
+  }
+
+  /** The transitional view the settings channel serves. */
+  view(): SettingsView {
+    return transitionalView(this.resolveSettings(), this.effective(), this.rev, this.capabilities);
+  }
+
+  /** Each wiring site sets its flag once the dependency it names is wired. */
+  setCapabilities(patch: Partial<SettingsCapabilities>): void {
+    this.capabilities = { ...this.capabilities, ...patch };
   }
 
   /**
@@ -129,6 +163,7 @@ export class SettingsService {
 
   /** Tell every subscriber; a failing one is logged and never undoes the save. */
   private changed(s: Settings): void {
+    this.rev += 1;
     for (const fn of this.listeners) {
       try {
         fn(s);
