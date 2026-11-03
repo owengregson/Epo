@@ -75,7 +75,6 @@
     {"key":"src/engine/followback-watcher.ts :: FollowbackWatcher.check.interrupted :: retryAt :: 30_000","class":"PENDING","stream":"RO","reason":"RO: deletes the watcher; its retries become plan parks (spec §17.8)"},
     {"key":"src/engine/prune-engine.ts :: PRUNE_CONSECUTIVE_BLOCK_HALT :: PRUNE_CONSECUTIVE_BLOCK_HALT :: 3","class":"PENDING","stream":"PR","reason":"PR: reads the D5 blockedStreakThreshold() (spec §17.8)"},
     {"key":"src/engine/prune-engine.ts :: PRUNE_CONSECUTIVE_FAIL_HALT :: PRUNE_CONSECUTIVE_FAIL_HALT :: 4","class":"PENDING","stream":"PR","reason":"PR: becomes the named override PRUNE.CONSECUTIVE_FAIL_HALT (spec §17.3)"},
-    {"key":"src/engine/prune-engine.ts :: PRUNE_PARK_MS :: PRUNE_PARK_MS :: PRUNE.PARK_MS","class":"PENDING","stream":"PR","reason":"PR: park.blocked reaches the prune engine through TempoSource (spec §5.11)"},
     {"key":"src/engine/prune-engine.ts :: PRUNE_PROGRESS_EMIT_MS :: PRUNE_PROGRESS_EMIT_MS :: 250","class":"PENDING","stream":"PR","reason":"PR: reads POLL.GRAPH_PUSH_THROTTLE_MS (spec §17.8)"},
     {"key":"src/engine/prune-engine.ts :: PruneEngine.constructor :: mulberry32 :: 0x51abc0de","class":"GEOM","reason":"a 32-bit mask or hash-mixing constant, numeric"},
     {"key":"src/engine/prune-engine.ts :: PruneEngine.constructor :: mulberry32 :: 0xffffffff","class":"GEOM","reason":"a 32-bit mask or hash-mixing constant, numeric"},

@@ -18,6 +18,7 @@
  */
 
 import type { SentinelStatus } from '../adapter/sentinel';
+import { tempoOrReference } from '../kernel/tempo';
 import type { PruneCensusRecord } from '../store/knowledge-store';
 import { PRUNE } from '../timing/config';
 import { DelayManager, type WaitResult } from '../timing/delay-manager';
@@ -58,9 +59,6 @@ export function pruneDue(scheduleDays: number, lastRunAt: number | null, now: nu
 import type { PruneCandidate, PruneConfig, PruneEngineDeps, PruneScanEstimates, PruneScanOpts, PruneState, PruneStatus } from './prune-types';
 
 export type { PruneCandidate, PruneChurnActions, PruneConfig, PruneEngineDeps, PruneOwnFollowers, PruneOwnFollowing, PruneScanEstimates, PruneScanFetch, PruneScanOpts, PruneSentinel, PruneState, PruneStatus } from './prune-types';
-
-/** Brief park after a blocked action before continuing. */
-export const PRUNE_PARK_MS = PRUNE.PARK_MS;
 
 /** Every DelayManager key the PruneEngine waits under: the closed set the noise registry classifies. */
 export type PruneWaitKey = 'prune:park' | 'prune:action-delay';
@@ -545,7 +543,7 @@ export class PruneEngine {
             consecutiveBlocked,
           });
           this.emitStatus();
-          await this.pruneWait('prune:park', PRUNE_PARK_MS);
+          await this.pruneWait('prune:park', tempoOrReference(this.deps.tempo).base('park.blocked'));
           continue;
         }
         consecutiveBlocked = 0;

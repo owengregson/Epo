@@ -13,7 +13,6 @@ import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import type { SleepFn } from '@/engine/engine';
 import {
   PRUNE_CONSECUTIVE_FAIL_HALT,
-  PRUNE_PARK_MS,
   PRUNE_PROGRESS_EMIT_MS,
   PRUNE_SCAN_FRESH_MS,
   PruneEngine,
@@ -22,7 +21,8 @@ import {
   type PruneStatus,
 } from '@/engine/prune-engine';
 import { FakeClock } from '@/governors/clock';
-import { NOISE } from '@/timing/config';
+import { referenceTempoSource } from '@/kernel/tempo';
+import { NOISE, PRUNE } from '@/timing/config';
 import { cyclePlan } from '@/timing/cycle-plan';
 import {
   makePruneHarness as build,
@@ -30,10 +30,12 @@ import {
   FakeListSource,
   FakePruneActions,
   FakeSentinel,
+  kitStore,
   OWN_PK,
   T0,
 } from '../kit/engine-harness';
 import { openTestStore } from '../kit/store';
+import { recordingTempo } from '../kit/tempo';
 
 // --- scan() ------------------------------------------------------------------------
 
@@ -422,11 +424,12 @@ describe('PruneEngine.run', () => {
 
     expect(h.churn.unfollows).toEqual(['u1', 'u1', 'u2']); // retried, then moved on
     expect(h.store.pruneCountSince(0)).toBe(2); // both eventually reached the ledger
-    // The brief park (a retry backoff — jittered around PRUNE_PARK_MS, bounded),
+    // The brief park (a retry backoff jittered around the park.blocked base, bounded),
     // then u1's inter-action delay, then u2's (60s base ×1/3 = 20s, exact).
+    const park = referenceTempoSource().base('park.blocked');
     expect(h.sleeps.length).toBe(3);
-    expect(h.sleeps[0]).toBeGreaterThanOrEqual(PRUNE_PARK_MS * NOISE.BACKOFF_MIN_FACTOR);
-    expect(h.sleeps[0]).toBeLessThanOrEqual(PRUNE_PARK_MS * NOISE.BACKOFF_MAX_FACTOR);
+    expect(h.sleeps[0]).toBeGreaterThanOrEqual(park * NOISE.BACKOFF_MIN_FACTOR);
+    expect(h.sleeps[0]).toBeLessThanOrEqual(park * NOISE.BACKOFF_MAX_FACTOR);
     expect(h.sleeps.slice(1)).toEqual([24_500, 24_500]);
     expect(h.engine.status().state).toBe('done');
     h.store.close();
@@ -1204,5 +1207,34 @@ describe('PruneEngine — pause/resume (unified transport)', () => {
     await run;
     expect(h.engine.status().upNext).toBeNull();
     h.store.close();
+  });
+});
+
+describe('PruneEngine — the blocked park reads the tempo (park.blocked, pace-up)', () => {
+  const blockedOnce = async (tempo: ReturnType<typeof recordingTempo>) => {
+    const store = kitStore();
+    store.setOwnPk(OWN_PK);
+    store.observe({ accountPk: '1', observedAt: T0, source: 'followers-list', fields: { username: 'u1' } });
+    const churn = new FakePruneActions();
+    let blocks = 1;
+    churn.unfollow = async (username: string): Promise<ChurnActionOutcome> => {
+      churn.unfollows.push(username);
+      return blocks-- > 0 ? { status: 'blocked' } : { status: 'ok' };
+    };
+    const engine = new PruneEngine({ store, clock: new FakeClock(T0), ownPk: OWN_PK, ownFollowing: new FakeListSource([OWN_PK, '1']),
+      ownFollowers: new FakeListSource([]), churnActions: churn, sentinel: new FakeSentinel(), cfg: CFG,
+      sleep: async () => {}, rng: () => 0.5, tempo });
+    await engine.run();
+    return churn.unfollows;
+  };
+
+  test('the park asks the injected tempo for its base, and the retry then goes ahead', async () => {
+    const tempo = recordingTempo();
+    expect(await blockedOnce(tempo)).toEqual(['u1', 'u1']);
+    expect(tempo.keys).toContain('park.blocked');
+  });
+
+  test('at the reference tempo the base is today\'s value (identity)', () => {
+    expect(referenceTempoSource().base('park.blocked')).toBe(PRUNE.PARK_MS);
   });
 });

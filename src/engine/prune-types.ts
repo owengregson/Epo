@@ -1,5 +1,6 @@
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
+import type { TempoSource } from '../kernel/tempo';
 import type { KnowledgeStore, PruneCensusRecord } from '../store/knowledge-store';
 import type { DelayManager } from '../timing/delay-manager';
 import type { SleepFn } from '../timing/primitives';
@@ -204,6 +205,8 @@ export interface PruneEngineDeps {
   cfg: PruneConfig;
   /** The protection port (spec §7.4, P5–P7); a rig without it runs unconfigured (main always wires it). */
   protection?: ProtectionPort;
+  /** The session tempo the blocked park's base reads (`park.blocked`, pace-up); the reference when absent. */
+  tempo?: TempoSource;
   /** Injected sleep; defaults to a real interruptible setTimeout. */
   sleep?: SleepFn;
   /** Injectable randomness for the paced delay (deterministic tests). */
