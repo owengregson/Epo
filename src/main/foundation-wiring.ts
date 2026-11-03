@@ -1200,7 +1200,7 @@ export class Foundation {
    */
   private shapedChainList(graph: BuiltGraph): ChainTargetView[] {
     try {
-      return shapeChainList(graph.store, graph.ownPk);
+      return shapeChainList(graph.store, graph.ownPk, { windowMs: this.resolveSettings().maxWaitForFollowbackDays * MS_PER_DAY, now: graph.clock.now() });
     } catch (e) {
       logger.error('foundation.chainList: failed', { error: String(e) });
       return [];
@@ -1221,7 +1221,7 @@ export class Foundation {
     if (graph === null) return null;
     try {
       return shapeTargetDetail(graph.store, graph.ownPk, targetPk, {
-        now: graph.clock.now(),
+        now: graph.clock.now(), followbackWindowMs: this.resolveSettings().maxWaitForFollowbackDays * MS_PER_DAY,
         plannedToday: graph.plan.service.view(graph.clock.now()).plan.volume.planned,
       });
     } catch (e) {
