@@ -37,6 +37,7 @@ import {
   shapeQueueList,
   shapeTargetDetail,
 } from '@/main/foundation-reads';
+import type { BootSequencer } from '@/main/modules/boot-sequencer';
 import { notBuiltPruneStatus, notBuiltStatus } from '@/main/modules/not-built';
 import { Projections, type PushFn, UNWIRED_SOURCES } from '@/main/modules/projections';
 import { PruneControl } from '@/main/modules/prune-control';
@@ -44,8 +45,8 @@ import { PruneSchedule } from '@/main/modules/prune-schedule';
 import { SeedCheckService } from '@/main/modules/seed-check';
 import { GraphSession } from '@/main/modules/session';
 import { SettingsService } from '@/main/modules/settings-service';
-import { landingStep, resumeStep, runStep, type StartupStep } from '@/main/modules/startup-steps';
-import { composeStatus } from '@/main/modules/status-compose';
+import { createStartup } from '@/main/modules/startup-steps';
+import { composeStatus, type StatusContributor } from '@/main/modules/status-compose';
 import { DriverSignal } from '@/main/services/driver-signal';
 import {
   type BuiltGraph,
@@ -129,6 +130,8 @@ export interface FoundationDeps {
    * electron-mockable for jest.
    */
   requestConnectivityCheck?: () => void;
+  /** The shell's first home navigation (spec §12.8 R5); absent → treated as settled. */
+  tabFirstLoad?: Promise<'ready' | 'failed'>;
 }
 
 /** Inputs to the step-watchdog fire decision — see {@link stepWatchdogShouldFire}. */
@@ -212,9 +215,9 @@ export class Foundation {
   private readonly prune: PruneControl;
   private readonly pruneSchedule: PruneSchedule;
   private readonly seed: SeedCheckService;
-  /** The startup steps, run as the Foundation always ran them. */
-  private readonly landing: StartupStep;
-  private readonly resume: StartupStep;
+  /** The boot sequence (spec §12.8) and its graph-independent `boot` / `account` status contributors. */
+  private readonly boot: BootSequencer;
+  private readonly bootFields: readonly StatusContributor[];
   /**
    * In-flight MANUAL operations (read-followers, follow/unfollow-one,
    * seed-check). Teardown awaits these before closing the store — an
@@ -300,7 +303,7 @@ export class Foundation {
     });
     this.prune = new PruneControl({ runtime: this.runtime, lease: this.lease, activity: this.activity,
       graph: () => this.graph, builtGraph: () => this.builtGraph(), online: () => this.lastOnline,
-      manualDriving: () => this.manualDriving, abortPreparation: () => this.preparation?.abort(),
+      manualDriving: () => this.manualDriving || this.boot.busy(), abortPreparation: () => this.preparation?.abort(),
       prepareMutation: (graph) => this.prepareMutation(graph), resumeDesiredRun: () => this.resumeDesiredRun(),
       notBuiltPruneStatus: () => this.notBuiltPruneStatus() });
     this.pruneSchedule = new PruneSchedule({ control: this.prune, runtime: this.runtime, lease: this.lease,
@@ -310,11 +313,11 @@ export class Foundation {
     this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
       builtGraph: () => this.builtGraph(), busyDriverReason: () => this.busyDriverReason(),
       setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun() });
-    this.landing = landingStep({ tab: this.tab, runtime: this.runtime, lease: this.lease, activity: this.activity,
-      disposing: () => this.disposing, ensureBuilt: () => this.ensureBuilt(), graph: () => this.graph });
-    this.resume = resumeStep({ runtime: this.runtime, lease: this.lease, igSession: this.igSession,
-      disposing: () => this.disposing, blockRuntime: (reason) => this.blockRuntime(reason),
-      startEngine: (opts) => this.startEngine(opts) });
+    ({ boot: this.boot, contributors: this.bootFields } = createStartup({ tab: this.tab, runtime: this.runtime,
+      lease: this.lease, activity: this.activity, session: this.session, igSession: this.igSession,
+      tabFirstLoad: deps.tabFirstLoad ?? Promise.resolve('ready'), disposing: () => this.disposing,
+      blockRuntime: (reason) => this.blockRuntime(reason), startEngine: (opts) => this.startEngine(opts),
+      driverBusy: () => this.manualDriving || this.isEngineDriving(), pushStatus: () => this.pushStatus() }));
     // Tab health events (debugger detach, renderer gone/unresponsive, input
     // fallback): the tab reports, the Foundation owns the recovery policy.
     // Guarded — partially-shaped test tabs may not carry the callback seam.
@@ -333,11 +336,7 @@ export class Foundation {
     return this.session.isLoggedIn();
   }
 
-  /**
-   * Open the dependency graph store-first, once, after login (see
-   * `src/main/modules/session.ts`, which owns the memoized open, the
-   * confirm-account rebuild and the teardown guards). Never touches the tab.
-   */
+  /** Open the graph store-first, once, after login; never touches the tab (see `modules/session.ts`). */
   async ensureBuilt(): Promise<boolean> {
     if (this.runtime.snapshot().phase !== 'ready') return this.graph !== null;
     return this.session.ensureBuilt();
@@ -365,27 +364,17 @@ export class Foundation {
     return { ...this.builtStatus(), refusal: 'prune-running' };
   }
 
-  /**
-   * Open Instagram in the embedded tab; the user completes login there. If the
-   * persisted session is already logged in, the graph is built here too so the
-   * first status reflects a live engine.
-   */
+  /** Open Instagram's home in the tab (the renderer shows Live) for the user to sign in; once signed in, the
+   * graph opens store-first and the identity steps land and confirm under the startup lease. */
   async login(): Promise<EpoStatus> {
-    this.tab.show();
     try {
       await this.tab.goto(IG_HOME_URL);
     } catch (e) {
       logger.error('foundation.login: navigation failed', { error: String(e) });
     }
-    const built = await this.ensureBuilt();
-    // Default page: once logged in, rest on the user's OWN profile (fire-and-
-    // forget — the login result must not wait out the click/nav settle).
-    if (built) void this.landOnOwnProfile();
+    if (await this.ensureBuilt()) void this.boot.runIdentitySteps();
     return this.status();
   }
-
-  /** Land the tab on the user's own profile, the default page (see {@link landingStep}). */
-  landOnOwnProfile(): Promise<void> { return runStep(this.landing, this.disposeAbort.signal); }
 
   // -------------------------------------------------------------------------
   // Engine controls (build-if-needed)
@@ -394,6 +383,8 @@ export class Foundation {
   /** Start the engine loop — fire-and-forget (never awaits the loop). */
   async startEngine(opts: { automaticToken?: number } = {}): Promise<EpoStatus> {
     const automatic = opts.automaticToken !== undefined;
+    // A user Start during the startup sequence is queued, never refused; a Stop while it waits cancels it.
+    if (!automatic && !(await this.boot.queueStart())) return { ...(await this.status()), refusal: 'runtime-intent-changed' };
     const token = opts.automaticToken ?? this.runtime.command('running');
     if (!automatic) this.lease.forgetHandoffs();
     if (!this.runtime.wantsRun(token)) return { ...(await this.status()), refusal: 'runtime-not-ready' };
@@ -476,6 +467,7 @@ export class Foundation {
   /** Stop the engine loop (aborts in-flight sleeps). */
   async stopEngine(): Promise<EpoStatus> {
     this.runtime.command('stopped');
+    this.boot.cancelStartup();
     this.preparation?.abort();
     this.lease.forgetHandoffs();
     const graph = this.graph;
@@ -513,10 +505,10 @@ export class Foundation {
     }
     await this.updateSettings({ seed: clean });
     if (!this.runtime.current(token) || !this.runtime.ready()) return { ...this.builtStatus(), refusal: 'runtime-intent-changed' };
-    // Scrap the current session: every active target is retired; queued
-    // records against them stop refilling and the chain restarts fresh.
+    // Scrap the current session: every active target is retired ("Set aside when
+    // you restarted"); queued records against them stop refilling.
     for (const t of graph.store.listTargets()) {
-      if (t.status === 'active') graph.store.setTargetStatus(t.accountPk, 'exhausted');
+      if (t.status === 'active') graph.store.setTargetStatus(t.accountPk, 'retired');
     }
     graph.store.setSourceFrontierState(null);
     // A seed the graph has already seen re-enters DELIBERATELY at the next
@@ -540,10 +532,10 @@ export class Foundation {
 
   /** The persisted scan's candidates (see {@link PruneControl.pruneCandidates}). */
   pruneCandidates(): Promise<PruneCandidate[]> { return this.prune.pruneCandidates(); }
-  /** Scan the own lists for prune candidates (see {@link PruneControl.scanPrune}). */
-  scanPrune(): Promise<PruneScanResult> { return this.prune.scanPrune(); }
-  /** Prepare, then start a prune run (see {@link PruneControl.startPrune}). */
-  startPrune(): Promise<PruneControlResult> { return this.prune.startPrune(); }
+  /** Scan the own lists for prune candidates (see {@link PruneControl.scanPrune}); `'starting'` during startup. */
+  scanPrune(): Promise<PruneScanResult> { return this.boot.busy() ? Promise.resolve({ ok: false, reason: 'starting', following: 0, followers: 0, candidates: [] }) : this.prune.scanPrune(); }
+  /** Prepare, then start a prune run (see {@link PruneControl.startPrune}); `'starting'` during startup. */
+  startPrune(): Promise<PruneControlResult> { return this.boot.busy() ? this.pruneStatus().then((status) => ({ ok: false, reason: 'starting', status })) : this.prune.startPrune(); }
   /** Stop an active prune scan/run (see {@link PruneControl.stopPrune}). */
   stopPrune(): Promise<PruneStatus> { return this.prune.stopPrune(); }
   /** Pause an active prune run between unfollows. */
@@ -726,6 +718,7 @@ export class Foundation {
   private busyDriverReason(): string | null {
     if (!this.runtime.ready()) return 'runtime-not-ready';
     if (!this.lastOnline) return 'offline';
+    if (this.boot.busy()) return 'starting';
     if (this.manualDriving) return 'manual-running';
     if (this.isEngineDriving()) return 'engine-running';
     if (this.lease.owner() === 'prune') return 'prune-running';
@@ -751,6 +744,7 @@ export class Foundation {
    */
   setConnectivity(online: boolean): void {
     this.lastOnline = online;
+    this.boot.onOnline(online);
     if (this.graph !== null) {
       this.graph.engine.setOnline(online);
       return;
@@ -775,11 +769,8 @@ export class Foundation {
       this.lease.pauseGrowthFor('tour', this.graph?.engine ?? null);
       return;
     }
-    // Release: restore the pre-tour state first, then run what was deferred.
+    // Release: restore the pre-tour state (the boot sequence heard the release and runs its deferred steps).
     this.lease.returnToGrowth('tour', this.graph?.engine ?? null);
-    if (this.lease.takeDeferredProfileLanding()) {
-      void this.landOnOwnProfile();
-    }
     // A scheduled prune that came due during the hold runs now, not one
     // watcher interval later (docs/PRINCIPLES.md §3 — schedules are durable).
     void this.maybeRunScheduledPrune();
@@ -810,11 +801,17 @@ export class Foundation {
     this.graph?.pruneEngine.stop();
   }
 
+  /** Block the run and push the real status (before the build, `loggedIn` comes from the cookie). */
   private blockRuntime(reason: string, detail?: string): void {
     this.runtime.block(reason, detail);
-    this.projections.send('status', this.graph === null ? this.notBuiltStatus(false) : this.builtStatus());
+    if (this.graph !== null) this.projections.send('status', this.builtStatus());
+    else this.pushStatus();
   }
 
+  /** Push the current status, built or not (the boot view rides it). */
+  private pushStatus(): void {
+    void this.status().then((s) => this.projections.send('status', s), (e: unknown) => logger.error('foundation: status push failed', { error: String(e) }));
+  }
 
   /** Called only for a deliberate Quit/close. A process crash never reaches
    * this seam, so its durable running intent can be reconciled at next launch. */
@@ -824,8 +821,11 @@ export class Foundation {
     this.runtime.record('intentional-shutdown');
   }
 
-  /** Resume a running intent a crash left behind (see {@link resumeStep}). */
-  restoreRuntimeIntent(): Promise<void> { return runStep(this.resume, this.disposeAbort.signal); }
+  /** The startup sequence (spec §12.8): main runs it once IPC answers; resolves when its lease is released. */
+  startBoot(): Promise<void> { return this.boot.start(); }
+
+  /** The renderer's intro ended: the remaining startup steps run (see {@link BootSequencer.revealed}). */
+  bootRevealed(): void { this.boot.revealed(); }
 
   /** Passive identity admission avoids tearing down a graph from inside its
    * own engine await. The next explicit build performs the bounded teardown. */
@@ -1386,7 +1386,7 @@ export class Foundation {
     // emit — in that order, so the hand-off never dips the veil.
     this.activity.signal('growth-loop', status.state === 'running');
     this.releaseGrowthStartBridge();
-    this.projections.send('status', composeStatus({ ...status, loggedIn: this.graph !== null, runtime: this.runtimeSnapshot() }, [], this.graph, Date.now()));
+    this.projections.send('status', composeStatus({ ...status, loggedIn: this.graph !== null, runtime: this.runtimeSnapshot() }, this.bootFields, this.graph, Date.now()));
   }
 
   /** Retire the `growth-start` bridge hold (idempotent; see {@link startEngine}). */
@@ -1398,7 +1398,7 @@ export class Foundation {
     // Only called when `this.graph` is set (post-build).
     const graph = this.graph;
     if (graph === null) return this.notBuiltStatus(true);
-    return composeStatus({ ...graph.engine.status(), loggedIn: true, runtime: this.runtimeSnapshot() }, [], graph, graph.clock.now());
+    return composeStatus({ ...graph.engine.status(), loggedIn: true, runtime: this.runtimeSnapshot() }, this.bootFields, graph, graph.clock.now());
   }
 
   private notBuiltPruneStatus(): PruneStatus {
@@ -1406,6 +1406,6 @@ export class Foundation {
   }
 
   private notBuiltStatus(loggedIn: boolean): EpoStatus {
-    return { ...notBuiltStatus(loggedIn, this.lastOnline), runtime: this.runtimeSnapshot() };
+    return composeStatus({ ...notBuiltStatus(loggedIn, this.lastOnline), runtime: this.runtimeSnapshot() }, this.bootFields, null, Date.now());
   }
 }

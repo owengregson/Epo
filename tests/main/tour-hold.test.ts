@@ -27,19 +27,24 @@ const countingTab = (): { tab: InstagramTab; touched(): number } => {
     show: () => bump(undefined),
     hide: () => bump(undefined),
     goto: async () => bump(undefined),
-    currentUrl: () => bump('https://www.instagram.com/'),
+    currentUrl: () => bump('https://www.instagram.com/myself/'),
     evaluate: async <T>(): Promise<T> => bump(null as T),
   });
   return { tab, touched: () => touches };
 };
 
 describe('Foundation tour hold', () => {
-  test('landOnOwnProfile defers instantly while held — the tab is never touched', async () => {
+  test('the boot sequence defers the landing while held — the tab is untouched until the release', async () => {
     const { tab, touched } = countingTab();
-    const { foundation: f } = newFoundation({ tab, igSession: makeIgSession(null) });
+    const { foundation: f } = newFoundation({ tab });
     f.setTourHold(true);
-    await f.landOnOwnProfile(); // no retry poll, no navigation, no click
-    expect(touched()).toBe(0);
+    const booting = f.startBoot();
+    f.bootRevealed();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(touched()).toBe(0); // no landing, no confirmation, no navigation while the tour is on screen
+    f.setTourHold(false);
+    await booting;
+    expect(touched()).toBeGreaterThan(0);
     await f.dispose();
   });
 

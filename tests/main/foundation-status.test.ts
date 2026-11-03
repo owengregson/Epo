@@ -52,9 +52,10 @@ describe('Foundation status (not built)', () => {
       recovery: null,
       pacing: null,
       loggedIn: false,
-      // The composed status fields: never a count from a not-built graph.
+      // The composed status fields: never a count from a not-built graph. Readiness rides the status even
+      // before the build (spec §12.8 R4), so `boot` is the live boot view.
       basis: 'not-built',
-      boot: null,
+      boot: expect.objectContaining({ phase: 'starting', identity: 'pending', data: 'pending', ig: 'pending' }),
       account: null,
       plan: null,
       boost: null,

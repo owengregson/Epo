@@ -56,7 +56,7 @@ export class SourceFrontier {
       recentFollowSources: [],
       totalFollows: 0,
       sources: this.deps.store.listTargets()
-        .filter((target) => target.status !== 'exhausted' || target.exhaustedAt !== undefined)
+        .filter((target) => target.status !== 'retired' && (target.status !== 'exhausted' || target.exhaustedAt !== undefined))
         .map((target) => ({
           pk: target.accountPk,
           source: target.source,

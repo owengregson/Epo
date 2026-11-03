@@ -84,6 +84,7 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
     tab,
     userDataDir: host.userDataDir,
     igSession: host.igSession,
+    tabFirstLoad: shell.igFirstLoad,
     // Digital cursor: mirror the Interactor's simulated pointer onto the veil.
     // The tap observes synthetic driver output only — the user's real mouse
     // never reaches it (and the veil page itself has no mouse listeners).
@@ -154,13 +155,12 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   });
   shell.loadDashboard();
 
-  await found.restoreRuntimeIntent();
-  void found.landOnOwnProfile();
-
-  // Opt-in scheduled auto-prune: fires a prune run when the user's
-  // `pruneScheduleDays` cadence is due and it is safe (tab free, active hours).
-  // No-op unless the user enabled a schedule; cleared in the foundation's dispose.
-  found.startScheduledPruneWatcher();
+  // The startup sequence (spec §12.8): R2/R3 store-first, the landing and confirm-account behind the splash,
+  // catch-up and a crash's resume after the reveal, all under the startup lease. The opt-in scheduled prune
+  // starts once that lease is released, so due work still runs at launch and never contends with it.
+  void found.startBoot()
+    .then(() => found.startScheduledPruneWatcher())
+    .catch((error: unknown) => logger.error('launch: startup sequence failed', { error: String(error) }));
 
   // Engine step watchdog: recovers a growth loop wedged on a never-settling
   // tab/CDP await (stop → tab reload + debugger re-attach → restart). Fires

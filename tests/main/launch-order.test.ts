@@ -35,7 +35,7 @@ jest.mock('@/main/foundation-wiring', () => ({
       setConnectivity: jest.fn(),
       restoreRuntimeIntent: jest.fn(async () => {}),
       landOnOwnProfile: jest.fn(async () => {}),
-      startBoot: jest.fn(() => order.push('boot.start')),
+      startBoot: jest.fn(async () => { order.push('boot.start'); }),
       startScheduledPruneWatcher: jest.fn(),
       startEngineStepWatchdog: jest.fn(),
     };
@@ -69,10 +69,10 @@ beforeEach(() => {
 });
 afterEach(() => jest.useRealTimers());
 
-test('hidden window, Foundation, modules, IPC, then the dashboard load', async () => {
+test('hidden window, Foundation, modules, IPC, the dashboard load, then the boot sequence', async () => {
   await launchWindow({ handles: handles() });
   expect(shellOpts[0]).toMatchObject({ startHidden: true, deferDashboardLoad: true });
-  expect(order.slice(0, 5)).toEqual(['shell', 'foundation', 'composeApp', 'ipc', 'loadDashboard']);
+  expect(order.slice(0, 6)).toEqual(['shell', 'foundation', 'composeApp', 'ipc', 'loadDashboard', 'boot.start']);
 });
 
 test("the dashboard's first load reveals the window; nothing replays the updater status", async () => {

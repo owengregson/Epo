@@ -141,7 +141,7 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     ...settingsHandlers(foundation),
     ...planHandlers(),
     ...liveHandlers(currentUpdate),
-    ...bootHandlers(),
+    ...bootHandlers(foundation),
     ...surfaceHandlers(),
   };
 
