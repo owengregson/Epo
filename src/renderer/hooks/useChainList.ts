@@ -28,9 +28,8 @@ const NONE: ChainTargetView[] = [];
  * The chain lineage (`chain:list`), live (docs/PRINCIPLES.md §2). The shell owns
  * the one subscription and its pull backstop (`useLiveFeeds`); this reads the
  * published list, so per-target yields tick DURING an acquisition walk wherever
- * the list is shown. Empty until the first pull lands. The status argument is
- * accepted for callers written before the shell owned the subscription.
+ * the list is shown. Empty until the first pull lands.
  */
-export function useChainList(_status?: EpoStatus | null): ChainTargetView[] {
+export function useChainList(): ChainTargetView[] {
   return chainListSignal.value ?? NONE;
 }

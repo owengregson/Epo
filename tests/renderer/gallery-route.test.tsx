@@ -29,7 +29,7 @@ describe('the ?gallery=1 route', () => {
   it('mounts with a stubbed bridge — no main process, no rejected pulls', async () => {
     await mountGallery();
     expect(document.querySelector('.console')).not.toBeNull();
-    expect(document.querySelector('#view-overview')).not.toBeNull();
+    expect(document.querySelector('.sidebar [data-zone="now"]')).not.toBeNull();
   });
 
   it('every scenario is selectable and drives the console posture', async () => {
