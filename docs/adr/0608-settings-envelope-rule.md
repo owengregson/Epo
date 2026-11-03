@@ -1,7 +1,7 @@
 # 0608 — The settings envelope rule
 
 **Status:** draft (SC stream; finalized in Phase I) · **Area:** kernel (`src/kernel/{settings-policy,derive-envelope,
-derive-schedule,derive-audience}.ts`), `src/settings/{params*,resolve}.ts`
+derive-schedule,derive-audience,catalog}.ts`), `src/settings/{params*,resolve}.ts`
 
 ## Context
 
@@ -28,6 +28,13 @@ plain choices with an Advanced view; A3/A4 ask that no override raise a ceiling 
    rungs, the Boost lengths, the tempo-override factor bound, the document version and the step grid.
 5. **The plan core's numbers** (the effective gap at pace 1, the day law and its maximum, the retry limit) reach the
    settings core through one port, `PlanMath`, so the catalog, the view and the migration read them from one place.
+6. **Every kernel number is visible, read-only** (Advanced → Under the hood, Limits & reading). `kernelCatalog()`
+   (`src/kernel/catalog.ts`) flattens every catalogued table to one row per value: every module whose header names
+   it tier 1, the fundamentals with `src`/`rev`, the registry with its `PROVENANCE` tier and override reasons, the
+   per-choice tables, `MOTION` with its roles and shape-dial guard lines, and the envelope. Guard lines live only in
+   the source text, so `scripts/gen-kernel-catalog.mjs` reads them into the committed `catalog.generated.ts`; a
+   freshness test re-reads the sources, a typed table map fails the build when a table appears unclassified, and
+   `catalog.test.ts` checks every exported entry shows. `SettingsService.basis()` serves it on `settings:basis`.
 
 ## Consequences
 

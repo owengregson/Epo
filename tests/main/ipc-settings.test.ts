@@ -1,10 +1,12 @@
 /**
  * The Settings rows through the real registration (Appendix B.9): the guard refuses a malformed op before
  * the service sees it, a throwing handler answers its typed fallback, and neither ever reads as saved.
- * The rows still waiting for their stores answer typed values; `seed:check` keeps its older wire shape.
+ * The rows still waiting for their stores answer typed values; `seed:check` keeps its older wire shape;
+ * `settings:basis` serves the kernel catalog.
  */
 import type { IpcFallbacks, IpcHandlers } from '@/ipc/register';
 import { registerIpc } from '@/ipc/register';
+import { kernelCatalog } from '@/kernel/catalog';
 import type { Foundation } from '@/main/foundation-wiring';
 import { settingsFallbacks, settingsHandlers } from '@/main/ipc-settings';
 import { settingsFactsSource } from '@/main/modules/settings-facts';
@@ -84,10 +86,19 @@ test('the transitional v1 rows: a failed save rejects so the old UI says Not sav
 test('the rows still waiting for their stores answer typed values, and the seed check keeps its older shape', async () => {
   const { call, dispose } = rig();
   expect(await call('settings:view')).toMatchObject({ rev: 0, health: { kind: 'ok' } });
-  expect(await call('settings:basis')).toEqual({ kind: 'unavailable' });
   expect(await call('settings:facts')).toMatchObject({ built: false, protection: null });
   expect(await call('accounts:suggest', 'ja', 'following')).toEqual({ kind: 'unavailable' });
   expect(await call('protection:kept', 0)).toEqual({ kind: 'unavailable' });
   expect(await call('seed:check', 'natgeo')).toEqual(SEED_OK);
+  dispose();
+});
+
+test('settings:basis serves every kernel catalog row, guard lines and provenance included', async () => {
+  const { call, dispose } = rig();
+  expect(await call('settings:basis')).toEqual({ kind: 'ok', rows: kernelCatalog() });
+  expect(await call('settings:basis')).toMatchObject({
+    rows: expect.arrayContaining([expect.objectContaining({ id: 'EMPIRICAL.FOLLOW_WALL_PER_DAY.low', group: 'fundamental',
+      rev: expect.any(String) })]),
+  });
   dispose();
 });

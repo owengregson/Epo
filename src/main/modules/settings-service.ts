@@ -4,6 +4,7 @@
  * tells its listeners and pushes the view after every persisted write.
  */
 import type { PlanPreviewPort } from '@/governors/plan-types';
+import { kernelCatalog } from '@/kernel/catalog';
 import type { BuiltGraph } from '@/main/services/graph-types';
 import { migrationBasis, type PlanMath } from '@/settings/basis';
 import { DEFAULT_DOC, type SettingsDocV2 } from '@/settings/doc';
@@ -125,7 +126,7 @@ export class SettingsService {
   effective(): EffectiveSettings { return this.derived().effective; }
   protection(): ProtectionIndex { return this.derived().index; }
   app(): { readonly tourCompletedAt: number | null } { return { tourCompletedAt: this.doc.app.tourCompletedAt }; }
-  basis(): BasisResult { return { kind: 'unavailable' }; }
+  basis(): BasisResult { return { kind: 'ok', rows: kernelCatalog() }; }
   setCapabilities(patch: Partial<SettingsCapabilities>): void { this.capabilities = { ...this.capabilities, ...patch }; }
   planPort(): PlanPreviewPort | null { return this.port; }
 
