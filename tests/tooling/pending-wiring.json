@@ -6,14 +6,14 @@
       "reason": "the stage controller derives the window title and Dock badge from the posture; SB's live column follows"
     },
     {
-      "module": "src/settings/doc-rules.ts",
-      "stream": "SC",
-      "reason": "the settings service coerces epo-settings-v2.json through these rules when it reads the document"
-    },
-    {
       "module": "src/settings/migrate-v1.ts",
       "stream": "SC",
       "reason": "the settings service runs the v1 migration at construction, with the kernel-derived basis"
+    },
+    {
+      "module": "src/settings/ops.ts",
+      "stream": "SC",
+      "reason": "the settings service applies every write through these ops (persist-first, then commit and push)"
     },
     {
       "module": "src/renderer/settings/SettingsStage.tsx",

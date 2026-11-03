@@ -56,7 +56,7 @@ const daysOff: Rule<readonly DayOfWeek[]> = (raw, fb) => {
   return ok(value, listed.dropped + (listed.value.length - unique.length) + (value === fb && unique.length > 0 ? 1 : 0));
 };
 
-const INTENT_RULES = {
+export const INTENT_RULES = {
   activity: oneOf(ACTIVITY_LEVELS), caution: oneOf(CAUTIONS), rhythm: oneOf(RHYTHMS), consistency: oneOf(CONSISTENCIES),
   dayShape: oneOf(DAY_SHAPES), weeklyShape: oneOf(WEEKLY_SHAPES), quietHours, daysOff, patience: oneOf(PATIENCES),
   mutuals: oneOf(MUTUAL_POLICIES), cleanup: oneOf(CLEANUP_LEVELS), audienceFocus: oneOf(AUDIENCE_FOCUSES),
