@@ -1,19 +1,9 @@
 /*
- * Direction boards — the board chrome (`db-*`) and the proposed product look
- * (`dx-*`). Every rule targets board-only classes and reads the proposed
- * tokens that the `.db` root carries inline (proposed-tokens.ts), so the
- * app's own markup and sheets are untouched. Reached only via `?gallery=1`.
+ * Direction boards — the board chrome (`db-*`) and the approved product look
+ * (`dx-*`). Every rule targets board-only classes and reads the app's own
+ * tokens and its bundled Inter (styles/fonts.css), so the app's markup is
+ * untouched. Reached only via `?gallery=1`.
  */
-
-/* Inter Variable (Latin subset, OFL-1.1) under a board-only family name, so
-   the app keeps its current face until step 4 declares "Inter" itself. */
-@font-face {
-  font-family: "Epo Board Inter";
-  src: url("../../fonts/InterVariable-latin.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: block;
-}
 
 /* A board is the page: it scrolls in the normal flow, so a full-page capture
    includes every frame; the gallery stays mounted underneath, hidden. */

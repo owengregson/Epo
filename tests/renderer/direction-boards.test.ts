@@ -35,7 +35,7 @@ import {
 } from '@/renderer/gallery/direction/layout';
 import { funnelShare } from '@/renderer/gallery/direction/people-page';
 import { POPOVER_FRAMES, POSTURES } from '@/renderer/gallery/direction/postures';
-import { contrast, PALETTE, SURFACES, TEXT_TOKENS, TYPE_SPECIMEN, tokenStyle } from '@/renderer/gallery/direction/proposed-tokens';
+import { contrast, PALETTE, SURFACES, TEXT_TOKENS, TYPE_SPECIMEN } from '@/renderer/gallery/direction/proposed-tokens';
 import { BOARDS } from '@/renderer/gallery/direction/registry';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
 import { Gallery, primeGallery } from '@/renderer/gallery/Gallery';
@@ -188,10 +188,9 @@ describe('the boards read the app’s own tokens', () => {
     }
   });
 
-  it('the board root carries nothing inline but its face (until the app declares Inter)', () => {
+  it('the board root carries no tokens of its own', () => {
     const root = renderBoard('tokens', 1024).querySelector<HTMLElement>('.db') as HTMLElement;
-    expect(root.style.length).toBe(1);
-    expect(root.style.getPropertyValue('--font').trim()).toBe(tokenStyle().slice('--font:'.length));
+    expect(root.getAttribute('style')).toBeNull();
   });
 });
 

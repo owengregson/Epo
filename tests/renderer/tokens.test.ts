@@ -147,3 +147,23 @@ describe('L-TOKENS: every token a stylesheet reads is declared', () => {
     expect(bareReads('.a { color: var(--txet); } .b { width: var(--w, 0); }')).toEqual(['--txet']);
   });
 });
+
+describe('the bundled face (spec §12.6)', () => {
+  const styles = path.join(__dirname, '..', '..', 'src', 'renderer', 'styles');
+  const fonts = readFileSync(path.join(styles, 'fonts.css'), 'utf8');
+
+  test('fonts.css declares Inter on the bundled woff2, blocking, the whole weight axis', () => {
+    expect(fonts).toMatch(/font-family: "Inter";/);
+    expect(fonts).toMatch(/font-display: block;/);
+    expect(fonts).toMatch(/font-weight: 100 900;/);
+    const url = /url\("([^"]+)"\)/.exec(fonts)?.[1] ?? '';
+    expect(readFileSync(path.join(styles, url)).subarray(0, 4).toString('latin1')).toBe('wOF2');
+    expect(readFileSync(path.join(styles, '..', 'fonts', 'OFL.txt'), 'utf8')).toMatch(/SIL OPEN FONT LICENSE/i);
+  });
+
+  test('it is first in the cascade, and the app’s --font names it first', () => {
+    const index = readFileSync(path.join(styles, 'index.css'), 'utf8');
+    expect(/@import "([^"]+)";/.exec(index)?.[1]).toBe('./fonts.css');
+    expect(readFileSync(path.join(styles, 'tokens.palette.css'), 'utf8')).toMatch(/--font:\s*"Inter",/);
+  });
+});

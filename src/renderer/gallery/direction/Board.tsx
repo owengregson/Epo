@@ -1,11 +1,10 @@
 /**
  * One direction board: a bar to move between boards, a header saying what to
  * judge, and the frames placed by `packFrames` (absolute, so the test reads
- * the same rects the eye sees). The proposed tokens ride the root's style.
+ * the same rects the eye sees). The boards read the app's own tokens.
  */
 import { type JSX } from 'preact';
 import { BOARD_PAD, packFrames } from '@/renderer/gallery/direction/layout';
-import { tokenStyle } from '@/renderer/gallery/direction/proposed-tokens';
 import { BOARDS, type BoardSpec } from '@/renderer/gallery/direction/registry';
 
 /** The board header's fixed height (title and a two-line introduction). */
@@ -25,7 +24,7 @@ export function BoardPage({ id, width, onPick, onClose }: BoardPageProps): JSX.E
   const rects = new Map(packFrames(frames, width, HEAD_H).map((r) => [r.key, r]));
   const height = Math.max(HEAD_H, ...[...rects.values()].map((r) => r.y + r.h)) + BOARD_PAD;
   return (
-    <div class="db" data-board={board.id} style={tokenStyle()}>
+    <div class="db" data-board={board.id}>
       <nav class="db-bar" aria-label="Direction boards">
         <span class="db-bar__title">Direction boards</span>
         <span class="db-bar__chips">

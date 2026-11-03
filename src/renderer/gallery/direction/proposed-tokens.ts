@@ -85,14 +85,6 @@ export const RADIUS_PX = { sm: 8, md: 10, lg: 14 } as const;
 /** The five durations, `--dur-1 … --dur-5`. */
 export const DUR_MS = [DUR[1], DUR[2], DUR[3], DUR[4], DUR[5]];
 
-/** The face the boards load (Inter Variable, Latin subset); step 4 makes it the app's own "Inter". */
-const BOARD_FONT = '"Epo Board Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
-
-/** What the board root still carries inline: only the board face, until the app declares Inter. */
-export function tokenStyle(): string {
-  return `--font:${BOARD_FONT}`;
-}
-
 /** WCAG 2 relative luminance of a `#rrggbb` colour. */
 function luminance(hex: string): number {
   const ch = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
