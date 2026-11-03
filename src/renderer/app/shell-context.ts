@@ -4,8 +4,6 @@ import { useContext } from 'preact/hooks';
 import { liveRevealedSignal, resetLiveSignals } from '@/renderer/app/live-signals';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import type { ToastKind } from '@/renderer/hooks/useToasts';
-import { type TransportModel, transportModel } from '@/renderer/lib/engine-view';
-import type { LogEntry } from '@/shared/log-entry';
 import type { SettingsFacts } from '@/shared/settings-facts';
 import type { SettingsView } from '@/shared/settings-view';
 import type { StageMode } from '@/shared/stage-mode';
@@ -33,13 +31,6 @@ export const settingsViewSignal = signal<SettingsView | null>(null);
 /** The store-derived Settings facts (a projection row; pushed on store mutation). */
 export const settingsFactsSignal = signal<SettingsFacts | null>(null);
 
-/** A log entry stamped with a feed-local sequence number (the stable render key). */
-export interface LogLine extends LogEntry {
-  seq: number;
-}
-/** Log lines for the console column's activity card (the raw log itself streams only to Diagnostics). */
-export const logSignal = signal<LogLine[]>([]);
-
 /** Which stage fills the window right of the console. */
 export const stageSignal = signal<StageMode>('tab');
 /** A renderer modal is open: the native views must not float above its scrim. */
@@ -57,29 +48,6 @@ export interface SettingsTarget {
 /** The latest Settings destination (a fresh object per request), for the Settings stage to act on. */
 export const settingsTargetSignal = signal<SettingsTarget | null>(null);
 
-/**
- * The unified console posture derived from BOTH status channels.
- *
- * `transportModel` builds a fresh object per call, so the computed caches the
- * previous one whenever all fields match: a status push that does not change
- * the POSTURE wakes nothing while counts tick underneath.
- */
-let lastTransport: TransportModel = { state: 'idle', driver: 'growth', pruneScanning: false };
-export const transportSignal: ReadonlySignal<TransportModel> = computed(() => {
-  const next = transportModel(statusSignal.value?.state, pruneSignal.value?.state, statusSignal.value?.runtime);
-  const prev = lastTransport;
-  if (
-    next.state === prev.state &&
-    next.driver === prev.driver &&
-    next.pruneScanning === prev.pruneScanning &&
-    next.intentActive === prev.intentActive
-  ) {
-    return prev;
-  }
-  lastTransport = next;
-  return next;
-});
-
 /** Adopt a saved Settings object as the new canonical one. */
 export function adoptSettings(next: Settings): void {
   settingsSignal.value = next;
@@ -94,14 +62,12 @@ export function resetShellSignals(): void {
   statusSignal.value = null;
   pruneSignal.value = null;
   settingsSignal.value = null;
-  logSignal.value = [];
   settingsViewSignal.value = null;
   settingsFactsSignal.value = null;
   stageSignal.value = 'tab';
   modalSignal.value = false;
   settingsTargetSignal.value = null;
   resetLiveSignals();
-  lastTransport = { state: 'idle', driver: 'growth', pruneScanning: false };
 }
 
 /** The shell's two services — per-App closures, so context rather than signals. */

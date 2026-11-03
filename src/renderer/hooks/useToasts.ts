@@ -2,15 +2,22 @@ import { useCallback, useRef, useState } from 'preact/hooks';
 
 export type ToastKind = 'error' | 'info' | 'success';
 
+/** One button on a toast (Stop's Undo): pressing it runs `run` and dismisses the toast. */
+export interface ToastAction {
+  readonly label: string;
+  run(): void;
+}
+
 export interface Toast {
   id: number;
   kind: ToastKind;
   message: string;
+  action?: ToastAction;
 }
 
 export interface ToastControls {
   toasts: Toast[];
-  push: (kind: ToastKind, message: string) => void;
+  push: (kind: ToastKind, message: string, action?: ToastAction) => void;
   dismiss: (id: number) => void;
 }
 
@@ -54,10 +61,10 @@ export function useToasts(): ToastControls {
   }, []);
 
   const push = useCallback(
-    (kind: ToastKind, message: string): void => {
+    (kind: ToastKind, message: string, action?: ToastAction): void => {
       const id = nextId.current++;
       setToasts((prev) => {
-        const { toasts: next, dropped } = appendCapped(prev, { id, kind, message });
+        const { toasts: next, dropped } = appendCapped(prev, action === undefined ? { id, kind, message } : { id, kind, message, action });
         // Silence the auto-dismiss timers of anything the cap dropped
         // (clearTimeout is idempotent, so a re-run updater is harmless).
         for (const t of dropped) {

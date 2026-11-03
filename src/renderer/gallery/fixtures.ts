@@ -142,6 +142,8 @@ export interface Scenario {
   label: string;
   status: EpoStatus;
   prune: PruneStatus;
+  /** Writes what the live column reads beyond status (feed, live op, Settings view slice); live scenarios only. */
+  apply?(): void;
 }
 
 /**

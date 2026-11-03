@@ -47,83 +47,7 @@
   overflow: hidden;
 }
 
-/* ---------- header: brand + state, then transport ---------- */
-.con-head {
-  padding: var(--sp-3) var(--sp-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
-}
-.brand-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-}
-.logo-mark {
-  position: relative;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px; /* literal: the ::after pulse ring (11px) is this + its -3px inset */
-  flex: 0 0 30px;
-  background: linear-gradient(160deg, var(--border), var(--surface));
-  border: 1px solid var(--border-strong);
-  box-shadow: var(--elev-2);
-  display: grid;
-  place-items: center;
-}
-/* live signal folded into the brand mark: hairline ring that breathes while
-   the engine runs, holds brass when paused */
-.logo-mark::after {
-  content: "";
-  position: absolute;
-  inset: -3px;
-  border-radius: 11px;
-  border: 1px solid rgba(238, 241, 244, 0.3);
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity var(--dur-3),
-    border-color var(--dur-3);
-}
-.console[data-state="running"] .logo-mark::after {
-  opacity: 1;
-  animation: markPulse var(--breath) var(--ease) infinite;
-}
-.console[data-state="paused"] .logo-mark::after {
-  opacity: 0.65;
-  border-color: rgba(216, 183, 104, 0.4);
-}
-@keyframes markPulse {
-  0%,
-  100% {
-    opacity: 0.22;
-  }
-  50% {
-    opacity: 0.8;
-  }
-}
-.head-text {
-  flex: 1;
-  min-width: 0;
-}
-.con-head h1 {
-  font-size: var(--fs-lead);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  color: var(--chrome);
-  line-height: 1.2;
-}
-.head-text .tagline {
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  color: var(--faint);
-  margin-top: var(--sp-0);
-  white-space: nowrap;
-}
-
-/* The ticker beacon breathes: an opacity loop on the compositor, never a
+/* The Live tab dot breathes: an opacity loop on the compositor, never a
    box-shadow pulse (ADR 0405). 2.2 s is the second breath of spec §12.7. */
 @keyframes beaconBreath {
   0%,
@@ -135,12 +59,6 @@
   }
 }
 
-/* ---------- transport trio — the buttons themselves read as engine state ---------- */
-.transport {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--sp-2);
-}
 .tbtn {
   appearance: none;
   cursor: pointer;
@@ -183,21 +101,6 @@
   outline: 2px solid var(--silver);
   outline-offset: 2px;
 }
-/* the natural next control carries the primary sheen for the current engine
-   state — the cluster itself is the state readout */
-.console[data-state="running"] #btnPause,
-.console[data-state="paused"] #btnStart,
-.console[data-state="halted"] #btnStart,
-.console[data-state="idle"] #btnStart {
-  background: var(--grad-raised);
-  background-image: var(--sheen);
-  border-color: var(--border-active);
-  color: var(--chrome);
-}
-.console[data-state="paused"] #btnStart {
-  border-color: #5c4e32;
-  color: #e2cd93;
-}
 .tbtn.danger:hover {
   color: var(--danger);
   border-color: var(--danger-border-soft);
@@ -208,202 +111,7 @@
   pointer-events: none;
 }
 
-/* ---------- nav rail ---------- */
-/* Flex, not a fixed column count: the rail splits its width evenly among
-   however many view buttons render (Prune moved to the stage bar; items may
-   come and go without touching this rule). */
-.nav {
-  display: flex;
-  gap: var(--sp-2);
-  padding: var(--sp-3) var(--sp-4);
-  border-bottom: 1px solid var(--border);
-}
-.nav button {
-  flex: 1 1 0;
-  min-width: 0;
-  appearance: none;
-  border: 1px solid transparent;
-  cursor: pointer;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--fs-label);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--sp-1);
-  padding: var(--sp-2) var(--sp-1);
-  border-radius: var(--r);
-  transition:
-    color var(--dur-1),
-    background var(--dur-1),
-    border-color var(--dur-1),
-    box-shadow var(--dur-1);
-}
-.nav button .icon {
-  font-size: var(--fs-lead);
-  opacity: 0.75;
-  transition: opacity var(--dur-1);
-}
-.nav button:hover {
-  color: var(--silver);
-  background: var(--hover-veil);
-}
-/* Inset offset keeps the ring inside the pill's rounded bounds. */
-.nav button:focus-visible {
-  outline: 2px solid var(--silver);
-  outline-offset: -2px;
-}
-.nav button.active {
-  color: var(--chrome);
-  background: var(--grad-active);
-  border-color: var(--border-strong);
-  box-shadow: var(--elev-2);
-}
-.nav button.active .icon {
-  opacity: 1;
-}
-
-/* ---------- view stage ---------- */
-.stage {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-  overflow: hidden;
-}
-.view {
-  position: absolute;
-  inset: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: var(--sp-4) var(--sp-4) var(--sp-5);
-  display: none;
-}
-.view.active {
-  display: block;
-  z-index: 2; /* the incoming view reveals over the outgoing one */
-}
-.view.entering {
-  animation: viewIn var(--dur-3) var(--ease) both;
-}
-/* The outgoing view stays painted while it fades, so a tab swap can begin its
-   fade-out the instant the new view starts entering (immediate crossfade) rather
-   than waiting for an exit phase to finish first. */
-.view.exiting {
-  display: block;
-  z-index: 1;
-  animation: viewOut var(--dur-1) ease-in both;
-}
-@keyframes viewIn {
-  from {
-    opacity: 0;
-    transform: scale(1.035) translateY(8px);
-    filter: brightness(1.25);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-    filter: brightness(1);
-  }
-}
-@keyframes viewOut {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.975) translateY(-4px);
-  }
-}
-
-/* ---------- docked ticker ---------- */
-.ticker {
-  flex: 0 0 var(--h-md);
-  height: var(--h-md);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: 0 var(--sp-4);
-  border-top: 1px solid var(--border-strong);
-  background: linear-gradient(180deg, #101013, #0b0b0d);
-  box-shadow:
-    0 -6px 16px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  font-family: var(--mono);
-  font-size: var(--fs-small);
-  overflow: hidden;
-  white-space: nowrap;
-}
-.ticker .beacon {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--live);
-  flex: 0 0 6px;
-  animation: beaconBreath 2.2s var(--ease-in-out) infinite;
-}
-.console:not([data-state="running"]) .ticker .beacon {
-  background: var(--faint);
-  animation: none;
-  box-shadow: none;
-}
-.ticker .tline {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--muted);
-}
-.ticker .tline .ts {
-  color: var(--faint);
-  margin-right: var(--sp-2);
-}
-.ticker .tline .lv-info {
-  color: var(--silver);
-  margin-right: var(--sp-2);
-  font-weight: 700;
-}
-.ticker .tline .lv-warn {
-  color: var(--warn);
-  margin-right: var(--sp-2);
-  font-weight: 700;
-}
-.ticker .tline .lv-error {
-  color: var(--danger);
-  margin-right: var(--sp-2);
-  font-weight: 700;
-}
-.ticker .tline.swap {
-  animation: tswap var(--dur-4) var(--ease);
-}
-@keyframes tswap {
-  0% {
-    opacity: 0;
-    transform: translateY(9px);
-  }
-  100% {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* ---------- console responsive: icon-only transport/nav when very narrow ---------- */
-@container console (max-width: 360px) {
-  .transport .tlabel {
-    display: none;
-  }
-  .nav button .nlabel {
-    display: none;
-  }
-  .nav button .icon {
-    font-size: 17px;
-  }
-}
-
-/* ---------- toasts — typed control failures, docked above the ticker ---------- */
+/* ---------- toasts — typed control failures, docked above the footer ---------- */
 .toasts {
   position: absolute;
   left: var(--sp-4);
@@ -631,8 +339,20 @@
 
 /* ---------- stage-hosted console pages (Prune) ---------- */
 /* A console page living on the stage: kept mounted (state survives tab
-   round-trips), shown class-driven like ViewStage's sections, replaying the
-   shared viewIn entrance (keyframes in shell.css) each time it is selected. */
+   round-trips), shown class-driven, replaying the viewIn entrance each time
+   it is selected. */
+@keyframes viewIn {
+  from {
+    opacity: 0;
+    transform: scale(1.035) translateY(8px);
+    filter: brightness(1.25);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: brightness(1);
+  }
+}
 .stage-view {
   position: absolute;
   inset: 0;

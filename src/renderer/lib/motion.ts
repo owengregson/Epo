@@ -32,13 +32,6 @@ export const EASE_OUT = 'cubic-bezier(0.16, 1, 0.3, 1)';
 /** Loops and slides (matches `--ease-in-out`). */
 export const EASE_IN_OUT = 'cubic-bezier(0.65, 0, 0.35, 1)';
 
-/**
- * How long the `.entering` / `.exiting` classes are held after a view swap.
- * Mirrors the `viewIn` animation in shell.css (0.34s) plus a settle margin;
- * the CARD entrance is no longer part of this contract — it is played by
- * lib/stagger.ts through the Web Animations API.
- */
-export const VIEW_SWAP_MS = 400;
 
 /** Growth-chart reveal timings (ms) — match the mockup's draw-in. */
 export const GROWTH_REVEAL_DELAY_MS = 300;

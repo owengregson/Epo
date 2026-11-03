@@ -8,6 +8,7 @@ import { PRUNE_SCAN_FRESH_MS, type PruneStatus } from '@/engine/prune-engine';
 import type { RecoveryIncident, RecoverySnapshot } from '@/engine/recovery';
 import { peekResumeTarget, type ResumeFrontier } from '@/engine/resume-target';
 import { SourceFrontier } from '@/engine/source-frontier';
+import { LIVE } from '@/kernel/live-policy';
 import type { PlanDayClock } from '@/kernel/plan';
 import { MS_PER_MINUTE } from '@/kernel/units';
 import { type FeedContext, keepShapedAt, shapeFeed } from '@/main/modules/feed-projection';
@@ -63,7 +64,9 @@ export const SHUTDOWN_INCIDENT = 'intentional-shutdown';
 
 /** What the live sources read from a built graph. */
 export interface LiveGraph {
-  readonly store: Pick<KnowledgeStore, 'feed' | 'followersBaselineAt' | 'getRecoveryState' | 'getRecoveryLastIncident'>;
+  readonly store: Pick<
+    KnowledgeStore, 'feed' | 'followersBaselineAt' | 'getRecoveryState' | 'getRecoveryLastIncident' | 'protectionFacts'
+  >;
   readonly ownPk: string;
   readonly pruneEngine: { status(): Pick<PruneStatus, 'scanReady' | 'scanAt'> };
 }
@@ -112,6 +115,12 @@ function lastShutdown(incidents: RuntimeIncidents['incidents']): number | null {
   return at;
 }
 
+/** The newest kept reviews (protection kept an account from an unfollow); the feed's window drops older ones. */
+function keptRows(graph: LiveGraph): NonNullable<FeedContext['kept']> {
+  return graph.store.protectionFacts.keptPage(0, LIVE.FEED_LIMIT).rows
+    .map((r) => ({ pk: r.pk, username: r.username, reason: r.reason, keptAt: r.keptAt }));
+}
+
 /**
  * The feed and expiry sources over one built graph: the feed keeps its previous view while only the clock moved
  * (so the deduplicated row stays quiet), and the expiry is the earlier of the plan-day roll and the census end.
@@ -138,7 +147,7 @@ export function liveSources(
       const { incidents } = runtime();
       shown = keepShapedAt(shown, shapeFeed(graph.store.feed, {
         now: now(), ownPk: graph.ownPk, baselineAt: graph.store.followersBaselineAt(), planDay, incidents,
-        recoveryIncident: recovery(), awayFrom: lastShutdown(incidents),
+        recoveryIncident: recovery(), awayFrom: lastShutdown(incidents), kept: keptRows(graph),
       }));
       return shown;
     },

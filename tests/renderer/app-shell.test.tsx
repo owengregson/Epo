@@ -168,17 +168,18 @@ describe('App — the shell services and controls', () => {
     expect(document.querySelector('.toast')).toBeNull();
   });
 
-  it("a 'prune-running' refusal explains itself as info, any other as an error", async () => {
+  it('a refusal reads in plain words on the Now reason line, never as a raw-key toast', async () => {
     await mountApp();
     bridge.stub('startEngine', () => idleStatus({ refusal: 'prune-running' }));
     await act(async () => controls?.start());
-    const info = await screen.findByText(/Start refused/);
-    expect(info.closest('.toast')?.getAttribute('data-kind')).toBe('info');
+    const reason = (): string => document.querySelector('.sb-now__reason')?.textContent ?? '';
+    await waitFor(() => expect(reason()).toBe('A prune is using Instagram. Epo starts when it finishes.'));
 
-    bridge.stub('startEngine', () => idleStatus({ refusal: 'seed-missing' }));
+    bridge.stub('startEngine', () => idleStatus({ refusal: 'some-new-key' }));
     await act(async () => controls?.start());
-    const error = await screen.findByText('Start refused: seed-missing');
-    expect(error.closest('.toast')?.getAttribute('data-kind')).toBe('error');
+    await waitFor(() => expect(reason()).toBe('That didn’t work. Diagnostics has details.'));
+    expect(document.querySelector('.toast')).toBeNull();
+    expect(document.body.textContent).not.toContain('some-new-key');
   });
 
   it('Sign in shows Live first, then signs in', async () => {

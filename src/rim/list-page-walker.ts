@@ -105,7 +105,7 @@ export class ListPageWalker {
     const reportActivity = (count: number): void =>
       this.reporter.report({
         kind: 'api',
-        op: { op: 'read-list', list: which, of: null, done: count, total: args.maxNewPks ?? null },
+        op: { op: 'read-list', list: which, of: args.ofUsername ?? null, done: count, total: args.maxNewPks ?? null },
       });
     reportActivity(0);
 

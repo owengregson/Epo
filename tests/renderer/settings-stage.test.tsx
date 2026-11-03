@@ -217,7 +217,7 @@ describe('the Easy sections', () => {
 
   it('the updater says what it knows: never "up to date" without a finished check', async () => {
     settingsViewSignal.value = view();
-    const unchecked = { state: 'unchecked', mode: 'notify', current: '3.2.0', version: null, percent: null, error: null } as const;
+    const unchecked = { state: 'unchecked', mode: 'notify', current: '3.2.0', version: null, percent: null, error: null, checkedAt: null } as const;
     render(shell(<SettingsStage updateStatus={unchecked} />));
     expect(await screen.findByText('Not checked yet.')).toBeTruthy();
     expect(screen.queryByText(/up to date/i)).toBeNull();

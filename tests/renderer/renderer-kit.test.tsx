@@ -58,7 +58,8 @@ test('the fake bridge implements every contract method', () => {
   expect(fake.data.settingsFacts).toMatchObject({ built: false });
 });
 
-test('the gallery scenario arrays the later streams fill start empty (the compatibility three have landed)', () => {
-  expect(LIVE_SCENARIOS).toEqual([]);
+test('the gallery scenario arrays the later streams fill (the live column and the compatibility three have landed)', () => {
+  expect(LIVE_SCENARIOS.length).toBeGreaterThan(0);
+  expect(LIVE_SCENARIOS.every((s) => s.key.startsWith('live-'))).toBe(true);
   expect(SURFACE_SCENARIOS.map((s) => s.key)).toEqual(['surface-adapted', 'surface-unfollows-paused', 'surface-exploration-paused']);
 });

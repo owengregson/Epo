@@ -126,6 +126,7 @@ const IDLE_UPDATE: UpdateStatus = {
   version: null,
   percent: null,
   error: null,
+  checkedAt: null,
 };
 
 /** The mutable projections the fake resolves its reads from. */

@@ -3,12 +3,43 @@ import {
   basePrune,
   baseStatus,
   GALLERY_CHAIN,
+  GALLERY_LOG,
   GALLERY_QUEUE,
   GALLERY_SETTINGS,
 } from '@/renderer/gallery/fixtures';
 import { GALLERY_BASIS } from '@/renderer/gallery/fixtures-settings';
 import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
+import {
+  type AreaReport,
+  type MeterReading,
+  SURFACE_AREAS,
+  SURFACE_METERS,
+  type SurfaceMeter,
+  type SurfaceReport,
+} from '@/shared/surface-health';
 import type { EpoBridge } from '@/types';
+
+/** A day of healthy reads in every area, so the compatibility panel renders its full layout. */
+function gallerySurfaceReport(): SurfaceReport {
+  const area = (a: AreaReport['area'], i: number): AreaReport => ({
+    area: a, state: 'ok', paused: [], lastReadAt: Date.now() - (i + 1) * 60_000,
+    today: { canonical: 40 + i * 7, normalized: i, recovered: 0, failed: 0, walls: 0, rowIssues: 0, fieldIssues: 0 },
+  });
+  const meter = (m: SurfaceMeter, i: number): [SurfaceMeter, MeterReading] => [m, { n: 30 + i, p50: 420 + 90 * i, p95: 1_400 + 200 * i }];
+  return {
+    surfaceId: '2026-08-12', generatedAt: Date.now(), areas: SURFACE_AREAS.map(area), changes: [],
+    meter: Object.fromEntries(SURFACE_METERS.map(meter)) as Record<SurfaceMeter, MeterReading>,
+    copyText: 'Instagram compatibility report (gallery)',
+  };
+}
+
+/** Per-scenario answers (a live scenario's Boost preview), consulted before the fixtures. */
+const ANSWERS = new Map<string, unknown>();
+
+/** Make the gallery bridge answer `method` with `value` until the next call for the same method. */
+export function answerInGallery(method: string, value: unknown): void {
+  ANSWERS.set(method, value);
+}
 
 /** One page of fixture rows, cut like main cuts a long lane. */
 const LANE = { rows: GALLERY_QUEUE, truncated: true };
@@ -54,7 +85,7 @@ const RESPONSES: Record<string, unknown> = {
     { pk: '2001', username: 'theo.park', protectedBy: 'account', bioUnread: false },
   ],
   checkSeed: { kind: 'ok', pk: '1001', isPrivate: false, followersVisible: true, followers: 12_400, observedAt: 0, fromStore: true },
-  checkForUpdate: { state: 'idle', mode: 'notify', current: '0.0.0', version: null, percent: null, error: null },
+  checkForUpdate: { state: 'idle', mode: 'notify', current: '0.0.0', version: null, percent: null, error: null, checkedAt: null },
   // The Settings stage: no main process saves here, so every change answers honestly that nothing was saved.
   settingsView: GALLERY_SETTINGS_VIEW,
   settingsFacts: GALLERY_SETTINGS_FACTS,
@@ -63,6 +94,10 @@ const RESPONSES: Record<string, unknown> = {
   previewSettings: { kind: 'unavailable' },
   suggestAccounts: { kind: 'ok', rows: [] },
   updateStatus: { state: 'unchecked', mode: 'notify', current: '3.1.1', version: null, percent: null, error: null, checkedAt: null },
+  // The live column's pulls: the Boost preview (a live scenario answers its own), the compatibility report, the log.
+  previewBoost: null,
+  surfaceReport: gallerySurfaceReport(),
+  logTail: GALLERY_LOG,
 };
 
 /** Install the fixture bridge on `window.epo`. Idempotent. */
@@ -74,7 +109,7 @@ export function installGalleryBridge(): void {
         if (prop === 'on' || prop === 'off' || prop === 'onPruneStatus' || prop === 'offPruneStatus') {
           return () => {};
         }
-        return () => Promise.resolve(RESPONSES[prop]);
+        return () => Promise.resolve(ANSWERS.has(prop) ? ANSWERS.get(prop) : RESPONSES[prop]);
       },
     },
   );

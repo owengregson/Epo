@@ -1,3 +1,112 @@
 /*
- * diagnostics.css — reserved in the final cascade order; the owning stream fills it.
+ * diagnostics.css — Settings › Advanced › Diagnostics: the raw log with its controls, what the Instagram
+ * page is used for right now, and the recent incidents.
  */
+
+.diag {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.diag-lead,
+.diag-muted {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.diag-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.diag-levels {
+  display: flex;
+  gap: var(--sp-1);
+}
+
+.diag-search {
+  flex: 1 1 180px;
+  min-width: 0;
+  height: var(--h-md);
+  padding: 0 var(--sp-3);
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--text);
+  background: var(--track-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+.diag-search:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.diag-now {
+  font-size: var(--fs-small);
+  color: var(--text);
+}
+
+.diag-log {
+  max-height: 360px;
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+  background: var(--track-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overscroll-behavior: contain;
+}
+
+.diag-log li {
+  display: grid;
+  grid-template-columns: max-content 44px 1fr;
+  gap: var(--sp-2);
+  color: var(--silver);
+}
+
+.diag-log li[data-level="warn"] .diag-level {
+  color: var(--st-hold);
+}
+
+.diag-log li[data-level="error"] .diag-level,
+.diag-log li[data-level="error"] .diag-msg {
+  color: var(--danger);
+}
+
+.diag-log time,
+.diag-level {
+  color: var(--faint);
+}
+
+.diag-msg {
+  overflow-wrap: anywhere;
+}
+
+.diag-incidents h4 {
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--chrome);
+}
+
+.diag-incidents ul {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.diag-incidents li {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: var(--sp-3);
+  font-size: var(--fs-small);
+  color: var(--text);
+}
+
+.diag-incidents code {
+  grid-column: 2;
+  font-size: var(--fs-caption);
+}

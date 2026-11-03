@@ -517,7 +517,7 @@ test('reports live API activity for the veil, with counts, then clears', async (
 
   // The direct walk is API traffic, never page driving.
   expect(activity.filter(Boolean).every((a) => a!.kind === 'api')).toBe(true);
-  expect(activity[0]).toEqual({ kind: 'api', label: 'Reading follower list', count: 0 });
+  expect(activity[0]).toEqual({ kind: 'api', label: 'Reading your followers', count: 0 });
   // Counts climb as pages land (2 then 3), and the phase clears at the end.
   expect(activity.filter(Boolean).map((a) => a!.count)).toEqual([0, 2, 3]);
   expect(activity[activity.length - 1]).toBeNull();
@@ -531,7 +531,13 @@ test('a FOLLOWING walk labels its activity accordingly', async () => {
 
   await walker.walkAll({ ...baseArgs, which: 'following' });
 
-  expect(activity[0]).toMatchObject({ kind: 'api', label: 'Reading following list' });
+  expect(activity[0]).toMatchObject({ kind: 'api', label: 'Reading your following' });
+});
+
+test("a walk of someone else's list names whose list it reads", async () => {
+  const { walker, activity } = harness([okEnv(followersBody(['a'], null, false)), okEnv(followersBody([], null, false))]);
+  await walker.walkAll({ ...baseArgs, ofUsername: 'studio.lumen' });
+  expect(activity[0]).toMatchObject({ kind: 'api', label: "Reading @studio.lumen's followers" });
 });
 
 test('a demand-bounded walk reports its total, so the overlay bar is determinate', async () => {

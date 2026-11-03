@@ -64,6 +64,17 @@ Decisions taken on the boards after the review (recorded for SB, SU and SH, who 
 - People's funnel bars are true linear shares with a 3 px sliver.
 - Under reduced motion the splash shows a still, even hairline (a frozen highlight would read as stuck progress).
 
+**The motion SB wired into the live column.** *Settle*: `NumberTicker` arms one frame after mount, so a first value
+never rolls, and reports a later rise for the "+N" chip. *Deplete*: the Now ring and the Boost band each run ONE
+linear WAAPI animation per deadline (`armDeadline`), re-armed only when the deadline itself changes; the plan strip's
+now marker is one linear move to the strip's end. *Arrive* and *file-into*: the feed's new rows rise into place while
+the others glide (`flipInsert`); a single new follow or unfollow travels from the now line into its row; scrolled
+away, the list holds still. *Nudge*: two small shakes once per move into an attention. The column's only loop is the
+mark's breath while Epo is live (the Live tab's dot is the shell's second); the splash's shimmer runs only before the
+app is shown. The intro: the mark flies into the masthead over `--dur-4` while the splash fades and the zones rise a
+60 ms stagger apart; the ring and plan blocks draw to their current values; reduced motion is one `--dur-2` cross-fade.
+`live-sheets.test.ts` holds the sheets to the tokens and the loop count.
+
 ## Consequences
 
 - Every renderer number now has a rule or a test: `tokens.test.ts` (golden, L-TOKENS, the restyle laws, the bundled

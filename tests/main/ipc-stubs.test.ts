@@ -13,7 +13,9 @@ import { isStageMode, STAGE_MODES } from '@/shared/stage-mode';
 import { SURFACE_AREAS, SURFACE_METERS } from '@/shared/surface-health';
 
 // The settings rows run on the settings service now: tests/main/ipc-settings.test.ts covers them.
-const UPDATE = { state: 'unchecked', mode: 'off', current: '3.1.1', version: null, percent: null, error: null } as const;
+const UPDATE = {
+  state: 'unchecked', mode: 'off', current: '3.1.1', version: null, percent: null, error: null, checkedAt: null,
+} as const;
 
 test('the Boost, live and boot rows', async () => {
   expect(await planHandlers().startBoost(12, { alsoStart: false })).toEqual({ kind: 'refused', reason: 'internal', boost: BOOST_OFF });
