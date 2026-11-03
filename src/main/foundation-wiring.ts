@@ -24,9 +24,7 @@ import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
-import { createTabInteractor } from '@/adapter/tab-interactor';
 import type { EngineStatus } from '@/engine/engine';
 import { journaledMutation } from '@/engine/journaled-mutation';
 import type { PruneCandidate, PruneStatus } from '@/engine/prune-engine';
@@ -265,9 +263,6 @@ export class Foundation {
     this.session = new GraphSession({
       igSession: deps.igSession,
       build: (ownPk, ownUsername) => this.build(ownPk, ownUsername),
-      resolveUsername: () => this.resolveOwnUsername(),
-      withBuildHold: (run) => this.activity.with('build', run),
-      tourHeld: () => this.lease.tourHeld(),
       drainManualOps: () => this.drainManualOps(),
       onIdentityChanged: () => {
         this.blockRuntime('account-changed');
@@ -339,9 +334,9 @@ export class Foundation {
   }
 
   /**
-   * Build the dependency graph exactly once, after login (see
-   * `src/main/modules/session.ts`, which owns the memoized in-flight build,
-   * the degraded-username backoff and the teardown guards).
+   * Open the dependency graph store-first, once, after login (see
+   * `src/main/modules/session.ts`, which owns the memoized open, the
+   * confirm-account rebuild and the teardown guards). Never touches the tab.
    */
   async ensureBuilt(): Promise<boolean> {
     if (this.runtime.snapshot().phase !== 'ready') return this.graph !== null;
@@ -1377,25 +1372,6 @@ export class Foundation {
 
   /** The cached settings, loaded once from disk (see {@link SettingsService.resolveSettings}). */
   private resolveSettings(): Settings { return this.settings.resolveSettings(); }
-
-  // -------------------------------------------------------------------------
-  // Identity resolution
-  // -------------------------------------------------------------------------
-
-  /**
-   * Resolve our username before graph construction. Page identity leads, then a
-   * guarded native profile click and JSON fallback handle hydration races.
-   * Failures remain uncached so a later login can resolve the account.
-   */
-  private async resolveOwnUsername(): Promise<string | undefined> {
-    // Resolution uses guarded native input even before the graph is built.
-    return resolveUsernameFromTab(this.tab, {
-      attempts: SCHEDULER.USERNAME_RESOLVE_ATTEMPTS,
-      retryMs: SCHEDULER.USERNAME_RESOLVE_RETRY_MS,
-      signal: this.disposeAbort.signal,
-      interactor: createTabInteractor(this.tab, { abortSignal: () => this.disposeAbort.signal }),
-    });
-  }
 
   // -------------------------------------------------------------------------
   // Status projection helpers

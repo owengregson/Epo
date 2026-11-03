@@ -43,11 +43,12 @@ describe('Foundation tour hold', () => {
     await f.dispose();
   });
 
-  test('ensureBuilt refuses to build while held', async () => {
-    const { tab } = countingTab();
-    const { foundation: f } = newFoundation({ tab, igSession: makeIgSession(null) });
+  test('the store opens while held (store-first), and the tab is never touched', async () => {
+    const { tab, touched } = countingTab();
+    const { foundation: f } = newFoundation({ tab });
     f.setTourHold(true);
-    await expect(f.ensureBuilt()).resolves.toBe(false);
+    await expect(f.ensureBuilt()).resolves.toBe(true);
+    expect(touched()).toBe(0);
     await f.dispose();
   });
 

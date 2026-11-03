@@ -54,13 +54,14 @@ import type { BuiltGraph, GraphBuildDeps } from './graph-types';
 
 export function buildGraph(
   ownPk: string,
-  ownUsername: string | undefined,
+  given: string | undefined,
   d: GraphBuildDeps,
 ): BuiltGraph {
   const store = new KnowledgeStore(path.join(d.userDataDir, d.dbFile), { policy: STORE_POLICY, rng: cryptoUniform });
-  // The store's reconciliation sink + already-following candidate exclusion
-  // both anchor on our own pk.
+  // The reconciliation sink + already-following exclusion anchor on our own pk; store-first identity: the own
+  // username is the store's own account row unless confirm-account gave one (spec §12.8).
   store.setOwnPk(ownPk);
+  const ownUsername = given ?? store.getAccount(ownPk)?.username;
   const clock = new SystemClock();
   const frontier = new SourceFrontier({ store, clock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
   const reentry = wireReentry(store, clock);
@@ -69,8 +70,7 @@ export function buildGraph(
   // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
   // from a single registry.
   const delays = new DelayManager({ clock });
-  const settings = d.settings;
-  const driverSignal = d.driverSignal;
+  const { settings, driverSignal } = d;
 
   const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
 
