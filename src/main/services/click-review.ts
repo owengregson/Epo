@@ -7,9 +7,12 @@ import { ActionAbortedError, ActionDeferredError } from '@/adapter/errors';
 import { bioMatchesFilter } from '@/engine/prune-bio-filter';
 import { scoreCandidate } from '@/engine/scorer';
 import type { Clock } from '@/governors/clock';
+import type { Admission } from '@/governors/plan-types';
 import type { ReadBudget } from '@/governors/read-budget';
+import type { MutationKind, Writer } from '@/kernel/plan';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import { type Settings, toScorerConfig } from '@/settings/settings';
+import { NEVER_PAUSED, type SurfaceGate } from '@/shared/surface-gate';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 
 export interface ClickReviewDeps {
@@ -23,7 +26,16 @@ export interface ClickReviewDeps {
   onProgress?(phase: string): void;
   /** The identity and run-token check every write repeats. */
   active(): Promise<boolean>;
+  /** The plan's admission, asked BEFORE the visit (a refusal spends no read); the default admits. */
+  preflight?(kind: MutationKind, writer: Writer, now: number, subject?: { pk: string; intentId?: string }): Admission;
+  /** Which loop asks for the action (default: the growth loop). */
+  writer?(): Writer;
+  /** Pauses unfollows while the relationship surface is unconfirmed (default: never paused). */
+  surfaceGate?: SurfaceGate;
 }
+
+/** Phase F: the plan admits everything here; today's checks keep running at `beforeMutation`. */
+const ADMITS = (): Admission => ({ ok: true });
 
 /** The click-review half of the mutation policy (see `mutation-policy.ts`). */
 export function createClickReview(d: ClickReviewDeps) {
@@ -32,6 +44,13 @@ export function createClickReview(d: ClickReviewDeps) {
     prepareProfile: async (username: string, expectedPk: string, action: 'follow' | 'unfollow'): Promise<void> => {
       const token = d.signal();
       if (!await active()) throw new ActionAbortedError('profile-admission');
+      const admission = (d.preflight ?? ADMITS)(action, d.writer?.() ?? 'growth', clock.now(), { pk: expectedPk });
+      if (!admission.ok) {
+        throw new ActionDeferredError(`plan refused: ${admission.reason}`, { reason: admission.reason, until: admission.until });
+      }
+      if (action === 'unfollow' && (d.surfaceGate ?? NEVER_PAUSED).paused('unfollows')) {
+        throw new ActionDeferredError('surface paused: unfollows', { reason: 'surface-paused', until: null });
+      }
       const permit = readBudget.consume('profile', 'reconciliation');
       if (!permit.allowed) throw new ActionDeferredError('profile read budget exhausted');
       const started = clock.now();

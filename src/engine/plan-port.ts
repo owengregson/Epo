@@ -3,6 +3,7 @@
  * loop consults (re-exported by `ports.ts`, so consumers may import from either).
  */
 
+import type { PlanView } from '../governors/plan-types';
 import type { TempoSource } from '../kernel/tempo';
 
 /** The tempo the loop's wait bases resolve from; the plan's source is swapped in at wiring (default: reference). */
@@ -48,4 +49,27 @@ export interface EnginePacing {
   sessionsToday(now: number): number;
   /** Durable snapshot for persistence; optional so plain test fakes can omit it. */
   serialize?(): unknown;
+}
+
+/** The plan the loop consults once the plan core lands (unconsumed in Phase F; replaces EnginePacing). */
+export interface EnginePlan {
+  view(now: number): PlanView;
+  ensureIfProvisional(now: number): PlanView;
+  wake(): void;
+}
+
+/** The `pacing` fact group's plan-backed type (the group name is kept; the rules are untouched). */
+export interface PlanFacts {
+  readonly sessionOpen: boolean;
+  /** `until` is always finite: a null next session parks to the next plan-day boundary. */
+  readonly park: { readonly key: 'engine:session-park' | 'engine:daily-ceiling-park' | 'engine:velocity-park'
+    | 'engine:read-budget-park'; readonly until: number } | null;
+  readonly admits: { readonly follow: boolean; readonly unfollow: boolean; readonly accept: boolean; readonly explore: boolean };
+  readonly mix: 'normal' | 'boost';
+  readonly probation: boolean;
+  readonly reads: { readonly exploreLeft: number; readonly reconcileLeft: number };
+  /** censusDue holds only when this session hosts the census. */
+  readonly checkDue: boolean;
+  readonly checkLight: boolean;
+  readonly censusDue: boolean;
 }
