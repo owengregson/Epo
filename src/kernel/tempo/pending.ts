@@ -1,7 +1,7 @@
 import type { TempoKey } from './keys';
 
 /**
- * Keys whose consumers land in a later stream: `gap.action` with the cadence
- * switch (PR S2). Every other key has a call site; Phase I empties this list.
+ * Keys whose consumers land in a later stream. Every key has a call site now (`gap.action` is
+ * drawn at dispatch by the mutation cadence); Phase I keeps this list empty.
  */
-export const PENDING_CONSUMERS: readonly TempoKey[] = ['gap.action'];
+export const PENDING_CONSUMERS: readonly TempoKey[] = [];

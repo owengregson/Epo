@@ -20,13 +20,14 @@ import { MS_PER_HOUR } from '@/kernel/units';
 import { PlanControl } from '@/main/modules/plan-control';
 import { toPlanIntent } from '@/settings/plan-intent';
 import { toReadAllowance } from '@/settings/read-allowance';
-import { NEVER_PAUSED } from '@/shared/surface-gate';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DelayManager } from '@/timing/delay-manager';
 import { launchStream } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import type { GraphBuildDeps, GraphPlan, StatusContributor, WiringParts } from './graph-types';
+import { createMutationCadence, type MutationCadence } from './mutation-cadence';
 import { lastMutationBefore, planDemand } from './plan-demand';
+import { surfaceGateOf } from './surface-wiring';
 
 /** The durable read budget; its limits re-derive from the live settings on every read. */
 export function wireReadBudget(
@@ -43,6 +44,12 @@ export interface PlanWiring extends GraphPlan {
   readonly pacing: EnginePlanPacing | undefined;
   /** The rate governor counting against the plan's day and volume. */
   rateGovernor(cfg: RateGovernorConfig): RateGovernor;
+  /** The plan's cadence: the admission before every visit and the deadline armed at dispatch. */
+  readonly cadence: MutationCadence;
+  /** The plan's next session start (a park slot), or null when none remains before the boundary. */
+  nextSessionAt(now: number): number | null;
+  /** The open session's start and planned unfollows, or null between sessions (spec §9.7). */
+  reviewBound(now: number): { readonly since: number; readonly planned: number } | null;
 }
 
 /** The loop's waits a re-plan can move: the plan's own parks. */
@@ -65,12 +72,13 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     lastMutationBefore: (t) => lastMutationBefore(store, t),
     // Outside following actions from the own-header log (spec §9.10): charged to the ceiling, increases only.
     outsideSince: (since) => store.growth.outsideSince(since),
-    // The engine still arms the shared delay itself; the plan's deadline arrives with the cadence switch.
-    deadline: () => null,
+    // The shared deadline the cadence arms at dispatch: an automatic write waits it out (spec §5.13 S2).
+    deadline: () => store.getActionDelayDeadline(),
     journal: { blocks: (pk, exceptIntentId) => journalBlocks(pk, store.effectIntents.unsettledFor(pk), exceptIntentId) },
     runIntent: () => host.runIntent(),
     unconfirmed: () => null,
-    surfaceGate: NEVER_PAUSED,
+    // The real gate of this store's graph, read at each ask (the plan mix and the admission).
+    surfaceGate: surfaceGateOf(store),
     onChanged: () => control?.changed(),
   }, { log: logger });
   const wake = (): void => {
@@ -106,6 +114,13 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   return {
     service,
     dayClock,
+    cadence: createMutationCadence({ plan: service, store }),
+    nextSessionAt: (now) => service.view(now).nextSessionAt,
+    reviewBound: (now) => {
+      const open = service.view(now).open;
+      const s = open === null ? undefined : service.view(now).plan.sessions[open.idx];
+      return s === undefined ? null : { since: s.startAt, planned: s.mix.unfollow };
+    },
     pacing: d.settings.pacingModel === 'organic' ? enginePlan : undefined,
     rateGovernor: (cfg) => new RateGovernor(store, clock, cfg, launchStream('governors/rate-governor'), ratePlan),
     resumed: () => triggers.resumed(),

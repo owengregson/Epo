@@ -76,9 +76,9 @@ export const rec = (over: Partial<FollowRecord> & { accountPk: string }): Follow
 
 const openStores: KnowledgeStore[] = [];
 
-/** Open a `:memory:` store the kit will close after the current test file. */
-export function kitStore(): KnowledgeStore {
-  const store = openTestStore(':memory:');
+/** Open a `:memory:` store the kit will close after the current test file (`rng` seeds its install entropy). */
+export function kitStore(rng?: () => number): KnowledgeStore {
+  const store = openTestStore(':memory:', rng === undefined ? {} : { rng });
   openStores.push(store);
   return store;
 }

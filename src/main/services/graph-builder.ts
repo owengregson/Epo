@@ -43,7 +43,7 @@ import { planWiringParts, wirePlan, wireReadBudget } from './plan-wiring';
 import {
   noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry, wireSweepCadence,
 } from './reopen-wiring';
-import { surfaceWiringParts, wireSurface } from './surface-wiring';
+import { surfaceGateOf, surfaceWiringParts, wireSurface } from './surface-wiring';
 import { journalSettler, pruneUnfollowDeps, unfollowWiringParts, wireChurn, wireMutationPolicy } from './unfollow-wiring';
 
 export type { BuiltGraph, GraphBuildDeps } from './graph-types';
@@ -83,8 +83,8 @@ export function buildGraph(
     observer: d.cursorObserver,
   });
 
-  const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, rate, reentry, readBudget, dayClock: plan.dayClock,
-    profiles: () => profiles, followback: () => followback });
+  const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, cadence: plan.cadence, readBudget, dayClock: plan.dayClock,
+    nextSessionAt: plan.nextSessionAt, surfaceGate: surfaceGateOf(store), cleanupRunning: () => pruneEngineRef?.status().state === 'running', profiles: () => profiles, followback: () => followback });
 
   // The adapter owns the single Actor + Sentinel instances the whole rim shares;
   // the Reader is pure and held directly.
@@ -193,7 +193,7 @@ export function buildGraph(
     minPoolSize: settings.minPoolSize,
   });
 
-  const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock: plan.dayClock });
+  const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock: plan.dayClock, nextSessionAt: plan.nextSessionAt, reviewBound: plan.reviewBound });
   prepareReentry(reentry, clock);
   const scanner = new Scanner({
     store,
@@ -242,7 +242,7 @@ export function buildGraph(
     reentry,
     validateIdentity: d.validateIdentity,
     onProgress: d.onProgress,
-    settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget, dayClock: plan.dayClock }),
+    settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget, dayClock: plan.dayClock, nextSessionAt: plan.nextSessionAt }),
     store,
     clock,
     rate,

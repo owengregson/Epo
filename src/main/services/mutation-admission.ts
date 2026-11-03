@@ -1,62 +1,48 @@
 /**
- * The mutation admission: the account budget, the journal and probation gates
- * and the shared delay every write passes, plus the request-acceptance pair.
+ * The mutation admission (spec §5.13 S2): the dispatch closure of every write arms the plan's
+ * deadline through the cadence (re-checked, drawn and persisted once per action), and request
+ * acceptance runs in passes, each inside the plan's accept budget, with one deadline per pass.
  */
 
-import { ActionAbortedError, ActionDeferredError } from '@/adapter/errors';
-import type { ReentrySupervisor } from '@/engine/reentry';
+import { ActionAbortedError } from '@/adapter/errors';
 import type { Clock } from '@/governors/clock';
-import type { RateGovernor } from '@/governors/rate-governor';
+import type { MutationKind, Writer } from '@/kernel/plan';
 import type { Settings } from '@/settings/settings';
-import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { MutationCadence, MutationSubject } from './mutation-cadence';
 
-/** Whether a reconciliation must settle before the next mutation may run. */
-export interface JournalGate {
-  requiresReconciliation(now: number): boolean;
+/** The write the click review just admitted: what the dispatch closure arms. */
+export interface ReviewedAction {
+  readonly kind: MutationKind;
+  readonly writer: Writer;
+  readonly subject?: MutationSubject;
 }
 
-/** The default gate: today's global re-entry check. */
-export function reentryJournalGate(reentry: Pick<ReentrySupervisor, 'requiresReconciliation'>): JournalGate {
-  return { requiresReconciliation: (now) => reentry.requiresReconciliation(now) };
-}
+/** A dispatch with no review before it (no subject to verify) is held to the manual headroom. */
+const UNREVIEWED: ReviewedAction = { kind: 'follow', writer: 'manual' };
 
 export interface MutationAdmissionDeps {
-  store: KnowledgeStore;
   clock: Clock;
-  rate: RateGovernor;
-  reentry: ReentrySupervisor;
+  cadence: MutationCadence;
   settings(): Settings;
   onProgress?(phase: string): void;
   /** The identity and run-token check every write repeats. */
   active(): Promise<boolean>;
-  /** The reconciliation gate; defaults to {@link reentryJournalGate}. */
-  journal?: JournalGate;
+  /** The action the review admitted last, taken by its dispatch. */
+  takeReviewed(): ReviewedAction | null;
 }
 
 /** The admission half of the mutation policy (see `mutation-policy.ts`). */
 export function createMutationAdmission(d: MutationAdmissionDeps) {
-  const { store, clock, rate, reentry, active } = d;
-  const journal = d.journal ?? reentryJournalGate(reentry);
-  const budgetOpen = (): boolean => !rate.atHardCeiling() && !rate.atOperatingRate()
-    && rate.actionsInLastHour() < d.settings().hourlyVelocityCap;
+  const { clock, cadence, active } = d;
   return {
     beforeMutation: async (): Promise<void> => {
       if (!await active()) throw new ActionAbortedError('mutation-admission');
-      if (!budgetOpen()) throw new ActionDeferredError('account mutation budget exhausted');
-      const now = clock.now();
-      if (journal.requiresReconciliation(now)) throw new ActionDeferredError('relationship reconciliation required');
-      if (reentry.mutationWaitUntil(now) !== null) throw new ActionDeferredError('return probation delay still owed');
-      if ((store.getActionDelayDeadline() ?? 0) > now) throw new ActionDeferredError('shared mutation delay still owed');
-      store.setActionDelayDeadline(now + rate.nextDelayMs());
+      const r = d.takeReviewed() ?? UNREVIEWED;
+      cadence.armAtDispatch(r.kind, r.writer, clock.now(), r.subject);
     },
-    canAccept: async (): Promise<boolean> => !d.settings().dryRun && await active() && budgetOpen()
-      && (store.getActionDelayDeadline() ?? 0) <= clock.now()
-      && reentry.mutationWaitUntil(clock.now()) === null
-      && !store.pendingEffectIntents().some((i) => i.state !== 'prepared'),
+    canAccept: async (): Promise<boolean> => !d.settings().dryRun && await active() && cadence.acceptAllowed(clock.now()),
     onAccepted: (): void => {
-      const now = clock.now();
-      store.setActionDelayDeadline(now + rate.nextDelayMs());
-      reentry.noteAction(now);
+      cadence.acceptPassEnded(clock.now());
       d.onProgress?.('request-accepted');
     },
   };

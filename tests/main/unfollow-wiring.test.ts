@@ -19,6 +19,7 @@ import type { ProtectionSettings } from '@/shared/settings-model';
 import { compileProtection } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeActions } from '../kit/engine-harness';
+import { kitPlan, PLAN_TEST_RNG } from '../kit/harness-plan';
 import { readLimits } from '../kit/read-limits';
 import { memoryStore } from '../kit/store';
 
@@ -27,7 +28,7 @@ let store: KnowledgeStore;
 let rules: ProtectionSettings;
 let rev: number;
 beforeEach(() => {
-  store = memoryStore();
+  store = memoryStore({ rng: PLAN_TEST_RNG });
   store.setOwnPk('me');
   rules = { accounts: [], words: [{ text: 'cafe', addedAt: 0 }], wordMatch: 'anywhere', keepVerified: false };
   rev = 1;
@@ -97,9 +98,8 @@ describe('the wired journal (spec §9.8)', () => {
   const policyFor = (clock: FakeClock, visit: ProfileVisitor['visit']) => {
     const reentry = new ReentrySupervisor({ store, clock });
     reentry.prepare(clock.now());
-    const rate = new RateGovernor(store, clock, toRateGovernorConfig(DEFAULT_SETTINGS));
     const policy = wireMutationPolicy({ ...deps(), driverSignal: () => undefined } as GraphBuildDeps, {
-      store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock, rate, reentry,
+      store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock, cadence: kitPlan(store, clock).cadence,
       readBudget: new ReadBudget({ store, clock, limits: readLimits() }), dayClock: dayOf(clock),
       profiles: () => ({ visit }) as unknown as TabProfileVisitor,
       followback: () => ({ check: async () => ({ detected: [], outcome: 'complete' }) }) as unknown as FollowbackWatcher,

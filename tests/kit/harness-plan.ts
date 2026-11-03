@@ -5,6 +5,7 @@
  */
 
 import type { EnginePacing, SweepCadence } from '@/engine/engine';
+import type { Clock } from '@/governors/clock';
 import type { PlanService } from '@/governors/plan-service';
 import type { PlanPreviewPort, PlanView } from '@/governors/plan-types';
 import { viewPlan } from '@/governors/plan-view';
@@ -40,10 +41,11 @@ export const memorySweepCadence = (): SweepCadence => {
 export interface PlanClock {
   t: number;
   now(): number;
+  advance(ms: number): void;
 }
 
 export const planClock = (t: number): PlanClock => {
-  const c = { t, now: () => c.t };
+  const c: PlanClock = { t, now: () => c.t, advance: (ms) => { c.t += ms; } };
   return c;
 };
 
@@ -93,9 +95,38 @@ export function fakePlanHost(settings: Settings = DEFAULT_SETTINGS): FakePlanHos
 }
 
 /** The plan wiring over a real store, as the graph builds it (the edge timer on `scheduler`). */
-export function storePlanWiring(store: KnowledgeStore, clock: PlanClock, host: FakePlanHost = fakePlanHost(),
+export function storePlanWiring(store: KnowledgeStore, clock: Clock, host: FakePlanHost = fakePlanHost(),
   scheduler: ScheduleManager = new ScheduleManager(), delays: DelayManager = new DelayManager({ clock })): PlanWiring {
   return wirePlan(store, clock, 'ME', delays, { plan: host, settings: host.settingsNow, scheduler });
+}
+
+const kitPlans: PlanWiring[] = [];
+afterEach(() => {
+  while (kitPlans.length > 0) kitPlans.pop()?.dispose();
+});
+
+/** The plan wiring over `store`, disposed after the current test: a rig's real cadence and plan port. */
+export function kitPlan(store: KnowledgeStore, clock: Clock, settings: Settings = DEFAULT_SETTINGS): PlanWiring {
+  const plan = storePlanWiring(store, clock, fakePlanHost(settings));
+  kitPlans.push(plan);
+  return plan;
+}
+
+/**
+ * Move `clock` to the first kept session of the next plan-day drawn whole (its first open at its start) whose
+ * plan satisfies `fits`: a rig that must act, with the day's kinds sized from the store's demand.
+ */
+export function intoSession(plan: PlanWiring, clock: { now(): number; set(t: number): void },
+  fits: (v: PlanView) => boolean = () => true): PlanView {
+  for (let day = 0; day < 14; day += 1) {
+    clock.set(plan.service.view(clock.now()).window.endsAt);
+    const view = plan.service.ensure(clock.now());
+    const first = view.plan.sessions.find((s) => s.budget > 0);
+    if (first === undefined || !fits(view)) continue;
+    clock.set(first.startAt);
+    return plan.service.view(first.startAt);
+  }
+  throw new Error('no plan-day in two weeks fits the rig');
 }
 
 /** The plan service over a real store and the given v1 settings, the way the plan wiring builds it. */
@@ -163,14 +194,37 @@ export class FakePlan implements EnginePacing {
 export const PLAN_TEST_RNG = (): number => 0.375;
 
 /** The busy plan-day's ideal plan for a store pinned to {@link PLAN_TEST_RNG}, read from a scratch store. */
-export function idealDay(from: number, sessions = 3): PlanView {
+export function idealDay(from: number, sessions = 3, settings: Settings = DEFAULT_SETTINGS): PlanView {
   const scratch = openTestStore(':memory:', { rng: PLAN_TEST_RNG });
   // Built two days earlier, so every day scanned is drawn whole (none is the build's own day).
-  const plan = storePlanWiring(scratch, planClock(from - MS_PER_DAY - MS_PER_DAY));
+  const plan = storePlanWiring(scratch, planClock(from - MS_PER_DAY - MS_PER_DAY), fakePlanHost(settings));
   try {
     return busyDay(plan.service, from, sessions);
   } finally {
     plan.dispose();
     scratch.close();
   }
+}
+
+/** A real plan over a pinned store, its clock at the start of a busy plan-day's first kept session. */
+export interface SessionPlanRig {
+  readonly store: KnowledgeStore;
+  readonly clock: PlanClock;
+  readonly host: FakePlanHost;
+  readonly plan: PlanWiring;
+  /** The busy plan-day's ideal plan (the pinned store draws the same one). */
+  readonly day: PlanView;
+  dispose(): void;
+}
+
+export function sessionPlanRig(settings: Settings = DEFAULT_SETTINGS, from = Date.parse('2026-11-09T12:00:00')): SessionPlanRig {
+  const day = idealDay(from, 3, settings);
+  const store = openTestStore(':memory:', { rng: PLAN_TEST_RNG });
+  store.setOwnPk('me');
+  const first = day.plan.sessions.find((s) => s.budget > 0);
+  if (first === undefined) throw new Error('the busy plan-day has no kept session');
+  const clock = planClock(first.startAt);
+  const host = fakePlanHost(settings);
+  const plan = storePlanWiring(store, clock, host);
+  return { store, clock, host, plan, day, dispose: () => { plan.dispose(); store.close(); } };
 }

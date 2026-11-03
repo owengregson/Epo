@@ -6,11 +6,10 @@
 
 import { ChurnScheduler } from '@/engine/churn-scheduler';
 import type { FollowbackWatcher } from '@/engine/followback-watcher';
-import { accountJournalGate, planDaySlots } from '@/engine/journal';
+import { planDaySlots } from '@/engine/journal';
 import { createProtectionPort, type ProtectionPort } from '@/engine/protection-port';
 import { ProtectionReconciler } from '@/engine/protection-reconciler';
 import type { PruneEngineDeps } from '@/engine/prune-engine';
-import type { ReentrySupervisor } from '@/engine/reentry';
 import { scoreCandidate } from '@/engine/scorer';
 import type { SourceFrontier } from '@/engine/source-frontier';
 import { type Clock, SystemClock } from '@/governors/clock';
@@ -23,8 +22,10 @@ import type { TabProfileVisitor } from '@/rim/profile-visit';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import { type Settings, toChurnConfig, toPruneConfig, toScorerConfig } from '@/settings/settings';
 import type { StatusFields } from '@/shared/status-fields';
+import type { SurfaceGate } from '@/shared/surface-gate';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { GraphBuildDeps, WiringParts } from './graph-types';
+import type { MutationCadence } from './mutation-cadence';
 import { createMutationPolicy } from './mutation-policy';
 
 type MutationPolicy = ReturnType<typeof createMutationPolicy>;
@@ -34,40 +35,50 @@ export function wireProtection(d: Pick<GraphBuildDeps, 'protection'>, clock: Clo
   return { port: createProtectionPort({ index: () => d.protection.index(), clock, dayClock }) };
 }
 
+/** The plan's next session start, a park slot (spec §9.9); null when none remains before the boundary. */
+type NextSessionAt = (now: number) => number | null;
+const noNextSession: NextSessionAt = () => null;
+
 /** What the mutation policy is built from; the two later pieces are read through closures. */
 export interface MutationPolicyWiring {
   store: KnowledgeStore;
   ownPk: string;
   ownUsername: string | undefined;
   clock: SystemClock;
-  rate: RateGovernor;
-  reentry: ReentrySupervisor;
+  /** The plan's cadence (spec §5.13 S2): its admission before every visit, its deadline at dispatch. */
+  cadence: MutationCadence;
   readBudget: ReadBudget;
   /** The plan's plan-day boundary (the park slots land on it). */
   dayClock: PlanDayClock;
+  nextSessionAt?: NextSessionAt;
+  /** The real surface gate (spec §10.6): pauses unfollows while the relationship surface is unconfirmed. */
+  surfaceGate?: SurfaceGate;
+  /** True while a cleanup run drives the tab. */
+  cleanupRunning?(): boolean;
   profiles(): TabProfileVisitor;
   followback(): FollowbackWatcher;
 }
 
-/** The click-boundary policy every writer passes (identity, budget, current relationship). */
+/** The click-boundary policy every writer passes (identity, the plan's admission, current relationship). */
 export function wireMutationPolicy(d: GraphBuildDeps, w: MutationPolicyWiring): MutationPolicy {
-  const { store, ownPk, ownUsername, clock, rate, reentry, readBudget, dayClock } = w;
-  return createMutationPolicy({ store, ownPk, ownUsername, clock, rate, reentry, readBudget,
+  const { store, ownPk, ownUsername, clock, cadence, readBudget, dayClock, surfaceGate, cleanupRunning } = w;
+  const next = w.nextSessionAt ?? noNextSession;
+  return createMutationPolicy({ store, ownPk, ownUsername, clock, cadence, readBudget, surfaceGate, cleanupRunning,
     profiles: w.profiles, followback: w.followback, settings: d.resolveSettings,
     protection: () => d.protection.index(),
-    // The per-account journal (spec §9.8): no global block; an account's own unsettled write blocks only it.
-    journal: accountJournalGate(() => store.pendingEffectIntents()),
-    parkSlots: () => planDaySlots(dayClock, clock.now()),
+    parkSlots: () => planDaySlots(dayClock, clock.now(), next(clock.now())),
     signal: d.driverSignal, validateIdentity: d.validateIdentity, onProgress: d.onProgress });
 }
 
 /** The engine's journal step: the oldest due intent settled with one read, on the plan-day slots (spec §9.8). */
 export function journalSettler(
   d: Pick<GraphBuildDeps, 'resolveSettings' | 'driverSignal'>,
-  w: { store: KnowledgeStore; profiles: ProfileVisitor; ownPk: string; clock: Clock; readBudget: ReadBudget; dayClock: PlanDayClock },
+  w: { store: KnowledgeStore; profiles: ProfileVisitor; ownPk: string; clock: Clock; readBudget: ReadBudget; dayClock: PlanDayClock;
+    nextSessionAt?: NextSessionAt },
 ): () => ReturnType<typeof settleNextIntent> {
-  const { dayClock, ...settle } = w;
-  return () => settleNextIntent({ ...settle, slots: () => planDaySlots(dayClock, w.clock.now()),
+  const { dayClock, nextSessionAt, ...settle } = w;
+  const next = nextSessionAt ?? noNextSession;
+  return () => settleNextIntent({ ...settle, slots: () => planDaySlots(dayClock, w.clock.now(), next(w.clock.now())),
     maxRetries: () => d.resolveSettings().maxRetries, signal: d.driverSignal });
 }
 
@@ -82,11 +93,15 @@ export interface ChurnWiring {
   settings: Settings;
   /** The plan's plan-day boundary (protection re-checks, the reconciler's day roll, the park slots). */
   dayClock: PlanDayClock;
+  nextSessionAt?: NextSessionAt;
+  /** The open session's start and planned unfollows: the bound on reviews that press nothing (spec §9.7). */
+  reviewBound?(now: number): { readonly since: number; readonly planned: number } | null;
 }
 
 /** The churn scheduler with its config, the frontier's pick, the live eligibility check and protection. */
 export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
-  const { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock } = w;
+  const { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock, reviewBound } = w;
+  const next = w.nextSessionAt ?? noNextSession;
   const { port } = wireProtection(d, clock, dayClock);
   const reconciler = new ProtectionReconciler({ store, port, clock, dayClock });
   const churn = new ChurnScheduler({
@@ -103,7 +118,8 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
     cfg: toChurnConfig(settings),
     protection: port,
     reconciler,
-    parkSlots: () => planDaySlots(dayClock, clock.now()),
+    parkSlots: () => planDaySlots(dayClock, clock.now(), next(clock.now())),
+    reviewBound,
   });
   // The graph-open pass: rules that changed, or a plan-day that rolled, while Epo was closed; and the writes an
   // earlier run prepared but never dispatched, cancelled with no read (spec §9.8).
@@ -133,9 +149,10 @@ export function pruneUnfollowDeps(
     // miss them entirely (SPA profile loads don't always issue
     // the profile endpoint).
     refreshOwnStats: ownUsername
-      ? async (): Promise<void> => {
+      ? async () => {
           const refreshed = await policy.refreshOwnStats();
           if (!refreshed.ok) throw new Error(`Fresh own profile required: ${refreshed.reason}`);
+          return refreshed.header;
         }
       : undefined,
   };
