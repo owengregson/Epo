@@ -51,3 +51,11 @@ Zod was rejected here for two reasons, in order of weight:
   referenced by the rules that need them.
 - `ResolvedPattern`'s key set IS the derived-knob set, so `applyResolvedPattern`
   is one `Object.assign` and a new derived knob needs no edit there.
+
+## Amendment — 2026-11-02: the v2 document keeps the coercion rule
+
+Settings v2 (ADR 0105) keeps this ADR's rule — coercion repairs to the nearest safe value and never throws — and
+moves it from the knob table to `src/settings/doc-rules.ts`, `satisfies`-linked to the v2 document so no field goes
+uncoerced. Two refinements: garbage is dropped **and counted**, so protection garbage puts protection under review;
+and an op that has no nearest safe value (a quiet window that is empty after snapping, seven days off) is refused as
+`invalid` rather than repaired. The v1 table stays frozen under `src/settings/v1/` for the migration and older builds.
