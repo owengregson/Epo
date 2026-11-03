@@ -48,7 +48,6 @@ export interface LiveTab {
 
 const n = (v: number): string => v.toLocaleString('en-US');
 const whose = (of: string | null, list: string): string => (of === null ? `your ${list}` : `@${of}'s ${list}`);
-const progress = (done: number, total: number | null): string => (total === null ? n(done) : `${n(done)} of ${n(total)}`);
 const PURPOSE = {
   'check-back': (u: string) => `Checking whether @${u} follows you back`,
   verify: (u: string) => `Double-checking @${u} before acting`,
@@ -56,16 +55,25 @@ const PURPOSE = {
   seed: (u: string) => `Checking @${u}`,
 } as const;
 
-/** One plain sentence per op, for the sidebar's now line (the sidebar stream owns this wording). */
-export function liveOpText(op: LiveOp): string {
+/** An op's running count, for the ops that have one (a list read or a round of profile visits). */
+export function liveOpProgress(op: LiveOp): { readonly done: number; readonly total: number | null } | null {
+  switch (op.op) {
+    case 'browse-list': case 'read-list': return { done: op.done, total: op.total };
+    case 'visit-profiles': return { done: op.done, total: op.total };
+    default: return null;
+  }
+}
+
+/** The op's sentence without its running count: the veil's chip label, steady while the count moves. */
+export function liveOpLead(op: LiveOp): string {
   switch (op.op) {
     case 'follow': return `Following @${op.username}`;
     case 'unfollow': return `Unfollowing @${op.username}`;
     case 'accept-request': return `Accepting @${op.username}'s follow request`;
     case 'open-list': return `Opening ${whose(op.of, op.list)}`;
-    case 'browse-list': return `Scrolling ${whose(op.of, op.list)} · ${progress(op.done, op.total)}`;
-    case 'read-list': return `Reading ${whose(op.of, op.list)} · ${progress(op.done, op.total)}`;
-    case 'visit-profiles': return `Looking at profiles · ${progress(op.done, op.total)}`;
+    case 'browse-list': return `Scrolling ${whose(op.of, op.list)}`;
+    case 'read-list': return `Reading ${whose(op.of, op.list)}`;
+    case 'visit-profiles': return 'Looking at profiles';
     case 'visit-profile': return PURPOSE[op.purpose](op.username);
     case 'check-notifications': return 'Checking your notifications';
     case 'open-own-profile': return 'Opening your profile';
@@ -73,21 +81,23 @@ export function liveOpText(op: LiveOp): string {
   }
 }
 
-const listWord = (list: 'followers' | 'following'): string => (list === 'following' ? 'following' : 'follower');
+/**
+ * One plain sentence per op, shared by the sidebar's now line and the veil ("Following @jane", "Reading
+ * @studio.lumen's followers · 120 of 250"). The sidebar stream owns this wording.
+ */
+export function liveOpText(op: LiveOp): string {
+  const p = liveOpProgress(op);
+  if (p === null) return liveOpLead(op);
+  return `${liveOpLead(op)} · ${p.total === null ? n(p.done) : `${n(p.done)} of ${n(p.total)}`}`;
+}
 
-/** The veil's chip: the labels the reporter sites have always shown; ops without one show their sentence. */
+/**
+ * The veil's chip: the same sentence, with the running count beside it rather than inside the label, so the
+ * veil's per-phase timer (keyed on the label) keeps running while a list read advances.
+ */
 export function toVeilInfo(info: ActivityInfo): VeilInfo {
-  const { kind, op } = info;
-  switch (op.op) {
-    case 'follow': return { kind, label: `Following @${op.username}` };
-    case 'unfollow': return { kind, label: `Unfollowing @${op.username}` };
-    case 'open-list': return { kind, label: `Opening ${op.list} list · @${op.of}` };
-    case 'check-notifications': return { kind, label: 'Checking notifications' };
-    case 'visit-profiles': return { kind, label: 'Visiting profiles', count: op.done, total: op.total };
-    case 'browse-list': return { kind, label: `Scrolling ${listWord(op.list)} list`, count: op.done,
-      ...(op.total === null ? {} : { total: op.total }), ...(op.of === null ? {} : { detail: `@${op.of}` }) };
-    case 'read-list': return { kind, label: `Reading ${listWord(op.list)} list`, count: op.done,
-      ...(op.total === null ? {} : { total: op.total }) };
-    default: return { kind, label: liveOpText(op) };
-  }
+  const p = liveOpProgress(info.op);
+  const label = liveOpLead(info.op);
+  if (p === null) return { kind: info.kind, label };
+  return { kind: info.kind, label, count: p.done, ...(p.total === null ? {} : { total: p.total }) };
 }

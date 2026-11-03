@@ -8,6 +8,8 @@ export interface WalkArgs {
   readPurpose?: ReadPurpose;
   /** Whose list to page (the prune scan passes our OWN pk). */
   pk: string;
+  /** Whose list, for the live readout ("Reading @x's followers"); absent or null reads as your own. */
+  ofUsername?: string | null;
   which: 'followers' | 'following';
   /**
    * Called for every parsed user, with the page's resume cursor.

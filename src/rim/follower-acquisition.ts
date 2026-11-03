@@ -197,7 +197,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
       let globallyNew = 0;
       const walk = await this.walker.walkAll({
         pk,
-        which: 'followers',
+        which: 'followers', ofUsername: targetUsername,
         readPurpose: 'exploration',
         startCursor,
         maxNewPks,
