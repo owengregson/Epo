@@ -7,6 +7,7 @@ import type { OrdinalPattern } from '@/kernel/derive';
 import type { PlanMath } from '@/settings/basis';
 import { DEFAULT_DOC, type OverrideEntry, RECOMMENDED_INTENT, type SettingsDocV2 } from '@/settings/doc';
 import { type EffectiveSettings, effectiveFrom } from '@/settings/effective';
+import type { SettingsFs } from '@/settings/persist';
 import { type ResolvedParams, resolveParams } from '@/settings/resolve';
 import type { Intent } from '@/shared/settings-intent';
 import type { ParamValue } from '@/shared/settings-model';
@@ -49,4 +50,42 @@ export function resolveDoc(doc: SettingsDocV2, plan = false, math: PlanMath = FA
 
 export function effectiveOf(doc: SettingsDocV2, plan = false): EffectiveSettings {
   return effectiveFrom(doc, resolveDoc(doc, plan));
+}
+
+/** An in-memory settings fs recording every call; `failOn` makes one operation (on one file) throw. */
+export function memoryFs(files: Record<string, string> = {}, mtime = 1) {
+  const data = new Map(Object.entries(files));
+  const calls: string[] = [];
+  let fail: { op: string; file?: string } | null = null;
+  const base = (p: string): string => p.split('/').pop() ?? p;
+  const guard = (op: string, p: string): void => {
+    calls.push(`${op} ${base(p)}`);
+    if (fail !== null && fail.op === op && (fail.file === undefined || fail.file === base(p))) throw new Error(`${op} failed`);
+  };
+  const fs: SettingsFs = {
+    exists: (p) => data.has(base(p)),
+    readFile: (p) => {
+      guard('read', p);
+      const v = data.get(base(p));
+      if (v === undefined) throw new Error('ENOENT');
+      return v;
+    },
+    writeFileSynced: (p, d) => {
+      guard('write', p);
+      data.set(base(p), d);
+    },
+    copyFile: (a, b) => {
+      guard('copy', a);
+      data.set(base(b), data.get(base(a)) ?? '');
+    },
+    rename: (a, b) => {
+      guard('rename', a);
+      data.set(base(b), data.get(base(a)) ?? '');
+      data.delete(base(a));
+    },
+    fsyncDir: (d) => guard('fsync-dir', d),
+    mtimeMs: () => mtime,
+    list: () => [...data.keys()],
+  };
+  return { fs, data, calls, failOn: (op: string, file?: string) => { fail = { op, file }; } };
 }
