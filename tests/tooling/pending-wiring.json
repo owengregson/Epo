@@ -16,6 +16,11 @@
       "reason": "the settings service applies every write through these ops (persist-first, then commit and push)"
     },
     {
+      "module": "src/settings/view.ts",
+      "stream": "SC",
+      "reason": "the settings service builds the view it serves and pushes from it, cached per revision"
+    },
+    {
       "module": "src/settings/persist.ts",
       "stream": "SC",
       "reason": "the settings service reads the files at construction and persists every write first through it"
