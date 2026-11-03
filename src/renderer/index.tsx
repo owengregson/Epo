@@ -2,9 +2,13 @@ import { render } from 'preact';
 import './styles/index.css';
 import { App } from '@/renderer/app/App';
 import { BootGate } from '@/renderer/boot/BootGate';
+import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
+import { diagnosticsPanelSlot } from '@/renderer/settings/diagnostics-slot';
 
 const root = document.getElementById('app');
 if (root) {
+  // Settings › Advanced › Diagnostics shows the log panel in its slot (in the app and in the gallery).
+  diagnosticsPanelSlot.value = DiagnosticsPanel;
   // `?gallery=1` mounts the dev component gallery instead of the shell (ADR
   // 1006). The import is dynamic so the gallery's module graph — its fixtures
   // included — is only EVALUATED behind the flag; esbuild inlines the chunk
