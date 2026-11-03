@@ -1,17 +1,19 @@
 /**
- * The live-data invoke rows (spec §12.9, §15.1): the feed pull, the log ring and
- * its stream switch, the log folder and the updater's state pull. Channel strings
- * written here once and spread into `CHANNELS`. Type-only imports plus one literal.
+ * The live-data invoke rows (spec §12.9, §15.1): the live tab's pull, the feed pull,
+ * the log ring and its stream switch, the log folder and the updater's state pull.
+ * Channel strings written here once and spread into `CHANNELS`. Type-only imports plus one literal.
  */
 
 // biome-ignore-all lint/suspicious/noConfusingVoidType: `res: void` is the
 // acknowledgement-only result of a fire-and-forget channel.
 
 import type { FeedView } from '@/shared/feed';
+import type { LiveTab } from '@/shared/live-op';
 import type { LogEntry } from '@/shared/log-entry';
 import type { UpdateStatus } from '@/shared/update-status';
 
 export const LIVE_CHANNELS = {
+  activityNow: 'activity:now',
   feedView: 'feed:get',
   logTail: 'log:tail',
   setLogStream: 'log:stream',
@@ -20,6 +22,8 @@ export const LIVE_CHANNELS = {
 } as const;
 
 export interface LiveIpcContract {
+  /** The live tab now: its current phase, whether a routine holds the page (pushes follow). */
+  activityNow: { req: []; res: LiveTab };
   /** The feed projection (also pushed on store mutation). */
   feedView: { req: []; res: FeedView };
   /** The in-process log ring, oldest first. */

@@ -4,17 +4,19 @@
  * Every bridge method resolves from a mutable `data` bag so a suite can stage a
  * projection before render; `emit(channel, payload)` drives the push channels the
  * renderer subscribes to (`status`, `pruneStatus`, `chainList`, `log`,
- * `updateStatus`, `settings`, `settingsFacts`, `feed`, `stageRequest`), which is
- * how §2 liveness is exercised without a main process.
+ * `updateStatus`, `settings`, `settingsFacts`, `feed`, `activity`, `stageRequest`),
+ * which is how §2 liveness is exercised without a main process.
  * `calls` records every invocation so control wiring can be asserted.
  */
 import type { PruneStatus } from '@/engine/prune-engine';
+import { NO_ACTIVITY } from '@/main/ipc-live';
 import { BOOST_OFF } from '@/main/ipc-plan';
 import { notBuiltFacts, notBuiltFeed, notBuiltSurfaceReport } from '@/main/modules/not-built';
 import { transitionalView } from '@/main/modules/settings-transitional';
 import { resetShellSignals } from '@/renderer/app/shell-context';
 import { effectiveFromV1 } from '@/settings/effective';
 import type { FeedView } from '@/shared/feed';
+import type { LiveTab } from '@/shared/live-op';
 import type { SettingsFacts } from '@/shared/settings-facts';
 import type { SettingsView } from '@/shared/settings-view';
 import type { SurfaceReport } from '@/shared/surface-health';
@@ -122,6 +124,8 @@ export interface FakeBridgeData {
   settingsView: SettingsView;
   settingsFacts: SettingsFacts;
   feed: FeedView;
+  /** What the `activity:now` pull resolves with (the push is `activity`). */
+  activity: LiveTab;
   /** What the `surface:report` pull resolves with (the summary rides `status.surface`). */
   surfaceReport: SurfaceReport;
 }
@@ -167,6 +171,7 @@ export function installFakeBridge(settings: Settings): FakeBridge {
       { plan: false, tempo: false, boost: false, protectionEverywhere: false }),
     settingsFacts: notBuiltFacts('loading'),
     feed: notBuiltFeed(0),
+    activity: NO_ACTIVITY,
     surfaceReport: notBuiltSurfaceReport(0),
   };
 
@@ -248,6 +253,7 @@ export function installFakeBridge(settings: Settings): FakeBridge {
     startBoost: (...a: unknown[]) => call('startBoost', a, () => ({ kind: 'refused', reason: 'internal', boost: BOOST_OFF })),
     endBoost: (...a: unknown[]) => call('endBoost', a, () => ({ kind: 'refused', reason: 'internal', boost: BOOST_OFF })),
     previewBoost: (...a: unknown[]) => call('previewBoost', a, () => null),
+    activityNow: (...a: unknown[]) => call('activityNow', a, () => data.activity),
     feedView: (...a: unknown[]) => call('feedView', a, () => data.feed),
     logTail: (...a: unknown[]) => call('logTail', a, () => []),
     setLogStream: (...a: unknown[]) => call('setLogStream', a, () => undefined),

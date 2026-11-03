@@ -28,6 +28,7 @@
 // return position (`Promise<Res<M>>`) everywhere it is used.
 
 import type { FeedView } from '@/shared/feed';
+import type { LiveTab } from '@/shared/live-op';
 import type { SettingsFacts } from '@/shared/settings-facts';
 import type { SettingsView } from '@/shared/settings-view';
 import type { ProtectedBy } from '@/shared/unfollow-protection';
@@ -239,6 +240,7 @@ export const PUSH = {
   settings: 'epo:settings',
   settingsFacts: 'epo:settings-facts',
   feed: 'epo:feed',
+  activity: 'epo:activity',
   stageRequest: 'epo:stage-request',
 } as const;
 
@@ -270,6 +272,8 @@ export interface PushContract {
   settingsFacts: SettingsFacts;
   /** The live feed (a projection row, deduplicated). */
   feed: FeedView;
+  /** The live tab's phase and holds (not graph-derived, so not a projection row). */
+  activity: LiveTab;
   /** A stage the application menu asks the renderer to show. */
   stageRequest: StageMode;
 }

@@ -4,7 +4,7 @@
  * and every row has a handler and a fallback.
  */
 
-import { CHANNELS } from '@/ipc/contract';
+import { CHANNELS, PUSH } from '@/ipc/contract';
 import type { Foundation } from '@/main/foundation-wiring';
 import { bootFallbacks, bootHandlers } from '@/main/ipc-boot';
 import { liveFallbacks, liveHandlers } from '@/main/ipc-live';
@@ -45,6 +45,8 @@ test('the Boost, live and boot rows', async () => {
   expect(await live.feedView()).toMatchObject({ items: [], awayFrom: null });
   expect(await live.logTail()).toEqual([]);
   expect(await live.updateStatus()).toBe(UPDATE);
+  expect(await live.activityNow()).toEqual({ activity: null, busy: false, holds: [] });
+  expect(await liveFallbacks(() => UPDATE).activityNow()).toEqual({ activity: null, busy: false, holds: [] });
   expect(await bootHandlers().bootRevealed()).toBeUndefined();
   expect(await planFallbacks().endBoost()).toMatchObject({ kind: 'refused' });
   expect(await liveFallbacks(() => UPDATE).updateStatus()).toBe(UPDATE);
@@ -69,5 +71,6 @@ test('the stage vocabulary is closed and the tab-visibility rows are gone', () =
   expect(CHANNELS).not.toHaveProperty('showTab');
   expect(CHANNELS).not.toHaveProperty('hideTab');
   expect(CHANNELS).toMatchObject({ settingsView: 'settings:view', startBoost: 'boost:start', feedView: 'feed:get',
-    bootRevealed: 'boot:revealed' });
+    bootRevealed: 'boot:revealed', activityNow: 'activity:now' });
+  expect(PUSH).toMatchObject({ activity: 'epo:activity' });
 });
