@@ -90,6 +90,29 @@ test('manual reconciliation completes before a write without starting growth', a
   await foundation.dispose();
 });
 
+test('I7: an account still unsettled never stops a manual write to another; it alone gets a typed journal refusal', async () => {
+  const { foundation } = newFoundation();
+  await foundation.ensureBuilt();
+  const graph = graphOf(foundation);
+  for (const [pk, username] of [['77', 'target'], ['88', 'stuck']]) {
+    graph.store.observe({ accountPk: pk, observedAt: Date.now(), source: 'profile', fields: { username } });
+  }
+  const stuck = graph.store.beginEffectIntent({ accountPk: '88', username: 'stuck', action: 'unfollow', channel: 'growth', at: Date.now() });
+  graph.store.markEffectUncertain(stuck.id, Date.now());
+  // The standalone pass reads the stuck account once; it stays unreadable and parks (spec §9.8).
+  const visit = jest.spyOn(graph.profiles, 'visit').mockResolvedValue({ ok: false, kind: 'unanswered', detail: {} });
+  const unfollow = jest.spyOn(graph.churnActions, 'unfollow').mockImplementation(async (_name, _pk, onDispatch) => {
+    onDispatch?.();
+    return { status: 'ok' };
+  });
+  expect(await foundation.unfollowOne('target')).toEqual({ ok: true, username: 'target' });
+  expect(visit).toHaveBeenCalledTimes(1);
+  expect(graph.store.getEffectIntent(stuck.id)).toMatchObject({ state: 'uncertain', attempts: 1 });
+  expect(await foundation.unfollowOne('stuck')).toMatchObject({ ok: false, reason: 'journal' });
+  expect(unfollow).toHaveBeenCalledTimes(1);
+  await foundation.dispose();
+});
+
 test('Stop during standalone reconciliation aborts admission before any mutation', async () => {
   const { foundation } = newFoundation();
   await foundation.ensureBuilt();

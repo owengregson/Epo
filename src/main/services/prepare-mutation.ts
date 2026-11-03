@@ -1,11 +1,10 @@
 /**
  * The standalone writers' settlement step: before a manual or prune mutation, settle the journal's
- * due intents (spec §9.8) and any owed relationship reconciliation.
+ * due intents (spec §9.8) — nothing else. The journal is per account, so an account still unsettled
+ * refuses only its own next write (typed `journal`); every other write proceeds.
  */
 
-import type { FollowbackWatcher } from '@/engine/followback-watcher';
 import { planDaySlots } from '@/engine/journal';
-import type { ReentrySupervisor } from '@/engine/reentry';
 import type { Clock } from '@/governors/clock';
 import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { ReadBudget } from '@/governors/read-budget';
@@ -19,10 +18,8 @@ export interface PrepareMutationDeps {
   store: KnowledgeStore;
   ownPk: string;
   clock: Clock;
-  reentry: ReentrySupervisor;
   readBudget: ReadBudget;
   profiles(): ProfileVisitor;
-  followback(): FollowbackWatcher;
   settings(): Settings;
   signal(): AbortSignal | undefined;
   /** The identity and run-token check every write repeats. */
@@ -31,9 +28,9 @@ export interface PrepareMutationDeps {
   parkSlots?(): ParkSlots;
 }
 
-/** The mutation policy's `prepareMutation` (see `mutation-policy.ts`): true once nothing is owed. */
+/** The mutation policy's `prepareMutation` (see `mutation-policy.ts`): true unless stopped or signed out. */
 export function createPrepareMutation(d: PrepareMutationDeps): () => Promise<boolean> {
-  const { store, clock, reentry, readBudget, ownPk, active } = d;
+  const { store, clock, readBudget, ownPk, active } = d;
   const dayClock = calendarPlanDayClock({ now: () => clock.now() });
   const slots = d.parkSlots ?? ((): ParkSlots => planDaySlots(dayClock, clock.now()));
   return async (): Promise<boolean> => {
@@ -42,13 +39,6 @@ export function createPrepareMutation(d: PrepareMutationDeps): () => Promise<boo
     if (!current() || !await active()) return false;
     await settleDueIntents({ store, profiles: d.profiles(), ownPk, clock, readBudget, slots,
       maxRetries: () => d.settings().maxRetries, signal: d.signal });
-    if (!current() || !await active()) return false;
-    if (reentry.requiresReconciliation(clock.now())) {
-      const checked = await d.followback().check({ requireFresh: reentry.requiresCensus(clock.now()),
-        freshSinceAt: reentry.snapshot().reconciliationStartedAt ?? undefined });
-      if (checked.outcome !== 'complete' || !current() || !await active()) return false;
-      reentry.noteReconciled(checked, clock.now());
-    }
-    return current() && !reentry.requiresReconciliation(clock.now());
+    return current() && await active();
   };
 }

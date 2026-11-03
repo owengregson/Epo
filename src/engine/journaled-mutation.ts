@@ -5,6 +5,12 @@ import type { ChurnActionOutcome, ChurnActions } from './churn-scheduler';
 import { journalBlocks } from './journal';
 import { normalizeMutationOutcome } from './mutation-outcome';
 
+/** A refused write's typed reason: a deferral's own (e.g. `journal`), else the review's verdict, else its status. */
+export function refusalReason(o: ChurnActionOutcome): string {
+  if (o.verdict?.kind === 'deferred') return o.verdict.reason;
+  return o.verdict?.kind ?? (o.status === 'blocked' ? 'blocked' : 'action-failed');
+}
+
 /** Shared settlement for non-growth writes. The lifecycle scheduler owns its record transition. */
 export async function journaledMutation<A extends 'follow' | 'unfollow'>(d: {
   store: KnowledgeStore; clock: Clock; ownPk: string; actions: Pick<ChurnActions, A>;
