@@ -9,6 +9,11 @@
       "module": "src/shared/settings-facts.ts",
       "stream": "F2b step 5",
       "reason": "the settings facts ride the settings IPC rows and the facts projection"
+    },
+    {
+      "module": "src/shared/unfollow-protection.ts",
+      "stream": "F2b step 9",
+      "reason": "the settings migration normalizes the protection lists through this one predicate"
     }
   ]
 }
