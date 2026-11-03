@@ -3,6 +3,7 @@
  * merges every observed feed page and stores each pending-request row as it parses.
  */
 
+import { readDrawerBody } from '@/adapter/drawer-read';
 import type { FollowEvent, Reader } from '@/adapter/reader';
 import type { RimTab } from '@/rim/types';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -49,19 +50,20 @@ export function captureFeed(deps: {
       resp
         .getBody()
         .then((body) => {
+          if (kind === 'friend-requests' && captured.pendingPks !== null) return;
+          const read = readDrawerBody({ kind, body }, { reader: deps.reader, now: Date.now() });
           if (kind === 'activity-feed') {
             // MERGE every observed feed page (the initial open, the Follows
             // filter refetch, scroll-loaded older pages) — deduped. STRICT
             // parse per page: a drifted body leaves `events` untouched (so
             // it can never read as a successful empty check) but flags the
             // drift; one well-formed page among drifted ones still succeeds.
-            const parsed = deps.reader.parseActivityFeedStrict(body);
-            if (parsed === null) {
+            if (read.events === null) {
               captured.feedDrift = true;
               return;
             }
             const merged = captured.events ?? [];
-            for (const e of parsed) {
+            for (const e of read.events) {
               const key = `${e.pk}|${e.atMs ?? ''}`;
               if (seenEvents.has(key)) continue;
               seenEvents.add(key);
@@ -70,10 +72,8 @@ export function captureFeed(deps: {
             captured.events = merged;
             return;
           }
-          if (captured.pendingPks !== null) return;
-          const parsed = deps.reader.parsePendingRequests(body, Date.now());
           const map = new Map<string, string>();
-          for (const obs of parsed.observations) {
+          for (const obs of read.requests.rows) {
             // §1: every requester row is a fact — store it as it parses.
             deps.store?.observe(obs);
             if (typeof obs.fields.username === 'string') {
