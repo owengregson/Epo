@@ -1,18 +1,20 @@
 /**
- * I1 (spec §5.13 guarding test, §20.3): the rate oracle. The production cadence, rate governor, plan
+ * I1 (spec §5.13 guarding test, §20.3): the rate oracle. The production cadence, read budget, plan
  * service and store (the plan wiring the graph builds) are driven over simulated weeks the way the engine
- * loop drives them: preflight, arm at dispatch, settle, wait on the armed deadline, park on a refusal.
+ * loop drives them (`tests/kit/plan-drive.ts`): preflight, verify read, arm at dispatch, settle, wait on
+ * the armed deadline, park on a refusal.
  * The pace matches the retired pacer's oracle, no rolling hour exceeds H, no day exceeds V or
  * automaticDayMax(P0), the day law's mean matches the legacy oracle, and (I6) bookkeeping never re-plans.
  */
 import { automaticDayMax } from '@/kernel/plan/volume';
 import { mulberry32 } from '@/kernel/rng';
 import type { PlanWiring } from '@/main/services/plan-wiring';
-import { DEFAULT_SETTINGS, type Settings, toRateGovernorConfig } from '@/settings/settings';
+import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import { MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE } from '@/timing/units';
+import { MS_PER_HOUR, MS_PER_MINUTE } from '@/timing/units';
 import { fakePlanHost, PLAN_TEST_RNG, type PlanClock, planClock, storePlanWiring } from '../kit/harness-plan';
 import { legacyDay, legacyMeanGapMs } from '../kit/legacy-pacer-oracle';
+import { drivePlan, perDay } from '../kit/plan-drive';
 import { openTestStore } from '../kit/store';
 
 const FROM = Date.parse('2026-11-09T00:30:00');
@@ -35,68 +37,15 @@ function rig(settings: Settings = SETTINGS): { store: KnowledgeStore; clock: Pla
   return { store, clock, plan };
 }
 
-/** One automatic follow, written through the journal the way a landed dispatch settles. */
-function settle(store: KnowledgeStore, pk: string, at: number): void {
-  const intent = store.beginEffectIntent({ accountPk: pk, username: pk, action: 'follow', channel: 'growth', at });
-  store.markEffectDispatched(intent.id, at);
-  store.settleEffectIntent(intent.id, { at, result: 'ok', ledger: 'growth' });
-}
-
-interface Run {
-  events: { at: number; day: string; session: number }[];
-  planned: Map<string, number>;
-  /** Each plan-day's plan revisions and draw instants as the loop saw them. */
-  draws: Map<string, Set<string>>;
-  hourlyParks: Set<number>;
-  sessionHours: number;
-}
-
-/** The loop over `days`: act while admitted, wait on the armed deadline, park until a refusal's `until`. */
-function drive(r: ReturnType<typeof rig>, days: number): Run {
-  const { store, clock, plan } = r;
-  const run: Run = { events: [], planned: new Map(), draws: new Map(), hourlyParks: new Set(), sessionHours: 0 };
-  const rate = plan.rateGovernor(toRateGovernorConfig(SETTINGS));
-  const seenSessions = new Set<string>();
-  const end = FROM + days * MS_PER_DAY;
-  for (let guard = 0, n = 0; clock.now() < end && guard < 100_000; guard += 1) {
-    const now = clock.now();
-    const view = plan.pacing.ensureIfProvisional(now);
-    run.planned.set(view.window.key, view.plan.volume.planned);
-    run.draws.set(view.window.key, (run.draws.get(view.window.key) ?? new Set()).add(`${view.plan.revision}@${view.plan.drawnAt}`));
-    for (const s of view.plan.sessions) {
-      const key = `${view.window.key}:${s.startAt}`;
-      if (s.budget > 0 && !seenSessions.has(key)) {
-        seenSessions.add(key);
-        run.sessionHours += (s.expectedEndAt - s.startAt) / MS_PER_HOUR;
-      }
-    }
-    const pk = `p${n}`;
-    const admission = plan.cadence.preflight('follow', 'growth', now, { pk });
-    if (admission.ok) {
-      const deadline = plan.cadence.armAtDispatch('follow', 'growth', now, { pk });
-      settle(store, pk, now);
-      n += 1;
-      run.events.push({ at: now, day: view.window.key, session: view.open?.idx ?? -1 });
-      expect(rate.actionsInLastHour(now)).toBeLessThanOrEqual(SETTINGS.hourlyVelocityCap);
-      clock.t = deadline;
-      continue;
-    }
-    if (admission.reason === 'hourly-cap') run.hourlyParks.add(Math.floor(now / MS_PER_HOUR));
-    const until = admission.until ?? view.nextSessionAt ?? view.window.endsAt;
-    clock.t = until > now ? until : now + MS_PER_MINUTE;
-  }
-  return run;
-}
-
 describe('I1: the plan runtime against the retired pacer (Balanced / Standard)', () => {
   const r = rig();
-  const run = drive(r, 21);
-  const byDay = new Map<string, number>();
-  for (const e of run.events) byDay.set(e.day, (byDay.get(e.day) ?? 0) + 1);
+  const run = drivePlan(r.plan, r.store, r.clock, 21);
+  const byDay = perDay(run);
+  const planned = (day: string): number => run.plans.get(day)?.volume.planned ?? 0;
 
   test("the mean in-session gap is within [0.95, 1.25] × the oracle's jittered(3, 7, 30 %) mean", () => {
-    const gaps = run.events.slice(1).flatMap((e, i) => {
-      const prev = run.events[i];
+    const gaps = run.writes.slice(1).flatMap((e, i) => {
+      const prev = run.writes[i];
       return prev.day === e.day && prev.session === e.session ? [e.at - prev.at] : [];
     });
     expect(gaps.length).toBeGreaterThan(200);
@@ -106,7 +55,7 @@ describe('I1: the plan runtime against the retired pacer (Balanced / Standard)',
   });
 
   test('no rolling hour exceeds H; hourly parks touch under 1 % of session-hours', () => {
-    const times = run.events.map((e) => e.at);
+    const times = run.writes.map((e) => e.at);
     for (let i = 0; i < times.length; i += 1) {
       const inHour = times.filter((t) => t > times[i] - MS_PER_HOUR && t <= times[i]).length;
       expect(inHour).toBeLessThanOrEqual(SETTINGS.hourlyVelocityCap);
@@ -120,17 +69,17 @@ describe('I1: the plan runtime against the retired pacer (Balanced / Standard)',
 
   test('day totals stay within V, and no automatic day exceeds automaticDayMax(P0)', () => {
     const max = automaticDayMax(SETTINGS.dailyOperatingRate);
-    const days = [...run.planned.keys()];
+    const days = [...run.plans.keys()];
     expect(days.length).toBeGreaterThanOrEqual(20);
     for (const day of days) {
-      expect(byDay.get(day) ?? 0).toBeLessThanOrEqual(run.planned.get(day) ?? 0);
-      expect(run.planned.get(day) ?? 0).toBeLessThanOrEqual(max);
+      expect(byDay.get(day) ?? 0).toBeLessThanOrEqual(planned(day));
+      expect(planned(day)).toBeLessThanOrEqual(max);
     }
     // Whole days (the first and last may be partial) realize their plan: a session its close cuts short
     // loses its rest (the plan's close rule), so the aggregate, not each day, is the pace guard.
     const whole = days.slice(1, -1);
     const sum = (f: (day: string) => number): number => whole.reduce((a, day) => a + f(day), 0);
-    expect(sum((day) => byDay.get(day) ?? 0) / sum((day) => run.planned.get(day) ?? 0)).toBeGreaterThanOrEqual(0.95);
+    expect(sum((day) => byDay.get(day) ?? 0) / sum(planned)).toBeGreaterThanOrEqual(0.95);
   });
 });
 
