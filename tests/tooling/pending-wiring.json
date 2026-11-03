@@ -39,6 +39,11 @@
       "module": "src/renderer/lib/flip.ts",
       "stream": "SB",
       "reason": "the activity feed's new rows arrive and file into place with it"
+    },
+    {
+      "module": "src/renderer/settings/change-queue.ts",
+      "stream": "SU",
+      "reason": "the Settings stage commit hook sends every change through it (wired with the stage shell)"
     }
   ]
 }
