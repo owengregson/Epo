@@ -44,6 +44,11 @@
       "module": "src/governors/plan-boost.ts",
       "stream": "PR",
       "reason": "the boost status contributor (boost-control) projects the window into EpoStatus.boost; plan-wiring includes it"
+    },
+    {
+      "module": "src/settings/plan-intent.ts",
+      "stream": "PR",
+      "reason": "plan-wiring.ts feeds the plan service toPlanIntent(effective()); the settings core wraps it for the PlanPreviewPort fingerprint"
     }
   ]
 }

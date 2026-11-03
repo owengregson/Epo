@@ -4,6 +4,7 @@
  */
 export * from './assemble';
 export * from './boost';
+export * from './caps';
 export * from './circadian';
 export * from './digest';
 export * from './draw';
