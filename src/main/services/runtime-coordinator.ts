@@ -1,10 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { RUNTIME_BOUNDS } from '@/kernel/runtime-bounds';
 
-/** Must exceed several eight-minute watchdog windows, otherwise repeated
- * watchdog restarts age out before the machinery budget can ever exhaust. */
-const REPAIR_WINDOW_MS = 60 * 60_000;
-const REPAIR_LIMIT = 3;
+/** The repair budget and the incident tail (`RUNTIME_BOUNDS`; the window spans several watchdog windows). */
+const { REPAIR_WINDOW_MS, REPAIR_LIMIT, INCIDENTS_KEPT } = RUNTIME_BOUNDS;
 
 export type RunIntent = 'stopped' | 'paused' | 'running';
 export type RuntimePhase = 'ready' | 'suspended' | 'reconciling' | 'recovering';
@@ -57,7 +56,7 @@ export class RuntimeCoordinator {
         legacyAccountPk: typeof value.legacyAccountPk === 'string' ? value.legacyAccountPk : null,
         blockedReason: typeof value.blockedReason === 'string' ? value.blockedReason : null,
         recoveryAttempts: (value.recoveryAttempts ?? []).filter((at) => Number.isFinite(at)),
-        incidents: (value.incidents ?? []).filter((i) => Number.isFinite(i.at) && typeof i.reason === 'string').slice(-50),
+        incidents: (value.incidents ?? []).filter((i) => Number.isFinite(i.at) && typeof i.reason === 'string').slice(-INCIDENTS_KEPT),
         updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : now(),
       };
     } catch (error) {
@@ -182,7 +181,7 @@ export class RuntimeCoordinator {
 
   record(reason: string, detail?: string): void {
     this.state.incidents.push({ at: this.now(), reason, ...(detail === undefined ? {} : { detail }) });
-    this.state.incidents = this.state.incidents.slice(-50);
+    this.state.incidents = this.state.incidents.slice(-INCIDENTS_KEPT);
     this.persist();
   }
 
@@ -199,7 +198,7 @@ export class RuntimeCoordinator {
       this.state.blockedReason = 'runtime-state-persist-failed';
       this.state.incidents = [...this.state.incidents, {
         at: this.now(), reason: 'runtime-state-persist-failed', detail: String(error),
-      }].slice(-50);
+      }].slice(-INCIDENTS_KEPT);
       this.activityAbort.abort();
     }
   }

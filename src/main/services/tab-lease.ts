@@ -19,8 +19,8 @@
 
 import * as logger from '@/utils/logger';
 
-/** The two routines that can drive the tab. */
-export type TabOwner = 'growth' | 'prune';
+/** The routines that can drive the tab: growth, prune, and the startup sequence (spec §12.8). */
+export type TabOwner = 'growth' | 'prune' | 'startup';
 
 /** Who took the tab away from a running growth loop, and therefore owes it back. */
 export type GrowthBorrower = 'prune' | 'tour';
@@ -50,8 +50,8 @@ export class TabLease {
   /** True while the renderer's intro tour is on screen (`tour:hold` IPC). */
   private tourHold = false;
 
-  /** A profile landing was requested while the tour hold was up. */
-  private profileLandDeferred = false;
+  /** Called when the tour hold lifts (the startup sequence resumes its deferred steps). */
+  private readonly tourReleased = new Set<() => void>();
 
   /** True between a growth start and the engine's first status emit. */
   private growthStarting = false;
@@ -152,23 +152,18 @@ export class TabLease {
     return this.tourHold;
   }
 
-  /** Set the tour hold; returns false when the value was already that (a no-op). */
+  /** Set the tour hold; returns false when the value was already that (a no-op). A release notifies listeners. */
   setTourHeld(held: boolean): boolean {
     if (this.tourHold === held) return false;
     this.tourHold = held;
+    if (!held) for (const cb of [...this.tourReleased]) cb();
     return true;
   }
 
-  /** Remember that a profile landing was requested while the hold was up. */
-  deferProfileLanding(): void {
-    this.profileLandDeferred = true;
-  }
-
-  /** Consume the deferred landing: true exactly once per {@link deferProfileLanding}. */
-  takeDeferredProfileLanding(): boolean {
-    if (!this.profileLandDeferred) return false;
-    this.profileLandDeferred = false;
-    return true;
+  /** Subscribe to the tour hold lifting; returns the unsubscribe. */
+  onTourReleased(cb: () => void): () => void {
+    this.tourReleased.add(cb);
+    return () => this.tourReleased.delete(cb);
   }
 
   // --- Growth spin-up bridge -------------------------------------------------

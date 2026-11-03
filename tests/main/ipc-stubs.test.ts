@@ -47,7 +47,9 @@ test('the Boost, live and boot rows', async () => {
   expect(await live.updateStatus()).toBe(UPDATE);
   expect(await live.activityNow()).toEqual({ activity: null, busy: false, holds: [] });
   expect(await liveFallbacks(() => UPDATE).activityNow()).toEqual({ activity: null, busy: false, holds: [] });
-  expect(await bootHandlers().bootRevealed()).toBeUndefined();
+  const revealed = jest.fn();
+  expect(await bootHandlers({ bootRevealed: revealed }).bootRevealed()).toBeUndefined();
+  expect(revealed).toHaveBeenCalledTimes(1);
   expect(await planFallbacks().endBoost()).toMatchObject({ kind: 'refused' });
   expect(await liveFallbacks(() => UPDATE).updateStatus()).toBe(UPDATE);
   expect(await bootFallbacks().bootRevealed()).toBeUndefined();

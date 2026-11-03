@@ -1,3 +1,4 @@
+import { RUNTIME_BOUNDS } from '@/kernel/runtime-bounds';
 import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 
 interface StartupFailureDeps {
@@ -22,7 +23,7 @@ export async function terminateFailedStartup(error: unknown, deps: StartupFailur
       if (await withTimeout(Promise.resolve().then(run), ms) === TIMED_OUT) deps.report(phase, 'deadline exceeded');
     } catch (failure) { deps.report(phase, failure); }
   };
-  await settle('startup cleanup failed', () => deps.dispose(), 15_000);
-  await settle('startup log drain failed', () => deps.closeLog(), 2_000);
+  await settle('startup cleanup failed', () => deps.dispose(), RUNTIME_BOUNDS.STARTUP_CLEANUP_MS);
+  await settle('startup log drain failed', () => deps.closeLog(), RUNTIME_BOUNDS.STARTUP_LOG_DRAIN_MS);
   deps.exit(1);
 }

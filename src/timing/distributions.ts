@@ -14,6 +14,7 @@
  * rounded, non-negative integer of milliseconds.
  */
 
+import { PLAN_BOUNDS } from '../kernel/plan/policy';
 import type { DelayPolicy, Rng } from './primitives';
 
 /**
@@ -41,82 +42,12 @@ export function logNormal(medianMs: number, sigma: number): DelayPolicy {
   };
 }
 
-/** One weighted component of a {@link logNormalMixture}. */
-export interface LogNormalComponent {
-  weight: number;
-  medianMs: number;
-  sigma: number;
-}
-
 /**
- * A mixture of log-normals — the empirically-correct bimodal shape for human
- * inter-activity (a fast within-session component + a slow between-session one).
- * One rng draw selects a component (by normalized weight), then a log-normal draw
- * from it (three draws total). Non-positive weights are ignored; an all-zero set
- * falls back to the first component.
- */
-export function logNormalMixture(components: LogNormalComponent[]): DelayPolicy {
-  const comps = components.length > 0 ? components : [{ weight: 1, medianMs: 0, sigma: 0 }];
-  const total = comps.reduce((a, c) => a + Math.max(0, c.weight), 0);
-  return {
-    kind: 'log-normal-mixture',
-    sample: (rng) => {
-      const target = total > 0 ? rng() * total : 0;
-      let acc = 0;
-      let chosen = comps[0];
-      for (const c of comps) {
-        acc += Math.max(0, c.weight);
-        if (target < acc) {
-          chosen = c;
-          break;
-        }
-      }
-      return Math.round(chosen.medianMs * Math.exp(Math.max(0, chosen.sigma) * normal01(rng)));
-    },
-  };
-}
-
-/**
- * Weibull via inverse-CDF: `X = scaleMs · (−ln(1−u))^(1/shape)`. A `shape < 1`
- * gives a heavy tail (many small draws, a few very large) — the shape web-session
- * dwell/length fits. `shape` is floored at 0.05 and `1−u` at 1e-12 so the draw is
- * always finite and non-negative.
- */
-export function weibull(scaleMs: number, shape: number): DelayPolicy {
-  const scale = Math.max(0, scaleMs);
-  const k = Math.max(0.05, shape);
-  return {
-    kind: 'weibull',
-    sample: (rng) => Math.round(scale * (-Math.log(Math.max(1e-12, 1 - rng()))) ** (1 / k)),
-  };
-}
-
-/**
- * Bounded Pareto (power law) via inverse-CDF over `[xMinMs, xMaxMs]`. Models the
- * heavy between-session/long-gap tail (web-browsing exponent α≈1.2, email≈1.0). The
- * result is always within the bounds by construction.
- */
-export function pareto(xMinMs: number, alpha: number, xMaxMs: number): DelayPolicy {
-  const xMin = Math.max(1, xMinMs);
-  const xMax = Math.max(xMin, xMaxMs);
-  const a = Math.max(0.01, alpha);
-  const ratio = (xMin / xMax) ** a;
-  return {
-    kind: 'pareto',
-    sample: (rng) => {
-      const u = rng();
-      const x = xMin / (1 - u * (1 - ratio)) ** (1 / a);
-      return Math.round(Math.min(xMax, Math.max(xMin, x)));
-    },
-  };
-}
-
-/**
- * Bound another policy into `[minMs, maxMs]` by BOUNDED RE-DRAW: up to four attempts,
+ * Bound another policy into `[minMs, maxMs]` by BOUNDED RE-DRAW: up to `CLAMP_REDRAWS` attempts,
  * returning the first sample in range. A pure projection would pile a detectable
  * spike of probability mass exactly at the bound (the very fingerprint we remove);
  * re-drawing preserves the interior shape and leaves only a tiny residual bound-mass.
- * After four misses it projects onto the nearer bound (a hard safety fallback).
+ * After the last miss it projects onto the nearer bound (a hard safety fallback).
  */
 export function clamp(inner: DelayPolicy, minMs: number, maxMs: number): DelayPolicy {
   const lo = Math.min(minMs, maxMs);
@@ -125,7 +56,7 @@ export function clamp(inner: DelayPolicy, minMs: number, maxMs: number): DelayPo
     kind: `clamp(${inner.kind})`,
     sample: (rng) => {
       let v = lo;
-      for (let i = 0; i < 4; i += 1) {
+      for (let i = 0; i < PLAN_BOUNDS.CLAMP_REDRAWS; i += 1) {
         v = inner.sample(rng);
         if (v >= lo && v <= hi) return v;
       }

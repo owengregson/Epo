@@ -8,7 +8,16 @@
  * and that no hand-picked default can creep back into the governor.
  */
 import * as readBudgetModule from '@/governors/read-budget';
-import { deriveReadAllowance, explorationSlices, profileReadShares, type ReadDemand } from '@/kernel/derive-reads';
+import {
+  censusFollowerPages,
+  censusPagesMax,
+  derivePlanReadAllowance,
+  deriveReadAllowance,
+  explorationSlices,
+  frontierPages,
+  profileReadShares,
+  type ReadDemand,
+} from '@/kernel/derive-reads';
 import { EXPLORATION_POLICY } from '@/kernel/exploration-policy';
 import { BOUNDS } from '@/kernel/policy';
 import { type PatternSettings, PERSONAS, resolvePattern } from '@/settings/pattern-map';
@@ -94,5 +103,38 @@ describe('the governor holds no numbers of its own', () => {
     }));
     const busier = toReadAllowance({ ...DEFAULT_SETTINGS, dailyHardCeiling: DEFAULT_SETTINGS.dailyHardCeiling + 10 });
     expect(busier.profiles).toBeGreaterThan(base.profiles);
+  });
+});
+
+describe('the plan-day allowance (ADR 0607, spec §5.8 layer 1)', () => {
+  const live = { dailyHardCeiling: 98, dailyPlanSize: 90, sessionsPerDayMax: 4 };
+  const balanced = { dailyHardCeiling: 65, dailyPlanSize: 60, sessionsPerDayMax: 6 };
+
+  test('identity: profiles 415 / exploration 189 unchanged; the verify reserve is the ceiling', () => {
+    const a = derivePlanReadAllowance({ ...live, checksPerDayMax: 11, censusPagesMax: 200, frontierPages: frontierPages(4) });
+    expect(a).toMatchObject({ profiles: 415, explorationProfiles: 189, verifyReserve: 98, explorationPages: 27 });
+    expect(a.listPages).toBe(27 + 200 + 25);
+    expect(a.notifications).toBe(4 + 11);
+  });
+
+  test('balanced: profiles 276; pages 218 → 253 (the frontier term is 7 × 5); notifications 30 → 17', () => {
+    const a = derivePlanReadAllowance({ ...balanced, checksPerDayMax: 11, censusPagesMax: 200, frontierPages: frontierPages(6) });
+    expect(a.profiles).toBe(276);
+    expect(a.listPages).toBe(253);
+    expect(a.notifications).toBe(17);
+    expect(deriveReadAllowance({ ...balanced, followbackSweepHours: 1 })).toMatchObject({ listPages: 218, notifications: 30 });
+  });
+
+  test('census pages are header-relative and bounded; an unknown header keeps 200', () => {
+    expect(censusPagesMax({ followers: null }, null, 50)).toBe(200);
+    expect(censusFollowerPages(4500, 50)).toBe(Math.ceil((4500 * 1.1) / 50) + 2);
+    expect(censusFollowerPages(4500, 3)).toBe(Math.ceil((4500 * 1.1) / 10) + 2);
+    expect(censusPagesMax({ followers: 1_000_000 }, 50, 50)).toBe(1_000);
+    expect(censusPagesMax({ followers: 2000 }, null, 50)).toBe(censusFollowerPages(2000, 50));
+  });
+
+  test('the frontier term is the catch-up plus one head walk per session start', () => {
+    expect(frontierPages(6)).toBe(35);
+    expect(frontierPages(0)).toBe(5);
   });
 });

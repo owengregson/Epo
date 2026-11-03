@@ -1,4 +1,7 @@
+import { RUNTIME_BOUNDS } from '@/kernel/runtime-bounds';
 import * as logger from '@/utils/logger';
+
+const { DASHBOARD_LOAD_MS, DASHBOARD_RELOADS, DASHBOARD_RELOAD_WINDOW_MS, DASHBOARD_RELOAD_STEP_MS } = RUNTIME_BOUNDS;
 
 interface DashboardRecoveryDeps {
   load(): Promise<void>;
@@ -6,7 +9,7 @@ interface DashboardRecoveryDeps {
   blocked(reason: string): void;
 }
 
-/** A lost control surface gets three reloads in ten minutes, then stops work.
+/** A lost control surface gets a bounded number of reloads per window, then stops work.
  * Neither a hung load nor a failed initial load may leave an invisible run. */
 export class DashboardRecovery {
   private attempts: number[] = [];
@@ -21,7 +24,7 @@ export class DashboardRecovery {
     if (this.stopped || !this.deps.available()) return;
     const generation = ++this.generation;
     this.clearDeadline();
-    this.deadline = setTimeout(() => this.failed('load-timeout'), 30_000);
+    this.deadline = setTimeout(() => this.failed('load-timeout'), DASHBOARD_LOAD_MS);
     void Promise.resolve().then(() => this.deps.load()).then(() => {
       if (generation === this.generation) this.clearDeadline();
     }, (error: unknown) => {
@@ -34,15 +37,15 @@ export class DashboardRecovery {
     this.generation++;
     this.clearDeadline();
     const now = Date.now();
-    this.attempts = this.attempts.filter((at) => now - at < 10 * 60_000);
+    this.attempts = this.attempts.filter((at) => now - at < DASHBOARD_RELOAD_WINDOW_MS);
     logger.error('shell: dashboard unavailable', { reason, attempts: this.attempts.length });
-    if (this.attempts.length >= 3) {
+    if (this.attempts.length >= DASHBOARD_RELOADS) {
       this.stop();
       this.deps.blocked('dashboard-recovery-exhausted');
       return;
     }
     this.attempts.push(now);
-    this.retry = setTimeout(() => { this.retry = null; this.load(); }, this.attempts.length * 1000);
+    this.retry = setTimeout(() => { this.retry = null; this.load(); }, this.attempts.length * DASHBOARD_RELOAD_STEP_MS);
   }
 
   stop(): void {

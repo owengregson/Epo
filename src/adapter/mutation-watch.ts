@@ -120,6 +120,16 @@ export class MutationWatch {
     return this.watch.latencyMs();
   }
 
+  /** The classified observation if one has arrived, without waiting (the confirm-layer loop, ADR 0308). */
+  peek(): MutationObservation | null {
+    return this.watch.peek();
+  }
+
+  /** Re-base the arrival latency on the press that may fire the mutation (a later confirm layer). */
+  markPress(): void {
+    this.watch.markPress();
+  }
+
   /**
    * The first matching mutation's classified observation, or `null` when none
    * arrives within `timeoutMs`. Throws `ActionAbortedError` when the driver's

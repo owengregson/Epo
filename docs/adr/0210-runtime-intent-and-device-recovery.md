@@ -87,3 +87,17 @@ Generation identity comparisons must not see a new composite signal on every
 read. Startup composition failures persist a block even before Foundation
 exists, drain cleanup/logs within a bounded deadline, and exit nonzero for the
 launcher. An intentional shutdown that already owns exit retains precedence.
+
+## Amendment — 2026-11-02: crash resume after the reveal, under the startup lease (ADR 1010)
+
+A running intent a crash left behind still resumes automatically, but as the
+last step of the startup sequence: after the renderer reports the reveal (or
+`BOOT.SETTLE_DEADLINE_MS` passes, so the resume never depends on the intro),
+after the landing and the account confirmation, under the `'startup'` tab lease
+claimed when the store opened. The identity check is unchanged (cookie pk =
+authorized account, else `login-required` / `account-changed`). While the lease
+is held a user Start is queued — never refused with `manual-running` — and a
+Stop cancels the remaining steps and any queued Start. Manual one-offs and prune
+scan/run are refused with `'starting'`. The engine still starts idle at every
+other launch. A block raised before the graph exists pushes the real status
+(`loggedIn` from the cookie) instead of a signed-out one.

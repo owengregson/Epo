@@ -60,21 +60,21 @@ describe('Actor health-checks throw AdapterStaleError on absent controls', () =>
     expect((err as AdapterStaleError).selector).toBe(SURFACE.staleSelectorLabel('action-button'));
   });
 
-  test('unfollow: confirm control never appears -> actor.unfollow / the confirm label', async () => {
+  test('unfollow: confirm control never appears -> an honest unverified result, never a second press', async () => {
     // The button reads Following and is pressed (needsConfirm), but the confirm
-    // control never shows — and the page carries no block interstitial.
+    // control never shows — and the page carries no block interstitial. The
+    // press was dispatched (ADR 0308), so this is no longer pre-click drift.
+    const interactor = new FakeInteractor();
     const tab = new ScriptedTab()
       .on(pageCall('locateActionButton'), locatedButton('following', true))
       .on(
         () => true,
         () => null,
       );
-    const err = await rejection(fastActor(tab).unfollow('someone'));
-    expect(err).toBeInstanceOf(AdapterStaleError);
-    expect((err as AdapterStaleError).component).toBe('actor.unfollow');
-    expect((err as AdapterStaleError).selector).toBe(
-      SURFACE.staleSelectorLabel('unfollow-confirm'),
-    );
+    const res = await fastActor(tab, interactor).unfollow('someone');
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toMatch(/post-click state not confirmed/);
+    expect(interactor.clicks).toEqual([RECT]);
   });
 
   test('openFollowersDialog: stat/dialog absent -> actor.openFollowersDialog', async () => {
@@ -175,7 +175,7 @@ describe('Actor A3: post-click state verification', () => {
   test('unfollow: post-confirm state never flips to Follow -> typed err', async () => {
     const tab = new ScriptedTab()
       .on(pageCall('locateActionButton'), locatedButton('following', true))
-      .on(pageCall('locateConfirm'), (): LocateRectResult => ({ found: true, rect: RECT }))
+      .on(pageCall('locateConfirm'), (): LocateRectResult & { sig: string } => ({ found: true, rect: RECT, sig: 'menu' }))
       // Stays Following: unverified.
       .on(pageCall('probeActionButton'), () => ({ found: true, state: 'following' }))
       .on(
@@ -280,15 +280,16 @@ describe('Actor block detection: an interstitial in place of the expected contro
     expect((err as ActionBlockedError).component).toBe('actor.unfollow');
   });
 
-  test('unfollow: missing confirm + unrelated dialog text -> AdapterStaleError (drift stays loud)', async () => {
+  test('unfollow: missing confirm + unrelated dialog text -> unverified, not a block (no refusal text)', async () => {
     const tab = blockedTab('Add to favorites')
       .on(pageCall('locateActionButton'), locatedButton('following', true))
       .on(
         () => true,
         () => null,
       );
-    const err = await rejection(fastActor(tab).unfollow('someone'));
-    expect(err).toBeInstanceOf(AdapterStaleError);
+    const res = await fastActor(tab).unfollow('someone');
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toMatch(/post-click state not confirmed/);
   });
 
   test('follow: verify never confirms + block dialog -> ActionBlockedError, not a failed Result', async () => {

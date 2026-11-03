@@ -1,7 +1,7 @@
 /**
- * The Phase F default of the ONE plan-day boundary (spec §4.4): local midnight, DST-safe (23-25 h).
- * Day-keyed consumers take a `PlanDayClock` from their wiring module; the plan core's quiet-minute
- * clock replaces this one at a single swap site.
+ * The ONE plan-day boundary (spec §4.4): the Phase F default is local midnight (DST-safe, 23-25 h);
+ * the plan core's quiet-minute clock replaces it at a single swap site. Day-keyed consumers take a
+ * `PlanDayClock` from their wiring module.
  */
 
 import type { PlanDayClock, PlanDayWindow } from '../kernel/plan';
@@ -30,22 +30,22 @@ const sleepThen = (ms: number, fn: () => void): (() => void) => {
   return () => stop.abort();
 };
 
-/** Local-midnight plan-days; `onRoll` listeners share one timer, armed only while any listens. */
-export function calendarPlanDayClock(deps: CalendarClockDeps = {}): PlanDayClock {
+/** A clock over any window function; `onRoll` listeners share one timer, armed only while any listens. */
+export function windowClock(windowOf: (t: number) => PlanDayWindow, deps: CalendarClockDeps = {}): PlanDayClock {
   const now = deps.now ?? Date.now;
   const after = deps.after ?? sleepThen;
   const listeners = new Set<(w: PlanDayWindow) => void>();
   let cancel: (() => void) | null = null;
-  let current: PlanDayWindow = localDay(now());
+  let current: PlanDayWindow = windowOf(now());
 
   const arm = (): void => {
     const t = now();
-    cancel = after(Math.max(1, localDay(t).endsAt - t), tick);
+    cancel = after(Math.max(1, windowOf(t).endsAt - t), tick);
   };
   // A late timer (a sleeping machine) rolls once to the day it wakes in; an early one re-arms.
   const tick = (): void => {
-    const w = localDay(now());
-    if (w.key !== current.key) {
+    const w = windowOf(now());
+    if (w.key !== current.key || w.startsAt !== current.startsAt) {
       current = w;
       for (const fn of [...listeners]) fn(w);
     }
@@ -54,12 +54,12 @@ export function calendarPlanDayClock(deps: CalendarClockDeps = {}): PlanDayClock
   };
 
   return {
-    window: localDay,
-    dayKey: (t) => localDay(t).key,
+    window: windowOf,
+    dayKey: (t) => windowOf(t).key,
     onRoll(fn) {
       listeners.add(fn);
       if (cancel === null) {
-        current = localDay(now());
+        current = windowOf(now());
         arm();
       }
       return () => {
@@ -71,4 +71,17 @@ export function calendarPlanDayClock(deps: CalendarClockDeps = {}): PlanDayClock
       };
     },
   };
+}
+
+/** Local-midnight plan-days: the Phase F default until the plan-backed clock is swapped in. */
+export function calendarPlanDayClock(deps: CalendarClockDeps = {}): PlanDayClock {
+  return windowClock(localDay, deps);
+}
+
+/**
+ * The plan-backed clock (spec §4.4): the plan service's quiet-minute windows — the current plan's
+ * window, a transition day after a boundary change, then the new quiet minute's days.
+ */
+export function planBackedDayClock(windowOf: (t: number) => PlanDayWindow, deps: CalendarClockDeps = {}): PlanDayClock {
+  return windowClock(windowOf, deps);
 }

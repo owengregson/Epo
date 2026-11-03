@@ -90,32 +90,22 @@ describe('follow/unfollow with a interactor', () => {
     expect(h.clicks).toEqual([RECT, confirmRect]); // button, then confirm
   });
 
-  test('unfollow: a vanished confirm menu is REOPENED once, then the confirm clicked', async () => {
+  test('unfollow: a confirm menu that never shows is never chased with a second header press (ADR 0308)', async () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
-    const confirmRect: LocatedRect = { x: 400, y: 500, width: 200, height: 44 };
-    // The confirm locate misses for the whole first wait window (menu closed
-    // under it), then resolves after the recovery re-click reopens the menu.
-    let reopenClicks = 0;
-    tab.on(pageCall('locateActionButton'), (): LocateActionResult => {
-      reopenClicks += 1;
-      return { found: true, state: 'following', wouldClick: true, needsConfirm: true, rect: RECT };
-    });
-    tab.on(
-      pageCall('locateConfirm'),
-      (): LocateRectResult =>
-        reopenClicks >= 2 ? { found: true, rect: confirmRect } : { found: false },
-    );
-    tab.on(pageCall('probeActionButton'), () => ({ found: true, state: 'follow' }));
-    // The stale-escalation probe (never reached here, but polled mid-recovery).
+    tab.on(pageCall('locateActionButton'), (): LocateActionResult => (
+      { found: true, state: 'following', wouldClick: true, needsConfirm: true, rect: RECT }));
+    tab.on(pageCall('locateConfirm'), (): LocateRectResult => ({ found: false }));
+    tab.on(pageCall('probeActionButton'), () => ({ found: true, state: 'following' }));
+    tab.on(pageCall('confirmLayer'), () => ({ present: false }));
     tab.on(pageCall('blockText'), () => '');
 
     const result = await buildActor(tab, h).unfollow('someone');
 
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.clicked).toBe(true);
-    // Button, reopen-button, then the confirm found on the retry.
-    expect(h.clicks).toEqual([RECT, RECT, confirmRect]);
+    // One header press, nothing else: the dispatched press ends unverified, honestly.
+    expect(h.clicks).toEqual([RECT]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/post-click state not confirmed/);
   });
 
   test('unfollow: a fallback-located confirm (self-recovery) is clicked like a primary hit', async () => {

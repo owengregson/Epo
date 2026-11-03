@@ -12,6 +12,7 @@ import * as path from 'node:path';
 
 import {
   cleanupMainHarness,
+  foundationStore,
   makeFakeTab,
   makeIgSession,
   newFoundation,
@@ -20,8 +21,8 @@ import {
 afterAll(cleanupMainHarness);
 
 test('clearData while a build is in flight never resurrects a graph over the deleted DB', async () => {
-  // Gate the FIRST identity evaluate so the build can be caught in flight; every
-  // evaluate answers with the nav profile-link href (identity strategy 1).
+  // Gate the FIRST identity cookie read so the store-first open can be caught
+  // in flight; every read answers with the same account pk.
   let release!: () => void;
   const gate = new Promise<void>((r) => {
     release = r;
@@ -30,20 +31,21 @@ test('clearData while a build is in flight never resurrects a graph over the del
   const reachedGate = new Promise<void>((r) => {
     reached = r;
   });
-  let evaluates = 0;
-  const tab = makeFakeTab({
-    evaluate: async <T>(): Promise<T> => {
-      evaluates += 1;
-      if (evaluates === 1) {
+  let reads = 0;
+  const igSession = {
+    ...makeIgSession('4242'),
+    readCookie: async (name: string): Promise<string | null> => {
+      reads += 1;
+      if (reads === 1) {
         reached();
         await gate;
       }
-      return '/myself/' as T;
+      return name === 'ds_user_id' ? '4242' : null;
     },
-  });
+  };
 
-  const { foundation: f, userDataDir } = newFoundation({ tab });
-  const building = f.ensureBuilt(); // parked inside username resolution
+  const { foundation: f, userDataDir } = newFoundation({ igSession });
+  const building = f.ensureBuilt(); // parked inside the identity read
   await reachedGate;
 
   const clearing = f.clearData(); // the wipe starts while the build is mid-flight
@@ -61,27 +63,20 @@ test('clearData while a build is in flight never resurrects a graph over the del
 });
 
 test('an in-tab account switch (ds_user_id change) tears down the stale graph and rebuilds', async () => {
-  let evaluates = 0;
-  const tab = makeFakeTab({
-    evaluate: async <T>(): Promise<T> => {
-      evaluates += 1;
-      return '/myself/' as T;
-    },
-  });
   const igSession = makeIgSession('4242');
-
-  const { foundation: f } = newFoundation({ tab, igSession });
+  const { foundation: f } = newFoundation({ tab: makeFakeTab(), igSession });
   expect(await f.ensureBuilt()).toBe(true); // graph anchored to pk 4242
-  const evaluatesAfterFirstBuild = evaluates;
+  const first = foundationStore(f);
 
   // The user logs out and back in as a DIFFERENT account inside the tab.
   igSession.setDsUserId('9999');
   await f.isLoggedIn(); // any routine pk resolve must notice the switch
 
-  // The stale graph (anchored to 4242) is gone; the next ensureBuilt rebuilds —
-  // observable as a fresh identity resolution against the tab.
+  // The stale graph (anchored to 4242) is gone; the next ensureBuilt opens the new account's store.
   expect(await f.ensureBuilt()).toBe(true);
-  expect(evaluates).toBeGreaterThan(evaluatesAfterFirstBuild);
+  expect(foundationStore(f)).not.toBe(first);
+  const session = (f as unknown as { session: { current(): { ownPk: string } | null } }).session;
+  expect(session.current()?.ownPk).toBe('9999');
 
   await f.dispose();
 });
