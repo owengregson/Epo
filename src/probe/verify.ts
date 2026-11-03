@@ -49,7 +49,7 @@ export async function verifyProbe(tab: InstagramTab, out: string): Promise<void>
         const parsed =
           kind === 'activity-feed'
             ? { followEvents: reader.parseActivityFeedStrict(body)?.length ?? 'SHAPE_MISMATCH' }
-            : { rows: reader.parsePendingRequests(body, Date.now()).observations.length };
+            : { rows: reader.parseRequestsStrict(body, Date.now())?.observations.length ?? 'SHAPE_MISMATCH' };
         drawer.push({ kind, method: resp.method, status: resp.status, ...parsed });
       },
       (e: unknown) => drawer.push({ kind, error: String(e) }),

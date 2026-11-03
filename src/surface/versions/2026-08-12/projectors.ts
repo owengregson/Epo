@@ -10,6 +10,7 @@
  */
 
 import type { z } from 'zod';
+import { readRelationship } from '@/surface/read/relationship';
 import { emptyProjection, type ProjectCtx, type Projection, type RowIssue } from '@/surface/schema/surface';
 import { JSON_PATHS } from '@/surface/versions/2026-08-12/literals';
 import {
@@ -23,6 +24,9 @@ import {
   type ShowManyBody,
   ShowManyStatus,
 } from '@/surface/versions/2026-08-12/schemas';
+
+/** The relationship keys, read by presence (spec §10.4). */
+const REL = JSON_PATHS.relationship;
 
 // ---------------------------------------------------------------------------
 // Row helpers — the ONLY place a projector reaches into a row
@@ -91,16 +95,8 @@ export const projectShowMany = (body: z.infer<typeof ShowManyBody>, _ctx: Projec
   Object.entries(body.friendship_statuses).forEach(([pk, raw], index) => {
     const status = parseRow(ShowManyStatus, raw, index, out.rowIssues);
     if (status === null) return;
-    out.relationships.push({
-      pk,
-      following: status.following === true,
-      // A pending request to a private account: `following` is false but the
-      // relationship is OURS — consumers must not read it as "not following".
-      outgoingRequest: status.outgoing_request === true,
-      // This shape carries NO followed-by direction. `null`, never `false`.
-      followedBy: null,
-      isPrivate: status.is_private,
-    });
+    // Every flag by presence; this shape carries NO followed-by direction (`null`, never `false`).
+    out.relationships.push({ ...readRelationship(status, REL, pk), followedBy: null, isPrivate: status.is_private });
   });
   return out;
 };
@@ -111,13 +107,7 @@ export const projectFriendshipShow = (
   ctx: ProjectCtx,
 ): Projection => {
   const out = emptyProjection();
-  out.relationships.push({
-    pk: ctx.pk ?? '',
-    following: body.following === true,
-    followedBy: body.followed_by === true,
-    outgoingRequest: body.outgoing_request === true,
-    isPrivate: body.is_private,
-  });
+  out.relationships.push({ ...readRelationship(body, REL, ctx.pk ?? ''), isPrivate: body.is_private });
   return out;
 };
 
@@ -164,14 +154,8 @@ const projectProfileUser = (user: ProfileUser, ctx: ProjectCtx, out: Projection)
   // Viewer-side relationship: GraphQL profile bodies carry it, `/users/<pk>/
   // info/` does not. Absent means UNKNOWN — never a fabricated `false`.
   const fs = user.friendship_status;
-  if (fs !== null && fs !== undefined && typeof fs.following === 'boolean') {
-    out.relationships.push({
-      pk,
-      following: fs.following,
-      outgoingRequest: fs.outgoing_request === true,
-      followedBy: typeof fs.followed_by === 'boolean' ? fs.followed_by : null,
-      isPrivate: some(user.is_private),
-    });
+  if (fs !== null && fs !== undefined) {
+    out.relationships.push({ ...readRelationship(fs, REL, pk), isPrivate: some(user.is_private) });
   }
 };
 
@@ -196,8 +180,13 @@ export const projectProfileGraphql = (
 ): Projection => {
   const out = emptyProjection();
   const user = body.data.user;
-  if (user === null || user === undefined) {
+  // Only an explicit null is Instagram saying "gone"; a missing `user` is drift (spec §10.4).
+  if (user === null) {
     out.absent = true;
+    return out;
+  }
+  if (user === undefined) {
+    out.rowIssues.push({ index: 0, path: 'data.user', message: 'profile container carries no user' });
     return out;
   }
   projectProfileUser(user, ctx, out);

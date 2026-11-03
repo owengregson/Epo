@@ -68,7 +68,7 @@ export function classifyMutationWith(
   const text = [verdict.message, verdict.feedbackText]
     .filter((s): s is string => s !== null && s !== '')
     .join(' — ');
-  const detail = text !== '' ? text : `HTTP ${httpStatus} fail`;
+  const detail = text !== '' ? text : `HTTP ${httpStatus} ${verdict.verdict}`;
   const signature = refusalSignatures.find((sig) => sig.pattern.test(text));
   if (signature !== undefined) {
     const kind =
@@ -78,5 +78,8 @@ export function classifyMutationWith(
   if (verdict.spam) return { kind: 'rate-limited', detail, wall: 'action-blocked' };
   if (httpStatus === 429 || httpStatus >= 500) return { kind: 'rate-limited', detail };
   if (httpStatus === 401 || httpStatus === 403) return { kind: 'auth', detail };
+  // A GraphQL errors[] answer is Instagram's evidence, never a success and never "unverified":
+  // the screen and the block probe pick its class (ADR 0803 amendment, spec §10.5).
+  if (verdict.verdict === 'error') return { kind: 'drift-suspect', detail };
   return { kind: 'refused', detail };
 }

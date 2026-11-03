@@ -60,12 +60,12 @@ test('a show_many body flips a held record to external (external unfollowed us-s
   expect(store.actionCountSince(0)).toBe(0);
 });
 
-test('a friendship-show following:false drops a held record', async () => {
+test('a friendship-show with following and outgoing_request false drops a held record', async () => {
   store.upsertFollowRecord(
     rec({ accountPk: '999', state: 'followed_back', followedBackAt: T0, holdUntil: T0 + 1 }),
   );
 
-  const body = { following: false, followed_by: true, status: 'ok' };
+  const body = { following: false, followed_by: true, outgoing_request: false, status: 'ok' };
   await reconciler.ingest(mkResp(showUrl('999'), body));
 
   expect(store.getFollowRecord('999')!.state).toBe('external');

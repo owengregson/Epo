@@ -25,6 +25,7 @@ import { CONTROLS } from '@/surface/versions/2026-08-12/controls';
 import {
   ACTIVITY_FEED_GRAPHQL_FRIENDLY_NAME,
   FOLLOW_REQUESTS_GRAPHQL_FRIENDLY_NAME,
+  FOLLOW_REQUESTS_ROOT_FIELDS,
   IG_APP_ID,
   IG_ORIGIN,
   IG_USER_AGENT,
@@ -176,7 +177,7 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
       mode: 'observe',
       match: {
         method: 'POST',
-        url: URLS.profileGraphql,
+        url: URLS.graphql,
         friendlyName: PROFILE_GRAPHQL_FRIENDLY_NAME,
       },
       response: ProfileGraphqlBody,
@@ -211,6 +212,7 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
         response: RequestsBody,
         project: projectListPage,
         source: 'friend-requests',
+        ...(url === URLS.graphql ? { rootFields: FOLLOW_REQUESTS_ROOT_FIELDS } : {}),
       }),
     ),
   ],

@@ -24,7 +24,8 @@ export interface MutationMatch {
 
 /** The server's own verdict, read out of a mutation response body. */
 export interface MutationVerdict {
-  verdict: 'ok' | 'fail';
+  /** `error`: a GraphQL `errors[]` answer — Instagram's evidence, classified by signature or by the screen. */
+  verdict: 'ok' | 'fail' | 'error';
   /** e.g. `following` / `requested` on an ok follow; null when the body has none. */
   result: string | null;
   /** The machine message on failure (e.g. `feedback_required`); null when absent. */

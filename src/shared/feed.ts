@@ -1,7 +1,7 @@
 /**
  * The live feed (spec §12.9, Appendix C.1): what the sidebar narrates, grouped and
  * newest first, shaped in main from store reads and pushed on mutation.
- * Renderer-safe types only.
+ * Renderer-safe and pure: the types and the row-time helper.
  */
 
 export interface Person { readonly pk: string; readonly username: string | null }
@@ -41,6 +41,12 @@ export interface AwaySummaryLite {
   readonly left: number;
 }
 
+/** One plan-day the feed window spans: the day groups' boundary and its key. */
+export interface FeedDay {
+  readonly key: string;
+  readonly startsAt: number;
+}
+
 export interface FeedView {
   /** Newest first, grouped, bounded by the live policy's feed limit. */
   readonly items: readonly FeedItem[];
@@ -48,4 +54,26 @@ export interface FeedView {
   readonly awayFrom: number | null;
   readonly windowStart: number;
   readonly shapedAt: number;
+  /** The plan-days the window spans, today first ("Today", "Yesterday", then weekday or date); absent before a build. */
+  readonly days?: readonly FeedDay[];
+}
+
+const CLOCK_TIME = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const localDate = (t: number): string => new Date(t).toDateString();
+
+/** How long ago `at` was, for a row's time: "just now" · "2m" · "1h 5m" · "yesterday 3:10 PM" · "Nov 2, 3:10 PM". */
+export function formatAgo(at: number, now: number): string {
+  const ago = Math.max(0, now - at);
+  const minutes = Math.floor(ago / 60_000);
+  if (minutes < 1) return 'just now';
+  const hours = Math.floor(ago / 3_600_000);
+  if (hours < 1) return `${minutes}m`;
+  if (localDate(at) === localDate(now)) {
+    const rest = Math.floor((ago - hours * 3_600_000) / 60_000);
+    return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  return localDate(at) === yesterday.toDateString() ? `yesterday ${CLOCK_TIME.format(at)}` : DATE_TIME.format(at);
 }

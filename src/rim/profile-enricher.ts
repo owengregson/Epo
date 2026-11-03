@@ -25,7 +25,7 @@ import {
 import type { Sentinel } from '@/adapter/sentinel';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { ReadBudget } from '@/governors/read-budget';
-import type { ProfileVisitor } from '@/rim/profile-visit-port';
+import { countsUnread, type ProfileVisitor } from '@/rim/profile-visit-port';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RECOVERY, RIM } from '@/timing/config';
 import { sample, sleep, uniform } from '@/timing/primitives';
@@ -162,6 +162,15 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
           break;
         }
         // Pace even on failure so a run of failures cannot hammer the site.
+        await this.pace(i, batch.length);
+        continue;
+      }
+      if (countsUnread(visit)) {
+        // A body without a valid count pair is a failed read (spec §10.4): it counts in the
+        // streak, so a drifted count ends the pass instead of re-visiting every pass.
+        logger.warn('rim.profile-enricher: profile read without its counts, skipping', { username });
+        walledInARow += 1;
+        if (walledInARow >= RECOVERY.BLOCKED_STREAK_ENTRY) break;
         await this.pace(i, batch.length);
         continue;
       }

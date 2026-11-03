@@ -49,3 +49,11 @@ because waiting out a wall is cheap and reversible while declaring drift — or
 fabricating an empty fact — is neither. The one exception is a 2xx with an
 unreadable body, which is `drift-suspect`: an unreadable success is never
 claimed as a success.
+
+## Amendment — 2026-11-02: absence needs every key it depends on (ADR 0806)
+
+A mismatch never becomes an empty fact, and neither does a missing key: a relationship flag, a more-flag or a
+count that is absent reads as unknown, never `false`, `end` or `0`. A destructive claim (we do not follow, the list
+ended, the pending set is complete, the account is gone, our own header) needs a canonical or normalized, complete
+read with every key it depends on present. "Gone" needs the declared container present and explicitly `null`, no
+GraphQL errors and a final body; `{data:{user:null}, errors:[…]}` is a wall to wait out.
