@@ -2,22 +2,14 @@
  * The pace and session rows of the parameter catalog (spec §6.5): the daily target and hard stop, the hourly
  * cap, the day's variation, sessions per day and the two gap rows on the effective scale (§5.10, slower only).
  */
-import { ACTIVITY, CAUTION, derivePattern, type OrdinalPattern, REST_DAY_PCT, RHYTHM, VARIANCE_PCT } from '@/kernel/derive';
+import { ACTIVITY, CAUTION, derivePattern, REST_DAY_PCT, RHYTHM, VARIANCE_PCT } from '@/kernel/derive';
 import { burstFloorSeconds, ENVELOPE } from '@/kernel/derive-envelope';
 import { POLICY } from '@/kernel/policy';
 import { SETTINGS_GUARDS as G, SETTINGS_POLICY } from '@/kernel/settings-policy';
-import type { Intent } from '@/shared/settings-intent';
+import { patternOf } from './basis';
 import { type DeriveCtx, num, type ParamSpec } from './params-spec';
 
 const { whole } = SETTINGS_POLICY.PARAM_STEP;
-
-/** The kernel's ordinal pattern for an intent (cleanup without the retired `deep`). */
-export function patternOf(i: Intent): OrdinalPattern {
-  return {
-    activityLevel: i.activity, consistency: i.consistency, rhythm: i.rhythm, dayShape: i.dayShape,
-    weeklyShape: i.weeklyShape, caution: i.caution, cleanup: i.cleanup, patience: i.patience,
-  };
-}
 
 const ROW = { kind: 'int', step: whole, needs: null, deps: [] } as const;
 

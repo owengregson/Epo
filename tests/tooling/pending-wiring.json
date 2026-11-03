@@ -6,26 +6,6 @@
       "reason": "the stage controller derives the window title and Dock badge from the posture; SB's live column follows"
     },
     {
-      "module": "src/settings/migrate-v1.ts",
-      "stream": "SC",
-      "reason": "the settings service runs the v1 migration at construction, with the kernel-derived basis"
-    },
-    {
-      "module": "src/settings/ops.ts",
-      "stream": "SC",
-      "reason": "the settings service applies every write through these ops (persist-first, then commit and push)"
-    },
-    {
-      "module": "src/settings/view.ts",
-      "stream": "SC",
-      "reason": "the settings service builds the view it serves and pushes from it, cached per revision"
-    },
-    {
-      "module": "src/settings/persist.ts",
-      "stream": "SC",
-      "reason": "the settings service reads the files at construction and persists every write first through it"
-    },
-    {
       "module": "src/renderer/settings/SettingsStage.tsx",
       "stream": "SU",
       "reason": "the Settings stage replaces its body and the stage host mounts it"

@@ -4,8 +4,8 @@
  * the read allowance, overrides and notices. Pure and deterministic for a fixed document; cached per rev.
  */
 import { riskRung, shareOfLowWall } from '@/kernel/derive-envelope';
-import type { IntentKey } from '@/shared/settings-intent';
-import { PACE_CARDS, type PaceCardId } from '@/shared/settings-intent';
+import { INTENT_KEYS, type IntentKey, PACE_CARDS, type PaceCardId } from '@/shared/settings-intent';
+import type { ChangeLine } from '@/shared/settings-ops';
 import { type ParamKey, RISK_LEVELS, type SectionId } from '@/shared/settings-params';
 import type {
   ParamView, PlanPreviewDay, ProvenanceStep, SettingsCapabilities, SettingsHealth, SettingsNotice, SettingsView,
@@ -14,7 +14,7 @@ import type { PlanMath } from './basis';
 import type { SettingsDocV2 } from './doc';
 import type { EffectiveSettings } from './effective';
 import { ALL_PARAM_KEYS, PARAM_SPECS } from './params';
-import type { ParamSpec } from './params-spec';
+import { type ParamSpec, sameValue } from './params-spec';
 import { toReadAllowance } from './read-allowance';
 import type { ResolvedParams } from './resolve';
 import { feasibilityOf, massOf, optionPreviews } from './view-options';
@@ -127,4 +127,35 @@ export function buildView(i: ViewInput): SettingsView {
     notices: notices(i, stale),
     app: { tourCompletedAt: doc.app.tourCompletedAt },
   };
+}
+
+const ORDER = { cleanup: ['off', 'trickle', 'steady'], patience: ['patient', 'normal', 'quick'], mutuals: ['keep', 'rotate'] } as const;
+/** Rows whose rise (+1) or fall (−1) makes Epo unfollow more or sooner. */
+const LOOSER: Readonly<Partial<Record<ParamKey, 1 | -1>>> = {
+  'unfollow.waitDays': -1, 'unfollow.holdDays': -1, 'unfollow.censusEveryDays': -1, 'unfollow.cleanupShare': 1, 'unfollow.cleanupPerDay': 1,
+};
+const shownValue = (v: unknown): string | number | boolean => (typeof v === 'object' ? JSON.stringify(v) : (v as string | number | boolean));
+
+/** What a preview changes, each line marked when it makes Epo unfollow more or sooner (the reset confirm). */
+export function previewChanges(before: SettingsDocV2, after: SettingsDocV2, rb: ResolvedParams, ra: ResolvedParams): ChangeLine[] {
+  const lines: ChangeLine[] = [];
+  for (const k of INTENT_KEYS) {
+    const [b, a] = [before.intent[k], after.intent[k]];
+    if (JSON.stringify(b) === JSON.stringify(a)) continue;
+    const order = (ORDER as Readonly<Partial<Record<IntentKey, readonly string[]>>>)[k];
+    lines.push({ key: k, before: shownValue(b), after: shownValue(a),
+      loosensUnfollows: order !== undefined && order.indexOf(a as string) > order.indexOf(b as string) });
+  }
+  for (const k of ALL_PARAM_KEYS) {
+    const [b, a] = [rb[k].value, ra[k].value];
+    if (sameValue(b, a)) continue;
+    const dir = LOOSER[k];
+    lines.push({ key: k, before: shownValue(b), after: shownValue(a),
+      loosensUnfollows: dir !== undefined && typeof a === 'number' && typeof b === 'number' && (a - b) * dir > 0 });
+  }
+  if (before.seed !== after.seed) lines.push({ key: 'seed', before: before.seed, after: after.seed, loosensUnfollows: false });
+  if (before.prefs.practice !== after.prefs.practice) {
+    lines.push({ key: 'prefs.practice', before: before.prefs.practice, after: after.prefs.practice, loosensUnfollows: before.prefs.practice });
+  }
+  return lines;
 }

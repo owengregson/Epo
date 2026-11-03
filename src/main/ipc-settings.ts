@@ -51,7 +51,8 @@ export function settingsFallbacks(foundation: Foundation): Pick<IpcFallbacks, Se
     keptList: () => ({ kind: 'unavailable' }),
     checkSeed: () => ({ ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'error' }),
     getSettings: () => foundation.getSettings(),
-    updateSettings: () => foundation.getSettings(),
-    resetSettings: () => foundation.getSettings(),
+    // The one transitional exception to typed fallbacks: a failed save rejects, so the old UI shows Not saved.
+    updateSettings: () => Promise.reject(new Error('settings not saved')),
+    resetSettings: () => Promise.reject(new Error('settings not reset')),
   };
 }
