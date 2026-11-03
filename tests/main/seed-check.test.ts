@@ -7,7 +7,6 @@ import { ActionAbortedError } from '@/adapter/errors';
 import { type SeedCheckDeps, SeedCheckService, type SeedStoreView } from '@/main/modules/seed-check';
 import type { BuiltGraph } from '@/main/services/graph-types';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
-import { toLegacySeedCheck } from '@/shared/seed-check';
 import type { AccountState } from '@/store/types';
 import { setLevel } from '@/utils/logger';
 
@@ -85,7 +84,6 @@ test.each([
   const { svc, calls, view } = rig({ busy });
   const r = await svc.check('friend');
   expect(r).toEqual({ kind: 'queued', why });
-  expect(toLegacySeedCheck(r).reason).not.toBe('not-found');
   expect(svc.status(view, 'friend')).toEqual({ kind: 'queued', handle: 'friend', why });
   expect(calls).toEqual(['changed']);
 });
@@ -131,7 +129,7 @@ test('only evidence reads as not found; every other outcome is unreadable and th
   expect(await rig().svc.check('not a handle!')).toEqual({ kind: 'invalid-handle' });
 });
 
-test('the wire keeps its older shape: a private seed is visible only to an account that follows it', async () => {
+test('a private seed is visible only to an account that follows it', async () => {
   const r = await rig({ visit: { ok: true, obs: { accountPk: '42', observedAt: NOW, source: 'profile', fields: { isPrivate: true } }, viewer: { following: false, requested: false } } as ProfileVisit }).svc.check('friend');
-  expect(toLegacySeedCheck(r)).toEqual({ ok: true, exists: true, followersVisible: false, isPrivate: true, reason: 'private' });
+  expect(r).toMatchObject({ kind: 'ok', isPrivate: true, followersVisible: false });
 });

@@ -88,10 +88,6 @@
     {
       "file": "src/renderer/charts/GrowthChart.tsx",
       "lines": 325
-    },
-    {
-      "file": "src/renderer/cards/settings/BehaviorCard.tsx",
-      "lines": 312
     }
   ]
 }

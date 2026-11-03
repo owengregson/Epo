@@ -41,7 +41,6 @@ const RESPONSES: Record<string, unknown> = {
   pruneStatus: basePrune(),
   getSettings: GALLERY_SETTINGS,
   updateSettings: GALLERY_SETTINGS,
-  resetSettings: GALLERY_SETTINGS,
   chainList: GALLERY_CHAIN,
   chainDetail: null,
   queueList: LANE,
@@ -49,7 +48,7 @@ const RESPONSES: Record<string, unknown> = {
   growthSeries: { points: [], baselineAt: null },
   graphSnapshot: null,
   pruneCandidates: [],
-  checkSeed: { ok: true, exists: true, followersVisible: true, isPrivate: false },
+  checkSeed: { kind: 'ok', pk: '1001', isPrivate: false, followersVisible: true, followers: 12_400, observedAt: 0, fromStore: true },
   checkForUpdate: { state: 'idle', mode: 'notify', current: '0.0.0', version: null, percent: null, error: null },
   // The Settings stage: no main process saves here, so every change answers honestly that nothing was saved.
   settingsView: GALLERY_SETTINGS_VIEW,

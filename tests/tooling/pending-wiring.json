@@ -6,11 +6,6 @@
       "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
     },
     {
-      "module": "src/main/modules/settings-transitional.ts",
-      "stream": "SC",
-      "reason": "deleted, not wired: production serves the v2 view; only tests/kit/render-bridge.ts (lead) still builds its view here, and SC or SU deletes the module once the bridge reads the v2 view"
-    },
-    {
       "module": "src/renderer/live/CompatibilityNotice.tsx",
       "stream": "SB",
       "reason": "the live column shows the compatibility line and wires its Details to the panel"
@@ -24,11 +19,6 @@
       "module": "src/renderer/lib/flip.ts",
       "stream": "SB",
       "reason": "the activity feed's new rows arrive and file into place with it"
-    },
-    {
-      "module": "src/renderer/views/SettingsView.tsx",
-      "stream": "SU",
-      "reason": "deleted, not wired: the Settings stage replaced it; SU deletes the old settings UI in its last commit"
     }
   ]
 }

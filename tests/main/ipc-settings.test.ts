@@ -1,7 +1,7 @@
 /**
  * The Settings rows through the real registration (Appendix B.9): the guard refuses a malformed op before
  * the service sees it, a throwing handler answers its typed fallback, and neither ever reads as saved.
- * The rows still waiting for their stores answer typed values; `seed:check` keeps its older wire shape;
+ * The rows still waiting for their stores answer typed values; `seed:check` answers the typed result;
  * `settings:basis` serves the kernel catalog.
  */
 import type { IpcFallbacks, IpcHandlers } from '@/ipc/register';
@@ -23,7 +23,7 @@ jest.mock('electron', () => ({
   },
 }));
 
-const SEED_OK = { ok: true, exists: true, followersVisible: true, isPrivate: false };
+const SEED_OK = { kind: 'ok', pk: '1', isPrivate: false, followersVisible: true, followers: null, observedAt: 1, fromStore: true };
 
 function rig() {
   const m = memoryFs();
@@ -74,16 +74,16 @@ test('a valid op saves through the service; a failed write is not-saved and chan
   dispose();
 });
 
-test('the transitional v1 rows: a failed save rejects so the old UI says Not saved', async () => {
+test('the remaining v1 rows: a failed save rejects so an older reader says Not saved; reset is gone', async () => {
   const { m, call, dispose } = rig();
   expect(await call('settings:update', { dryRun: true })).toMatchObject({ dryRun: true });
   m.failOn('rename');
   await expect(call('settings:update', { dryRun: false })).rejects.toThrow('not saved');
-  await expect(call('settings:reset')).rejects.toThrow('not reset');
+  expect(() => call('settings:reset')).toThrow('settings:reset is not registered');
   dispose();
 });
 
-test('the rows still waiting for their stores answer typed values, and the seed check keeps its older shape', async () => {
+test('the rows still waiting for their stores answer typed values, and the seed check answers its typed result', async () => {
   const { call, dispose } = rig();
   expect(await call('settings:view')).toMatchObject({ rev: 0, health: { kind: 'ok' } });
   expect(await call('settings:facts')).toMatchObject({ built: false, protection: null });

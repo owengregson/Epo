@@ -86,7 +86,7 @@ describe('the starting-account field', () => {
 
   it('Check now runs one check; a refusal it cannot read says so without turning red', async () => {
     await mount(facts({ kind: 'unseen', handle: 'studio.lumen' }));
-    bridge.stub('checkSeed', { ok: false, exists: false, followersVisible: false, isPrivate: false, reason: 'error' });
+    bridge.stub('checkSeed', { kind: 'unreadable', why: 'no-answer' });
     fireEvent.click(screen.getByText('Check now'));
     await waitFor(() => expect(line().textContent).toMatch(/Couldn’t check @studio\.lumen just now/));
     expect(calls('checkSeed')).toEqual([['checkSeed', 'studio.lumen']]);

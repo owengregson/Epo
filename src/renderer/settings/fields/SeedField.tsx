@@ -6,9 +6,9 @@
  */
 import type { JSX } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
-import type { Res } from '@/ipc/contract';
 import { useNow } from '@/renderer/app/clock';
 import { Icon } from '@/renderer/ui/Icon';
+import type { SeedCheckResult } from '@/shared/seed-check';
 import type { SeedStatus } from '@/shared/settings-facts';
 import { AUDIENCE_COPY } from '../copy/choices';
 import { SEED_COPY, SEED_QUEUED_COPY } from '../copy/fields';
@@ -18,18 +18,25 @@ import { ControlError } from './controls';
 
 const KEY = 'seed';
 type Tone = 'ok' | 'info' | 'warn' | 'error';
-/** What the last explicit check said that the facts cannot (they keep the previous status). */
-type Outcome = 'running' | 'unreadable' | 'invalid' | 'answered';
+/** The last explicit check: still running, or its typed answer. */
+type Outcome = 'running' | SeedCheckResult;
 
 /** The handle as the document stores it: trimmed, without a leading "@". */
 export const cleanHandle = (raw: string): string => raw.trim().replace(/^@+/, '');
 
-/** The check's answer, read off the older wire shape the channel still carries. */
-function outcomeOf(r: Res<'checkSeed'>): Outcome {
-  if (r.ok || r.reason === 'not-found') return 'answered';
-  if (r.reason === 'empty') return 'invalid';
-  if (r.reason === 'blocked' || r.reason === 'error') return 'unreadable';
-  return 'answered';
+/** A check's answer as the status it implies, so it reads exactly like the facts would. */
+function asStatus(r: SeedCheckResult, u: string): SeedStatus | null {
+  switch (r.kind) {
+    case 'ok':
+      return { kind: 'seen', handle: u, pk: r.pk, currentUsername: u, observedAt: r.observedAt, followers: r.followers,
+        isPrivate: r.isPrivate, followersVisible: r.followersVisible };
+    case 'not-found':
+      return { kind: 'gone', handle: u, at: r.observedAt, evidence: r.evidence };
+    case 'queued':
+      return { kind: 'queued', handle: u, why: r.why };
+    default:
+      return null;
+  }
 }
 
 interface Line {
@@ -81,8 +88,8 @@ export function SeedField({ s }: { s: StageApi }): JSX.Element {
   const check = (handle: string): void => {
     setOutcome({ handle, kind: 'running' });
     window.epo.checkSeed(handle).then(
-      (r) => setOutcome({ handle, kind: outcomeOf(r) }),
-      () => setOutcome({ handle, kind: 'unreadable' }),
+      (r) => setOutcome({ handle, kind: r }),
+      () => setOutcome({ handle, kind: { kind: 'unreadable', why: 'error' } }),
     );
   };
   // Committing a different handle is explicit intent: check it once its save has landed.
@@ -117,12 +124,13 @@ export function SeedField({ s }: { s: StageApi }): JSX.Element {
   const st: SeedStatus = facts === null || !facts.built ? (u === '' ? { kind: 'none' } : { kind: 'loading' }) : facts.seed;
   const factsSettled = st.kind === 'seen' || st.kind === 'gone' || st.kind === 'queued' || st.kind === 'checking';
   const mine = outcome !== null && outcome.handle === u && !factsSettled ? outcome.kind : null;
+  const again = (): void => check(u);
   const line: Line | null =
     mine === 'running' ? { tone: 'info', text: fill(SEED_COPY.checking, { u }), busy: true }
-    : mine === 'unreadable' ? { tone: 'warn', text: fill(SEED_COPY.unreadable, { u }), action: { label: SEED_COPY.tryAgain, run: () => check(u) } }
-    : mine === 'invalid' ? { tone: 'warn', text: fill(SEED_COPY.invalid, { u }) }
+    : mine?.kind === 'unreadable' ? { tone: 'warn', text: fill(SEED_COPY.unreadable, { u }), action: { label: SEED_COPY.tryAgain, run: again } }
+    : mine?.kind === 'invalid-handle' ? { tone: 'warn', text: fill(SEED_COPY.invalid, { u }) }
     : u === '' ? { tone: 'info', text: SEED_COPY.needed }
-    : factsLine(st, u, now, () => check(u));
+    : factsLine((mine === null ? null : asStatus(mine, u)) ?? st, u, now, again);
   const red = line?.tone === 'error';
 
   return (
