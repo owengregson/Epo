@@ -34,6 +34,11 @@
       "module": "src/governors/plan-day-clock.ts",
       "stream": "PR",
       "reason": "plan-wiring.ts, the one swap site, hands the plan-day clock to every day-keyed consumer (UD, RO, PH, LD); the first of them to merge wires this default and removes the entry"
+    },
+    {
+      "module": "src/governors/plan-state.ts",
+      "stream": "PR",
+      "reason": "PlanService (the plan core) reads and writes meta.plan_state through it; plan-wiring.ts builds the service"
     }
   ]
 }
