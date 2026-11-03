@@ -80,6 +80,37 @@ describe('I4 — status reads never write plan_state', () => {
     expect(writes).not.toHaveBeenCalled();
     expect(store.getPlanState()).toBe(raw);
   });
+
+  test("the engine's status is pure too, and its today counts from the plan-day, not midnight", () => {
+    const day = idealDay(T0);
+    const { store } = diskStore();
+    const clock = planClock(T0);
+    const plan = build(store, clock);
+    const engine = new Engine({
+      ...testDeps({ store, clock, rate: plan.rateGovernor(toRateGovernorConfig(DEFAULT_SETTINGS)) }),
+      pacing: plan.pacing,
+    });
+    const raw = store.getPlanState();
+    const writes = jest.spyOn(store, 'setPlanState');
+    for (let t = T0; t < day.window.endsAt; t += 11 * MS_PER_MINUTE) {
+      clock.t = t;
+      const { drawn, planned } = plan.service.view(t).plan.volume;
+      expect(engine.status().plannedToday).toBe(Math.max(drawn, planned));
+      expect(engine.status().pacing?.dailyTarget).toBe(Math.max(drawn, planned));
+    }
+    expect(writes).not.toHaveBeenCalled();
+    expect(store.getPlanState()).toBe(raw);
+
+    clock.t = T0;
+    const start = plan.service.view(T0).window.startsAt;
+    const midnight = new Date(new Date(T0).setHours(0, 0, 0, 0)).getTime();
+    store.setOwnPk('ME');
+    store.ensureFollowersBaseline(midnight - MS_PER_HOUR);
+    store.observeOwnFollowerEvent('early', 'ME', Math.max(midnight + MS_PER_MINUTE, start - 10 * MS_PER_MINUTE));
+    store.observeOwnFollowerEvent('later', 'ME', start + MS_PER_MINUTE);
+    expect(start).toBeGreaterThan(midnight + MS_PER_MINUTE);
+    expect(engine.status().netToday).toBe(1);
+  });
 });
 
 describe('I5 — a restart mid-session', () => {

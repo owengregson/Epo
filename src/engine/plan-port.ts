@@ -21,11 +21,13 @@ export interface EngineRate {
   nextDelayMs(): number;
   actionsToday(): number;
   remainingToday(): number;
-  /** The volume planned for this cycle — a fluctuating draw just under the
+  /** The plan's automatic volume for today — a fluctuating draw just under the
    *  operating rate; where {@link atOperatingRate} actually trips. */
   plannedToday(): number;
-  /** ms until the action counter resets (the next active-hours cycle start) —
-   *  the park horizon once a daily cap is hit. */
+  /** The current plan-day's start: the one boundary every "today" counts from. */
+  dayStart(): number;
+  /** ms until the action counter resets (the next plan-day) — the legacy
+   *  metronome's park horizon once a daily cap is hit. */
   msUntilCycleReset(): number;
   /** Real IG actions (both ledgers) in the trailing hour — the durable velocity signal. */
   actionsInLastHour(): number;
