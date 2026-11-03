@@ -11,6 +11,7 @@ import { surface } from '@/surface/index';
 import { Scrubber } from '@/surface/lab/scrub';
 import { SCRUB_SHAPES } from '@/surface/lab/shape';
 import { readResponse } from '@/surface/parse';
+import type { RouteVia } from '@/surface/read/route';
 import type { EndpointKind } from '@/surface/schema/endpoints';
 import { CORPUS_PATHS } from '@/surface/versions/2026-08-12/scrub-shapes';
 import { at, fingerprintOf } from '@/surface-lab/fingerprint';
@@ -36,7 +37,7 @@ interface Exchange extends RecordedRequest {
   readonly body?: string;
 }
 
-interface Candidate { kind: EndpointKind; op: string | null; ex: Exchange; origin: string; body: unknown; size: number;
+interface Candidate { kind: EndpointKind; op: string | null; via: RouteVia; ex: Exchange; origin: string; body: unknown; size: number;
   fingerprint: string }
 
 /** The run folders under a source: `<src>/<run>/traffic.json`, or the capture layout `<src>/raw/probe-verify-*`. */
@@ -158,7 +159,7 @@ export function ingestProbeRuns(opts: { source: string; outDir: string; repoRoot
       const { projection } = replay;
       bodies.push({
         file, endpoint: kind, source, origin: c.origin,
-        route: { method: c.ex.method, path: c.ex.path, op: c.op, via: c.op === null ? 'url' : 'header' },
+        route: { method: c.ex.method, path: c.ex.path, op: c.op, via: c.via },
         status: c.ex.status ?? null, mime: c.ex.mime ?? null,
         expect: {
           facts: projection.facts.length, relationships: projection.relationships.length,

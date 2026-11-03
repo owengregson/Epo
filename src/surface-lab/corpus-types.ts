@@ -5,6 +5,7 @@
 
 import type { Source } from '@/store/types';
 import type { ScrubStats } from '@/surface/lab/scrub';
+import type { RouteVia } from '@/surface/read/route';
 import type { EndpointKind } from '@/surface/schema/endpoints';
 
 /** One committed body, and what replaying it must produce. */
@@ -17,7 +18,7 @@ export interface CorpusBody {
   /** Where it came from in the local capture (provenance, no payload). */
   origin: string;
   /** How the exchange was routed (probe-run corpora: the real path and GraphQL operation name). */
-  route?: { method: string; path: string; op: string | null; via: 'url' | 'header' };
+  route?: { method: string; path: string; op: string | null; via: RouteVia };
   status?: number | null;
   mime?: string | null;
   expect: {
