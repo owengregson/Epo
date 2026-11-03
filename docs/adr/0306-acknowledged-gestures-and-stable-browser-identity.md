@@ -91,3 +91,13 @@ runtime, replay command, exact measurements and limits.
   viewport CSS coordinates and mouse event fields.
 - [Chromium runtime protocol](https://chromedevtools.github.io/devtools-protocol/tot/Runtime/):
   remote objects, calls and explicit release.
+
+## Note — 2026-11-02: the stage curtain keeps re-stack concealment (ADR 1010)
+
+Entering the Live stage now runs through the veil curtain: the veil (already
+stacked above the tab) paints an opaque layer, the tab is re-stacked above the
+dashboard beneath it, and the layer fades. The curtain only changes the veil
+view's own visibility; the tab is still concealed by re-stacking under the
+opaque dashboard and never by native visibility, so CDP input ACKs keep
+arriving while another stage covers it. The boot covers the tab the same way
+from the window's first frame.

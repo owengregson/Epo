@@ -1,19 +1,22 @@
 /**
- * The window launch: the shell, the Foundation, the module graph, IPC and the
- * connectivity monitor, composed in order. Each part lands in the handles as it is built.
+ * The window launch (spec §12.8): a hidden shell, the Foundation, the module graph and IPC, and only then the
+ * dashboard load; its first load reveals the window. Each part lands in the handles as it is built.
  */
 
 import * as path from 'node:path';
-import { app, type BaseWindow } from 'electron';
+import { app, type BaseWindow, Menu } from 'electron';
 import type { InstagramTab } from '@/adapter/tab';
 import { PUSH, type PushContract, type PushMethod } from '@/ipc/contract';
+import { BOOT } from '@/kernel/boot-policy';
 import { type App, composeApp } from '@/main/app';
 import { ConnectivityMonitor } from '@/main/connectivity';
 import { Foundation } from '@/main/foundation-wiring';
 import { registerEpoIpc } from '@/main/ipc';
 import type { OverlayVeil } from '@/main/overlay/veil-view';
 import { electronIgSession } from '@/main/services/ig-session';
+import { buildAppMenu } from '@/main/window/app-menu';
 import { createAppShell } from '@/main/window/shell';
+import { createStageController, statusPosture } from '@/main/window/stage-controller';
 import type { LogEntry, LogLevel } from '@/shared/log-entry';
 import * as logger from '@/utils/logger';
 
@@ -41,7 +44,8 @@ function windowStateFile(): string {
 
 export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   const h = env.handles;
-  const shell = createAppShell({ windowStateFile: windowStateFile(),
+  // Hidden until the dashboard has painted; the page loads only once IPC answers (below).
+  const shell = createAppShell({ windowStateFile: windowStateFile(), startHidden: true, deferDashboardLoad: true,
     onDashboardBlocked: (reason) => h.foundation?.stopForIncident(reason) });
   const { win, tab, veil } = shell;
   h.mainWindow = win;
@@ -50,16 +54,25 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   win.on('closed', () => {
     h.mainWindow = null;
   });
+  // The one entry point for the stage (spec §12.4): the tab sits under the dashboard from frame 1.
+  const stage = createStageController({ shell, veil, dock: app.dock ?? null,
+    timing: { paintMaxMs: BOOT.CURTAIN_PAINT_MAX_MS, fadeMs: BOOT.CURTAIN_FADE_MS } });
+  stage.cover();
 
   /**
    * The typed push seam. Every main→renderer channel string comes from the
    * contract's `PUSH` table and the payload is checked against `PushContract`,
    * so a channel can no longer be misspelled here or drift from what preload
-   * subscribes to (ADR 1008).
+   * subscribes to (ADR 1008). Each status also titles the window and badges the Dock.
    */
   const push = <C extends PushMethod>(channel: C, payload: PushContract[C]): void => {
     shell.send(PUSH[channel], payload);
+    if (channel === 'status') stage.onPosture(statusPosture(payload as PushContract['status'], Date.now()));
   };
+  // ⌘1–⌘5 and ⌘, work while Instagram has focus; Windows and Linux hide the menu bar until Alt.
+  const isMac = process.platform === 'darwin';
+  Menu.setApplicationMenu(buildAppMenu({ onStage: (mode) => push('stageRequest', mode), isPackaged: app.isPackaged, isMac }));
+  if (!isMac) win.setAutoHideMenuBar(true);
 
   // Stream structured logs to the renderer's log pane.
   logger.setSink((level: LogLevel, message: string, meta?: unknown) => {
@@ -82,6 +95,7 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
     tab,
     userDataDir: host.userDataDir,
     igSession: host.igSession,
+    tabFirstLoad: shell.igFirstLoad,
     // Digital cursor: mirror the Interactor's simulated pointer onto the veil.
     // The tap observes synthetic driver output only — the user's real mouse
     // never reaches it (and the veil page itself has no mouse listeners).
@@ -128,15 +142,12 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   const composed = await composeApp(host);
   h.composedApp = composed;
   const upd = composed.updater;
-  // The renderer may finish loading after the launch check settled — replay
-  // the current status so the Updates card never starts blank.
-  shell.onRendererLoad(() => push('updateStatus', upd.current()));
 
   h.disposeIpc = registerEpoIpc({
     tab,
     foundation: found,
     updater: upd,
-    setStage: shell.setStage,
+    setStage: (mode, covered) => stage.set(mode, covered),
   });
 
   // --- Connectivity monitor (offline-hold for the engine loop) -------------
@@ -146,13 +157,21 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   h.connectivityMonitor = connectivity;
   connectivity.start();
 
-  await found.restoreRuntimeIntent();
-  void found.landOnOwnProfile();
+  // The dashboard loads against registered IPC; its first load reveals the window, the timer guards a page
+  // that never finishes.
+  const revealFallback = setTimeout(() => shell.reveal(), BOOT.SHOW_FALLBACK_MS);
+  shell.onRendererLoad(() => {
+    clearTimeout(revealFallback);
+    shell.reveal();
+  });
+  shell.loadDashboard();
 
-  // Opt-in scheduled auto-prune: fires a prune run when the user's
-  // `pruneScheduleDays` cadence is due and it is safe (tab free, active hours).
-  // No-op unless the user enabled a schedule; cleared in the foundation's dispose.
-  found.startScheduledPruneWatcher();
+  // The startup sequence (spec §12.8): R2/R3 store-first, the landing and confirm-account behind the splash,
+  // catch-up and a crash's resume after the reveal, all under the startup lease. The opt-in scheduled prune
+  // starts once that lease is released, so due work still runs at launch and never contends with it.
+  void found.startBoot()
+    .then(() => found.startScheduledPruneWatcher())
+    .catch((error: unknown) => logger.error('launch: startup sequence failed', { error: String(error) }));
 
   // Engine step watchdog: recovers a growth loop wedged on a never-settling
   // tab/CDP await (stop → tab reload + debugger re-attach → restart). Fires

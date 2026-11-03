@@ -1,11 +1,6 @@
 {
   "pending": [
     {
-      "module": "src/shared/posture.ts",
-      "stream": "BL",
-      "reason": "the stage controller derives the window title and Dock badge from the posture; SB's live column follows"
-    },
-    {
       "module": "src/settings/doc-rules.ts",
       "stream": "SC",
       "reason": "the settings service coerces epo-settings-v2.json through these rules when it reads the document"

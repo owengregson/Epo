@@ -12,14 +12,12 @@
 
 import { app, BaseWindow } from 'electron';
 import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
+import { RUNTIME_BOUNDS } from '@/kernel/runtime-bounds';
 import { claimAppIdentity } from '@/main/app-identity';
 import { electronIgSession } from '@/main/services/ig-session';
 import { HARNESS } from '@/timing/config';
 import { sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
-
-/** Settle after a navigation to instagram.com before the page's own fetches run. */
-const ORIGIN_SETTLE_MS = 2_000;
 
 /**
  * Keep page timers, rendering and input responsive in background window states.
@@ -149,5 +147,5 @@ export async function awaitLogin(
 export async function ensureInstagramOrigin(tab: InstagramTab): Promise<void> {
   if (tab.currentUrl().includes('instagram.com')) return;
   await tab.goto(IG_HOME_URL);
-  await sleep(ORIGIN_SETTLE_MS);
+  await sleep(RUNTIME_BOUNDS.ORIGIN_SETTLE_MS);
 }

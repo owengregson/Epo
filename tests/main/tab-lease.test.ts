@@ -161,13 +161,28 @@ describe('tour hold + latches', () => {
     expect(lease.setTourHeld(false)).toBe(false);
   });
 
-  test('a deferred profile landing is consumed exactly once', () => {
+  test('only a real release notifies the tour listeners, until they unsubscribe', () => {
     const lease = new TabLease();
-    expect(lease.takeDeferredProfileLanding()).toBe(false);
-    lease.deferProfileLanding();
-    lease.deferProfileLanding();
-    expect(lease.takeDeferredProfileLanding()).toBe(true);
-    expect(lease.takeDeferredProfileLanding()).toBe(false);
+    const released = jest.fn();
+    const off = lease.onTourReleased(released);
+    lease.setTourHeld(false); // not held: no transition
+    lease.setTourHeld(true);
+    expect(released).not.toHaveBeenCalled();
+    lease.setTourHeld(false);
+    expect(released).toHaveBeenCalledTimes(1);
+    off();
+    lease.setTourHeld(true);
+    lease.setTourHeld(false);
+    expect(released).toHaveBeenCalledTimes(1);
+  });
+
+  test('the startup sequence holds the tab like any driver, and a stale release never frees it', () => {
+    const lease = new TabLease();
+    const generation = lease.claim('startup');
+    expect(lease.owner()).toBe('startup');
+    lease.claim('growth'); // resume-run starts growth under the startup lease
+    lease.release('startup', generation);
+    expect(lease.owner()).toBe('growth');
   });
 
   test('the growth spin-up bridge arms once and retires once', () => {
