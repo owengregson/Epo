@@ -11,7 +11,8 @@ import { SourceFrontier } from '@/engine/source-frontier';
 import type { PlanDayClock } from '@/kernel/plan';
 import { MS_PER_MINUTE } from '@/kernel/units';
 import { type FeedContext, keepShapedAt, shapeFeed } from '@/main/modules/feed-projection';
-import type { FeedView } from '@/shared/feed';
+import type { AwaySummaryLite, FeedView } from '@/shared/feed';
+import type { AwaySummary } from '@/shared/reopen-view';
 import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import * as logger from '@/utils/logger';
@@ -63,7 +64,7 @@ export const SHUTDOWN_INCIDENT = 'intentional-shutdown';
 
 /** What the live sources read from a built graph. */
 export interface LiveGraph {
-  readonly store: Pick<KnowledgeStore, 'feed' | 'followersBaselineAt' | 'getRecoveryState' | 'getRecoveryLastIncident'>;
+  readonly store: Pick<KnowledgeStore, 'feed' | 'followersBaselineAt' | 'getRecoveryState' | 'getRecoveryLastIncident' | 'reopen'>;
   readonly ownPk: string;
   readonly pruneEngine: { status(): Pick<PruneStatus, 'scanReady' | 'scanAt'> };
 }
@@ -106,6 +107,12 @@ function recoveryEpisode(stateRaw: string | null, lastRaw: string | null): FeedC
 }
 
 /** The last deliberate quit, or null when Epo never closed on purpose. */
+/** The last launch catch-up as the feed's caught-up row: from the previous sweep's end to the check (spec §9.6). */
+function awayRow(s: AwaySummary | null | undefined): AwaySummaryLite | null {
+  return s == null ? null : { awayFrom: s.from, checkedAt: s.to, newFollowers: s.newFollowers, followBacks: s.followBacks,
+    left: s.lostIdentified };
+}
+
 function lastShutdown(incidents: RuntimeIncidents['incidents']): number | null {
   let at: number | null = null;
   for (const i of incidents) if (i.reason === SHUTDOWN_INCIDENT && (at === null || i.at > at)) at = i.at;
@@ -136,9 +143,11 @@ export function liveSources(
   return {
     feed: () => {
       const { incidents } = runtime();
+      // The catch-up's own window replaces the last-quit divider once a launch sweep has run.
+      const away = awayRow(graph.store.reopen.get()?.lastCatchUp);
       shown = keepShapedAt(shown, shapeFeed(graph.store.feed, {
         now: now(), ownPk: graph.ownPk, baselineAt: graph.store.followersBaselineAt(), planDay, incidents,
-        recoveryIncident: recovery(), awayFrom: lastShutdown(incidents),
+        recoveryIncident: recovery(), awayFrom: away?.awayFrom ?? lastShutdown(incidents), away,
       }));
       return shown;
     },

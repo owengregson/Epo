@@ -70,6 +70,17 @@ test("the feed reads the graph's store and keeps its view while only the clock m
   expect(second.items[0]).toMatchObject({ kind: 'followed', people: [{ pk: 'b' }, { pk: 'a' }] });
 });
 
+test("the last launch catch-up is the feed's caught-up row, and its window replaces the last-quit divider", () => {
+  const away = { sweepId: 3, from: NOW - 5 * DAY, to: NOW - MIN, isReturn: true, followers: { before: 10, after: 14 },
+    following: { before: 5, after: 5, outsideEpo: null }, newFollowers: 4, followBacks: 2, lostIdentified: 1, unattributed: 0,
+    requestsWaiting: null, gaps: { feed: false, head: false }, backfilled: null, journalPending: 0 };
+  store.reopen.set({ v: 1, feed: null, head: null, requests: null, lastSweep: null, lastCatchUp: away, following: null });
+  const view = sources({ incidents: [{ at: NOW - 2 * DAY, reason: 'intentional-shutdown' }] }).feed();
+  expect(view.awayFrom).toBe(NOW - 5 * DAY);
+  expect(view.items.find((i) => i.kind === 'caught-up')).toMatchObject({ at: NOW - MIN,
+    summary: { awayFrom: NOW - 5 * DAY, checkedAt: NOW - MIN, newFollowers: 4, followBacks: 2, left: 1 } });
+});
+
 test('the expiry is the next plan-day roll, or the census freshness end when that comes first', () => {
   expect(sources().expiresAt()).toBe(utcDays.window(NOW).endsAt);
   const scanAt = NOW - PRUNE_SCAN_FRESH_MS + HOUR;
