@@ -13,7 +13,6 @@ import * as relationships from '@/adapter/reader-relationships';
 import { coerceBody, shadowDocument, shadowLegacy, warnUnexpected } from '@/adapter/reader-shadow';
 import type { ProfileSeen } from '@/rim/profile-visit-port';
 import type { ObservedRelation } from '@/shared/observed-relation';
-import type { Observation } from '@/store/types';
 import { admits } from '@/surface/read/admission';
 import { defaultEnv, readBody } from '@/surface/read/read';
 import { mintObserved } from '@/surface/read/relationship';
@@ -24,9 +23,7 @@ import { type Decoded, decodeBody } from '@/surface/transport/decode';
 
 export type { EndpointKind, FollowEvent, FollowersListResult, FriendshipShowResult, ShowManyEntry } from '@/adapter/ig-surface';
 
-import type {
-  EndpointKind, FollowEvent, FollowersListResult, FriendshipShowResult, ProfileViewer, ShowManyEntry,
-} from '@/adapter/ig-surface';
+import type { EndpointKind, FollowersListResult, FriendshipShowResult, ProfileViewer, ShowManyEntry } from '@/adapter/ig-surface';
 
 /** Which profile body a parse is reading — the two containers differ. */
 export type ProfileKind = Extract<EndpointKind, 'profile-info' | 'profile-graphql'>;
@@ -152,12 +149,7 @@ export class Reader {
     return this.legacyList('following-list', body, at, final);
   }
 
-  /** STRICT follow-requests panel: `null` on drift, never "nobody asked to follow you" (spec §10.4). */
-  parseRequestsStrict(body: unknown, at: number): FollowersListResult | null {
-    return this.legacyList('friend-requests', body, at, null);
-  }
-
-  private legacyList(kind: 'followers-list' | 'following-list' | 'friend-requests', body: unknown, at: number,
+  private legacyList(kind: 'followers-list' | 'following-list', body: unknown, at: number,
     final: boolean | null): FollowersListResult | null {
     const json = coerceBody(body, kind);
     const result = SURFACE.extractFollowersList(json, at, kind, final);

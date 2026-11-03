@@ -128,7 +128,7 @@ const drawerEndpoint = (kind: 'activity-feed' | 'friend-requests', rest: { url: 
     ? defineEndpoint({ kind, mode: 'enforce', match: d.match, response: ActivityFeedStories, project: projectActivityFeed,
       source: 'activity-feed', containers: d.containers,
       ...(d.graphql === true ? { sideLists: { pendingPreview: JSON_PATHS.activityFeedPendingPreview } } : {}) })
-    : defineEndpoint({ kind, mode: 'observe', match: d.match, response: ListPageBody, project: projectListPage,
+    : defineEndpoint({ kind, mode: 'enforce', match: d.match, response: ListPageBody, project: projectListPage,
       source: 'friend-requests', containers: d.containers,
       ...(d.graphql === true ? { rootFields: FOLLOW_REQUESTS_ROOT_FIELDS } : {}) }));
 
