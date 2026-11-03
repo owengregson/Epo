@@ -90,7 +90,12 @@ app.whenReady().then(async () => {
   tab.onUnhealthy((reason) => unhealthy.push(reason));
   tab.attach(win);
   tab.setBounds({ x: 110, y: 90, width: 760, height: 560 });
-  tab.show();
+  // never-shown-boot (spec §12.8): like the production launch, the window is built hidden with the tab
+  // re-stacked under the opaque dashboard, the page loads while the window was never shown, and the window
+  // is revealed a second later; the scenario below then measures input on that tab.
+  const neverShownBoot = selected.size === 0 || selected.has('never-shown-boot');
+  if (neverShownBoot) tab.hide();
+  else tab.show();
   let inputAcknowledgments = 0;
   let longestDispatchMs = 0;
   let gestureDeadline = Number.POSITIVE_INFINITY;
@@ -110,6 +115,10 @@ app.whenReady().then(async () => {
   };
   const interactor = createTabInteractor(tab);
   await tab.goto(`${origin}/`);
+  if (neverShownBoot) {
+    await delay(1000);
+    tab.show();
+  }
   win.show();
   win.focus();
   const identity = await tab.evaluate(`(async () => ({
@@ -237,6 +246,8 @@ app.whenReady().then(async () => {
       gestureDeadline = Number.POSITIVE_INFINITY;
     }
   };
+  // Input ACKs after a boot that loaded the page in a never-shown window (zero Instagram traffic: loopback only).
+  await scenario('never-shown-boot', () => win!.focus());
   await scenario('foreground', () => win!.focus());
   occluder = new BaseWindow({ width: 1100, height: 850, title: 'Local probe occluder' });
   occluder.setBounds(win.getBounds());

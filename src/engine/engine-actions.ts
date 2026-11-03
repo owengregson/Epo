@@ -11,6 +11,7 @@ import type { DelayPolicy } from '../timing/primitives';
 import * as log from '../utils/logger';
 import type { EngineWaitKey } from './engine-waits';
 import type { FeedCandidate } from './facts';
+import { isUnverifiedOutcome } from './mutation-outcome';
 import type { Pacer } from './pacers';
 import type { EngineTempo } from './plan-port';
 import type { EngineDeps, EngineState, EngineUnfollowFeed, StepResult } from './ports';
@@ -136,6 +137,11 @@ export async function actChurn(
   if (outcome === 'blocked') {
     if (ctx.deps.churn.lastBlockedCause() === 'local-policy') {
       await ctx.engineWait('engine:idle', ENGINE_IDLE_MS);
+      return { step: 'idle' };
+    }
+    if (isUnverifiedOutcome(ctx.deps.churn.lastActionOutcome?.())) {
+      // Dispatched with no Instagram evidence (ADR 0308, spec §11.1 F7): a park, never a rate-wall signal by itself.
+      await ctx.engineWait('engine:blocked-park', tempoOrReference(ctx.deps.tempo).base('park.blocked'));
       return { step: 'idle' };
     }
     // Nothing was clicked and the record is untouched. Re-driving the SAME

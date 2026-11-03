@@ -72,3 +72,23 @@ scoped lifetimes, reverse-order finalizers — are 250 lines we own.
   its own `dispose`. Unwinding never aborts on a failure; errors are reported
   through `onUnwindError`, which the app wires to the logger (the kernel has
   none by construction).
+
+## Amendment — 2026-11-02: additive shell options and two kernel imports (ADR 1010)
+
+The shell stays layout and plumbing. `createAppShell` gains options whose
+defaults are today's window: `startHidden` (built hidden until `reveal()`, which
+maximizes when the saved state was maximized, else shows, then focuses) and
+`deferDashboardLoad` (the page loads at `loadDashboard()`, after IPC is
+registered), plus `igFirstLoad` (the first home navigation, `'ready' | 'failed'`).
+The window and dashboard paint `#0d0d0f` and the dashboard's visual zoom is
+limited to 1–1. Untouched: the stacking order, `TabPlacement`,
+`backgroundThrottling`, the tab's frame-rate switch, the veil's attach order and
+`DashboardRecovery` semantics. Wrapping the shell could not do this: `show:false`
+is a constructor option and the dashboard load had to move after IPC.
+
+Two kernel constants now reach files that are otherwise frozen, each by one
+import line and no other change: `src/adapter/tab.ts` reads `INPUT_PROBE`
+through `@/timing/config` (the input probe's rounds and interval, derived from
+the display frame; Phase F), and `src/main/bootstrap.ts` reads
+`RUNTIME_BOUNDS.ORIGIN_SETTLE_MS` (the harness origin settle). Neither import
+changes a survival layer.

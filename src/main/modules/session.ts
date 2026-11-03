@@ -1,24 +1,23 @@
 /**
- * The graph session — the lazy build, the identity, and the teardown.
+ * The graph session — the store-first open, the identity, and the teardown.
  *
  * The knowledge graph does not exist until the `ds_user_id` cookie resolves.
- * That one fact produced six mutable fields on `Foundation` (`graph`,
- * `buildPromise`, `ownPkCache`, `usernameRetryAt`, `disposing`, `tearingDown`)
- * consulted by ~40 guards across 2,200 lines: a real state machine with no
- * name. `GraphSession` owns those six and publishes a `Session<BuiltGraph>`
+ * `GraphSession` owns that state machine (the in-flight open, the cached pk,
+ * `disposing`, `tearingDown`) and publishes a `Session<BuiltGraph>`
  * (`src/kernel/session.ts`), so dependents subscribe to the open/close
  * transitions instead of testing `graph === null`.
  *
- * Every behaviour is a faithful move of the code it replaces: the memoized
- * in-flight build (f6), the degraded-username rebuild backoff (R5), the
- * account-switch teardown, the tour hold, and the ordered bounded drain (f14).
- * `tests/main/*` are the oracle. See ADR 1007.
+ * Identity is store-first (spec §12.8, ADR 1010): the graph opens from the
+ * store alone, with the own username from the store's own account row, so no
+ * read path ever navigates the tab. Only confirm-account rebuilds, through
+ * {@link GraphSession.rebuildWith}. Kept from before: the memoized open (f6),
+ * the account-switch teardown and the ordered bounded drain (f14).
  */
 
 import { createSession, type MutableSession, type Session } from '@/kernel/session';
 import type { BuiltGraph } from '@/main/services/graph-builder';
 import type { IgSessionPort } from '@/main/services/ig-session';
-import { SCHEDULER, TAB } from '@/timing/config';
+import { TAB } from '@/timing/config';
 import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
@@ -43,14 +42,8 @@ async function awaitLoopExit(what: string, loop: Promise<unknown> | null): Promi
 export interface GraphSessionDeps {
   /** The persistent IG session: the identity cookie. */
   igSession: IgSessionPort;
-  /** Assemble the dependency graph for one resolved identity. */
+  /** Assemble the graph for one identity; an undefined username is read from the store's own account row. */
   build(ownPk: string, ownUsername: string | undefined): BuiltGraph;
-  /** Best-effort own-username resolution (navigates the tab; retried inside). */
-  resolveUsername(): Promise<string | undefined>;
-  /** Run the tab-driving tail of the build under the veil's `build` hold. */
-  withBuildHold<T>(run: () => Promise<T>): Promise<T>;
-  /** True while the intro tour parks every self-starting routine. */
-  tourHeld(): boolean;
   /** Await in-flight manual ops (bounded) before the store closes. */
   drainManualOps(): Promise<void>;
   /** Identity changes revoke the old run before any new graph can be admitted. */
@@ -63,14 +56,12 @@ export class GraphSession {
   private readonly mutable: MutableSession<BuiltGraph> = createSession<BuiltGraph>();
 
   /**
-   * f6 — the in-flight build. Memoized so two concurrent IPC calls landing in
-   * {@link ensureBuilt} share ONE build instead of each calling `build()`
-   * (which would leak a store, double the metering sub and orphan an engine).
+   * f6 — the in-flight open or rebuild. Memoized so concurrent IPC calls share
+   * ONE build instead of each calling `build()` (which would leak a store,
+   * double the metering sub and orphan an engine).
    */
   private buildPromise: Promise<boolean> | null = null;
   private ownPkCache: string | null = null;
-  /** Epoch ms of the last failed own-username resolution attempt (backoff). */
-  private usernameRetryAt = 0;
   /**
    * True once {@link beginDispose} runs. Read handlers still fire during
    * shutdown, so this makes {@link ensureBuilt} refuse to (re)build.
@@ -107,45 +98,68 @@ export class GraphSession {
   }
 
   /**
-   * Build the graph exactly once, after login. `false` when not logged in.
-   * R5 — a graph built DEGRADED (username unresolved) is not frozen forever: a
-   * later call re-attempts resolution and, if it succeeds while the engine is
-   * idle, rebuilds so follow-back/own-followers chaining recover.
+   * Open the graph from the store alone, once, after login: no tab work, and
+   * `false` when not logged in. Shutting down or tearing down never (re)builds,
+   * so polled reads resolve to safe empties instead of re-opening the store
+   * mid-teardown. The passive identity is revalidated on every call.
    */
-  async ensureBuilt(): Promise<boolean> {
-    // Shutting down / tearing down: never (re)build — let reads resolve to safe
-    // empties instead of re-opening the store mid-teardown (the polled reads
-    // race the teardown's async drain window).
-    if (this.disposingFlag || this.tearingDownFlag) return false;
-    // Intro tour on screen: nothing may navigate the tab, so no (re)build and
-    // no degraded-username recovery. A built graph keeps serving reads; a
-    // missing one waits for the hold to release (see setTourHold).
-    if (this.deps.tourHeld()) return this.current() !== null;
-    // Revalidate passive identity even for a healthy, fully-built graph. Coalesce
-    // the whole operation so a cookie switch cannot race two graph teardowns.
+  openFromStore(): Promise<boolean> {
+    if (this.disposingFlag || this.tearingDownFlag) return Promise.resolve(false);
     if (this.buildPromise !== null) return this.buildPromise;
-    this.buildPromise = this.ensureIdentityAndBuild().finally(() => {
-      this.buildPromise = null;
-    });
-    return this.buildPromise;
+    return this.memoize(this.openIdentity());
   }
 
-  private async ensureIdentityAndBuild(): Promise<boolean> {
+  /** Every read path opens store-first (see {@link openFromStore}). */
+  ensureBuilt(): Promise<boolean> {
+    return this.openFromStore();
+  }
+
+  /** Hold `build` as the one in-flight build until it settles. */
+  private memoize(build: Promise<boolean>): Promise<boolean> {
+    const held: Promise<boolean> = build.finally(() => {
+      if (this.buildPromise === held) this.buildPromise = null;
+    });
+    this.buildPromise = held;
+    return held;
+  }
+
+  private async openIdentity(): Promise<boolean> {
     const ownPk = await this.resolveOwnPk();
     if (ownPk === null || this.disposingFlag || this.tearingDownFlag) return false;
-    // Fully built (with a real username): nothing more to do.
+    if (this.current() === null) this.open(ownPk, undefined);
+    return true;
+  }
+
+  /**
+   * The confirm-account rebuild: the graph takes the confirmed `username`.
+   * Deferred (and logged) while the engine runs or is paused; `true` once the
+   * live graph carries the username. Concurrent opens wait for the rebuild.
+   */
+  async rebuildWith(username: string): Promise<boolean> {
+    await this.settleBuild();
     const live = this.current();
-    if (live !== null && live.ownUsername !== undefined) return true;
-    // A DEGRADED graph (username unresolved) is still a built graph. Recovery
-    // is retried on a BACKOFF, never on every call: the attempt navigates the
-    // tab and retries the page reads up to 4 times (~23 s), and 16 routine IPC
-    // reads used to re-trigger it each — a loop the rate governor never saw.
-    if (live !== null) {
-      const sinceLastAttempt = Date.now() - this.usernameRetryAt;
-      if (sinceLastAttempt < SCHEDULER.USERNAME_REBUILD_BACKOFF_MS) return true;
-      this.usernameRetryAt = Date.now();
+    if (live === null || this.disposingFlag || this.tearingDownFlag) return false;
+    if (live.ownUsername === username) return true;
+    const state = live.engine.status().state;
+    if (state === 'running' || state === 'paused') {
+      logger.warn('foundation: confirmed username differs but the engine is active, deferring the rebuild', {
+        username,
+        state,
+      });
+      return false;
     }
-    return this.deps.withBuildHold(() => this.buildResolved(ownPk));
+    logger.info('foundation: own username confirmed, rebuilding graph', { from: live.ownUsername ?? '(unknown)', to: username });
+    return this.memoize(this.teardown().then(() => {
+      if (this.disposingFlag || this.tearingDownFlag || this.current() !== null) return false;
+      this.open(live.ownPk, username);
+      return true;
+    }));
+  }
+
+  /** The open transition IS the wiring: every dependent declared over this session is built here. */
+  private open(ownPk: string, ownUsername: string | undefined): void {
+    this.mutable.open(this.deps.build(ownPk, ownUsername));
+    logger.info('foundation: dependency graph built', { ownPk, ownUsername: this.current()?.ownUsername ?? '(unknown)' });
   }
 
   /**
@@ -156,42 +170,6 @@ export class GraphSession {
   async builtGraph(): Promise<BuiltGraph | null> {
     if (!(await this.ensureBuilt())) return null;
     return this.current();
-  }
-
-  /** The tab-driving tail of {@link buildOrRetry} (runs under the `build` hold). */
-  private async buildResolved(ownPk: string): Promise<boolean> {
-    const ownUsername = await this.deps.resolveUsername();
-
-    const existing = this.current();
-    if (existing !== null) {
-      // A degraded graph already exists (username was undefined at build time).
-      if (ownUsername === undefined) return true; // still no username — keep it.
-      const state = existing.engine.status().state;
-      if (state === 'running' || state === 'paused') {
-        logger.warn('foundation: username recovered but engine active, deferring rebuild', {
-          ownUsername,
-          state,
-        });
-        return true;
-      }
-      logger.info('foundation: own username recovered, rebuilding graph', { ownUsername });
-      await this.teardown();
-    }
-
-    // A teardown/wipe raced this build past the ensureBuilt gate: abort instead
-    // of resurrecting a store over a path that is being torn down or deleted.
-    if (this.disposingFlag || this.tearingDownFlag) {
-      logger.warn('foundation: build aborted, teardown in progress');
-      return false;
-    }
-    // The open transition IS the wiring: every dependent declared over this
-    // session is built here by the kernel's binding rule.
-    this.mutable.open(this.deps.build(ownPk, ownUsername));
-    logger.info('foundation: dependency graph built', {
-      ownPk,
-      ownUsername: ownUsername ?? '(unknown)',
-    });
-    return true;
   }
 
   /**
@@ -237,7 +215,7 @@ export class GraphSession {
     try {
       await this.buildPromise;
     } catch (e) {
-      logger.warn('foundation.clearData: in-flight build rejected during wipe', {
+      logger.warn('foundation: in-flight build rejected while settling', {
         error: String(e),
       });
     }

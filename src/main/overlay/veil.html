@@ -325,9 +325,20 @@
         width: 100%;
         height: 100%;
       }
+      /* The stage curtain: an opaque layer in the dashboard's background colour, above everything else on
+         this page, painted before the tab is re-stacked into view and faded once it is there. */
+      #curtain {
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+        background: #0d0d0f;
+        opacity: 0;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
+    <div id="curtain" hidden></div>
     <!-- macOS arrow from MacTahoe-icon-theme (cursors/src/svg-shadow/default.svg,
          GPL-3.0, © vinceliuice). 32×32 canvas; hotspot (5,5) per the theme's
          config/default.cursor. Painted before .veil → underneath the dim layer. -->
@@ -576,6 +587,38 @@
           }
         };
       })();
+
+      // ---- Stage curtain ----------------------------------------------------
+      // 'opaque' resolves after two frames (painted), 'clear' after its fade of `ms`, 'off' at once.
+      window.__curtain = function (state, ms) {
+        var c = document.getElementById('curtain');
+        if (!c) return Promise.resolve(false);
+        if (state === 'off') {
+          c.hidden = true;
+          c.style.transition = 'none';
+          c.style.opacity = '0';
+          return Promise.resolve(true);
+        }
+        if (state === 'opaque') {
+          c.hidden = false;
+          c.style.transition = 'none';
+          c.style.opacity = '1';
+          return new Promise(function (resolve) {
+            requestAnimationFrame(function () {
+              requestAnimationFrame(function () {
+                resolve(true);
+              });
+            });
+          });
+        }
+        c.style.transition = 'opacity ' + ms + 'ms ease';
+        c.style.opacity = '0';
+        return new Promise(function (resolve) {
+          setTimeout(function () {
+            resolve(true);
+          }, ms);
+        });
+      };
     </script>
   </body>
 </html>

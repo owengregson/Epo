@@ -5,10 +5,36 @@
  */
 
 import type { BuiltGraph, StatusContributor } from '@/main/services/graph-types';
+import type { BootView } from '@/shared/boot';
 import type { StatusFields } from '@/shared/status-fields';
 import type { EpoStatus } from '@/types';
 
 export type { StatusContributor };
+
+/** The account confirm-account verified: its pk and the username the signed-in page showed. */
+export interface ConfirmedAccount {
+  readonly pk: string;
+  readonly username: string;
+}
+
+/**
+ * The graph-independent contributors (spec §15.3): `boot` (readiness rides the status) and `account` (the
+ * graph's username, confirmed only when confirm-account saw that username for that pk).
+ */
+export function bootContributors(d: { boot(): BootView; confirmed(): ConfirmedAccount | null }): readonly StatusContributor[] {
+  return [
+    { name: 'boot', contribute: () => ({ boot: d.boot() }) },
+    {
+      name: 'account',
+      contribute: (graph) => {
+        if (graph === null) return { account: null };
+        const c = d.confirmed();
+        const username = graph.ownUsername ?? null;
+        return { account: { username, confirmed: c !== null && c.pk === graph.ownPk && c.username === username } };
+      },
+    },
+  ];
+}
 
 /** A status before composition: everything but the composed fields, which it may already carry. */
 export type BaseStatus = Omit<EpoStatus, keyof StatusFields> & Partial<StatusFields>;

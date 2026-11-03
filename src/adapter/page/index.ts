@@ -7,11 +7,11 @@
  * here is the only step needed to make it callable from page context.
  */
 
-export type { ActionButtonCfg, ButtonState } from './action-button';
+export type { ActionButtonCfg, ButtonState, ProbeStateResult } from './action-button';
 export { locateActionButton, probeActionButton } from './action-button';
 export { canClick, clickTarget } from './click-target';
-export type { ConfirmCfg } from './confirm';
-export { locateConfirm } from './confirm';
+export type { ConfirmCfg, ConfirmLocate, LayerCfg, LayerReport } from './confirm';
+export { confirmLayer, locateConfirm } from './confirm';
 export type { LocateRect, LocateScroll, Rect, RegexLit } from './dom';
 export type { ConfirmRequestCfg, LabeledCfg, TextEntryCfg } from './drawer';
 export { locateConfirmRequest, locateLabeled, locateTextEntry } from './drawer';

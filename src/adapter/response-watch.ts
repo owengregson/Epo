@@ -54,12 +54,15 @@ export class ResponseWatch<T> {
   private unsubscribe: Unsubscribe | null = null;
   private observed: T | null = null;
   private observedAt = 0;
+  private pressedAt: number;
+  private matched = false;
   private waiter: ((value: T) => void) | null = null;
 
   constructor(spec: WatchSpec<T>, tab: MaybeObservable, now: () => number = Date.now) {
     this.spec = spec;
     this.now = now;
     this.armedAt = now();
+    this.pressedAt = this.armedAt;
     this.available = typeof tab.onResponse === 'function';
     if (!this.available) return;
     this.unsubscribe = (tab.onResponse as (h: ResponseHandler) => Unsubscribe)((response) =>
@@ -67,9 +70,19 @@ export class ResponseWatch<T> {
     );
   }
 
-  /** How long the observation took to arrive, in ms; `null` if none has. */
+  /** How long the observation took to arrive after the last press (or the arming), in ms; `null` if none has. */
   latencyMs(): number | null {
-    return this.observed === null ? null : this.observedAt - this.armedAt;
+    return this.observed === null ? null : this.observedAt - this.pressedAt;
+  }
+
+  /** The observation if one has arrived, without waiting: a confirm-layer loop's evidence check. */
+  peek(): T | null {
+    return this.observed;
+  }
+
+  /** Re-base the latency on the press that may fire the response; a no-op once a match arrived. */
+  markPress(): void {
+    if (!this.matched) this.pressedAt = this.now();
   }
 
   /**
@@ -115,6 +128,7 @@ export class ResponseWatch<T> {
       this.spec.onUnmatched?.(response);
       return;
     }
+    this.matched = true;
     void this.settle(response);
   }
 

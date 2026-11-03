@@ -1,5 +1,8 @@
 import { appendFile, mkdir, rename, stat, unlink } from 'node:fs/promises';
 import * as path from 'node:path';
+import { RUNTIME_BOUNDS } from '@/kernel/runtime-bounds';
+
+const { LOG_MAX_BYTES, LOG_FILES, LOG_LINE_BYTES, LOG_MESSAGE_CHARS, LOG_PENDING_BYTES, LOG_FLUSH_MS } = RUNTIME_BOUNDS;
 
 /** Bounded, rotating diagnostics. Logging never blocks the action loop on disk. */
 export class RuntimeLog {
@@ -12,8 +15,8 @@ export class RuntimeLog {
 
   constructor(
     private readonly directory: string,
-    private readonly maxBytes = 2 * 1024 * 1024,
-    private readonly files = 4,
+    private readonly maxBytes: number = LOG_MAX_BYTES,
+    private readonly files: number = LOG_FILES,
   ) {}
 
   write(level: string, message: string, meta?: unknown): void {
@@ -25,15 +28,15 @@ export class RuntimeLog {
       line = `${JSON.stringify({ at: Date.now(), level, message, meta: '[unserializable]' })}\n`;
     }
     // A corrupt payload or repeated failing loop must not exhaust memory/disk.
-    if (Buffer.byteLength(line) > 32_768) {
-      line = `${JSON.stringify({ at: Date.now(), level, message: message.slice(0, 2000), truncated: true })}\n`;
+    if (Buffer.byteLength(line) > LOG_LINE_BYTES) {
+      line = `${JSON.stringify({ at: Date.now(), level, message: message.slice(0, LOG_MESSAGE_CHARS), truncated: true })}\n`;
     }
     const bytes = Buffer.byteLength(line);
-    if (this.pendingBytes + bytes > 256 * 1024) { this.dropped++; return; }
+    if (this.pendingBytes + bytes > LOG_PENDING_BYTES) { this.dropped++; return; }
     this.pending.push(line);
     this.pendingBytes += bytes;
     if (this.timer === null) {
-      this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, 1000);
+      this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, LOG_FLUSH_MS);
       this.timer.unref();
     }
   }
