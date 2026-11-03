@@ -28,8 +28,11 @@ import * as logger from '@/utils/logger';
 /** Fixed width of the dashboard sidebar; the IG tab fills the remainder. */
 const SIDEBAR_WIDTH = 460;
 
-/** Height of the renderer's stage bar — must match `.stagebar` in graph.css. */
+/** Height of the renderer's stage bar — must match `.stagebar` in shell.css. */
 const STAGE_BAR_HEIGHT = 44;
+
+/** The window and dashboard background: the renderer's `--bg`, so no frame ever paints another colour. */
+const BACKGROUND = '#0d0d0f';
 
 /** Debounce for geometry persistence — resize/move fire per frame. */
 const BOUNDS_PERSIST_MS = 500;
@@ -51,12 +54,22 @@ export interface AppShell {
   send(channel: string, payload: unknown): void;
   /** Run `cb` every time the renderer finishes loading (status replay). */
   onRendererLoad(cb: () => void): void;
+  /** The tab's first navigation to the home page: 'ready' once it settles, 'failed' when it threw. */
+  igFirstLoad: Promise<'ready' | 'failed'>;
+  /** Load the dashboard page held back by `deferDashboardLoad` (idempotent; a no-op once loaded). */
+  loadDashboard(): void;
+  /** Show a window built hidden — maximized when its saved state was — then focus it (idempotent). */
+  reveal(): void;
 }
 
 export interface AppShellOptions {
   /** Where the window's persisted geometry file lives. */
   windowStateFile: string;
   onDashboardBlocked?(reason: string): void;
+  /** Build the window hidden until `reveal()` (default: shown at construction, as before). */
+  startHidden?: boolean;
+  /** Hold the dashboard load until `loadDashboard()` (default: loaded at once, as before). */
+  deferDashboardLoad?: boolean;
 }
 
 export function createAppShell(opts: AppShellOptions): AppShell {
@@ -72,9 +85,12 @@ export function createAppShell(opts: AppShellOptions): AppShell {
     minWidth: MIN_WINDOW.width,
     minHeight: MIN_WINDOW.height,
     title: 'Epo',
-    backgroundColor: '#0e0e10',
+    backgroundColor: BACKGROUND,
+    show: opts.startHidden !== true,
   });
-  if (state.maximized) win.maximize();
+  // A hidden window maximizes at reveal(): maximize() on a never-shown window would show it.
+  let revealed = opts.startHidden !== true;
+  if (state.maximized && revealed) win.maximize();
 
   // getNormalBounds() keeps reporting the un-maximized rect while maximized, so
   // a maximized close still restores to a sane normal size.
@@ -119,6 +135,10 @@ export function createAppShell(opts: AppShellOptions): AppShell {
   // Bottom layer, full window: the page renders the console column PLUS the
   // stage area (the stage bar and, in graph mode, the graph canvas).
   win.contentView.addChildView(dash);
+  dash.setBackgroundColor(BACKGROUND);
+  // CSS px always equal DIP: zoom would desync the native tab's bounds from the layout.
+  void dash.webContents.setVisualZoomLevelLimits(1, 1).catch((error: unknown) =>
+    logger.warn('shell: dashboard zoom limits failed', { error: String(error) }));
   const dashboardFile = path.join(__dirname, '..', 'renderer', 'index.html');
   const dashboard = new DashboardRecovery({
     load: () => dash.webContents.loadFile(dashboardFile),
@@ -130,12 +150,21 @@ export function createAppShell(opts: AppShellOptions): AppShell {
   });
   dash.webContents.on('unresponsive', () => dashboard.failed('unresponsive'));
   win.on('closed', () => dashboard.stop());
-  dashboard.load();
+  let dashboardLoaded = false;
+  const loadDashboard = (): void => {
+    if (dashboardLoaded) return;
+    dashboardLoaded = true;
+    dashboard.load();
+  };
+  if (opts.deferDashboardLoad !== true) loadDashboard();
 
   // --- Embedded Instagram tab (right) ---------------------------------------
   const tab = new InstagramTab();
   tab.attach(win);
-  void tab.goto(IG_HOME_URL).catch((error: unknown) => logger.warn('shell: initial tab load failed', { error: String(error) }));
+  const igFirstLoad = tab.goto(IG_HOME_URL).then(() => 'ready' as const, (error: unknown) => {
+    logger.warn('shell: initial tab load failed', { error: String(error) });
+    return 'failed' as const;
+  });
 
   // --- Activity veil (stacked above the tab) --------------------------------
   const veil = new OverlayVeil();
@@ -180,6 +209,15 @@ export function createAppShell(opts: AppShellOptions): AppShell {
     },
     onRendererLoad: (cb) => {
       dash.webContents.on('did-finish-load', cb);
+    },
+    igFirstLoad,
+    loadDashboard,
+    reveal: () => {
+      if (revealed || win.isDestroyed()) return;
+      revealed = true;
+      if (state.maximized) win.maximize();
+      else win.show();
+      win.focus();
     },
   };
 }
