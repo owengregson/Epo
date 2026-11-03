@@ -8,7 +8,7 @@
  * now aliases of the unions below.
  */
 
-import type { ResponseHandler, Unsubscribe } from '@/types';
+import type { ResponseHandler, Unsubscribe } from '@/shared/tab-response';
 
 /** In-page script evaluation. */
 export interface Evaluable {

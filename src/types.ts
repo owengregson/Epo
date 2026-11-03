@@ -9,49 +9,10 @@
  */
 
 // ---------------------------------------------------------------------------
-// Tab network-observation contract (consumed by the Reader in Task 7)
+// Tab network-observation contract (one home: `src/shared/tab-response.ts`)
 // ---------------------------------------------------------------------------
 
-/**
- * A single observed network response from the embedded Instagram tab.
- *
- * The tab observes responses via the Chrome DevTools Protocol (see
- * `src/adapter/tab.ts`). `getBody()` lazily fetches the decoded response body
- * so the Reader only pays for bodies it actually wants to parse.
- */
-export interface TabResponse {
-  /** CDP request identifier; unique within the tab's page session. */
-  requestId: string;
-  /** Fully-qualified response URL. */
-  url: string;
-  /** HTTP status code. */
-  status: number;
-  /** Response MIME type (e.g. `application/json`). */
-  mimeType: string;
-  /**
-   * The request's HTTP method (from `Network.requestWillBeSent`), when the
-   * observer saw the request go out. Absent for responses whose request
-   * predates the observer (a debugger re-attach mid-flight).
-   */
-  method?: string;
-  /**
-   * The request headers the page sent, keys LOWER-CASED. Lets a consumer tell
-   * a GraphQL mutation apart from a query by its friendly-name header without
-   * the tab knowing any Instagram literal. Absent when `method` is.
-   */
-  requestHeaders?: Record<string, string>;
-  /**
-   * Lazily fetch the decoded response body as a UTF-8 string.
-   * Rejects if the body is no longer available in the CDP resource cache.
-   */
-  getBody(): Promise<string>;
-}
-
-/** Handler registered via {@link InstagramTab.onResponse}. */
-export type ResponseHandler = (response: TabResponse) => void;
-
-/** Disposer returned by subscription helpers; idempotent. */
-export type Unsubscribe = () => void;
+export type { ResponseHandler, TabResponse, Unsubscribe } from '@/shared/tab-response';
 
 import type { EngineParkReason, EngineStatus } from '@/engine/engine';
 import type { PruneCandidate, PruneState, PruneStatus } from '@/engine/prune-engine';
