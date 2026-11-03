@@ -132,10 +132,6 @@
     {
       "file": "src/engine/rules.ts",
       "lines": 303
-    },
-    {
-      "file": "src/store/schema.ts",
-      "lines": 301
     }
   ]
 }
