@@ -31,19 +31,9 @@
       "reason": "surface-wiring.ts swaps the production sink in for NO_SINK and the read pipeline reports to it"
     },
     {
-      "module": "src/governors/plan-service.ts",
-      "stream": "PR",
-      "reason": "plan-wiring.ts builds the plan service over the store and settings, and swaps its plan-day clock in for every day-keyed consumer"
-    },
-    {
       "module": "src/governors/plan-projection.ts",
       "stream": "PR",
       "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
-    },
-    {
-      "module": "src/governors/plan-boost.ts",
-      "stream": "PR",
-      "reason": "the boost status contributor (boost-control) projects the window into EpoStatus.boost; plan-wiring includes it"
     },
     {
       "module": "src/settings/plan-intent.ts",

@@ -245,6 +245,7 @@ export class PruneControl {
     if (!this.deps.online()) return 'offline';
     if (this.deps.manualDriving()) return 'manual-running';
     if (this.lease.owner() === 'prune') return 'prune-running';
+    if (this.deps.boostActive()) return 'boost-active';
     return null;
   }
 
