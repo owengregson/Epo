@@ -4,7 +4,8 @@
  * rows only slow down; both lists come raw, every item counted; a broken post-condition refuses.
  */
 import { createHash } from 'node:crypto';
-import { SETTINGS_POLICY } from '@/kernel/settings-policy';
+import { SETTINGS_GUARDS, SETTINGS_POLICY } from '@/kernel/settings-policy';
+import { MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
 import type { AudienceSize, CleanupLevel, Intent, QuietHours } from '@/shared/settings-intent';
 import type { ParamValue, RatioCurve } from '@/shared/settings-model';
 import type { ParamKey } from '@/shared/settings-params';
@@ -57,6 +58,8 @@ const DERIVED_ROWS: ReadonlyArray<readonly [ParamKey, keyof ResolvedPattern]> = 
   ['unfollow.holdDays', 'holdAfterFollowbackDays'],
 ];
 
+const MINUTES_PER_HOUR = MS_PER_HOUR / MS_PER_MINUTE;
+
 const CURVE_KEYS = ['hardLow', 'bandLow', 'peakLow', 'peakHigh', 'bandHigh', 'hardHigh'] as const;
 
 function quietHoursFrom(v1: Settings, notes: MigrationNote[]): QuietHours {
@@ -67,7 +70,7 @@ function quietHoursFrom(v1: Settings, notes: MigrationNote[]): QuietHours {
   }
   notes.push({ kind: 'quiet-hours-from-active-hours', start, end });
   // The active window [start, end) becomes the quiet window [end, start); an empty one has none.
-  return start === end ? { kind: 'none' } : { kind: 'custom', startMinute: end * 60, endMinute: start * 60 };
+  return start === end ? { kind: 'none' } : { kind: 'custom', startMinute: end * MINUTES_PER_HOUR, endMinute: start * MINUTES_PER_HOUR };
 }
 
 function cleanupFrom(v1: Settings, notes: MigrationNote[]): CleanupLevel {
@@ -159,7 +162,8 @@ export function migrateV1(raw: string, opts: MigrateOptions): MigrationOutcome {
       basis.interim.cleanupPerDay);
   }
   if (v1.pruneScheduleDays > 0 && v1.pruneScheduleDays !== basis.interim.censusEveryDays) {
-    set('unfollow.censusEveryDays', clamped('unfollow.censusEveryDays', v1.pruneScheduleDays, 1, 30),
+    const { min, max } = SETTINGS_GUARDS.censusEveryDays;
+    set('unfollow.censusEveryDays', clamped('unfollow.censusEveryDays', v1.pruneScheduleDays, min, max),
       basis.interim.censusEveryDays);
   }
   // The scan band becomes a walk.page factor over the v1 default band (the walk.page reference), slower

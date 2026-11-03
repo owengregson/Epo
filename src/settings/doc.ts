@@ -104,7 +104,7 @@ export const RECOMMENDED_INTENT: Intent = {
 
 /** A fresh install's document. */
 export const DEFAULT_DOC: SettingsDocV2 = {
-  v: 2,
+  v: SETTINGS_POLICY.DOC_VERSION,
   rev: 0,
   intent: RECOMMENDED_INTENT,
   seed: '',
