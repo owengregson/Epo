@@ -12,6 +12,7 @@ import {
   statusSignal,
 } from '@/renderer/app/shell-context';
 import { LivePlaceholder } from '@/renderer/boot/LivePlaceholder';
+import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
 import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, GALLERY_SETTINGS, type Scenario } from '@/renderer/gallery/fixtures';
 import { LIVE_SCENARIOS, resetLiveGallery } from '@/renderer/gallery/fixtures-live';
@@ -29,6 +30,7 @@ const SURFACES = [
   { key: 'prune', label: 'Prune' },
   { key: 'settings', label: 'Settings' },
   { key: 'live', label: 'Live placeholder' },
+  { key: 'diagnostics', label: 'Diagnostics' },
 ] as const;
 
 type SurfaceKey = (typeof SURFACES)[number]['key'];
@@ -71,6 +73,8 @@ function Surface({ surface }: { surface: SurfaceKey }): JSX.Element {
       return <SettingsStage goTo={noop} seedPrompt={0} onReplayTour={noop} updateStatus={null} />;
     case 'live':
       return <LivePlaceholder />;
+    case 'diagnostics':
+      return <DiagnosticsPanel />;
   }
 }
 

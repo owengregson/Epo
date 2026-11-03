@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { parseSync } from '@swc/core';
 import { PLACEHOLDER, SPLASH } from '@/renderer/boot/boot-copy';
 import { BOOST_COPY } from '@/renderer/copy/boost';
+import { DIAGNOSTICS_COPY } from '@/renderer/diagnostics/diagnostics-copy';
 import { STOP_TOAST, UNDO } from '@/renderer/hooks/useTransportControls';
 import { UPDATE_TOAST } from '@/renderer/hooks/useUpdateToasts';
 import { BOOST_NEEDS_PLAN, bandLine, buttonLabel, PAUSED_REASON, previewLine } from '@/renderer/sidebar/boost-copy';
@@ -195,6 +196,7 @@ function everySentence(): string[] {
   out.push(UPDATE_TOAST.ready('3.4.1'), UPDATE_TOAST.available('3.4.1'));
   for (const op of ops) out.push(liveOpText(op));
   out.push(...Object.values(SPLASH), ...Object.values(PLACEHOLDER));
+  out.push(...Object.values(DIAGNOSTICS_COPY).flatMap((v) => (typeof v === 'string' ? [v] : Object.values(v))));
   return out.filter((s) => s !== '');
 }
 
@@ -246,7 +248,7 @@ const DECKS = [
   'src/renderer/sidebar/copy/refusal-copy.ts', 'src/renderer/sidebar/copy/explain-copy.ts',
   'src/renderer/sidebar/copy/feed-copy.ts', 'src/renderer/sidebar/copy/zone-copy.ts', 'src/renderer/sidebar/boost-copy.ts',
   'src/renderer/copy/boost.ts', 'src/shared/live-op.ts', 'src/renderer/hooks/useUpdateToasts.ts',
-  'src/renderer/boot/boot-copy.ts',
+  'src/renderer/boot/boot-copy.ts', 'src/renderer/diagnostics/diagnostics-copy.ts',
 ];
 
 /** An swc AST node, walked generically. */
