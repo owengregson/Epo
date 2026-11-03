@@ -15,7 +15,7 @@
  *     approved mockup's values, and a scale change that moves a rendered pixel
  *     has to update it in the same commit, on purpose.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { renderTokensCss } from '@/renderer/design/scale';
 
@@ -121,7 +121,7 @@ describe('the generated tokens reproduce the shipped values', () => {
     for (const declaration of spacing) expect(container).not.toContain(declaration);
   });
 
-  test('nothing else declares a spacing, type or control token', () => {
+  test('nothing else declares a spacing, type or control token (generated block)', () => {
     const declared = [...css.matchAll(/^ {2}(--[\w-]+):/gm)].map((m) => m[1]);
     expect(declared.sort()).toEqual(
       [
@@ -132,5 +132,34 @@ describe('the generated tokens reproduce the shipped values', () => {
         ...controls.map((d) => d.slice(0, d.indexOf(':'))),
       ].sort(),
     );
+  });
+});
+
+/** Every stylesheet the renderer loads through `styles/index.css`, comments stripped. */
+function sheets(): Array<{ file: string; css: string }> {
+  const dir = path.join(__dirname, '..', '..', 'src', 'renderer', 'styles');
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.css'))
+    .map((file) => ({ file, css: readFileSync(path.join(dir, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '') }));
+}
+
+/** `var(--name)` reads with no fallback; a fallback marks a property set inline from a component. */
+const bareReads = (css: string): string[] =>
+  [...css.matchAll(/var\(\s*(--[\w-]+)\s*(,)?/g)].filter((m) => m[2] === undefined).map((m) => m[1] as string);
+
+describe('L-TOKENS: every token a stylesheet reads is declared', () => {
+  test('each bare var(--name) is declared in some sheet', () => {
+    const all = sheets();
+    const declared = new Set(all.flatMap(({ css }) => [...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1])));
+    const undeclared = all.flatMap(({ file, css }) =>
+      bareReads(css)
+        .filter((name) => !declared.has(name))
+        .map((name) => `${file}: ${name}`),
+    );
+    expect(undeclared).toEqual([]);
+  });
+
+  test('the check sees a typo’d token and lets an inline-set one with a fallback through', () => {
+    expect(bareReads('.a { color: var(--txet); } .b { width: var(--w, 0); }')).toEqual(['--txet']);
   });
 });

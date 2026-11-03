@@ -2,9 +2,9 @@
  * @jest-environment jsdom
  * @jest-environment-options {"customExportConditions": [""]}
  *
- * The Epo mark is locked: `src/renderer/design/brand-mark.ts` is its one geometry
- * source, the favicon in `index.html` carries a copy, and `EpoMark` draws it.
- * All three must agree rectangle for rectangle and stop for stop.
+ * L-MARK: the Epo mark is locked. `src/renderer/design/brand-mark.ts` is its one
+ * geometry source; the favicon and any inline mark in `index.html` (the splash)
+ * carry copies, and `EpoMark` draws it. All agree rectangle for rectangle and stop for stop.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -45,12 +45,20 @@ function read(svg: Element): Geometry {
   return { rects, layers };
 }
 
-describe('the brand mark', () => {
+const INDEX_HTML = fs.readFileSync(path.resolve(__dirname, '../../src/renderer/index.html'), 'utf8');
+
+describe('the brand mark (L-MARK)', () => {
   it('the favicon is the mark', () => {
-    const html = fs.readFileSync(path.resolve(__dirname, '../../src/renderer/index.html'), 'utf8');
-    const b64 = /href="data:image\/svg\+xml;base64,([^"]+)"/.exec(html)?.[1] ?? '';
+    const b64 = /href="data:image\/svg\+xml;base64,([^"]+)"/.exec(INDEX_HTML)?.[1] ?? '';
     const svg = new DOMParser().parseFromString(Buffer.from(b64, 'base64').toString('utf8'), 'image/svg+xml');
     expect(read(svg.documentElement)).toEqual(expected());
+  });
+
+  it('every mark drawn inline in index.html (the splash, once it lands) is the mark', () => {
+    const doc = new DOMParser().parseFromString(INDEX_HTML, 'text/html');
+    for (const svg of doc.querySelectorAll('svg')) {
+      if (svg.querySelector('mask') !== null) expect(read(svg)).toEqual(expected());
+    }
   });
 
   it('EpoMark draws exactly that geometry, at any size', () => {

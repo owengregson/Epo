@@ -14,7 +14,7 @@
   width: 100%;
   height: 100%;
 }
-/* 460px mirrors SIDEBAR_WIDTH in src/main/main.ts — keep the two in sync. */
+/* 460px = SHELL_GEOMETRY.SIDEBAR_WIDTH_PX (src/kernel/shell-geometry.ts); a test pins the two. */
 .shell > .console {
   flex: 0 0 460px;
   min-width: 0;
@@ -472,8 +472,8 @@
   flex-direction: column;
 }
 
-/* 44px mirrors STAGE_BAR_HEIGHT in src/main/main.ts — keep the two in sync;
-   the native Instagram view starts exactly below this strip. */
+/* 44px = SHELL_GEOMETRY.STAGE_BAR_HEIGHT_PX (src/kernel/shell-geometry.ts), pinned
+   by a test; the native Instagram view starts exactly below this strip. */
 .stagebar {
   flex: 0 0 44px;
   height: 44px;
