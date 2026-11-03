@@ -3,6 +3,13 @@
  * loop consults (re-exported by `ports.ts`, so consumers may import from either).
  */
 
+import type { TempoSource } from '../kernel/tempo';
+
+/** The tempo the loop's wait bases resolve from; the plan's source is swapped in at wiring (default: reference). */
+export interface EngineTempo {
+  readonly tempo?: TempoSource;
+}
+
 /** The Rate Governor slice the Engine consults for gating, pacing, and status. */
 export interface EngineRate {
   withinActiveHours(): boolean;

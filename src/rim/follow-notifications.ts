@@ -22,20 +22,18 @@
  * empty feed must remain distinguishable from a failed read.
  */
 
-import {
-  type ActivityReporter,
-  NOOP_ACTIVITY_REPORTER,
-} from '@/adapter/activity-reporter';
+import { type ActivityReporter, NOOP_ACTIVITY_REPORTER } from '@/adapter/activity-reporter';
 import type { Actor } from '@/adapter/actor';
 import type { LocateConfirmRequestResult } from '@/adapter/ig-surface';
 import type { FollowEvent, Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import type { ReadBudget } from '@/governors/read-budget';
+import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import { awaitCaptured, captureFeed } from '@/rim/feed-capture';
 import type { RimTab } from '@/rim/types';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
-import { sample, sleep, uniform } from '@/timing/primitives';
+import { sample, sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 import { acceptRequests as acceptPendingRequests } from './request-acceptance';
 
@@ -101,6 +99,8 @@ export interface FollowNotificationsDeps {
   abortSignal?: () => AbortSignal | undefined;
   /** Live activity readout for the veil; defaults to a no-op. */
   reporter?: ActivityReporter;
+  /** The tempo the drawer's waits and step pauses resolve from (default: the reference tempo). */
+  tempo?: TempoSource;
 }
 
 export class AdapterBackedFollowNotifications implements FollowNotificationsSource {
@@ -118,6 +118,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly abortSignal?: () => AbortSignal | undefined;
   private readonly reporter: ActivityReporter;
+  private readonly tempo: TempoSource;
 
   constructor(deps: FollowNotificationsDeps) {
     this.readBudget = deps.readBudget;
@@ -134,6 +135,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     this.sleep = deps.sleep ?? sleep;
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
+    this.tempo = tempoOrReference(deps.tempo);
   }
 
   async fetchRecent(opts?: { acceptRequests?: boolean }): Promise<FollowNotificationsResult> {
@@ -172,6 +174,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
 
       // Narrow the feed to follow events with the drawer's own filter — a soft
       // nicety (the JSON parse filters by story type regardless of the UI filter).
+      await this.stepPause(signal);
       const filtered = await this.actor.clickNotificationsFollowsFilter();
       if (!filtered) {
         logger.debug('rim.follow-notifications: Follows filter not present, reading full feed');
@@ -210,10 +213,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
         const before = seenEvents.size;
         const scrolled = await this.actor.scrollNotificationsList();
         if (!scrolled) break; // list fits or already bottomed
-        await this.sleep(
-          sample(uniform(RIM.NOTIFICATIONS_SCROLL_WAIT_MIN_MS, RIM.NOTIFICATIONS_SCROLL_WAIT_MAX_MS)),
-          signal,
-        );
+        await this.sleep(sample(this.tempo.policy('scroll.wait.drawer')), signal);
         await Promise.all(pendingReads.splice(0));
         if (seenEvents.size === before) break; // no older page / nothing new
       }
@@ -222,12 +222,13 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
       // --- Follow requests (private accounts) — same drawer session ---------
       const accepted: AcceptedFollowRequest[] = [];
       if (acceptRequests && !signal?.aborted) {
+        await this.stepPause(signal);
         const entered = await this.actor.clickFollowRequestsEntry();
         if (entered) {
           await this.awaitCaptured(() => captured.pendingPks !== null, pendingReads, signal);
           await acceptPendingRequests({ actor: this.actor, store: this.store, ownPk: this.ownPk,
             canAccept: this.canAccept, onAccepted: this.onAccepted, acceptVerifyMs: this.acceptVerifyMs,
-            sleep: this.sleep }, captured.pendingPks ?? new Map(), accepted, signal);
+            sleep: this.sleep, tempo: this.tempo }, captured.pendingPks ?? new Map(), accepted, signal);
         } else {
           logger.debug('rim.follow-notifications: no Follow requests entry (nothing pending)');
         }
@@ -248,16 +249,18 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
       // bell when no close control is found. Best-effort: every subsequent
       // operation begins with a `goto` that resets the SPA anyway.
       try {
-        await this.sleep(
-          sample(uniform(RIM.NOTIFICATIONS_CLOSE_DELAY_MIN_MS, RIM.NOTIFICATIONS_CLOSE_DELAY_MAX_MS)),
-          this.abortSignal?.(),
-        );
+        await this.sleep(sample(this.tempo.policy('drawer.close-settle')), this.abortSignal?.());
         const closed = await this.actor.clickNotificationsClose();
         if (!closed) await this.actor.clickNotifications();
       } catch (e) {
         logger.debug('rim.follow-notifications: drawer close skipped', { error: String(e) });
       }
     }
+  }
+
+  /** A reading pause between two presses of one drawer flow (`ui.step-pause`; off at identity). */
+  private async stepPause(signal: AbortSignal | undefined): Promise<void> {
+    if (this.tempo.enabled('ui.step-pause')) await this.sleep(sample(this.tempo.policy('ui.step-pause')), signal);
   }
 
   /** Bounded poll for an observed response (interruptible by a stop()). */

@@ -3,7 +3,7 @@
   "allow": [
     {
       "file": "src/main/foundation-wiring.ts",
-      "lines": 1437
+      "lines": 1436
     },
     {
       "file": "src/engine/prune-engine.ts",
@@ -15,7 +15,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 972
+      "lines": 968
     },
     {
       "file": "src/adapter/actor.ts",
@@ -47,7 +47,7 @@
     },
     {
       "file": "src/engine/target-pipeline.ts",
-      "lines": 421
+      "lines": 417
     },
     {
       "file": "src/main/foundation-reads.ts",
@@ -55,7 +55,7 @@
     },
     {
       "file": "src/rim/list-page-walker.ts",
-      "lines": 406
+      "lines": 405
     },
     {
       "file": "src/main/services/graph-builder.ts",
@@ -67,7 +67,7 @@
     },
     {
       "file": "src/rim/follower-acquisition.ts",
-      "lines": 362
+      "lines": 359
     },
     {
       "file": "src/types.ts",

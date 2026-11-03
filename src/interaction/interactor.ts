@@ -12,7 +12,7 @@ import {
   uniform,
   wheelPlan,
 } from '@/interaction/motion-profile';
-import { MOTION } from '@/kernel/motion-policy';
+import { type MotionPolicy, type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import { sleep as defaultSleep, type SleepFn } from '@/timing/primitives';
 
 export type { ElementRect, Point } from '@/interaction/motion-profile';
@@ -31,12 +31,17 @@ export interface InteractorDeps {
   canClick?: (target: ElementRect, point: Point) => Promise<boolean>;
   prepareClick?: (target: ElementRect, point: Point) => Promise<ClickGuard>;
   viewport?: () => Promise<ElementRect>;
+  /** The tempo every gesture resolves its motion policy from (default: the reference tempo). */
+  tempo?: TempoSource;
 }
+
+type GestureRun = (guard: () => void, signal: AbortSignal | undefined, policy: MotionPolicy) => Promise<void>;
 
 export class Interactor {
   private readonly driver: InputDriver;
   private readonly rng: Rng;
   private readonly sleep: SleepFn;
+  private readonly tempo: TempoSource;
   private tail: Promise<void> = Promise.resolve();
   private pos: Point;
   private boundedStart = false;
@@ -45,9 +50,11 @@ export class Interactor {
     this.driver = deps.driver;
     this.rng = deps.rng ?? Math.random;
     this.sleep = deps.sleep ?? defaultSleep;
+    this.tempo = tempoOrReference(deps.tempo);
+    const start = this.tempo.gesture().policy;
     this.pos = {
-      x: Math.round(uniform(this.rng, 180, 720)),
-      y: Math.round(uniform(this.rng, 160, 560)),
+      x: Math.round(uniform(this.rng, ...start.initialCursorXPx)),
+      y: Math.round(uniform(this.rng, ...start.initialCursorYPx)),
     };
   }
 
@@ -56,15 +63,16 @@ export class Interactor {
   }
 
   async moveTo(x: number, y: number, targetWidthPx = 32): Promise<void> {
-    return this.gesture(async (guard, signal) => {
+    return this.gesture(async (guard, signal, policy) => {
       const bounds = await this.viewport(guard);
-      await this.move(x, y, targetWidthPx, guard, signal, bounds);
+      await this.move(x, y, targetWidthPx, guard, policy, signal, bounds);
     });
   }
 
-  private async move(x: number, y: number, targetWidthPx: number, guard: () => void, signal?: AbortSignal, bounds?: ElementRect): Promise<void> {
+  private async move(x: number, y: number, targetWidthPx: number, guard: () => void, policy: MotionPolicy,
+    signal?: AbortSignal, bounds?: ElementRect): Promise<void> {
     const to: Point = { x, y };
-    const { points: path, delaysMs: delays } = movementPlan(this.pos, to, targetWidthPx, this.rng, { bounds });
+    const { points: path, delaysMs: delays } = movementPlan(this.pos, to, targetWidthPx, this.rng, { bounds }, policy);
 
     for (let i = 1; i < path.length; i++) {
       await this.sleep(delays[i - 1], signal);
@@ -83,14 +91,14 @@ export class Interactor {
    * again after this resolves and presses what is there now.
    */
   async hover(target: ElementRect, aim?: ElementRect): Promise<void> {
-    return this.gesture(async (guard, signal) => {
+    return this.gesture(async (guard, signal, policy) => {
       const bounds = await this.viewport(guard);
       const zone = (aim && intersectRect(aim, target)) ?? target;
       const visible = bounds ? intersectRect(zone, bounds) : zone;
       if (!visible) throw new RangeError('Hover target is outside the viewport');
-      const point = targetPoint(visible, this.rng, bounds);
-      await this.move(point.x, point.y, Math.min(visible.width, visible.height), guard, signal, bounds);
-      await this.sleep(Math.round(uniform(this.rng, MOTION.hoverSettleMs[0], MOTION.hoverSettleMs[1])), signal);
+      const point = targetPoint(visible, this.rng, bounds, policy);
+      await this.move(point.x, point.y, Math.min(visible.width, visible.height), guard, policy, signal, bounds);
+      await this.sleep(Math.round(uniform(this.rng, ...policy.hoverSettleMs)), signal);
       guard();
     });
   }
@@ -100,16 +108,16 @@ export class Interactor {
    * rest is covered; the guard still identifies the control by `target`.
    */
   async click(target: ElementRect, aim?: ElementRect): Promise<void> {
-    return this.gesture(async (guard, signal) => {
+    return this.gesture(async (guard, signal, policy) => {
       const bounds = await this.viewport(guard);
       const zone = (aim && intersectRect(aim, target)) ?? target;
-      const point = targetPoint(zone, this.rng, bounds);
+      const point = targetPoint(zone, this.rng, bounds, policy);
       const visible = bounds ? intersectRect(zone, bounds) : zone;
       if (!visible) throw new RangeError('Click target is outside the viewport');
       const clickGuard = await this.deps.prepareClick?.(target, point);
       try {
-        await this.move(point.x, point.y, Math.min(visible.width, visible.height), guard, signal, bounds);
-        await this.sleep(Math.round(uniform(this.rng, 30, 120)), signal);
+        await this.move(point.x, point.y, Math.min(visible.width, visible.height), guard, policy, signal, bounds);
+        await this.sleep(Math.round(uniform(this.rng, ...policy.prePressMs)), signal);
         guard();
         if ((clickGuard && !(await clickGuard.validate()))
           || (this.deps.canClick && !(await this.deps.canClick(target, point)))) {
@@ -123,7 +131,7 @@ export class Interactor {
           await this.driver.mouseDown(this.pos.x, this.pos.y);
           accepted = true;
           // Finish an accepted press even if Pause arrives during the short hold.
-          await this.sleep(pressDurationMs(this.rng), signal);
+          await this.sleep(pressDurationMs(this.rng, policy), signal);
         } catch (error) {
           failure = { error };
         }
@@ -141,32 +149,33 @@ export class Interactor {
   }
 
   async scroll(container: ElementRect, deltaPx: number, restPoint?: Point): Promise<void> {
-    return this.gesture((guard, signal) => this.scrollWithin(container, deltaPx, guard, signal, restPoint));
+    return this.gesture((guard, signal, policy) => this.scrollWithin(container, deltaPx, guard, policy, signal, restPoint));
   }
 
-  private async scrollWithin(container: ElementRect, deltaPx: number, guard: () => void, signal?: AbortSignal, restPoint?: Point): Promise<void> {
+  private async scrollWithin(container: ElementRect, deltaPx: number, guard: () => void, policy: MotionPolicy,
+    signal?: AbortSignal, restPoint?: Point): Promise<void> {
     if (deltaPx === 0) return;
-    const ticks = wheelPlan(deltaPx, this.rng);
+    const ticks = wheelPlan(deltaPx, this.rng, {}, policy);
     const bounds = await this.viewport(guard);
     const visible = bounds ? intersectRect(container, bounds) : container;
     if (!visible) throw new RangeError('Scroll container is outside the viewport');
     container = visible;
     if (restPoint !== undefined) {
       if (!this.inside(restPoint, container)) throw new RangeError('Scroll rest point is outside its container');
-      await this.move(restPoint.x, restPoint.y, Math.min(container.width, container.height), guard, signal, bounds);
+      await this.move(restPoint.x, restPoint.y, Math.min(container.width, container.height), guard, policy, signal, bounds);
     } else if (!this.inside(this.pos, container)) {
-      const entry = targetPoint(container, this.rng);
-      await this.move(entry.x, entry.y, Math.min(container.width, container.height), guard, signal, bounds);
+      const entry = targetPoint(container, this.rng, undefined, policy);
+      await this.move(entry.x, entry.y, Math.min(container.width, container.height), guard, policy, signal, bounds);
     }
     for (const tick of ticks) {
       guard();
       await this.driver.wheel(this.pos.x, this.pos.y, tick.deltaPx);
       await this.sleep(tick.pauseMs, signal);
       guard();
-      if (restPoint === undefined && this.rng() < 0.15) {
+      if (restPoint === undefined && this.rng() < policy.driftProbability) {
         const drifted: Point = {
-          x: this.pos.x + Math.round(uniform(this.rng, -3, 3)),
-          y: this.pos.y + Math.round(uniform(this.rng, -3, 3)),
+          x: this.pos.x + Math.round(uniform(this.rng, -policy.driftPx, policy.driftPx)),
+          y: this.pos.y + Math.round(uniform(this.rng, -policy.driftPx, policy.driftPx)),
         };
         if (this.inside(drifted, container)) {
           await this.driver.mouseMove(drifted.x, drifted.y);
@@ -184,7 +193,7 @@ export class Interactor {
     return bounds;
   }
 
-  private gesture(run: (guard: () => void, signal?: AbortSignal) => Promise<void>): Promise<void> {
+  private gesture(run: GestureRun): Promise<void> {
     const signal = this.deps.abortSignal?.();
     const version = this.deps.contextVersion?.();
     const guard = (): void => {
@@ -194,7 +203,8 @@ export class Interactor {
     };
     const operation = this.tail.then(async () => {
       guard();
-      await run(guard, signal);
+      // The motion policy is resolved once per gesture, when it starts (§5.11).
+      await run(guard, signal, this.tempo.gesture().policy);
     });
     this.tail = operation.catch(() => {});
     return operation;

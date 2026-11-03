@@ -35,19 +35,16 @@
  *    mid-sleep, exactly like the page reader's scroll loop.
  */
 
-import {
-  type ActivityReporter,
-  NOOP_ACTIVITY_REPORTER,
-} from '@/adapter/activity-reporter';
+import { type ActivityReporter, NOOP_ACTIVITY_REPORTER } from '@/adapter/activity-reporter';
 import { fetchJson } from '@/adapter/fetch-json';
 import { SURFACE } from '@/adapter/ig-surface';
 import type { Reader } from '@/adapter/reader';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { ReadBudget } from '@/governors/read-budget';
+import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import { decideStep } from '@/rim/list-walk-end';
 import type { RimTab } from '@/rim/types';
 import { RIM } from '@/timing/config';
-import { nextRestStride } from '@/timing/noise';
 import { sample, sleep, uniform } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
@@ -65,6 +62,8 @@ export interface ListPageWalkerDeps {
   rng?: () => number;
   /** Provider of the ACTIVE driver's abort signal (breaks sleeps mid-wait). */
   abortSignal?: () => AbortSignal | undefined;
+  /** The tempo every page wait, rest and rest stride resolves from (default: the reference tempo). */
+  tempo?: TempoSource;
 }
 
 export type { WalkArgs, WalkResult } from './list-walk-types';
@@ -81,6 +80,7 @@ export class ListPageWalker {
   private readonly rng: () => number;
   private readonly abortSignal?: () => AbortSignal | undefined;
   private readonly reporter: ActivityReporter;
+  private readonly tempo: TempoSource;
 
   constructor(deps: ListPageWalkerDeps) {
     this.onProgress = deps.onProgress;
@@ -92,6 +92,7 @@ export class ListPageWalker {
     this.rng = deps.rng ?? Math.random;
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
+    this.tempo = tempoOrReference(deps.tempo);
   }
 
   async walkAll(args: WalkArgs): Promise<WalkResult> {
@@ -100,15 +101,13 @@ export class ListPageWalker {
     const externalStop = args.shouldStop ?? ((): boolean => false);
     const shouldStop = (): boolean =>
       externalStop() || this.abortSignal?.()?.aborted === true;
-    const pacePolicy = uniform(
-      args.pageMinMs ?? RIM.LIST_WALK_PAGE_MIN_MS,
-      args.pageMaxMs ?? RIM.LIST_WALK_PAGE_MAX_MS,
-    );
-    const restPolicy = uniform(RIM.LIST_WALK_REST_MIN_MS, RIM.LIST_WALK_REST_MAX_MS);
+    const pacePolicy = args.pageMinMs === undefined || args.pageMaxMs === undefined
+      ? this.tempo.policy('walk.page') : uniform(args.pageMinMs, args.pageMaxMs);
+    const restPolicy = this.tempo.policy('walk.rest');
     // The long-rest STRIDE is drawn, not fixed (timing-noise layer): the next
     // breather lands after a fresh 5–10 pages, redrawn after each rest, so the
     // walk never rests on an exact every-Nth-page metronome.
-    let nextRestAtPage = nextRestStride(this.rng);
+    let nextRestAtPage = sample(this.tempo.policy('walk.rest-every'), this.rng);
 
     // Live veil readout: this walk hits the private JSON API directly (not the
     // page), so it reads as an 'api' phase, counting followers as they arrive.
@@ -378,7 +377,7 @@ export class ListPageWalker {
           restMs,
         });
         await this.sleepFn(restMs, this.abortSignal?.());
-        nextRestAtPage = pages + nextRestStride(this.rng);
+        nextRestAtPage = pages + sample(this.tempo.policy('walk.rest-every'), this.rng);
       }
     }
 

@@ -21,11 +21,10 @@
 import { ActionAbortedError, TabUnavailableError, TabUnresponsiveError } from '@/adapter/errors';
 import { type LocateRectResult, type SentinelStatus, SURFACE } from '@/adapter/ig-surface';
 import type { Navigable } from '@/adapter/tab-ports';
-import { MOTION } from '@/kernel/motion-policy';
+import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import type { ProfileExpectation } from '@/rim/profile-observer';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
 import { ADAPTER } from '@/timing/config';
-import { clamp, logNormal } from '@/timing/distributions';
 import { type Rng, type SleepFn, sample, sleep } from '@/timing/primitives';
 
 export interface TabProfileVisitorDeps {
@@ -45,6 +44,8 @@ export interface TabProfileVisitorDeps {
   sleep?: SleepFn;
   rng?: Rng;
   now?: () => number;
+  /** The tempo the dwell resolves from (default: the reference tempo). */
+  tempo?: TempoSource;
 }
 
 export class TabProfileVisitor implements ProfileVisitor {
@@ -53,6 +54,7 @@ export class TabProfileVisitor implements ProfileVisitor {
   private readonly sleep: SleepFn;
   private readonly rng: Rng;
   private readonly now: () => number;
+  private readonly tempo: TempoSource;
   /** When the previous visit ENDED — the dwell is measured from here. */
   private lastVisitAt: number | null = null;
 
@@ -62,6 +64,7 @@ export class TabProfileVisitor implements ProfileVisitor {
     this.sleep = deps.sleep ?? sleep;
     this.rng = deps.rng ?? Math.random;
     this.now = deps.now ?? Date.now;
+    this.tempo = tempoOrReference(deps.tempo);
   }
 
   async visit(username: string): Promise<ProfileVisit> {
@@ -76,15 +79,13 @@ export class TabProfileVisitor implements ProfileVisitor {
   }
 
   /**
-   * A person looks at a profile before opening the next one: rest a drawn
-   * dwell ({@link MOTION.profileDwellMedianMs}) since the previous visit ended.
-   * The ONE visitor serves every caller, so their visits share one rhythm — no
-   * caller can burst. A visit long after the last waits nothing.
+   * Rest a drawn dwell (`dwell.visit`) since the previous visit ended. The ONE
+   * visitor serves every caller, so their visits share one rhythm — no caller
+   * can burst. A visit long after the last waits nothing.
    */
   private async dwell(signal: AbortSignal | undefined): Promise<void> {
     if (this.lastVisitAt === null) return;
-    const [min, max] = MOTION.profileDwellMs;
-    const draw = sample(clamp(logNormal(MOTION.profileDwellMedianMs, MOTION.profileDwellSigma), min, max), this.rng);
+    const draw = sample(this.tempo.policy('dwell.visit'), this.rng);
     const left = this.lastVisitAt + draw - this.now();
     if (left > 0) await this.sleep(left, signal);
   }

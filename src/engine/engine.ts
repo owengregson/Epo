@@ -8,17 +8,12 @@
  */
 
 import type { SentinelStatus } from '../adapter/sentinel';
+import { tempoOrReference } from '../kernel/tempo';
 import type { Settings } from '../settings/settings';
 import { ENGINE as ENGINE_TIMING } from '../timing/config';
 import type { WaitResult } from '../timing/delay-manager';
 import { mulberry32 } from '../timing/noise';
-import {
-  type DelayPolicy,
-  type Rng,
-  TIMED_OUT,
-  uniform,
-  withTimeout,
-} from '../timing/primitives';
+import { type DelayPolicy, type Rng, TIMED_OUT, withTimeout } from '../timing/primitives';
 import { WaitRunner } from '../timing/wait-runner';
 import * as log from '../utils/logger';
 import { absurd } from './absurd';
@@ -36,6 +31,7 @@ import {
 import { FactGatherer, type FactSources, type Facts, type FeedCandidate } from './facts';
 import { type HaltReason, haltReasonKey } from './halt-reason';
 import { LegacyPacer, OrganicPacer, type Pacer } from './pacers';
+import type { EngineTempo } from './plan-port';
 import type {
   CurrentTarget,
   EngineDeps,
@@ -96,7 +92,7 @@ export class Engine {
   private readonly health: RuntimeHealth;
   private refillSinceAction = false;
   private readonly reconciliation: ReconciliationRunner;
-  private readonly deps: EngineDeps;
+  private readonly deps: EngineDeps & EngineTempo;
   /** The ONE wait gate: every Engine wait is a named `engine:*` entry here. */
   private readonly waits: WaitRunner<EngineWaitKey, EngineParkReason>;
   /** Live settings — swapped by {@link applySettings} when the user saves changes. */
@@ -197,7 +193,7 @@ export class Engine {
   /** The context the extracted effect steps run against (see {@link effectContext}). */
   private readonly ctx: EngineEffectContext;
 
-  constructor(deps: EngineDeps) {
+  constructor(deps: EngineDeps & EngineTempo) {
     this.deps = deps;
     this.reconciliation = new ReconciliationRunner(deps);
     this.health = new RuntimeHealth(deps.store);
@@ -260,7 +256,7 @@ export class Engine {
     this.targets = new TargetPipeline({
       frontier: deps.frontier,
       store: deps.store,
-      clock: deps.clock,
+      clock: deps.clock, tempo: deps.tempo,
       acquisition: deps.acquisition,
       scanner: deps.scanner,
       enricher: deps.enricher,
@@ -506,7 +502,7 @@ export class Engine {
       log.error('engine: step failed', { error: String(err), terminal });
       if (terminal) result = this.halt({ kind: 'runtime-error' });
       else {
-        await this.engineWait('engine:transient-backoff', ENGINE_IDLE_MS);
+        await this.engineWait('engine:transient-backoff', tempoOrReference(this.deps.tempo).base('beat.transient'));
         result = 'idle';
       }
     }
@@ -876,7 +872,7 @@ export class Engine {
   private async pacingSleep(): Promise<void> {
     await this.engineWait(
       'engine:refill-pacing',
-      uniform(REFILL_PACING_MIN_MS, REFILL_PACING_MAX_MS),
+      tempoOrReference(this.deps.tempo).policy('pause.after-task'),
     );
   }
 
@@ -967,6 +963,6 @@ export class Engine {
 }
 
 /** Pure factory for the composition root; no wiring lives here. */
-export function createEngine(deps: EngineDeps): Engine {
+export function createEngine(deps: EngineDeps & EngineTempo): Engine {
   return new Engine(deps);
 }

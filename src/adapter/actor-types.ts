@@ -1,3 +1,4 @@
+import type { TempoSource } from '@/kernel/tempo';
 import type { ActivityReporter } from './activity-reporter';
 import type { LocatedRect } from './ig-surface';
 import type { PageTab } from './tab-ports';
@@ -50,5 +51,7 @@ export interface ActorOptions {
   abortSignal?: () => AbortSignal | undefined;
   /** Live activity readout for the veil; defaults to a no-op. */
   reporter?: ActivityReporter;
+  /** The tempo the Actor's reading pauses resolve from (default: the reference tempo). */
+  tempo?: TempoSource;
 }
 

@@ -32,6 +32,7 @@ import { journaledMutation } from '@/engine/journaled-mutation';
 import type { PruneCandidate, PruneStatus } from '@/engine/prune-engine';
 import { SystemClock } from '@/governors/clock';
 import type { CursorObserver } from '@/interaction/input-driver';
+import { referenceTempoSource } from '@/kernel/tempo';
 import {
   shapeChainList,
   shapeGraphSnapshot,
@@ -59,7 +60,7 @@ import { TabLease } from '@/main/services/tab-lease';
 import { TabActivity } from '@/main/tab-activity';
 import type { Settings } from '@/settings/settings';
 import { RECOVERY, SCHEDULER, TAB } from '@/timing/config';
-import { sleep, TIMED_OUT, uniform, withTimeout } from '@/timing/primitives';
+import { sample, sleep, TIMED_OUT, withTimeout } from '@/timing/primitives';
 import { ScheduleManager } from '@/timing/schedule-manager';
 import { MS_PER_DAY } from '@/timing/units';
 import type {
@@ -1027,9 +1028,7 @@ export class Foundation {
       logger.warn('foundation: system resumed — running wake sequence', {
         restartEngine: restart,
       });
-      const settleMs =
-        opts.settleMsOverride ??
-        uniform(RECOVERY.RESUME_SETTLE_MIN_MS, RECOVERY.RESUME_SETTLE_MAX_MS).sample(Math.random);
+      const settleMs = opts.settleMsOverride ?? sample(referenceTempoSource().policy('pause.wake-settle'));
       await sleep(settleMs, this.disposeAbort.signal);
       if (this.disposing || this.runtime.snapshot().phase === 'suspended') return;
       this.requestConnectivityCheck?.();

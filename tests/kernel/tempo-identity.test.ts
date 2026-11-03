@@ -260,6 +260,25 @@ describe('laws at any tempo (L10)', () => {
   });
 });
 
+describe('call sites', () => {
+  const SRC = path.resolve(__dirname, '..', '..', 'src');
+  const text = fs.readdirSync(SRC, { recursive: true, encoding: 'utf8' })
+    .filter((f) => f.endsWith('.ts') && !f.startsWith(path.join('kernel', 'tempo')))
+    .map((f) => fs.readFileSync(path.join(SRC, f), 'utf8'))
+    .join('\n');
+  /** A key is consumed by name, or (motion keys) every MOTION key it claims is read off a gesture's policy. */
+  const consumed = (key: TempoKey): boolean => {
+    if (text.includes(`'${key}'`)) return true;
+    const spec = TEMPO_SPECS[key];
+    return spec.axis === 'motion' && 'motion' in spec.identity
+      && spec.identity.motion.every((name) => new RegExp(`\\bpolicy\\.${name}\\b`).test(text));
+  };
+
+  test.each(TEMPO_KEYS)('%s has a call site, or sits in PENDING_CONSUMERS (never both)', (key) => {
+    expect(consumed(key)).toBe(!PENDING_CONSUMERS.includes(key));
+  });
+});
+
 test('the kernel draws no Math.random anywhere', () => {
   const kernel = path.resolve(__dirname, '..', '..', 'src', 'kernel');
   const files = fs.readdirSync(kernel, { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.ts'));

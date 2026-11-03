@@ -1,12 +1,13 @@
 import { ActionBlockedError } from '@/adapter/errors';
+import type { TempoSource } from '@/kernel/tempo';
 import { RIM } from '@/timing/config';
-import { sample, uniform } from '@/timing/primitives';
+import { sample } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 import type { AcceptedFollowRequest, FollowNotificationsDeps, NotificationsActor } from './follow-notifications';
 
 /** Journal and verify each request separately; never replay a dispatched unknown. */
 export async function acceptRequests(d: Pick<FollowNotificationsDeps, 'actor' | 'store' | 'ownPk' | 'canAccept' | 'onAccepted'> & {
-  acceptVerifyMs: number; sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  acceptVerifyMs: number; sleep: (ms: number, signal?: AbortSignal) => Promise<void>; tempo: TempoSource;
 }, pendingPks: Map<string, string>, accepted: AcceptedFollowRequest[], signal: AbortSignal | undefined): Promise<void> {
     for (let i = 0; i < RIM.REQUEST_ACCEPT_CAP; i++) {
       if (signal?.aborted) return;
@@ -80,10 +81,7 @@ export async function acceptRequests(d: Pick<FollowNotificationsDeps, 'actor' | 
         logger.info('rim.follow-notifications: accepted follow request', { username, pk });
       }
 
-      await d.sleep(
-        sample(uniform(RIM.ACCEPT_PACE_MIN_MS, RIM.ACCEPT_PACE_MAX_MS)),
-        signal,
-      );
+      await d.sleep(sample(d.tempo.policy('gap.accept')), signal);
     }
     logger.info('rim.follow-notifications: accept cap reached, remainder next check', {
       cap: RIM.REQUEST_ACCEPT_CAP,

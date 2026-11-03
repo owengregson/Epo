@@ -7,11 +7,7 @@
 import {
   type ElementRect,
   gaussian,
-  MOVE_MAX_MS,
-  MOVE_MIN_MS,
   type Point,
-  PRESS_MAX_MS,
-  PRESS_MIN_MS,
   pathBetween,
   pressDurationMs,
   stepDelays,
@@ -19,6 +15,10 @@ import {
   travelDurationMs,
   wheelPlan,
 } from '@/interaction/motion-profile';
+import { MOTION_REFERENCE } from '@/kernel/tempo';
+
+const [PRESS_MIN_MS, PRESS_MAX_MS] = MOTION_REFERENCE.pressMs;
+const { moveMinMs: MOVE_MIN_MS, moveMaxMs: MOVE_MAX_MS } = MOTION_REFERENCE;
 
 /** mulberry32 — a tiny deterministic PRNG for reproducible sampling. */
 const mulberry32 = (seed: number) => (): number => {

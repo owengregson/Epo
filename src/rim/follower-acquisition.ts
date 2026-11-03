@@ -39,6 +39,7 @@ import type { Sentinel } from '@/adapter/sentinel';
 import { EXPLORATION_POLICY } from '@/engine/exploration-policy';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { ReadBudget } from '@/governors/read-budget';
+import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { ListPageWalker } from '@/rim/list-page-walker';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
@@ -68,11 +69,9 @@ export interface AcquisitionConfig {
   maxRounds: number;
   noNewStop: number;
   /**
-   * Dialog-scroll FALLBACK pacing band (uniform per-round draw). Optional so
-   * existing config literals keep compiling; absent falls back to
-   * `RIM.ACQUIRE_SCROLL_{MIN,MAX}_MS` — never to the page reader's fixed
-   * metronome (the timing-noise layer removed that path's only bound-less
-   * call site).
+   * Dialog-scroll FALLBACK pacing band (uniform per-round draw). Optional:
+   * absent, every round draws from the `scroll.wait.acquire` tempo — never the
+   * page reader's own dialog wait.
    */
   scrollMinMs?: number;
   scrollMaxMs?: number;
@@ -86,8 +85,6 @@ export const ACQUISITION_DEFAULTS: AcquisitionConfig = {
   maxCoverageFraction: 0.5,
   maxRounds: EXPLORATION_POLICY.pagesPerSlice,
   noNewStop: RIM.ACQUIRE_NO_NEW_STOP,
-  scrollMinMs: RIM.ACQUIRE_SCROLL_MIN_MS,
-  scrollMaxMs: RIM.ACQUIRE_SCROLL_MAX_MS,
 };
 
 export type { AcquireEndReason, AcquireResult } from './acquisition-result';
@@ -112,6 +109,8 @@ export interface AcquisitionDeps {
   ownPk?: string;
   clock?: Clock;
   cfg?: AcquisitionConfig;
+  /** The tempo the dialog fallback's scroll waits resolve from (default: the reference tempo). */
+  tempo?: TempoSource;
 }
 
 export class AdapterBackedAcquisition implements FollowerAcquisition {
@@ -125,6 +124,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
   private readonly visitor?: ProfileVisitor;
   private readonly clock: Clock;
   private readonly cfg: AcquisitionConfig;
+  private readonly tempo: TempoSource;
 
   constructor(deps: AcquisitionDeps) {
     this.onProgress = deps.onProgress;
@@ -136,6 +136,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     this.visitor = deps.visitor;
     this.clock = deps.clock ?? new SystemClock();
     this.cfg = deps.cfg ?? ACQUISITION_DEFAULTS;
+    this.tempo = tempoOrReference(deps.tempo);
   }
 
   async acquire(targetUsername: string): Promise<AcquireResult> {
@@ -311,9 +312,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     const result = await this.pageReader.collect({
       targetUsername,
       readPurpose: 'exploration',
-      onTargetPk: (pk) => {
-        edgePk = pk;
-      },
+      onTargetPk: (pk) => { edgePk = pk; },
       onObservation: (obs) => {
         this.store.observe(obs);
         // The target's OWN profile-info observation carries no edge.
@@ -324,12 +323,10 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
       sentinel: this.sentinel,
       maxRounds: this.cfg.maxRounds,
       noNewStop: this.cfg.noNewStop,
-      // Jittered per-round pacing (timing-noise layer): passing the band routes
-      // the reader onto its uniform branch — without it this was the one call
-      // site pacing every scroll at the fixed 2 s metronome.
-      scrollMinMs: this.cfg.scrollMinMs ?? RIM.ACQUIRE_SCROLL_MIN_MS,
-      scrollMaxMs: this.cfg.scrollMaxMs ?? RIM.ACQUIRE_SCROLL_MAX_MS,
-    });
+      // Per-round pacing: a configured band, else the acquisition scroll tempo.
+      scrollMinMs: this.cfg.scrollMinMs,
+      scrollMaxMs: this.cfg.scrollMaxMs,
+    }, this.tempo.policy('scroll.wait.acquire'));
 
     const now = this.clock.now();
     const pk = result.targetPk ?? edgePk;

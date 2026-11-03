@@ -19,7 +19,7 @@ export interface WalkArgs {
   /** Cumulative observed-pk count, reported once per page that grew the set. */
   onProgress?: (observedCount: number) => void;
   sentinel: Sentinel;
-  /** Per-page pacing bounds; defaults to `RIM.LIST_WALK_PAGE_{MIN,MAX}_MS`. */
+  /** Per-page pacing bounds (both, or neither: the `walk.page` tempo). */
   pageMinMs?: number;
   pageMaxMs?: number;
   /** Cooperative abort, checked at the top of every page. */

@@ -3,18 +3,16 @@
  * the ladder's breakers, and one woven prune unfollow, run against the Engine's context.
  */
 
+import { tempoOrReference } from '../kernel/tempo';
 import type { FollowRecord } from '../store/types';
-import {
-  ENGINE as ENGINE_TIMING,
-  PRUNE as PRUNE_TIMING,
-  RECOVERY as RECOVERY_TIMING,
-} from '../timing/config';
+import { ENGINE as ENGINE_TIMING, RECOVERY as RECOVERY_TIMING } from '../timing/config';
 import type { WaitResult } from '../timing/delay-manager';
 import type { DelayPolicy } from '../timing/primitives';
 import * as log from '../utils/logger';
 import type { EngineWaitKey } from './engine-waits';
 import type { FeedCandidate } from './facts';
 import type { Pacer } from './pacers';
+import type { EngineTempo } from './plan-port';
 import type { EngineDeps, EngineState, EngineUnfollowFeed, StepResult } from './ports';
 import type { FailureKind, RecoveryIncident, RecoverySupervisor } from './recovery';
 
@@ -29,7 +27,7 @@ export type ActionOutcome =
 
 /** The slice of the Engine the action steps read and write. */
 export interface EngineActionContext {
-  readonly deps: EngineDeps;
+  readonly deps: EngineDeps & EngineTempo;
   readonly recovery: RecoverySupervisor;
   readonly pacer: Pacer;
   readonly unfollowFeed: EngineUnfollowFeed;
@@ -113,7 +111,7 @@ export async function actWovenUnfollow(
   if (status === 'blocked') {
     if (detail?.cause === 'rate-limited') return { step: await ctx.enterRecovery(token, 'rate-limited') };
     // The journal retains unresolved effects; no failed attempt consumes the candidate.
-    await ctx.engineWait('engine:prune-park', PRUNE_TIMING.PARK_MS);
+    await ctx.engineWait('engine:prune-park', tempoOrReference(ctx.deps.tempo).base('park.blocked'));
     return { step: 'idle' };
   }
   if (status === 'ok' && !detail?.alreadyInState) {
@@ -156,7 +154,7 @@ export async function actChurn(
       return { step: await ctx.enterRecovery(token, 'rate-limited') };
     }
     log.info('engine: action blocked — short park before the next attempt', { blockedStreak });
-    await ctx.engineWait('engine:blocked-park', PRUNE_TIMING.PARK_MS);
+    await ctx.engineWait('engine:blocked-park', tempoOrReference(ctx.deps.tempo).base('park.blocked'));
     return { step: 'idle' };
   }
 
