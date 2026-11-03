@@ -14,6 +14,11 @@
       "module": "src/shared/unfollow-protection.ts",
       "stream": "F2b step 9",
       "reason": "the settings migration normalizes the protection lists through this one predicate"
+    },
+    {
+      "module": "src/shared/posture.ts",
+      "stream": "BL",
+      "reason": "the stage controller derives the window title and Dock badge from the posture; SB's live column follows"
     }
   ]
 }
