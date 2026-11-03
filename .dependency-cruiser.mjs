@@ -198,7 +198,7 @@ export default {
         'marks it external), so importing it from main/ and adapter/tab.ts is correct.',
       severity: 'error',
       from: { path: '^src/', pathNot: '[.]test[.]tsx?$' },
-      to: { dependencyTypes: ['npm-dev'], pathNot: '^node_modules/electron(/|$)' },
+      to: { dependencyTypes: ['npm-dev'], pathNot: '(^|/)node_modules/electron(/|$)' },
     },
     {
       name: 'not-to-deprecated-core',
