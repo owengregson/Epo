@@ -32,7 +32,7 @@ import type { MutationTally, Observation, StorePolicy } from './types';
 export type StoreOpenOptions = KnowledgeStoreOptions & { readonly policy: StorePolicy };
 
 /** What every store needs before its first delegation; `KnowledgeStore` adds the reads and writes. */
-export class KnowledgeStoreBase {
+export abstract class KnowledgeStoreBase {
   protected readonly db: SqliteDriver;
   /** The `meta` key/value table (durable scalars), behind its typed manifest. */
   protected readonly meta: MetaRepo;
@@ -113,7 +113,7 @@ export class KnowledgeStoreBase {
       meta: this.meta, baselineAt: () => this.relationships.baselineAt(), now: this.now, changed,
       lookbackMs: this.policy.retentionMs,
     });
-    this.reopen = new ReopenStateRepo(this.db, this.meta, changed);
+    this.reopen = new ReopenStateRepo(this.db, this.meta, changed, (message, context) => this.reportFault(message, context));
     this.feed = new FeedReadsRepo(this.db);
     this.surface = new SurfaceDriftRepo(this.db, this.meta, changed);
     this.protectionFacts = new ProtectionFactsRepo(this.db);
@@ -159,6 +159,9 @@ export class KnowledgeStoreBase {
   // --- Mutation notifications (docs/PRINCIPLES.md §2 — the UI mirrors the graph) ----
 
   protected readonly mutationPulse = new MutationPulse();
+
+  /** A repo recovered from a corrupt durable value (it reads as absent): the facade logs it as an error. */
+  protected abstract reportFault(message: string, context: Record<string, unknown>): void;
 
   /** Subscribe to committed graph changes; listeners must throttle their projections. */
   onMutation(listener: () => void): () => void { return this.mutationPulse.subscribe(listener); }

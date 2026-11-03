@@ -44,6 +44,8 @@ export class KnowledgeStore extends KnowledgeStoreBase {
   /** One-time guard so an unset ownPk warns once, not on every reconciliation. */
   private warnedOwnPkUnset = false;
 
+  protected reportFault(message: string, context: Record<string, unknown>): void { logger.error(message, context); }
+
   // --- Accounts and edges (via AccountRepo / RelationshipRepo) --------------------
 
   /**
@@ -86,19 +88,12 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.accounts.get(pk);
   }
 
-  /**
-   * Stamp `username`'s account as permanently un-enrichable (deleted, suspended,
-   * unparseable profile body) so enrichment selection skips it. Cleared by any
-   * later successful stats observation.
-   */
+  /** Stamp `username`'s account permanently un-enrichable (selection skips it) until a later stats read. */
   markEnrichmentFailed(username: string, at: number): void {
     this.accounts.markEnrichmentFailed(username, at);
   }
 
-  /**
-   * The pk currently projected under `username` (case-insensitive). Lets
-   * acquisition resolve a known target without an Instagram request.
-   */
+  /** The pk projected under `username` (case-insensitive): a known target resolves with no request. */
   pkByUsername(username: string): string | null {
     return this.accounts.pkByUsername(username);
   }
