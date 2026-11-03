@@ -2,7 +2,7 @@
  * The plan wiring (ADR 0607, spec §5.13 S1): the plan service, the single writer of the day plan,
  * over the store and the live settings; its plan-backed day clock (the one boundary every day
  * counter reads); the loop's plan port; the plan and Boost status contributors; and the settings
- * preview port. The pace is unchanged: the reference tempo and the reference gap stay in force.
+ * preview port; the cadence, the read budget and the plan-backed tempo the whole graph runs on.
  */
 
 import type { EngineWaitKey } from '@/engine/engine-waits';
@@ -17,6 +17,7 @@ import { PlanService } from '@/governors/plan-service';
 import { RateGovernor, type RateGovernorConfig, type RatePlan } from '@/governors/rate-governor';
 import { ReadBudget, type ReadBudgetConfig } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
+import type { TempoSource } from '@/kernel/tempo';
 import { PlanControl } from '@/main/modules/plan-control';
 import type { EffectiveSettings } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
@@ -58,6 +59,8 @@ export interface PlanWiring extends GraphPlan {
   readonly prunePlan: PrunePlan;
   /** The durable read budget on the plan's plan-day limits. */
   readonly readBudget: ReadBudget;
+  /** The plan-backed tempo (spec §5.9, §5.11): every Instagram-facing wait, dwell and gesture follows the session. */
+  readonly tempo: TempoSource;
 }
 
 /** The loop's waits a re-plan can move: the plan's own parks. */
@@ -99,7 +102,8 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   });
   const triggers = control;
   host.settings.setPlanPort(service);
-  host.settings.setCapabilities({ plan: true });
+  // The plan's tempo is in force: every key's site is enabled (the look-before-act dwell, the step pauses).
+  host.settings.setCapabilities({ plan: true, tempo: true });
   triggers.start();
   // The legacy planner's phase is migrated by the plan's first write; its snapshot is retired.
   if (store.getPlanState() !== null && store.getPacingState() !== null) store.setPacingState(null);
@@ -144,6 +148,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     breaker,
     prunePlan,
     readBudget: new ReadBudget({ store, clock, limits: () => planReadLimits(service, effective, clock.now()) }),
+    tempo: service.tempo(),
     nextSessionAt: (now) => service.view(now).nextSessionAt,
     reviewBound: (now) => {
       const open = service.view(now).open;
@@ -158,7 +163,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     dispose: () => {
       triggers.dispose();
       host.settings.setPlanPort(null);
-      host.settings.setCapabilities({ plan: false });
+      host.settings.setCapabilities({ plan: false, tempo: false });
     },
   };
 }

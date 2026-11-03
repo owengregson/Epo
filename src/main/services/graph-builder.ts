@@ -80,7 +80,7 @@ export function buildGraph(
   // unchanged.
   const interactor = createTabInteractor(d.tab, {
     abortSignal: driverSignal,
-    observer: d.cursorObserver,
+    observer: d.cursorObserver, tempo: plan.tempo,
   });
 
   const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, cadence: plan.cadence, readBudget, dayClock: plan.dayClock,
@@ -91,7 +91,7 @@ export function buildGraph(
   const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub, sink } = wireSurface({ tab: d.tab, store, ownPk, clock, day: plan.dayClock });
   const adapter = new InstagramAdapter(d.tab, {
     interactor,
-    abortSignal: driverSignal,
+    abortSignal: driverSignal, tempo: plan.tempo,
     reporter: d.reporter, sink, // an unrecognized confirm layer reaches the surface sink
     beforeMutation: policy.beforeMutation,
     prepareProfile: policy.prepareProfile,
@@ -106,7 +106,7 @@ export function buildGraph(
     tab: d.tab,
     observer: profileObserver,
     sentinel,
-    abortSignal: driverSignal,
+    abortSignal: driverSignal, tempo: plan.tempo,
   });
 
   const pageReader = new FollowersPageReader({
@@ -115,7 +115,7 @@ export function buildGraph(
     tab: d.tab,
     reader,
     actor,
-    abortSignal: driverSignal,
+    abortSignal: driverSignal, tempo: plan.tempo,
     reporter: d.reporter,
   });
   // The prune scan's FAST census path: direct friendships-API pagination at
@@ -126,7 +126,7 @@ export function buildGraph(
     readBudget,
     tab: d.tab,
     reader,
-    abortSignal: driverSignal,
+    abortSignal: driverSignal, tempo: plan.tempo,
     reporter: d.reporter,
   });
 
@@ -141,7 +141,7 @@ export function buildGraph(
     sentinel,
     walker: listWalker,
     visitor: profiles,
-    ownPk,
+    ownPk, tempo: plan.tempo,
   });
   const churnActions = new AdapterBackedChurnActions({
     validateIdentity: d.validateIdentity,
@@ -200,7 +200,7 @@ export function buildGraph(
     scorerCfg: toScorerConfig(settings),
     cfg: toScannerConfig(settings),
   });
-  const followback = wireFollowback(d, { store, clock, ownPk, ownUsername, settings, readBudget, policy,
+  const followback = wireFollowback(d, { store, clock, ownPk, ownUsername, settings, readBudget, policy, tempo: plan.tempo,
     adapter, reader, sentinel, profiles, liveOwnFollowers, dayClock: plan.dayClock });
 
   // Live discovery over the already-harvested graph: propose the biggest
@@ -237,7 +237,7 @@ export function buildGraph(
   // dedicated timing-noise rngs + the restart-stable daily-boundary jitter.
   const installEntropy = store.installEntropy();
 
-  const engine = createEngine({
+  const engine = createEngine({ tempo: plan.tempo,
     frontier,
     reentry,
     validateIdentity: d.validateIdentity,
@@ -304,7 +304,7 @@ export function buildGraph(
   const pruneOwnFollowers: PruneOwnFollowers =
     liveOwnFollowers ?? unresolvedUsernameSource('prune followers scan');
   const noteMutation = noteMutationFor(reentry, clock, d);
-  const pruneEngine = createPruneEngine({
+  const pruneEngine = createPruneEngine({ tempo: plan.tempo,
     onMutation: noteMutation,
     store,
     clock,
