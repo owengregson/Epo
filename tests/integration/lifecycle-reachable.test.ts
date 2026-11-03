@@ -111,13 +111,18 @@ test('on proceed the dispatch closure admits once; a refusal there marks no disp
   const r = rig({ alice: { pk: 'a', page: 'non-follower', record: true } });
   r.store.setActionDelayDeadline(r.clock.now() + 60_000);
   const onDispatch = jest.fn();
-  const dispatch = await prepareAction({ tab: r.tab as never, prepareProfile: r.policy.prepareProfile,
+  const prepare = () => prepareAction({ tab: r.tab as never, prepareProfile: r.policy.prepareProfile,
     beforeMutation: r.policy.beforeMutation, abortSignal: () => undefined }, 'unfollow', 'alice', 'a', onDispatch);
+  const refused = await prepare();
   expect(r.visit).toHaveBeenCalledWith('alice');
-  await expect(dispatch()).rejects.toBeInstanceOf(ActionDeferredError);
-  expect(onDispatch).not.toHaveBeenCalled();
+  await expect(refused()).rejects.toBeInstanceOf(ActionDeferredError);
+  // ADR 0308: a refused closure keeps refusing after the refusal clears; the next action prepares its own.
   r.store.setActionDelayDeadline(null);
-  await dispatch();
+  await expect(refused()).rejects.toBeInstanceOf(ActionDeferredError);
+  expect(onDispatch).not.toHaveBeenCalled();
+  const admitted = await prepare();
+  await admitted();
+  await admitted();
   expect(onDispatch).toHaveBeenCalledTimes(1);
 });
 
