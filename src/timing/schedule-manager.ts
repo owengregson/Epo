@@ -5,7 +5,7 @@
  * with a built-in overlap guard: a tick landing while the task is still in
  * flight is DROPPED, never stacked — generalizing ConnectivityMonitor's old
  * `checking` flag. Task exceptions are caught and logged; a bad tick never
- * kills the loop.
+ * kills the loop. `after()` arms one replaceable one-shot (the plan's edge).
  *
  * `cadence()` models due-by-timestamp scheduling (follow-back sweep, pruneDue):
  * "due when never run, or when everyMs has elapsed since the recorded last run" —
@@ -37,7 +37,7 @@ export interface Cadence {
 }
 
 interface ActiveLoop {
-  timer: ReturnType<typeof setInterval>;
+  cancel(): void;
 }
 
 export class ScheduleManager {
@@ -87,14 +87,32 @@ export class ScheduleManager {
       tick();
     }, intervalMs);
     if (opts.unref === true) timer.unref?.();
-    this.loops.set(key, { timer });
+    this.loops.set(key, { cancel: () => clearInterval(timer) });
     if (opts.immediate === true) tick();
+  }
+
+  /**
+   * Run `fn` once after `delayMs`, replacing any one-shot or loop under `key`.
+   * A failure is logged, never thrown; `stop(key)` cancels a pending run.
+   */
+  after(key: string, delayMs: number, fn: () => void | Promise<void>, opts: Pick<EveryOpts, 'unref'> = {}): void {
+    this.stop(key);
+    const loop: ActiveLoop = { cancel: () => clearTimeout(timer) };
+    const timer = setTimeout(() => {
+      if (this.loops.get(key) !== loop) return;
+      this.loops.delete(key);
+      Promise.resolve().then(fn).catch((e: unknown) => {
+        log.error('schedule: task failed', { key, error: String(e) });
+      });
+    }, Math.max(0, delayMs));
+    if (opts.unref === true) timer.unref?.();
+    this.loops.set(key, loop);
   }
 
   stop(key: string): void {
     const loop = this.loops.get(key);
     if (loop === undefined) return;
-    clearInterval(loop.timer);
+    loop.cancel();
     this.loops.delete(key);
   }
 

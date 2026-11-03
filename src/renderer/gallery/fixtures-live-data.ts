@@ -3,12 +3,12 @@
  * approvals = 44 of a 48 maximum), a feed that shows every row kind, and the slice of the Settings view the
  * column reads. Times are relative to when the gallery opens. Names are invented.
  */
-import { settingsViewSignal } from '@/renderer/app/shell-context';
+import { settingsFactsSignal, settingsViewSignal } from '@/renderer/app/shell-context';
+import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
 import type { BoostPreview, BoostView } from '@/shared/boost';
 import type { FeedItem, FeedView, Person } from '@/shared/feed';
 import type { PlanProjection } from '@/shared/plan-projection';
 import type { CatchUpView } from '@/shared/reopen-view';
-import type { SettingsView } from '@/shared/settings-view';
 
 export const NOW = Date.now();
 export const MIN = 60_000;
@@ -126,13 +126,17 @@ export function liveFeed(away: boolean): FeedView {
 }
 
 /**
- * The part of the Settings view the live column reads (the Boost capability and length, practice mode, the
- * starting account). Dev-only: the full view arrives from the Settings stage's own fixture.
+ * The live column's slice of the Settings view (the Boost capability and length, practice mode, the starting
+ * account) over the Settings stage's full gallery view, and the store facts beside it (no seed → none).
  */
 export function setGalleryView(o: { boost: boolean; practice?: boolean; seed?: string }): void {
+  const view = settingsViewSignal.peek() ?? GALLERY_SETTINGS_VIEW;
   settingsViewSignal.value = {
-    seed: o.seed ?? 'longish.handle.example',
-    capabilities: { plan: true, tempo: true, boost: o.boost, protectionEverywhere: true },
-    prefs: { practice: o.practice ?? false, acceptRequests: true, boost: { hours: 12, acceptRequests: true } },
-  } as unknown as SettingsView;
+    ...view,
+    seed: o.seed ?? view.seed,
+    capabilities: { ...view.capabilities, boost: o.boost },
+    prefs: { ...view.prefs, practice: o.practice ?? false },
+  };
+  const facts = settingsFactsSignal.peek() ?? GALLERY_SETTINGS_FACTS;
+  settingsFactsSignal.value = o.seed === '' ? { ...facts, seed: { kind: 'none' } } : facts;
 }

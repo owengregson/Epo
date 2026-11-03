@@ -4,7 +4,7 @@
  */
 import type { BuiltGraph } from '@/main/services/graph-types';
 import {
-  type Settings, toChainConfig, toChurnConfig, toFollowbackConfig, toPacingConfig, toPruneConfig, toRateGovernorConfig,
+  type Settings, toChainConfig, toChurnConfig, toFollowbackConfig, toPruneConfig, toRateGovernorConfig,
   toScannerConfig, toScorerConfig,
 } from '@/settings/settings';
 import * as logger from '@/utils/logger';
@@ -25,9 +25,6 @@ export function reloadChanged(g: BuiltGraph, prev: Settings, next: Settings): st
   if (moved(toFollowbackConfig)) reload('followback', () => g.followback.applyConfig(toFollowbackConfig(next)));
   if (moved(toChainConfig)) reload('chain', () => g.chain.applyConfig(toChainConfig(next)));
   if (moved(toPruneConfig)) reload('prune', () => g.pruneEngine.applyConfig(toPruneConfig(next)));
-  if (moved(toPacingConfig) && g.pacing !== null && g.pacing !== undefined) {
-    reload('pacing', () => g.pacing?.applyConfig(toPacingConfig(next)));
-  }
   if (prev.dryRun !== next.dryRun) reload('practice', () => g.churnActions.setDryRun(next.dryRun));
   if (JSON.stringify(prev) !== JSON.stringify(next)) g.engine.applySettings(next);
   if (reloaded.length > 0) logger.info('settings: reloaded the changed live configs', { reloaded });

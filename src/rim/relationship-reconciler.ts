@@ -21,6 +21,7 @@ import type { Clock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
 import type { ObservedRelation } from '@/shared/observed-relation';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { SurfaceRead } from '@/surface/read/types';
 import type { TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
 
@@ -58,24 +59,21 @@ export class RelationshipReconciler {
    * WARN-and-skip — a missed observation, never an error state.
    */
   async ingest(resp: TabResponse): Promise<void> {
-    let body: string;
+    const at = this.clock.now();
+    // One read per response, shared with every other consumer of the body; facts are minted from it.
+    const observed = this.reader.observed.read(resp, at);
+    if (observed === null) return;
+    let read: SurfaceRead;
     try {
-      body = await resp.getBody();
+      read = (await observed).read;
     } catch (e) {
-      logger.warn('rim.relationship-reconciler: body unavailable, skipping', {
-        url: resp.url,
-        error: String(e),
-      });
+      logger.warn('rim.relationship-reconciler: body unavailable, skipping', { url: resp.url, error: String(e) });
       return;
     }
     try {
-      const at = this.clock.now();
-      this.apply(this.reader.relationshipFacts(resp.url, body, at, this.friendlyNameOf(resp)), at);
+      this.apply(this.reader.relationshipFacts(read), at);
     } catch (e) {
-      logger.warn('rim.relationship-reconciler: reconciliation failed', {
-        url: resp.url,
-        error: String(e),
-      });
+      logger.warn('rim.relationship-reconciler: reconciliation failed', { url: resp.url, error: String(e) });
     }
   }
 

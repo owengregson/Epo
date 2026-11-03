@@ -1,112 +1,67 @@
 /**
- * SHADOW PARSE — the step that earns the right to switch.
- *
- * Every endpoint is `mode: 'observe'` in this wave: the LEGACY extractor still
- * drives behaviour, and the schema runs beside it purely to be compared. A
- * disagreement logs the zod issue path (or the differing fact) and ticks
- * `SurfaceHealth.disagreed`; nothing about the app's behaviour changes.
- *
- * That ordering is not caution for its own sake — it is risk #1 of the design:
- * a body today's lenient extractor tolerates, rejected by a stricter schema,
- * would kill a whole census mid-walk. The per-endpoint `observe | enforce` mode
- * is what lets a single endpoint be flipped, and rolled back, without a release.
+ * The shadow comparison (spec §10.3): two projections of one body, compared FIELD BY FIELD. Before
+ * an endpoint's flip the document runs beside the legacy extractor; after it the legacy extractor
+ * runs beside the document. A disagreement is reported as `shadow-disagreed`; behaviour never changes.
  */
 
-import { surface } from '@/surface/index';
-import { readResponse, SURFACE_HEALTH } from '@/surface/parse';
-import type { EndpointKind } from '@/surface/schema/endpoints';
-import type { ProjectCtx, Projection } from '@/surface/schema/surface';
+import type { Observation } from '@/store/types';
+import type { SurfaceRead } from '@/surface/read/types';
+import type { Projection } from '@/surface/schema/projection';
+import type { SurfaceSink } from '@/surface/sink';
 import * as logger from '@/utils/logger';
 
-/** What the caller says the LEGACY extractor produced, for the comparison. */
-/**
- * Describe the disagreement between the legacy result and the projection, or
- * `null` when they agree. The caller owns this because only it knows the legacy
- * shape; keeping it out of `src/surface` is what lets the surface package stay
- * free of adapter types.
- */
-export type ShadowCompare = (projection: Projection) => string | null;
+/** The projected fields a comparison reads; a legacy result fills what it carries. */
+export type Comparable = Pick<Projection, 'facts' | 'relationships' | 'events' | 'cursor' | 'hasMore' | 'absent'>
+  & Partial<Pick<Projection, 'continuation' | 'presence' | 'pendingPreview'>> & { readonly rows?: number };
 
-export interface ShadowInput {
-  kind: EndpointKind;
-  /** The already-JSON-parsed body (never a string). */
-  body: unknown;
-  ctx: ProjectCtx;
-  /** True when the legacy extractor itself reported a shape mismatch. */
-  legacyMismatch: boolean;
-  compare?: ShadowCompare;
+const FACT_FIELDS = ['username', 'followers', 'following', 'mutuals', 'isPrivate', 'isVerified', 'bio'] as const;
+const REL_FIELDS = ['pk', 'following', 'outgoingRequest', 'followedBy', 'incomingRequest', 'isPrivate'] as const;
+
+const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+function factDiffs(name: string, a: readonly Observation[], b: readonly Observation[], out: string[]): void {
+  if (a.length !== b.length) out.push(`${name}.length`);
+  a.forEach((fa, i) => {
+    const fb = b[i];
+    if (fb === undefined) return;
+    if (fa.accountPk !== fb.accountPk) out.push(`${name}[].accountPk`);
+    for (const f of FACT_FIELDS) if (!same(fa.fields[f], fb.fields[f])) out.push(`${name}[].fields.${f}`);
+  });
 }
 
-/**
- * Run the schema alongside the legacy extractor. Returns the projection when
- * the schema parsed (so an `enforce` flip has something to consume) and `null`
- * otherwise. NEVER throws: a shadow parse that can break the live path is worse
- * than no shadow parse.
- */
-export function shadowParse(input: ShadowInput): Projection | null {
-  const endpoint = surface().endpoints.find((e) => e.kind === input.kind);
-  if (endpoint === undefined) return null;
-
-  let result: ReturnType<typeof readResponse>;
-  try {
-    result = readResponse(endpoint, input.body, input.ctx);
-  } catch (e) {
-    // A projector throwing is itself drift evidence, and must not escape into
-    // the live read path.
-    SURFACE_HEALTH.mismatch(input.kind, input.ctx.at);
-    logger.warn('surface.shadow: projector threw', { endpoint: input.kind, error: String(e) });
-    return null;
-  }
-
-  if (!result.ok) {
-    SURFACE_HEALTH.mismatch(input.kind, input.ctx.at);
-    // A body the LEGACY extractor also rejected is not news — both agree it is
-    // drift. Only a disagreement is worth a warn.
-    if (!input.legacyMismatch) {
-      logger.warn('surface.shadow: schema rejected a body the extractor accepted', {
-        endpoint: input.kind,
-        issues: result.issues.slice(0, 4).map((i) => `${i.path} — ${i.message}`),
-      });
-      SURFACE_HEALTH.disagreed(input.kind);
-    }
-    return null;
-  }
-
-  SURFACE_HEALTH.parsed(input.kind, {
-    novelKeys: result.novelKeys,
-    rowIssues: result.projection.rowIssues.length,
+/** Every field the two disagree on, as path patterns (empty when they agree); `rows` compares unread rows. */
+export function diffProjections(doc: Comparable, legacy: Comparable): string[] {
+  const out: string[] = [];
+  factDiffs('facts', doc.facts, legacy.facts, out);
+  if (doc.relationships.length !== legacy.relationships.length) out.push('relationships.length');
+  doc.relationships.forEach((r, i) => {
+    const l = legacy.relationships[i];
+    if (l !== undefined) for (const f of REL_FIELDS) if (!same(r[f], l[f])) out.push(`relationships[].${f}`);
   });
+  if (doc.events.length !== legacy.events.length) out.push('events.length');
+  doc.events.forEach((e, i) => {
+    const l = legacy.events[i];
+    if (l !== undefined && !same(e, l)) out.push('events[]');
+  });
+  for (const key of ['cursor', 'hasMore', 'absent'] as const) if (!same(doc[key], legacy[key])) out.push(key);
+  if (legacy.continuation !== undefined && !same(doc.continuation, legacy.continuation)) out.push('continuation');
+  if (legacy.presence !== undefined && !same(doc.presence, legacy.presence)) out.push('presence');
+  if (legacy.pendingPreview !== undefined) factDiffs('pendingPreview', doc.pendingPreview ?? [], legacy.pendingPreview, out);
+  if (legacy.rows !== undefined && doc.rows !== legacy.rows) out.push('rows');
+  return [...new Set(out)];
+}
 
-  if (result.novelKeys.length > 0) {
-    logger.debug('surface.shadow: unknown keys observed', {
-      endpoint: input.kind,
-      keys: result.novelKeys.slice(0, 8),
-    });
-  }
-  if (result.projection.rowIssues.length > 0) {
-    logger.warn('surface.shadow: rows rejected inside a valid body', {
-      endpoint: input.kind,
-      count: result.projection.rowIssues.length,
-      first: result.projection.rowIssues[0],
-    });
-    SURFACE_HEALTH.disagreed(input.kind);
-  }
+/** A read's projection as a comparable, or `null` when the read failed. */
+export const comparableOf = (read: SurfaceRead): Comparable | null =>
+  read.ok ? { ...read.projection, rows: read.projection.rowIssues.length } : null;
 
-  if (input.legacyMismatch) {
-    logger.warn('surface.shadow: extractor rejected a body the schema accepted', {
-      endpoint: input.kind,
-    });
-    SURFACE_HEALTH.disagreed(input.kind);
-    return result.projection;
+/** Report a comparison: `shadow-disagreed` once per differing field, or nothing when the two agree. */
+export function reportShadow(sink: SurfaceSink, read: SurfaceRead, diffs: readonly string[], at: number): void {
+  if (diffs.length === 0) return;
+  try {
+    sink.read(read.endpoint, 'shadow-disagreed', { rows: 0, fields: diffs.length }, at);
+    for (const path of diffs) sink.drift({ endpoint: read.endpoint, cls: 'shadow-disagreed', path, detail: { fields: diffs.length } }, at);
+  } catch (e) {
+    logger.warn('surface.shadow: the sink refused a report', { endpoint: read.endpoint, error: String(e) });
   }
-
-  const disagreement = input.compare?.(result.projection) ?? null;
-  if (disagreement !== null) {
-    logger.warn('surface.shadow: schema and extractor disagree', {
-      endpoint: input.kind,
-      detail: disagreement,
-    });
-    SURFACE_HEALTH.disagreed(input.kind);
-  }
-  return result.projection;
 }

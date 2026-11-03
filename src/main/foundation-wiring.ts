@@ -27,7 +27,7 @@ import {
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import type { EngineStatus } from '@/engine/engine';
 import { journaledMutation, refusalReason } from '@/engine/journaled-mutation';
-import type { PruneCandidate, PruneStatus } from '@/engine/prune-engine';
+import type { PruneStatus } from '@/engine/prune-engine';
 import { SystemClock } from '@/governors/clock';
 import type { CursorObserver } from '@/interaction/input-driver';
 import { referenceTempoSource } from '@/kernel/tempo';
@@ -50,12 +50,12 @@ import { createStartup } from '@/main/modules/startup-steps';
 import { composeStatus, type StatusContributor } from '@/main/modules/status-compose';
 import { DriverSignal } from '@/main/services/driver-signal';
 import {
-  type BuiltGraph,
-  buildGraph,
+  type BuiltGraph, buildGraph,
   type GraphBuildDeps,
 } from '@/main/services/graph-builder';
 import type { IgSessionPort } from '@/main/services/ig-session';
 import { liveSources } from '@/main/services/live-wiring';
+import { openGraphPlanDay } from '@/main/services/plan-wiring';
 import { RuntimeCoordinator, type RuntimeSnapshot } from '@/main/services/runtime-coordinator';
 import { TabLease } from '@/main/services/tab-lease';
 import { TabActivity } from '@/main/tab-activity';
@@ -286,7 +286,7 @@ export class Foundation {
       graph.engine.setOnline(this.lastOnline);
       this.settings.bindStore(settingsBinding(graph));
       this.projections.bind(graph.store, { status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot()), settingsFacts: () => this.facts.facts() });
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock }), settingsFacts: () => this.facts.facts() });
     });
     this.session.session.onClose(() => {
       this.scheduler.stop('store:retention');
@@ -315,7 +315,7 @@ export class Foundation {
       builtGraph: () => this.builtGraph(), disposing: () => this.disposing,
       resolveSettings: () => this.resolveSettings(), updateSettings: (partial) => this.updateSettings(partial) });
     this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
-      graph: () => this.graph, busyDriverReason: () => this.busyDriverReason(),
+      graph: () => this.graph, planDay: openGraphPlanDay(() => this.graph), busyDriverReason: () => this.busyDriverReason(),
       setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun(), changed: () => this.projections.pushAll() });
     ({ boot: this.boot, contributors: this.bootFields } = createStartup({ tab: this.tab, runtime: this.runtime,
       lease: this.lease, activity: this.activity, session: this.session, igSession: this.igSession,
@@ -535,8 +535,8 @@ export class Foundation {
   // Auto-prune controls (Phase 5) — same tab/rim, mutually exclusive with growth
   // -------------------------------------------------------------------------
 
-  /** The persisted scan's candidates (see {@link PruneControl.pruneCandidates}). */
-  pruneCandidates(): Promise<PruneCandidate[]> { return this.prune.pruneCandidates(); }
+  /** The persisted scan's candidates, annotated by protection (see {@link PruneControl.pruneCandidates}). */
+  pruneCandidates(): ReturnType<PruneControl['pruneCandidates']> { return this.prune.pruneCandidates(); }
   /** Scan the own lists for prune candidates (see {@link PruneControl.scanPrune}); `'starting'` during startup. */
   scanPrune(): Promise<PruneScanResult> { return this.boot.busy() ? Promise.resolve({ ok: false, reason: 'starting', following: 0, followers: 0, candidates: [] }) : this.prune.scanPrune(); }
   /** Prepare, then start a prune run (see {@link PruneControl.startPrune}); `'starting'` during startup. */
@@ -1023,9 +1023,7 @@ export class Foundation {
     const token = this.runtime.beginWake();
     try {
       const restart = this.runtime.snapshot().desired === 'running';
-      logger.warn('foundation: system resumed — running wake sequence', {
-        restartEngine: restart,
-      });
+      logger.warn('foundation: system resumed — running wake sequence', { restartEngine: restart });
       const settleMs = opts.settleMsOverride ?? sample(referenceTempoSource().policy('pause.wake-settle'));
       await sleep(settleMs, this.disposeAbort.signal);
       if (this.disposing || this.runtime.snapshot().phase === 'suspended') return;
@@ -1065,6 +1063,7 @@ export class Foundation {
       }
 
       this.runtime.finishWake(token);
+      this.graph?.plan.resumed();
       if (
         restart &&
         this.runtime.wantsRun(token) &&
@@ -1153,12 +1152,12 @@ export class Foundation {
     return {
       tab: this.tab, userDataDir: this.userDataDir,
       dbFile: IG_DB_FILE,
-      reporter: this.reporter,
-      cursorObserver: this.cursorObserver,
+      reporter: this.reporter, cursorObserver: this.cursorObserver,
       scheduler: this.scheduler,
       settings: this.resolveSettings(),
       resolveSettings: () => this.resolveSettings(),
       protection: { index: () => this.settings.protection(), setCapabilities: (p) => this.settings.setCapabilities(p) },
+      plan: { runIntent: () => this.runtime.snapshot().desired, settings: this.settings, pushStatus: () => this.pushStatus() },
       updateSettings: (partial) => {
         void this.updateSettings(partial);
       },

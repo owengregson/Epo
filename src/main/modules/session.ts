@@ -268,6 +268,7 @@ export class GraphSession {
     await this.deps.drainManualOps();
     graph.relationshipReconcilerUnsub();
     graph.profileInfoUnsub();
+    graph.plan.dispose();
     graph.delays.dispose();
     graph.store.close();
   }

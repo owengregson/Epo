@@ -31,22 +31,22 @@ const base = { pk: 'ME', which: 'followers' as const, sentinel: new FakeSentinel
 
 describe('stopAfterPage', () => {
   test('true after the first page ends the walk there: rows written, no pacing sleep, reason caller-stop', async () => {
-    const { walker, sleeps, fetches } = walkerOver([okEnv(followersBody(['a', 'b'], 'C1', true)),
-      okEnv(followersBody(['c'], null, false))]);
+    const { walker, sleeps, fetches } = walkerOver([okEnv(followersBody(['11', '12'], 'C1', true)),
+      okEnv(followersBody(['13'], null, false))]);
     const seen: string[] = [];
     const pages: Array<readonly Observation[]> = [];
     const result = await walker.walkAll({ ...base, onObservation: (obs) => seen.push(obs.accountPk),
       stopAfterPage: (page) => { pages.push(page); return true; } });
     expect(result).toMatchObject({ reason: 'caller-stop', complete: false, endConfirmed: false, pages: 1 });
-    expect(seen).toEqual(['a', 'b']);
-    expect(pages.map((p) => p.map((o) => o.accountPk))).toEqual([['a', 'b']]);
+    expect(seen).toEqual(['11', '12']);
+    expect(pages.map((p) => p.map((o) => o.accountPk))).toEqual([['11', '12']]);
     expect(sleeps).toEqual([]);
     expect(fetches()).toBe(1);
     expect(result.cursor).toBe('C1');
   });
 
   test('false on every page leaves the walk exactly as without the hook', async () => {
-    const pages = [okEnv(followersBody(['a', 'b'], 'C1', true)), okEnv(followersBody(['c'], null, false)),
+    const pages = [okEnv(followersBody(['11', '12'], 'C1', true)), okEnv(followersBody(['13'], null, false)),
       okEnv(followersBody([], null, false))];
     const plain = walkerOver(pages);
     const hooked = walkerOver(pages);
@@ -65,7 +65,7 @@ describe('readUse', () => {
 
   test('tags every page debit of the walk with its use', async () => {
     const budget = new ReadBudget({ store: store(), clock: new FakeClock(1_000), limits: readLimits({ listPages: 10 }) });
-    const { walker } = walkerOver([okEnv(followersBody(['a'], null, false)), okEnv(followersBody([], null, false))], budget);
+    const { walker } = walkerOver([okEnv(followersBody(['11'], null, false)), okEnv(followersBody([], null, false))], budget);
     await walker.walkAll({ ...base, onObservation: () => {}, readUse: 'check' });
     const debits = budget.snapshot().debits;
     expect(debits.length).toBeGreaterThan(0);
@@ -74,7 +74,7 @@ describe('readUse', () => {
 
   test('without a use, a debit carries no use field (the v1 shape, unchanged)', async () => {
     const budget = new ReadBudget({ store: store(), clock: new FakeClock(1_000), limits: readLimits({ listPages: 10 }) });
-    const { walker } = walkerOver([okEnv(followersBody(['a'], null, false)), okEnv(followersBody([], null, false))], budget);
+    const { walker } = walkerOver([okEnv(followersBody(['11'], null, false)), okEnv(followersBody([], null, false))], budget);
     await walker.walkAll({ ...base, onObservation: () => {} });
     expect(budget.snapshot().debits.every((d) => !('use' in d))).toBe(true);
   });

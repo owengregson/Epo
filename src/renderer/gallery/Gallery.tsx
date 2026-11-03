@@ -16,6 +16,7 @@ import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
 import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, GALLERY_SETTINGS, type Scenario } from '@/renderer/gallery/fixtures';
 import { LIVE_SCENARIOS, resetLiveGallery } from '@/renderer/gallery/fixtures-live';
+import { SETTINGS_SCENARIOS } from '@/renderer/gallery/fixtures-settings';
 import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
 import { GALLERY_LANES, installGalleryBridge } from '@/renderer/gallery/gallery-bridge';
 import type { ToastControls } from '@/renderer/hooks/useToasts';
@@ -35,8 +36,10 @@ const SURFACES = [
 
 type SurfaceKey = (typeof SURFACES)[number]['key'];
 
-/** Every story: the console's, the live column's, the compatibility surfaces', then the direction boards. */
-const SCENARIOS: Scenario[] = [...BASE_SCENARIOS, ...LIVE_SCENARIOS, ...SURFACE_SCENARIOS, ...DIRECTION_SCENARIOS];
+/** Every story: the console's, the live column's, the compatibility surfaces', Settings', then the direction boards. */
+const SCENARIOS: Scenario[] = [
+  ...BASE_SCENARIOS, ...LIVE_SCENARIOS, ...SURFACE_SCENARIOS, ...SETTINGS_SCENARIOS, ...DIRECTION_SCENARIOS,
+];
 
 /** Publish one scenario onto the shell's signals — this IS mounting a story. */
 function applyScenario(s: Scenario): void {

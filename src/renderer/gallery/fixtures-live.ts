@@ -7,7 +7,6 @@
 
 import type { Res } from '@/ipc/contract';
 import { activitySignal, feedSignal } from '@/renderer/app/live-signals';
-import { settingsFactsSignal } from '@/renderer/app/shell-context';
 import { basePrune, baseStatus, type Scenario } from '@/renderer/gallery/fixtures';
 import {
   boostPreview, boostView, catchingUp, dayOffPlan, HOUR, lateStartPlan, lightPlan, liveFeed, livePlan, MIN, NOW,
@@ -66,12 +65,10 @@ function scenario(key: string, label: string, status: EpoStatus, live: Live = {}
   };
 }
 
-/** Back to a column with no extras (the console's own scenarios read only status). */
+/** Back to a column with no extras; the Settings view and facts stay the Settings fixture's own. */
 export function resetLiveGallery(): void {
   feedSignal.value = liveFeed(false);
   activitySignal.value = null;
-  settingsFactsSignal.value = null;
-  setGalleryView({ boost: false });
   answerInGallery('previewBoost', null);
 }
 

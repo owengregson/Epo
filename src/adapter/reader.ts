@@ -1,77 +1,62 @@
 /**
- * Instagram Adapter — Reader.
- *
- * The read half of the versioned Instagram Adapter: it turns intercepted
- * network responses (see `src/adapter/tab.ts`) into typed `Observation`s for
- * the KnowledgeStore. It NEVER touches the DOM and NEVER issues requests — it
- * only parses bodies the tab already captured.
- *
- * Everything Instagram-specific (URL matchers, JSON paths, per-shape
- * extraction logic) lives behind the `SURFACE` interface
- * (`src/adapter/ig-surface.ts`, implemented in `src/adapter/versions/*`). When
- * Instagram changes shape, the version module is the one place to update; this
- * Reader is version-agnostic and carries zero Instagram literals.
- *
- * Robustness contract (per Global Constraints): no silent `catch {}`. Every
- * parser returns a typed empty/`null` result on no-match and logs a `warn`
- * (via `@/utils/logger`) when the surface reports an unexpected-but-nonempty
- * body (`SHAPE_MISMATCH`), so shape drift is loud rather than swallowed.
+ * Instagram Adapter — Reader: the read pipeline over the bodies the tab already captured. It NEVER
+ * touches the DOM and NEVER issues requests. `read()` is `readBody` (spec §10.2–10.3) with the
+ * Reader's env (the document, the sink, the hint book); `observed` reads each observed response once.
+ * The document drives every endpoint; the legacy extractors read its clean canonical bodies only as
+ * comparators (the reverse shadow). Zero Instagram literals here: they live in `versions/*`.
  */
 
-import { isShapeMismatch, SURFACE } from '@/adapter/ig-surface';
-import * as relationships from '@/adapter/reader-relationships';
-import {
-  coerceBody,
-  compareActivityFeed,
-  compareList,
-  compareProfile,
-  shadowRead,
-  warnUnexpected,
-} from '@/adapter/reader-shadow';
+import { SURFACE } from '@/adapter/ig-surface';
+import { ObservedReads, type ObservedReadsOpts } from '@/adapter/observed-reads';
+import { shadowLegacy } from '@/adapter/reader-shadow';
+import type { ProfileSeen } from '@/rim/profile-visit-port';
 import type { ObservedRelation } from '@/shared/observed-relation';
-import type { Observation } from '@/store/types';
-import type { ProfilePresence } from '@/surface/schema/projection';
-import { type GraphqlOutcome, graphqlEnvelope } from '@/surface/transport/graphql';
+import { admits } from '@/surface/read/admission';
+import { defaultEnv, readBody } from '@/surface/read/read';
+import { recoverBody } from '@/surface/read/recover';
+import { mintObserved } from '@/surface/read/relationship';
+import { type ObservedRequest, routeObserved } from '@/surface/read/route';
+import type { BodyInput, ReadCtx, ReadEnv, RouteMatch, SurfaceRead } from '@/surface/read/types';
+import type { DriftSignal } from '@/surface/sink';
+import { type Decoded, decodeBody } from '@/surface/transport/decode';
 
-// Re-export the stable result types so existing consumers keep one import site.
-export type {
-  EndpointKind,
-  FollowEvent,
-  FollowersListResult,
-  FriendshipShowResult,
-  ShowManyEntry,
-} from '@/adapter/ig-surface';
+export type { EndpointKind, FollowEvent, FollowersListResult, FriendshipShowResult, ShowManyEntry } from '@/adapter/ig-surface';
 
-import type {
-  EndpointKind,
-  FollowEvent,
-  FollowersListResult,
-  FriendshipShowResult,
-  ProfileViewer,
-  ShowManyEntry,
-} from '@/adapter/ig-surface';
+import type { EndpointKind, ProfileViewer } from '@/adapter/ig-surface';
 
 /** Which profile body a parse is reading — the two containers differ. */
 export type ProfileKind = Extract<EndpointKind, 'profile-info' | 'profile-graphql'>;
 
+/** A viewer whose every flag is unknown (a recovered or partial read withholds them all). */
+const UNKNOWN_VIEWER: ProfileViewer = { following: null, requested: null, followsUs: null, incomingRequest: null };
+
 export class Reader {
-  /**
-   * Route a response URL to the parser that handles it, or `null`. Ordering
-   * concerns (e.g. `friendship-show` before `show-many`/`followers-list`)
-   * live inside the versioned endpoint table.
-   */
+  readonly env: ReadEnv;
+  /** Every observed response read once, shared by every consumer of this Reader. */
+  readonly observed: ObservedReads;
+  /** Our own pk, when the session names it: our own header counts are gated on it. */
+  readonly ownPk: string | null;
+
+  /** `session` names whose session observes (I10) and the observation clock. */
+  constructor(env: Partial<ReadEnv> = {}, session: ObservedReadsOpts = {}) {
+    this.env = { ...defaultEnv(), ...env };
+    this.observed = new ObservedReads(this, session);
+    this.ownPk = session.viewerPk ?? null;
+  }
+
+  /** Route an observed request through the one routing table, or `null`. */
+  route(req: ObservedRequest): RouteMatch | null {
+    return routeObserved(req, { doc: this.env.doc, transport: this.env.doc.read.transport, hints: this.env.hints });
+  }
+
+  /** Route a response URL (and the operation name it carried) to its endpoint kind, or `null`. */
   matchEndpoint(url: string, friendlyName?: string): EndpointKind | null {
     return SURFACE.matchEndpoint(url, friendlyName);
   }
 
-  /**
-   * Route an OBSERVED response — URL plus the request headers the tab
-   * recorded. Use this over {@link Reader.matchEndpoint} for passive traffic:
-   * the GraphQL profile body is identified by its operation name, which lives
-   * in a request header, and a URL-only match cannot see it.
-   */
-  kindOf(resp: { url: string; requestHeaders?: Record<string, string> }): EndpointKind | null {
-    return SURFACE.route(resp)?.kind ?? null;
+  /** The endpoint kind of an OBSERVED response (URL plus the request headers the tab recorded). */
+  kindOf(resp: ObservedRequest): EndpointKind | null {
+    return this.route(resp)?.kind ?? null;
   }
 
   /** The GraphQL operation name a request carried, read off its headers. */
@@ -79,205 +64,85 @@ export class Reader {
     return SURFACE.friendlyName(requestHeaders);
   }
 
-  /**
-   * Whether an observed response's media type carries a parseable body. The
-   * GraphQL profile body is `text/javascript`, so a json-only gate would drop
-   * it — consumers ask the surface instead of testing a media type themselves.
-   */
+  /** Whether an observed response's media type carries a parseable body (GraphQL answers `text/javascript`). */
   parseableBody(mimeType: string): boolean {
     return SURFACE.parseableMime(mimeType);
   }
 
   /** The profile kind this observed response carries, or `null`. */
-  profileKindOf(resp: { url: string; requestHeaders?: Record<string, string> }): ProfileKind | null {
+  profileKindOf(resp: ObservedRequest): ProfileKind | null {
     const kind = this.kindOf(resp);
     return kind === 'profile-info' || kind === 'profile-graphql' ? kind : null;
   }
 
-  /**
-   * Pull the target pk out of a `friendships/show/<pk>/` URL. The single-show
-   * body carries no pk of its own, so callers pass this through to
-   * {@link parseFriendshipShow}.
-   */
+  /** The subject pk of a `friendships/show/<pk>/` URL (the body carries none). */
   extractPkFromUrl(url: string): string | null {
     return SURFACE.extractIds('friendship-show', url).pk ?? null;
   }
 
-  /**
-   * Pull the target pk out of a followers-list URL. The followers-list body
-   * carries the follower rows but not the target's own pk, so acquisition
-   * derives the follower→target edge from this URL the first time a page
-   * matches (profile-info is enrichment only). Returns `null` on a
-   * non-matching URL.
-   */
+  /** The list owner's pk of a followers-list URL (the body carries the rows, not the owner). */
   extractTargetPkFromFollowersUrl(url: string): string | null {
     return SURFACE.extractIds('followers-list', url).targetPk ?? null;
   }
 
-  /**
-   * Pull the target pk out of a following-list URL (the account whose FOLLOWING
-   * list is paginating). Mirrors {@link extractTargetPkFromFollowersUrl};
-   * returns `null` on a non-matching URL.
-   */
+  /** The list owner's pk of a following-list URL. */
   extractTargetPkFromFollowingUrl(url: string): string | null {
     return SURFACE.extractIds('following-list', url).targetPk ?? null;
   }
 
-  /**
-   * STRICT parse of one paginated followers page: the typed result on a
-   * well-formed page, `null` on SHAPE_MISMATCH — so the list walks can tell IG
-   * shape drift apart from a genuinely empty page. The typed empty result
-   * (`{observations: [], cursor: null, hasMore: false}`) is the END-OF-LIST
-   * shape: a drifted page collapsing to it would fabricate an end-of-list
-   * claim, and downstream completeness verdicts (the prune census's
-   * lost-follower marking, growth's exhaustion advance) would act on it.
-   */
-  parseFollowersListStrict(body: unknown, at: number, final: boolean | null = null): FollowersListResult | null {
-    const result = SURFACE.extractFollowersList(coerceBody(body, 'followers-list'), at, 'followers-list', final);
-    const legacy = isShapeMismatch(result) ? null : result;
-    shadowRead('followers-list', body, at, 'followers-list', legacy === null,
-      compareList(legacy));
-    if (legacy === null) {
-      warnUnexpected('followers-list', body);
-      return null;
-    }
-    return legacy;
+  /** Read one body (never throws). An enforced endpoint's clean reads are compared with the legacy extractors. */
+  read(kind: EndpointKind, input: BodyInput, ctx: ReadCtx): SurfaceRead {
+    const decoded: Decoded = 'text' in input ? decodeBody(input.text, this.env.doc.read.transport) : input.decoded;
+    const read = readBody(kind, { decoded, status: input.status, mime: input.mime }, ctx, this.env);
+    const def = ctx.route === undefined ? this.env.doc.endpoints.find((e) => e.kind === kind) : this.env.doc.endpoints[ctx.route.defIndex];
+    if (def?.mode === 'enforce' && decoded.ok) shadowLegacy(this.env, read, decoded.json, ctx);
+    return read;
+  }
+
+  /** One composed list page (lists are never recovered: an own-list walk reads C0/C1 only). */
+  readListPage(which: 'followers-list' | 'following-list', decoded: Decoded, at: number): SurfaceRead {
+    return this.read(which, { decoded }, { at, source: which });
+  }
+
+  /** C2 recovery of a decoded body under a role's witness (spec §10.6): only ever adds facts, never destructive. */
+  recover(kind: EndpointKind, decoded: Decoded, ctx: ReadCtx): SurfaceRead {
+    return recoverBody(kind, decoded, ctx, this.env);
+  }
+
+  /** A walk-level drift signal (a stop the read alone cannot see), to the env's sink. */
+  report(signal: DriftSignal, at: number): void {
+    this.env.sink.drift(signal, at);
+  }
+
+  /** The relationship facts a read may feed the reconciler: presence-complete and admitted only. */
+  relationshipFacts(read: SurfaceRead): ObservedRelation[] {
+    return read.ok ? mintObserved(read, read.projection.relationships) : [];
   }
 
   /**
-   * STRICT parse of one paginated FOLLOWING page (`null` on SHAPE_MISMATCH —
-   * see {@link parseFollowersListStrict}). The following-list body carries the
-   * exact followers-list shape (a `users` array + `next_max_id`), so this is a
-   * thin alias over the same extractor — kept separate so shape-drift warnings
-   * name the endpoint that actually broke.
+   * A profile read as the visit sees it: the observation (our own counts dropped unless the read is
+   * C0/C1 and complete), the viewer flags (withheld unless destructive-admitted), presence and tier.
    */
-  parseFollowingListStrict(body: unknown, at: number, final: boolean | null = null): FollowersListResult | null {
-    const result = SURFACE.extractFollowersList(coerceBody(body, 'following-list'), at, 'following-list', final);
-    const legacy = isShapeMismatch(result) ? null : result;
-    shadowRead('following-list', body, at, 'following-list', legacy === null,
-      compareList(legacy));
-    if (legacy === null) {
-      warnUnexpected('following-list', body);
-      return null;
-    }
-    return legacy;
+  profileSeen(read: SurfaceRead, ownPk: string | null = this.ownPk): ProfileSeen | null {
+    if (!read.ok) return null;
+    const p = read.projection;
+    const fact = p.facts[0];
+    if (fact === undefined || p.presence === null) return null;
+    const admitted = admits('destructive', read);
+    const obs = fact.accountPk === ownPk && !admitted
+      ? { ...fact, fields: { ...fact.fields, followers: undefined, following: undefined, mutuals: undefined } } : fact;
+    const r = p.relationships.find((x) => x.pk === fact.accountPk);
+    const viewer = !admitted || r === undefined ? UNKNOWN_VIEWER
+      : { following: r.following, requested: r.outgoingRequest, followsUs: r.followedBy, incomingRequest: r.incomingRequest };
+    return { obs, viewer, presence: p.presence, tier: read.tier, partial: read.partial };
   }
 
   /**
-   * Parse a profile body into a single profile observation (with follower and
-   * following counts). Returns `null` when the body has no user.
-   *
-   * `kind` names WHICH profile body this is: `profile-info` (what Epo fetches
-   * from `/users/<pk>/info/`) or `profile-graphql` (the query Instagram's own
-   * client fires, observed during ordinary navigation). The records inside are
-   * the same shape; only the container and the shadow-parse schema differ.
+   * Whether this response's endpoint carries viewer-side relationship facts — the only bodies worth
+   * the reconciler's read (`profile-info` has no `friendship_status`; the GraphQL profile does).
    */
-  parseProfileInfo(
-    body: unknown,
-    at: number,
-    kind: ProfileKind = 'profile-info',
-  ): Observation | null {
-    const result = SURFACE.extractProfileInfo(coerceBody(body, kind), at);
-    const mismatch = isShapeMismatch(result);
-    shadowRead(kind, body, at, 'profile', mismatch,
-      compareProfile(mismatch ? null : (result as Observation | null)));
-    if (mismatch) {
-      warnUnexpected(kind, body);
-      return null;
-    }
-    return result as Observation | null;
-  }
-
-  /**
-   * Viewer-side flags from the GraphQL body's `friendship_status` (`/users/<pk>/info/`
-   * has none; `null` when absent). `following` makes a PRIVATE account's followers readable.
-   */
-  profileViewer(body: unknown, kind: ProfileKind = 'profile-graphql'): ProfileViewer {
-    return SURFACE.extractProfileViewer(coerceBody(body, kind));
-  }
-
-  /** Which decision-bearing fields a profile body carried (`viewerPk` names a null relationship's owner). */
-  profilePresence(body: unknown, kind: ProfileKind, viewerPk: string | null): ProfilePresence | null {
-    return SURFACE.extractProfilePresence(coerceBody(body, kind), viewerPk);
-  }
-
-  /**
-   * A profile body's GraphQL envelope (spec §10.5): a wall, errors without the profile (to wait
-   * out), errors beside it (partial), or plain data. Never "gone".
-   */
-  profileEnvelope(body: unknown, kind: ProfileKind): GraphqlOutcome {
-    const json = coerceBody(body, kind);
-    const read = (): boolean => {
-      const r = SURFACE.extractProfileInfo(json, 0);
-      return r !== null && !isShapeMismatch(r);
-    };
-    return graphqlEnvelope(json, read, SURFACE.graphql, SURFACE.mutationRefusalSignatures);
-  }
-
-  /** Whether the body is Instagram saying the profile is gone: its declared container present and null. */
-  profileAbsent(body: unknown, kind: ProfileKind): boolean {
-    return SURFACE.extractProfileInfo(coerceBody(body, kind), 0) === null;
-  }
-
-  /** Parse the batched relationship map (`reader-relationships.ts`). */
-  parseShowMany(body: unknown, at: number): ShowManyEntry[] {
-    return relationships.parseShowMany(body, at);
-  }
-
-  /** Parse the single relationship shape; `null` when unparsed (`reader-relationships.ts`). */
-  parseFriendshipShow(body: unknown, at: number, pk: string): FriendshipShowResult | null {
-    return relationships.parseFriendshipShow(body, at, pk);
-  }
-
-  /**
-   * STRICT parse of the follow-requests panel (the list shape, REST or a GraphQL connection):
-   * `null` on a shape mismatch, never the typed empty page — an unreadable panel must never
-   * read as "nobody asked to follow you" (spec §10.4).
-   */
-  parseRequestsStrict(body: unknown, at: number): FollowersListResult | null {
-    const result = SURFACE.extractFollowersList(coerceBody(body, 'friend-requests'), at, 'friend-requests');
-    const legacy = isShapeMismatch(result) ? null : result;
-    shadowRead('friend-requests', body, at, 'friend-requests', legacy === null, compareList(legacy));
-    if (legacy === null) warnUnexpected('friend-requests', body);
-    return legacy;
-  }
-
-  /** The feed body's side list of pending requesters, row by row (never the complete set). */
-  feedPendingPreview(body: unknown, at: number): Observation[] {
-    return SURFACE.extractFeedPendingPreview(coerceBody(body, 'activity-feed'), at);
-  }
-
-  /**
-   * STRICT parse of the activity-feed (news inbox) body into the "started
-   * following you" events it carries: `[]` on a well-formed empty feed, `null`
-   * on a shape mismatch — so callers can tell IG shape drift apart from
-   * "nobody new followed". A drifted body must never invent follow events, and
-   * (via the null) must never masquerade as a successful empty check either.
-   */
-  parseActivityFeedStrict(body: unknown): FollowEvent[] | null {
-    const result = SURFACE.extractActivityFeed(coerceBody(body, 'activity-feed'));
-    const legacy = isShapeMismatch(result) ? null : (result as FollowEvent[]);
-    shadowRead('activity-feed', body, Date.now(), 'activity-feed', legacy === null,
-      compareActivityFeed(legacy));
-    if (legacy === null) {
-      warnUnexpected('activity-feed', body);
-      return null;
-    }
-    return legacy;
-  }
-
-  /** Lenient variant for callers that only merge facts: drift collapses to `[]`. */
-  parseActivityFeed(body: unknown): FollowEvent[] {
-    return this.parseActivityFeedStrict(body) ?? [];
-  }
-
-  /** Whether this response's endpoint carries viewer-side relationship facts. */
   relationshipBearing(url: string, friendlyName?: string): boolean {
-    return relationships.relationshipBearing(this, url, friendlyName);
-  }
-
-  /** Viewer-side relationship facts, presence-gated and minted (`reader-relationships.ts`). */
-  relationshipFacts(url: string, body: unknown, at: number, friendlyName?: string): ObservedRelation[] {
-    return relationships.relationshipFacts(this, url, body, at, friendlyName);
+    const kind = this.matchEndpoint(url, friendlyName);
+    return kind === 'show-many' || kind === 'friendship-show' || kind === 'profile-graphql';
   }
 }

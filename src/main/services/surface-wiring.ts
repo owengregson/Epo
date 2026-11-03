@@ -7,7 +7,6 @@
 import { Reader } from '@/adapter/reader';
 import type { InstagramTab } from '@/adapter/tab';
 import type { SystemClock } from '@/governors/clock';
-import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { PlanDayClock } from '@/kernel/plan';
 import { ProfileObserver } from '@/rim/profile-observer';
 import {
@@ -59,14 +58,15 @@ export function wireSurface(d: {
   store: KnowledgeStore;
   ownPk: string;
   clock: SystemClock;
-  /** The plan-day boundary (the plan-backed clock at the plan wiring's swap; local midnight until then). */
-  day?: PlanDayClock;
+  /** The plan's plan-day boundary (spec §4.4): the sink's and the report's plan-days. */
+  day: PlanDayClock;
 }): SurfaceWiring {
-  const { store, ownPk, clock } = d;
-  const reader = new Reader();
-  const day = d.day ?? calendarPlanDayClock({ now: () => clock.now() });
+  const { store, ownPk, clock, day } = d;
   const surfaceId = surface().id;
   const sink = createSurfaceHealthSink({ store, surfaceId, day, clock, scrub: scrubSample });
+  // Every read reports to the production sink, which is also its hint book and identity oracle; the
+  // session names our own pk (I10) and the clock each observed response is read at.
+  const reader = new Reader({ sink, hints: sink, identity: sink }, { viewerPk: ownPk, now: () => clock.now() });
   const report = createSurfaceReport({ store, surfaceId, day, clock });
   reporters.set(store, report);
   live = report;
@@ -86,7 +86,7 @@ export function wireSurface(d: {
   // coverage guard, and every other profile enriches candidate scoring. It is
   // also how a profile is READ since 2026-10-08: the visitor navigates and the
   // observer hands it the page's own profile body (no request is composed).
-  const profileObserver = new ProfileObserver({ tab: d.tab, reader, store, clock });
+  const profileObserver = new ProfileObserver({ tab: d.tab, reader, store, clock, ownPk });
   const stopObserver = profileObserver.start();
   const profileInfoUnsub = (): void => {
     stopObserver();

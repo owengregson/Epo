@@ -7,6 +7,8 @@ import {
   GALLERY_QUEUE,
   GALLERY_SETTINGS,
 } from '@/renderer/gallery/fixtures';
+import { GALLERY_BASIS } from '@/renderer/gallery/fixtures-settings';
+import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
 import {
   type AreaReport,
   type MeterReading,
@@ -70,17 +72,29 @@ const RESPONSES: Record<string, unknown> = {
   pruneStatus: basePrune(),
   getSettings: GALLERY_SETTINGS,
   updateSettings: GALLERY_SETTINGS,
-  resetSettings: GALLERY_SETTINGS,
   chainList: GALLERY_CHAIN,
   chainDetail: null,
   queueList: LANE,
   keptList: GALLERY_LANES.kept,
   growthSeries: { points: [], baselineAt: null },
   graphSnapshot: null,
-  pruneCandidates: [],
-  checkSeed: { ok: true, exists: true, followersVisible: true, isPrivate: false },
+  // Annotated as main serves them: two to prune (one bio not read yet), one kept by the protection list.
+  pruneCandidates: [
+    { pk: '9001', username: 'sunny.loops', protectedBy: null, bioUnread: false },
+    { pk: '9002', username: 'quiet.harbor', protectedBy: null, bioUnread: true },
+    { pk: '2001', username: 'theo.park', protectedBy: 'account', bioUnread: false },
+  ],
+  checkSeed: { kind: 'ok', pk: '1001', isPrivate: false, followersVisible: true, followers: 12_400, observedAt: 0, fromStore: true },
   checkForUpdate: { state: 'idle', mode: 'notify', current: '0.0.0', version: null, percent: null, error: null, checkedAt: null },
-  updateStatus: { state: 'idle', mode: 'notify', current: '3.4.1', version: null, percent: null, error: null, checkedAt: null },
+  // The Settings stage: no main process saves here, so every change answers honestly that nothing was saved.
+  settingsView: GALLERY_SETTINGS_VIEW,
+  settingsFacts: GALLERY_SETTINGS_FACTS,
+  settingsBasis: { kind: 'ok', rows: GALLERY_BASIS },
+  applySettings: { kind: 'not-saved', view: GALLERY_SETTINGS_VIEW, detail: 'the gallery has no main process to save to' },
+  previewSettings: { kind: 'unavailable' },
+  suggestAccounts: { kind: 'ok', rows: [] },
+  updateStatus: { state: 'unchecked', mode: 'notify', current: '3.1.1', version: null, percent: null, error: null, checkedAt: null },
+  // The live column's pulls: the Boost preview (a live scenario answers its own), the compatibility report, the log.
   previewBoost: null,
   surfaceReport: gallerySurfaceReport(),
   logTail: GALLERY_LOG,

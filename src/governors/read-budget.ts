@@ -58,6 +58,13 @@ export class ReadBudget {
     return { allowed: resumeAt === null, resumeAt };
   }
 
+  /** The reads debited since `since`, by kind (the plan projection's "done"). */
+  doneSince(since: number): { readonly profiles: number; readonly pages: number; readonly checks: number } {
+    const sum = (kind: ReadKind): number => this.snapshot().debits
+      .filter((d) => d.kind === kind && d.at >= since).reduce((n, d) => n + d.count, 0);
+    return { profiles: sum('profile'), pages: sum('list-page'), checks: sum('notification') };
+  }
+
   /** `use` tags the debit with what the read is for (an optional field the v1 snapshot shape ignores). */
   consume(kind: ReadKind, purpose: ReadPurpose = 'exploration', count = 1, use?: ReadUse): ReadPermit {
     const permit = this.availability(kind, purpose, count);

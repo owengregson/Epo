@@ -2,8 +2,8 @@
  * README live panels — the two nightly charts committed to the `readme-live`
  * branch (README guide §5). The honesty of these panels is the point: the
  * growth chart runs the SAME `computeProjection` that ships in the app on the
- * default settings, and the pace chart plans one real day with the SAME
- * `SessionPlanner` — no invented data. Only presentation lives here.
+ * default settings, and the pace chart draws one real plan-day with the SAME
+ * day plan and gap the engine runs — no invented data. Only presentation lives here.
  *
  * Both themes render from one drawing function and the §3.4 palette table;
  * the drawing code is never forked per theme.
@@ -11,12 +11,12 @@
  * CI-ONLY: bundled by .github/workflows/readme-live.yml, never by the app.
  */
 
+import { referenceGapMs } from '@/engine/pacers';
+import { drawDayPlan, type PlanDemand, phaseOffsetHours, planDayWindow, quietMinute } from '@/kernel/plan';
 import { computeProjection } from '@/renderer/charts/growth-model';
-import { patternCircadianProfile } from '@/settings/pattern-map';
-import { DEFAULT_SETTINGS, toPacingConfig } from '@/settings/settings';
-import { samplePhaseOffset } from '@/timing/circadian';
-import { CIRCADIAN } from '@/timing/config';
-import { SessionPlanner } from '@/timing/session-planner';
+import { effectiveFromV1 } from '@/settings/effective';
+import { toPlanIntent } from '@/settings/plan-intent';
+import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { MS_PER_DAY, MS_PER_HOUR } from '@/timing/units';
 
 const UI_FONT = `-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
@@ -148,7 +148,7 @@ export function growthCharts(dayOfYear: number, dateStamp: string): { light: str
   return { light: draw(LIGHT), dark: draw(DARK) };
 }
 
-// --- Pace chart (§5b: one real day planned by the shipping SessionPlanner) ---
+// --- Pace chart (§5b: one real plan-day drawn by the shipping day plan) ---
 
 /** Deterministic small PRNG so a given date always plans the same day. */
 function mulberry32(seed: number): () => number {
@@ -165,60 +165,53 @@ function mulberry32(seed: number): () => number {
 export interface DayPlan {
   /** Epoch ms of each planned action, in order. */
   actions: number[];
-  /** The day's drawn follow target (the PLAN in the stamp). */
+  /** The plan-day's automatic volume (the PLAN in the stamp). */
   target: number;
   /** The hard daily ceiling (the CAP line). */
   cap: number;
+  /** Hours from `dayStartMs` to the first session's start and the last session's end (the band). */
   activeStartHour: number;
   activeEndHour: number;
   dayStartMs: number;
 }
 
+/** A fresh install's demand: no work waiting anywhere. */
+const NO_DEMAND: PlanDemand = {
+  lifecycleDueByDayEnd: 0, lifecycleBacklog: 0, pruneStock: 0, protectedReeval: 0, journalPending: 0,
+  followsDoneToday: 0, outsideToday: 0, pendingRequests: 0, acceptsRecent: 0,
+  ownHeader: { followers: null, following: null }, census: { lastCompleteAt: null, rowsPerPage: null },
+};
+
 /**
- * Plan one full day with the real SessionPlanner on the default settings: walk a
- * minimal engine loop over the planner's own API — open sessions when they come
- * due, spend each session's budget at the planner's drawn gaps.
+ * Draw the plan-day ending in this calendar day on the default settings, then spend each session's
+ * budget from its start at the engine's reference gap (the rolling hour first).
  */
 export function planOneDay(dayStartMs: number, seed: number): DayPlan {
-  const s = DEFAULT_SETTINGS;
-  const cfg = toPacingConfig(s);
+  const intent = toPlanIntent(effectiveFromV1(DEFAULT_SETTINGS));
+  const entropy = seed >>> 0;
+  const phase = phaseOffsetHours(entropy);
+  const window = planDayWindow(dayStartMs + MS_PER_DAY - 1, quietMinute(intent.shape, phase, intent.quietHours));
+  const plan = drawDayPlan({
+    installEntropy: entropy, window, intent, demand: NO_DEMAND, phaseOffsetHours: phase,
+    firstOpenAt: window.startsAt, boost: null, runIntent: 'running',
+  });
   const rng = mulberry32(seed);
-  const profile = patternCircadianProfile(s.pattern, samplePhaseOffset(CIRCADIAN.PHASE_JITTER_MAX_HOURS, rng));
-  const planner = new SessionPlanner({ rng, profile, cfg });
-
-  const dayEnd = dayStartMs + MS_PER_DAY;
-  // The engine parks outside the active-hours wall no matter which pacing model
-  // runs (engine loop → RateGovernor.withinActiveHours), so the simulated day
-  // honors the same window.
-  const windowStart = dayStartMs + s.activeHoursStart * MS_PER_HOUR;
-  const windowEnd = dayStartMs + s.activeHoursEnd * MS_PER_HOUR;
   const actions: number[] = [];
-  let t = dayStartMs + 5 * 60_000; // draw the plan just after local midnight
-  planner.advance(t);
-  const target = planner.dailyTarget(t);
-  for (let guard = 0; t < dayEnd && guard < 10_000; guard++) {
-    if (t >= windowEnd) break;
-    if (t < windowStart) {
-      t = windowStart;
-      continue;
-    }
-    planner.advance(t);
-    if (planner.isSessionOpen(t)) {
-      planner.recordAction(t, 'follow');
+  for (const session of plan.sessions) {
+    let t = session.startAt;
+    for (let k = 0; k < session.budget && t < window.endsAt; k += 1) {
       actions.push(t);
-      t += planner.nextActionGapMs(t);
-      continue;
+      t += referenceGapMs(intent, actions.filter((a) => a > t - MS_PER_HOUR), t, rng);
     }
-    const next = planner.nextSessionStartAt(t);
-    if (next >= windowEnd) break;
-    t = Math.max(next, t + 60_000);
   }
+  const kept = plan.sessions.filter((x) => x.budget > 0);
+  const hourOf = (ms: number): number => (ms - dayStartMs) / MS_PER_HOUR;
   return {
     actions,
-    target,
-    cap: cfg.dailyHardCeiling,
-    activeStartHour: s.activeHoursStart,
-    activeEndHour: s.activeHoursEnd,
+    target: plan.volume.planned,
+    cap: intent.hardCeiling,
+    activeStartHour: hourOf(kept[0]?.startAt ?? window.startsAt),
+    activeEndHour: hourOf(kept[kept.length - 1]?.expectedEndAt ?? window.startsAt),
     dayStartMs,
   };
 }
@@ -247,13 +240,13 @@ export function paceCharts(plan: DayPlan, dateStamp: string): { light: string; d
       g += `<line x1="${L}" y1="${y(v)}" x2="${R}" y2="${y(v)}" stroke="${c.grid}"/>`;
       g += `<text x="${L - 8}" y="${y(v) + 3.5}" text-anchor="end" font-family="${MONO_FONT}" font-size="10" fill="${c.faint}">${v}</text>`;
     }
-    // Active-hours band.
+    // The day's session span.
     const bx1 = x(plan.dayStartMs + plan.activeStartHour * MS_PER_HOUR);
     const bx2 = x(plan.dayStartMs + plan.activeEndHour * MS_PER_HOUR);
     g += `<rect x="${bx1}" y="${T}" width="${bx2 - bx1}" height="${B - T}" fill="${c.activeBand}"/>`;
     g += `<line x1="${bx1}" y1="${T}" x2="${bx1}" y2="${B}" stroke="${c.grid}"/>`;
     g += `<line x1="${bx2}" y1="${T}" x2="${bx2}" y2="${B}" stroke="${c.grid}"/>`;
-    g += `<text x="${bx1 + 12}" y="${T + 15}" font-family="${MONO_FONT}" font-size="10.5" letter-spacing="1.5" fill="${c.faint}">ACTIVE ${hhmm(plan.activeStartHour)}–${hhmm(plan.activeEndHour)}</text>`;
+    g += `<text x="${bx1 + 12}" y="${T + 15}" font-family="${MONO_FONT}" font-size="10.5" letter-spacing="1.5" fill="${c.faint}">SESSIONS ${hhmm(plan.activeStartHour)}–${hhmm(plan.activeEndHour)}</text>`;
     // The daily-cap line.
     g += `<line x1="${L}" y1="${y(plan.cap)}" x2="${R}" y2="${y(plan.cap)}" stroke="${c.amber}" stroke-width="1.5" stroke-dasharray="6 5"/>`;
     g += `<text x="${R - 8}" y="${y(plan.cap) - 8}" text-anchor="end" font-family="${MONO_FONT}" font-size="10.5" letter-spacing="1.5" fill="${c.amber}">DAILY CAP · ${plan.cap}</text>`;
@@ -266,7 +259,7 @@ export function paceCharts(plan: DayPlan, dateStamp: string): { light: string; d
       'ONE PLANNED DAY — DRAWN BY THE SHIPPING PLANNER',
       `${dateStamp} · PLAN ${plan.target} / CAP ${plan.cap}`,
       g,
-      'One planned day of paced actions inside the active-hours window, under the daily cap',
+      'One planned day of paced actions inside its sessions, under the daily cap',
     );
   };
 

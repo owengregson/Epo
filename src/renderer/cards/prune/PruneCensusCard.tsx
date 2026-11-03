@@ -11,10 +11,10 @@ export interface PruneCensusCardProps {
   prune: PruneStatus | null;
   /** True while this view's `scanPrune()` call is in flight. */
   scanning: boolean;
-  /** Actionable candidates after the LIVE whitelist; null before any census. */
+  /** Unprotected candidates still to visit (main's annotation); null before any census. */
   visibleCount: number | null;
-  /** Whitelisted (never-pruned) accounts. */
-  whitelistCount: number;
+  /** Candidates the protection rules keep; null while unknown. */
+  protectedCount: number | null;
 }
 
 /**
@@ -32,7 +32,7 @@ export function PruneCensusCard({
   prune,
   scanning,
   visibleCount,
-  whitelistCount,
+  protectedCount,
 }: PruneCensusCardProps): JSX.Element {
   const isScanning = scanning || prune?.state === 'scanning';
   const census = prune?.census ?? null;
@@ -43,10 +43,10 @@ export function PruneCensusCard({
   const followers = isScanning ? (prune?.followers ?? 0) : (census?.followers ?? 0);
 
   // THE one 'Prunable' definition, at all times: candidates still unvisited
-  // after the live whitelist — always the same number as the candidate list.
+  // and unprotected — always the same number as the candidate list.
   const prunable = visibleCount ?? prune?.remaining ?? 0;
   // The live mid-scan figure is a DIFFERENT quantity (whole-graph count,
-  // including whitelisted, growth-managed, and stale edges) — it only ever
+  // including protected, growth-managed, and stale edges) — it only ever
   // renders under its own label while scanning.
   const unconfirmed = prune?.graph.notFollowingBack ?? 0;
 
@@ -113,7 +113,7 @@ export function PruneCensusCard({
               {census !== null ? <NumberTicker value={prunableD} /> : '—'}
             </Stat>
           )}
-          <Stat label="Whitelisted">{commas(whitelistCount)}</Stat>
+          <Stat label="Protected">{protectedCount === null ? '—' : commas(protectedCount)}</Stat>
         </div>
         {seg !== null ? (
           <div class="pcomp">
@@ -129,7 +129,7 @@ export function PruneCensusCard({
               aria-label={
                 `Of ${commas(seg.total)} followed accounts at the last scan: ` +
                 `${commas(seg.mutual)} follow back, ${commas(seg.prunable)} are prunable, ` +
-                `${commas(seg.shielded)} are whitelist-protected, ` +
+                `${commas(seg.shielded)} are protected, ` +
                 `${commas(seg.handled)} were already unfollowed or skipped by a run, ` +
                 `${commas(seg.exempt)} are managed by the growth engine, and ` +
                 `${commas(seg.unresolvable)} are unresolvable (deactivated or unavailable ` +
@@ -154,7 +154,7 @@ export function PruneCensusCard({
               </span>
               {seg.shielded > 0 ? (
                 <span>
-                  <i class="dot shielded" /> Whitelist-protected{' '}
+                  <i class="dot shielded" /> Protected{' '}
                   <b class="num">{commas(seg.shielded)}</b>
                 </span>
               ) : null}

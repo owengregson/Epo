@@ -105,23 +105,6 @@ export const ListPageBody = z
   .loose();
 export type ListPageBody = z.infer<typeof ListPageBody>;
 
-/** One page of the follow-requests panel's connection (GraphQL, since 2026-11). */
-const PendingConnection = z
-  .object({
-    edges: z.array(z.object({ node: z.unknown() }).loose()),
-    page_info: z
-      .object({ end_cursor: z.string().meta({ pii: 'cursor' }).nullish(), has_next_page: z.boolean().optional() })
-      .loose()
-      .optional(),
-  })
-  .loose();
-/** Follow requests via GraphQL: the SAME `pending/` user rows, as nodes (REST still accepted). */
-export const FollowRequestsGraphqlBody = z
-  .object({ data: z.object({ xdt_friendships_pending_users: z.object({ users: PendingConnection }).loose() }).loose() })
-  .loose();
-export const FriendRequestsBody = z.union([FollowRequestsGraphqlBody, ListPageBody]);
-export type FriendRequestsBody = z.infer<typeof FriendRequestsBody>;
-
 /** The batched relationship map. */
 export const ShowManyBody = z
   .object({
@@ -202,50 +185,27 @@ export const ProfileUser = z
 export type ProfileUser = z.infer<typeof ProfileUser>;
 
 /**
- * `/api/v1/users/<pk>/info/`. The `user` key must EXIST — that is what tells
- * "Instagram says the profile is gone" apart from a soft-block body, which is a
- * mismatch (ADR 0303). A genuinely missing profile answers 404 with
- * `{"status":"fail"}`, classified as `gone` before a body is ever parsed.
+ * The profile record as the read pipeline validates it: STRUCTURE only (a record). Every scalar is
+ * read by the field readers (I1–I10), so a digit-string count is a retype, never a rejected body.
  */
-export const ProfileInfoBody = z
-  .object({
-    user: ProfileUser.nullable(),
-  })
-  .loose();
-export type ProfileInfoBody = z.infer<typeof ProfileInfoBody>;
+export const ProfileRecord = z.object({}).loose();
+export type ProfileRecord = z.infer<typeof ProfileRecord>;
 
 /**
- * The GraphQL profile body (OBSERVED, never composed by Epo). Same `data`
- * container invariant the retired endpoint had: present-with-empty-user is
- * "gone", absent container is drift.
- */
-export const ProfileGraphqlBody = z
-  .object({
-    data: z.object({ user: ProfileUser.nullish() }).loose(),
-  })
-  .loose();
-export type ProfileGraphqlBody = z.infer<typeof ProfileGraphqlBody>;
-
-/**
- * The news inbox. At least one of the story containers must be an array —
- * an empty feed is a VALID "no recent follows" result, a body carrying neither
- * container is drift.
+ * The news inbox (the REST body itself, or the GraphQL feed's container). At least one story
+ * section must be an array — an empty feed is a VALID "no recent follows" result, a record with
+ * neither section is drift. Stories are read row by row, so one odd story never costs the page.
  */
 export const ActivityFeedStories = z
   .object({
-    new_stories: z.array(ActivityStory).optional(),
-    old_stories: z.array(ActivityStory).optional(),
+    new_stories: z.array(z.unknown()).optional(),
+    old_stories: z.array(z.unknown()).optional(),
   })
   .loose()
   .refine((b) => Array.isArray(b.new_stories) || Array.isArray(b.old_stories), {
     error: 'no story container (`new_stories` / `old_stories`) present',
   });
-/** The drawer's GraphQL feed (since 2026-11) wraps the very same stories. */
-export const ActivityFeedGraphqlBody = z
-  .object({ data: z.object({ xdt_activity_inbox: ActivityFeedStories }).loose() })
-  .loose();
-export const ActivityFeedBody = z.union([ActivityFeedGraphqlBody, ActivityFeedStories]);
-export type ActivityFeedBody = z.infer<typeof ActivityFeedBody>;
+export type ActivityFeedStories = z.infer<typeof ActivityFeedStories>;
 
 /** The mutation (follow / unfollow) verdict body, REST form. */
 export const MutationBody = z
@@ -261,19 +221,18 @@ export const MutationBody = z
 export type MutationBody = z.infer<typeof MutationBody>;
 
 /**
- * Every response schema, keyed by the endpoint kind that routes to it. The
- * scrubber and the novelty pass both walk this map, so a new endpoint is
- * covered by both the moment its schema lands here.
+ * What each endpoint's chosen CONTAINER holds, keyed by the endpoint kind that routes to it (the
+ * container itself is resolved by `read/normalize.ts` from the definition's declarations).
  */
 export const RESPONSE_SCHEMAS = {
   'followers-list': ListPageBody,
   'following-list': ListPageBody,
-  'friend-requests': FriendRequestsBody,
+  'friend-requests': ListPageBody,
   'show-many': ShowManyBody,
   'friendship-show': FriendshipShowBody,
-  'profile-info': ProfileInfoBody,
-  'profile-graphql': ProfileGraphqlBody,
-  'activity-feed': ActivityFeedBody,
+  'profile-info': ProfileRecord,
+  'profile-graphql': ProfileRecord,
+  'activity-feed': ActivityFeedStories,
 } as const satisfies Record<EndpointKind, z.ZodType>;
 
 /** Every row-level schema, for the scrubber's per-row walk. */

@@ -1,6 +1,7 @@
 /**
  * The unfollow wiring: the protection port over the settings service's live index, the mutation
- * policy's deps, the churn scheduler with its reconciler, and the prune engine's unfollow deps.
+ * policy's deps, the churn scheduler with its reconciler, and the prune engine's unfollow deps,
+ * all on the plan's one plan-day boundary (spec §4.4), handed in by the graph build.
  */
 
 import { ChurnScheduler } from '@/engine/churn-scheduler';
@@ -13,7 +14,6 @@ import type { ReentrySupervisor } from '@/engine/reentry';
 import { scoreCandidate } from '@/engine/scorer';
 import type { SourceFrontier } from '@/engine/source-frontier';
 import { type Clock, SystemClock } from '@/governors/clock';
-import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { RateGovernor } from '@/governors/rate-governor';
 import type { ReadBudget } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
@@ -29,15 +29,9 @@ import { createMutationPolicy } from './mutation-policy';
 
 type MutationPolicy = ReturnType<typeof createMutationPolicy>;
 
-/** The one plan-day boundary of the unfollow wiring: local midnight until the plan's own clock is swapped in here. */
-function planDayClockOf(clock: Clock): PlanDayClock {
-  return calendarPlanDayClock({ now: () => clock.now() });
-}
-
-/** The protection port over the settings service's live index, on the one plan-day boundary (spec §4.4, §7). */
-export function wireProtection(d: Pick<GraphBuildDeps, 'protection'>, clock: Clock): { port: ProtectionPort; dayClock: PlanDayClock } {
-  const dayClock = planDayClockOf(clock);
-  return { port: createProtectionPort({ index: () => d.protection.index(), clock, dayClock }), dayClock };
+/** The protection port over the settings service's live index, on the plan's plan-day boundary (spec §4.4, §7). */
+export function wireProtection(d: Pick<GraphBuildDeps, 'protection'>, clock: Clock, dayClock: PlanDayClock): { port: ProtectionPort } {
+  return { port: createProtectionPort({ index: () => d.protection.index(), clock, dayClock }) };
 }
 
 /** What the mutation policy is built from; the two later pieces are read through closures. */
@@ -49,14 +43,15 @@ export interface MutationPolicyWiring {
   rate: RateGovernor;
   reentry: ReentrySupervisor;
   readBudget: ReadBudget;
+  /** The plan's plan-day boundary (the park slots land on it). */
+  dayClock: PlanDayClock;
   profiles(): TabProfileVisitor;
   followback(): FollowbackWatcher;
 }
 
 /** The click-boundary policy every writer passes (identity, budget, current relationship). */
 export function wireMutationPolicy(d: GraphBuildDeps, w: MutationPolicyWiring): MutationPolicy {
-  const { store, ownPk, ownUsername, clock, rate, reentry, readBudget } = w;
-  const dayClock = planDayClockOf(clock);
+  const { store, ownPk, ownUsername, clock, rate, reentry, readBudget, dayClock } = w;
   return createMutationPolicy({ store, ownPk, ownUsername, clock, rate, reentry, readBudget,
     profiles: w.profiles, followback: w.followback, settings: d.resolveSettings,
     protection: () => d.protection.index(),
@@ -69,10 +64,10 @@ export function wireMutationPolicy(d: GraphBuildDeps, w: MutationPolicyWiring): 
 /** The engine's journal step: the oldest due intent settled with one read, on the plan-day slots (spec §9.8). */
 export function journalSettler(
   d: Pick<GraphBuildDeps, 'resolveSettings' | 'driverSignal'>,
-  w: { store: KnowledgeStore; profiles: ProfileVisitor; ownPk: string; clock: Clock; readBudget: ReadBudget },
+  w: { store: KnowledgeStore; profiles: ProfileVisitor; ownPk: string; clock: Clock; readBudget: ReadBudget; dayClock: PlanDayClock },
 ): () => ReturnType<typeof settleNextIntent> {
-  const dayClock = planDayClockOf(w.clock);
-  return () => settleNextIntent({ ...w, slots: () => planDaySlots(dayClock, w.clock.now()),
+  const { dayClock, ...settle } = w;
+  return () => settleNextIntent({ ...settle, slots: () => planDaySlots(dayClock, w.clock.now()),
     maxRetries: () => d.resolveSettings().maxRetries, signal: d.driverSignal });
 }
 
@@ -85,12 +80,14 @@ export interface ChurnWiring {
   churnActions: AdapterBackedChurnActions;
   ownPk: string;
   settings: Settings;
+  /** The plan's plan-day boundary (protection re-checks, the reconciler's day roll, the park slots). */
+  dayClock: PlanDayClock;
 }
 
 /** The churn scheduler with its config, the frontier's pick, the live eligibility check and protection. */
 export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
-  const { frontier, store, clock, rate, churnActions, ownPk, settings } = w;
-  const { port, dayClock } = wireProtection(d, clock);
+  const { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock } = w;
+  const { port } = wireProtection(d, clock, dayClock);
   const reconciler = new ProtectionReconciler({ store, port, clock, dayClock });
   const churn = new ChurnScheduler({
     pickQueued: (records) => frontier.pickQueued(records),
@@ -119,12 +116,12 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
 /** The prune engine's unfollow-facing deps: its config, protection, the run stamp, the own-stats refresh. */
 export function pruneUnfollowDeps(
   d: GraphBuildDeps,
-  w: { settings: Settings; policy: MutationPolicy; ownUsername: string | undefined },
+  w: { settings: Settings; policy: MutationPolicy; ownUsername: string | undefined; dayClock: PlanDayClock },
 ): Pick<PruneEngineDeps, 'cfg' | 'protection' | 'onRunComplete' | 'refreshOwnStats'> {
   const { settings, policy, ownUsername } = w;
   return {
     cfg: toPruneConfig(settings),
-    protection: wireProtection(d, new SystemClock()).port,
+    protection: wireProtection(d, new SystemClock(), w.dayClock).port,
     // Persist the completed run's timestamp through the one settings save path
     // (also reloads live configs — harmless, and keeps one write path).
     onRunComplete: (at) => {

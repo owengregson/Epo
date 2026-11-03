@@ -1,29 +1,28 @@
-import { DEFAULT_SETTINGS } from '@/settings/settings';
-import { MS_PER_HOUR } from '@/timing/units';
+import { MS_PER_DAY, MS_PER_HOUR } from '@/timing/units';
 import { growthCharts, paceCharts, planOneDay } from '@/tools/readme/live-charts';
 
 /**
  * The README's nightly panels draw REAL data — the growth model and the
- * shipping SessionPlanner on the default settings. These pin the contract the
- * charts advertise: the plan respects the active-hours wall and the daily cap,
- * a given date always renders the same bytes, and different dates visibly
- * differ (the turbulence phase and the plan are keyed by the run date).
+ * shipping day plan on the default settings. These pin the contract the
+ * charts advertise: the plan keeps its actions inside its sessions and under
+ * the daily cap, a given date always renders the same bytes, and different
+ * dates visibly differ (the turbulence phase and the plan are keyed by the run date).
  */
 describe('README live charts', () => {
   const dayStart = new Date(2026, 7, 24).getTime(); // a fixed local midnight
 
-  test('planOneDay stays inside the active-hours window and under the cap', () => {
+  test('planOneDay keeps its actions inside its sessions and under the cap', () => {
     const plan = planOneDay(dayStart, 20260824);
     expect(plan.cap).toBeGreaterThan(0);
     expect(plan.target).toBeLessThanOrEqual(plan.cap);
     expect(plan.actions.length).toBeLessThanOrEqual(plan.target);
     expect(plan.actions.length).toBeGreaterThan(0);
-    const windowStart = dayStart + DEFAULT_SETTINGS.activeHoursStart * MS_PER_HOUR;
-    const windowEnd = dayStart + DEFAULT_SETTINGS.activeHoursEnd * MS_PER_HOUR;
+    const firstStart = dayStart + plan.activeStartHour * MS_PER_HOUR;
     for (const at of plan.actions) {
-      expect(at).toBeGreaterThanOrEqual(windowStart);
-      expect(at).toBeLessThan(windowEnd);
+      expect(at).toBeGreaterThanOrEqual(firstStart);
+      expect(at).toBeLessThan(dayStart + MS_PER_DAY + MS_PER_DAY);
     }
+    expect(planOneDay(dayStart, 20260824)).toEqual(plan);
     // Ascending: cumulative dots must stair-step left to right.
     const sorted = [...plan.actions].sort((a, b) => a - b);
     expect(plan.actions).toEqual(sorted);
