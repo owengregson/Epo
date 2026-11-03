@@ -66,7 +66,7 @@
   visibility: hidden;
 }
 .tour-kicker {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -74,14 +74,14 @@
 }
 .tour-t {
   margin-top: var(--sp-2);
-  font-size: var(--fs-xl);
+  font-size: var(--fs-lead);
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--chrome);
 }
 .tour-b {
   margin-top: var(--sp-2);
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   color: var(--muted);
   line-height: 1.6;
 }
@@ -127,7 +127,7 @@
   padding: var(--sp-1);
   color: var(--faint);
   cursor: pointer;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-body);
   line-height: 1;
   transition: color 0.15s;
 }

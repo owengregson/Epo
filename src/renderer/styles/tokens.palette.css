@@ -127,4 +127,9 @@
 
   /* ============ MOTION ============ */
   --ease: cubic-bezier(0.22, 0.9, 0.28, 1);
+
+  /* Two pre-ladder names, read only by the old settings sheet (settings.css), which
+     the Settings stage replaces; they leave with it. Nothing new may use them. */
+  --fs-xs: var(--fs-caption);
+  --fs-sm: var(--fs-small);
 }

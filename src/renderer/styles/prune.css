@@ -6,8 +6,8 @@
 
 /* Prune as a full PAGE on the wide stage: a hero strip, the census card
    across the top, then two independent card columns. The page and each
-   column are console-named size containers carrying the shared --sp rhythm
-   (shell.css), so console cards keep their container-query typography at
+   column are console-named size containers (.stage-page / .stage-col, shell.css)
+   carrying the shared --sp rhythm, so cards keep their container-query layout at
    any pane width. */
 .prune-page {
   max-width: 1120px;
@@ -31,7 +31,7 @@
 .prune-hero p {
   margin-top: 2px;
   color: var(--muted);
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
 }
 .prune-cols {
   display: grid;
@@ -42,7 +42,7 @@
 .prune-col {
   min-width: 0;
 }
-/* Resolves against .prune-page (the columns' nearest container ancestor):
+/* Resolves against .stage-page (the columns' nearest container ancestor):
    below this width side-by-side columns would starve, so they stack. */
 @container console (max-width: 720px) {
   .prune-cols {
@@ -115,7 +115,7 @@
   flex-wrap: wrap;
   gap: var(--sp-1) var(--sp-4);
   margin-top: var(--sp-2);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   color: var(--muted);
 }
 .pcomp-legend b {
@@ -171,7 +171,7 @@
   margin-top: var(--sp-3);
 }
 .wl-chip .icon {
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-micro);
   margin-left: var(--sp-1);
   color: var(--faint);
 }

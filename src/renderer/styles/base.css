@@ -21,7 +21,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: var(--fs-lg);
+  font-size: var(--fs-body);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow: hidden; /* the console scrolls inside itself, never the document */
@@ -83,7 +83,7 @@ body {
   border: 1px solid var(--border-strong);
   background: rgba(255, 255, 255, 0.04);
   color: var(--faint);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-micro);
   font-weight: 700;
   text-align: center;
   vertical-align: 1px;
@@ -116,7 +116,7 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: var(--r);
   box-shadow: var(--elev-5);
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
   line-height: 1.55;
   color: var(--silver);
   font-weight: 500;

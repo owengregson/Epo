@@ -37,7 +37,7 @@
   background: linear-gradient(180deg, var(--border-strong), var(--border));
 }
 .chain-link span {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   font-weight: 700;
@@ -53,12 +53,12 @@
 }
 .cn-body .h .handle {
   font-weight: 700;
-  font-size: var(--fs-lg);
+  font-size: var(--fs-body);
   letter-spacing: -0.02em;
   color: var(--text);
 }
 .cn-body .sub {
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
   color: var(--muted);
   margin-top: var(--sp-0);
 }
@@ -71,7 +71,7 @@
   align-items: center;
   gap: var(--sp-2);
   padding: 0 var(--sp-0) var(--sp-3);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -79,7 +79,7 @@
 }
 .view-h .icon {
   flex: 0 0 auto;
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
 }
 
 /* ============ TARGETS · lineage breadcrumb ============ */
@@ -102,7 +102,7 @@
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   box-shadow: var(--elev-1);
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
   color: var(--muted);
   min-width: 0;
 }
@@ -128,7 +128,7 @@
   border-style: dashed;
   box-shadow: none;
   color: var(--faint);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   letter-spacing: 0.04em;
 }
 .crumb-sep {
@@ -136,7 +136,7 @@
   flex: 0 0 auto;
 }
 .crumb-sep .icon {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
 }
 .crumbs .chip {
   margin-left: auto;
@@ -169,7 +169,7 @@
 .funnel-pool .fl {
   flex: 1;
   min-width: 0;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -177,7 +177,7 @@
 }
 .funnel-pool .fn {
   flex: 0 0 auto;
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text);
 }
@@ -205,7 +205,7 @@
 }
 .frow .fl {
   min-width: 0;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -230,7 +230,7 @@
 }
 .frow .fn {
   text-align: right;
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text);
 }

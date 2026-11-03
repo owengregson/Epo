@@ -58,7 +58,7 @@
   padding: 24px;
   text-align: center;
   color: var(--faint);
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   pointer-events: none;
   animation: gsFade 0.35s ease;
 }
@@ -79,18 +79,18 @@
   border-radius: 6px;
   box-shadow: var(--elev-2);
   pointer-events: none;
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
   animation: gsFade 0.15s ease;
 }
 .graph-tip__title {
   color: var(--text);
   font-family: var(--mono);
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   margin-bottom: 2px;
 }
 .graph-tip__line {
   color: var(--muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   line-height: 1.5;
 }
 
@@ -135,7 +135,7 @@
   border: 0;
   color: var(--muted);
   font: inherit;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -179,7 +179,7 @@
 .graph-legend__hint {
   margin: 0;
   color: var(--faint);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   line-height: 1.5;
 }
 
@@ -201,7 +201,7 @@
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
   text-align: left;
   cursor: pointer;
   transition: background 0.15s;
@@ -237,5 +237,5 @@
 .gleg-count {
   color: var(--text);
   font-family: var(--mono);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
 }

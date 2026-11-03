@@ -177,7 +177,7 @@ export function PruneView(): JSX.Element {
   const chip = stateChip(prune?.state);
 
   return (
-    <div class="prune-page">
+    <div class="prune-page stage-page">
       <header class="prune-hero">
         <div>
           <h2>Prune</h2>
@@ -195,7 +195,7 @@ export function PruneView(): JSX.Element {
         />
       </div>
       <div class="prune-cols">
-        <div class="prune-col">
+        <div class="prune-col stage-col">
           <PruneScanCard
             prune={prune}
             scan={scan}
@@ -222,7 +222,7 @@ export function PruneView(): JSX.Element {
           />
           {settings !== null ? <PruneScheduleCard settings={settings} onSave={save} /> : null}
         </div>
-        <div class="prune-col">
+        <div class="prune-col stage-col">
           <PruneCandidatesCard
             scanned={visibleCandidates !== null}
             candidates={visibleCandidates ?? []}

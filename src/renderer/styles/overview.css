@@ -40,7 +40,7 @@
   pointer-events: none;
 }
 .hn-ring .glyph .icon {
-  font-size: var(--fs-xl);
+  font-size: var(--fs-lead);
 }
 /* Fill the row so the trailing hold chip pins to the card's right edge
    regardless of caption length (max-content sizing let it float mid-card). */
@@ -49,7 +49,7 @@
   min-width: 0;
 }
 .hn-count {
-  font-size: var(--fs-fluid-hero);
+  font-size: var(--fs-state);
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1;
@@ -59,7 +59,7 @@
   color: var(--muted);
 }
 .hn-cap {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -80,7 +80,7 @@
   min-width: 0;
 }
 .hero-what .hw-k {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -90,10 +90,10 @@
 .hero-what .icon {
   flex: 0 0 auto;
   color: var(--faint);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
 }
 .hero-what .hw-act {
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   color: var(--muted);
   min-width: 0;
   overflow: hidden;
@@ -119,11 +119,11 @@
 }
 .hero-today .ht-top .k {
   color: var(--muted);
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
 }
 .hero-today .ht-top .v {
   font-weight: 600;
-  font-size: var(--fs-base);
+  font-size: var(--fs-body);
   color: var(--text);
 }
 .hero-today .ht-top .v b {
@@ -139,7 +139,7 @@
   justify-content: space-between;
   align-items: baseline;
   margin-top: var(--sp-2);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   color: var(--faint);
   letter-spacing: 0.03em;
 }
@@ -164,14 +164,14 @@
   margin-bottom: var(--sp-3);
 }
 .g-num {
-  font-size: var(--fs-fluid-display);
+  font-size: var(--fs-heading);
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1;
   color: var(--chrome);
 }
 .g-cap {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   color: var(--faint);
   margin-top: var(--sp-1);
   letter-spacing: 0.02em;
@@ -185,7 +185,7 @@
   border-radius: var(--r-pill);
   background: rgba(216, 221, 227, 0.05);
   border: 1px solid var(--border-strong);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   font-weight: 700;
   color: var(--live);
   letter-spacing: 0.01em;
@@ -193,7 +193,7 @@
 }
 .g-delta .icon {
   flex: 0 0 auto;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
 }
 .g-delta .dim {
   color: var(--faint);
@@ -219,7 +219,7 @@
 }
 .growth-ylab {
   fill: var(--faint);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-caption);
   font-family: var(--mono);
 }
 /* Paint only — the draw-in reveal is driven per-frame by GrowthChart.tsx from
@@ -245,7 +245,7 @@
   display: flex;
   justify-content: space-between;
   margin-top: var(--sp-2);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   color: var(--faint);
   letter-spacing: 0.03em;
 }
@@ -280,7 +280,7 @@
 }
 .growth-proj-note {
   margin-top: var(--sp-2);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-small);
   color: var(--faint);
   letter-spacing: 0.02em;
 }
@@ -295,13 +295,13 @@
   min-width: 0;
 }
 .t-id .handle {
-  font-size: var(--fs-fluid-handle);
+  font-size: var(--fs-lead);
   font-weight: 700;
   letter-spacing: -0.025em;
   color: var(--chrome);
 }
 .t-id .meta {
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
   color: var(--muted);
   margin-top: var(--sp-0);
 }
@@ -319,7 +319,7 @@
 /* ============ LOG ============ */
 .log {
   font-family: var(--mono);
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
   line-height: 1.8;
   color: var(--muted);
 }
