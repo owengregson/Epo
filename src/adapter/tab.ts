@@ -24,7 +24,7 @@ import type { PointerInputEvent } from '@/interaction/input-driver';
 import type { ClickGuard } from '@/interaction/interactor';
 import type { ElementRect, Point } from '@/interaction/motion-profile';
 import { SURFACE_METER } from '@/surface/meter';
-import { RECOVERY, TAB } from '@/timing/config';
+import { INPUT_PROBE, RECOVERY, TAB } from '@/timing/config';
 import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 import type { ResponseHandler, TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
@@ -348,8 +348,8 @@ export class InstagramTab {
         })()`,
       );
       await this.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
-      for (let i = 0; i < 10; i++) {
-        await new Promise((r) => setTimeout(r, 50));
+      for (let i = 0; i < INPUT_PROBE.ROUNDS; i++) {
+        await new Promise((r) => setTimeout(r, INPUT_PROBE.INTERVAL_MS));
         const got = await this.evaluate(
           'window.__epoInputProbe === true',
         );

@@ -58,6 +58,8 @@ export {
   /** Update-feed check cadence. */
   UPDATER,
 } from '../kernel/derive';
+/** Tab: the input probe's poll count and interval (derived from the display frame). */
+export { INPUT_PROBE } from '../kernel/input-probe';
 
 /**
  * Dev harnesses only (livetest / capture / inspect). NOT derived and not

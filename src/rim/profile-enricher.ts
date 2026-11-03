@@ -104,9 +104,7 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
     const reportActivity = (count: number): void =>
       this.reporter.report({
         kind: 'page',
-        label: 'Visiting profiles',
-        count,
-        total: batch.length,
+        op: { op: 'visit-profiles', done: count, total: batch.length },
       });
 
     // Consecutive visits a WALL answered — or that never answered at all. A

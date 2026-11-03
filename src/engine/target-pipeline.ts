@@ -11,6 +11,7 @@
  */
 
 import type { Clock } from '../governors/clock';
+import { tempoOrReference } from '../kernel/tempo';
 import { type AcquireEndReason, isAcquireFailure } from '../rim/follower-acquisition';
 import type { Settings } from '../settings/settings';
 import type { KnowledgeStore } from '../store/knowledge-store';
@@ -20,14 +21,9 @@ import { unenrichedUsernames } from './decisions';
 import type { EngineWait } from './engine-waits';
 import { EXPLORATION_POLICY } from './exploration-policy';
 import type { HaltReason } from './halt-reason';
-import {
-  ACQUIRE_DRAIN_REASONS,
-  type CurrentTarget,
-  type EngineAcquisition,
-  type EngineEnricher,
-  type EngineScanner,
-  type StepResult,
-} from './ports';
+import type { EngineTempo } from './plan-port';
+import { ACQUIRE_DRAIN_REASONS, type CurrentTarget, type EngineAcquisition, type EngineEnricher, type EngineScanner,
+  type StepResult } from './ports';
 import type { FailureKind } from './recovery';
 import { peekResumeTarget } from './resume-target';
 import type { SourceFrontier, SourceVisitEndReason } from './source-frontier';
@@ -50,7 +46,7 @@ export const MAX_ENRICH_PASSES_PER_CYCLE = 1;
 export const ACQUIRE_SKIP_POOL_FACTOR = 4;
 
 /** Everything the pipeline needs; the Engine supplies its own gates as callbacks. */
-export interface TargetPipelineDeps {
+export interface TargetPipelineDeps extends EngineTempo {
   store: KnowledgeStore;
   clock: Clock;
   acquisition: EngineAcquisition;
@@ -360,7 +356,7 @@ export class TargetPipeline {
           target: current.pk,
           walledCycles: this.walledCycles,
         });
-        await this.deps.wait('engine:enrich-backoff', ENGINE_TIMING.ENRICH_BACKOFF_MS);
+        await this.deps.wait('engine:enrich-backoff', tempoOrReference(this.deps.tempo).base('backoff.walled'));
         return 'idle';
       }
       this.walledCycles = 0;
@@ -386,7 +382,7 @@ export class TargetPipeline {
         sliceReopens: this.sliceReopens,
       });
       if (this.sliceReopens >= RECOVERY_TIMING.WALLED_CYCLES_ENTRY) {
-        await this.deps.wait('engine:enrich-backoff', ENGINE_TIMING.ENRICH_BACKOFF_MS);
+        await this.deps.wait('engine:enrich-backoff', tempoOrReference(this.deps.tempo).base('backoff.walled'));
         return 'idle';
       }
     } else if (this.lastAcquireEnd === null && current.username !== null) {

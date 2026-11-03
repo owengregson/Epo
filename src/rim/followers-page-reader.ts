@@ -16,15 +16,12 @@
  *        in-flight parse set stops growing, before returning.
  */
 
-import {
-  type ActivityReporter,
-  NOOP_ACTIVITY_REPORTER,
-} from '@/adapter/activity-reporter';
+import { type ActivityReporter, NOOP_ACTIVITY_REPORTER } from '@/adapter/activity-reporter';
 import type { Reader } from '@/adapter/reader';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { ReadBudget } from '@/governors/read-budget';
+import { type TempoPolicy, type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import type { RimTab } from '@/rim/types';
-import { RIM } from '@/timing/config';
 import { noisify } from '@/timing/noise';
 import { sample, sleep, uniform } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
@@ -45,7 +42,7 @@ export interface FollowersPageReaderDeps {
   reader: Reader;
   actor: FollowersActor;
   clock?: Clock;
-  /** Pause after each scroll so the paginated `followers/` response can land. */
+  /** Pause after each scroll so the paginated `followers/` response can land (default: `scroll.wait.dialog`). */
   scrollWaitMs?: number;
   /** Injected pause; defaults to a real setTimeout (tests record the ms instead). */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -59,6 +56,8 @@ export interface FollowersPageReaderDeps {
   abortSignal?: () => AbortSignal | undefined;
   /** Live activity readout for the veil; defaults to a no-op. */
   reporter?: ActivityReporter;
+  /** The tempo the default scroll wait resolves from (default: the reference tempo). */
+  tempo?: TempoSource;
 }
 
 export type { CollectArgs, CollectResult } from './followers-page-types';
@@ -72,11 +71,12 @@ export class FollowersPageReader {
   private readonly reader: Reader;
   private readonly actor: FollowersActor;
   private readonly clock: Clock;
-  private readonly scrollWaitMs: number;
+  private readonly scrollWaitMs: number | undefined;
   private readonly sleepFn: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly rng: () => number;
   private readonly abortSignal?: () => AbortSignal | undefined;
   private readonly reporter: ActivityReporter;
+  private readonly tempo: TempoSource;
 
   constructor(deps: FollowersPageReaderDeps) {
     this.onProgress = deps.onProgress;
@@ -85,14 +85,16 @@ export class FollowersPageReader {
     this.reader = deps.reader;
     this.actor = deps.actor;
     this.clock = deps.clock ?? new SystemClock();
-    this.scrollWaitMs = deps.scrollWaitMs ?? RIM.SCROLL_WAIT_MS;
+    this.scrollWaitMs = deps.scrollWaitMs;
     this.sleepFn = deps.sleep ?? sleep;
     this.rng = deps.rng ?? Math.random;
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
+    this.tempo = tempoOrReference(deps.tempo);
   }
 
-  async collect(args: CollectArgs): Promise<CollectResult> {
+  /** `scrollWait`: the caller's own wait policy when it sets no explicit bounds (acquisition's `scroll.wait.acquire`). */
+  async collect(args: CollectArgs, scrollWait?: TempoPolicy): Promise<CollectResult> {
     const { targetUsername, onObservation, sentinel, maxRounds, noNewStop } = args;
     const purpose = args.readPurpose ?? 'reconciliation';
     const readyAt = Math.max(this.readBudget?.availability('profile', purpose).resumeAt ?? 0,
@@ -104,13 +106,11 @@ export class FollowersPageReader {
     // The caller's cooperative stop, folded with the ACTIVE driver's abort
     // signal — either ends the scrape at the next check.
     const externalStop = args.shouldStop ?? ((): boolean => false);
-    const shouldStop = (): boolean =>
-      externalStop() || this.abortSignal?.()?.aborted === true;
+    const shouldStop = (): boolean => externalStop() || this.abortSignal?.()?.aborted === true;
     // Explicit bounds already vary; the default scroll cadence must vary too.
-    const waitPolicy =
-      args.scrollMinMs === undefined || args.scrollMaxMs === undefined
-        ? noisify('sub-cadence', this.scrollWaitMs, this.rng)
-        : uniform(args.scrollMinMs, args.scrollMaxMs);
+    const waitPolicy = args.scrollMinMs === undefined || args.scrollMaxMs === undefined
+      ? scrollWait ?? (this.scrollWaitMs === undefined ? this.tempo.policy('scroll.wait.dialog') : noisify('sub-cadence', this.scrollWaitMs, this.rng))
+      : uniform(args.scrollMinMs, args.scrollMaxMs);
     const nextWaitMs = (): number => sample(waitPolicy, this.rng);
     // The one endpoint kind this scrape parses list pages from — the paginated
     // `following/` API when the FOLLOWING dialog is open, else `followers/`.
@@ -118,17 +118,13 @@ export class FollowersPageReader {
 
     // Live veil readout: unlike the direct API walk, this scrape DRIVES the page
     // (opens the modal and scrolls it), so it reads as a 'page' phase.
-    const activityLabel =
-      dialog === 'following' ? 'Scrolling following list' : 'Scrolling follower list';
     // No honest denominator here: the scroll scrape stops on stagnation/rounds,
     // not at a known count, so it reports NO total and the overlay shows an
     // indeterminate sweep rather than a fabricated percentage.
     const reportActivity = (count: number): void =>
       this.reporter.report({
         kind: 'page',
-        label: activityLabel,
-        count,
-        detail: `@${targetUsername}`,
+        op: { op: 'browse-list', list: dialog, of: targetUsername, done: count, total: null },
       });
     reportActivity(0);
 

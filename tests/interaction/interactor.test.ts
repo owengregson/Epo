@@ -9,8 +9,11 @@ import {
   type PointerInputEvent,
 } from '@/interaction/input-driver';
 import { Interactor } from '@/interaction/interactor';
-import { type ElementRect, PRESS_MAX_MS, PRESS_MIN_MS } from '@/interaction/motion-profile';
+import type { ElementRect } from '@/interaction/motion-profile';
 import { MOTION } from '@/kernel/motion-policy';
+import { MOTION_REFERENCE } from '@/kernel/tempo';
+
+const [PRESS_MIN_MS, PRESS_MAX_MS] = MOTION_REFERENCE.pressMs;
 
 const mulberry32 = (seed: number) => (): number => {
   seed = (seed + 0x6d2b79f5) | 0;

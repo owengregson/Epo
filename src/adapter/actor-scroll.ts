@@ -5,14 +5,10 @@
 
 import type { LocatedRect, LocateScrollResult } from '@/adapter/ig-surface';
 import { SURFACE } from '@/adapter/ig-surface';
+import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
+import { MIN_SCROLL_STEP_PX } from '@/kernel/tempo-policy';
 import * as logger from '@/utils/logger';
 import type { ActorInteractor, AdapterTab } from './actor-types';
-
-/** Minimum wheel distance (px) for a list-scroll step — a shorter nudge can fail
- *  to trigger the next page load on tall viewports. One home for BOTH scroll
- *  paths (notifications drawer / followers dialog); the viewport multipliers
- *  stay local to each path's dialog geometry. */
-const MIN_SCROLL_STEP_PX = 600;
 
 /** The slice of the Actor a scroll round drives. */
 export interface ScrollDeps {
@@ -20,6 +16,8 @@ export interface ScrollDeps {
   readonly interactor: ActorInteractor;
   /** The Actor's pressable-rect guard. */
   readonly rectUsable: (rect: LocatedRect | undefined) => rect is LocatedRect;
+  /** Viewports per burst come from the tempo's depth axis, floored at MIN_SCROLL_STEP_PX (default: reference). */
+  readonly tempo?: TempoSource;
 }
 
 /**
@@ -39,7 +37,7 @@ export async function scrollNotificationsList(deps: ScrollDeps): Promise<boolean
   if (remaining <= 0) return false;
   await deps.interactor.scroll(
     res.rect,
-    Math.min(remaining, Math.max(MIN_SCROLL_STEP_PX, clientHeight * 2)),
+    Math.min(remaining, Math.max(MIN_SCROLL_STEP_PX, clientHeight * tempoOrReference(deps.tempo).draw('scroll.depth.drawer'))),
   );
   return true;
 }
@@ -72,7 +70,8 @@ export async function scrollFollowersDriven(deps: ScrollDeps): Promise<boolean> 
     logger.debug('actor.scrollFollowers: container already at bottom');
     return false;
   }
-  const delta = Math.min(remaining, Math.max(MIN_SCROLL_STEP_PX, clientHeight * 3));
+  const delta = Math.min(remaining,
+    Math.max(MIN_SCROLL_STEP_PX, clientHeight * tempoOrReference(deps.tempo).draw('scroll.depth.dialog')));
   // Rest the cursor on the hover-safe point the locate script found (off the
   // username/avatar/button hover triggers) so the wheel scrolls the list and
   // not an Instagram hover-preview card. Absent → the Interactor picks its own

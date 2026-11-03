@@ -108,7 +108,7 @@ export class Actor {
    * Throws {@link AdapterStaleError} when the header button is absent.
    */
   async follow(username: string, expectedPk?: string, onDispatch?: () => void): Promise<Result<{ clicked: boolean }>> {
-    this.reporter.report({ kind: 'page', label: `Following @${username}` });
+    this.reporter.report({ kind: 'page', op: { op: 'follow', username } });
     try {
       return await this.followInner(username, expectedPk, onDispatch);
     } finally {
@@ -185,7 +185,7 @@ export class Actor {
    * confirm control never appears after opening the menu.
    */
   async unfollow(username: string, expectedPk?: string, onDispatch?: () => void): Promise<Result<{ clicked: boolean }>> {
-    this.reporter.report({ kind: 'page', label: `Unfollowing @${username}` });
+    this.reporter.report({ kind: 'page', op: { op: 'unfollow', username } });
     try {
       return await this.unfollowInner(username, expectedPk, onDispatch);
     } finally {
@@ -334,7 +334,7 @@ export class Actor {
     const statLabel = which === 'followers' ? 'followers-stat' : 'following-stat';
     this.reporter.report({
       kind: 'page',
-      label: `Opening ${which} list · @${targetUsername}`,
+      op: { op: 'open-list', list: which, of: targetUsername },
     });
 
     let lastMissing: 'dialog' | typeof statLabel = 'dialog';

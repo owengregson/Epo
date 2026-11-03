@@ -1,9 +1,10 @@
 import type { ReadAllowance } from '../kernel/derive-reads';
+import type { ReadUse } from '../kernel/plan/types';
 import type { Clock } from './clock';
 
 export type ReadKind = 'profile' | 'list-page' | 'notification';
 export type ReadPurpose = 'exploration' | 'reconciliation';
-export interface ReadDebit { at: number; kind: ReadKind; purpose: ReadPurpose; count: number }
+export interface ReadDebit { at: number; kind: ReadKind; purpose: ReadPurpose; count: number; use?: ReadUse }
 export interface ReadBudgetSnapshot { version: 1; debits: ReadDebit[] }
 export interface ReadPermit { allowed: boolean; resumeAt: number | null }
 /** The window's ceilings: derived from the live limits (kernel D6), never hardcoded. */
@@ -57,11 +58,12 @@ export class ReadBudget {
     return { allowed: resumeAt === null, resumeAt };
   }
 
-  consume(kind: ReadKind, purpose: ReadPurpose = 'exploration', count = 1): ReadPermit {
+  /** `use` tags the debit with what the read is for (an optional field the v1 snapshot shape ignores). */
+  consume(kind: ReadKind, purpose: ReadPurpose = 'exploration', count = 1, use?: ReadUse): ReadPermit {
     const permit = this.availability(kind, purpose, count);
     if (!permit.allowed) return permit;
     const state = this.snapshot();
-    state.debits.push({ at: this.deps.clock.now(), kind, purpose, count });
+    state.debits.push({ at: this.deps.clock.now(), kind, purpose, count, ...(use === undefined ? {} : { use }) });
     this.deps.store.setReadBudgetState(JSON.stringify(state));
     return permit;
   }

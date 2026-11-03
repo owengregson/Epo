@@ -1,10 +1,12 @@
 import type { Clock } from '../governors/clock';
+import { tempoOrReference } from '../kernel/tempo';
 import type { AcquireEndReason } from '../rim/acquisition-result';
 import type { KnowledgeStore } from '../store/knowledge-store';
-import { ENGINE, RECOVERY } from '../timing/config';
+import { RECOVERY } from '../timing/config';
 import * as log from '../utils/logger';
 import { acquireFailureVerdict } from './decisions';
 import type { EngineWait } from './engine-waits';
+import type { EngineTempo } from './plan-port';
 import type { StepResult } from './ports';
 import type { FailureKind } from './recovery';
 
@@ -28,7 +30,7 @@ export function reviveRecentExhausted(
 
 /** Failed reads retain the acquisition slot; repeated walls enter account-wide recovery. */
 export async function acquisitionFailureBackoff(
-  deps: { wait: EngineWait; recover(token: AbortController, kind: FailureKind): Promise<StepResult> },
+  deps: EngineTempo & { wait: EngineWait; recover(token: AbortController, kind: FailureKind): Promise<StepResult> },
   currentPk: string,
   endReason: AcquireEndReason,
   token: AbortController,
@@ -42,6 +44,6 @@ export async function acquisitionFailureBackoff(
   log.warn('engine: acquire failed — backing off (target NOT exhausted)', {
     target: currentPk, endReason, walledCycles: verdict.walledCycles,
   });
-  await deps.wait('engine:enrich-backoff', ENGINE.ENRICH_BACKOFF_MS);
+  await deps.wait('engine:enrich-backoff', tempoOrReference(deps.tempo).base('backoff.walled'));
   return { step: 'idle', walledCycles: verdict.walledCycles };
 }
