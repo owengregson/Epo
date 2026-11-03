@@ -41,7 +41,7 @@ import { DelayManager } from '@/timing/delay-manager';
 import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import { liveWiringParts } from './live-wiring';
-import { planWiringParts, wirePacing, wireReadBudget } from './plan-wiring';
+import { planWiringParts, wirePlan, wireReadBudget } from './plan-wiring';
 import {
   noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry, wireSweepCadence,
 } from './reopen-wiring';
@@ -71,7 +71,7 @@ export function buildGraph(
   // from a single registry.
   const delays = new DelayManager({ clock });
   const { settings, driverSignal } = d;
-
+  const plan = wirePlan(store, clock, ownPk, d);
   const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
 
   // Interactor: every Actor click/scroll becomes native input events
@@ -223,8 +223,6 @@ export function buildGraph(
 
   const sweepCadence = wireSweepCadence(d);
 
-  const pacing = wirePacing(store, settings);
-
   // Woven prune feed: the growth loop drains unfollows from the PruneEngine's
   // scanned census, interleaved with its follows. The PruneEngine is built
   // after the engine, so the feed delegates through a ref set once it exists
@@ -259,7 +257,7 @@ export function buildGraph(
     enricher,
     settings,
     delays,
-    pacing,
+    pacing: plan.pacing,
     unfollowFeed,
     sweepCadence,
     installEntropy,
@@ -333,7 +331,7 @@ export function buildGraph(
   // Back the woven-feed adapter now that the PruneEngine exists.
   pruneEngineRef = pruneEngine;
   // Once per build: a rebuild or account switch starts from a fresh list, never a duplicate.
-  const parts = [planWiringParts(), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts()];
+  const parts = [planWiringParts(plan, readBudget, store, d), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts()];
 
   return {
     prepareMutation: policy.prepareMutation,
@@ -360,7 +358,8 @@ export function buildGraph(
     scanner,
     followback,
     chain,
-    pacing,
+    pacing: plan.pacing,
+    plan,
     startupSteps: parts.flatMap((p) => p.startupSteps),
     statusContributors: parts.flatMap((p) => p.statusContributors),
   };

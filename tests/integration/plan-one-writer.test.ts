@@ -6,15 +6,17 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { projectPlan } from '@/governors/plan-projection';
 import type { PlanView } from '@/governors/plan-types';
+import { ReadBudget } from '@/governors/read-budget';
 import { MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
+import { planWiringParts } from '@/main/services/plan-wiring';
+import { toReadAllowance } from '@/settings/read-allowance';
+import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import { busyDay, planClock, storePlan } from '../kit/harness-plan';
+import { busyDay, fakePlanHost, planClock, storePlan, storePlanWiring } from '../kit/harness-plan';
 import { openTestStore } from '../kit/store';
 
 const T0 = new Date(2026, 10, 9, 12).getTime();
-const NO_READS = { profiles: 0, pages: 0, checks: 0 };
 const dirs: string[] = [];
 const stores: KnowledgeStore[] = [];
 
@@ -36,24 +38,28 @@ afterAll(() => {
 const kept = (v: PlanView) => v.plan.sessions.filter((s) => s.budget > 0);
 
 describe('I4 — status reads never write plan_state', () => {
-  test('before the first ensure nothing is written; after it N reads leave plan_state byte-identical', () => {
+  test('before the first ensure nothing is written; after it N composed reads leave plan_state byte-identical', () => {
     const { store } = diskStore();
     const clock = planClock(T0);
-    const plan = storePlan(store, clock);
-    const day = busyDay(plan, T0);
-    for (let i = 0; i < 30; i += 1) projectPlan(plan.view(day.window.startsAt + i * 20 * MS_PER_MINUTE), NO_READS);
+    const host = fakePlanHost();
+    const plan = storePlanWiring(store, clock, host);
+    const reads = new ReadBudget({ store, clock, limits: () => toReadAllowance(DEFAULT_SETTINGS) });
+    const contributors = planWiringParts(plan, reads, store, { plan: host }).statusContributors;
+    const statusAt = (t: number) => contributors.map((c) => c.contribute(null, t));
+    const day = busyDay(plan.service, T0);
+    for (let i = 0; i < 30; i += 1) statusAt(day.window.startsAt + i * 20 * MS_PER_MINUTE);
     expect(store.getPlanState()).toBeNull();
 
     const open = kept(day)[0].startAt;
     clock.t = open;
-    plan.ensure(open);
+    plan.service.ensure(open);
     const raw = store.getPlanState();
     expect(raw).not.toBeNull();
     const writes = jest.spyOn(store, 'setPlanState');
     for (let t = open; t < day.window.endsAt; t += 7 * MS_PER_MINUTE) {
       clock.t = t;
-      projectPlan(plan.view(t), NO_READS);
-      plan.snapshot(t);
+      statusAt(t);
+      plan.dayClock.window(t);
     }
     expect(writes).not.toHaveBeenCalled();
     expect(store.getPlanState()).toBe(raw);

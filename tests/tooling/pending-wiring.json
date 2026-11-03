@@ -21,16 +21,6 @@
       "reason": "the sidebar's one Boost control and the Settings Boost section read this copy deck"
     },
     {
-      "module": "src/governors/plan-projection.ts",
-      "stream": "PR",
-      "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
-    },
-    {
-      "module": "src/settings/plan-intent.ts",
-      "stream": "PR",
-      "reason": "plan-wiring.ts feeds the plan service toPlanIntent(effective()); the settings core wraps it for the PlanPreviewPort fingerprint"
-    },
-    {
       "module": "src/renderer/settings/compatibility/CompatibilityPanel.tsx",
       "stream": "SU",
       "reason": "Settings › Advanced mounts the Instagram compatibility panel"

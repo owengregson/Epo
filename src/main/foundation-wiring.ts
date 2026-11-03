@@ -1148,11 +1148,11 @@ export class Foundation {
       tab: this.tab,
       userDataDir: this.userDataDir,
       dbFile: IG_DB_FILE,
-      reporter: this.reporter,
-      cursorObserver: this.cursorObserver,
+      reporter: this.reporter, cursorObserver: this.cursorObserver,
       scheduler: this.scheduler,
       settings: this.resolveSettings(),
       resolveSettings: () => this.resolveSettings(),
+      plan: { runIntent: () => this.runtime.snapshot().desired, settings: this.settings, pushStatus: () => this.pushStatus() },
       updateSettings: (partial) => {
         void this.updateSettings(partial);
       },
