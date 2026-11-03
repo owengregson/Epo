@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { EpoStatus, FollowState, QueueRow } from '@/types';
+import type { EpoStatus, FollowState, QueueListResult, QueueRow } from '@/types';
 
 export interface QueueResult {
   rows: QueueRow[];
@@ -8,19 +8,25 @@ export interface QueueResult {
 }
 
 /**
- * Lazily loads one lifecycle queue (`queue:list`) for the active stage, and
- * refetches when its lifecycle counts change (bind to real state, never index
- * arithmetic). Rows are capped by the main process; `truncated` flags the cut.
+ * One lifecycle lane (`queue:list`), refetched when its lifecycle counts change
+ * (bind to real state, never index arithmetic) and only while `active` (the
+ * page is shown). `preloaded` is the page the shell fetched before the reveal,
+ * so a lane renders at once when it opens. Rows are capped by main;
+ * `truncated` flags the cut.
  *
- * Count-change refetches HOLD the previous rows (the useTargetDetail
- * hold-previous pattern) so a landed action never blanks the list for a
- * paint; only a stage switch drops them — stale rows from another stage
- * would be the wrong facts, not stale ones.
+ * Count-change refetches HOLD the previous rows, so a landed action never
+ * blanks the list for a paint; a lane switch shows that lane's preloaded rows
+ * (or none) — another lane's rows would be the wrong facts, not stale ones.
  */
-export function useQueue(state: FollowState, status: EpoStatus | null): QueueResult {
-  const [rows, setRows] = useState<QueueRow[]>([]);
-  const [truncated, setTruncated] = useState(false);
-  const [loading, setLoading] = useState(true);
+export function useQueue(
+  state: FollowState,
+  status: EpoStatus | null,
+  active = true,
+  preloaded: QueueListResult | null = null,
+): QueueResult {
+  const [rows, setRows] = useState<QueueRow[]>(preloaded?.rows ?? []);
+  const [truncated, setTruncated] = useState(preloaded?.truncated ?? false);
+  const [loading, setLoading] = useState(preloaded === null);
   const shownState = useRef<FollowState>(state);
 
   const countKey = status
@@ -28,11 +34,12 @@ export function useQueue(state: FollowState, status: EpoStatus | null): QueueRes
     : '';
 
   useEffect(() => {
+    if (!active) return;
     let alive = true;
     if (shownState.current !== state) {
       shownState.current = state;
-      setRows([]);
-      setTruncated(false);
+      setRows(preloaded?.rows ?? []);
+      setTruncated(preloaded?.truncated ?? false);
     }
     setLoading(true);
     window.epo
@@ -49,7 +56,9 @@ export function useQueue(state: FollowState, status: EpoStatus | null): QueueRes
     return () => {
       alive = false;
     };
-  }, [state, countKey]);
+    // `preloaded` only seeds a lane switch; a new object alone must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, countKey, active]);
 
   return { rows, truncated, loading };
 }

@@ -52,6 +52,14 @@ export const LEGEND_LABELS: Record<GraphNodeStatus, string> = {
   kept: 'Kept · protected',
 };
 
+/**
+ * Statuses drawn with a glyph rather than a plain dot wherever the lifecycle is
+ * listed (the People funnel): a kept account carries the protection shield.
+ */
+export const STATUS_GLYPHS: Partial<Record<GraphNodeStatus, string>> = {
+  kept: 'shield-halved',
+};
+
 /** Saturation ramp resolution (progress buckets per timed status). */
 export const RAMP_STEPS = 8;
 /** A fresh timer keeps this fraction of the status's full saturation. */

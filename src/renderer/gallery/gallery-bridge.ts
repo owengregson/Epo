@@ -1,3 +1,4 @@
+import type { QueueLanes } from '@/renderer/app/live-signals';
 import {
   basePrune,
   baseStatus,
@@ -7,10 +8,22 @@ import {
 } from '@/renderer/gallery/fixtures';
 import type { EpoBridge } from '@/types';
 
+/** One page of fixture rows, cut like main cuts a long lane. */
+const LANE = { rows: GALLERY_QUEUE, truncated: true };
+
+/** The People lanes as the shell would have preloaded them. */
+export const GALLERY_LANES: QueueLanes = {
+  next: LANE,
+  waiting: LANE,
+  back: LANE,
+  leaving: LANE,
+  kept: { kind: 'ok', rows: [], total: 0 },
+};
+
 /**
  * A `window.epo` stand-in for the gallery route.
  *
- * The gallery must render with no main process behind it, but the views still
+ * The gallery must render with no main process behind it, but the pages still
  * pull (`chain:detail`, `queue:list`, `growth:series`) as part of the §2
  * push-with-pull-backstop contract — and a rejected pull would show loading
  * states instead of the design. So every invoke resolves from a fixture, and
@@ -29,7 +42,8 @@ const RESPONSES: Record<string, unknown> = {
   resetSettings: GALLERY_SETTINGS,
   chainList: GALLERY_CHAIN,
   chainDetail: null,
-  queueList: { rows: GALLERY_QUEUE, truncated: true },
+  queueList: LANE,
+  keptList: GALLERY_LANES.kept,
   growthSeries: { points: [], baselineAt: null },
   graphSnapshot: null,
   pruneCandidates: [],

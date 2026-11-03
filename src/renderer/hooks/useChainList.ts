@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'preact/hooks';
-import { useBridgeEvent } from '@/renderer/hooks/useBridgeEvent';
+import { chainListSignal } from '@/renderer/app/live-signals';
 import type { ChainTargetView, EpoStatus } from '@/types';
 
 /**
- * Refetch key for the belt-and-braces pull in {@link useChainList}: login and
- * chain position (target hop) PLUS the lifecycle counters, so any transition a
- * status push reports (a follow, a follow-back sweep, an unfollow coming due)
- * re-pulls the list even if a chain push were missed. Exported for the
- * key-derivation regression test.
+ * Refetch key for the pull backstop behind the chain push: login and chain
+ * position (target hop) PLUS the lifecycle counters, so any transition a status
+ * push reports (a follow, a follow-back sweep, an unfollow coming due) re-pulls
+ * the list even if a chain push were missed. Exported for the key-derivation
+ * regression test; the shell's `useLiveFeeds` keys its backstop on it.
  */
 export function chainListKey(status: EpoStatus | null): string {
   if (status === null) return '';
@@ -23,34 +22,15 @@ export function chainListKey(status: EpoStatus | null): string {
   ].join('|');
 }
 
+const NONE: ChainTargetView[] = [];
+
 /**
- * The chain lineage (`chain:list`), live (docs/PRINCIPLES.md §2). Primary source: the pushed
- * `chainList` projection, re-shaped in main on every store mutation (throttled)
- * — this is what makes per-target yields tick DURING an acquisition walk, where
- * observations write accounts/edges only and no status counter moves. A pull
- * keyed on {@link chainListKey} backstops it: initial load before any push, and
- * every lifecycle transition the status stream reports.
+ * The chain lineage (`chain:list`), live (docs/PRINCIPLES.md §2). The shell owns
+ * the one subscription and its pull backstop (`useLiveFeeds`); this reads the
+ * published list, so per-target yields tick DURING an acquisition walk wherever
+ * the list is shown. Empty until the first pull lands. The status argument is
+ * accepted for callers written before the shell owned the subscription.
  */
-export function useChainList(status: EpoStatus | null): ChainTargetView[] {
-  const [list, setList] = useState<ChainTargetView[]>([]);
-
-  useBridgeEvent('chainList', setList);
-
-  const key = chainListKey(status);
-  useEffect(() => {
-    let alive = true;
-    window.epo
-      .chainList()
-      .then((l) => {
-        if (alive) setList(l);
-      })
-      .catch(() => {
-        /* foundation logs; keep the last good list */
-      });
-    return () => {
-      alive = false;
-    };
-  }, [key]);
-
-  return list;
+export function useChainList(_status?: EpoStatus | null): ChainTargetView[] {
+  return chainListSignal.value ?? NONE;
 }

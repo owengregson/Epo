@@ -1,11 +1,6 @@
 {
   "pending": [
     {
-      "module": "src/renderer/settings/SettingsStage.tsx",
-      "stream": "SU",
-      "reason": "the Settings stage replaces its body and the stage host mounts it"
-    },
-    {
       "module": "src/renderer/copy/boost.ts",
       "stream": "SB",
       "reason": "the sidebar's one Boost control and the Settings Boost section read this copy deck"
@@ -34,6 +29,16 @@
       "module": "src/renderer/live/CompatibilityNotice.tsx",
       "stream": "SB",
       "reason": "the live column shows the compatibility line and wires its Details to the panel"
+    },
+    {
+      "module": "src/renderer/lib/deadline-anim.ts",
+      "stream": "SB",
+      "reason": "the sidebar ring and the plan strip deplete toward their deadline with one animation each"
+    },
+    {
+      "module": "src/renderer/lib/flip.ts",
+      "stream": "SB",
+      "reason": "the activity feed's new rows arrive and file into place with it"
     }
   ]
 }

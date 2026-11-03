@@ -69,8 +69,47 @@ Reload/DevTools only unpackaged.
 
 **The live console (SH, SB).** The sidebar is instruments only; targets and
 queues become the People stage; Settings is a stage; Graph preloads behind the
-splash. The stage hosting and People page sections belong to SH's part of this
-record.
+splash.
+
+**Five stages, hosted by the renderer (SH).** The stage bar shows Live ·
+People · Graph · Prune · Settings in `STAGE_MODES` order (the menu's ⌘1–⌘5;
+Settings also ⌘,), equal-width tabs, a live dot on Live while Epo uses the page
+from another stage, and on Live a line saying whether Epo is using the page or
+when it next will. `StageHost` mounts Graph eagerly, People and Prune on first
+activation, Settings on first activation with nothing preloaded beyond its
+pushes — so no Settings mount effect (the seed check of defect D1) runs at
+boot. Pages stay mounted once opened, open at the top and replay their arrival.
+The App asks main for `setStage(stage, modalOpen || !liveRevealed)`; the boot
+gate holds `liveRevealed` false until its reveal. Menu requests arrive as the
+`stageRequest` push and are ignored while the tour drives the stages.
+
+**Shell services and controls (SH).** `ShellServices` stays `{confirm, toast}`;
+the controls get their own context (`useShellControls()`): `showStage`,
+`openSettings(target)`, and one control runner for Start / Pause / Stop / Sign
+in whose in-flight name is mirrored on `pendingControlSignal`. Start without a
+starting account opens Settings at that field; Sign in asks for Live before
+`login()`, since main no longer shows the tab on login.
+
+**One subscription per channel, data before the page (SH).** `useLiveFeeds`
+subscribes feed, activity, chain list, settings view and facts once, push-first
+with keep-alive pulls, and fetches the People data (the default growth window,
+every lane's first page, the kept table) before any page mounts. Pages read
+Instagram-derived data again only while shown. One ref-counted clock serves
+every "m:ss" and "5m ago"; `play()` resolves at once in jsdom or under reduced
+motion, so no logic waits on an animation.
+
+**Overlays over native views (SH).** Tooltips and the one popover render at
+shell level, outside the console column. On Live the Instagram page covers the
+stage body and draws above everything the renderer paints, so a bubble anchored
+in the column is placed inside the column, and a tooltip that cannot avoid the
+page is not shown (its anchor's label carries the text); a popover that cannot
+clear its anchor there opens over it.
+
+**People (SH).** Measured growth only (the static projection band goes with
+owner Q30), where Epo finds people (steps, the source in detail, days of people
+left, follow-backs) and who is in progress (Up next · Waiting · Following back
+· Leaving soon · Kept), in plain words. The detailed source is
+`status.resumeTarget` while Epo is stopped, so the page and the engine agree.
 
 ## Consequences
 
@@ -84,6 +123,12 @@ record.
   never revisits.
 - The window title and Dock badge follow the same posture function the sidebar
   uses.
+- A launch mounts no Settings page, so nothing checks the starting account at
+  boot; every push channel has exactly one renderer listener; the raw log no
+  longer streams to the window (it lives in Diagnostics).
+- Until the sidebar lands, the console column keeps the interim overview, so the
+  integration build has no Start/Pause/Stop buttons between the two merges; the
+  controls exist in `useShellControls()` for the sidebar to render.
 
 ## Alternatives rejected
 
@@ -96,3 +141,12 @@ record.
 - **Keep resolving the username through the tab on reads.** That is how a read
   path moved the page; the store already knows the account, and confirm-account
   checks it once, passively.
+- **Keep every page mounted from boot.** The always-mounted hidden Settings view
+  is what fired a live seed check at every launch (§13 D1); mounting on first
+  activation removes the mechanism, not just the symptom.
+- **Clamp overlays by z-order.** The native page draws above every renderer
+  layer whatever its stacking, so the only fix is not to place a bubble where
+  the page is.
+- **Widen `ShellServices` with the controls.** Pages and suites that provide
+  only the two services would all have to change; a second context costs one
+  provider.

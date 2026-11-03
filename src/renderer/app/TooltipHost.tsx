@@ -1,6 +1,7 @@
 import { type JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { place } from '@/renderer/lib/anchor';
+import { coveredRegion } from '@/renderer/app/overlay-bounds';
+import { placeAvoiding } from '@/renderer/lib/anchor';
 
 interface TipState {
   text: string;
@@ -16,9 +17,12 @@ const GAP_PX = 8;
 
 /**
  * The single global tooltip popover. Listens for hover over any `[data-tip]`
- * element and shows one fixed-position bubble (portal-style, so the scrolling
- * settings pane never clips it). Positioned above the anchor, flipping below near
- * the top edge and clamping to the viewport.
+ * element and shows one fixed-position bubble at shell level (so no scrolling
+ * pane or console column clips it). Positioned above the anchor, flipping below
+ * near the top edge and clamping to the viewport. On Live the Instagram page
+ * draws above everything here, so a bubble is kept inside the console column
+ * its anchor sits in, and one that cannot avoid the page is not shown at all —
+ * the anchor's own label carries the text (spec §12.4).
  */
 export function TooltipHost(): JSX.Element {
   const [tip, setTip] = useState<TipState | null>(null);
@@ -63,22 +67,26 @@ export function TooltipHost(): JSX.Element {
   // Measure-then-show: the bubble mounts INVISIBLE (no `.show`, opacity 0),
   // this layout effect measures its real size and positions it before paint,
   // and only then `.show` is added — so the open animation always starts from
-  // the final spot. One flip rule (above unless it would leave the top gutter),
-  // no estimated sizes to drift from the CSS.
+  // the final spot. A placement the native page would cover stays hidden.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !tip) {
       setShown(false);
       return;
     }
-    const { left, top } = place(
+    const at = placeAvoiding(
       { x: tip.rect.left, y: tip.rect.top, w: tip.rect.width, h: tip.rect.height },
       { w: el.offsetWidth, h: el.offsetHeight },
       { w: window.innerWidth, h: window.innerHeight },
+      coveredRegion(),
       { side: 'above', align: 'start', gap: GAP_PX, edge: EDGE_PX },
     );
-    el.style.left = `${left}px`;
-    el.style.top = `${top}px`;
+    if (at === null) {
+      setShown(false);
+      return;
+    }
+    el.style.left = `${at.left}px`;
+    el.style.top = `${at.top}px`;
     setShown(true);
   }, [tip]);
 
@@ -87,7 +95,7 @@ export function TooltipHost(): JSX.Element {
       class={tip && shown ? 'tip show' : 'tip'}
       ref={ref}
       role="tooltip"
-      aria-hidden={tip ? 'false' : 'true'}
+      aria-hidden={tip && shown ? 'false' : 'true'}
     >
       {tip?.text}
     </div>
