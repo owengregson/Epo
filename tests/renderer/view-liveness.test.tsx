@@ -60,15 +60,15 @@ describe('The console column mirrors the status stream', () => {
 });
 
 describe('People mirrors the lifecycle counters', () => {
-  it('the pipeline and its summary line both move on a push', async () => {
+  it('the lane counts move on a push', async () => {
     await mountApp();
     await open('people');
     await act(async () => bridge.emit('status', idleStatus({ queued: 3 })));
-    expect(text('[data-stage="people"] .qsum')).toBe('3 ranked candidates');
+    expect(text('[data-lane="next"] .n')).toBe('3');
 
     await act(async () => bridge.emit('status', idleStatus({ queued: 9, pendingFollowback: 2 })));
-    expect(text('[data-stage="people"] .qsum')).toBe('9 ranked candidates');
-    expect(text('[data-stage="people"] .qpipe')).toContain('9');
+    expect(text('[data-lane="next"] .n')).toBe('9');
+    expect(text('[data-lane="waiting"] .n')).toBe('2');
   });
 });
 
@@ -92,13 +92,13 @@ describe('People mirrors the chain projection', () => {
     await open('people');
     await act(async () => bridge.emit('chainList', trail(120)));
     await act(async () => {
-      fireEvent.click(screen.getByText('expand trail'));
+      fireEvent.click(screen.getByText('Show every step'));
     });
-    expect(text('[data-stage="people"]')).toContain('120 scanned');
+    expect(text('[data-stage="people"]')).toContain('120 people found');
 
     // The SECOND value exists only in the push: a pull would still say 120.
     await act(async () => bridge.emit('chainList', trail(4_800)));
-    expect(text('[data-stage="people"]')).toContain('4,800 scanned');
+    expect(text('[data-stage="people"]')).toContain('4,800 people found');
   });
 });
 

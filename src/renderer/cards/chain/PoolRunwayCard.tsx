@@ -10,80 +10,79 @@ export interface PoolRunwayCardProps {
   detail: ChainTargetDetail | null;
 }
 
-/** Coverage percent, honest at small fractions: "1.5%" under 10%, else "23%". */
-function coveragePct(scanned: number, audience: number): string {
-  const pct = audience > 0 ? (scanned / audience) * 100 : 0;
+/** Share of the account's followers found so far, honest at small fractions: "1.5%" under 10%, else "23%". */
+function coveragePct(found: number, followers: number): string {
+  const pct = followers > 0 ? (found / followers) * 100 : 0;
   return pct < 10 ? `${pct.toFixed(1)}%` : `${Math.round(pct)}%`;
 }
 
+/** "Enough people for about N days", clamped past the cap rather than falsely precise. */
+export function runwayText(runway: { days: number; overCap: boolean }): string {
+  if (runway.overCap) return `Enough people for more than ${RUNWAY_CAP_DAYS} days`;
+  const days = Math.max(1, Math.ceil(runway.days));
+  return `Enough people for about ${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
 /**
- * Tier 3 of the Targets console — honest audience framing plus runway.
- *
- * The audience size is the target's TRUE follower count, known only once the
- * profile is enriched; until then the card says so ("audience size pending")
- * and the scanned count is never dressed up as the audience. The runway
- * divides the actionable stock (queued records + scoreable candidates — not
- * the raw remaining pool, which score-rejections and the coverage cap make a
- * systematic overestimate) by the realized follow pace, clamped past
- * {@link RUNWAY_CAP_DAYS} rather than reported with false precision.
+ * How many people this source has, and how long they last. The source's real
+ * follower count is known only once Epo has read its profile; until then the
+ * card says so and never presents the people found as the whole audience. The
+ * days left divide the people Epo can still follow (not the raw remainder,
+ * which poor fits and the coverage cap make an overestimate) by the recent
+ * follow pace.
  */
 export function PoolRunwayCard({ detail }: PoolRunwayCardProps): JSX.Element {
-  const audience = detail?.trueFollowers ?? null;
-  const scanned = detail?.scanned ?? 0;
+  const followers = detail?.trueFollowers ?? null;
+  const found = detail?.scanned ?? 0;
 
   return (
     <Card>
-      <CardHeader icon="chart-pie">Pool &amp; Runway</CardHeader>
+      <CardHeader icon="chart-pie">How many are left</CardHeader>
       <CardBody>
         {detail === null ? (
-          <div class="hint">No target adopted yet.</div>
+          <div class="hint">Epo isn’t exploring a source yet.</div>
         ) : (
           <Fragment>
             <div class="t-stats num">
-              <Stat label="Audience" sub={audience === null ? 'pending enrichment' : 'true followers'}>
-                {audience === null ? '—' : commas(audience)}
+              <Stat label="Followers" sub={followers === null ? 'not read yet' : 'on its profile'}>
+                {followers === null ? '—' : commas(followers)}
               </Stat>
-              <Stat label="Scanned" sub="observed so far">
-                {commas(scanned)}
+              <Stat label="People found" sub="so far">
+                {commas(found)}
               </Stat>
-              <Stat label="Actionable" sub="queued + scoreable">
+              <Stat label="Good fits left" sub="Epo can still follow">
                 {commas(detail.remainingActionable)}
               </Stat>
             </div>
-            {/* "Pending" is an enrichment fact (audience === null); an enriched
-                zero-follower audience is a different, settled fact. The > 0
-                guard only protects the coverage ratio/Meter division. */}
-            {audience === null ? (
+            {followers === null ? (
               <div class="hint">
-                <span class="num">{commas(scanned)}</span> scanned · audience size pending — the
-                true follower count lands with the target&apos;s profile enrichment.
+                <span class="num">{commas(found)}</span> found so far · the follower count appears once Epo
+                reads this account’s profile.
               </div>
-            ) : audience > 0 ? (
+            ) : followers > 0 ? (
               <Fragment>
-                <KeyValue k="Pool coverage">
-                  {commas(scanned)} of {commas(audience)}
-                  <span class="dim">({coveragePct(scanned, audience)})</span>
+                <KeyValue k="Found so far">
+                  {commas(found)} of {commas(followers)}
+                  <span class="dim">({coveragePct(found, followers)})</span>
                 </KeyValue>
-                <Meter pct={(scanned / audience) * 100} live />
+                <Meter pct={(found / followers) * 100} live />
               </Fragment>
             ) : (
-              <div class="hint">Enriched: this audience has zero followers — no pool to walk.</div>
+              <div class="hint">This account has no followers to look through.</div>
             )}
             {detail.runway === null ? (
-              <KeyValue k="Runway">
-                <span class="dim">forms after the first follows</span>
+              <KeyValue k="How long they last">
+                <span class="dim">shows after the first follows</span>
               </KeyValue>
             ) : detail.remainingActionable === 0 ? (
-              <KeyValue k="Runway">
-                drained
-                <span class="dim">chain advances next</span>
+              <KeyValue k="How long they last">
+                none left
+                <span class="dim">Epo moves on to the next source</span>
               </KeyValue>
             ) : (
-              <KeyValue k="Runway" live>
-                {detail.runway.overCap
-                  ? `> ${RUNWAY_CAP_DAYS} days`
-                  : `≈ ${Math.max(1, Math.ceil(detail.runway.days))} ${Math.ceil(detail.runway.days) <= 1 ? 'day' : 'days'}`}
-                <span class="dim">at current pace · until the chain advances</span>
+              <KeyValue k="How long they last" live>
+                {runwayText(detail.runway)}
+                <span class="dim">at the recent pace</span>
               </KeyValue>
             )}
           </Fragment>

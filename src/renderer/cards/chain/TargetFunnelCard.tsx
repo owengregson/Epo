@@ -1,17 +1,18 @@
 import { Fragment, type JSX } from 'preact';
-import { LEGEND_LABELS, legendColor } from '@/renderer/graph/palette';
+import { legendColor, STATUS_GLYPHS } from '@/renderer/graph/palette';
 import { commas, withAt } from '@/renderer/lib/format';
 import { Badge } from '@/renderer/ui/Badge';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
+import { Icon } from '@/renderer/ui/Icon';
 import type { ChainTargetDetail, GraphNodeStatus } from '@/types';
 
 export interface TargetFunnelCardProps {
   detail: ChainTargetDetail | null;
-  /** True when this target is the engine's active one. */
+  /** True when Epo explores this source now. */
   current: boolean;
 }
 
-/** One funnel row: a lifecycle segment with its graph-palette identity. */
+/** One row: where people from this source are now, in the graph's colours. */
 interface FunnelRow {
   status: GraphNodeStatus;
   label: string;
@@ -20,48 +21,37 @@ interface FunnelRow {
 }
 
 /**
- * Funnel-local fill overrides — colors tuned for the card's track, not the
- * canvas ground. The `unfollowed` spent-graphite reads on `--bg` as a dot but
- * vanishes as a 3px fill on the card track, so the funnel lifts its lightness
- * ~10 points; the graph palette itself is untouched.
+ * Funnel-local fill overrides — colours tuned for the card's track, not the
+ * canvas ground: the spent-graphite `unfollowed` reads as a dot on the canvas
+ * but vanishes as a 3 px fill, so the funnel lifts its lightness.
  */
 const FUNNEL_COLOR_OVERRIDES: Partial<Record<GraphNodeStatus, string>> = {
   unfollowed: 'hsl(240 6% 37%)',
 };
 
-/** The fill/dot color for one funnel row (palette color unless overridden). */
 function funnelColor(status: GraphNodeStatus): string {
   return FUNNEL_COLOR_OVERRIDES[status] ?? legendColor(status);
 }
 
-/**
- * Truthful status tail for the header: an exhausted target that never yielded
- * a follow reads "exhausted (unworked)" — drained without work is a different
- * fact from poached out.
- */
+/** The source's state in one badge (a source with no follows says so). */
 function statusBadge(detail: ChainTargetDetail, current: boolean): JSX.Element {
-  if (current) return <Badge tone="live">Current · Hop {detail.chainIndex ?? 0}</Badge>;
+  const step = (detail.chainIndex ?? 0) + 1;
+  if (current) return <Badge tone="live">Exploring now · Step {step}</Badge>;
   if (detail.status === 'exhausted') {
-    return <Badge>{detail.yield.total === 0 ? 'exhausted (unworked)' : 'exhausted'}</Badge>;
+    return <Badge>{detail.yield.total === 0 ? 'Explored · no one new to follow' : 'Explored'}</Badge>;
   }
-  if (detail.status === 'retained') return <Badge>retired</Badge>;
-  return <Badge>Hop {detail.chainIndex ?? 0}</Badge>;
+  if (detail.status === 'retired') return <Badge>Set aside when you restarted</Badge>;
+  if (detail.status === 'retained') return <Badge>Kept</Badge>;
+  return <Badge>Step {step}</Badge>;
 }
 
 /**
- * Tier 2 of the Targets console — the live funnel for the detailed target,
- * one row per lifecycle segment over the REAL FollowState union. Vocabulary
- * and colors come from the graph palette (`LEGEND_LABELS` / `legendColor`),
- * so this funnel and the GraphStage legend describe the lifecycle in the same
- * words and hues. "Held" is not a state — the `followed_back` segment's
- * legend label ("Followed back · holding") carries the holding meaning
- * explicitly. The two terminal oddities are never folded away silently:
- * `abandoned` renders as a hazard row whose copy explains the red (an earlier
- * systemic failure — a requeue healer lands separately), and `external` is
- * labeled hands-off. The observed pool renders as a context stat ABOVE the
- * funnel, never as a funnel row: it is the crowd the stages draw from, and
- * keeping it out of the bar denominator keeps the stage bars legible. Counts
- * tick during walks — the hosting view re-reads the detail on every chain
+ * Where the people found through one source are now, one row per lifecycle
+ * state, in the words the lanes use and the graph's colours. "People found" is
+ * the crowd the rows draw from, shown above them and kept out of the bar scale
+ * so the stage bars stay legible. Two rare rows appear only when non-zero: people
+ * Epo stopped trying after repeated errors (red, with why), and people you
+ * changed yourself. Counts move during walks — the page re-reads on every chain
  * push (docs/PRINCIPLES.md §2).
  */
 export function TargetFunnelCard({ detail, current }: TargetFunnelCardProps): JSX.Element {
@@ -69,71 +59,66 @@ export function TargetFunnelCard({ detail, current }: TargetFunnelCardProps): JS
     detail === null
       ? []
       : [
-          { status: 'queued', label: LEGEND_LABELS.queued, n: detail.funnel.queued },
-          { status: 'waiting', label: LEGEND_LABELS.waiting, n: detail.funnel.pending_followback },
-          { status: 'held', label: LEGEND_LABELS.held, n: detail.funnel.followed_back },
-          {
-            status: 'unfollow_queued',
-            label: LEGEND_LABELS.unfollow_queued,
-            n: detail.funnel.unfollow_queued,
-          },
-          { status: 'unfollowed', label: LEGEND_LABELS.unfollowed, n: detail.funnel.unfollowed },
+          { status: 'queued', label: 'Up next', n: detail.funnel.queued },
+          { status: 'waiting', label: 'Waiting', n: detail.funnel.pending_followback },
+          { status: 'held', label: 'Following back', n: detail.funnel.followed_back },
+          { status: 'unfollow_queued', label: 'Leaving soon', n: detail.funnel.unfollow_queued },
+          { status: 'unfollowed', label: 'Unfollowed', n: detail.funnel.unfollowed },
+          { status: 'kept', label: 'Kept', n: detail.funnel.kept },
         ];
   if (detail !== null && detail.funnel.abandoned > 0) {
-    rows.push({
-      status: 'abandoned',
-      label: `${LEGEND_LABELS.abandoned} · earlier systemic failure`,
-      n: detail.funnel.abandoned,
-      hazard: true,
-    });
+    rows.push({ status: 'abandoned', label: 'Stopped after repeated errors', n: detail.funnel.abandoned, hazard: true });
   }
   if (detail !== null && detail.funnel.external > 0) {
-    rows.push({ status: 'external', label: LEGEND_LABELS.external, n: detail.funnel.external });
+    rows.push({ status: 'external', label: 'Changed by you', n: detail.funnel.external });
   }
-  // Widths are relative to the largest LIFECYCLE segment only. The observed
-  // pool (thousands after a walk) is context, not a stage — folding it into
-  // the denominator would crush every lifecycle bar to sub-pixel widths.
   const denom = Math.max(1, ...rows.map((r) => r.n));
 
   return (
     <Card raised>
-      <CardHeader
-        icon="filter"
-        aux={detail !== null ? withAt(detail.username) || detail.accountPk : undefined}
-      >
-        Target Funnel
+      <CardHeader icon="filter" aux={detail !== null ? withAt(detail.username) || detail.accountPk : undefined}>
+        Through this source
       </CardHeader>
       <CardBody>
         {detail === null ? (
-          <div class="hint">No target adopted yet — set a seed and press Start.</div>
+          <div class="hint">Epo isn’t exploring a source yet.</div>
         ) : (
           <Fragment>
             <div class="funnel-status">{statusBadge(detail, current)}</div>
             <div class="funnel-pool num">
               <span class="dot" style={`background:${funnelColor('known')}`} />
-              <span class="fl">Pool observed</span>
+              <span class="fl">People found</span>
               <span class="fn">{commas(detail.scanned)}</span>
             </div>
             <div class="funnel num">
-              {rows.map((r) => (
-                <div key={r.status} class={r.hazard ? 'frow hazard' : 'frow'}>
-                  <span class="dot" style={`background:${funnelColor(r.status)}`} />
-                  <span class="fl">{r.label}</span>
-                  <span class="fbar">
-                    {r.n > 0 ? (
-                      <i
-                        style={`width:${Math.min(100, (r.n / denom) * 100)}%;background:${funnelColor(r.status)}`}
-                      />
-                    ) : null}
-                  </span>
-                  <span class="fn">{commas(r.n)}</span>
-                </div>
-              ))}
+              {rows.map((r) => {
+                const glyph = STATUS_GLYPHS[r.status];
+                return (
+                  <div key={r.status} class={r.hazard ? 'frow hazard' : 'frow'}>
+                    {glyph !== undefined ? (
+                      <span class="dot glyph" style={`color:${funnelColor(r.status)}`}>
+                        <Icon name={glyph} />
+                      </span>
+                    ) : (
+                      <span class="dot" style={`background:${funnelColor(r.status)}`} />
+                    )}
+                    <span class="fl">{r.label}</span>
+                    <span class="fbar">
+                      {r.n > 0 ? (
+                        <i
+                          style={`width:${Math.min(100, (r.n / denom) * 100)}%;background:${funnelColor(r.status)}`}
+                        />
+                      ) : null}
+                    </span>
+                    <span class="fn">{commas(r.n)}</span>
+                  </div>
+                );
+              })}
             </div>
             {detail.funnel.abandoned > 0 ? (
               <div class="hint">
-                Abandoned records came from an earlier systemic failure (retries ran out under a
-                block or outage) — they are not score rejections.
+                Epo stopped trying these after its attempts kept failing (for example while Instagram was
+                limiting actions). They were not judged a poor fit.
               </div>
             ) : null}
           </Fragment>

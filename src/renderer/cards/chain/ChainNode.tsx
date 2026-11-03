@@ -5,73 +5,65 @@ import { Badge } from '@/renderer/ui/Badge';
 import type { ChainTargetView } from '@/types';
 
 export interface ChainNodeProps extends ChainTargetView {
-  /** True when this node is the ENGINE's active target. */
+  /** Its place in the trail, counted from 1. */
+  step: number;
+  /** True when this source is the one Epo explores now. */
   current: boolean;
-  /** True when the console details this node WITHOUT it being the engine's
-   *  current one — a highlight ring only, never "Current" semantics. */
+  /** True when the page details this source WITHOUT Epo exploring it now — a highlight only. */
   viewing: boolean;
-  /** True for the final node in the trail. */
-  isLast: boolean;
-  /** Label for the `.chain-link` connector rendered after this node. */
+  /** Label for the connector rendered after this step. */
   linkLabel: string;
 }
 
-/** Badge label for each target source (seed handled separately). */
+/** How each source came to be on the trail (the first one is the starting account). */
 const SOURCE_LABELS: Record<ChainTargetView['source'], string> = {
-  seed: 'Seed',
-  discovered: 'Discovered',
-  own_followers: 'Own Followers',
+  seed: 'Starting account',
+  discovered: 'Found by Epo',
+  own_followers: 'Your followers',
 };
 
 /**
- * Status-truthful tail for a node's subline. An exhausted target that never
- * yielded a follow is called out as "exhausted (unworked)" — the pool being
- * drained without work is a different fact from a poached-out target.
+ * What became of a source, in words. A source explored without a single follow
+ * says so — running out of new people there is a different fact from having
+ * worked it.
  */
-function statusText(props: ChainNodeProps): string {
-  if (props.current) return `followed ${props.yield.total}`;
-  switch (props.status) {
+export function sourceState(t: Pick<ChainTargetView, 'status' | 'yield'>, current: boolean): string {
+  if (current) return `Exploring now · ${commas(t.yield.total)} followed here`;
+  switch (t.status) {
     case 'exhausted':
-      return props.yield.total === 0 ? 'exhausted (unworked)' : 'exhausted & chained';
+      return t.yield.total === 0 ? 'Explored · no one new to follow' : `Explored · ${commas(t.yield.total)} followed`;
+    case 'retired':
+      return 'Set aside when you restarted';
     case 'retained':
-      return 'retired';
+      return 'Kept · Epo explores through it';
     default:
-      return `followed ${props.yield.total}`; // active but not adopted this session
+      return `${commas(t.yield.total)} followed here`;
   }
 }
 
 /**
- * One node in the expanded lineage trail, plus the `.chain-link` connector that
- * follows it. Every node — the seed included — carries the same yield subline
- * (follow-back rate · followers scanned · status): the seed is a working
- * target like any other, and its numbers move during walks (docs/PRINCIPLES.md §2). The observed
- * follower count is labeled "scanned", never "pool" — it is what the walk has
- * seen, not the audience size.
+ * One step in the expanded trail, plus the connector that follows it. Every
+ * step — the starting account included — carries the same line: follow-backs,
+ * people found so far, and what became of it; its numbers move during walks
+ * (docs/PRINCIPLES.md §2). "People found" is what the walk has seen, never the
+ * account's follower count.
  */
 export function ChainNode(props: ChainNodeProps): JSX.Element {
-  const seed = props.source === 'seed' || props.chainIndex === 0;
-
   return (
     <Fragment>
-      {/* `viewing` shares the highlight ring only — the badge and status line
-          below stay engine-truthful (`current` alone claims "Current"). */}
       <div class={props.current || props.viewing ? 'chain-node current' : 'chain-node'}>
         <Avatar small>{monogram(props.username)}</Avatar>
         <div class="cn-body">
           <div class="h">
             <span class="handle">{withAt(props.username) || props.accountPk}</span>
-            {seed ? <Badge>Seed</Badge> : null}
-            {props.current ? (
-              <Badge tone="live">Current · Hop {props.chainIndex ?? 0}</Badge>
-            ) : seed ? null : (
-              <Badge>{SOURCE_LABELS[props.source]}</Badge>
-            )}
+            <Badge tone={props.current ? 'live' : undefined}>Step {props.step}</Badge>
+            <Badge>{SOURCE_LABELS[props.source]}</Badge>
           </div>
           <div class="sub num">
-            {pctInt(props.yield.followBackRate)}% back<span class="sep">·</span>
-            {commas(props.yield.poolSize)} scanned
+            {pctInt(props.yield.followBackRate)}% followed back<span class="sep">·</span>
+            {commas(props.yield.poolSize)} people found
             <span class="sep">·</span>
-            {statusText(props)}
+            {sourceState(props, props.current)}
           </div>
         </div>
       </div>

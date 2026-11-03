@@ -9,49 +9,37 @@ export interface ConversionCardProps {
 }
 
 /**
- * Tier 4 of the Targets console — the progressive conversion readout. The raw
- * n-of-m tally ("9 of 41 followed back") streams from the graph immediately;
- * the PERCENTAGE and the median time-to-follow-back are VERDICTS and wait for
- * a sample (docs/PRINCIPLES.md §1): both appear only once
- * {@link CONVERSION_VERDICT_MIN} follow outcomes have resolved — before that
- * the card says the verdict is still forming rather than presenting three
+ * Who follows back. The plain count ("9 of 41 followed back") streams from the
+ * graph at once; the RATE and the usual wait are verdicts and wait for enough
+ * results (docs/PRINCIPLES.md §1): until {@link CONVERSION_VERDICT_MIN} follows
+ * have an outcome, the card says how many it has rather than presenting three
  * follow-backs as a rate.
  */
 export function ConversionCard({ detail }: ConversionCardProps): JSX.Element {
-  const verdictReady = detail !== null && detail.resolvedOutcomes >= CONVERSION_VERDICT_MIN;
+  const ready = detail !== null && detail.resolvedOutcomes >= CONVERSION_VERDICT_MIN;
 
   return (
     <Card>
-      <CardHeader
-        icon="arrow-trend-up"
-        aux={detail !== null ? `${commas(detail.resolvedOutcomes)} resolved` : undefined}
-      >
-        Conversion
+      <CardHeader icon="arrow-trend-up" aux={detail !== null ? `${commas(detail.resolvedOutcomes)} results` : undefined}>
+        Follow-backs
       </CardHeader>
       <CardBody>
         {detail === null ? (
-          <div class="hint">No target adopted yet.</div>
+          <div class="hint">Epo isn’t exploring a source yet.</div>
         ) : (
           <Fragment>
-            <KeyValue k="Followed back" live={verdictReady}>
+            <KeyValue k="Followed back" live={ready}>
               {commas(detail.yield.followedBack)} of {commas(detail.yield.total)}
-              {verdictReady ? (
-                <span>· {pctInt(detail.yield.followBackRate)}%</span>
-              ) : null}
+              {ready ? <span>· {pctInt(detail.yield.followBackRate)}%</span> : null}
             </KeyValue>
-            {verdictReady ? (
-              <KeyValue k="Median time to follow-back">
-                {detail.medianFollowbackMs === null ? (
-                  <span class="dim">—</span>
-                ) : (
-                  durationCoarse(detail.medianFollowbackMs)
-                )}
+            {ready ? (
+              <KeyValue k="Usually follows back within">
+                {detail.medianFollowbackMs === null ? <span class="dim">—</span> : durationCoarse(detail.medianFollowbackMs)}
               </KeyValue>
             ) : (
               <div class="hint">
-                Warming up — the rate and median form as follows resolve (
-                <span class="num">{commas(detail.resolvedOutcomes)}</span> of{' '}
-                {CONVERSION_VERDICT_MIN} outcomes settled).
+                Epo shows a rate once {CONVERSION_VERDICT_MIN} follows have a result (
+                <span class="num">{commas(detail.resolvedOutcomes)}</span> so far).
               </div>
             )}
           </Fragment>

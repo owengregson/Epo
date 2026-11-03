@@ -1,6 +1,6 @@
 import type { ComponentChildren, JSX } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
-import { staggerCards } from '@/renderer/lib/stagger';
+import { staggerSections } from '@/renderer/lib/stagger';
 import type { StageMode } from '@/shared/stage-mode';
 
 /**
@@ -33,7 +33,8 @@ export function StageHost({ mode, active, mount, children }: StageHostProps): JS
     const el = host.current;
     if (!active || el === null) return;
     el.scrollTop = 0;
-    staggerCards(el);
+    const page = Array.from(el.children).find((c) => c.classList.contains('stage-page'));
+    staggerSections((page as HTMLElement | undefined) ?? null);
   }, [active]);
 
   return (

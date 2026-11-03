@@ -555,6 +555,51 @@
 .stageseg button.active .stageseg-aux {
   color: var(--silver);
 }
+/* The five stage tabs (spec §12.4, the approved board): each the same width,
+   clamp(100px, (stage − 32px) / 5, 132px) of the bar, with 14 px labels; the
+   bar's spare width carries the Live context line on the right. */
+.stagebar {
+  container-type: inline-size;
+  gap: 16px;
+  padding: 0 16px;
+}
+.stagebar .stageseg {
+  flex: 0 0 auto;
+}
+.stagebar .stageseg button {
+  flex: 0 0 auto;
+  width: clamp(100px, calc((100cqi - 32px) / 5), 132px);
+  font-size: var(--fs-label);
+  font-weight: 500;
+}
+.stagebar .stageseg button .icon {
+  font-size: 15px;
+}
+/* Epo is using the Instagram page while another stage shows: a 6 px live dot. */
+.stageseg-dot {
+  position: absolute;
+  top: 5px;
+  right: 9px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--st-live);
+  animation: beaconBreath 2.2s var(--ease-in-out) infinite;
+}
+.stagebar-context {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .stageseg-dot {
+    animation: none;
+  }
+}
 /* The raised active segment (the .seg active recipe), gliding under the
    labels. One slot = one equal flex share of the track (2px pad each side,
    2px gaps); translateX percentages resolve against the thumb's own width,

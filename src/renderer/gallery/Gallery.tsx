@@ -9,6 +9,7 @@ import {
   type ShellControls,
   ShellControlsContext,
   type ShellServices,
+  stageSignal,
   statusSignal,
   transportSignal,
 } from '@/renderer/app/shell-context';
@@ -159,5 +160,6 @@ export function primeGallery(): void {
   chainListSignal.value = GALLERY_CHAIN;
   growthSeriesSignal.value = { points: [], baselineAt: null };
   queueLanesSignal.value = GALLERY_LANES;
+  stageSignal.value = 'people';
   applyScenario(SCENARIOS[1] ?? (SCENARIOS[0] as Scenario));
 }

@@ -6,24 +6,27 @@
  * badge would imply measurement where none exists.
  */
 
-import { MS_PER_DAY } from '@/timing/units';
+import { CHART_DEFAULT_DAYS } from '@/renderer/lib/motion';
 import type { NetGrowthPoint } from '@/types';
+
+/** A calendar day in ms (a unit of the series' own day starts, not a timing). */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The GrowthCard's selectable history windows. */
 export type GrowthWindowKey = '14d' | '30d' | '90d' | 'all';
 
 /** Selector options in display order (labels are the Segmented captions). */
 export const GROWTH_WINDOWS: ReadonlyArray<{ value: GrowthWindowKey; label: string }> = [
-  { value: '14d', label: '14d' },
-  { value: '30d', label: '30d' },
-  { value: '90d', label: '90d' },
+  { value: '14d', label: '14 days' },
+  { value: '30d', label: '30 days' },
+  { value: '90d', label: '90 days' },
   { value: 'all', label: 'All' },
 ];
 
 export const DEFAULT_GROWTH_WINDOW: GrowthWindowKey = '14d';
 
-/** Fallback span when "All" is selected before measurement has begun. */
-export const GROWTH_WINDOW_FALLBACK_DAYS = 14;
+/** Fallback span when "All" is selected before measurement has begun: the chart's default range. */
+export const GROWTH_WINDOW_FALLBACK_DAYS = CHART_DEFAULT_DAYS;
 
 /** Local-midnight epoch ms of the day containing `atMs` (DST-safe). */
 export function startOfLocalDay(atMs: number): number {
@@ -50,7 +53,7 @@ export function windowDays(key: GrowthWindowKey, baselineAt: number | null, nowM
     case 'all': {
       if (baselineAt === null) return GROWTH_WINDOW_FALLBACK_DAYS;
       const span =
-        Math.round((startOfLocalDay(nowMs) - startOfLocalDay(baselineAt)) / MS_PER_DAY) + 1;
+        Math.round((startOfLocalDay(nowMs) - startOfLocalDay(baselineAt)) / DAY_MS) + 1;
       return Math.max(1, span);
     }
   }
