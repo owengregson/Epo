@@ -18,6 +18,7 @@ import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
+import * as listScroll from '@/adapter/actor-scroll';
 import { arbitrate } from '@/adapter/arbiter';
 import {
   ActionAbortedError,
@@ -30,7 +31,6 @@ import type {
   LocateConfirmRequestResult,
   LocatedRect,
   LocateRectResult,
-  LocateScrollResult,
 } from '@/adapter/ig-surface';
 import { SURFACE } from '@/adapter/ig-surface';
 import { MutationWatch } from '@/adapter/mutation-watch';
@@ -42,12 +42,6 @@ import * as logger from '@/utils/logger';
 import { ok, type Result } from '@/utils/result';
 import { prepareAction } from './action-admission';
 import type { ActorInteractor, ActorOptions, AdapterTab } from './actor-types';
-
-/** Minimum wheel distance (px) for a list-scroll step — a shorter nudge can fail
- *  to trigger the next page load on tall viewports. One home for BOTH scroll
- *  paths (notifications drawer / followers dialog); the viewport multipliers
- *  stay local to each path's dialog geometry. */
-const MIN_SCROLL_STEP_PX = 600;
 
 export type { ActorInteractor, ActorOptions, AdapterTab } from './actor-types';
 
@@ -441,25 +435,11 @@ export class Actor {
   }
 
   /**
-   * One wheel-scroll round of the notifications drawer's list (loads older
-   * notification pages). `false` when nothing scrollable remains — the list
-   * fits, is already bottomed, or the drawer is gone.
+   * One wheel-scroll round of the notifications drawer's list (`actor-scroll.ts`);
+   * `false` when nothing scrollable remains.
    */
   async scrollNotificationsList(): Promise<boolean> {
-    const res = await this.tab.evaluate<LocateScrollResult>(
-      SURFACE.locateNotificationsScrollScript(),
-    );
-    if (!res?.found || !Actor.rectUsable(res.rect)) return false;
-    const scrollTop = res.scrollTop ?? 0;
-    const scrollHeight = res.scrollHeight ?? 0;
-    const clientHeight = res.clientHeight ?? 0;
-    const remaining = Math.max(0, scrollHeight - scrollTop - clientHeight);
-    if (remaining <= 0) return false;
-    await this.interactor.scroll(
-      res.rect,
-      Math.min(remaining, Math.max(MIN_SCROLL_STEP_PX, clientHeight * 2)),
-    );
-    return true;
+    return listScroll.scrollNotificationsList(this.scrollDeps());
   }
 
   /**
@@ -540,7 +520,7 @@ export class Actor {
    * container (largest scrollable descendant of the dialog).
    */
   async scrollFollowers(): Promise<boolean> {
-    return this.scrollFollowersDriven();
+    return listScroll.scrollFollowersDriven(this.scrollDeps());
   }
 
   // -------------------------------------------------------------------------
@@ -606,47 +586,9 @@ export class Actor {
     return { clicked: true };
   }
 
-  /**
-   * One interactor dialog-scroll round: locate the scroll container's rect +
-   * metrics in-page, then wheel-scroll toward the bottom with real input
-   * events. The per-round distance is the remaining scroll, capped at three
-   * viewports — a few screens are covered at a time, and the collect loop's
-   * rounds carry the walk onward anyway. Returns `false` (nothing to scroll)
-   * when the container is absent or already bottomed. Best-effort by design: a
-   * small list that fits in the modal has NO scrollable container, and the list
-   * may not be hydrated on the first attempt — either way there is nothing to
-   * scroll, so this returns `false` rather than throwing (a throw would abort
-   * the whole collect and discard followers the initial page already loaded).
-   */
-  private async scrollFollowersDriven(): Promise<boolean> {
-    const res = await this.tab.evaluate<LocateScrollResult>(
-      SURFACE.locateScrollContainerScript(),
-    );
-    if (!res?.found || !Actor.rectUsable(res.rect)) {
-      logger.debug('actor.scrollFollowers: no scroll container (list fits or not yet hydrated)');
-      return false;
-    }
-    const scrollTop = res.scrollTop ?? 0;
-    const scrollHeight = res.scrollHeight ?? 0;
-    const clientHeight = res.clientHeight ?? 0;
-    const remaining = Math.max(0, scrollHeight - scrollTop - clientHeight);
-    if (remaining <= 0) {
-      logger.debug('actor.scrollFollowers: container already at bottom');
-      return false;
-    }
-    const delta = Math.min(remaining, Math.max(MIN_SCROLL_STEP_PX, clientHeight * 3));
-    // Rest the cursor on the hover-safe point the locate script found (off the
-    // username/avatar/button hover triggers) so the wheel scrolls the list and
-    // not an Instagram hover-preview card. Absent → the Interactor picks its own
-    // interior entry point.
-    await this.interactor.scroll(res.rect, delta, res.safePoint);
-    logger.debug('actor.scrollFollowers (interactor)', {
-      scrollTop,
-      scrollHeight,
-      delta,
-      safePoint: res.safePoint ?? null,
-    });
-    return true;
+  /** The slice of the Actor a list-scroll round drives (`actor-scroll.ts`). */
+  private scrollDeps(): listScroll.ScrollDeps {
+    return { tab: this.tab, interactor: this.interactor, rectUsable: Actor.rectUsable };
   }
 
   /** Settle-then-press a rail/drawer control (see `settle-press.ts`). */
