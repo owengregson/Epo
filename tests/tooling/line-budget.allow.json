@@ -7,7 +7,7 @@
     },
     {
       "file": "src/engine/prune-engine.ts",
-      "lines": 1133
+      "lines": 1127
     },
     {
       "file": "src/kernel/derive.ts",
@@ -43,7 +43,7 @@
     },
     {
       "file": "src/engine/churn-scheduler.ts",
-      "lines": 488
+      "lines": 471
     },
     {
       "file": "src/engine/target-pipeline.ts",

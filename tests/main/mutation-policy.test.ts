@@ -1,4 +1,4 @@
-import { ActionAbortedError, ActionDeferredError } from '@/adapter/errors';
+import { ActionAbortedError } from '@/adapter/errors';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { UNCONFIGURED_PROTECTION } from '@/engine/protection-port';
 import { REENTRY_POLICY, ReentrySupervisor } from '@/engine/reentry';
@@ -62,7 +62,9 @@ test.each(['wrong-pk', 'stale', 'future', 'nan'] as const)('fresh target verific
   visit.mockResolvedValue({ ok: true, obs: { accountPk: kind === 'wrong-pk' ? 'changed-owner' : 'a', source: 'profile',
     observedAt: kind === 'stale' ? clock.now() - 1 : kind === 'future' ? clock.now() + 1 : kind === 'nan' ? NaN : clock.now(),
     fields: { username: 'alice' } }, viewer: { following: false, requested: false, followsUs: false } });
-  await expect(policy().prepareProfile('alice', 'a', 'follow')).rejects.toBeInstanceOf(ActionDeferredError);
+  // A consuming verdict (spec §9.7 steps 2 and 4): the record parks instead of re-offering the same visit.
+  await expect(policy().prepareProfile('alice', 'a', 'follow')).rejects.toMatchObject({
+    verdict: { kind: 'unavailable', evidence: kind === 'wrong-pk' ? 'renamed' : 'unreadable' } });
   expect(store.getEdge('a', 'me', 'follows')).toBeNull();
 });
 
@@ -96,15 +98,15 @@ test.each(['target', 'retained-role'] as const)('%s protection is enforced for e
     .rejects.toMatchObject({ verdict: { kind: 'protected', by: 'source', match: 'a' } });
 });
 
-test('unknown reciprocity blocks removal; a newly observed mutual earns a fresh hold', async () => {
+test('unknown reciprocity blocks removal; a newly observed mutual is re-held by the churn', async () => {
   store.upsertFollowRecord({ accountPk: 'a', targetPk: 'seed', state: 'unfollow_queued', retryCount: 0, followedAt: clock.now() - 7 * 86_400_000 });
   reciprocal = null;
-  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toThrow('unresolved');
+  await expect(policy().prepareProfile('alice', 'a', 'unfollow'))
+    .rejects.toMatchObject({ verdict: { kind: 'unavailable', evidence: 'unreadable' } });
   reciprocal = true;
-  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toThrow('new follow-back requires hold');
-  expect(store.getFollowRecord('a')).toMatchObject({ state: 'followed_back', followbackObservedAt: clock.now() });
-  expect(store.getFollowRecord('a')?.holdUntil).toBeGreaterThan(clock.now());
-  expect(store.getFollowRecord('a')?.followedBackAt).toBeUndefined();
+  // The verdict consumes the work; the churn's applyClickVerdict writes the hold (spec §9.7).
+  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toMatchObject({ verdict: { kind: 'reheld' } });
+  expect(store.getFollowRecord('a')?.state).toBe('unfollow_queued');
 });
 
 test('bio words protect at the click whether or not they follow back; without them a non-follower goes', async () => {

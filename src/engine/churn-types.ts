@@ -1,5 +1,6 @@
 import type { Clock } from '../governors/clock';
 import type { RateGovernor } from '../governors/rate-governor';
+import type { ParkSlots } from '../kernel/derive-parks';
 import type { ClickVerdict } from '../shared/click-verdict';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { FollowRecord, FollowState } from '../store/types';
@@ -20,7 +21,7 @@ import type { ProtectionPort } from './protection-port';
  */
 export type ChurnActionOutcome = {
   status: 'ok' | 'failed' | 'blocked' | 'simulated' | 'reviewed';
-  /** The click review's verdict, when `status` is `'reviewed'`. */
+  /** The click review's verdict when `'reviewed'`; a local-policy block's `deferred` reason and until. */
   verdict?: ClickVerdict;
   /** True when `ok` but no click happened — the button was already in the target
    *  state, so an external actor is responsible for the relationship. */
@@ -63,17 +64,17 @@ export interface ChurnActions {
 
 /**
  * Lifecycle timers + retry cap for the churn state machine, projected from Settings
- * by `toChurnConfig` (tests build it from `tests/kit/configs.ts`). NB: the post-follow-back
- * HOLD is not here — `holdUntil` is stamped by the FollowbackWatcher; the scheduler honors it.
+ * by `toChurnConfig` (tests build it from `tests/kit/configs.ts`).
  */
 export interface ChurnConfig {
   /** How long to wait for a follow-back before reclaiming the slot. */
   maxWaitForFollowbackMs: number;
+  /** The hold a follow-back first seen at the click earns (the re-held verdict, spec §9.7). */
+  holdAfterFollowbackMs: number;
   /** Failed follow/unfollow attempts tolerated before a record is abandoned. */
   maxRetries: number;
   /** False = "keep people who follow you back": a held mutual is never rotated out (spec §6.4, P2 off). */
   rotateMutuals: boolean;
-  relationshipFreshMs?: number;
 }
 
 /** What one verb does to a record and the graph when its action verifies. */
@@ -105,4 +106,8 @@ export interface ChurnDeps {
   protection?: ProtectionPort;
   /** Re-judges the kept records (spec §7.5); synced before every selection pass and on a reload. */
   reconciler?: { sync(now: number): unknown };
+  /** Where a click-time park lands (default: local-midnight plan-days; main hands the wiring's). */
+  parkSlots?(): ParkSlots;
+  /** The open session's start and planned unfollows: the bound on reviews that press nothing (spec §9.7). */
+  reviewBound?(now: number): { readonly since: number; readonly planned: number } | null;
 }

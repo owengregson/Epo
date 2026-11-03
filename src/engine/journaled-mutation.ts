@@ -2,6 +2,7 @@ import type { Clock } from '../governors/clock';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import * as log from '../utils/logger';
 import type { ChurnActionOutcome, ChurnActions } from './churn-scheduler';
+import { journalBlocks } from './journal';
 import { normalizeMutationOutcome } from './mutation-outcome';
 
 /** Shared settlement for non-growth writes. The lifecycle scheduler owns its record transition. */
@@ -10,8 +11,11 @@ export async function journaledMutation<A extends 'follow' | 'unfollow'>(d: {
   action: A; username: string; accountPk: string;
   channel: 'manual' | 'prune';
 }): Promise<ChurnActionOutcome> {
+  // An unsettled write to this account refuses the next one, typed (spec §9.8); others proceed.
+  if (journalBlocks(d.accountPk, d.store.effectIntents.unsettledFor(d.accountPk))) {
+    return { status: 'blocked', cause: 'local-policy', verdict: { kind: 'deferred', reason: 'journal', until: null } };
+  }
   const intent = d.store.beginEffectIntent({ ...d, at: d.clock.now() });
-  if (intent.state !== 'prepared') return { status: 'blocked', cause: 'tab-unhealthy', unverifiedClick: true };
   let outcome: ChurnActionOutcome;
   try {
     outcome = await d.actions[d.action](d.username, d.accountPk, () => {

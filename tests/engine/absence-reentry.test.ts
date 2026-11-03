@@ -30,20 +30,27 @@ const pending = () => store.upsertFollowRecord({
   accountPk: 'a', targetPk: null, state: 'pending_followback', followedAt: START, retryCount: 0,
 });
 
-test('week away: timers cannot turn stale pending membership into an unfollow', async () => {
+test('week away: the timer queues the unfollow and the click verifies it once (verify-at-act, spec §9.7)', () => {
   pending();
   const churn = scheduler();
   churn.advanceTimers();
-  expect(store.getFollowRecord('a')?.state).toBe('pending_followback');
-  expect(churn.nextDue()).toBeNull();
+  expect(store.getFollowRecord('a')).toMatchObject({ state: 'unfollow_queued', unfollowReason: 'no-followback' });
+  expect(churn.nextDue()?.accountPk).toBe('a');
+});
+
+test('week away: a follow-back recorded first, or an open follower edge, keeps the record from the timer', async () => {
+  pending();
+  const churn = scheduler();
   const feed = jest.fn(async () => ({ ok: true, events: [{ pk: 'a', username: 'alice', atMs: clock.now() - 3_600_000 }] }));
   const watcher = new FollowbackWatcher({ store, clock, ownPk: 'me', notifications: { fetchRecent: feed },
     followers: { fetchAllPks: async () => ({ pks: ['a'], complete: true, authoritative: true }) } });
   expect((await watcher.check({ requireFresh: true })).outcome).toBe('complete');
   churn.advanceTimers();
-  expect(feed).toHaveBeenCalledTimes(1);
   expect(store.getFollowRecord('a')).toMatchObject({ state: 'followed_back', followedBackAt: clock.now() - 3_600_000 });
   expect(churn.nextDue()).toBeNull();
+  store.upsertFollowRecord({ accountPk: 'a', targetPk: null, state: 'pending_followback', followedAt: START, retryCount: 0 });
+  churn.advanceTimers();
+  expect(store.getFollowRecord('a')?.state).toBe('pending_followback');
 });
 
 test('complete current absence authorizes timeout at its original deadline', async () => {
@@ -65,8 +72,9 @@ test.each([false, true])('partial or uncovered census cannot prove absence (comp
   });
   expect(await watcher.check({ requireFresh: true })).toMatchObject({ outcome: 'partial', reconciledAt: null, unresolved: 1 });
   scheduler().advanceTimers();
+  // No absence is concluded here: the queued unfollow reads the fresh relationship at its click.
   expect(store.getEdge('a', 'me', 'follows')).toBeNull();
-  expect(store.getFollowRecord('a')?.state).toBe('pending_followback');
+  expect(store.getFollowRecord('a')?.state).toBe('unfollow_queued');
 });
 
 test('unknown historical follow-back gets an observed hold, not a fabricated timing sample', async () => {

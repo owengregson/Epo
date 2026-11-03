@@ -38,7 +38,7 @@ import { type HaltReason, haltReasonKey } from './halt-reason';
 import { journaledMutation } from './journaled-mutation';
 import { annotatedRows, protectionKey, selectionVerdict, unprotectedRows } from './protection-gate';
 import { type ProtectionPort, unconfiguredProtection } from './protection-port';
-import { type AnnotatedCandidate, decidePruneCandidate } from './prune-candidate';
+import { type AnnotatedCandidate, decidePruneCandidate, pruneDeferral } from './prune-candidate';
 import { nextFeedCandidate, type PruneFeedContext } from './prune-feed';
 import { PrunePacing } from './prune-pacing';
 import { assertFetchComplete, assertScanCoverage } from './prune-scan-guards';
@@ -419,18 +419,15 @@ export class PruneEngine {
     }
 
     this.setState('running');
-    // Why the run stopped before exhausting its candidates, if it did. A
-    // truncated run keeps its unvisited remainder RUNNABLE (and does not stamp
-    // lastRunAt) — "the daily cap tapped out" must not read as "the list is
-    // clean", or the schedule resets and the next run re-walks both lists.
-    let truncated: 'cap' | 'active-hours' | 'protection-paused' | null = null;
-    // EVERY early exit (user stop, sentinel halt, unexpected failure) hands the
-    // unvisited remainder back as the runnable set, exactly like truncation —
-    // the durable snapshot keeps the rows, but Run would gray out and the list
-    // empty until a restart.
+    // Why the run stopped before exhausting its candidates: its unvisited remainder stays RUNNABLE and
+    // lastRunAt is not stamped ("the cap tapped out" is not "the list is clean"); a typed refusal names it.
+    let truncated: string | null = null;
+    // EVERY early exit (user stop, sentinel halt, unexpected failure) hands the unvisited remainder —
+    // with the candidates passed over for their account's unsettled write — back as the runnable set.
     let index = 0;
+    const passed: PruneCandidate[] = [];
     const handBackRemainder = (): void => {
-      const rest = candidates.slice(index);
+      const rest = [...passed, ...candidates.slice(index)];
       if (rest.length > 0) {
         this.pendingCandidates = rest;
         this.pendingScanAt = scanAt;
@@ -510,22 +507,20 @@ export class PruneEngine {
         }
 
         const outcome = await this.journaledUnfollow(cand.pk, verdict.username);
-        if (outcome.verdict?.kind === 'protection-paused') {
-          truncated = 'protection-paused'; // judged before any visit: the candidate stays unvisited
-          break;
-        }
+        // Judged before any visit, a refusal never marks the candidate visited (spec §9.7).
+        const deferral = outcome.verdict?.kind === 'protection-paused' ? { do: 'end' as const, reason: 'protection-paused' }
+          : pruneDeferral(outcome.verdict);
+        if (deferral?.do === 'end') { truncated = deferral.reason; break; }
+        if (deferral?.do === 'pass') { passed.push(cand); index += 1; continue; }
+        if (deferral?.do === 'wait') { await this.pruneWait('prune:action-delay', deferral.until - this.deps.clock.now()); continue; }
         if (outcome.status === 'blocked') {
           if (outcome.cause === 'rate-limited') {
-            // Instagram's own response refused the unfollow as throttling —
-            // definitive. Parking and retrying would only deepen the block:
-            // halt now (loud, with the reason), remainder runnable.
+            // Instagram's own response refused the unfollow as throttling — definitive: halt now, remainder runnable.
             handBackRemainder();
             this.halt({ kind: 'rate-limited' });
             return;
           }
-          // Sentinel closed inside the rim before any click: the account was
-          // NEVER acted on, so it is NOT visited — park briefly and retry the
-          // SAME candidate. Persistently blocked → halt loud rather than spin.
+          // Blocked before any click: NOT visited — park briefly and retry the SAME candidate; halt rather than spin.
           if (outcome.cause !== 'local-policy') consecutiveBlocked += 1;
           if (consecutiveBlocked >= PRUNE_CONSECUTIVE_BLOCK_HALT) {
             handBackRemainder();
@@ -597,12 +592,11 @@ export class PruneEngine {
       this.setState('idle');
       return;
     }
+    if (truncated === null && passed.length > 0) truncated = 'journal';
     if (truncated !== null) {
-      // Hand the unvisited remainder back as the runnable set (the durable
-      // snapshot still holds exactly these rows — visited ones were consumed
-      // one by one). lastRunAt is NOT stamped: the list is not clean, and a
-      // scheduled prune should resume rather than wait a whole cycle.
-      const rest = candidates.slice(index);
+      // Hand the unvisited remainder back as the runnable set (the durable snapshot still holds exactly
+      // these rows). lastRunAt is NOT stamped: the list is not clean, and the next run resumes it.
+      const rest = [...passed, ...candidates.slice(index)];
       this.pendingCandidates = rest;
       this.pendingScanAt = scanAt;
       log.info('prune: run truncated, remainder stays runnable', {

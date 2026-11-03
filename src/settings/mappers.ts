@@ -37,6 +37,7 @@ export function toScorerConfig(s: Settings): ScorerConfig {
 export function toChurnConfig(s: Settings): ChurnConfig {
   return {
     maxWaitForFollowbackMs: s.maxWaitForFollowbackDays * MS_PER_DAY,
+    holdAfterFollowbackMs: s.holdAfterFollowbackDays * MS_PER_DAY,
     maxRetries: s.maxRetries,
     // v1 has no mutuals choice: held mutuals rotate (the v2 intent `mutuals` drives it).
     rotateMutuals: true,

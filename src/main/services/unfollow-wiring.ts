@@ -94,6 +94,7 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
     cfg: toChurnConfig(settings),
     protection: port,
     reconciler,
+    parkSlots: () => planDaySlots(dayClock, clock.now()),
   });
   // The graph-open pass: rules that changed, or a plan-day that rolled, while Epo was closed.
   reconciler.sync(clock.now());

@@ -40,6 +40,10 @@ test.each(['manual', 'prune'] as const)('%s post-dispatch failed result is not a
   expect(await journaledMutation(deps)).toMatchObject({ status: 'blocked', unverifiedClick: true });
   expect(store.pendingEffectIntents()[0].state).toBe('uncertain');
   expect(store.actionCountSince(0) + store.pruneCountSince(0)).toBe(0);
-  await journaledMutation(deps);
+  // The same account gets a typed journal refusal; another account's write proceeds (spec §9.8, law L6).
+  expect(await journaledMutation(deps)).toMatchObject({ status: 'blocked', cause: 'local-policy',
+    verdict: { kind: 'deferred', reason: 'journal', until: null } });
   expect(unfollow).toHaveBeenCalledTimes(1);
+  await journaledMutation({ ...deps, accountPk: 'b', username: 'bob' });
+  expect(unfollow).toHaveBeenCalledTimes(2);
 });
