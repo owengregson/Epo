@@ -62,12 +62,12 @@
       "lines": 422
     },
     {
-      "file": "src/rim/list-page-walker.ts",
-      "lines": 413
-    },
-    {
       "file": "src/main/foundation-reads.ts",
       "lines": 410
+    },
+    {
+      "file": "src/rim/list-page-walker.ts",
+      "lines": 406
     },
     {
       "file": "src/rim/followers-page-reader.ts",
