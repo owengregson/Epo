@@ -24,6 +24,16 @@
       "module": "src/renderer/copy/boost.ts",
       "stream": "SB",
       "reason": "the sidebar's one Boost control and the Settings Boost section read this copy deck"
+    },
+    {
+      "module": "src/surface/sink.ts",
+      "stream": "PH",
+      "reason": "surface-wiring.ts swaps the production sink in for NO_SINK and the read pipeline reports to it"
+    },
+    {
+      "module": "src/governors/plan-day-clock.ts",
+      "stream": "PR",
+      "reason": "plan-wiring.ts, the one swap site, hands the plan-day clock to every day-keyed consumer (UD, RO, PH, LD); the first of them to merge wires this default and removes the entry"
     }
   ]
 }
