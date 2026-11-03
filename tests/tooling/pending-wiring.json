@@ -31,9 +31,9 @@
       "reason": "surface-wiring.ts swaps the production sink in for NO_SINK and the read pipeline reports to it"
     },
     {
-      "module": "src/governors/plan-day-clock.ts",
-      "stream": "PR",
-      "reason": "plan-wiring.ts, the one swap site, hands the plan-day clock to every day-keyed consumer (UD, RO, PH, LD); the first of them to merge wires this default and removes the entry"
+      "module": "src/engine/protection-reconciler.ts",
+      "stream": "UD",
+      "reason": "unfollow-wiring.ts builds the reconciler beside the protection port and runs its graph-open pass (UD step 3)"
     }
   ]
 }
