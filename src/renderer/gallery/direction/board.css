@@ -54,30 +54,30 @@ html.db-open #app {
   font-feature-settings: "tnum";
 }
 
-/* Colour is state: every tone sets one accent and its faint glow. */
+/* Colour is state: every tone sets one accent and its faint glow (tokens.palette.css). */
 .db [data-tone="live"] {
   --tone: var(--st-live);
-  --glow: rgba(216, 221, 227, 0.09);
+  --glow: var(--glow-live);
 }
 .db [data-tone="calm"] {
   --tone: var(--st-calm);
-  --glow: rgba(168, 168, 176, 0.05);
+  --glow: var(--glow-calm);
 }
 .db [data-tone="hold"] {
   --tone: var(--st-hold);
-  --glow: rgba(216, 183, 104, 0.08);
+  --glow: var(--glow-hold);
 }
 .db [data-tone="alert"] {
   --tone: var(--st-alert);
-  --glow: rgba(210, 120, 120, 0.11);
+  --glow: var(--glow-alert);
 }
 .db [data-tone="good"] {
   --tone: var(--st-good);
-  --glow: rgba(109, 178, 138, 0.1);
+  --glow: var(--glow-good);
 }
 .db [data-tone="idle"] {
   --tone: var(--st-idle);
-  --glow: rgba(142, 142, 151, 0.05);
+  --glow: var(--glow-idle);
 }
 
 /* ---------- the board bar ---------- */

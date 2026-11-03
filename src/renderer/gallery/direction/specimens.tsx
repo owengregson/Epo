@@ -6,7 +6,7 @@
 import { type JSX } from 'preact';
 import { Ring, Said } from '@/renderer/gallery/direction/instruments';
 import {
-  CONTROL_PX,
+  CONTROL_SPECIMEN,
   contrast,
   DUR_MS,
   PALETTE,
@@ -17,14 +17,14 @@ import {
   SURFACES,
   TEXT_TOKENS,
   TONES,
-  TYPE_LADDER,
+  TYPE_SPECIMEN,
 } from '@/renderer/gallery/direction/proposed-tokens';
 import { Icon } from '@/renderer/ui/Icon';
 
 export function TypeSpecimen(): JSX.Element {
   return (
     <div class="db-spec">
-      {[...TYPE_LADDER].reverse().map((t) => (
+      {[...TYPE_SPECIMEN].reverse().map((t) => (
         <div key={t.name} class="db-spec__type">
           <span class="db-spec__meta">
             --fs-{t.name} · {t.px}px · {t.weight}
@@ -86,9 +86,9 @@ export function RampSpecimen(): JSX.Element {
         ))}
       </div>
       <div class="db-spec__controls">
-        {Object.entries(CONTROL_PX).map(([k, px]) => (
-          <span key={k} class="db-spec__control" style={`height:${px}px`}>
-            --h-{k} {px}
+        {CONTROL_SPECIMEN.map(({ name, px }) => (
+          <span key={name} class="db-spec__control" style={`height:${px}px`}>
+            --h-{name} {px}
           </span>
         ))}
       </div>

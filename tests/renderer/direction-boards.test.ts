@@ -35,16 +35,7 @@ import {
 } from '@/renderer/gallery/direction/layout';
 import { funnelShare } from '@/renderer/gallery/direction/people-page';
 import { POPOVER_FRAMES, POSTURES } from '@/renderer/gallery/direction/postures';
-import {
-  contrast,
-  DUR_MS,
-  PALETTE,
-  PERCEPTION_MS,
-  SURFACES,
-  TEXT_TOKENS,
-  TYPE_LADDER,
-  tokenStyle,
-} from '@/renderer/gallery/direction/proposed-tokens';
+import { contrast, PALETTE, SURFACES, TEXT_TOKENS, TYPE_SPECIMEN, tokenStyle } from '@/renderer/gallery/direction/proposed-tokens';
 import { BOARDS } from '@/renderer/gallery/direction/registry';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
 import { Gallery, primeGallery } from '@/renderer/gallery/Gallery';
@@ -183,19 +174,13 @@ describe('the words', () => {
   });
 });
 
-describe('the proposed tokens obey their rules', () => {
-  it('text rungs are 15 + [−4 … +2]; display rungs are 2·round(16·1.25ⁿ/2)', () => {
-    const px = TYPE_LADDER.map((t) => t.px);
-    expect(px.slice(0, 6)).toEqual([-4, -3, -2, -1, 0, 2].map((o) => 15 + o));
-    expect(px.slice(6)).toEqual([1, 2, 3, 5].map((n) => 2 * Math.round((16 * 1.25 ** n) / 2)));
+describe('the boards read the app’s own tokens', () => {
+  it('the type specimen prints the generated ladder, 15 px body included', () => {
+    expect(TYPE_SPECIMEN.map((t) => t.px)).toEqual([11, 12, 13, 14, 15, 17, 20, 26, 32, 48]);
+    expect(TYPE_SPECIMEN.every((t) => t.sample !== '' && t.use !== '')).toBe(true);
   });
 
-  it('durations are perception × 1.2 × [1, 5/3, 8/3, 4, 7.5]', () => {
-    expect(PERCEPTION_MS).toBe(100);
-    expect(DUR_MS).toEqual([120, 200, 320, 480, 900]);
-  });
-
-  it('every text token reaches 4.5:1 on every surface', () => {
+  it('every text token the colour specimen shows reaches 4.5:1 on every surface', () => {
     for (const t of TEXT_TOKENS) {
       for (const s of SURFACES) {
         expect({ pair: `${t}/${s}`, ok: contrast(PALETTE[t], PALETTE[s]) >= 4.5 }).toEqual({ pair: `${t}/${s}`, ok: true });
@@ -203,15 +188,10 @@ describe('the proposed tokens obey their rules', () => {
     }
   });
 
-  it('the board root carries every one of them', () => {
+  it('the board root carries nothing inline but its face (until the app declares Inter)', () => {
     const root = renderBoard('tokens', 1024).querySelector<HTMLElement>('.db') as HTMLElement;
-    const declared = tokenStyle()
-      .split(';')
-      .map((d) => [d.slice(0, d.indexOf(':')), d.slice(d.indexOf(':') + 1)] as const);
-    expect(declared.length).toBeGreaterThan(50);
-    for (const [name, value] of declared) expect([name, root.style.getPropertyValue(name).trim()]).toEqual([name, value]);
-    expect(root.style.getPropertyValue('--fs-body').trim()).toBe('15px');
-    expect(root.style.getPropertyValue('--faint').trim()).toBe('#8e8e97');
+    expect(root.style.length).toBe(1);
+    expect(root.style.getPropertyValue('--font').trim()).toBe(tokenStyle().slice('--font:'.length));
   });
 });
 

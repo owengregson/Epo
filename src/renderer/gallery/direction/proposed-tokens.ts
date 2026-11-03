@@ -1,11 +1,14 @@
 /**
- * The PROPOSED tokens of spec §12.6–12.7, scoped to the direction boards: the
- * board root carries them as inline custom properties, so the boards preview
- * the refresh while the app keeps today's tokens. Steps 2–3 move them into
- * `design/scale.ts` and `tokens.palette.css`; the boards then read those.
+ * What the token specimens print. The boards themselves now read the app's own
+ * tokens (`tokens.palette.css`, `tokens.generated.css`); the numbers below are
+ * the few the specimens need in TypeScript — the palette's hex values (pinned to
+ * the stylesheet by `tests/renderer/contrast.test.ts`) and the radii — while the
+ * type, spacing, control and motion ladders come from `design/*` directly.
  */
+import { DUR } from '@/renderer/design/motion-scale';
+import { CONTROL_NAMES, CONTROL_PX, SPACE_PX, TYPE_LADDER } from '@/renderer/design/scale';
 
-/** Surfaces, text and accents. Three values reopened for WCAG AA; the rest unchanged. */
+/** Surfaces, text and accents, as `tokens.palette.css` declares them. */
 export const PALETTE = {
   bg: '#0d0d0f',
   surface: '#141417',
@@ -28,7 +31,7 @@ export const PALETTE = {
 
 export type PaletteKey = keyof typeof PALETTE;
 
-/** The three values this refresh reopens, with today's value beside each. */
+/** The three values this refresh reopened, with the old value beside each. */
 export const REOPENED: ReadonlyArray<{ key: PaletteKey; was: string }> = [
   { key: 'faint', was: '#66666e' },
   { key: 'muted', was: '#9a9aa2' },
@@ -53,56 +56,41 @@ export const TONES = {
 
 export type Tone = keyof typeof TONES;
 
-/** The semantic type ladder: text rungs 15 + [−4 … +2], display rungs 2·round(16·1.25ⁿ/2). */
-export const TYPE_LADDER = [
-  { name: 'micro', px: 11, weight: 500, sample: '9 AM · 12 PM · 3 PM', use: 'axis ticks, badge counts — never sentences' },
-  { name: 'caption', px: 12, weight: 400, sample: 'Today · 4m · Yesterday 8:12 PM', use: 'timestamps, group headers, meta' },
-  { name: 'small', px: 13, weight: 400, sample: 'Next session at 5:40 PM', use: 'secondary lines, hints, chips, the next line' },
-  { name: 'label', px: 14, weight: 500, sample: 'Followed @jane.doe', use: 'control labels, stage tabs, feed sentences' },
-  { name: 'body', px: 15, weight: 400, sample: 'How quickly should Epo grow your account?', use: 'body, inputs, buttons, zone titles' },
-  { name: 'lead', px: 17, weight: 400, sample: 'Following @jane.doe', use: 'the now line, the wordmark, section leads' },
-  { name: 'title', px: 20, weight: 600, sample: 'Growth pace', use: 'section titles, column titles' },
-  { name: 'heading', px: 26, weight: 600, sample: 'Settings', use: 'page titles, the compact posture word' },
-  { name: 'state', px: 32, weight: 600, sample: 'Working', use: 'the posture word' },
-  { name: 'hero', px: 48, weight: 650, sample: '+12', use: 'the one hero number' },
-] as const;
+/** How each rung of the ladder is used, beside its size from `design/scale.ts`. */
+const TYPE_USE: Readonly<Record<string, { weight: number; sample: string; use: string }>> = {
+  micro: { weight: 500, sample: '9 AM · 12 PM · 3 PM', use: 'axis ticks, badge counts — never sentences' },
+  caption: { weight: 400, sample: 'Today · 4m · Yesterday 8:12 PM', use: 'timestamps, group headers, meta' },
+  small: { weight: 400, sample: 'Next session at 5:40 PM', use: 'secondary lines, hints, chips, the next line' },
+  label: { weight: 500, sample: 'Followed @jane.doe', use: 'control labels, stage tabs, feed sentences' },
+  body: { weight: 400, sample: 'How quickly should Epo grow your account?', use: 'body, inputs, buttons, zone titles' },
+  lead: { weight: 400, sample: 'Following @jane.doe', use: 'the now line, the wordmark, section leads' },
+  title: { weight: 600, sample: 'Growth pace', use: 'section titles, column titles' },
+  heading: { weight: 600, sample: 'Settings', use: 'page titles, the compact posture word' },
+  state: { weight: 600, sample: 'Working', use: 'the posture word' },
+  hero: { weight: 650, sample: '+12', use: 'the one hero number' },
+};
 
-/** Spacing: 4 × [0.5, 1, 2, 3, 4, 5, 6, 8, 10] — `--sp-7` and `--sp-8` are new. */
-export const SPACE_PX = [2, 4, 8, 12, 16, 20, 24, 32, 40] as const;
+const FALLBACK_USE = { weight: 400, sample: '', use: '' };
 
-/** Controls `32 + 4n`: chips, segments and tabs, inputs, primary. */
-export const CONTROL_PX = { xs: 32, sm: 36, md: 40, lg: 44 } as const;
+export const TYPE_SPECIMEN = TYPE_LADDER.map((r) => ({ name: r.name, px: r.px, ...(TYPE_USE[r.name] ?? FALLBACK_USE) }));
 
-/** Radii 8 / 10 / 14 (pills unchanged). */
+export { SPACE_PX };
+
+/** Controls `32 + 4n`, by name. */
+export const CONTROL_SPECIMEN = CONTROL_NAMES.map((name, i) => ({ name, px: CONTROL_PX[i] as number }));
+
+/** Radii 8 / 10 / 14, as `tokens.palette.css` declares them (pills unchanged). */
 export const RADIUS_PX = { sm: 8, md: 10, lg: 14 } as const;
 
-/** Motion: DUR = PERCEPTION × 1.2 × [1, 5/3, 8/3, 4, 7.5]; one breath for the two loops. */
-export const PERCEPTION_MS = 100;
-export const DUR_MS = [1, 5 / 3, 8 / 3, 4, 7.5].map((k) => Math.round(PERCEPTION_MS * 1.2 * k));
-const BREATH_MS = 2600;
-const EASE = {
-  ease: 'cubic-bezier(0.22, 0.9, 0.28, 1)',
-  'ease-out': 'cubic-bezier(0.16, 1, 0.3, 1)',
-  'ease-in-out': 'cubic-bezier(0.65, 0, 0.35, 1)',
-} as const;
+/** The five durations, `--dur-1 … --dur-5`. */
+export const DUR_MS = [DUR[1], DUR[2], DUR[3], DUR[4], DUR[5]];
 
-/** The face the boards load (Inter Variable, Latin subset); step 4 renames it "Inter". */
+/** The face the boards load (Inter Variable, Latin subset); step 4 makes it the app's own "Inter". */
 const BOARD_FONT = '"Epo Board Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
 
-/** Every proposed token as one inline `style` string for the board root. */
+/** What the board root still carries inline: only the board face, until the app declares Inter. */
 export function tokenStyle(): string {
-  const decl: string[] = [];
-  for (const [k, v] of Object.entries(PALETTE)) decl.push(`--${k}:${v}`);
-  for (const [tone, key] of Object.entries(TONES)) decl.push(`--st-${tone}:var(--${key})`);
-  for (const t of TYPE_LADDER) decl.push(`--fs-${t.name}:${t.px}px`);
-  for (const [i, px] of SPACE_PX.entries()) decl.push(`--sp-${i}:${px}px`);
-  for (const [k, px] of Object.entries(CONTROL_PX)) decl.push(`--h-${k}:${px}px`);
-  decl.push(`--r-sm:${RADIUS_PX.sm}px`, `--r:${RADIUS_PX.md}px`, `--r-lg:${RADIUS_PX.lg}px`, '--r-pill:99px');
-  for (const [i, ms] of DUR_MS.entries()) decl.push(`--dur-${i + 1}:${ms}ms`);
-  decl.push(`--breath:${BREATH_MS}ms`);
-  for (const [k, v] of Object.entries(EASE)) decl.push(`--${k}:${v}`);
-  decl.push(`--font:${BOARD_FONT}`);
-  return decl.join(';');
+  return `--font:${BOARD_FONT}`;
 }
 
 /** WCAG 2 relative luminance of a `#rrggbb` colour. */
