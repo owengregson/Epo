@@ -6,6 +6,7 @@
  */
 
 import { ActionDeferredError } from '@/adapter/errors';
+import { UNCONFIGURED_PROTECTION } from '@/engine/protection-port';
 import { FakeClock } from '@/governors/clock';
 import { ReadBudget } from '@/governors/read-budget';
 import type { PlanDayClock, PlanDayWindow } from '@/kernel/plan';
@@ -169,7 +170,8 @@ describe('the gate at the click and status.surface over a built graph', () => {
     const budget = new ReadBudget({ store, clock, limits: readLimits() });
     const visit = jest.fn();
     const err = await createClickReview({ store, ownPk: 'me', clock, readBudget: budget, profiles: () => ({ visit }),
-      settings: () => DEFAULT_SETTINGS, signal: () => undefined, active: async () => true, surfaceGate: report.gate })
+      settings: () => DEFAULT_SETTINGS, protection: () => UNCONFIGURED_PROTECTION, signal: () => undefined,
+      active: async () => true, surfaceGate: report.gate })
       .prepareProfile('alice', 'a', 'unfollow').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ActionDeferredError);
     expect(visit).not.toHaveBeenCalled();
