@@ -108,8 +108,10 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
     reconciler,
     parkSlots: () => planDaySlots(dayClock, clock.now()),
   });
-  // The graph-open pass: rules that changed, or a plan-day that rolled, while Epo was closed.
+  // The graph-open pass: rules that changed, or a plan-day that rolled, while Epo was closed; and the writes an
+  // earlier run prepared but never dispatched, cancelled with no read (spec §9.8).
   reconciler.sync(clock.now());
+  store.effectIntents.cancelInterruptedPrepared(clock.now());
   d.protection.setCapabilities({ protectionEverywhere: true });
   return churn;
 }

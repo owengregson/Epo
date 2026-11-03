@@ -128,6 +128,15 @@ describe('the wired journal (spec §9.8)', () => {
   });
 });
 
+test('the graph-open pass cancels the prepared intents an earlier run left, with no read (spec §9.8)', () => {
+  const interrupted = store.beginEffectIntent({ accountPk: '1', username: 'u1', action: 'unfollow', channel: 'growth', at: T0 - 1 });
+  const open = store.beginEffectIntent({ accountPk: '2', username: 'u2', action: 'unfollow', channel: 'growth', at: T0 - 1 });
+  store.markEffectUncertain(open.id, T0 - 1);
+  churnFor(new FakeClock(T0));
+  expect(store.getEffectIntent(interrupted.id)).toMatchObject({ state: 'settled', result: 'cancelled' });
+  expect(store.getEffectIntent(open.id)?.state).toBe('uncertain');
+});
+
 test('the graph-open pass releases a record no rule protects anymore', () => {
   store.observe({ accountPk: '1', observedAt: T0, source: 'profile', fields: { username: 'u1', bio: 'photographer' } });
   store.upsertFollowRecord({ accountPk: '1', targetPk: null, state: 'kept', retryCount: 0, followedAt: T0,
