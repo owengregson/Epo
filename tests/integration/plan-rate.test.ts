@@ -3,7 +3,7 @@
  * service and store (the plan wiring the graph builds) are driven over simulated weeks the way the engine
  * loop drives them: preflight, arm at dispatch, settle, wait on the armed deadline, park on a refusal.
  * The pace matches the retired pacer's oracle, no rolling hour exceeds H, no day exceeds V or
- * automaticDayMax(P0), and the day law's mean matches the legacy oracle.
+ * automaticDayMax(P0), the day law's mean matches the legacy oracle, and (I6) bookkeeping never re-plans.
  */
 import { automaticDayMax } from '@/kernel/plan/volume';
 import { mulberry32 } from '@/kernel/rng';
@@ -45,6 +45,8 @@ function settle(store: KnowledgeStore, pk: string, at: number): void {
 interface Run {
   events: { at: number; day: string; session: number }[];
   planned: Map<string, number>;
+  /** Each plan-day's plan revisions and draw instants as the loop saw them. */
+  draws: Map<string, Set<string>>;
   hourlyParks: Set<number>;
   sessionHours: number;
 }
@@ -52,7 +54,7 @@ interface Run {
 /** The loop over `days`: act while admitted, wait on the armed deadline, park until a refusal's `until`. */
 function drive(r: ReturnType<typeof rig>, days: number): Run {
   const { store, clock, plan } = r;
-  const run: Run = { events: [], planned: new Map(), hourlyParks: new Set(), sessionHours: 0 };
+  const run: Run = { events: [], planned: new Map(), draws: new Map(), hourlyParks: new Set(), sessionHours: 0 };
   const rate = plan.rateGovernor(toRateGovernorConfig(SETTINGS));
   const seenSessions = new Set<string>();
   const end = FROM + days * MS_PER_DAY;
@@ -60,6 +62,7 @@ function drive(r: ReturnType<typeof rig>, days: number): Run {
     const now = clock.now();
     const view = plan.pacing.ensureIfProvisional(now);
     run.planned.set(view.window.key, view.plan.volume.planned);
+    run.draws.set(view.window.key, (run.draws.get(view.window.key) ?? new Set()).add(`${view.plan.revision}@${view.plan.drawnAt}`));
     for (const s of view.plan.sessions) {
       const key = `${view.window.key}:${s.startAt}`;
       if (s.budget > 0 && !seenSessions.has(key)) {
@@ -109,6 +112,10 @@ describe('I1: the plan runtime against the retired pacer (Balanced / Standard)',
       expect(inHour).toBeLessThanOrEqual(SETTINGS.hourlyVelocityCap);
     }
     expect(run.hourlyParks.size / run.sessionHours).toBeLessThan(0.01);
+  });
+
+  test('I6: bookkeeping never re-plans: a day of writes, parks and joins keeps its one draw', () => {
+    expect([...run.draws.values()].every((d) => d.size === 1)).toBe(true);
   });
 
   test('day totals stay within V, and no automatic day exceeds automaticDayMax(P0)', () => {
