@@ -16,6 +16,7 @@ import { PlanService } from '@/governors/plan-service';
 import { RateGovernor, type RateGovernorConfig, type RatePlan } from '@/governors/rate-governor';
 import { ReadBudget } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
+import { BOUNDS_REENTRY } from '@/kernel/reentry-policy';
 import { MS_PER_HOUR } from '@/kernel/units';
 import { PlanControl } from '@/main/modules/plan-control';
 import { toPlanIntent } from '@/settings/plan-intent';
@@ -72,7 +73,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     unconfirmed: () => null,
     surfaceGate: NEVER_PAUSED,
     onChanged: () => control?.changed(),
-  }, { log: logger });
+  }, { log: logger, readFacts: { followingWalkPages: BOUNDS_REENTRY.FOLLOWING_WALK_PAGES } });
   const wake = (): void => {
     for (const key of PLAN_PARKS) delays.cancel(key);
   };

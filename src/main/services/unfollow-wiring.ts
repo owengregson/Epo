@@ -26,6 +26,7 @@ import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { GraphBuildDeps, WiringParts } from './graph-types';
 import { createMutationPolicy } from './mutation-policy';
+import { requesterPredicate } from './reopen-wiring';
 
 type MutationPolicy = ReturnType<typeof createMutationPolicy>;
 
@@ -104,6 +105,8 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
     protection: port,
     reconciler,
     parkSlots: () => planDaySlots(dayClock, clock.now()),
+    // An open request into our account keeps a record out of every timer and pick (spec §9.9).
+    hasActiveRequest: requesterPredicate(store),
   });
   // The graph-open pass: rules that changed, or a plan-day that rolled, while Epo was closed; and the writes an
   // earlier run prepared but never dispatched, cancelled with no read (spec §9.8).
