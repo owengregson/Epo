@@ -2,9 +2,10 @@ import type { LocateConfirmRequestResult } from '@/adapter/ig-surface';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { setLevel } from '@/utils/logger';
 import { FakeSentinel, FakeTab, mkResp } from '../kit/fakes';
+import { openTestStore } from '../kit/store';
 
 beforeAll(() => setLevel('error'));
 
@@ -250,7 +251,7 @@ const pendingBody = (rows: Array<{ pk: string; username: string }>): unknown => 
 const emptyInbox = (): unknown => ({ counts: {}, new_stories: [], old_stories: [] });
 
 test('accepts pending requests via Confirm clicks and returns WHO with resolved pks', async () => {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   const { tab, actor, source } = build({ store });
   actor.entryExists = true;
   actor.requestQueue = ['req_a', 'req_b'];
@@ -386,7 +387,7 @@ test('GraphQL: an unrelated query on the same path is never read as the feed', a
 });
 
 test('GraphQL follow requests: the panel query resolves requester pks for the accepts', async () => {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   const { tab, actor, source } = build({ store });
   actor.entryExists = true;
   actor.requestQueue = ['req_a'];

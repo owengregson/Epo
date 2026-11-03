@@ -14,7 +14,47 @@
  * Settings, which is why the prune shape takes it.
  */
 
+import type { FeedView } from '@/shared/feed';
+import type { SettingsFacts } from '@/shared/settings-facts';
+import { NOT_BUILT_FIELDS } from '@/shared/status-fields';
+import {
+  type AreaReport, type MeterReading, SURFACE_AREAS, SURFACE_METERS, type SurfaceMeter, type SurfaceReport,
+} from '@/shared/surface-health';
 import type { EpoStatus, PruneStatus, Settings } from '@/types';
+
+/** The Settings facts before the store opens (`why` is the caller's reason): every field honest-unknown. */
+export function notBuiltFacts(_why: 'signed-out' | 'loading' | 'error'): SettingsFacts {
+  return {
+    built: false,
+    seed: { kind: 'loading' },
+    ownAccount: { isPrivate: null },
+    protection: null,
+    cleanup: null,
+  };
+}
+
+/** The feed before the graph exists: empty, nothing to narrate yet. */
+export function notBuiltFeed(now: number): FeedView {
+  return { items: [], awayFrom: null, windowStart: now, shapedAt: now };
+}
+
+/** The surface report before anything was read: every area unseen, nothing recorded, no meter sample. */
+export function notBuiltSurfaceReport(now: number): SurfaceReport {
+  const area = (a: AreaReport['area']): AreaReport => ({
+    area: a, state: 'unseen', paused: [], lastReadAt: null,
+    today: { canonical: 0, normalized: 0, recovered: 0, failed: 0, walls: 0, rowIssues: 0, fieldIssues: 0 },
+  });
+  const unsampled = (): MeterReading => ({ n: 0, p50: null, p95: null });
+  return {
+    // No surface has been read yet, so none is named.
+    surfaceId: '',
+    generatedAt: now,
+    areas: SURFACE_AREAS.map(area),
+    changes: [],
+    meter: Object.fromEntries(SURFACE_METERS.map((m) => [m, unsampled()])) as Record<SurfaceMeter, MeterReading>,
+    copyText: '',
+  };
+}
 
 /** The prune projection before a graph exists: idle, zeroed, settings-seeded. */
 export function notBuiltPruneStatus(s: Settings): PruneStatus {
@@ -39,9 +79,9 @@ export function notBuiltPruneStatus(s: Settings): PruneStatus {
 }
 
 /**
- * The growth projection before a graph exists. `loggedIn` and `online` are the
- * only two fields that can be true here — everything else is a count the graph
- * has not yet been asked for.
+ * The growth projection before a graph exists: `loggedIn` and `online` are the only fields that can be true;
+ * every count is one the graph has not been asked for, `basis` is 'not-built' and every optional status
+ * field is `null` ("not known yet", never a zero).
  */
 export function notBuiltStatus(loggedIn: boolean, online: boolean): EpoStatus {
   return {
@@ -68,5 +108,6 @@ export function notBuiltStatus(loggedIn: boolean, online: boolean): EpoStatus {
     recovery: null,
     pacing: null,
     loggedIn,
+    ...NOT_BUILT_FIELDS,
   };
 }

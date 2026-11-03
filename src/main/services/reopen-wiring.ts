@@ -17,7 +17,7 @@ import type { TabProfileVisitor } from '@/rim/profile-visit';
 import { type Settings, toFollowbackConfig } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { Cadence } from '@/timing/schedule-manager';
-import type { GraphBuildDeps } from './graph-types';
+import type { GraphBuildDeps, WiringParts } from './graph-types';
 import type { createMutationPolicy } from './mutation-policy';
 
 /** The re-entry supervisor over the graph's store. */
@@ -120,4 +120,9 @@ export function noteMutationFor(
     d.onProgress?.('mutation-verified');
   };
   return noteMutation;
+}
+
+/** The reopen wiring's startup steps and status contributors (the reopen stream fills them). */
+export function reopenWiringParts(): WiringParts {
+  return { startupSteps: [], statusContributors: [] };
 }

@@ -14,7 +14,10 @@
  * `EpoEventPayloads`, preload's subscription map and `main.ts`'s sends all
  * derive. See ADR 1008.
  *
- * Dependency-free by construction: type-only imports, plus two frozen literals.
+ * Per-topic rows live in `contract-{settings,plan,live,surface}.ts` and are
+ * spread in here, so each channel string is still written exactly once.
+ *
+ * Dependency-free by construction: type-only imports, plus frozen literals.
  * Imported by main, preload AND the renderer — so the boundary VALIDATORS live
  * next door in `src/ipc/guards.ts` (zod is a main-process cost, not a renderer
  * bundle cost). See ADR 1009.
@@ -24,6 +27,11 @@
 // acknowledgement-only result of a fire-and-forget channel; it flows into a
 // return position (`Promise<Res<M>>`) everywhere it is used.
 
+import type { FeedView } from '@/shared/feed';
+import type { LiveTab } from '@/shared/live-op';
+import type { SettingsFacts } from '@/shared/settings-facts';
+import type { SettingsView } from '@/shared/settings-view';
+import type { ProtectedBy } from '@/shared/unfollow-protection';
 import type {
   ActionResult,
   ChainTargetDetail,
@@ -44,6 +52,18 @@ import type {
   StageMode,
   UpdateStatus,
 } from '@/types';
+import { LIVE_CHANNELS, type LiveIpcContract } from './contract-live';
+import { PLAN_CHANNELS, type PlanIpcContract } from './contract-plan';
+import { SETTINGS_CHANNELS, type SettingsIpcContract } from './contract-settings';
+import { SURFACE_CHANNELS, type SurfaceIpcContract } from './contract-surface';
+
+/** A prune candidate as the candidates channel serves it, annotated by the protection predicate. */
+export interface PruneCandidateView extends PruneCandidate {
+  /** The rule that keeps it, or null when none does. */
+  readonly protectedBy: ProtectedBy | null;
+  /** True when a configured bio rule could not be judged from the stored facts. */
+  readonly bioUnread: boolean;
+}
 
 /**
  * Bridge method → IPC channel. The ONLY place a channel string appears.
@@ -79,14 +99,17 @@ export const CHANNELS = {
   updateSettings: 'settings:update',
   resetSettings: 'settings:reset',
   clearData: 'data:clear',
-  showTab: 'tab:show',
-  hideTab: 'tab:hide',
   graphSnapshot: 'graph:snapshot',
   setStage: 'stage:set',
   setTourHold: 'tour:hold',
   checkForUpdate: 'update:check',
   installUpdate: 'update:install',
   openLatestRelease: 'update:open-latest',
+  bootRevealed: 'boot:revealed',
+  ...SETTINGS_CHANNELS,
+  ...PLAN_CHANNELS,
+  ...LIVE_CHANNELS,
+  ...SURFACE_CHANNELS,
 } as const;
 
 /** A renderer-callable bridge method name. */
@@ -96,7 +119,7 @@ export type BridgeMethod = keyof typeof CHANNELS;
 export type Channel = (typeof CHANNELS)[BridgeMethod];
 
 /** Argument tuple + result type per bridge method. */
-export interface IpcContract {
+export interface IpcContract extends SettingsIpcContract, PlanIpcContract, LiveIpcContract, SurfaceIpcContract {
   /** Open Instagram in the embedded tab (login is performed by the user). */
   login: { req: []; res: EpoStatus };
   /** Read a target account's followers into the knowledge graph. */
@@ -121,8 +144,8 @@ export interface IpcContract {
   engineStatus: { req: []; res: EpoStatus };
   /** READ-ONLY prune scan: the raw following − followers census (no unfollows). */
   scanPrune: { req: []; res: PruneScanResult };
-  /** The persisted scan's not-yet-visited candidates (raw census). */
-  pruneCandidates: { req: []; res: PruneCandidate[] };
+  /** The persisted scan's not-yet-visited candidates (raw census), annotated by protection. */
+  pruneCandidates: { req: []; res: PruneCandidateView[] };
   /** Start one prune run (mutually exclusive with the growth engine). */
   startPrune: { req: []; res: PruneControlResult };
   /** Stop an active prune scan/run between actions. */
@@ -151,10 +174,6 @@ export interface IpcContract {
   resetSettings: { req: []; res: Settings };
   /** Wipe the knowledge DB + IG session (logout); settings kept. */
   clearData: { req: []; res: EpoStatus };
-  /** Reveal the embedded Instagram tab. */
-  showTab: { req: []; res: void };
-  /** Hide the embedded Instagram tab. */
-  hideTab: { req: []; res: void };
   /** The full knowledge graph shaped for the Graph view (null before login). */
   graphSnapshot: { req: []; res: GraphSnapshot | null };
   /**
@@ -171,6 +190,8 @@ export interface IpcContract {
   installUpdate: { req: []; res: UpdateStatus };
   /** Notify mode: open the latest-release page in the default browser. */
   openLatestRelease: { req: []; res: void };
+  /** The renderer revealed the app (the boot sequence moves to live). */
+  bootRevealed: { req: []; res: void };
 }
 
 /** Argument tuple for one bridge method. */
@@ -216,6 +237,11 @@ export const PUSH = {
   pruneStatus: 'epo:prune-status',
   updateStatus: 'epo:update-status',
   chainList: 'epo:chain-list',
+  settings: 'epo:settings',
+  settingsFacts: 'epo:settings-facts',
+  feed: 'epo:feed',
+  activity: 'epo:activity',
+  stageRequest: 'epo:stage-request',
 } as const;
 
 /** A renderer-subscribable push channel name (`window.epo.on(<name>, …)`). */
@@ -240,6 +266,16 @@ export interface PushContract {
    * walks, where observations move no status counter.
    */
   chainList: ChainTargetView[];
+  /** The Settings view, sent by the settings service after every persisted write (not graph-derived). */
+  settings: SettingsView;
+  /** The store-derived Settings facts (a projection row; also sent on each settings change). */
+  settingsFacts: SettingsFacts;
+  /** The live feed (a projection row, deduplicated). */
+  feed: FeedView;
+  /** The live tab's phase and holds (not graph-derived, so not a projection row). */
+  activity: LiveTab;
+  /** A stage the application menu asks the renderer to show. */
+  stageRequest: StageMode;
 }
 
 /** Payload type for one push channel. */

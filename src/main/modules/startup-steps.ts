@@ -11,17 +11,13 @@ import type { IgSessionPort } from '@/main/services/ig-session';
 import type { RuntimeCoordinator } from '@/main/services/runtime-coordinator';
 import type { TabLease } from '@/main/services/tab-lease';
 import type { TabActivity } from '@/main/tab-activity';
+import type { StartupStep } from '@/shared/boot';
 import { ADAPTER } from '@/timing/config';
 import { pauseBeforePageRetry } from '@/timing/page-pacing';
 import { sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
-/** One startup step: its name, when it applies, and the work. */
-export interface StartupStep {
-  readonly name: string;
-  when(): boolean;
-  run(signal: AbortSignal): Promise<void>;
-}
+export type { StartupStep };
 
 /** Run `step` when it applies; `signal` interrupts its waits. */
 export async function runStep(step: StartupStep, signal: AbortSignal): Promise<void> {
@@ -52,7 +48,7 @@ export interface LandingStepDeps {
  */
 export function landingStep(d: LandingStepDeps): StartupStep {
   return {
-    name: 'own-profile-landing',
+    name: 'open-own-profile',
     when: () => d.runtime.ready(),
     run: async (signal) => {
       // Intro tour on screen: the landing (a build + a cursor-driven click) is
@@ -135,7 +131,7 @@ export interface ResumeStepDeps {
 /** Resume a running intent a crash left behind, after the identity matches. */
 export function resumeStep(d: ResumeStepDeps): StartupStep {
   return {
-    name: 'restore-run-intent',
+    name: 'resume-run',
     when: () => d.runtime.wantsRun() && !d.disposing() && !d.lease.tourHeld(),
     run: async () => {
       const token = d.runtime.token();

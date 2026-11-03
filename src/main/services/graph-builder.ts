@@ -13,21 +13,15 @@ import * as path from 'node:path';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { ChainController, type TargetDiscovery } from '@/engine/chain-controller';
+import { createEngine, type EngineUnfollowFeed } from '@/engine/engine';
 import {
-  createEngine,
-  type EngineUnfollowFeed,
-} from '@/engine/engine';
-import {
-  createPruneEngine,
-  type PruneEngine,
-  type PruneOwnFollowers,
-  type PruneOwnFollowing,
-  type PruneScanFetch,
+  createPruneEngine, type PruneEngine, type PruneOwnFollowers, type PruneOwnFollowing, type PruneScanFetch,
 } from '@/engine/prune-engine';
 import { Scanner } from '@/engine/scanner';
 import { SourceFrontier } from '@/engine/source-frontier';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
+import { STORE_POLICY } from '@/kernel/store-policy';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { reconcileEffects } from '@/rim/effect-reconciliation';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
@@ -45,16 +39,13 @@ import {
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { DelayManager } from '@/timing/delay-manager';
 import * as logger from '@/utils/logger';
-import { wirePacing, wireReadBudget } from './plan-wiring';
+import { liveWiringParts } from './live-wiring';
+import { planWiringParts, wirePacing, wireReadBudget } from './plan-wiring';
 import {
-  noteMutationFor,
-  prepareReentry,
-  wireFollowback,
-  wireReentry,
-  wireSweepCadence,
+  noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry, wireSweepCadence,
 } from './reopen-wiring';
-import { wireSurface } from './surface-wiring';
-import { pruneUnfollowDeps, wireChurn, wireMutationPolicy } from './unfollow-wiring';
+import { surfaceWiringParts, wireSurface } from './surface-wiring';
+import { pruneUnfollowDeps, unfollowWiringParts, wireChurn, wireMutationPolicy } from './unfollow-wiring';
 
 export type { BuiltGraph, GraphBuildDeps } from './graph-types';
 
@@ -65,7 +56,7 @@ export function buildGraph(
   ownUsername: string | undefined,
   d: GraphBuildDeps,
 ): BuiltGraph {
-  const store = new KnowledgeStore(path.join(d.userDataDir, d.dbFile));
+  const store = new KnowledgeStore(path.join(d.userDataDir, d.dbFile), { policy: STORE_POLICY });
   // The store's reconciliation sink + already-following candidate exclusion
   // both anchor on our own pk.
   store.setOwnPk(ownPk);
@@ -341,6 +332,8 @@ export function buildGraph(
   });
   // Back the woven-feed adapter now that the PruneEngine exists.
   pruneEngineRef = pruneEngine;
+  // Once per build: a rebuild or account switch starts from a fresh list, never a duplicate.
+  const parts = [planWiringParts(), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts()];
 
   return {
     prepareMutation: policy.prepareMutation,
@@ -368,5 +361,7 @@ export function buildGraph(
     followback,
     chain,
     pacing,
+    startupSteps: parts.flatMap((p) => p.startupSteps),
+    statusContributors: parts.flatMap((p) => p.statusContributors),
   };
 }

@@ -4,13 +4,13 @@ import {
   installRelationshipReconciler,
   RelationshipReconciler,
 } from '@/rim/relationship-reconciler';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
 import { setLevel } from '@/utils/logger';
 import profileGraphql1 from '../fixtures/adapter/profile-graphql-1.json';
-
 import showMany from '../fixtures/adapter/show-many.json';
 import { FakeTab, mkProfileGraphqlResp, mkResp } from '../kit/fakes';
+import { openTestStore } from '../kit/store';
 
 // Keep test output quiet; the store logs info on every reconciliation drop.
 beforeAll(() => setLevel('error'));
@@ -36,7 +36,7 @@ let clock: FakeClock;
 let reconciler: RelationshipReconciler;
 
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
   store.setOwnPk(OWN);
   clock = new FakeClock(T0);
   reconciler = new RelationshipReconciler({ store, ownPk: OWN, reader: new Reader(), clock });

@@ -40,7 +40,7 @@ import {
   shapeTargetDetail,
 } from '@/main/foundation-reads';
 import { notBuiltPruneStatus, notBuiltStatus } from '@/main/modules/not-built';
-import { Projections, type PushFn } from '@/main/modules/projections';
+import { Projections, type PushFn, UNWIRED_SOURCES } from '@/main/modules/projections';
 import { PruneControl } from '@/main/modules/prune-control';
 import { PruneSchedule } from '@/main/modules/prune-schedule';
 import { SeedCheckService } from '@/main/modules/seed-check';
@@ -209,7 +209,7 @@ export class Foundation {
   private readonly signals = new DriverSignal();
 
   /** Settings load, cache, persist and live reload. */
-  private readonly settings: SettingsService;
+  readonly settings: SettingsService;
   /** The manual prune controls and the scheduled prune over them. */
   private readonly prune: PruneControl;
   private readonly pruneSchedule: PruneSchedule;
@@ -284,9 +284,8 @@ export class Foundation {
       }, { unref: true });
       graph.engine.setOnline(this.lastOnline);
       this.projections.bind(graph.store, {
-        status: () => this.builtStatus(),
-        pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph),
+        status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES,
       });
     });
     this.session.session.onClose(() => {
@@ -1411,7 +1410,7 @@ export class Foundation {
     // emit — in that order, so the hand-off never dips the veil.
     this.activity.signal('growth-loop', status.state === 'running');
     this.releaseGrowthStartBridge();
-    this.projections.send('status', { ...status, loggedIn: this.graph !== null, runtime: this.runtimeSnapshot() });
+    this.projections.send('status', composeStatus({ ...status, loggedIn: this.graph !== null, runtime: this.runtimeSnapshot() }, [], this.graph, Date.now()));
   }
 
   /** Retire the `growth-start` bridge hold (idempotent; see {@link startEngine}). */

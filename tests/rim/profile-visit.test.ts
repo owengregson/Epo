@@ -14,10 +14,11 @@ import { FakeClock } from '@/governors/clock';
 import { MOTION } from '@/kernel/motion-policy';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { clamp, logNormal } from '@/timing/distributions';
 import { sample } from '@/timing/primitives';
 import { setLevel } from '@/utils/logger';
+import { openTestStore } from '../kit/store';
 import { marker, NetworkTab } from '../kit/tabs';
 
 beforeAll(() => setLevel('error'));
@@ -66,7 +67,7 @@ const serve = (tab: PageTab, body: unknown, requestId = 'r1') =>
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 

@@ -1,11 +1,12 @@
 import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import { openTestStore } from '../kit/store';
 
 const OWN = 'me';
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 

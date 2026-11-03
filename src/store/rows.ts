@@ -15,6 +15,7 @@ import type {
   EnrichmentLevel,
   FollowRecord,
   FollowState,
+  KeptReason,
   Source,
   Target,
 } from './types';
@@ -65,6 +66,13 @@ export interface FollowRecordRow {
   unfollow_reason: string | null;
   queued_at: number | null;
   decision_version: string | null;
+  kept_reason: string | null;
+  kept_match: string | null;
+  kept_at: number | null;
+  recheck_at: number | null;
+  park_reason: string | null;
+  check_failures: number;
+  followback_after: number | null;
 }
 
 export interface TargetRow {
@@ -129,4 +137,11 @@ export const rowToFollowRecord = (row: FollowRecordRow): FollowRecord => ({
   unfollowReason: strOrUndef(row.unfollow_reason) as FollowRecord['unfollowReason'],
   queuedAt: numOrUndef(row.queued_at),
   decisionVersion: strOrUndef(row.decision_version),
+  keptReason: strOrUndef(row.kept_reason) as KeptReason | undefined,
+  keptMatch: strOrUndef(row.kept_match),
+  keptAt: numOrUndef(row.kept_at),
+  recheckAt: numOrUndef(row.recheck_at),
+  parkReason: strOrUndef(row.park_reason) as FollowRecord['parkReason'],
+  checkFailures: row.check_failures,
+  followbackAfter: numOrUndef(row.followback_after),
 });

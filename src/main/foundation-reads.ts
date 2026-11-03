@@ -20,8 +20,7 @@ import {
 } from '@/store/types';
 import { MS_PER_DAY } from '@/timing/units';
 import {
-  type ChainTargetDetail,
-  type ChainTargetView,
+  type ChainTargetDetail, type ChainTargetView,
   CONVERSION_VERDICT_MIN,
   GRAPH_NODE_STATUSES,
   type GraphHub,
@@ -231,6 +230,7 @@ const RECORD_STATUS: Record<FollowState, GraphNodeStatus> = {
   unfollowed: 'unfollowed',
   abandoned: 'abandoned',
   external: 'external',
+  kept: 'kept',
 };
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);

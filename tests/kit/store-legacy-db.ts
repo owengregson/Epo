@@ -16,8 +16,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { SqliteDriver } from '@/store/driver/driver';
 import { openDatabase } from '@/store/driver/index';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { MIGRATIONS } from '@/store/schema';
+import { openTestStore } from './store';
 
 export interface LegacyDb {
   /** Raw handle open at the requested version — seed rows and read PRAGMAs. */
@@ -60,7 +61,7 @@ export const withLegacyDb = <T>(version: number, fn: (db: LegacyDb) => T): T => 
       raw,
       open() {
         closeRaw();
-        const store = new KnowledgeStore(dbPath);
+        const store = openTestStore(dbPath);
         stores.push(store);
         return store;
       },

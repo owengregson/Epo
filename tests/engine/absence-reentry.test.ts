@@ -3,8 +3,9 @@ import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { REENTRY_POLICY, ReentrySupervisor } from '@/engine/reentry';
 import { FakeClock } from '@/governors/clock';
 import type { RateGovernor } from '@/governors/rate-governor';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { setLevel } from '@/utils/logger';
+import { openTestStore } from '../kit/store';
 
 const DAY = 86_400_000;
 const START = Date.UTC(2026, 9, 1, 12);
@@ -12,7 +13,7 @@ let store: KnowledgeStore;
 let clock: FakeClock;
 beforeEach(() => {
   setLevel('error');
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
   store.setOwnPk('me');
   clock = new FakeClock(START + 7 * DAY);
   store.observe({ accountPk: 'a', observedAt: START, source: 'profile', fields: { username: 'alice' } });

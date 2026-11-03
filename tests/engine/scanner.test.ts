@@ -1,13 +1,14 @@
 import { SCANNER_DEFAULTS, Scanner } from '@/engine/scanner';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { AccountFields } from '@/store/types';
+import { openTestStore } from '../kit/store';
 
 const TARGET = 'target';
 const NOW = 1_000_000;
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 

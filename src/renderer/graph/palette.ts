@@ -33,6 +33,7 @@ export const STATUS_COLORS: Record<GraphNodeStatus, StatusColor> = {
   follows_you: { h: 205, s: 34, l: 63, timed: false }, // steel blue
   you_follow: { h: 226, s: 26, l: 67, timed: false }, // indigo steel
   mutual: { h: 160, s: 42, l: 62, timed: false }, // bright green-teal
+  kept: { h: 226, s: 18, l: 56, timed: false }, // the followed (indigo steel) family, muted
 };
 
 /** Sidebar legend labels, in {@link GRAPH_NODE_STATUSES} order. */
@@ -48,6 +49,7 @@ export const LEGEND_LABELS: Record<GraphNodeStatus, string> = {
   follows_you: 'Follows you',
   you_follow: 'You follow',
   mutual: 'Mutual',
+  kept: 'Kept · protected',
 };
 
 /** Saturation ramp resolution (progress buckets per timed status). */

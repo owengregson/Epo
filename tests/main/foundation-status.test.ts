@@ -52,6 +52,21 @@ describe('Foundation status (not built)', () => {
       recovery: null,
       pacing: null,
       loggedIn: false,
+      // The composed status fields: never a count from a not-built graph.
+      basis: 'not-built',
+      boot: null,
+      account: null,
+      plan: null,
+      boost: null,
+      catchUp: null,
+      own: null,
+      today: null,
+      journal: null,
+      requests: null,
+      surface: null,
+      unfollowsPaused: null,
+      actionsUnconfirmed: null,
+      resumeTarget: null,
     });
 
     f.dispose(); // idempotent no-op when nothing was built

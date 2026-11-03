@@ -93,6 +93,7 @@ describe('shapeTargetDetail', () => {
     unfollowed: 0,
     abandoned: 0,
     external: 0,
+    kept: 0,
     ...over,
   });
 

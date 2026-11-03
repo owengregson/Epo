@@ -11,8 +11,9 @@ import { type ClickReviewDeps, createClickReview } from '@/main/services/click-r
 import type { ProfileVisit } from '@/rim/profile-visit-port';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { PausedActivity } from '@/shared/surface-gate';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { readLimits } from '../kit/read-limits';
+import { openTestStore } from '../kit/store';
 
 let store: KnowledgeStore;
 let clock: FakeClock;
@@ -20,7 +21,7 @@ let budget: ReadBudget;
 let visit: jest.Mock<Promise<ProfileVisit>, [string]>;
 
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
   clock = new FakeClock(Date.UTC(2026, 10, 3, 12));
   budget = new ReadBudget({ store, clock, limits: readLimits() });
   visit = jest.fn(async (username: string): Promise<ProfileVisit> => ({

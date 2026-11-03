@@ -14,13 +14,15 @@
  *     intervals (`p50 / 4`) are measurements, not guesses;
  *     {@link SpanSink.percentile} is where the measurement comes from.
  *
- * Retention is a 50k-row ring. Ids sort lexicographically by time, so trimming
- * the ring is one indexed DELETE and "the oldest rows" needs no clock.
+ * Retention is a ring sized by the injected store policy. Ids sort
+ * lexicographically by time, so trimming the ring is one indexed DELETE and
+ * "the oldest rows" needs no clock.
  */
 
 import type { SqliteDriver, SqlValue } from './driver/driver';
 import { SPANS } from './schema/manifest';
 import { decodeRow, type RowOf, upsertSql } from './schema/tables';
+import type { StorePolicy } from './types';
 
 /** How a span ended. The closed vocabulary the runtime's outcome algebra maps onto. */
 export type SpanOutcome =
@@ -57,18 +59,9 @@ export interface Span {
 export interface SpanSinkOptions {
   now?: () => number;
   rng?: () => number;
-  /** Ring size. Defaults to {@link RING_ROWS}. */
-  retain?: number;
+  /** Ring size, inline-event cap, trim stride and default listing size (the store policy's). */
+  policy: StorePolicy['spans'];
 }
-
-/** The ring: enough for weeks of runs, small enough to never need a sweep job. */
-export const RING_ROWS = 50_000;
-
-/** Events kept inline on a span before the oldest are dropped (with a count). */
-const MAX_INLINE_EVENTS = 32;
-
-/** How many opens between ring trims — the trim is indexed, but not free. */
-const TRIM_EVERY = 512;
 
 /** Crockford base32: sortable, case-insensitive, no ambiguous glyphs. */
 const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -115,7 +108,7 @@ const toSpan = (row: SpanRow): Span => {
 export class SpanSink {
   private readonly now: () => number;
   private readonly rng: () => number;
-  private readonly retain: number;
+  private readonly policy: StorePolicy['spans'];
   /** Monotonic within one millisecond, so ids sort by time even under a fake clock. */
   private lastMs = -1;
   private seq = 0;
@@ -123,11 +116,11 @@ export class SpanSink {
 
   constructor(
     private readonly db: SqliteDriver,
-    opts: SpanSinkOptions = {},
+    opts: SpanSinkOptions,
   ) {
     this.now = opts.now ?? Date.now;
     this.rng = opts.rng ?? Math.random;
-    this.retain = opts.retain ?? RING_ROWS;
+    this.policy = opts.policy;
   }
 
   /**
@@ -161,7 +154,7 @@ export class SpanSink {
       attrs: JSON.stringify(opts.attrs ?? {}),
     });
     this.opens += 1;
-    if (this.opens % TRIM_EVERY === 0) this.trim();
+    if (this.opens % this.policy.trimEvery === 0) this.trim();
     return id;
   }
 
@@ -182,7 +175,7 @@ export class SpanSink {
   /**
    * Annotate a span with something that happened inside it — what `log.info`
    * calls become once the console is a sink rather than the record. Kept
-   * inline and BOUNDED: past {@link MAX_INLINE_EVENTS} the oldest go and a
+   * inline and BOUNDED: past the policy's `inlineEvents` the oldest go and a
    * `droppedEvents` count replaces them, so one pathological loop can never
    * inflate a row without limit.
    */
@@ -192,7 +185,7 @@ export class SpanSink {
     const current = { ...parseAttrs(row.attrs) } as Record<string, unknown>;
     const events = Array.isArray(current.events) ? [...(current.events as unknown[])] : [];
     events.push({ at: this.now(), ...attrs });
-    const dropped = Math.max(0, events.length - MAX_INLINE_EVENTS);
+    const dropped = Math.max(0, events.length - this.policy.inlineEvents);
     if (dropped > 0) {
       events.splice(0, dropped);
       const prior = current.droppedEvents;
@@ -237,7 +230,7 @@ export class SpanSink {
 
   /** The most recent spans, newest first; optionally one name only. */
   recent(opts: { name?: string; limit?: number } = {}): Span[] {
-    const args = { name: opts.name ?? null, limit: opts.limit ?? 100 };
+    const args = { name: opts.name ?? null, limit: opts.limit ?? this.policy.listLimit };
     return this.db
       .prepare(`${SELECT} WHERE (@name IS NULL OR name = @name) ORDER BY id DESC LIMIT @limit`)
       .all<SpanRow>(args)
@@ -283,12 +276,12 @@ export class SpanSink {
   }
 
   /**
-   * Hold the ring at `retain` rows by dropping the oldest. Runs every
-   * {@link TRIM_EVERY} opens rather than on each one — the DELETE is indexed,
+   * Hold the ring at the policy's `ringRows` by dropping the oldest. Runs every
+   * `trimEvery` opens rather than on each one — the DELETE is indexed,
    * but the sub-select is not free at a scan's write rate.
    */
   trim(): number {
-    const offset = this.retain - 1;
+    const offset = this.policy.ringRows - 1;
     const oldest = this.db
       .prepare(`SELECT id FROM spans ORDER BY id DESC LIMIT 1 OFFSET @offset`)
       .get<{ id: string }>({ offset });

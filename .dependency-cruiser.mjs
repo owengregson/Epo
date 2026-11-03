@@ -16,6 +16,17 @@
  *           one way.
  */
 
+import { readFileSync } from 'node:fs';
+
+/**
+ * Modules deliberately unwired for now (`tests/tooling/pending-wiring.json`, each
+ * naming the stream that wires it): `no-orphans` exceptions until that stream lands.
+ * `pending-wiring.test.ts` fails once a listed module gains an importer.
+ */
+const PENDING_WIRING = JSON.parse(
+  readFileSync(new URL('./tests/tooling/pending-wiring.json', import.meta.url), 'utf8'),
+).pending.map((entry) => `^${entry.module.replace(/[.]/g, '[.]')}$`);
+
 /** Every layer under `src/`, for allow-list rules that must name the complement. */
 const BACKEND = [
   '^src/store',
@@ -65,6 +76,7 @@ export default {
           '^src/renderer/index[.]tsx$',
           '^src/adapter/page/index[.]ts$',
           '^src/tools/',
+          ...PENDING_WIRING,
         ],
       },
       to: {},

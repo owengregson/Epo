@@ -37,9 +37,12 @@ test('every push channel string is written in exactly one place', () => {
 
   for (const channel of channels) {
     const literal = PUSH[channel];
-    const sites = FILES.flatMap(({ file, text }) =>
-      text.split(literal).length > 1 ? [{ file, count: text.split(literal).length - 1 }] : [],
-    );
+    // The quoted literal, so `epo:settings` is not counted inside `epo:settings-facts`.
+    const quoted = new RegExp(`['"\`]${literal}['"\`]`, 'g');
+    const sites = FILES.flatMap(({ file, text }) => {
+      const count = text.match(quoted)?.length ?? 0;
+      return count > 0 ? [{ file, count }] : [];
+    });
     expect({ literal, sites }).toEqual({
       literal,
       sites: [{ file: CONTRACT, count: 1 }],

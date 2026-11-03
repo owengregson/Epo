@@ -21,6 +21,9 @@
  */
 
 import type { PushContract, PushMethod } from '@/ipc/contract';
+import { notBuiltFacts, notBuiltFeed } from '@/main/modules/not-built';
+import type { FeedView } from '@/shared/feed';
+import type { SettingsFacts } from '@/shared/settings-facts';
 import { POLL } from '@/timing/config';
 import type { ChainTargetView, EpoStatus, PruneStatus } from '@/types';
 
@@ -36,12 +39,26 @@ export interface ProjectionSource {
   status(): EpoStatus;
   pruneStatus(): PruneStatus;
   chainList(): ChainTargetView[];
+  /** The store-derived Settings facts (the settings core shapes them). */
+  settingsFacts(): SettingsFacts;
+  /** The live feed (the live-data stream shapes it). */
+  feed(): FeedView;
+  /** The earliest instant a shown verdict changes with no mutation; null when none. */
+  expiresAt?(): number | null;
 }
+
+/** The two sources whose shapers land with their owning streams: honest not-built shapes until then. */
+export const UNWIRED_SOURCES: Pick<ProjectionSource, 'settingsFacts' | 'feed'> = {
+  settingsFacts: () => notBuiltFacts('loading'),
+  feed: () => notBuiltFeed(Date.now()),
+};
 
 /** One row of the registry: a push channel and how to shape its payload. */
 export interface Projection<C extends PushMethod> {
   readonly channel: C;
   shape(source: ProjectionSource): PushContract[C];
+  /** Push only when the shaped payload's JSON differs from this row's last push. */
+  readonly dedupe?: boolean;
 }
 
 /**
@@ -66,6 +83,8 @@ export const PROJECTIONS = [
   { channel: 'status', shape: (s) => s.status() },
   { channel: 'pruneStatus', shape: (s) => s.pruneStatus() },
   { channel: 'chainList', shape: (s) => s.chainList() },
+  { channel: 'settingsFacts', shape: (s) => s.settingsFacts() },
+  { channel: 'feed', shape: (s) => s.feed(), dedupe: true },
 ] as const satisfies readonly AnyProjection[];
 
 /** The one store surface the registry subscribes to. */
@@ -94,6 +113,8 @@ export class Projections {
   private unsub: (() => void) | null = null;
   private source: ProjectionSource | null = null;
   private stopped = false;
+  /** The last pushed JSON of each deduplicated row. */
+  private readonly lastPushed = new Map<PushMethod, string>();
 
   constructor(deps: ProjectionsDeps = {}) {
     this.push = deps.push;
@@ -119,7 +140,13 @@ export class Projections {
     const source = this.source;
     if (source === null || this.stopped) return;
     for (const projection of PROJECTIONS) {
-      this.push?.(projection.channel, projection.shape(source));
+      const payload = projection.shape(source);
+      if ('dedupe' in projection && projection.dedupe) {
+        const json = JSON.stringify(payload);
+        if (this.lastPushed.get(projection.channel) === json) continue;
+        this.lastPushed.set(projection.channel, json);
+      }
+      this.push?.(projection.channel, payload);
     }
   }
 
@@ -153,6 +180,7 @@ export class Projections {
   unbind(): void {
     this.unsub?.();
     this.unsub = null;
+    this.lastPushed.clear();
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;

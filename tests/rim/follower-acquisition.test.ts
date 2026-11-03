@@ -5,15 +5,16 @@ import { ACQUISITION_DEFAULTS, AdapterBackedAcquisition } from '@/rim/follower-a
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeActor, FakeSentinel, FakeTab, followersBody, followersUrl, mkResp } from '../kit/fakes';
+import { openTestStore } from '../kit/store';
 
 const reader = new Reader();
 const clock = new FakeClock(2_000_000);
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 

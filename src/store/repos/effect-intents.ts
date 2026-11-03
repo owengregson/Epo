@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SqliteDriver } from '../driver/driver';
-import type { EffectChannel, EffectIntent, EffectSettlement, MutationAction } from '../types';
+import type { EffectChannel, EffectIntent, EffectSettlement, MutationAction, MutationTally } from '../types';
 import type { FollowRecordRepo } from './follow-records';
 import type { LedgerRepo } from './ledgers';
 import type { RelationshipRepo } from './relationships';
@@ -16,13 +16,29 @@ interface IntentRow {
   dispatched_at: number | null;
   settled_at: number | null;
   result: EffectIntent['result'];
+  attempts: number;
+  next_attempt_at: number | null;
 }
 
 const decode = (r: IntentRow): EffectIntent => ({
   id: r.id, accountPk: r.account_pk, username: r.username, action: r.action,
   channel: r.channel, state: r.state, createdAt: r.created_at,
   dispatchedAt: r.dispatched_at, settledAt: r.settled_at, result: r.result,
+  attempts: r.attempts, nextAttemptAt: r.next_attempt_at,
 });
+
+/** The rate governor's write union: one row per write at or after `@since`. */
+const UNION_SINCE = `
+  SELECT at, action AS kind, 0 AS manual FROM action_ledger WHERE at >= @since
+  UNION ALL SELECT at, 'unfollow', 0 FROM prune_ledger WHERE at >= @since AND result IN ('ok','fail')
+  UNION ALL SELECT COALESCE(dispatched_at, created_at), action, channel = 'manual' FROM effect_intents
+    WHERE state IN ('dispatched','uncertain') AND COALESCE(dispatched_at, created_at) >= @since
+  UNION ALL SELECT dispatched_at, action, channel = 'manual' FROM effect_intents
+    WHERE state = 'settled' AND result IN ('external','cancelled','expired') AND dispatched_at IS NOT NULL
+      AND dispatched_at >= @since AND COALESCE(ledger, 'none') = 'none'
+  UNION ALL SELECT settled_at, action, channel = 'manual' FROM effect_intents
+    WHERE state = 'settled' AND action = 'accept-request' AND result IN ('ok','fail')
+      AND COALESCE(ledger, 'none') = 'none' AND settled_at >= @since`;
 
 /** Write-ahead effects survive an acknowledgement loss. Settlement is idempotent. */
 export class EffectIntentRepo {
@@ -97,16 +113,52 @@ export class EffectIntentRepo {
   additionalCountSince(since: number): number {
     return (this.db.prepare(`SELECT COUNT(*) AS n FROM effect_intents WHERE
       (state IN ('dispatched','uncertain') AND COALESCE(dispatched_at, created_at) >= ?)
-      OR (state = 'settled' AND result IN ('external','cancelled')
+      OR (state = 'settled' AND result IN ('external','cancelled','expired')
           AND dispatched_at IS NOT NULL AND dispatched_at >= ? AND COALESCE(ledger, 'none') = 'none')
       OR (state = 'settled' AND action = 'accept-request' AND result IN ('ok','fail')
           AND COALESCE(ledger, 'none') = 'none' AND settled_at >= ?)`)
       .get<{ n: number }>(since, since, since) as { n: number }).n;
   }
 
+  /**
+   * The account's write budget since `since`, by kind: the growth ledger, real
+   * prune rows and the intents {@link additionalCountSince} counts (the rate
+   * governor's union). `manual` counts the writes a manual intent made.
+   */
+  tallySince(since: number): MutationTally {
+    const t: MutationTally = { all: 0, auto: 0, manual: 0, follow: 0, unfollow: 0, accept: 0 };
+    for (const r of this.unionSince(since)) {
+      t.all += 1;
+      t.manual += r.manual;
+      if (r.kind === 'accept-request') t.accept += 1;
+      else if (r.kind === 'follow') t.follow += 1;
+      else t.unfollow += 1;
+    }
+    // A manual write that reached a ledger is counted there, by the row settled with it.
+    t.manual += (this.db.prepare(`SELECT COUNT(*) AS n FROM effect_intents
+      WHERE channel = 'manual' AND state = 'settled' AND result IN ('ok','fail')
+        AND COALESCE(ledger, 'none') <> 'none' AND settled_at >= ?`).get<{ n: number }>(since) as { n: number }).n;
+    t.auto = t.all - t.manual;
+    return t;
+  }
+
+  /** When each write in {@link tallySince}'s union happened, oldest first. */
+  mutationTimesSince(since: number): number[] {
+    return this.unionSince(since).map((r) => r.at);
+  }
+
+  /** Whether the union holds any write at all, however old: an install with a ledger. */
+  hasAnyMutation(): boolean {
+    return this.db.prepare(`SELECT EXISTS(${UNION_SINCE}) AS hit`).get<{ hit: number }>({ since: 0 })?.hit === 1;
+  }
+
+  private unionSince(since: number): Array<{ at: number; kind: string; manual: number }> {
+    return this.db.prepare(`${UNION_SINCE} ORDER BY 1`).all<{ at: number; kind: string; manual: number }>({ since });
+  }
+
   /** Terminal intent detail is operational history; unresolved intent and outcome ledgers are durable. */
-  pruneSettled(now: number): void {
-    const cutoff = now - 90 * 24 * 60 * 60 * 1000;
+  pruneSettled(now: number, retentionMs: number): void {
+    const cutoff = now - retentionMs;
     this.db.prepare(`DELETE FROM effect_intents WHERE state = 'settled' AND settled_at < ?
       AND (dispatched_at IS NULL OR dispatched_at < ?)`).run(cutoff, cutoff);
   }

@@ -12,6 +12,7 @@ import {
   RelationshipReconciler,
 } from '@/rim/relationship-reconciler';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { WiringParts } from './graph-types';
 
 /** The readers one graph shares, and the disposers of the two passive taps. */
 export interface SurfaceWiring {
@@ -49,4 +50,9 @@ export function wireSurface(d: {
   const profileObserver = new ProfileObserver({ tab: d.tab, reader, store, clock });
   const profileInfoUnsub = profileObserver.start();
   return { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub };
+}
+
+/** The surface wiring's startup steps and status contributors (the parse-health stream fills them). */
+export function surfaceWiringParts(): WiringParts {
+  return { startupSteps: [], statusContributors: [] };
 }

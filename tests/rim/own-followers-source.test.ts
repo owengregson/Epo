@@ -4,7 +4,7 @@ import { FakeClock } from '@/governors/clock';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
 import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { TabResponse } from '@/types';
 import { setLevel } from '@/utils/logger';
 import {
@@ -15,6 +15,7 @@ import {
   followersUrl,
   mkResp,
 } from '../kit/fakes';
+import { openTestStore } from '../kit/store';
 
 beforeAll(() => setLevel('error'));
 
@@ -23,7 +24,7 @@ const clock = new FakeClock(2_000_000);
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 

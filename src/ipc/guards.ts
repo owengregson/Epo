@@ -28,6 +28,9 @@
 
 import { z } from 'zod';
 import type { BridgeMethod, Req } from '@/ipc/contract';
+import { LIVE_GUARDS } from '@/ipc/guards-live';
+import { PLAN_GUARDS } from '@/ipc/guards-plan';
+import { SETTINGS_GUARDS } from '@/ipc/guards-settings';
 import { SETTINGS_KEYS } from '@/settings/settings';
 import { FOLLOW_STATES } from '@/store/types';
 import type { Settings } from '@/types';
@@ -78,8 +81,12 @@ const SETTINGS_PATCH = z.custom<Partial<Settings>>(
  */
 export const GUARDS = {
   restartFromSeed: [SEED],
+  checkSeed: [SEED],
   queueList: [FOLLOW_STATE],
   chainDetail: [PK],
+  ...SETTINGS_GUARDS,
+  ...PLAN_GUARDS,
+  ...LIVE_GUARDS,
   // Last, deliberately: the widest payload, and the one whose over-strictness
   // would silently cost a user a saved setting (see ADR 1009's risk note).
   updateSettings: [SETTINGS_PATCH],

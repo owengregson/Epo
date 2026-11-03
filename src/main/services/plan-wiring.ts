@@ -13,7 +13,7 @@ import { samplePhaseOffset } from '@/timing/circadian';
 import { CIRCADIAN } from '@/timing/config';
 import { type PlannerSnapshot, SessionPlanner } from '@/timing/session-planner';
 import * as logger from '@/utils/logger';
-import type { GraphBuildDeps } from './graph-types';
+import type { GraphBuildDeps, WiringParts } from './graph-types';
 
 /** The durable read budget; its limits re-derive from the live settings on every read. */
 export function wireReadBudget(
@@ -53,4 +53,9 @@ export function wirePacing(store: KnowledgeStore, settings: Settings): SessionPl
         })
       : undefined;
   return pacing;
+}
+
+/** The plan wiring's startup steps and status contributors (the plan streams fill them). */
+export function planWiringParts(): WiringParts {
+  return { startupSteps: [], statusContributors: [] };
 }

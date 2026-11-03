@@ -12,12 +12,9 @@ import {
   transportSignal,
 } from '@/renderer/app/shell-context';
 import { Ticker } from '@/renderer/app/Ticker';
-import {
-  GALLERY_LOG,
-  GALLERY_SETTINGS,
-  SCENARIOS,
-  type Scenario,
-} from '@/renderer/gallery/fixtures';
+import { SCENARIOS as BASE_SCENARIOS, GALLERY_LOG, GALLERY_SETTINGS, type Scenario } from '@/renderer/gallery/fixtures';
+import { LIVE_SCENARIOS } from '@/renderer/gallery/fixtures-live';
+import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
 import { installGalleryBridge } from '@/renderer/gallery/gallery-bridge';
 import type { ViewKey } from '@/renderer/hooks/useView';
 import { staggerCards } from '@/renderer/lib/stagger';
@@ -37,6 +34,9 @@ const SURFACES = [
 ] as const;
 
 type SurfaceKey = (typeof SURFACES)[number]['key'];
+
+/** Every story: the console's, then the live column's, then the compatibility surfaces'. */
+const SCENARIOS: Scenario[] = [...BASE_SCENARIOS, ...LIVE_SCENARIOS, ...SURFACE_SCENARIOS];
 
 /** Publish one scenario onto the shell's signals — this IS mounting a story. */
 function applyScenario(s: Scenario): void {

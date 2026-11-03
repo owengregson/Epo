@@ -19,6 +19,8 @@ export function useKeepAlivePoll<T>(opts: {
   pull: () => Promise<T>;
   /** Where the projection is published. */
   sink: Signal<T | null>;
+  /** A failed pull (the mount pull or a keep-alive pull); without it a failure waits for the next push. */
+  onError?: (error: unknown) => void;
 }): void {
   const lastUpdateAt = useRef(0);
   // Pin the first render's opts: the effect runs once, and the callers' inline
@@ -27,7 +29,10 @@ export function useKeepAlivePoll<T>(opts: {
 
   useEffect(() => {
     let alive = true;
-    const { subscribe, pull, sink } = optsRef.current;
+    const { subscribe, pull, sink, onError } = optsRef.current;
+    const failed = (error: unknown): void => {
+      if (alive) onError?.(error);
+    };
     const apply = (v: T): void => {
       if (!alive) return;
       lastUpdateAt.current = Date.now();
@@ -35,16 +40,10 @@ export function useKeepAlivePoll<T>(opts: {
     };
     const unsubscribe = subscribe(apply);
     // One pull on mount so the first paint reflects real state.
-    pull()
-      .then(apply)
-      .catch(() => {
-        // best-effort; a push or the keep-alive will fill this in
-      });
+    pull().then(apply).catch(failed);
     const keepalive = window.setInterval(() => {
       if (Date.now() - lastUpdateAt.current < POLL.KEEPALIVE_MS) return;
-      pull()
-        .then(apply)
-        .catch(() => {});
+      pull().then(apply).catch(failed);
     }, POLL.KEEPALIVE_MS);
     return () => {
       alive = false;

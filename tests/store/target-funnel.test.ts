@@ -46,6 +46,7 @@ describe('targetFunnel', () => {
       unfollowed: 0,
       abandoned: 1,
       external: 1,
+      kept: 0,
     });
   });
 
@@ -99,6 +100,7 @@ describe('targetFunnel', () => {
         unfollowed: 0,
         abandoned: 0,
         external: 0,
+        kept: 0,
       },
       observed: 0,
       candidates: 0,

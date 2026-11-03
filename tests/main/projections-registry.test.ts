@@ -6,16 +6,19 @@
  * Foundation and asserts the chain projection ticks during a simulated walk).
  * What this suite pins is the STRUCTURE that made it one mechanism instead of
  * five: exactly one `onMutation` subscription, one trailing throttle, and all
- * three projections coming off it.
+ * five projections coming off it (the feed row deduplicated).
  */
 
 import type { PushMethod } from '@/ipc/contract';
-import { PROJECTIONS, type ProjectionSource, Projections } from '@/main/modules/projections';
+import { notBuiltFacts, notBuiltFeed } from '@/main/modules/not-built';
+import { PROJECTIONS, type ProjectionSource, Projections, UNWIRED_SOURCES } from '@/main/modules/projections';
 import type { ChainTargetView, EpoStatus, PruneStatus } from '@/types';
 
 const STATUS = { state: 'idle', queued: 3 } as unknown as EpoStatus;
 const PRUNE = { state: 'idle', candidates: 9 } as unknown as PruneStatus;
 const CHAIN: ChainTargetView[] = [{ accountPk: '7' } as unknown as ChainTargetView];
+const FACTS = notBuiltFacts('loading');
+const FEED = notBuiltFeed(1);
 
 function fakeStore() {
   const listeners: (() => void)[] = [];
@@ -40,11 +43,14 @@ const source: ProjectionSource = {
   status: () => STATUS,
   pruneStatus: () => PRUNE,
   chainList: () => CHAIN,
+  settingsFacts: () => FACTS,
+  feed: () => FEED,
 };
+const ALL: PushMethod[] = ['status', 'pruneStatus', 'chainList', 'settingsFacts', 'feed'];
 
 test('the table names every store-derived push channel exactly once', () => {
   const channels = PROJECTIONS.map((p) => p.channel);
-  expect(channels).toEqual(['status', 'pruneStatus', 'chainList']);
+  expect(channels).toEqual(ALL);
   expect(new Set(channels).size).toBe(channels.length);
   // `log` and `updateStatus` derive from nothing in the graph, so they must NOT
   // ride a store-mutation push.
@@ -52,7 +58,7 @@ test('the table names every store-derived push channel exactly once', () => {
   expect(channels).not.toContain('updateStatus' as PushMethod);
 });
 
-test('one subscription pushes all three projections, coalesced on a trailing edge', async () => {
+test('one subscription pushes every projection, coalesced on a trailing edge; the feed only when it changed', async () => {
   const pushed: [PushMethod, unknown][] = [];
   const store = fakeStore();
   const projections = new Projections({
@@ -61,13 +67,13 @@ test('one subscription pushes all three projections, coalesced on a trailing edg
   });
 
   projections.bind(store, source);
-  // Exactly one subscription for all three projections — the whole point.
+  // Exactly one subscription for every projection — the whole point.
   expect(store.subscriptions()).toBe(1);
   // The opening push: the renderer must not wait for a first mutation.
-  expect(pushed.map(([c]) => c)).toEqual(['status', 'pruneStatus', 'chainList']);
+  expect(pushed.map(([c]) => c)).toEqual(ALL);
   pushed.length = 0;
 
-  // A burst of writes coalesces into ONE round of three pushes.
+  // A burst of writes coalesces into ONE round; the unchanged feed is not re-sent.
   store.fire();
   store.fire();
   store.fire();
@@ -77,6 +83,7 @@ test('one subscription pushes all three projections, coalesced on a trailing edg
     ['status', STATUS],
     ['pruneStatus', PRUNE],
     ['chainList', CHAIN],
+    ['settingsFacts', FACTS],
   ]);
 
   projections.dispose();
@@ -124,6 +131,12 @@ test('rebinding to a second graph leaves exactly one live subscription', async (
 
   second.fire();
   await new Promise((r) => setTimeout(r, 25));
-  expect(pushed).toEqual(['status', 'pruneStatus', 'chainList']);
+  // The feed went out in the new graph's opening push and has not changed since.
+  expect(pushed).toEqual(['status', 'pruneStatus', 'chainList', 'settingsFacts']);
   projections.dispose();
+});
+
+test('until their streams land, the facts and feed rows serve honest not-built shapes', () => {
+  expect(UNWIRED_SOURCES.settingsFacts()).toMatchObject({ built: false, protection: null, cleanup: null });
+  expect(UNWIRED_SOURCES.feed()).toMatchObject({ items: [], awayFrom: null });
 });

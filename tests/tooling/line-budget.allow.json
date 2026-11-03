@@ -3,7 +3,7 @@
   "allow": [
     {
       "file": "src/main/foundation-wiring.ts",
-      "lines": 1436
+      "lines": 1435
     },
     {
       "file": "src/engine/prune-engine.ts",
@@ -27,7 +27,7 @@
     },
     {
       "file": "src/livetest/steps.ts",
-      "lines": 731
+      "lines": 727
     },
     {
       "file": "src/adapter/tab.ts",
@@ -59,7 +59,7 @@
     },
     {
       "file": "src/main/services/graph-builder.ts",
-      "lines": 372
+      "lines": 367
     },
     {
       "file": "src/rim/followers-page-reader.ts",

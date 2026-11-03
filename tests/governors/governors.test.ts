@@ -1,13 +1,14 @@
 import { FakeClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { cyclePlan } from '@/timing/cycle-plan';
+import { openTestStore } from '../kit/store';
 
 const cfg = { dailyHardCeiling: 50, dailyOperatingRate: 25, minDelayMs: 1000, maxDelayMs: 2000,
   jitterPercent: 0, activeHoursStart: 0, activeHoursEnd: 24 };
 
 test('the day plan decrements with recorded actions', () => {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
   const g = new RateGovernor(store, clock, cfg);
   const plan = g.plannedToday();
@@ -19,7 +20,7 @@ test('the day plan decrements with recorded actions', () => {
 
 describe('per-cycle plan (fluctuates just under the operating rate)', () => {
   test('plannedToday is the cyclePlan draw under the operating rate', () => {
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
     const g = new RateGovernor(store, clock, cfg);
     expect(g.plannedToday()).toBe(cyclePlan(cfg.dailyOperatingRate, g.cycleStartMs()));
@@ -28,7 +29,7 @@ describe('per-cycle plan (fluctuates just under the operating rate)', () => {
   });
 
   test('atOperatingRate trips at the plan, before the configured rate', () => {
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
     const g = new RateGovernor(store, clock, cfg);
     const plan = g.plannedToday();
@@ -41,7 +42,7 @@ describe('per-cycle plan (fluctuates just under the operating rate)', () => {
   });
 
   test('the hard ceiling is untouched by the plan', () => {
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
     const g = new RateGovernor(store, clock, cfg);
     for (let i = 0; i < cfg.dailyHardCeiling - 1; i++)
@@ -54,7 +55,7 @@ describe('per-cycle plan (fluctuates just under the operating rate)', () => {
 });
 
 test('actionsInLastHour counts both ledgers within the trailing hour only', () => {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
   const g = new RateGovernor(store, clock, cfg);
   const now = clock.now();
@@ -66,7 +67,7 @@ test('actionsInLastHour counts both ledgers within the trailing hour only', () =
 });
 
 test('hard ceiling blocks past 50 regardless of operating rate', () => {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   const clock = new FakeClock(Date.parse('2026-08-12T12:00:00'));
   const g = new RateGovernor(store, clock, cfg);
   for (let i = 0; i < 50; i++) store.recordAction(String(i), 'follow', 'ok', clock.now());
@@ -78,7 +79,7 @@ describe('withinActiveHours', () => {
   const at = (hour: number): FakeClock =>
     new FakeClock(Date.parse(`2026-08-12T${String(hour).padStart(2, '0')}:00:00`));
   const withWindow = (start: number, end: number, clock: FakeClock): RateGovernor =>
-    new RateGovernor(new KnowledgeStore(':memory:'), clock, {
+    new RateGovernor(openTestStore(':memory:'), clock, {
       ...cfg,
       activeHoursStart: start,
       activeHoursEnd: end,
@@ -112,7 +113,7 @@ describe('active-hours cycle counting (actions reset when the window opens)', ()
     new RateGovernor(store, clock, { ...cfg, activeHoursStart: start, activeHoursEnd: end });
 
   test('actions before the current cycle start do not count (normal 9→17 window)', () => {
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     const clock = at('2026-08-15T12:00:00');
     // 08:00 today — BEFORE the window opened; belongs to the previous cycle.
     store.recordAction('a', 'follow', 'ok', Date.parse('2026-08-15T08:00:00'));
@@ -123,7 +124,7 @@ describe('active-hours cycle counting (actions reset when the window opens)', ()
   });
 
   test("an overnight window's post-midnight tail stays in YESTERDAY's cycle (11→3)", () => {
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     // Prune work at 00:30 — after midnight but inside the cycle that opened
     // yesterday 11:00. At 02:00 it still counts...
     store.recordPruneAction('p1', 'ok', Date.parse('2026-08-15T00:30:00'));
@@ -135,7 +136,7 @@ describe('active-hours cycle counting (actions reset when the window opens)', ()
   });
 
   test('a degenerate start === end window falls back to local midnight', () => {
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     store.recordAction('a', 'follow', 'ok', Date.parse('2026-08-14T23:00:00'));
     store.recordAction('b', 'follow', 'ok', Date.parse('2026-08-15T01:00:00'));
     expect(govern(8, 8, at('2026-08-15T02:00:00'), store).actionsToday()).toBe(1);
@@ -143,7 +144,7 @@ describe('active-hours cycle counting (actions reset when the window opens)', ()
   });
 
   test('msUntilCycleReset points at the NEXT window opening', () => {
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     // 22:22 with an 11→3 window: the counter resets tomorrow 11:00.
     const now = Date.parse('2026-08-15T22:22:00');
     const g = govern(11, 3, new FakeClock(now), store);
@@ -153,7 +154,7 @@ describe('active-hours cycle counting (actions reset when the window opens)', ()
 });
 
 test('delay respects bounds with jitter off', () => {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   const g = new RateGovernor(store, new FakeClock(0), cfg);
   const d = g.nextDelayMs(() => 0.5);
   expect(d).toBe(1500);
@@ -161,7 +162,7 @@ test('delay respects bounds with jitter off', () => {
 });
 
 test('equal positive action delays still vary and never undercut the configured interval', () => {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   const g = new RateGovernor(store, new FakeClock(0), { ...cfg, minDelayMs: 60_000, maxDelayMs: 60_000 });
   expect([0, 0.5, 1].map((draw) => g.nextDelayMs(() => draw))).toEqual([60_000, 73_500, 87_000]);
   store.close();

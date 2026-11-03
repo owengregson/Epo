@@ -22,7 +22,6 @@ import {
   type PruneStatus,
 } from '@/engine/prune-engine';
 import { FakeClock } from '@/governors/clock';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { NOISE } from '@/timing/config';
 import { cyclePlan } from '@/timing/cycle-plan';
 import {
@@ -35,6 +34,7 @@ import {
   OWN_PK,
   T0,
 } from '../kit/engine-harness';
+import { openTestStore } from '../kit/store';
 
 // --- scan() ------------------------------------------------------------------------
 
@@ -161,7 +161,7 @@ describe('PruneEngine.scan', () => {
   });
 
   test('scan surfaces LIVE mid-scrape counts, throttled to one emission per PRUNE_PROGRESS_EMIT_MS', async () => {
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     store.setOwnPk(OWN_PK);
     const clock = new FakeClock(T0);
     const statuses: PruneStatus[] = [];
@@ -240,7 +240,7 @@ describe('PruneEngine.scan', () => {
       },
     };
     const followers = new FakeListSource(['9']);
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     store.setOwnPk(OWN_PK);
     const engine = new PruneEngine({
       store,
@@ -531,7 +531,7 @@ describe('PruneEngine.run', () => {
       },
     };
     const followers = new FakeListSource([]);
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     store.setOwnPk(OWN_PK);
     const churn = new FakePruneActions();
     const engine = new PruneEngine({
@@ -561,7 +561,7 @@ describe('PruneEngine.run', () => {
   test('a candidate without a known username is skipped with a typed warn (no unfollow, no ledger)', async () => {
     // Built by hand (not via the harness) so the store genuinely lacks an
     // account row — and hence a username — for the candidate pk.
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     store.setOwnPk(OWN_PK);
     const churn = new FakePruneActions();
     const engine = new PruneEngine({

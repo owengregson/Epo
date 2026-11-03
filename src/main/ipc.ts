@@ -11,6 +11,12 @@
 import type { InstagramTab } from '@/adapter/tab';
 import { type IpcFallbacks, type IpcHandlers, registerIpc } from '@/ipc/register';
 import type { Foundation } from '@/main/foundation-wiring';
+import { bootFallbacks, bootHandlers } from '@/main/ipc-boot';
+import { liveFallbacks, liveHandlers } from '@/main/ipc-live';
+import { planFallbacks, planHandlers } from '@/main/ipc-plan';
+import { settingsFallbacks, settingsHandlers } from '@/main/ipc-settings';
+import { surfaceFallbacks, surfaceHandlers } from '@/main/ipc-surface';
+import { isStageMode } from '@/shared/stage-mode';
 import type { EpoStatus, StageMode, UpdateStatus } from '@/types';
 import * as logger from '@/utils/logger';
 
@@ -41,7 +47,8 @@ export interface IpcContext {
 
 /** Register every contract channel; returns the disposer for window teardown. */
 export function registerEpoIpc(ctx: IpcContext): () => void {
-  const { tab, foundation, updater, setStage } = ctx;
+  const { foundation, updater, setStage } = ctx;
+  const currentUpdate = () => updater.current();
 
   const handlers: IpcHandlers = {
     // --- Manual live-gate ops ------------------------------------------------
@@ -82,7 +89,9 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
       logger.info('prune:scan');
       return foundation.scanPrune();
     },
-    pruneCandidates: () => foundation.pruneCandidates(),
+    // Annotated by protection once the unfollow-decisions stream wires it; the base fields are today's.
+    pruneCandidates: async () =>
+      (await foundation.pruneCandidates()).map((c) => ({ ...c, protectedBy: null, bioUnread: false })),
     startPrune: () => {
       logger.info('prune:start');
       return foundation.startPrune();
@@ -101,38 +110,22 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     },
     pruneStatus: () => foundation.pruneStatus(),
 
-    // --- Read-only list projections + settings -------------------------------
+    // --- Read-only list projections ------------------------------------------
     chainList: () => foundation.chainList(),
     chainDetail: (targetPk) => foundation.chainDetail(targetPk),
     growthSeries: (days) => foundation.growthSeries(days),
-    checkSeed: (username) => foundation.checkSeed(username),
     queueList: (state) => foundation.queueList(state),
-    getSettings: () => foundation.getSettings(),
-    updateSettings: (partial) => {
-      logger.info('settings:update');
-      return foundation.updateSettings(partial);
-    },
-    resetSettings: () => {
-      logger.info('settings:reset');
-      return foundation.resetSettings();
-    },
     clearData: () => {
       logger.info('data:clear');
       return foundation.clearData();
     },
 
-    // --- Tab visibility / stage ----------------------------------------------
-    showTab: () => {
-      tab.show();
-    },
-    hideTab: () => {
-      tab.hide();
-    },
+    // --- Stage ----------------------------------------------------------------
     graphSnapshot: () => foundation.graphSnapshot(),
-    // Renderer input is unvalidated at the boundary: only the three known modes
-    // move the stage.
+    // Renderer input is unvalidated at the boundary: only a known stage moves.
     setStage: (mode: unknown, covered: unknown) => {
-      if (mode === 'tab' || mode === 'graph' || mode === 'prune') setStage(mode, covered === true);
+      if (isStageMode(mode)) setStage(mode, covered === true);
+      else logger.warn('stage: unknown mode refused', { mode: String(mode) });
     },
     // Park/unpark the app while the renderer's tour is on screen (see
     // Foundation.setTourHold). Main engages the hold itself at launch when the
@@ -145,19 +138,17 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     checkForUpdate: () => updater.check(),
     installUpdate: () => updater.install(),
     openLatestRelease: () => updater.openLatest(),
+    ...settingsHandlers(foundation),
+    ...planHandlers(),
+    ...liveHandlers(currentUpdate),
+    ...bootHandlers(),
+    ...surfaceHandlers(),
   };
 
   // A refused/failed control still owes the renderer a real status: the
   // status-shaped fallbacks re-read the projection rather than fabricating one.
   const status = (): Promise<EpoStatus> => foundation.status();
   const pruneStatus = () => foundation.pruneStatus();
-  const seedFailure = {
-    ok: false,
-    exists: false,
-    followersVisible: false,
-    isPrivate: false,
-    reason: 'error',
-  } as const;
 
   const fallbacks: IpcFallbacks = {
     login: status,
@@ -181,20 +172,19 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     chainList: () => [],
     chainDetail: () => null,
     growthSeries: () => ({ points: [], baselineAt: null }),
-    checkSeed: () => ({ ...seedFailure }),
     queueList: () => ({ rows: [], truncated: false }),
-    getSettings: () => foundation.getSettings(),
-    updateSettings: () => foundation.getSettings(),
-    resetSettings: () => foundation.getSettings(),
     clearData: status,
-    showTab: () => undefined,
-    hideTab: () => undefined,
     graphSnapshot: () => null,
     setStage: () => undefined,
     setTourHold: () => undefined,
     checkForUpdate: () => updater.current(),
     installUpdate: () => updater.current(),
     openLatestRelease: () => undefined,
+    ...settingsFallbacks(foundation),
+    ...planFallbacks(),
+    ...liveFallbacks(currentUpdate),
+    ...bootFallbacks(),
+    ...surfaceFallbacks(),
   };
 
   return registerIpc(handlers, fallbacks);

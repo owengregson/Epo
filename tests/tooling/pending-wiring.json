@@ -1,0 +1,39 @@
+{
+  "pending": [
+    {
+      "module": "src/shared/posture.ts",
+      "stream": "BL",
+      "reason": "the stage controller derives the window title and Dock badge from the posture; SB's live column follows"
+    },
+    {
+      "module": "src/settings/doc-rules.ts",
+      "stream": "SC",
+      "reason": "the settings service coerces epo-settings-v2.json through these rules when it reads the document"
+    },
+    {
+      "module": "src/settings/migrate-v1.ts",
+      "stream": "SC",
+      "reason": "the settings service runs the v1 migration at construction, with the kernel-derived basis"
+    },
+    {
+      "module": "src/renderer/settings/SettingsStage.tsx",
+      "stream": "SU",
+      "reason": "the Settings stage replaces its body and the stage host mounts it"
+    },
+    {
+      "module": "src/renderer/copy/boost.ts",
+      "stream": "SB",
+      "reason": "the sidebar's one Boost control and the Settings Boost section read this copy deck"
+    },
+    {
+      "module": "src/surface/sink.ts",
+      "stream": "PH",
+      "reason": "surface-wiring.ts swaps the production sink in for NO_SINK and the read pipeline reports to it"
+    },
+    {
+      "module": "src/governors/plan-day-clock.ts",
+      "stream": "PR",
+      "reason": "plan-wiring.ts, the one swap site, hands the plan-day clock to every day-keyed consumer (UD, RO, PH, LD); the first of them to merge wires this default and removes the entry"
+    }
+  ]
+}

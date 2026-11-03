@@ -12,9 +12,13 @@
  */
 export type UpdateMode = 'full' | 'notify' | 'off';
 
-/** The updater's live state, pushed to the renderer as it changes. */
+/**
+ * The updater's live state, pushed to the renderer as it changes. `unchecked`:
+ * no check has run yet; `unavailable`: no release feed (or offline), so no claim
+ * about being up to date can be made.
+ */
 export interface UpdateStatus {
-  state: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error';
+  state: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error' | 'unchecked' | 'unavailable';
   mode: UpdateMode;
   /** The running app's version (always present — the Updates card shows it). */
   current: string;
@@ -24,4 +28,6 @@ export interface UpdateStatus {
   percent: number | null;
   /** Human-readable failure, only when state === 'error'. */
   error: string | null;
+  /** When the last check finished (epoch ms); absent or null before the first. */
+  checkedAt?: number | null;
 }

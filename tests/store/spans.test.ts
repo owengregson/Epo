@@ -7,7 +7,7 @@
 
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { SpanSink } from '@/store/spans';
-import { memoryStore } from '../kit/store';
+import { memoryStore, TEST_STORE_POLICY } from '../kit/store';
 import { driverOf, fakeClock, seededRng } from '../kit/store-driver';
 
 const clock = fakeClock(1_700_000_000_000);
@@ -130,7 +130,9 @@ test('the ring is bounded: the oldest rows go, the newest stay', () => {
   const store = memoryStore({ now: clock.now, rng: seededRng(3) });
   try {
     // A tiny ring proves the same rule the 50k default does.
-    const small = new SpanSink(driverOf(store), { now: clock.now, rng: seededRng(3), retain: 10 });
+    const small = new SpanSink(driverOf(store), {
+      now: clock.now, rng: seededRng(3), policy: { ...TEST_STORE_POLICY.spans, ringRows: 10 },
+    });
     for (let i = 0; i < 25; i++) {
       small.open(`s${i}`);
       clock.advance(1);

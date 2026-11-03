@@ -1,7 +1,6 @@
 /**
- * Shared cross-cutting types for Epo v3.
- * This module is the single source of truth for the IPC contract between the
- * main process and the renderer, plus the network-observation shape that the
+ * Shared cross-cutting types for Epo v3. This module is the single source of truth for the IPC
+ * contract between the main process and the renderer, plus the network-observation shape that the
  * embedded Instagram tab emits and the Adapter Reader (Task 7) consumes.
  *
  * It is imported by both the main process and the (browser) renderer, so it
@@ -14,6 +13,7 @@ import type { BridgeInvokers, PushContract, PushMethod } from '@/ipc/contract';
 import type { Settings } from '@/settings/v1/settings-v1-types';
 import type { LogEntry, LogLevel } from '@/shared/log-entry';
 import type { StageMode } from '@/shared/stage-mode';
+import type { StatusFields } from '@/shared/status-fields';
 import type { ResponseHandler, TabResponse, Unsubscribe } from '@/shared/tab-response';
 import type { UpdateMode, UpdateStatus } from '@/shared/update-status';
 import type { FollowState, Target } from '@/store/types';
@@ -70,11 +70,11 @@ export interface ActionResult {
 
 /**
  * The full status snapshot the main process emits to (and serves) the renderer:
- * the Engine's own projection (§5) plus the login flag the header needs. Before
- * the dependency graph is built (pre-login) the Engine fields carry their idle
- * defaults and `loggedIn` is false.
+ * the Engine's own projection (§5), the composed {@link StatusFields} and the login
+ * flag. Before the graph is built the Engine fields carry their idle defaults,
+ * `basis` is 'not-built' and `loggedIn` is false.
  */
-export interface EpoStatus extends EngineStatus {
+export interface EpoStatus extends EngineStatus, StatusFields {
   runtime?: import('./runtime-status').RuntimeStatus;
   /** True once the persisted IG session has a `ds_user_id` cookie. */
   loggedIn: boolean;
@@ -199,9 +199,9 @@ export interface GrowthSeriesRead {
 
 /**
  * Every status a graph node can carry, in legend order. A node's `statuses`
- * entry indexes into this tuple. The first seven mirror the churn lifecycle
- * (`FollowState`); the last three describe relationship-only nodes that have
- * no follow record (organic followers, manual follows, and both at once).
+ * entry indexes into this tuple. The first seven and `kept` mirror the churn
+ * lifecycle (`FollowState`); `follows_you`, `you_follow` and `mutual` describe
+ * relationship-only nodes (organic followers, manual follows, and both at once).
  * `waiting` and `held` are the two TIMED statuses — their `progress` runs
  * 0..1 toward the follow-back timeout / the hold release.
  */
@@ -217,6 +217,7 @@ export const GRAPH_NODE_STATUSES = [
   'follows_you',
   'you_follow',
   'mutual',
+  'kept',
 ] as const;
 export type GraphNodeStatus = (typeof GRAPH_NODE_STATUSES)[number];
 
@@ -226,7 +227,7 @@ export interface GraphHub {
   username: string | null;
   kind: 'self' | 'target';
   /** Chain-target lifecycle when `kind` is 'target'; null for the self hub. */
-  targetStatus: 'active' | 'exhausted' | 'retained' | null;
+  targetStatus: 'active' | 'exhausted' | 'retained' | 'retired' | null;
   chainIndex: number | null;
   /** Nodes whose primary cluster is this hub (set by the shaper). */
   memberCount: number;
@@ -264,11 +265,10 @@ export interface GraphSnapshot {
 export type { StageMode };
 
 /**
- * Result of a read-only prune scan (`prune:scan`). `ok: false` carries a typed
- * reason (e.g. `growth-running`, `prune-running`, `not-logged-in`) the UI
- * surfaces; the counts/candidates are then empty. `candidates` is the RAW
- * census (whitelist NOT applied) — the UI derives the visible/actionable list
- * against the live whitelist so edits react without a re-scan.
+ * Result of a read-only prune scan (`prune:scan`). `ok: false` carries a typed reason (e.g.
+ * `growth-running`, `prune-running`, `not-logged-in`) the UI surfaces; the counts/candidates are then
+ * empty. `candidates` is the RAW census (whitelist NOT applied) — the UI derives the visible/actionable
+ * list against the live whitelist so edits react without a re-scan.
  */
 export interface PruneScanResult {
   ok: boolean;

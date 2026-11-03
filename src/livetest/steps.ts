@@ -21,6 +21,7 @@ import { Scanner } from '@/engine/scanner';
 import { type ScorerConfig, scoreCandidate } from '@/engine/scorer';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
+import { STORE_POLICY } from '@/kernel/store-policy';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { ACQUISITION_DEFAULTS, AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
@@ -30,12 +31,7 @@ import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { FollowerAcquisition } from '@/rim/types';
-import {
-  DEFAULT_SETTINGS,
-  toRateGovernorConfig,
-  toScannerConfig,
-  toScorerConfig,
-} from '@/settings/settings';
+import { DEFAULT_SETTINGS, toRateGovernorConfig, toScannerConfig, toScorerConfig } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { HARNESS, SCHEDULER } from '@/timing/config';
 import { sample, sleep, uniform } from '@/timing/primitives';
@@ -446,7 +442,7 @@ export class LiveTestHarness {
         logger.warn('livetest: could not remove temp db file', { file: dbPath + suffix, error: String(e) });
       }
     }
-    const store = new KnowledgeStore(dbPath);
+    const store = new KnowledgeStore(dbPath, { policy: STORE_POLICY });
     const clock = new SystemClock();
 
     // Active hours 0–24 so wall-clock hours never gate; constructed for parity only.

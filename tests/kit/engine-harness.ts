@@ -49,12 +49,13 @@ import { FakeClock } from '@/governors/clock';
 import { RateGovernor, type RateGovernorConfig } from '@/governors/rate-governor';
 import type { AcquireEndReason } from '@/rim/follower-acquisition';
 import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { AccountFields, FollowRecord } from '@/store/types';
 import { DelayManager, type DelayManagerDeps } from '@/timing/delay-manager';
 import { FakeActions, FakePruneActions, NO_UNFOLLOW_FEED } from './harness-journal';
 import { memorySweepCadence } from './harness-plan';
 import { FakeFollowback } from './harness-reopen';
+import { openTestStore } from './store';
 
 // The per-concern fakes live beside the core; every suite still imports them from here.
 export { FakeActions, FakeFollowback, FakePruneActions, memorySweepCadence, NO_UNFOLLOW_FEED };
@@ -80,7 +81,7 @@ const openStores: KnowledgeStore[] = [];
 
 /** Open a `:memory:` store the kit will close after the current test file. */
 export function kitStore(): KnowledgeStore {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   openStores.push(store);
   return store;
 }

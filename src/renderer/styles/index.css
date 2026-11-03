@@ -5,9 +5,11 @@
  *
  * Ownership: tokens and base are the foundation, shell is the console/stage
  * scaffolding, controls is the data-agnostic design system, and every file
- * after it owns one feature's card internals.
+ * after it owns one feature's card internals. The order is final: streams add
+ * rules to their own file and never reorder this list.
  */
 
+@import "./fonts.css";
 @import "./tokens.palette.css";
 @import "./tokens.generated.css";
 @import "./base.css";
@@ -21,3 +23,9 @@
 @import "./settings.css";
 @import "./tour.css";
 @import "./gallery.css";
+@import "./sidebar.css";
+@import "./people.css";
+@import "./settings-stage.css";
+@import "./compatibility.css";
+@import "./boot.css";
+@import "./diagnostics.css";

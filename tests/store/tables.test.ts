@@ -8,7 +8,9 @@
 import { openDatabase } from '@/store/driver/index';
 import { runMigrations } from '@/store/migrations';
 import { MIGRATIONS } from '@/store/schema';
+import { FOLLOWER_CHANGES, OWN_COUNTS } from '@/store/schema/growth-log-migration';
 import { ACCOUNTS, assertSchema, SPANS, TABLES, TIMERS } from '@/store/schema/manifest';
+import { SURFACE_DRIFT, SURFACE_HEALTH } from '@/store/schema/surface-tables';
 import { ddl, driftOf, upsertSql } from '@/store/schema/tables';
 import { memoryStore } from '../kit/store';
 import { driverOf, withDriver } from '../kit/store-driver';
@@ -116,12 +118,88 @@ test('migration 12 generated exactly this DDL, and must keep generating it', () 
   expect(twelve.sql).toContain('CREATE INDEX idx_spans_name_outcome ON spans(name, outcome, started_at)');
 });
 
+// Migrations 15 and 16 shipped these four strings; the same freeze applies.
+test('migrations 15 and 16 generated exactly this DDL, and must keep generating it', () => {
+  expect(ddl(OWN_COUNTS)).toBe(
+    `CREATE TABLE own_counts (
+  at INTEGER PRIMARY KEY,
+  followers INTEGER NOT NULL,
+  following INTEGER NOT NULL
+);`,
+  );
+  expect(ddl(FOLLOWER_CHANGES)).toBe(
+    `CREATE TABLE follower_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_pk TEXT NOT NULL,
+  delta INTEGER NOT NULL,
+  lo INTEGER NOT NULL,
+  hi INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  found_at INTEGER NOT NULL
+);`,
+  );
+  expect(ddl(SURFACE_DRIFT)).toBe(
+    `CREATE TABLE surface_drift (
+  signature TEXT PRIMARY KEY,
+  surface_id TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  cls TEXT NOT NULL,
+  path TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  seen INTEGER NOT NULL DEFAULT 1,
+  sample TEXT,
+  hint_pattern TEXT,
+  witnesses INTEGER NOT NULL DEFAULT 0,
+  contradictions INTEGER NOT NULL DEFAULT 0,
+  witness_keys TEXT NOT NULL DEFAULT '[]',
+  state TEXT NOT NULL DEFAULT 'open',
+  clean_reads INTEGER NOT NULL DEFAULT 0
+);`,
+  );
+  expect(ddl(SURFACE_HEALTH)).toBe(
+    `CREATE TABLE surface_health (
+  day TEXT NOT NULL,
+  surface_id TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  canonical INTEGER NOT NULL DEFAULT 0,
+  normalized INTEGER NOT NULL DEFAULT 0,
+  recovered INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
+  walls INTEGER NOT NULL DEFAULT 0,
+  row_issues INTEGER NOT NULL DEFAULT 0,
+  field_issues INTEGER NOT NULL DEFAULT 0,
+  shadow_disagreed INTEGER NOT NULL DEFAULT 0,
+  last_read_at INTEGER,
+  last_ok_at INTEGER,
+  last_fail_at INTEGER,
+  PRIMARY KEY (day, surface_id, endpoint)
+);`,
+  );
+  const [fifteen, sixteen] = [MIGRATIONS[15], MIGRATIONS[16]];
+  expect([fifteen.id, sixteen.id]).toEqual([15, 16]);
+  expect(fifteen.sql).toContain(ddl(OWN_COUNTS));
+  expect(fifteen.sql).toContain(ddl(FOLLOWER_CHANGES));
+  expect(sixteen.sql).toContain(ddl(SURFACE_DRIFT));
+  expect(sixteen.sql).toContain(ddl(SURFACE_HEALTH));
+});
+
+test('migrations 14 to 17 are the review, growth-log, surface and feed-index steps, in order', () => {
+  expect(MIGRATIONS.slice(14).map((m) => [m.id, m.name])).toEqual([
+    [14, 'review-columns'],
+    [15, 'growth-log'],
+    [16, 'surface-health'],
+    [17, 'feed-indexes'],
+  ]);
+});
+
 test('generated DDL round-trips: a table built from a def matches the def', () => {
   withDriver((db) => {
-    db.exec(ddl(TIMERS));
-    db.exec(ddl(SPANS));
-    expect(driftOf(db, TIMERS)).toEqual([]);
-    expect(driftOf(db, SPANS)).toEqual([]);
+    for (const def of [TIMERS, SPANS, OWN_COUNTS, FOLLOWER_CHANGES, SURFACE_DRIFT, SURFACE_HEALTH]) {
+      db.exec(ddl(def));
+      expect({ [def.name]: driftOf(db, def) }).toEqual({ [def.name]: [] });
+    }
   });
 });
 
@@ -169,6 +247,11 @@ test('the timers and spans tables carry their indexes', () => {
         'idx_timers_owner',
         'idx_spans_name_outcome',
         'idx_spans_parent',
+        'idx_follower_changes_hi',
+        'idx_follower_changes_pk',
+        'idx_surface_drift_open',
+        'idx_edges_dst_status_first_seen',
+        'idx_effect_state_settled',
       ]),
     );
   } finally {
