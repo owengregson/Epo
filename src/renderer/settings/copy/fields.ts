@@ -79,7 +79,7 @@ export const PROTECTION_COPY = {
   unknown: '—',
   unknownWhy: 'The counts appear once Epo has opened your account.',
   match: 'Keyword matching',
-  matchAnywhere: 'Anywhere in a word',
+  matchAnywhere: 'Anywhere in the bio',
   matchWhole: 'Whole words only',
   state: 'Protection list',
   stateReady: 'Checked',

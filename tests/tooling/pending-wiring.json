@@ -11,16 +11,6 @@
       "reason": "deleted, not wired: production serves the v2 view; only tests/kit/render-bridge.ts (lead) still builds its view here, and SC or SU deletes the module once the bridge reads the v2 view"
     },
     {
-      "module": "src/renderer/settings/compatibility/CompatibilityPanel.tsx",
-      "stream": "SU",
-      "reason": "Settings › Advanced mounts the Instagram compatibility panel"
-    },
-    {
-      "module": "src/renderer/settings/compatibility/CompatibilityLine.tsx",
-      "stream": "SU",
-      "reason": "the Easy settings show the compatibility one-liner, its Details opening Advanced"
-    },
-    {
       "module": "src/renderer/live/CompatibilityNotice.tsx",
       "stream": "SB",
       "reason": "the live column shows the compatibility line and wires its Details to the panel"

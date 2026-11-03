@@ -8,6 +8,7 @@ import type { SettingsOp } from '@/shared/settings-ops';
 import type { SectionId } from '@/shared/settings-params';
 import type { SettingsView } from '@/shared/settings-view';
 import type { UpdateStatus } from '@/shared/update-status';
+import { FineTune } from './advanced/FineTune';
 import { atLimitGate } from './at-limit';
 import { STAGE_COPY } from './copy/sections';
 import { ExpectPanel, SummaryLine } from './ExpectPanel';
@@ -16,7 +17,7 @@ import { Section } from './Section';
 import { SectionRail } from './SectionRail';
 import { SettingsHeader, saveStatusOf } from './SettingsHeader';
 import { useScrollSpy } from './scroll-spy';
-import { SECTION_BODIES } from './section-bodies';
+import { ADVANCED_EXTRAS, SECTION_BODIES } from './section-bodies';
 import { isAdvancedOnly, type SettingsMode, sectionDomId, sectionOf, visibleSections } from './sections';
 import type { StageApi } from './stage-api';
 
@@ -104,9 +105,13 @@ function Stage({ view, c, updateStatus }: { view: SettingsView; c: SettingsCommi
         <main class="set-content" ref={content}>
           {sections.map((id) => {
             const Body = SECTION_BODIES[id];
+            const Extra = ADVANCED_EXTRAS[id];
             return (
               <Section key={id} id={id} s={api}>
                 <Body s={api} />
+                {mode === 'advanced' && !isAdvancedOnly(id) ? (
+                  <FineTune s={api} section={id} extra={Extra ? <Extra s={api} /> : undefined} />
+                ) : null}
               </Section>
             );
           })}

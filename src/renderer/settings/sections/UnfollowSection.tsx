@@ -56,7 +56,7 @@ export function UnfollowSection({ s }: SectionProps): JSX.Element {
   const mutuals: CardChoice<MutualPolicy>[] = MUTUAL_POLICIES.map((m) => ({
     value: m,
     title: UNFOLLOW_COPY.mutualTitle[m],
-    line: fill(UNFOLLOW_COPY[m], { hold }),
+    line: fill(UNFOLLOW_COPY[m], { hold: daysLabel(hold) }),
     recommended: m === RECOMMENDED.intent.mutuals,
   }));
   const cleanup = s.c.value<CleanupLevel>(CLEANUP_KEY, view.intent.cleanup);
@@ -99,7 +99,7 @@ export function UnfollowSection({ s }: SectionProps): JSX.Element {
       <RadioCards
         label={UNFOLLOW_COPY.own}
         choices={levels}
-        selected={asking ?? cleanup}
+        selected={cleanup}
         onSelect={pickCleanup}
         pending={s.c.pending(CLEANUP_KEY)}
       />

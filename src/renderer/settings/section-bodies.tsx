@@ -1,5 +1,7 @@
 import type { JSX } from 'preact';
 import type { SectionId } from '@/shared/settings-params';
+import { AppExtras, ProtectionExtras } from './advanced/Extras';
+import { DiagnosticsSection, ExploreSection, LimitsSection, TechnicalSection, TimingSection } from './sections/AdvancedSections';
 import { AppSection } from './sections/AppSection';
 import { AudienceSection } from './sections/AudienceSection';
 import { BoostSection } from './sections/BoostSection';
@@ -8,9 +10,6 @@ import { ProtectionSection } from './sections/ProtectionSection';
 import { ScheduleSection } from './sections/ScheduleSection';
 import { UnfollowSection } from './sections/UnfollowSection';
 import type { SectionProps } from './stage-api';
-
-/** The Advanced-only sections' bodies arrive with Advanced. */
-const empty = (_p: SectionProps): JSX.Element | null => null;
 
 /** Each section's controls under its heading. */
 export const SECTION_BODIES: Readonly<Record<SectionId, (p: SectionProps) => JSX.Element | null>> = {
@@ -21,9 +20,15 @@ export const SECTION_BODIES: Readonly<Record<SectionId, (p: SectionProps) => JSX
   protection: ProtectionSection,
   boost: BoostSection,
   app: AppSection,
-  timing: empty,
-  explore: empty,
-  limits: empty,
-  technical: empty,
-  diagnostics: empty,
+  timing: TimingSection,
+  explore: ExploreSection,
+  limits: LimitsSection,
+  technical: TechnicalSection,
+  diagnostics: DiagnosticsSection,
+};
+
+/** What Advanced adds under an Easy section, after its Fine-tune rows. */
+export const ADVANCED_EXTRAS: Partial<Record<SectionId, (p: SectionProps) => JSX.Element>> = {
+  protection: ProtectionExtras,
+  app: AppExtras,
 };

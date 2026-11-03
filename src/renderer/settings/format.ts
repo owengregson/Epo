@@ -103,10 +103,17 @@ export function unitLabel(n: number, unit: ParamUnit): string {
   }
 }
 
+/** A span of two values in one unit, the unit said once where it reads that way ("1–100 a day"). */
+export function spanOf(min: number, max: number, unit: ParamUnit): string {
+  if (unit === 'seconds' || unit === 'ms' || unit === 'factor') return `${unitLabel(min, unit)} – ${unitLabel(max, unit)}`;
+  const bare = unitLabel(min, unit === 'share' || unit === 'percent' ? unit : 'count').replace(/%$/, '');
+  return `${bare}–${unitLabel(max, unit)}`;
+}
+
 /** Any parameter value as text: numbers in their unit, ranges as "a–b", a curve as its six points. */
 export function valueLabel(v: ParamValue, unit: ParamUnit): string {
   if (typeof v === 'number') return unitLabel(v, unit);
   if (typeof v === 'boolean') return v ? 'On' : 'Off';
-  if ('min' in v) return `${unitLabel(v.min, unit)}–${unitLabel(v.max, unit)}`;
+  if ('min' in v) return spanOf(v.min, v.max, unit);
   return [v.hardLow, v.bandLow, v.peakLow, v.peakHigh, v.bandHigh, v.hardHigh].map((x) => trim(x, 2)).join(' · ');
 }

@@ -6,6 +6,7 @@
 import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import { useShellControls } from '@/renderer/app/shell-context';
+import { CompatibilityLine } from '@/renderer/settings/compatibility/CompatibilityLine';
 import { APP_COPY } from '../copy/choices';
 import { SwitchRow } from '../fields/controls';
 import { ResetConfirm } from '../fields/ResetConfirm';
@@ -88,6 +89,7 @@ export function AppSection({ s }: SectionProps): JSX.Element {
         {resetting ? <ResetConfirm s={s} onClose={() => setResetting(false)} /> : null}
       </div>
       <ClearData s={s} />
+      {s.mode === 'easy' ? <CompatibilityLine onDetails={() => s.openAdvanced('diagnostics')} /> : null}
     </>
   );
 }

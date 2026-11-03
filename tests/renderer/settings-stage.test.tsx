@@ -8,7 +8,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import type { ComponentChildren } from 'preact';
 import { ShellContext, settingsFactsSignal, settingsViewSignal } from '@/renderer/app/shell-context';
+import { GALLERY_BASIS } from '@/renderer/gallery/fixtures-settings';
 import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
+import { resetBasisCache } from '@/renderer/settings/advanced/BasisTable';
 import { resetAtLimitAcknowledgement } from '@/renderer/settings/at-limit';
 import { SettingsStage } from '@/renderer/settings/SettingsStage';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
@@ -219,5 +221,92 @@ describe('the Easy sections', () => {
     render(shell(<SettingsStage updateStatus={unchecked} />));
     expect(await screen.findByText('Not checked yet.')).toBeTruthy();
     expect(screen.queryByText(/up to date/i)).toBeNull();
+  });
+});
+
+describe('Advanced', () => {
+  const advanced = (over: Partial<SettingsView> = {}) => view({ mode: 'advanced', ...over });
+  const row = (key: string) => document.querySelector(`[data-row="${key}"]`) as HTMLElement;
+  const ceilingOverride = (stale: boolean): SettingsView => advanced({
+    overrides: { count: 1, stale: stale ? 1 : 0, bySection: { pace: 1 } },
+    params: GALLERY_SETTINGS_VIEW.params.map((p) => (p.key === 'pace.dailyCeiling'
+      ? { ...p, value: 60, override: { requested: 60, setAt: 1, clamped: false, stale, basis: stale ? 52 : 65 } } : p)),
+  });
+
+  it('adds a Fine-tune block under the Easy sections; nothing above it moves', async () => {
+    await mount(advanced());
+    expect(screen.getAllByRole('group', { name: 'Fine-tune' }).length).toBeGreaterThanOrEqual(4);
+    expect(screen.getByRole('radiogroup', { name: 'Growth pace' })).toBeTruthy();
+    expect(row('pace.dailyVolume').textContent).toMatch(/Recommended 50 a day/);
+  });
+
+  it('a stepper press sends one override; the recommendation itself clears it', async () => {
+    await mount(advanced());
+    fireEvent.click(within(row('pace.hourlyCap')).getByRole('button', { name: 'Less: Most actions in an hour' }));
+    await waitFor(() => expect(applyCalls()).toEqual([[{ op: 'override', key: 'pace.hourlyCap', value: 21 }]]));
+  });
+
+  it('a typed value commits on Enter; Esc reverts and sends nothing', async () => {
+    await mount(advanced());
+    const input = within(row('pace.dailyVolume')).getByRole('textbox', { name: 'Daily action target' }) as HTMLInputElement;
+    fireEvent.input(input, { target: { value: '40' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    fireEvent.blur(input);
+    expect(applyCalls()).toHaveLength(0);
+    fireEvent.input(input, { target: { value: '40' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(applyCalls()).toEqual([[{ op: 'override', key: 'pace.dailyVolume', value: 40 }]]));
+  });
+
+  it('an overridden row says "Set by you"; Use recommended sends clear-override', async () => {
+    await mount(ceilingOverride(false));
+    const r = row('pace.dailyCeiling');
+    expect(within(r).getByText('Set by you')).toBeTruthy();
+    fireEvent.click(within(r).getByText('Use recommended'));
+    await waitFor(() => expect(applyCalls()).toEqual([[{ op: 'clear-override', key: 'pace.dailyCeiling' }]]));
+  });
+
+  it('a stale override says when it was set and what Epo recommends now', async () => {
+    await mount(ceilingOverride(true));
+    expect(row('pace.dailyCeiling').textContent).toMatch(/Set to 60 a day when Epo recommended 52 a day; it now recommends 65 a day/);
+  });
+
+  it('a save that moved a recommendation offers Use it or Keep yours, inline', async () => {
+    await mount(ceilingOverride(false));
+    bridge.stub('applySettings', (): SettingsSaveResult => ({
+      kind: 'saved', view: ceilingOverride(false), adjustments: [], applies: [], inverse: [],
+      conflicts: [{ key: 'pace.dailyCeiling', yours: 60, recommendedBefore: 65, recommendedNow: 39 }],
+    }));
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Activity level' })).getByRole('radio', { name: /Light/ }));
+    const note = await within(row('pace.dailyCeiling')).findByText(/You set Most actions in a day, including your own yourself \(60 a day\)/);
+    fireEvent.click(within(note).getByText('Keep 60 a day'));
+    expect(within(row('pace.dailyCeiling')).queryByText(/You set Most actions/)).toBeNull();
+    expect(applyCalls()).toHaveLength(1);
+  });
+
+  it('Under the hood lists main’s catalog grouped by kind', async () => {
+    bridge.stub('settingsBasis', { kind: 'ok', rows: GALLERY_BASIS });
+    resetBasisCache();
+    await mount(advanced({ capabilities: { ...GALLERY_SETTINGS_VIEW.capabilities, tempo: false } }));
+    const hood = document.getElementById('settings-technical') as HTMLElement;
+    expect(await within(hood).findByText('POLICY.CEILING_HEADROOM')).toBeTruthy();
+    expect(within(hood).getByText(/Pointer and scroll motion/)).toBeTruthy();
+    expect(within(hood).getByText('[220, 640] ms')).toBeTruthy();
+  });
+
+  it('Start over from the older version’s settings asks first, then sends only the migration op', async () => {
+    await mount(advanced());
+    fireEvent.click(within(row('startOver')).getByText('Start over'));
+    await waitFor(() => expect(applyCalls()).toEqual([[{ op: 'migration', action: 'remigrate-from-v1' }]]));
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('Diagnostics hosts the compatibility panel; Easy shows its one line, whose Details opens it', async () => {
+    await mount();
+    bridge.stub('applySettings', () => saved(advanced({ rev: 8 })));
+    fireEvent.click(within(document.getElementById('settings-app') as HTMLElement).getByText('Details'));
+    await waitFor(() => expect(applyCalls()).toEqual([[{ op: 'ui', mode: 'advanced' }]]));
+    expect(await screen.findByRole('heading', { name: 'Diagnostics' })).toBeTruthy();
+    expect(screen.getByText('Instagram compatibility')).toBeTruthy();
   });
 });
