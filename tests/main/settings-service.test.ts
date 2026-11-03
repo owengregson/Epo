@@ -201,14 +201,14 @@ describe('the effective settings are upstream of the plan; the week preview is d
 
   test('effective(), protection() and the change events never draw the week', () => {
     const { svc, draws } = planBacked();
-    const heard: number[] = [];
-    svc.onChange((e) => heard.push(e.next.dailyOperatingRate));
+    const heard: number[][] = [];
+    svc.onChange((e) => heard.push([e.next.dailyOperatingRate, draws()]));
     expect([svc.effective().dailyOperatingRate, svc.protection().rev, draws()]).toEqual([50, 0, 0]);
     svc.setCapabilities({ plan: false });
     svc.setCapabilities({ plan: true });
     expect([svc.effective().dailyOperatingRate, draws()]).toEqual([50, 0]);
-    svc.setPlanPort(null);
+    // The port stays registered: the listener hears the new settings undrawn; only the pushed view draws, once.
     svc.apply([{ op: 'intent', key: 'activity', value: 'active' }], 'user');
-    expect([heard, svc.effective().dailyOperatingRate, svc.protection().rev, draws()]).toEqual([[75], 75, 1, 0]);
+    expect([heard, svc.effective().dailyOperatingRate, svc.protection().rev, draws()]).toEqual([[[75, 0]], 75, 1, 1]);
   });
 });
