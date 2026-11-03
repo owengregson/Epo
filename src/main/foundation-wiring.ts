@@ -75,7 +75,6 @@ import type {
   PruneScanResult,
   QueueListResult,
   ReadFollowersResult,
-  SeedCheck,
 } from '@/types';
 import * as logger from '@/utils/logger';
 
@@ -215,7 +214,7 @@ export class Foundation {
   /** The manual prune controls and the scheduled prune over them. */
   private readonly prune: PruneControl;
   private readonly pruneSchedule: PruneSchedule;
-  private readonly seed: SeedCheckService;
+  readonly seed: SeedCheckService;
   /** The boot sequence (spec §12.8) and its graph-independent `boot` / `account` status contributors. */
   private readonly boot: BootSequencer;
   private readonly bootFields: readonly StatusContributor[];
@@ -301,6 +300,7 @@ export class Foundation {
     this.activity = new TabActivity((active, holds) => {
       logger.info('foundation: tab activity', { active, holds });
       deps.onActivity?.(active, holds);
+      if (!active) this.seed.onTabFree();
     });
     this.prune = new PruneControl({ runtime: this.runtime, lease: this.lease, activity: this.activity,
       graph: () => this.graph, builtGraph: () => this.builtGraph(), online: () => this.lastOnline,
@@ -312,13 +312,13 @@ export class Foundation {
       builtGraph: () => this.builtGraph(), disposing: () => this.disposing,
       resolveSettings: () => this.resolveSettings(), updateSettings: (partial) => this.updateSettings(partial) });
     this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
-      builtGraph: () => this.builtGraph(), busyDriverReason: () => this.busyDriverReason(),
+      graph: () => this.graph, busyDriverReason: () => this.busyDriverReason(),
       setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun() });
     ({ boot: this.boot, contributors: this.bootFields } = createStartup({ tab: this.tab, runtime: this.runtime,
       lease: this.lease, activity: this.activity, session: this.session, igSession: this.igSession,
       tabFirstLoad: deps.tabFirstLoad ?? Promise.resolve('ready'), disposing: () => this.disposing,
       blockRuntime: (reason) => this.blockRuntime(reason), startEngine: (opts) => this.startEngine(opts),
-      driverBusy: () => this.manualDriving || this.isEngineDriving(), pushStatus: () => this.pushStatus() }));
+      driverBusy: () => this.manualDriving || this.isEngineDriving(), pushStatus: () => this.pushStatus(), afterStartup: () => this.seed.onTabFree() }));
     // Tab health events (debugger detach, renderer gone/unresponsive, input
     // fallback): the tab reports, the Foundation owns the recovery policy.
     // Guarded — partially-shaped test tabs may not carry the callback seam.
@@ -1264,9 +1264,6 @@ export class Foundation {
       return { points: [], baselineAt: null };
     }
   }
-
-  /** The seed precheck: one sentinel-gated profile visit (see {@link SeedCheckService}). */
-  checkSeed(username: string): Promise<SeedCheck> { return this.seed.checkSeed(username); }
 
   /**
    * A capped page of follow_records in one lifecycle state, joined to accounts.

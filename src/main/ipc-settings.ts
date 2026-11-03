@@ -7,6 +7,7 @@
 import type { IpcFallbacks, IpcHandlers } from '@/ipc/register';
 import type { Foundation } from '@/main/foundation-wiring';
 import { notBuiltFacts } from '@/main/modules/not-built';
+import { toLegacySeedCheck } from '@/shared/seed-check';
 import * as logger from '@/utils/logger';
 
 type SettingsRow =
@@ -23,7 +24,7 @@ export function settingsHandlers(foundation: Foundation): Pick<IpcHandlers, Sett
     settingsFacts: () => notBuiltFacts('error'),
     suggestAccounts: () => ({ kind: 'unavailable' }),
     keptList: () => ({ kind: 'unavailable' }),
-    checkSeed: (username) => foundation.checkSeed(username),
+    checkSeed: async (handle) => toLegacySeedCheck(await foundation.seed.check(handle)),
     getSettings: () => settings.getSettings(),
     updateSettings: (partial) => {
       logger.info('settings:update');

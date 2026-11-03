@@ -26,7 +26,8 @@ function rig() {
   const m = memoryFs();
   const settings = new SettingsService({ userDataDir: '/u', fs: m.fs, knowledgeDbExists: () => false, math: FAKE_PLAN_MATH,
     now: () => 1_000, push: () => {} });
-  const foundation = { settings, checkSeed: async () => SEED_OK } as unknown as Foundation;
+  const seed = { check: async () => ({ kind: 'ok', pk: '1', isPrivate: false, followersVisible: true, followers: null, observedAt: 1, fromStore: true }) };
+  const foundation = { settings, seed } as unknown as Foundation;
   // Every other row is someone else's: a placeholder keeps registerIpc total.
   const total = <T extends object>(rows: Partial<T>): T =>
     new Proxy(rows, { get: (t, k) => (t as Record<string | symbol, unknown>)[k] ?? (() => null) }) as T;
