@@ -1,7 +1,7 @@
 import * as logger from '../utils/logger';
 import { KnowledgeStoreBase } from './knowledge-store-base';
 import type { PruneCensusRecord } from './knowledge-types';
-import type { TargetYield } from './repos/analytics';
+import type { OutcomeWindow, TargetYield } from './repos/analytics';
 import type { CensusAuthority, ReconcileOutcome } from './repos/census';
 import type { HealResult } from './repos/follow-records';
 import type { GrowthPoint } from './repos/growth';
@@ -471,9 +471,9 @@ export class KnowledgeStore extends KnowledgeStoreBase {
 
   // --- Emergent analysis (via AnalyticsRepo) --------------------------------------
 
-  /** Yield statistics for a poaching session against `targetPk`, computed on demand (an emergent query). */
-  targetYield(targetPk: string, ownPk: string): TargetYield {
-    return this.analytics.targetYield(targetPk, ownPk);
+  /** A target's yield; without a window the classifier reads all-time outcomes (an unbounded horizon). */
+  targetYield(targetPk: string, ownPk: string, outcome?: OutcomeWindow): TargetYield {
+    return this.analytics.targetYield(targetPk, ownPk, outcome ?? { windowMs: Number.POSITIVE_INFINITY, now: this.now() });
   }
 
   /** The Targets console's funnel read for one chain target, in cheap COUNTs. */

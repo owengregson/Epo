@@ -138,28 +138,30 @@ test('nextChainIndex is (MAX ?? -1) + 1', () => {
   expect(s.nextChainIndex()).toBe(5);
 });
 
-test('targetYield counts followed records aimed at the target, computes rate', () => {
-  // Aimed at T and past follow stage: 4 total, 2 reciprocated.
+test('targetYield counts followed records aimed at the target; the rate folds the one classifier', () => {
+  // Aimed at T and past the follow stage: 4 total; two follow-backs inside the window, one no-follow-back.
   s.upsertFollowRecord(
-    rec({ accountPk: '1', targetPk: 'T', state: 'pending_followback' }),
+    rec({ accountPk: '1', targetPk: 'T', state: 'pending_followback', followedAt: 100 }),
   );
   s.upsertFollowRecord(
-    rec({ accountPk: '2', targetPk: 'T', state: 'followed_back', followedBackAt: 500 }),
+    rec({ accountPk: '2', targetPk: 'T', state: 'followed_back', followedAt: 100, followedBackAt: 500 }),
   );
   s.upsertFollowRecord(
-    rec({ accountPk: '3', targetPk: 'T', state: 'unfollow_queued', followedBackAt: 600 }),
+    rec({ accountPk: '3', targetPk: 'T', state: 'unfollow_queued', followedAt: 100, followedBackAt: 600 }),
   );
-  s.upsertFollowRecord(rec({ accountPk: '4', targetPk: 'T', state: 'unfollowed' }));
+  s.upsertFollowRecord(rec({ accountPk: '4', targetPk: 'T', state: 'unfollowed', followedAt: 100,
+    unfollowReason: 'no-followback' }));
   // Excluded: still queued (never followed), and a different target.
   s.upsertFollowRecord(rec({ accountPk: '5', targetPk: 'T', state: 'queued' }));
   s.upsertFollowRecord(
-    rec({ accountPk: '6', targetPk: 'OTHER', state: 'followed_back', followedBackAt: 700 }),
+    rec({ accountPk: '6', targetPk: 'OTHER', state: 'followed_back', followedAt: 100, followedBackAt: 700 }),
   );
 
-  const y = s.targetYield('T', OWN);
+  const y = s.targetYield('T', OWN, { windowMs: 1_000, now: 800 });
   expect(y.total).toBe(4);
   expect(y.followedBack).toBe(2);
-  expect(y.followBackRate).toBeCloseTo(0.5);
+  // Successes over decided outcomes; the pending follow is no evidence either way.
+  expect(y.followBackRate).toBeCloseTo(2 / 3);
 });
 
 test('targetYield returns 0 rate when no follows exist for the target', () => {
