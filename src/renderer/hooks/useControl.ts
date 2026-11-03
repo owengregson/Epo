@@ -8,8 +8,8 @@ export type ToastPush = (kind: ToastKind, message: string, action?: ToastAction)
 export interface ControlRunner {
   /** Name of the in-flight control ('start' | 'pauseResume' | 'stop' | …), else null. */
   pending: string | null;
-  /** Run one bridge control, showing pending and reporting how it ended. */
-  run(name: string, label: string, fn: () => Promise<unknown>): Promise<void>;
+  /** Run one bridge control, showing pending; resolves true when main carried it out (no refusal, no failure). */
+  run(name: string, label: string, fn: () => Promise<unknown>): Promise<boolean>;
   /** The shell's toasts, for the one control that confirms with an action (Stop's Undo). */
   toast: ToastPush;
 }
@@ -23,16 +23,19 @@ export interface ControlRunner {
 export function useControl(toast: ToastPush): ControlRunner {
   const [pending, setPending] = useState<string | null>(null);
 
-  const run = useCallback(async (name: string, _label: string, fn: () => Promise<unknown>): Promise<void> => {
+  const run = useCallback(async (name: string, _label: string, fn: () => Promise<unknown>): Promise<boolean> => {
     setPending(name);
     clearReason();
     try {
       const res = await fn();
       const refusal =
         typeof res === 'object' && res !== null && 'refusal' in res ? (res as { refusal?: string }).refusal : undefined;
-      if (refusal !== undefined) noteRefusal(refusal);
+      if (refusal === undefined) return true;
+      noteRefusal(refusal);
+      return false;
     } catch {
       noteFailure();
+      return false;
     } finally {
       setPending(null);
     }

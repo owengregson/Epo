@@ -65,7 +65,8 @@ export function useTransportControls(
       await run('stop', 'Stop', () => window.epo.stopPrune());
       return;
     }
-    await run('stop', 'Stop', () => window.epo.stopEngine());
+    // Only a Stop main carried out offers Undo; a refused one says why on the reason line.
+    if (!(await run('stop', 'Stop', () => window.epo.stopEngine()))) return;
     toast('info', STOP_TOAST, { label: UNDO, run: () => void run('start', 'Start', () => window.epo.startEngine()) });
     afterStop();
   }, [confirm, run, toast, afterStop]);

@@ -228,6 +228,17 @@ describe('controls', () => {
     expect(bridge.calls.some((c) => c[0] === 'startEngine')).toBe(true);
   });
 
+  it('a Stop main refused says why on the reason line and offers no Undo', async () => {
+    bridge.stub('stopEngine', () => idleStatus({ refusal: 'manual-running' }));
+    await mount();
+    await push({ state: 'running', runtime: RUNTIME, lastStep: 'acted', nextActionAt: T + 60_000 });
+    await act(async () => {
+      fireEvent.click(q('.sb-now__buttons .sb-btn--ghost') as HTMLButtonElement);
+    });
+    await waitFor(() => expect(reason()).toBe('Epo is finishing a quick task. Try again in a moment.'));
+    expect(q('.toast__msg')).toBeNull();
+  });
+
   it("Why? opens the posture's explanation in the shell's popover", async () => {
     await mount();
     await push({ state: 'running', runtime: RUNTIME, lastStep: 'acted', parkReason: 'session', parkedUntil: T + 3_600_000 });
