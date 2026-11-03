@@ -257,6 +257,20 @@ describe('F2: each confirm layer is pressed until Instagram answers', () => {
     expect(laterLocates.length).toBeLessThanOrEqual(1);
   });
 
+  test('a later layer on a page that is no longer the profile is never travelled to, pressed or cancelled', async () => {
+    const page = new ConfirmPage('following', (p) => ({
+      header: () => p.layers.push(menu()),
+      confirm: () => {
+        p.layers.splice(0, p.layers.length, dialog());
+        void p.tab.goto('https://www.instagram.com/someone_else/');
+      },
+    }));
+
+    await expect(actorOn(page).unfollow('someone', 'pk')).rejects.toThrow(/profile changed/);
+    expect(page.h.clicks).toEqual([HEADER, MENU_ROW]);
+    expect(page.h.hovers).toEqual([MENU_ROW]);
+  });
+
   test('Variant R answered inline at the header press: no layer is pressed', async () => {
     const page = new ConfirmPage('requested', (p) => ({ header: () => p.land() }));
 
@@ -434,13 +448,22 @@ describe('in-action pacing (spec §11.2 item 11)', () => {
 });
 
 describe('the passive capture (spec §11.1, §22 L5)', () => {
-  test('a layer met after the first is captured once, scrubbed, with the POSTs the tab saw', async () => {
+  test('a layer met after the first is captured once — not once per account — scrubbed, with the POSTs', async () => {
     const capture = recordingCapture();
-    const page = new ConfirmPage('following', variantP);
+    let account = 0;
+    const page = new ConfirmPage('following', (p) => ({
+      header: () => p.layers.push(menu()),
+      // The dialog's text names the account, so each account's dialog signs differently.
+      confirm: (layer) => {
+        if (layer.kind === 'menu') p.layers.splice(0, p.layers.length, { ...dialog(), sig: `0:2:dialog-${account}` });
+        else p.land();
+      },
+    }));
     const actor = actorOn(page, { capture });
 
     expect((await actor.unfollow('someone', 'pk')).ok).toBe(true);
     page.state = 'following';
+    account += 1;
     expect((await actor.unfollow('someone', 'pk')).ok).toBe(true);
 
     expect(capture.records).toHaveLength(1);

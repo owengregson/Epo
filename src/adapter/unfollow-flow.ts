@@ -109,9 +109,16 @@ export async function pressConfirmLayers(f: LayerFlow): Promise<LayerRun> {
   return { lastSig };
 }
 
+/**
+ * What makes two captures the same: the reason and the layer's shape, never its text (which names the
+ * account), so the dialog every private unfollow shows is kept once, not once per account.
+ */
+const captureKey = (reason: CaptureReason, layer: string | undefined, controls?: number): string =>
+  [reason, layer ?? '', reason === 'later-layer' ? '' : String(controls ?? '')].join(':');
+
 /** A layer met after the first is captured once (the next private unfollow is also the capture, §22 L5). */
 async function captureLater(f: LayerFlow, located: ConfirmLocate): Promise<void> {
-  if (!f.capture.wants(sigOf(located))) return;
+  if (!f.capture.wants(captureKey('later-layer', located.layer))) return;
   try {
     const top = await report(f, true);
     if (top?.present === true) keep(f, 'later-layer', top);
@@ -122,9 +129,9 @@ async function captureLater(f: LayerFlow, located: ConfirmLocate): Promise<void>
 
 /** Save one capture of the top layer: scrubbed markup and the watch's unmatched POSTs. */
 function keep(f: LayerFlow, reason: CaptureReason, top: LayerReport): void {
-  const sig = top.sig ?? '';
-  if (!f.capture.wants(sig) || top.markup === undefined) return;
-  f.capture.save(sig, scrubbedCapture({ reason, op: f.op, username: f.username, layer: top.layer, controls: top.controls,
+  const key = captureKey(reason, top.layer, top.controls);
+  if (!f.capture.wants(key) || top.markup === undefined) return;
+  f.capture.save(key, scrubbedCapture({ reason, op: f.op, username: f.username, layer: top.layer, controls: top.controls,
     structural: top.structural, markup: top.markup, unmatchedPosts: f.watch.unmatchedPosts() }));
 }
 
@@ -143,6 +150,7 @@ async function pressLayer(f: LayerFlow, located: ConfirmLocate, later: boolean):
   if (located.fallback) logger.warn(`${f.op}: the confirm's role-marked search missed; found by its text instead`);
   if (f.tempo.enabled('ui.step-pause')) await f.sleep(f.tempo.draw('ui.step-pause'), f.signal());
   if (f.signal()?.aborted) throw new ActionAbortedError(f.op);
+  await f.dispatch(); // the check (stop, same profile) before the cursor travels, again before the press
   const relocate = async (): Promise<ConfirmLocate> => {
     const settled = await f.tab.evaluate<ConfirmLocate | null>(confirmScript(later));
     return settled?.found && sigOf(settled) === sigOf(located) ? settled : { found: false };
