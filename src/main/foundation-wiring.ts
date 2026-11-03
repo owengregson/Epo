@@ -40,7 +40,7 @@ import {
   shapeTargetDetail,
 } from '@/main/foundation-reads';
 import { notBuiltPruneStatus, notBuiltStatus } from '@/main/modules/not-built';
-import { Projections, type PushFn } from '@/main/modules/projections';
+import { Projections, type PushFn, UNWIRED_SOURCES } from '@/main/modules/projections';
 import { PruneControl } from '@/main/modules/prune-control';
 import { PruneSchedule } from '@/main/modules/prune-schedule';
 import { SeedCheckService } from '@/main/modules/seed-check';
@@ -284,9 +284,8 @@ export class Foundation {
       }, { unref: true });
       graph.engine.setOnline(this.lastOnline);
       this.projections.bind(graph.store, {
-        status: () => this.builtStatus(),
-        pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph),
+        status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES,
       });
     });
     this.session.session.onClose(() => {
