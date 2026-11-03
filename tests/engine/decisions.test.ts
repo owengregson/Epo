@@ -6,17 +6,11 @@
 import {
   acquireFailureVerdict,
   type DecisionStore,
-  msUntilActiveWindow,
   pickAction,
-  pruneCycleStart,
-  pruneDailyPlan,
   queuedCountFor,
   unenrichedUsernames,
 } from '@/engine/decisions';
-import { PATTERN } from '@/kernel/derive';
-import { automaticDayMax } from '@/kernel/plan';
 import type { AccountState, FollowRecord, FollowState } from '@/store/types';
-import { startOfLocalDay } from '@/timing/units';
 
 const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({
   targetPk: null,
@@ -127,23 +121,6 @@ describe('pickAction', () => {
   });
 });
 
-describe('msUntilActiveWindow', () => {
-  test('later today when the window has not opened yet', () => {
-    const now = Date.parse('2026-08-12T06:30:00');
-    expect(msUntilActiveWindow(now, 8)).toBe(Date.parse('2026-08-12T08:00:00') - now);
-  });
-
-  test('tomorrow when the o-clock has already passed', () => {
-    const now = Date.parse('2026-08-12T09:15:00');
-    expect(msUntilActiveWindow(now, 8)).toBe(Date.parse('2026-08-13T08:00:00') - now);
-  });
-
-  test('always strictly future, even exactly ON the boundary', () => {
-    const now = Date.parse('2026-08-12T08:00:00');
-    expect(msUntilActiveWindow(now, 8)).toBe(24 * 3_600_000);
-  });
-});
-
 describe('acquireFailureVerdict', () => {
   test('the first walled cycles back off, counting up', () => {
     expect(acquireFailureVerdict(0, 'fetch-failed', 3)).toEqual({
@@ -173,28 +150,5 @@ describe('acquireFailureVerdict', () => {
       action: 'backoff',
       walledCycles: 1,
     });
-  });
-});
-
-describe('prune cap boundary', () => {
-  const now = Date.parse('2026-08-12T02:00:00');
-
-  test('falls back to local midnight without a governor', () => {
-    expect(pruneCycleStart(now)).toBe(startOfLocalDay(now));
-  });
-
-  test("uses growth's active-hours cycle start when one is wired", () => {
-    const cycleStart = Date.parse('2026-08-11T20:00:00');
-    expect(pruneCycleStart(now, () => cycleStart)).toBe(cycleStart);
-  });
-
-  test('the daily plan is the automatic-day band under the limit, stable within a plan-day', () => {
-    const cycleStart = startOfLocalDay(now);
-    expect(pruneDailyPlan(50, cycleStart)).toBe(pruneDailyPlan(50, cycleStart));
-    const days = Array.from({ length: 60 }, (_, d) => pruneDailyPlan(50, cycleStart + d * 86_400_000));
-    expect(Math.max(...days)).toBeLessThanOrEqual(automaticDayMax(50));
-    expect(Math.min(...days)).toBeGreaterThanOrEqual(Math.round(50 * PATTERN.CYCLE_PLAN_MIN_FRACTION));
-    expect(new Set(days).size).toBeGreaterThan(1);
-    expect(pruneDailyPlan(5, cycleStart)).toBe(5);
   });
 });

@@ -42,17 +42,9 @@ export function toChurnConfig(s: Settings): ChurnConfig {
   };
 }
 
-/** Project the Rate Governor's config out of Settings (minutes → ms). */
+/** Project the Rate Governor's config out of Settings: the hard ceiling (the plan paces; spec §5.13 S2). */
 export function toRateGovernorConfig(s: Settings): RateGovernorConfig {
-  return {
-    dailyHardCeiling: s.dailyHardCeiling,
-    dailyOperatingRate: s.dailyOperatingRate,
-    minDelayMs: s.minDelayMinutes * MS_PER_MINUTE,
-    maxDelayMs: s.maxDelayMinutes * MS_PER_MINUTE,
-    jitterPercent: s.jitterPercent,
-    activeHoursStart: s.activeHoursStart,
-    activeHoursEnd: s.activeHoursEnd,
-  };
+  return { dailyHardCeiling: s.dailyHardCeiling };
 }
 
 /** Project the Follow-back Watcher's config out of Settings (days → ms). */

@@ -6,7 +6,7 @@
 
 import { ActionDeferredError } from '@/adapter/errors';
 import type { Admission, PlanView } from '@/governors/plan-types';
-import { drawGapMs, type MutationKind, u, type Writer } from '@/kernel/plan';
+import { drawGapMs, type MutationKind, u, velocityWakeAt, type Writer } from '@/kernel/plan';
 import type { TempoKey } from '@/kernel/tempo';
 import { MS_PER_HOUR } from '@/kernel/units';
 import * as logger from '@/utils/logger';
@@ -28,6 +28,10 @@ export interface MutationCadence {
   acceptAllowed(now: number): boolean;
   /** A single manual action: the ceiling and the hourly cap only (spec §5.7). */
   manualOpen(now: number): Admission;
+  /** A practice-mode write pressed nothing: the gap a dispatch would owe, drawn and persisted the same way. */
+  armPractice(now: number): number;
+  /** A full rolling hour (the session's cap): when it has room again plus one gap draw; null while it has room. */
+  velocityParkUntil(now: number): number | null;
 }
 
 export interface MutationCadenceDeps {
@@ -112,5 +116,12 @@ export function createMutationCadence(d: MutationCadenceDeps): MutationCadence {
       return p.armed;
     },
     manualOpen: (now) => d.plan.view(now).manualOpen(),
+    armPractice: (now) => persist(now + gapAt(d.plan.view(now), now)),
+    velocityParkUntil: (now) => {
+      const view = d.plan.view(now);
+      const cap = view.open?.probation ? view.plan.ceilings.probationHour : view.plan.ceilings.hour;
+      const wake = velocityWakeAt(recent(now), cap, now);
+      return wake === null ? null : wake + gapAt(view, wake);
+    },
   };
 }

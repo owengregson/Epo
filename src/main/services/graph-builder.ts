@@ -316,13 +316,8 @@ export function buildGraph(
     delays,
     installEntropy,
     lastRunAt: settings.pruneLastRunAt,
-    // A run stops at the active-hours edge instead of rolling past local
-    // midnight (where the daily count re-zeroes and one run could spend 2× the
-    // cap). Same governor window the growth engine parks on.
-    withinActiveHours: (): boolean => rate.withinActiveHours(),
-    // The prune cap shares the growth budget's boundary: the active-hours cycle
-    // start, not calendar midnight.
-    cycleStartMs: (now: number): number => rate.cycleStartMs(now),
+    // The prune cap shares the growth budget's boundary: the plan-day start.
+    cycleStartMs: (now: number): number => rate.dayStart(now),
     onStatus: (s) => d.onPruneStatus(s),
     ...pruneUnfollowDeps(d, { settings, policy, ownUsername, dayClock: plan.dayClock }),
   });

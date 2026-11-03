@@ -5,6 +5,8 @@
  */
 
 import type { EnginePacing, SweepCadence } from '@/engine/engine';
+import type { EngineWriteKind } from '@/engine/plan-port';
+import { UnconfirmedBreaker } from '@/engine/unconfirmed-breaker';
 import type { Clock } from '@/governors/clock';
 import type { PlanService } from '@/governors/plan-service';
 import type { PlanPreviewPort, PlanView } from '@/governors/plan-types';
@@ -164,17 +166,24 @@ export function stubPlanView(now: number, o: { open: boolean; nextSessionAt: num
   };
 }
 
-/** The plan port a loop test steers: open or closed, the next session, the day's target, the gap it arms. */
+/**
+ * The plan port a loop test steers: open or closed, the next session, the day's target, the exact
+ * velocity window; a practice write arms `gapMs` on the store it was handed; the breaker is the real one.
+ */
 export class FakePlan implements EnginePacing {
   open = true;
   gapMs = 4 * 60_000;
   target = 25;
   hourCap: number | undefined;
   usedAuto = 0;
-  /** When each action the gap was drawn after landed. */
-  gaps: number[] = [];
+  /** The exact velocity window the next read reports (null: the rolling hour has room). */
+  velocityUntil: number | null = null;
+  /** When each practice-mode write landed. */
+  practices: number[] = [];
   ensures = 0;
-  constructor(private readonly nextStart: number) {}
+  readonly breaker = new UnconfirmedBreaker();
+  constructor(private readonly nextStart: number,
+    private readonly deadlines?: Pick<KnowledgeStore, 'setActionDelayDeadline'>) {}
   view(now: number): PlanView {
     return stubPlanView(now, { open: this.open, nextSessionAt: this.nextStart, target: this.target, hourCap: this.hourCap,
       usedAuto: this.usedAuto });
@@ -184,9 +193,15 @@ export class FakePlan implements EnginePacing {
     return this.view(now);
   }
   wake(): void {}
-  gapAfter(at: number): number {
-    this.gaps.push(at);
-    return this.gapMs;
+  velocityParkUntil(): number | null {
+    return this.velocityUntil;
+  }
+  practiced(at: number): void {
+    this.practices.push(at);
+    this.deadlines?.setActionDelayDeadline(at + this.gapMs);
+  }
+  noteOutcome(kind: EngineWriteKind, unverified: boolean, at: number): number {
+    return this.breaker.note(kind, unverified, at, this.nextStart);
   }
 }
 

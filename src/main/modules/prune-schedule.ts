@@ -110,7 +110,6 @@ export class PruneSchedule {
     // Re-check the driver token after the await: never contend with a prune that
     // started in the meantime. (Growth running is fine — startPrune hands it off.)
     if (control.pruneRefusalReason() !== null) return;
-    if (!graph.rate.withinActiveHours()) return;
 
     // Launch jitter (timing-noise layer): the 30-min due-poll is LOCAL (no IG
     // traffic on the tick), but launching the moment the tick lands put every
@@ -123,7 +122,6 @@ export class PruneSchedule {
     });
     await sleep(launchHoldMs, this.deps.disposeSignal);
     if (this.deps.disposing() || this.deps.lease.tourHeld() || control.pruneRefusalReason() !== null || !this.deps.runtime.current(token) || this.deps.graph() !== graph) return;
-    if (!graph.rate.withinActiveHours()) return;
     // A manual prune may have started AND completed during the hold — its
     // fresh lastRunAt makes the schedule no longer due.
     {

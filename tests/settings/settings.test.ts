@@ -165,17 +165,8 @@ describe('projections from DEFAULT_SETTINGS', () => {
     expect(toChurnConfig(DEFAULT_SETTINGS).maxWaitForFollowbackMs).toBe(4 * 24 * 3600 * 1000);
   });
 
-  test('toRateGovernorConfig converts minutes → ms (3 min → 180000 ms) and carries caps', () => {
-    expect(toRateGovernorConfig(DEFAULT_SETTINGS)).toEqual({
-      dailyHardCeiling: 65,
-      dailyOperatingRate: 50,
-      minDelayMs: 180_000,
-      maxDelayMs: 420_000,
-      jitterPercent: 30,
-      activeHoursStart: 8,
-      activeHoursEnd: 22,
-    });
-    expect(toRateGovernorConfig(DEFAULT_SETTINGS).minDelayMs).toBe(3 * 60_000);
+  test('toRateGovernorConfig carries the hard ceiling only (the plan paces, spec §5.13 S2)', () => {
+    expect(toRateGovernorConfig(DEFAULT_SETTINGS)).toEqual({ dailyHardCeiling: 65 });
   });
 
   test('toFollowbackConfig converts hold days → ms and carries auto-accept', () => {
@@ -271,7 +262,6 @@ describe('projections from DEFAULT_SETTINGS', () => {
       minDelayMinutes: 5,
     };
     expect(toChurnConfig(custom).maxWaitForFollowbackMs).toBe(24 * 3600 * 1000);
-    expect(toRateGovernorConfig(custom).minDelayMs).toBe(5 * 60_000);
   });
 });
 

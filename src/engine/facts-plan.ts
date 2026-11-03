@@ -14,8 +14,8 @@ import type { EngineChurn } from './ports';
 export interface PlanFactDeps {
   /** Live settings (swapped between steps). */
   settings(): Settings;
-  /** The plan, or undefined in the legacy model. */
-  pacing?: EnginePacing;
+  /** The plan: the one pacing model (spec §5.13 S2). */
+  pacing: EnginePacing;
   churn: EngineChurn;
   /** The woven prune feed's next offer (consumes leading skips — see the Engine). */
   selectPruneCandidate(now: number): FeedCandidate | null;
@@ -28,27 +28,29 @@ const dayVolume = (view: PlanView): number => Math.max(view.plan.volume.drawn, v
 
 /**
  * The plan's park (spec §5.16), exact: the day done (the hard ceiling or V) parks to the next
- * plan-day's first session, a closed session to the next one; with none left, to the boundary.
+ * plan-day's first session, a closed session to the next one (with none left, to the boundary), and
+ * a full rolling hour until it has room again plus one gap draw.
  */
-export function planPark(view: PlanView, atHardCeiling: boolean): PlanFacts['park'] {
+export function planPark(view: PlanView, atHardCeiling: boolean, velocityUntil: number | null = null): PlanFacts['park'] {
   const end = view.window.endsAt;
   if (atHardCeiling || view.used.auto >= dayVolume(view)) {
     const tomorrow = view.nextSessionAt !== null && view.nextSessionAt >= end ? view.nextSessionAt : end;
     return { key: 'engine:daily-ceiling-park', until: tomorrow };
   }
   if (view.open === null) return { key: 'engine:session-park', until: view.nextSessionAt ?? end };
+  if (velocityUntil !== null && velocityUntil > view.at) return { key: 'engine:velocity-park', until: velocityUntil };
   return null;
 }
 
 /**
  * The plan's facts at the view's instant. The planned check and the census host arrive with the
- * reopen sweep and the cadence switch; until then neither is due here.
+ * reopen sweep (RO-b); until then neither is due here.
  */
-export function planFacts(view: PlanView, atHardCeiling: boolean): PlanFacts {
+export function planFacts(view: PlanView, atHardCeiling: boolean, velocityUntil: number | null = null): PlanFacts {
   const open = view.open;
   return {
     sessionOpen: open !== null,
-    park: planPark(view, atHardCeiling),
+    park: planPark(view, atHardCeiling, velocityUntil),
     admits: {
       follow: view.admits('follow', 'growth').ok,
       unfollow: view.admits('unfollow', 'growth').ok,
@@ -64,17 +66,15 @@ export function planFacts(view: PlanView, atHardCeiling: boolean): PlanFacts {
   };
 }
 
-/** The pacing source: the plan's facts (ensured only while provisional), or the legacy metronome's window. */
+/** The pacing source: the plan's facts, ensured only while provisional. */
 export function pacingSource(d: PlanFactDeps): FactSource<'pacing'> {
   return {
     staleAfterMs: 0,
     gather: async (read) => {
       const { now } = await read('clock');
-      const plan = d.pacing;
-      if (plan === undefined) return { model: 'legacy' as const, activeHoursStart: d.settings().activeHoursStart };
       const { atHardCeiling } = await read('ledger');
-      const view = plan.ensureIfProvisional(now);
-      return { model: 'plan' as const, hourlyCap: view.plan.ceilings.hour, ...planFacts(view, atHardCeiling) };
+      const view = d.pacing.ensureIfProvisional(now);
+      return planFacts(view, atHardCeiling, d.pacing.velocityParkUntil(now));
     },
   };
 }

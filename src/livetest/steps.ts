@@ -445,12 +445,8 @@ export class LiveTestHarness {
     const store = new KnowledgeStore(dbPath, { policy: STORE_POLICY });
     const clock = new SystemClock();
 
-    // Active hours 0–24 so wall-clock hours never gate; constructed for parity only.
-    const rate = new RateGovernor(store, clock, {
-      ...toRateGovernorConfig(DEFAULT_SETTINGS),
-      activeHoursStart: 0,
-      activeHoursEnd: 24,
-    });
+    // Constructed for parity only: the hard ceiling of the default settings.
+    const rate = new RateGovernor(store, clock, toRateGovernorConfig(DEFAULT_SETTINGS));
 
     const reader = new Reader();
     // Production parity: the Actor clicks/scrolls through native input events,

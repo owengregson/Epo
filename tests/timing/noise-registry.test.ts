@@ -124,7 +124,6 @@ describe('noise — class behavior (i)', () => {
 describe('noise — the class registries cover exactly the wait keys (ii)', () => {
   test('ENGINE_WAIT_CLASS key set === the EngineWaitKey union', () => {
     const expected: EngineWaitKey[] = [
-      'engine:active-hours-park',
       'engine:daily-ceiling-park',
       'engine:session-park',
       'engine:velocity-park',
@@ -142,10 +141,10 @@ describe('noise — the class registries cover exactly the wait keys (ii)', () =
   });
 
   test('the shipped engine classifications match the design', () => {
-    expect(ENGINE_WAIT_CLASS['engine:active-hours-park']).toBe('daily-boundary');
-    expect(ENGINE_WAIT_CLASS['engine:daily-ceiling-park']).toBe('daily-boundary');
+    // The plan's parks end at the instants it names (spec §5.16): exact, never jittered.
+    expect(ENGINE_WAIT_CLASS['engine:daily-ceiling-park']).toBe('exact');
     expect(ENGINE_WAIT_CLASS['engine:enrich-backoff']).toBe('retry-backoff');
-    expect(ENGINE_WAIT_CLASS['engine:read-budget-park']).toBe('daily-boundary');
+    expect(ENGINE_WAIT_CLASS['engine:read-budget-park']).toBe('exact');
     expect(ENGINE_WAIT_CLASS['engine:prune-park']).toBe('retry-backoff');
     expect(ENGINE_WAIT_CLASS['engine:blocked-park']).toBe('retry-backoff');
     expect(ENGINE_WAIT_CLASS['engine:idle']).toBe('local-beat');

@@ -8,6 +8,9 @@ import type { PlanView } from '../governors/plan-types';
 import type { CurrentTarget, EngineDeps, EnginePacing } from './ports';
 import type { RuntimeHealth } from './runtime-health';
 
+/** The day's automatic volume: what the day law drew, or more once a Boost lifted it. */
+const dayVolume = (view: PlanView): number => Math.max(view.plan.volume.drawn, view.plan.volume.planned);
+
 /** The deprecated session readout the old renderer shows, read from the plan's pure view. */
 function sessionReadout(view: PlanView) {
   const open = view.open;
@@ -16,34 +19,33 @@ function sessionReadout(view: PlanView) {
     sessionEndsAt: open === null ? null : (view.sessions[open.idx]?.closesAt ?? null),
     nextSessionAt: open === null ? view.nextSessionAt : null,
     sessionsToday: view.plan.sessions.filter((s) => s.budget > 0).length,
-    dailyTarget: Math.max(view.plan.volume.drawn, view.plan.volume.planned),
+    dailyTarget: dayVolume(view),
   };
 }
 
-export function projectEngineStatus(deps: EngineDeps, target: CurrentTarget | null, plan: EnginePacing | undefined, health: RuntimeHealth) {
+export function projectEngineStatus(deps: EngineDeps, target: CurrentTarget | null, plan: EnginePacing, health: RuntimeHealth) {
     const { store, rate, clock } = deps;
     const chainIndex =
       target === null
         ? null
         : (store.getTarget(target.pk)?.chainIndex ?? null);
-    const pacing = plan === undefined ? null : sessionReadout(plan.view(clock.now()));
+    const view = plan.view(clock.now());
     return {
       health: health.snapshot(),
       frontier: deps.frontier?.snapshot(),
-      reentry: deps.reentry?.snapshot(),
       currentTargetPk: target?.pk ?? null,
       currentTargetUsername: target?.username ?? null,
       chainIndex,
       actionsToday: rate.actionsToday(),
-      remainingToday: rate.remainingToday(),
-      plannedToday: rate.plannedToday(),
+      remainingToday: view.remaining,
+      plannedToday: dayVolume(view),
       atHardCeiling: rate.atHardCeiling(),
       queued: store.followRecordsByState('queued').length,
       pendingFollowback: store.followRecordsByState('pending_followback').length,
       followedBackHeld: store.followRecordsByState('followed_back').length,
       unfollowDue: store.followRecordsByState('unfollow_queued').length,
-      netToday: store.netFollowersSince(rate.dayStart()),
-      pacing,
+      netToday: store.netFollowersSince(view.window.startsAt),
+      pacing: sessionReadout(view),
     };
 }
 

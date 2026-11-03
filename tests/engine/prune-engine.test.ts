@@ -10,7 +10,6 @@
  */
 
 import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
-import { pruneDailyPlan } from '@/engine/decisions';
 import type { SleepFn } from '@/engine/engine';
 import {
   PRUNE_CONSECUTIVE_FAIL_HALT,
@@ -21,6 +20,7 @@ import {
   type PruneScanOpts,
   type PruneStatus,
 } from '@/engine/prune-engine';
+import { pruneDailyPlan } from '@/engine/prune-pacing';
 import { FakeClock } from '@/governors/clock';
 import { referenceTempoSource } from '@/kernel/tempo';
 import { NOISE, PRUNE } from '@/timing/config';

@@ -63,8 +63,8 @@ export interface EngineFactDeps {
   /** Record the tick's sentinel reading on the owner (status projection). */
   onSentinel(status: SentinelStatus): void;
   recovery: FactRecovery;
-  /** The plan, or undefined in the legacy model. */
-  pacing?: EnginePacing;
+  /** The plan: the one pacing model. */
+  pacing: EnginePacing;
   targets: FactTargets;
   sweepCadence: SweepCadence;
   /** The woven prune feed's next offer (consumes leading skips — see the Engine). */
@@ -110,13 +110,7 @@ export function buildEngineFactSources(d: EngineFactDeps): FactSources {
 
     ledger: {
       staleAfterMs: 0,
-      gather: () => ({
-        atHardCeiling: rate.atHardCeiling(),
-        atOperatingRate: rate.atOperatingRate(),
-        withinActiveHours: rate.withinActiveHours(),
-        msUntilCycleReset: rate.msUntilCycleReset(),
-        actionsInLastHour: rate.actionsInLastHour(),
-      }),
+      gather: () => ({ atHardCeiling: rate.atHardCeiling(), actionsInLastHour: rate.actionsInLastHour() }),
     },
 
     pacing: pacingSource(d),

@@ -5,7 +5,7 @@ import type { BuiltGraph } from '@/main/services/graph-builder';
 import type { RuntimeCoordinator } from '@/main/services/runtime-coordinator';
 import type { TabLease } from '@/main/services/tab-lease';
 import { RECOVERY } from '@/timing/config';
-import { cleanupMainHarness, makeFakeTab, newFoundation } from '../kit/main-harness';
+import { cleanupMainHarness, makeFakeTab, newFoundation, parkedForTheDay } from '../kit/main-harness';
 
 afterAll(cleanupMainHarness);
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -21,7 +21,8 @@ const internal = (f: Foundation) => f as unknown as {
 
 async function running(over: Parameters<typeof newFoundation>[0] = {}) {
   const h = newFoundation(over);
-  await h.foundation.updateSettings({ activeHoursStart: 8, activeHoursEnd: 8, pacingModel: 'legacy' });
+  // The plan parks the loop for the day (its ceiling reached): 'running' on a long exact wait, no tab work.
+  await parkedForTheDay(h.foundation);
   await h.foundation.startEngine();
   await flush();
   return h;
@@ -266,9 +267,9 @@ test('Stop during watchdog repair is never undone', async () => {
 
 test('scheduled maintenance can borrow from continuously running growth', async () => {
   const { foundation } = await running();
-  await foundation.updateSettings({ pruneScheduleDays: 1, pruneLastRunAt: null });
+  // The watcher's bulk-run branch (until the scheduled prune retires with the cadence switch, step 12).
+  await foundation.updateSettings({ pruneScheduleDays: 1, pruneLastRunAt: null, pacingModel: 'legacy' });
   const graph = internal(foundation).session.current();
-  jest.spyOn(graph.rate, 'withinActiveHours').mockReturnValue(false).mockReturnValueOnce(true).mockReturnValueOnce(true);
   const run = jest.spyOn(graph.pruneEngine, 'run').mockResolvedValue(undefined);
   const random = jest.spyOn(Math, 'random').mockReturnValue(0);
   await internal(foundation).maybeRunScheduledPrune();

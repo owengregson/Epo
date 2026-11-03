@@ -20,8 +20,7 @@ const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord 
 function build(cfg: Partial<ChurnConfig> = {}) {
   const store = kitStore();
   const clock = new FakeClock(T0);
-  const rate = new RateGovernor(store, clock, { dailyHardCeiling: 1000, dailyOperatingRate: 1000, minDelayMs: 0,
-    maxDelayMs: 0, jitterPercent: 0, activeHoursStart: 0, activeHoursEnd: 24 });
+  const rate = new RateGovernor(store, clock, { dailyHardCeiling: 1000 });
   const actions = new FakeActions();
   const rig = new ProtectionRig(clock);
   const synced: number[] = [];

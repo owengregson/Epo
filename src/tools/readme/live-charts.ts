@@ -11,8 +11,7 @@
  * CI-ONLY: bundled by .github/workflows/readme-live.yml, never by the app.
  */
 
-import { referenceGapMs } from '@/engine/pacers';
-import { drawDayPlan, type PlanDemand, phaseOffsetHours, planDayWindow, quietMinute } from '@/kernel/plan';
+import { drawDayPlan, drawGapMs, type PlanDemand, phaseOffsetHours, planDayWindow, quietMinute, u } from '@/kernel/plan';
 import { computeProjection } from '@/renderer/charts/growth-model';
 import { effectiveFromV1 } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
@@ -195,13 +194,13 @@ export function planOneDay(dayStartMs: number, seed: number): DayPlan {
     installEntropy: entropy, window, intent, demand: NO_DEMAND, phaseOffsetHours: phase,
     firstOpenAt: window.startsAt, boost: null, runIntent: 'running',
   });
-  const rng = mulberry32(seed);
   const actions: number[] = [];
   for (const session of plan.sessions) {
     let t = session.startAt;
     for (let k = 0; k < session.budget && t < window.endsAt; k += 1) {
       actions.push(t);
-      t += referenceGapMs(intent, actions.filter((a) => a > t - MS_PER_HOUR), t, rng);
+      // The gap the cadence draws at each dispatch: the session's spec over the trailing hour.
+      t += drawGapMs(session.tempo.gap, actions.filter((a) => a > t - MS_PER_HOUR), t, (attempt) => u(plan.seed, 'gap', session.idx, k, attempt));
     }
   }
   const kept = plan.sessions.filter((x) => x.budget > 0);

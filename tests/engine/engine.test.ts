@@ -10,13 +10,13 @@
 
 import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import {
-  ENGINE_IDLE_MS,
   ENRICH_BATCH_SIZE,
   type EngineUnfollowFeed,
   MAX_ENRICH_PASSES_PER_CYCLE,
   REFILL_PACING_MAX_MS,
   REFILL_PACING_MIN_MS,
 } from '@/engine/engine';
+import { referenceTempoSource } from '@/kernel/tempo';
 import type { AccountFields, FollowRecord } from '@/store/types';
 import { ENGINE, NOISE, RECOVERY } from '@/timing/config';
 import {
@@ -30,6 +30,9 @@ import {
 import { FakePlan as FakePacing } from '../kit/harness-plan';
 
 // --- Tests ---------------------------------------------------------------------------
+
+/** The idle beat's bound: the `beat.transient` base at the reference tempo (today's 30 s). */
+const ENGINE_IDLE_MS = referenceTempoSource().base('beat.transient');
 
 describe('Engine.stepOnce — one major thing per iteration', () => {
   test("an 'acted' step executes exactly ONE churn action then sleeps nextDelayMs", async () => {
@@ -149,31 +152,29 @@ describe('Engine — sentinel gate (precedence 2)', () => {
   });
 });
 
-describe('Engine — active-hours and ceiling gates (precedence 3–4)', () => {
-  test('outside active hours: waits until the window opens, no action', async () => {
-    const h = makeHarness({
-      startAt: Date.parse('2026-08-12T02:00:00'),
-      activeHours: { start: 8, end: 22 },
-    });
+describe('Engine — the plan\'s session and ceiling gates (precedence 3–4)', () => {
+  test('between sessions: waits exactly until the next session opens, no action', async () => {
+    const pacing = new FakePacing(T0 + 6 * HOUR);
+    pacing.open = false;
+    const h = makeHarness({ pacing });
     h.churn.due = [rec({ accountPk: 'a' })];
 
     const result = await h.engine.stepOnce();
 
-    expect(result).toBe('waited-active-hours');
-    // The park is the exact 02:00→08:00 base plus the POSITIVE-ONLY boundary
-    // jitter — a wake never precedes the window and never lands exactly on it.
-    expect(h.sleep.calls.length).toBe(1);
-    expect(h.sleep.calls[0]).toBeGreaterThan(6 * HOUR);
-    expect(h.sleep.calls[0]).toBeLessThanOrEqual(6 * HOUR + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
+    expect(result).toBe('waited-session');
+    // The plan's park is exact (spec §5.16): no jitter, the next session's start.
+    expect(h.sleep.calls).toEqual([6 * HOUR]);
     expect(h.churn.executed).toEqual([]);
     expect(h.churn.advanceCalls).toBe(0); // gate fires before timers
 
-    // The fake sleep advanced the clock into the window: the next step acts.
+    // The session opened while the loop slept: the next step acts.
+    pacing.open = true;
     expect(await h.engine.stepOnce()).toBe('acted');
   });
 
-  test('at the hard ceiling: waits until local midnight, no action', async () => {
-    const h = makeHarness({ ceiling: 2 });
+  test("at the hard ceiling: waits exactly to the plan-day's boundary, no action", async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    const h = makeHarness({ ceiling: 2, pacing });
     h.store.recordAction('x', 'follow', 'ok', T0 - HOUR);
     h.store.recordAction('y', 'follow', 'ok', T0 - HOUR / 2);
     h.churn.due = [rec({ accountPk: 'a' })];
@@ -181,22 +182,17 @@ describe('Engine — active-hours and ceiling gates (precedence 3–4)', () => {
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('waited-ceiling');
-    // noon → midnight, plus the positive-only daily-boundary jitter.
-    expect(h.sleep.calls.length).toBe(1);
-    expect(h.sleep.calls[0]).toBeGreaterThan(12 * HOUR);
-    expect(h.sleep.calls[0]).toBeLessThanOrEqual(12 * HOUR + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
+    expect(h.sleep.calls).toEqual([pacing.view(T0).window.endsAt - T0]);
     expect(h.churn.executed).toEqual([]);
-    expect(h.engine.status().atHardCeiling).toBe(false); // ledger rolled over at midnight
   });
 });
 
 describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)', () => {
-  test('a fresh start outside active hours pushes the park BEFORE it elapses', async () => {
-    const h = makeHarness({
-      startAt: Date.parse('2026-08-12T23:00:00'),
-      activeHours: { start: 8, end: 22 },
-    });
-    h.sleep.hang = true; // the active-hours park blocks until aborted
+  test('a fresh start between sessions pushes the park BEFORE it elapses', async () => {
+    const pacing = new FakePacing(T0 + 9 * HOUR);
+    pacing.open = false;
+    const h = makeHarness({ pacing });
+    h.sleep.hang = true; // the session park blocks until aborted
 
     const started = h.engine.start();
     await new Promise((r) => setTimeout(r, 0)); // let the loop reach the park
@@ -206,14 +202,10 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
     // without these fields this state was indistinguishable from a dead run.
     const pushed = h.statuses[h.statuses.length - 1];
     expect(pushed.state).toBe('running');
-    expect(pushed.parkReason).toBe('active-hours');
-    // parkedUntil carries the REAL jittered deadline: past the window open,
-    // within the boundary-jitter band.
-    const windowOpen = Date.parse('2026-08-13T08:00:00');
-    expect(pushed.parkedUntil!).toBeGreaterThan(windowOpen);
-    expect(pushed.parkedUntil!).toBeLessThanOrEqual(windowOpen + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
+    expect(pushed.parkReason).toBe('session');
+    expect(pushed.parkedUntil).toBe(T0 + 9 * HOUR);
     expect(pushed.lastStep).toBeNull();
-    expect(h.engine.status().parkReason).toBe('active-hours');
+    expect(h.engine.status().parkReason).toBe('session');
 
     h.engine.stop();
     await started;
@@ -223,24 +215,21 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
   });
 
   test('the park clears once the wait elapses (resume shows unparked)', async () => {
-    const h = makeHarness({
-      startAt: Date.parse('2026-08-12T02:00:00'),
-      activeHours: { start: 8, end: 22 },
-    });
+    const pacing = new FakePacing(T0 + 6 * HOUR);
+    pacing.open = false;
+    const h = makeHarness({ pacing });
 
     const result = await h.engine.stepOnce(); // the fake sleep advances through the park
 
-    expect(result).toBe('waited-active-hours');
-    // A mid-park push carried the hold with its REAL (jittered) deadline...
-    const mid = h.statuses.find((s) => s.parkReason === 'active-hours');
-    const windowOpen = Date.parse('2026-08-12T08:00:00');
-    expect(mid?.parkedUntil ?? 0).toBeGreaterThan(windowOpen);
-    expect(mid?.parkedUntil ?? 0).toBeLessThanOrEqual(windowOpen + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
+    expect(result).toBe('waited-session');
+    // A mid-park push carried the hold with its exact deadline...
+    const mid = h.statuses.find((s) => s.parkReason === 'session');
+    expect(mid?.parkedUntil).toBe(T0 + 6 * HOUR);
     // ...and the post-step push (and the live read) show it cleared.
     const last = h.statuses[h.statuses.length - 1];
     expect(last.parkReason).toBeNull();
     expect(last.parkedUntil).toBeNull();
-    expect(last.lastStep).toBe('waited-active-hours');
+    expect(last.lastStep).toBe('waited-session');
     expect(h.engine.status().parkReason).toBeNull();
   });
 
@@ -262,8 +251,9 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
     expect(h.engine.status().parkReason).toBeNull();
   });
 
-  test('a daily-ceiling park surfaces reason "daily-ceiling" until the cycle reset', async () => {
-    const h = makeHarness({ ceiling: 2 });
+  test('a daily-ceiling park surfaces reason "daily-ceiling" until the plan-day boundary, exactly', async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    const h = makeHarness({ ceiling: 2, pacing });
     h.store.recordAction('x', 'follow', 'ok', T0 - HOUR);
     h.store.recordAction('y', 'follow', 'ok', T0 - HOUR / 2);
     h.churn.due = [rec({ accountPk: 'a' })];
@@ -273,12 +263,8 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.engine.status().parkReason).toBe('daily-ceiling');
-    // noon → midnight plus the positive-only boundary jitter.
-    const cycleReset = T0 + 12 * HOUR;
-    expect(h.engine.status().parkedUntil!).toBeGreaterThan(cycleReset);
-    expect(h.engine.status().parkedUntil!).toBeLessThanOrEqual(
-      cycleReset + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS,
-    );
+    // The plan's park is exact (spec §5.16): the plan-day boundary, no jitter.
+    expect(h.engine.status().parkedUntil).toBe(pacing.view(T0).window.endsAt);
 
     h.engine.stop();
     expect(await stepping).toBe('waited-ceiling');
@@ -641,10 +627,10 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
       reached = r;
     });
     const orig = h.churn.execute.bind(h.churn);
-    h.churn.execute = async (r: FollowRecord) => {
+    h.churn.execute = async (r: FollowRecord, actAt: number) => {
       reached();
       await gate;
-      return orig(r);
+      return orig(r, actAt);
     };
 
     const stale = h.engine.stepOnce(); // old generation, parked inside the action
@@ -659,9 +645,10 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     expect(await stale).toBe('aborted');
 
     await new Promise((r) => setTimeout(r, 0));
-    // Exactly ONE recorded action: the new generation's own. A stale step that
-    // also recorded would double-drive the planner and clobber the deadline.
-    expect(pacing.gaps).toHaveLength(1);
+    // Both clicks landed and each dispatch armed its own deadline; the stale step armed nothing of its own,
+    // so the deadline owed is the new generation's dispatch gap.
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a', 'b']);
+    expect(h.store.getActionDelayDeadline()).toBeGreaterThanOrEqual(T0 + DELAY_MS);
 
     h.engine.stop();
     await started;
@@ -736,9 +723,9 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
 
     expect(await h.engine.stepOnce()).toBe('acted');
 
-    // The remainder wait came BEFORE the action, and the owed slot then cleared.
+    // The remainder wait came BEFORE the action; the action's own dispatch then armed the next one.
     expect(h.events.slice(0, 2)).toEqual([`sleep:${DELAY_MS}`, 'execute:a']);
-    expect(h.store.getActionDelayDeadline()).toBeNull(); // consumed, then re-armed…
+    expect(h.store.getActionDelayDeadline()).toBe(T0 + DELAY_MS + DELAY_MS);
   });
 
   test('an ELAPSED persisted deadline (long app closure) acts immediately', async () => {
@@ -767,13 +754,18 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     expect(h.store.getActionDelayDeadline()).toBe(T0 + DELAY_MS);
   });
 
-  test('a fully-elapsed delay clears the persisted deadline', async () => {
+  test('a fully-elapsed delay owes nothing: the countdown clears and the next action needs no wait', async () => {
     const h = makeHarness();
-    h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.due = [rec({ accountPk: 'a' }), rec({ accountPk: 'b' })];
 
     await h.engine.stepOnce(); // fake sleep advances the clock — the delay completes
 
-    expect(h.store.getActionDelayDeadline()).toBeNull();
+    expect(h.store.getActionDelayDeadline()).toBeLessThanOrEqual(h.clock.now());
+    expect(h.engine.status().nextActionAt).toBeNull();
+    h.sleep.calls = [];
+    h.events.length = 0;
+    await h.engine.stepOnce();
+    expect(h.events[0]).toBe('execute:b');
   });
 
   test('awaitParked resolves once the paused loop quiesces at the gate (prune hand-off)', async () => {
@@ -1206,9 +1198,10 @@ describe('Engine — status projection', () => {
     expect(s.followedBackHeld).toBe(1);
     expect(s.unfollowDue).toBe(1);
     expect(s.actionsToday).toBe(1);
-    // The cycle plan fluctuates under the rate; remaining derives from it.
-    expect(s.plannedToday).toBeLessThan(100);
-    expect(s.remainingToday).toBe(s.plannedToday - 1);
+    // The day's volume and what is left of it are the plan's (spec §5.7).
+    const view = (h.engine as unknown as { pacing: FakePacing }).pacing.view(h.clock.now());
+    expect(s.plannedToday).toBe(Math.max(view.plan.volume.drawn, view.plan.volume.planned));
+    expect(s.remainingToday).toBe(view.remaining);
     expect(s.atHardCeiling).toBe(false);
     expect(s.state).toBe('idle');
     expect(s.lastStep).toBeNull();
@@ -1231,42 +1224,52 @@ describe('Engine — organic pacing model', () => {
     expect(h.churn.executed).toEqual([]); // the gate returns before any action
   });
 
-  test("acts inside a session and arms the plan's reference gap (not nextDelayMs)", async () => {
+  test('acts inside a session, then waits on the deadline its dispatch armed — no gap of its own', async () => {
     const pacing = new FakePacing(T0);
-    pacing.gapMs = 4 * 60_000;
     const h = makeHarness({ pacing });
+    const gap = 4 * 60_000;
+    h.churn.onDispatch = (at) => h.store.setActionDelayDeadline(at + gap);
     h.churn.due = [rec({ accountPk: 'a', state: 'queued' })];
 
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('acted');
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
-    expect(pacing.gaps).toEqual([T0]);
-    expect(h.sleep.calls).toEqual([4 * 60_000]); // the plan's gap, not the legacy DELAY_MS
+    expect(h.sleep.calls).toEqual([gap]); // the dispatch's deadline, not a draw of the loop's
   });
 
-  test('a due unfollow arms the same gap after it lands', async () => {
+  test('a write that dispatched nothing (blocked before any press) arms nothing and owes nothing', async () => {
     const pacing = new FakePacing(T0);
     const h = makeHarness({ pacing });
+    h.churn.outcome = 'blocked';
+    h.churn.lastCause = 'tab-unhealthy';
     h.churn.due = [rec({ accountPk: 'u', state: 'unfollow_queued' })];
 
     await h.engine.stepOnce();
 
-    expect(pacing.gaps).toEqual([T0]);
+    expect(h.store.getActionDelayDeadline()).toBeNull();
   });
 
-  test('velocity backstop parks the loop when the trailing-hour ledger is at the cap', async () => {
+  test('a practice-mode write owes the gap a dispatch would (practice works as usual)', async () => {
     const pacing = new FakePacing(T0);
-    pacing.hourCap = 3;
     const h = makeHarness({ pacing });
-    h.store.recordAction('x', 'follow', 'ok', T0 - 10 * 60_000);
-    h.store.recordAction('y', 'follow', 'ok', T0 - 20 * 60_000);
-    h.store.recordAction('z', 'follow', 'ok', T0 - 30 * 60_000);
+    h.churn.outcome = 'simulated';
+    h.churn.due = [rec({ accountPk: 'a', state: 'queued' })];
+
+    expect(await h.engine.stepOnce()).toBe('acted');
+    expect(pacing.practices).toEqual([T0]);
+  });
+
+  test('a full rolling hour parks exactly to its window, taking no action', async () => {
+    const pacing = new FakePacing(T0);
+    pacing.velocityUntil = T0 + 7 * 60_000;
+    const h = makeHarness({ pacing });
     h.churn.due = [rec({ accountPk: 'a' })];
 
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('waited-session');
+    expect(h.sleep.calls).toEqual([7 * 60_000]);
     expect(h.churn.executed).toEqual([]);
   });
 
@@ -1303,10 +1306,6 @@ describe('Engine — organic pacing model', () => {
     expect(s.pacing?.nextSessionAt).toBe(T0 + 1000);
   });
 
-  test('legacy mode leaves status.pacing null', () => {
-    const h = makeHarness();
-    expect(h.engine.status().pacing).toBeNull();
-  });
 });
 
 // --- Woven prune feed (organic model) ---------------------------------------------
@@ -1318,14 +1317,17 @@ class FakeFeed implements EngineUnfollowFeed {
   cap = false;
   executed: Array<{ pk: string; username: string }> = [];
   outcome: 'ok' | 'failed' | 'simulated' | 'blocked' = 'ok';
+  /** The dispatch closure's arm (the cadence in production), when the write dispatched. */
+  onDispatch: ((at: number) => void) | null = null;
   nextCandidate(): { pk: string; username: string } | null {
     return this.cap ? null : (this.candidates[0] ?? null);
   }
-  async executeUnfollow(cand: { pk: string; username: string }): Promise<
+  async executeUnfollow(cand: { pk: string; username: string }, now: number): Promise<
     'ok' | 'failed' | 'simulated' | 'blocked'
   > {
     this.executed.push(cand);
     if (this.outcome !== 'blocked') this.candidates = this.candidates.filter((c) => c.pk !== cand.pk);
+    if (this.outcome === 'ok' || this.outcome === 'failed') this.onDispatch?.(now);
     return this.outcome;
   }
   atDailyCap(): boolean {
@@ -1345,20 +1347,19 @@ describe('Engine — woven prune feed', () => {
     expect(h.churn.executed).toEqual([]);
     expect(feed.candidates).toHaveLength(1);
   });
-  test('weaves a prune unfollow when no lifecycle action is due, paced by the planner', async () => {
+  test('weaves a prune unfollow when no lifecycle action is due, paced by the deadline its dispatch armed', async () => {
     const pacing = new FakePacing(T0);
-    pacing.gapMs = 4 * 60_000;
     const feed = new FakeFeed();
     feed.candidates = [{ pk: 'p1', username: 'prunee' }];
     const h = makeHarness({ pacing, unfollowFeed: feed });
+    feed.onDispatch = (at) => h.store.setActionDelayDeadline(at + 4 * 60_000);
     // no churn.due → no lifecycle action
 
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('acted');
     expect(feed.executed).toEqual([{ pk: 'p1', username: 'prunee' }]);
-    expect(pacing.gaps).toEqual([T0]);
-    expect(h.sleep.calls).toEqual([4 * 60_000]); // the plan's gap
+    expect(h.sleep.calls).toEqual([4 * 60_000]); // the dispatch's deadline
   });
 
   test('does not weave when weaveEnabled is false', async () => {
@@ -1396,7 +1397,7 @@ describe('Engine — woven prune feed', () => {
 
     expect(result).toBe('idle');
     expect(feed.executed.length).toBe(1); // attempted
-    expect(pacing.gaps).toEqual([]); // no gap armed on a block
+    expect(h.store.getActionDelayDeadline()).toBeNull(); // nothing dispatched, nothing owed
   });
 
   test('interleaves: both available and rng below the cap picks the prune unfollow', async () => {
@@ -1769,5 +1770,42 @@ describe('Engine — requeue-healer (closed incident windows)', () => {
     expect(incident.healed.count).toBe(1);
     h.engine.stop();
     await started;
+  });
+});
+
+describe('Engine — the unconfirmed-actions breaker (spec §11.1 F7)', () => {
+  /** A lifecycle unfollow Instagram answers with nothing: dispatched, unverified. */
+  const unverified = (h: Harness): void => {
+    h.churn.outcome = 'blocked';
+    (h.churn as { lastActionOutcome?: () => ChurnActionOutcome }).lastActionOutcome = () =>
+      ({ status: 'blocked', cause: 'unverified', unverifiedClick: true });
+  };
+
+  test('two unverified unfollows park (no rate-wall signal) and hold unfollows; the third enters the ladder', async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    const h = makeHarness({ pacing });
+    unverified(h);
+    h.churn.due = [rec({ accountPk: 'u', state: 'unfollow_queued' })];
+
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(pacing.breaker.held(h.clock.now())).toEqual({ kind: 'unfollow', streak: 2 });
+    expect(h.engine.status().recovery).toBeNull();
+    // The next session's one attempt: unverified again, so the kind enters the ladder.
+    h.clock.set(T0 + HOUR);
+    await h.engine.stepOnce();
+    expect(h.engine.status().recovery).not.toBeNull();
+  });
+
+  test('a confirmed unfollow resets the streak', async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    const h = makeHarness({ pacing });
+    unverified(h);
+    h.churn.due = [rec({ accountPk: 'u', state: 'unfollow_queued' })];
+    await h.engine.stepOnce();
+    h.churn.outcome = 'ok';
+    (h.churn as { lastActionOutcome?: () => ChurnActionOutcome }).lastActionOutcome = () => ({ status: 'ok' });
+    await h.engine.stepOnce();
+    expect(pacing.noteOutcome('unfollow', true, h.clock.now())).toBe(1);
   });
 });

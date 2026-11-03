@@ -5,23 +5,20 @@
 
 import { tempoOrReference } from '../kernel/tempo';
 import type { FollowRecord } from '../store/types';
-import { ENGINE as ENGINE_TIMING, RECOVERY as RECOVERY_TIMING } from '../timing/config';
+import { RECOVERY as RECOVERY_TIMING } from '../timing/config';
 import type { WaitResult } from '../timing/delay-manager';
 import type { DelayPolicy } from '../timing/primitives';
 import * as log from '../utils/logger';
+import type { ChurnActionOutcome } from './churn-types';
 import type { EngineWaitKey } from './engine-waits';
 import type { FeedCandidate } from './facts';
 import { isUnverifiedOutcome } from './mutation-outcome';
-import type { Pacer } from './pacers';
-import type { EngineTempo } from './plan-port';
+import type { EngineTempo, EngineWriteKind } from './plan-port';
 import type { EngineDeps, EngineState, EngineUnfollowFeed, StepResult } from './ports';
 import type { FailureKind, RecoveryIncident, RecoverySupervisor } from './recovery';
+import { UnconfirmedBreaker } from './unconfirmed-breaker';
 
-/** How long an iteration idles when nothing is due yet (the Engine's `ENGINE_IDLE_MS`). */
-const ENGINE_IDLE_MS = ENGINE_TIMING.IDLE_MS;
-
-/** What one action attempt produced: the verb that landed (so the pacer can be
- *  told and the delay armed), or a StepResult that ends the iteration outright. */
+/** What one action attempt produced: the verb that landed, or a StepResult that ends the iteration outright. */
 export type ActionOutcome =
   | { kind: 'follow' | 'unfollow'; step?: undefined }
   | { kind?: undefined; step: StepResult };
@@ -30,12 +27,9 @@ export type ActionOutcome =
 export interface EngineActionContext {
   readonly deps: EngineDeps & EngineTempo;
   readonly recovery: RecoverySupervisor;
-  readonly pacer: Pacer;
   readonly unfollowFeed: EngineUnfollowFeed;
   /** Consecutive failed actions that enter the recovery ladder (`ACTIONS_FAILING_HALT`). */
   readonly actionsFailingHalt: number;
-  /** The owed inter-action deadline (epoch ms), or null; see {@link setActionDeadline}. */
-  actionDelayDeadline: number | null;
   /** True once a refill ran since the last action. */
   refillSinceAction: boolean;
   /** Epoch ms of the last action that landed. */
@@ -43,58 +37,92 @@ export interface EngineActionContext {
   stateNow(): EngineState;
   superseded(token: AbortController): boolean;
   engineWait(key: EngineWaitKey, policyOrMs: DelayPolicy | number): Promise<WaitResult>;
+  /** The idle beat until the next known event (spec §5.16). */
+  idleWait(now: number): Promise<WaitResult>;
   enterRecovery(token: AbortController, kind: FailureKind): Promise<StepResult>;
   noteProgress(phase: string): void;
   healIncidentWindow(incident: RecoveryIncident): void;
 }
 
+/** The plan's own park for a refusal before the visit (spec §5.13 S2 item 3); none for a refusal with no instant. */
+const DEFERRAL_PARK: Readonly<Record<string, EngineWaitKey>> = {
+  deadline: 'engine:action-delay',
+  'session-closed': 'engine:session-park',
+  'quiet-hours': 'engine:session-park',
+  'day-off': 'engine:session-park',
+  'day-done': 'engine:daily-ceiling-park',
+  ceiling: 'engine:daily-ceiling-park',
+  'hourly-cap': 'engine:velocity-park',
+  probation: 'engine:velocity-park',
+  'read-budget': 'engine:read-budget-park',
+};
+
+/** Park exactly until a typed deferral's instant (no idle-and-revisit), else the idle beat. */
+async function serveDeferral(ctx: EngineActionContext, outcome: ChurnActionOutcome | null | undefined): Promise<void> {
+  const now = ctx.deps.clock.now();
+  const v = outcome?.verdict;
+  const key = v?.kind === 'deferred' ? DEFERRAL_PARK[v.reason] : undefined;
+  if (v?.kind === 'deferred' && key !== undefined && v.until !== null && v.until > now) {
+    await ctx.engineWait(key, v.until - now);
+    return;
+  }
+  await ctx.idleWait(now);
+}
+
+/** The owed deadline, when it is still in the future. */
+function owedMs(ctx: EngineActionContext): number {
+  return (ctx.deps.store.getActionDelayDeadline() ?? 0) - ctx.deps.clock.now();
+}
+
 /**
- * THE one Instagram action per iteration — a growth/lifecycle churn action
- * or, in the organic model with prune woven in, an interleaved prune unfollow
- * drawn from the SAME stream. Returns null when neither stream has work.
+ * THE one Instagram action per iteration (spec §5.13 S2): serve the deadline still owed (armed at a
+ * previous dispatch, persisted, so a relaunch serves its remainder), act, then wait on the deadline
+ * the dispatch closure armed. The loop draws no gap of its own.
  */
 export async function performAction(
   ctx: EngineActionContext,
-  now: number,
+  _now: number,
   token: AbortController,
   act: (actAt: number) => Promise<ActionOutcome>,
 ): Promise<StepResult> {
-  const probationUntil = ctx.deps.reentry?.mutationWaitUntil(now);
-  if (probationUntil !== null && probationUntil !== undefined) {
-    await ctx.engineWait('engine:action-delay', probationUntil - now);
-    return 'idle';
+  // Interruptible: a fresh pause during the remainder leaves the deadline owed and parks without acting.
+  const owed = owedMs(ctx);
+  if (owed > 0) {
+    const res = await ctx.engineWait('engine:action-delay', owed);
+    if (!res.completed) return 'idle';
   }
-  // Pay down an OWED remainder first (armed by a previous action whose delay a
-  // pause/offline aborted). Interruptible: a fresh pause during the remainder
-  // leaves the deadline armed and parks without acting.
-  if (ctx.actionDelayDeadline !== null) {
-    const remaining = ctx.actionDelayDeadline - now;
-    if (remaining > 0) {
-      const res = await ctx.engineWait('engine:action-delay', remaining);
-      // Aborted with the remainder still owed: NOTHING was acted on — report
-      // 'idle' so lastStep/lastActionAt stay truthful.
-      if (!res.completed) return 'idle';
-    }
-    setActionDeadline(ctx, null);
-  }
-
   const actAt = ctx.deps.clock.now();
   ctx.refillSinceAction = false;
   const outcome = await act(actAt);
   if (outcome.kind === undefined) return outcome.step;
-
   ctx.lastActionAt = actAt;
-  // Arm the delay deadline BEFORE waiting: if a pause/stop/quit lands during
-  // the action (or the wait), the persisted deadline survives so the next
-  // resume — or app launch — serves the remainder.
-  setActionDeadline(ctx, Math.max(ctx.deps.store.getActionDelayDeadline() ?? 0,
-    actAt + ctx.pacer.noteAction(actAt, outcome.kind)));
   if (ctx.stateNow() !== 'paused' && !ctx.superseded(token)) {
-    const remaining = (ctx.actionDelayDeadline ?? 0) - ctx.deps.clock.now();
-    const res = await ctx.engineWait('engine:action-delay', remaining);
-    if (res.completed) setActionDeadline(ctx, null);
+    const remaining = owedMs(ctx);
+    if (remaining > 0) await ctx.engineWait('engine:action-delay', remaining);
   }
   return 'acted';
+}
+
+/**
+ * Feed a dispatched write's evidence to the plan's breaker (spec §11.1 F7). An unverified one parks
+ * (pace-up), or enters the ladder once the streak reaches the blocked entry; null when nothing was unverified.
+ */
+async function unverifiedStep(ctx: EngineActionContext, kind: EngineWriteKind, outcome: ChurnActionOutcome | null | undefined,
+  actAt: number, token: AbortController, park: EngineWaitKey): Promise<StepResult | null> {
+  const unverified = isUnverifiedOutcome(outcome);
+  // Instagram answered: the write landed, was refused, or drifted — evidence either way. A tab stall is neither.
+  const confirmed = outcome?.status === 'ok' || outcome?.status === 'failed'
+    || (outcome?.status === 'blocked' && outcome.cause === 'rate-limited');
+  if (!unverified && !confirmed) return null;
+  const streak = ctx.deps.pacing.noteOutcome(kind, unverified, actAt);
+  if (!unverified) return null;
+  if (UnconfirmedBreaker.entersLadder(streak)) {
+    log.warn('engine: Instagram confirmed none of the last writes of this kind — entering recovery', { kind, streak });
+    return ctx.enterRecovery(token, 'rate-limited');
+  }
+  // Dispatched with no Instagram evidence (ADR 0308): a park, never a rate-wall signal by itself.
+  await ctx.engineWait(park, tempoOrReference(ctx.deps.tempo).base('park.blocked'));
+  return 'idle';
 }
 
 /** One woven prune unfollow: the feed owns the ledger row + edge reconcile. */
@@ -109,12 +137,15 @@ export async function actWovenUnfollow(
   // now — bail before recording, arming, or serving anything.
   if (ctx.superseded(token)) return { step: 'aborted' };
   const detail = ctx.unfollowFeed.lastActionOutcome?.();
+  const unverified = await unverifiedStep(ctx, 'unfollow', detail, actAt, token, 'engine:prune-park');
+  if (unverified !== null) return { step: unverified };
   if (status === 'blocked') {
     if (detail?.cause === 'rate-limited') return { step: await ctx.enterRecovery(token, 'rate-limited') };
     // The journal retains unresolved effects; no failed attempt consumes the candidate.
     await ctx.engineWait('engine:prune-park', tempoOrReference(ctx.deps.tempo).base('park.blocked'));
     return { step: 'idle' };
   }
+  if (status === 'simulated') ctx.deps.pacing.practiced(actAt);
   if (status === 'ok' && !detail?.alreadyInState) {
     ctx.deps.reentry?.noteAction(actAt);
     ctx.noteProgress('mutation-verified');
@@ -134,14 +165,13 @@ export async function actChurn(
   // is dropped rather than allowed to overwrite the new run's deadline.
   if (ctx.superseded(token)) return { step: 'aborted' };
 
+  const kind: EngineWriteKind = rec.state === 'unfollow_queued' ? 'unfollow' : 'follow';
+  const detail = ctx.deps.churn.lastActionOutcome?.();
+  const unverified = await unverifiedStep(ctx, kind, detail, actAt, token, 'engine:blocked-park');
+  if (unverified !== null) return { step: unverified };
   if (outcome === 'blocked') {
     if (ctx.deps.churn.lastBlockedCause() === 'local-policy') {
-      await ctx.engineWait('engine:idle', ENGINE_IDLE_MS);
-      return { step: 'idle' };
-    }
-    if (isUnverifiedOutcome(ctx.deps.churn.lastActionOutcome?.())) {
-      // Dispatched with no Instagram evidence (ADR 0308, spec §11.1 F7): a park, never a rate-wall signal by itself.
-      await ctx.engineWait('engine:blocked-park', tempoOrReference(ctx.deps.tempo).base('park.blocked'));
+      await serveDeferral(ctx, detail);
       return { step: 'idle' };
     }
     // Nothing was clicked and the record is untouched. Re-driving the SAME
@@ -173,7 +203,8 @@ export async function actChurn(
     const kind: FailureKind = drift >= failed ? 'drift' : 'rate-limited';
     return { step: await ctx.enterRecovery(token, kind) };
   }
-  if ((outcome === 'ok' && !ctx.deps.churn.lastActionOutcome?.()?.alreadyInState) || outcome === 'simulated') {
+  if (outcome === 'simulated') ctx.deps.pacing.practiced(actAt);
+  if ((outcome === 'ok' && !detail?.alreadyInState) || outcome === 'simulated') {
     ctx.noteProgress(outcome === 'ok' ? 'mutation-verified' : 'simulation-completed');
     if (outcome === 'ok') {
       ctx.deps.reentry?.noteAction(actAt);
@@ -184,13 +215,4 @@ export async function actChurn(
     if (incident !== null) ctx.healIncidentWindow(incident);
   }
   return { kind: rec.state === 'unfollow_queued' ? 'unfollow' : 'follow' };
-}
-
-/**
- * Set the owed inter-action deadline in memory AND the store in one move —
- * the durable mirror is what lets an app relaunch resume the remaining wait.
- */
-export function setActionDeadline(ctx: EngineActionContext, at: number | null): void {
-  ctx.actionDelayDeadline = at;
-  ctx.deps.store.setActionDelayDeadline(at);
 }

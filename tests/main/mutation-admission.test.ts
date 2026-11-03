@@ -17,6 +17,8 @@ function admission(o: { reviewed?: ReviewedAction | null; refuse?: boolean; acti
     acceptPassEnded: () => { ended += 1; return 3_000; },
     acceptAllowed: () => true,
     manualOpen: () => ({ ok: true }),
+    armPractice: () => 0,
+    velocityParkUntil: () => null,
   };
   let reviewed = o.reviewed ?? null;
   const gate = createMutationAdmission({ clock: { now: () => 1_000 }, cadence, settings: () => ({ ...DEFAULT_SETTINGS, dryRun: o.dryRun ?? false }),

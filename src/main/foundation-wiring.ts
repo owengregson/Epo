@@ -1237,7 +1237,7 @@ export class Foundation {
     try {
       return shapeTargetDetail(graph.store, graph.ownPk, targetPk, {
         now: graph.clock.now(),
-        plannedToday: graph.rate.plannedToday(),
+        plannedToday: graph.plan.service.view(graph.clock.now()).plan.volume.planned,
       });
     } catch (e) {
       logger.error('foundation.chainDetail: failed', { error: String(e) });

@@ -3,13 +3,25 @@
  * plan, and the paced delay between unfollows.
  */
 
+import { bandDay, u } from '../kernel/plan';
+import { MS_PER_MINUTE } from '../kernel/units';
 import { actionGap } from '../timing/action-gap';
 import { PRUNE } from '../timing/config';
 import type { WaitResult } from '../timing/delay-manager';
 import { sample, scaled } from '../timing/primitives';
+import { startOfLocalDay } from '../timing/units';
 import * as log from '../utils/logger';
-import { pruneCycleStart, pruneDailyPlan } from './decisions';
 import type { PruneConfig, PruneEngineDeps, PruneState } from './prune-types';
+
+/** Prune's cap boundary: the plan-day start when a governor is wired, else local midnight. */
+export function pruneCycleStart(now: number, cycleStartMs?: (now: number) => number): number {
+  return cycleStartMs?.(now) ?? startOfLocalDay(now);
+}
+
+/** Today's planned prune volume: the automatic-day band drawn under `dailyLimit` from the plan-day's start. */
+export function pruneDailyPlan(dailyLimit: number, cycleStart: number): number {
+  return bandDay(dailyLimit, u(Math.floor(cycleStart / MS_PER_MINUTE) >>> 0, 'prune-band', dailyLimit));
+}
 
 /**
  * Prune unfollows run at a THIRD of the growth engine's paced inter-action

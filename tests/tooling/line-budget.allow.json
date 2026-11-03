@@ -15,7 +15,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 958
+      "lines": 952
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -23,7 +23,7 @@
     },
     {
       "file": "src/livetest/steps.ts",
-      "lines": 727
+      "lines": 723
     },
     {
       "file": "src/adapter/actor.ts",
@@ -54,16 +54,16 @@
       "lines": 410
     },
     {
-      "file": "src/main/services/graph-builder.ts",
-      "lines": 363
-    },
-    {
       "file": "src/rim/followers-page-reader.ts",
       "lines": 362
     },
     {
       "file": "src/rim/follower-acquisition.ts",
       "lines": 359
+    },
+    {
+      "file": "src/main/services/graph-builder.ts",
+      "lines": 358
     },
     {
       "file": "src/types.ts",

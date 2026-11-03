@@ -5,11 +5,8 @@
  * a clock, or a fake port (the store slices below are read-only reads).
  */
 
-import { bandDay, u } from '../kernel/plan';
-import { MS_PER_MINUTE } from '../kernel/units';
 import type { AcquireEndReason } from '../rim/follower-acquisition';
 import type { AccountState, FollowRecord, FollowState } from '../store/types';
-import { startOfLocalDay } from '../timing/units';
 import { EXPLORATION_POLICY } from './exploration-policy';
 import type { FailureKind } from './recovery';
 
@@ -88,14 +85,6 @@ export function pickAction(
   return null;
 }
 
-/** Ms until the next local `activeHoursStart` o'clock (always strictly future). */
-export function msUntilActiveWindow(now: number, activeHoursStart: number): number {
-  const next = new Date(now);
-  next.setHours(activeHoursStart, 0, 0, 0);
-  if (next.getTime() <= now) next.setDate(next.getDate() + 1);
-  return next.getTime() - now;
-}
-
 /**
  * The refill path's verdict on a FAILED acquire: the first walled cycles take
  * the long backoff park (a rate wall must not spin the refill loop at pacing
@@ -116,22 +105,4 @@ export function acquireFailureVerdict(
     return { action: 'recover', kind: endReason === 'shape-mismatch' ? 'drift' : 'rate-limited' };
   }
   return { action: 'backoff', walledCycles: next };
-}
-
-/**
- * Prune's cap boundary: growth's active-hours cycle start when a governor is
- * wired, else local midnight — so an overnight window's post-midnight tail
- * spends the cycle it belongs to.
- */
-export function pruneCycleStart(now: number, cycleStartMs?: (now: number) => number): number {
-  return cycleStartMs?.(now) ?? startOfLocalDay(now);
-}
-
-/**
- * Today's planned prune volume: the plan's automatic-day band drawn under
- * `dailyLimit` from the plan-day's start (restart-stable; another day or limit
- * draws again), so the amount pruned per day fluctuates under the limit.
- */
-export function pruneDailyPlan(dailyLimit: number, cycleStart: number): number {
-  return bandDay(dailyLimit, u(Math.floor(cycleStart / MS_PER_MINUTE) >>> 0, 'prune-band', dailyLimit));
 }

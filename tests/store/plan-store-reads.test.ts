@@ -60,7 +60,7 @@ test('tallySince over the ledger union equals the governor actionsToday on journ
     const clock = new FakeClock(NOON);
     const g = new RateGovernor(s, clock, cfg);
     seedJournal(s, NOON);
-    const since = g.cycleStartMs();
+    const since = g.dayStart();
     const tally = s.tallySince(since);
     expect(tally.all).toBe(g.actionsToday());
     expect(tally).toEqual({ all: 7, auto: 5, manual: 2, follow: 2, unfollow: 4, accept: 1 });
