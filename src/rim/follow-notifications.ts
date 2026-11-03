@@ -31,6 +31,7 @@ import type { LocateConfirmRequestResult } from '@/adapter/ig-surface';
 import type { FollowEvent, Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import type { ReadBudget } from '@/governors/read-budget';
+import { awaitCaptured, captureFeed } from '@/rim/feed-capture';
 import type { RimTab } from '@/rim/types';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
@@ -155,69 +156,10 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
   }
 
   private async fetchRecentHeld(acceptRequests: boolean): Promise<FollowNotificationsResult> {
-    // Capture the FIRST activity-feed response — and, when accepting, the
-    // pending-requests response — that land after the clicks. Subscribing
-    // BEFORE clicking closes the race where a fast response beats the handler.
-    // (Object properties so callback assignments stay visible to CFA.)
-    const captured: {
-      /** Accumulated follow events across ALL observed WELL-FORMED feed pages (deduped). */
-      events: FollowEvent[] | null;
-      sawInbox: boolean;
-      /** A feed body arrived but shape-mismatched (IG drift / fail interstitial). */
-      feedDrift: boolean;
-      /** username(lower) → pk from the observed pending-requests rows. */
-      pendingPks: Map<string, string> | null;
-    } = { events: null, sawInbox: false, feedDrift: false, pendingPks: null };
-    const seenEvents = new Set<string>();
-    const pendingReads: Promise<void>[] = [];
-    const unsubscribe = this.tab.onResponse((resp) => {
-      const kind = this.reader.kindOf(resp); // URL + operation name: the drawer reads via GraphQL
-      if (kind !== 'activity-feed' && kind !== 'friend-requests') return;
-      if (kind === 'activity-feed') captured.sawInbox = true;
-      pendingReads.push(
-        resp
-          .getBody()
-          .then((body) => {
-            if (kind === 'activity-feed') {
-              // MERGE every observed feed page (the initial open, the Follows
-              // filter refetch, scroll-loaded older pages) — deduped. STRICT
-              // parse per page: a drifted body leaves `events` untouched (so
-              // it can never read as a successful empty check) but flags the
-              // drift; one well-formed page among drifted ones still succeeds.
-              const parsed = this.reader.parseActivityFeedStrict(body);
-              if (parsed === null) {
-                captured.feedDrift = true;
-                return;
-              }
-              const merged = captured.events ?? [];
-              for (const e of parsed) {
-                const key = `${e.pk}|${e.atMs ?? ''}`;
-                if (seenEvents.has(key)) continue;
-                seenEvents.add(key);
-                merged.push(e);
-              }
-              captured.events = merged;
-              return;
-            }
-            if (captured.pendingPks !== null) return;
-            const parsed = this.reader.parsePendingRequests(body, Date.now());
-            const map = new Map<string, string>();
-            for (const obs of parsed.observations) {
-              // §1: every requester row is a fact — store it as it parses.
-              this.store?.observe(obs);
-              if (typeof obs.fields.username === 'string') {
-                map.set(obs.fields.username.toLowerCase(), obs.accountPk);
-              }
-            }
-            captured.pendingPks = map;
-          })
-          .catch((e: unknown) => {
-            logger.warn('rim.follow-notifications: response body read failed', {
-              kind,
-              error: String(e),
-            });
-          }),
-      );
+    const { captured, seenEvents, pendingReads, unsubscribe } = captureFeed({
+      tab: this.tab,
+      reader: this.reader,
+      store: this.store,
     });
 
     try {
@@ -237,11 +179,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
 
       // A drifted page also unblocks the wait: the response ARRIVED, so there is
       // nothing left to wait for — but only a well-formed page may count as data.
-      await this.awaitCaptured(
-        () => captured.events !== null || captured.feedDrift,
-        pendingReads,
-        signal,
-      );
+      await this.awaitCaptured(() => captured.events !== null || captured.feedDrift, pendingReads, signal);
 
       if (signal?.aborted) return { ok: false, events: [], accepted: [], reason: 'aborted' };
       if (captured.events === null) {
@@ -323,18 +261,11 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
   }
 
   /** Bounded poll for an observed response (interruptible by a stop()). */
-  private async awaitCaptured(
+  private awaitCaptured(
     done: () => boolean,
     pendingReads: Promise<void>[],
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    const deadline = Date.now() + this.responseWaitMs;
-    while (!done() && Date.now() < deadline) {
-      if (signal?.aborted) return;
-      await this.sleep(RIM.NOTIFICATIONS_POLL_MS, signal);
-      await Promise.all(pendingReads.splice(0));
-    }
+    return awaitCaptured(done, pendingReads, signal, this.responseWaitMs, (ms, s) => this.sleep(ms, s));
   }
-
-
 }
