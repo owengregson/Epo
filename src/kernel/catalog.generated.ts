@@ -301,6 +301,7 @@ export const KERNEL_GUARDS: Readonly<Partial<Record<string, string>>> = {
   "PREFERENCES.weeklyShape": "Named week shapes, Sun..Sat. `realistic` is not here — it derives from `EMPIRICAL.HUMAN_CIRCADIAN.dayOfWeek`.",
   "BOUNDS_REENTRY.MIN_ROWS_PER_PAGE": "A walk averaging fewer rows per page than this is a parse or server fault, never a census to size by.",
   "BOUNDS_REENTRY.FRONTIER_PAGES_MAX": "About a week of gains at measured page sizes; a longer gap stops with `gap` and waits for the census.",
+  "BOUNDS_REENTRY.FOLLOWING_WALK_PAGES": "The ordered following form answers the whole list in one response; one plain probe proves its end.",
   "RENDERER_HEALTH.minAnimationFps": "A live-but-throttled 1fps page cannot reliably hydrate controls or deliver input.",
   "RENDERER_HEALTH.backstopWindowFactor": "Stop a zero-frame observation even when its requested frame window never completes.",
   "RUNTIME_BOUNDS.REPAIR_LIMIT": "Guards: endless machinery repairs; three tab repairs inside the window, then the run blocks.",

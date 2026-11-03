@@ -27,7 +27,8 @@ test('identity: the seven-day windows today are exactly one weekly cycle', () =>
 });
 
 test('the reentry bounds are the spec values', () => {
-  expect(BOUNDS_REENTRY).toEqual({ MIN_ROWS_PER_PAGE: 10, FRONTIER_PAGES_MAX: 5 });
+  // FOLLOWING_WALK_PAGES is spec §9.2's SURFACE.followingWalkPages: the ordered response plus one plain probe.
+  expect(BOUNDS_REENTRY).toEqual({ MIN_ROWS_PER_PAGE: 10, FRONTIER_PAGES_MAX: 5, FOLLOWING_WALK_PAGES: 2 });
 });
 
 describe('the head walk and the frontier (spec §9.5)', () => {
