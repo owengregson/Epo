@@ -44,6 +44,21 @@
       "module": "src/renderer/live/CompatibilityNotice.tsx",
       "stream": "SB",
       "reason": "the live column shows the compatibility line and wires its Details to the panel"
+    },
+    {
+      "module": "src/renderer/app/clock.ts",
+      "stream": "SH",
+      "reason": "the stage bar's Live context counts down to Epo's next use of the page on the second tick"
+    },
+    {
+      "module": "src/renderer/lib/deadline-anim.ts",
+      "stream": "SB",
+      "reason": "the sidebar ring and the plan strip deplete toward their deadline with one animation each"
+    },
+    {
+      "module": "src/renderer/lib/flip.ts",
+      "stream": "SB",
+      "reason": "the activity feed's new rows arrive and file into place with it"
     }
   ]
 }

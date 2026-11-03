@@ -18,6 +18,7 @@ import { useConfirm } from '@/renderer/hooks/useConfirm';
 import { useControl } from '@/renderer/hooks/useControl';
 import { useEngineStatus } from '@/renderer/hooks/useEngineStatus';
 import { useGraphBoard } from '@/renderer/hooks/useGraphBoard';
+import { useLiveFeeds } from '@/renderer/hooks/useLiveFeeds';
 import { useLogFeed } from '@/renderer/hooks/useLogFeed';
 import { usePruneStatus } from '@/renderer/hooks/usePruneStatus';
 import { useScrollReset } from '@/renderer/hooks/useScrollReset';
@@ -59,6 +60,7 @@ export function App(): JSX.Element {
   usePruneStatus();
   useSettings();
   useLogFeed();
+  useLiveFeeds();
 
   const toasts = useToasts();
   const view = useView('overview');

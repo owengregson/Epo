@@ -1,10 +1,13 @@
 import { computed, type ReadonlySignal, signal } from '@preact/signals';
 import { createContext } from 'preact';
 import { useContext } from 'preact/hooks';
+import { resetLiveSignals } from '@/renderer/app/live-signals';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import type { LogLine } from '@/renderer/hooks/useLogFeed';
 import type { ToastKind } from '@/renderer/hooks/useToasts';
 import { type TransportModel, transportModel } from '@/renderer/lib/engine-view';
+import type { SettingsFacts } from '@/shared/settings-facts';
+import type { SettingsView } from '@/shared/settings-view';
 import type { EpoStatus, PruneStatus, Settings } from '@/types';
 
 /**
@@ -28,6 +31,10 @@ export const pruneSignal = signal<PruneStatus | null>(null);
 export const settingsSignal = signal<Settings | null>(null);
 /** The streamed structured log, capped by the feed's ring buffer. */
 export const logSignal = signal<LogLine[]>([]);
+/** The Settings view (pushed after every persisted settings write). */
+export const settingsViewSignal = signal<SettingsView | null>(null);
+/** The store-derived Settings facts (a projection row; pushed on store mutation). */
+export const settingsFactsSignal = signal<SettingsFacts | null>(null);
 
 /**
  * The unified console posture derived from BOTH status channels.
@@ -75,6 +82,9 @@ export function resetShellSignals(): void {
   pruneSignal.value = null;
   settingsSignal.value = null;
   logSignal.value = [];
+  settingsViewSignal.value = null;
+  settingsFactsSignal.value = null;
+  resetLiveSignals();
   lastTransport = { state: 'idle', driver: 'growth', pruneScanning: false };
 }
 
