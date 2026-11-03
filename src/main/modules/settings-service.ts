@@ -3,10 +3,12 @@
  * settings file for the Foundation, so every reader shares one copy. Its v2
  * surface (spec §6.9) runs on these v1 internals until the settings core
  * replaces them: `effective()`, `protection()` (the new predicate over the v1
- * lists), `view()` and the capability flags each wiring site sets.
+ * lists), `view()`, the capability flags each wiring site sets and the plan
+ * preview port the plan wiring registers.
  */
 
 import * as path from 'node:path';
+import type { PlanPreviewPort } from '@/governors/plan-types';
 import type { BuiltGraph } from '@/main/services/graph-types';
 import { type EffectiveSettings, effectiveFromV1 } from '@/settings/effective';
 import {
@@ -47,6 +49,8 @@ export class SettingsService {
   private rev = 0;
   private capabilities: SettingsCapabilities = { plan: false, tempo: false, boost: false, protectionEverywhere: false };
   private compiled: { readonly rev: number; readonly index: ProtectionIndex } | null = null;
+  /** The plan core's what-if port for the settings previews; null until the plan wiring registers it. */
+  private previewPort: PlanPreviewPort | null = null;
 
   constructor(private readonly deps: SettingsServiceDeps) {
     this.userDataDir = deps.userDataDir;
@@ -91,6 +95,16 @@ export class SettingsService {
   /** Each wiring site sets its flag once the dependency it names is wired. */
   setCapabilities(patch: Partial<SettingsCapabilities>): void {
     this.capabilities = { ...this.capabilities, ...patch };
+  }
+
+  /** The plan wiring registers the preview port (null withdraws it); the `plan` flag stays its own to set. */
+  setPlanPort(port: PlanPreviewPort | null): void {
+    this.previewPort = port;
+  }
+
+  /** The registered preview port, or null: what the settings previews ask for plan-days. */
+  planPort(): PlanPreviewPort | null {
+    return this.previewPort;
   }
 
   /**

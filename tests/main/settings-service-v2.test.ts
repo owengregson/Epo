@@ -1,13 +1,14 @@
 /**
  * The settings service's v2 surface over its v1 internals (spec §6.9): the
  * effective record, the protection index compiled with the NEW predicate (bio
- * words protect everyone, not only follow-backs), the capability flags and the
- * transitional view.
+ * words protect everyone, not only follow-backs), the capability flags, the plan
+ * preview port and the transitional view.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { PlanPreviewPort } from '@/governors/plan-types';
 import { SettingsService } from '@/main/modules/settings-service';
 import { effectiveFromV1 } from '@/settings/effective';
 import { protectionVerdict } from '@/shared/unfollow-protection';
@@ -44,6 +45,17 @@ test('capabilities start off and each wiring site sets its own flag', () => {
   svc.setCapabilities({ protectionEverywhere: true });
   svc.setCapabilities({ plan: true });
   expect(svc.view().capabilities).toEqual({ plan: true, tempo: false, boost: false, protectionEverywhere: true });
+});
+
+test('the plan preview port is absent until the plan wiring registers it, and can be withdrawn', () => {
+  expect(svc.planPort()).toBeNull();
+  const port: PlanPreviewPort = { previewDays: () => [] };
+  svc.setPlanPort(port);
+  expect(svc.planPort()).toBe(port);
+  // Registering the port sets no capability: the plan wiring sets `plan` itself.
+  expect(svc.view().capabilities.plan).toBe(false);
+  svc.setPlanPort(null);
+  expect(svc.planPort()).toBeNull();
 });
 
 test('the transitional view carries the v1 file as intent, seed, protection and prefs', async () => {
