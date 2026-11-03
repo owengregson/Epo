@@ -15,9 +15,11 @@ import { ambientTempo, sessionTempo } from '../kernel/plan/tempo';
 import type {
   BoostWindow, DayPlan, DrawInput, PlanDayClock, PlanDayWindow, PlanIntent, PlanPreviewDay, ReplanCause,
 } from '../kernel/plan/types';
+import type { TempoSource } from '../kernel/tempo';
 import { CLOCK_TOLERANCE_MS } from '../kernel/tempo-policy';
 import { MS_PER_HOUR } from '../kernel/units';
 import type { BoostPreview } from '../shared/boost';
+import { planTempoSource } from '../timing/tempo-source';
 import { planBackedDayClock } from './plan-day-clock';
 import { boostPreview, clampBoostHours, previewDays } from './plan-preview';
 import {
@@ -254,6 +256,11 @@ export class PlanService {
   /** The current plan-day's start (the rate governor's provider). */
   dayStart(now?: number): number {
     return this.step(this.at(now)).plan.window.startsAt;
+  }
+
+  /** The plan-backed TempoSource: the open session's tempo, else the ambient one; overrides only slow. */
+  tempo(): TempoSource {
+    return planTempoSource({ current: () => this.view().tempo, overrides: () => this.deps.intent().tempoOverrides }, this.deps.launchSeed);
   }
 
   /** The plan-backed one boundary every day counter reads (swapped in at plan-wiring). */
