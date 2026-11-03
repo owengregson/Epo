@@ -14,6 +14,7 @@
 import * as path from 'node:path';
 import { BaseWindow, screen, WebContentsView } from 'electron';
 import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
+import { SHELL_GEOMETRY } from '@/kernel/shell-geometry';
 import { OverlayVeil } from '@/main/overlay/veil-view';
 import { DashboardRecovery } from '@/main/services/dashboard-recovery';
 import {
@@ -26,16 +27,16 @@ import type { StageMode } from '@/types';
 import * as logger from '@/utils/logger';
 
 /** Fixed width of the dashboard sidebar; the IG tab fills the remainder. */
-const SIDEBAR_WIDTH = 460;
+const SIDEBAR_WIDTH = SHELL_GEOMETRY.SIDEBAR_WIDTH_PX;
 
 /** Height of the renderer's stage bar — must match `.stagebar` in shell.css. */
-const STAGE_BAR_HEIGHT = 44;
+const STAGE_BAR_HEIGHT = SHELL_GEOMETRY.STAGE_BAR_HEIGHT_PX;
 
 /** The window and dashboard background: the renderer's `--bg`, so no frame ever paints another colour. */
 const BACKGROUND = '#0d0d0f';
 
 /** Debounce for geometry persistence — resize/move fire per frame. */
-const BOUNDS_PERSIST_MS = 500;
+const BOUNDS_PERSIST_MS = SHELL_GEOMETRY.BOUNDS_PERSIST_MS;
 
 export interface AppShell {
   win: BaseWindow;

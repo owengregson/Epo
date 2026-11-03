@@ -90,10 +90,6 @@
       "lines": 325
     },
     {
-      "file": "src/renderer/design/scale.ts",
-      "lines": 316
-    },
-    {
       "file": "src/renderer/cards/settings/BehaviorCard.tsx",
       "lines": 312
     }

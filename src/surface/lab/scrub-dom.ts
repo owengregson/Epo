@@ -3,6 +3,7 @@
  * that can carry identity is rewritten through the scrubber's pseudonym tables.
  */
 
+import { SCRUB_POLICY } from '@/kernel/scrub-policy';
 import { RESERVED_ROUTES, USERNAME_RE } from '@/surface/versions/2026-08-12/literals';
 
 /** The host every scrubbed media URL points at — unresolvable by construction. */
@@ -58,7 +59,7 @@ export function scrubDom(html: string, t: DomPseudonyms): string {
 
   // 5. Full names already pseudonymised from a body.
   for (const [real, alias] of t.names) {
-    if (real.length < 3) continue;
+    if (real.length < SCRUB_POLICY.minNameChars) continue;
     out = out.replace(new RegExp(escapeRe(real), 'g'), alias);
   }
 

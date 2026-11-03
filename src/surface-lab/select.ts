@@ -10,6 +10,8 @@
  */
 
 import type { Source } from '@/store/types';
+import { routeOf } from '@/surface/index';
+import type { RouteVia } from '@/surface/read/route';
 import type { EndpointKind } from '@/surface/schema/endpoints';
 
 /** Observation provenance for each endpoint kind. */
@@ -23,6 +25,22 @@ export const SOURCE_OF: Record<EndpointKind, Source> = {
   'profile-graphql': 'profile',
   'activity-feed': 'activity-feed',
 };
+
+/** The request half of one recorded exchange: enough to route it the way the production reader does. */
+export interface RecordedRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+/**
+ * Route a recorded exchange through the production routing table (`routeObserved`): the URL, then the
+ * GraphQL operation name the client sent, then a declared root field.
+ */
+export function routeExchange(req: RecordedRequest): { kind: EndpointKind; op: string | null; via: RouteVia } | null {
+  const route = routeOf({ url: req.path, method: req.method, requestHeaders: { ...req.headers } });
+  return route === null ? null : { kind: route.kind, op: route.op, via: route.via };
+}
 
 /** Route a raw capture body to the endpoint whose shape it carries. */
 export function classifyBody(name: string, body: unknown): EndpointKind | null {

@@ -15,8 +15,9 @@
  * | `capture`  | yes            | passive capture of real responses + DOM      |
  * | `inspect`  | yes            | click-to-capture element instrumentation     |
  * | `smoke`    | yes            | the live action test (`npm run livetest`)    |
- * | `replay`   | no             | re-parse the committed corpus (CI-runnable)  |
+ * | `replay`   | no             | re-parse the committed corpora (CI-runnable) |
  * | `diff`     | no             | corpus shape digest vs the schemas           |
+ * | `ingest`   | no             | scrub local probe runs into the 2026-11-02 corpus (`EPO_SCRUB_SOURCE`) |
  *
  * The two that need no Electron are the point: they run under plain Node (and
  * under Jest, which is where CI actually runs them), so the contract the corpus
@@ -29,34 +30,38 @@ import { surface } from '@/surface/index';
 import { readResponse } from '@/surface/parse';
 import type { EndpointKind } from '@/surface/schema/endpoints';
 import { diffEndpoint } from '@/surface-lab/digest';
+import { ingestProbeRuns, PROBE_CORPUS_DIR } from '@/surface-lab/probe-ingest';
 import type { CorpusManifest } from '@/surface-lab/scrub-fixtures';
 
-export type Subcommand = 'capture' | 'inspect' | 'smoke' | 'replay' | 'diff';
+export type Subcommand = 'capture' | 'inspect' | 'smoke' | 'replay' | 'diff' | 'ingest';
 
-const SUBCOMMANDS: readonly Subcommand[] = ['capture', 'inspect', 'smoke', 'replay', 'diff'];
+const SUBCOMMANDS: readonly Subcommand[] = ['capture', 'inspect', 'smoke', 'replay', 'diff', 'ingest'];
 
 const isSubcommand = (value: string): value is Subcommand =>
   (SUBCOMMANDS as readonly string[]).includes(value);
 
-/** Where the committed corpus lives, relative to the repo root. */
-const corpusDir = (): string => join(process.cwd(), 'tests/fixtures/surface', surface().id);
+/** Where the committed corpora live, relative to the repo root. */
+const CORPORA_ROOT = (): string => join(process.cwd(), 'tests/fixtures/surface');
 
-function loadManifest(): { dir: string; manifest: CorpusManifest } | null {
-  const dir = corpusDir();
-  const file = join(dir, 'manifest.json');
-  if (!existsSync(file)) return null;
-  return { dir, manifest: JSON.parse(readFileSync(file, 'utf8')) as CorpusManifest };
+/** Every committed corpus (one directory per capture, each with its manifest), oldest first. */
+function loadManifests(): Array<{ dir: string; manifest: CorpusManifest }> {
+  const root = CORPORA_ROOT();
+  if (!existsSync(root)) return [];
+  return readdirSync(root).sort()
+    .map((id) => join(root, id))
+    .filter((dir) => existsSync(join(dir, 'manifest.json')))
+    .map((dir) => ({ dir, manifest: JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')) as CorpusManifest }));
 }
 
-/** Re-parse every committed body through the active surface. Returns the failures. */
+/** Re-parse every committed body of every corpus through the active surface. Returns the failures. */
 export function replay(): { checked: number; failures: string[] } {
-  const loaded = loadManifest();
-  if (loaded === null) return { checked: 0, failures: ['no committed corpus'] };
+  const corpora = loadManifests();
+  if (corpora.length === 0) return { checked: 0, failures: ['no committed corpus'] };
   const doc = surface();
   const failures: string[] = [];
   let checked = 0;
 
-  for (const entry of loaded.manifest.bodies) {
+  for (const loaded of corpora) for (const entry of loaded.manifest.bodies) {
     checked += 1;
     const endpoint = doc.endpoints.find((e) => e.kind === entry.endpoint);
     if (endpoint === undefined) {
@@ -92,12 +97,12 @@ export function replay(): { checked: number; failures: string[] } {
   return { checked, failures };
 }
 
-/** Compare the corpus's observed shapes against the schemas. */
+/** Compare the corpora's observed shapes against the schemas. */
 export function diff(): string[] {
-  const loaded = loadManifest();
-  if (loaded === null) return ['no committed corpus'];
+  const corpora = loadManifests();
+  if (corpora.length === 0) return ['no committed corpus'];
   const byEndpoint = new Map<EndpointKind, unknown[]>();
-  for (const entry of loaded.manifest.bodies) {
+  for (const loaded of corpora) for (const entry of loaded.manifest.bodies) {
     const bucket = byEndpoint.get(entry.endpoint) ?? [];
     bucket.push(JSON.parse(readFileSync(join(loaded.dir, 'bodies', entry.file), 'utf8')));
     byEndpoint.set(entry.endpoint, bucket);
@@ -108,8 +113,9 @@ export function diff(): string[] {
     lines.push(`${endpoint}: ${bodies.length} bodies, ${findings.length} findings`);
     for (const f of findings) lines.push(`  ${f.kind.padEnd(18)} ${f.path} — ${f.detail}`);
   }
-  for (const missing of loaded.manifest.missing) {
-    lines.push(`${missing}: NO BODY IN THE CORPUS — this endpoint is unverified`);
+  const covered = new Set(byEndpoint.keys());
+  for (const missing of new Set(corpora.flatMap((c) => c.manifest.missing))) {
+    if (!covered.has(missing)) lines.push(`${missing}: NO BODY IN THE CORPUS — this endpoint is unverified`);
   }
   return lines;
 }
@@ -125,7 +131,8 @@ function usage(): void {
       `  inspect   click-to-capture element instrumentation (Electron, interactive)\n` +
       `  smoke     the live action test (Electron, interactive, real account)\n` +
       `  replay    re-parse the committed corpus through the active surface\n` +
-      `  diff      corpus shape digest vs the endpoint schemas\n`,
+      `  diff      corpus shape digest vs the endpoint schemas\n` +
+      `  ingest    scrub the local probe runs (EPO_SCRUB_SOURCE) into the 2026-11-02 corpus\n`,
   );
 }
 
@@ -154,6 +161,16 @@ export function main(argv: readonly string[]): number {
     }
     case 'diff': {
       for (const line of diff()) process.stdout.write(`${line}\n`);
+      return 0;
+    }
+    case 'ingest': {
+      const source = process.env.EPO_SCRUB_SOURCE;
+      if (source === undefined) {
+        process.stdout.write('ingest: set EPO_SCRUB_SOURCE to the local probe runs\n');
+        return 1;
+      }
+      const { manifest } = ingestProbeRuns({ source, outDir: join(process.cwd(), PROBE_CORPUS_DIR), repoRoot: process.cwd() });
+      process.stdout.write(`ingest: ${manifest.bodies.length} bodies, ${manifest.dropped.length} dropped\n`);
       return 0;
     }
   }

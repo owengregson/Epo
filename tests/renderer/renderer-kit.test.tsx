@@ -58,7 +58,7 @@ test('the fake bridge implements every contract method', () => {
   expect(fake.data.settingsFacts).toMatchObject({ built: false });
 });
 
-test('the gallery scenario arrays the later streams fill start empty', () => {
+test('the gallery scenario arrays the later streams fill start empty (the compatibility three have landed)', () => {
   expect(LIVE_SCENARIOS).toEqual([]);
-  expect(SURFACE_SCENARIOS).toEqual([]);
+  expect(SURFACE_SCENARIOS.map((s) => s.key)).toEqual(['surface-adapted', 'surface-unfollows-paused', 'surface-exploration-paused']);
 });
