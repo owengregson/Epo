@@ -14,13 +14,11 @@ import type { SleepFn } from '@/engine/engine';
 import {
   PRUNE_CONSECUTIVE_FAIL_HALT,
   PRUNE_PROGRESS_EMIT_MS,
-  PRUNE_SCAN_FRESH_MS,
   PruneEngine,
   type PruneScanFetch,
   type PruneScanOpts,
   type PruneStatus,
 } from '@/engine/prune-engine';
-import { pruneDailyPlan } from '@/engine/prune-pacing';
 import { FakeClock } from '@/governors/clock';
 import { referenceTempoSource } from '@/kernel/tempo';
 import { NOISE, PRUNE } from '@/timing/config';
@@ -32,8 +30,10 @@ import {
   FakeSentinel,
   kitStore,
   OWN_PK,
+  PRUNE_GAP_MS,
   T0,
 } from '../kit/engine-harness';
+import { CENSUS_FRESH_MS, fakePrunePlan } from '../kit/harness-plan';
 import { openTestStore } from '../kit/store';
 import { recordingTempo } from '../kit/tempo';
 
@@ -289,9 +289,8 @@ describe('PruneEngine.run', () => {
     // Both actions in the prune-own ledger; growth's action ledger untouched.
     expect(h.store.pruneCountSince(0)).toBe(2);
     expect(h.store.actionCountSince(0)).toBe(0);
-    // Equal bounds receive positive-only variation: rng=0.5 draws 73.5s,
-    // then PRUNE_DELAY_FACTOR scales the real sampled gap to 24.5s.
-    expect(h.sleeps).toEqual([24_500, 24_500]);
+    // Between unfollows the run waits the deadline each dispatch armed (the shared gap; no prune pace).
+    expect(h.sleeps).toEqual([PRUNE_GAP_MS, PRUNE_GAP_MS]);
     // Completed: done + lastRunAt reported exactly once.
     const status = h.engine.status();
     expect(status.state).toBe('done');
@@ -310,25 +309,25 @@ describe('PruneEngine.run', () => {
 
     await h.engine.run();
 
-    // The mid-wait emission carries the sampled deadline: 73.5s ×1/3 = 24.5s.
+    // The mid-wait emission carries the deadline the dispatch armed.
     const midWait = h.statuses.find((s) => s.nextActionAt !== null);
     expect(midWait).toBeDefined();
-    expect(midWait!.nextActionAt).toBe(T0 + 24_500);
+    expect(midWait!.nextActionAt).toBe(T0 + PRUNE_GAP_MS);
     expect(h.engine.status().nextActionAt).toBeNull();
     h.store.close();
   });
 
-  test('inter-action delay runs at a THIRD of the paced pace (PRUNE_DELAY_FACTOR)', async () => {
-    const h = build({
-      following: [OWN_PK, '1'],
-      followers: [],
-      cfg: { minDelayMs: 90_000, maxDelayMs: 90_000, jitterPercent: 0 },
-    });
+  test("a cleanup run's spacing is the deadline its dispatch armed, whatever the plan drew (no pace of its own)", async () => {
+    const h = build({ following: [OWN_PK, '1'], followers: [] });
+    h.churn.unfollow = async (username: string): Promise<ChurnActionOutcome> => {
+      h.churn.unfollows.push(username);
+      h.store.setActionDelayDeadline(h.clock.now() + 90_000);
+      return { status: 'ok' };
+    };
 
     await h.engine.run();
 
-    // rng=0.5 draws 110.25s from the positive-only band, then scales by one third.
-    expect(h.sleeps).toEqual([36_750]);
+    expect(h.sleeps).toEqual([90_000]);
     h.store.close();
   });
 
@@ -416,6 +415,7 @@ describe('PruneEngine.run', () => {
         u1Blocks -= 1;
         return { status: 'blocked' };
       }
+      h.store.setActionDelayDeadline(h.clock.now() + PRUNE_GAP_MS);
       return { status: 'ok' };
     };
     h.store.observeEdge(OWN_PK, '1', 'follows', true, T0 - 1000);
@@ -425,12 +425,12 @@ describe('PruneEngine.run', () => {
     expect(h.churn.unfollows).toEqual(['u1', 'u1', 'u2']); // retried, then moved on
     expect(h.store.pruneCountSince(0)).toBe(2); // both eventually reached the ledger
     // The brief park (a retry backoff jittered around the park.blocked base, bounded),
-    // then u1's inter-action delay, then u2's (60s base ×1/3 = 20s, exact).
+    // then the deadline u1's dispatch armed, then u2's.
     const park = referenceTempoSource().base('park.blocked');
     expect(h.sleeps.length).toBe(3);
     expect(h.sleeps[0]).toBeGreaterThanOrEqual(park * NOISE.BACKOFF_MIN_FACTOR);
     expect(h.sleeps[0]).toBeLessThanOrEqual(park * NOISE.BACKOFF_MAX_FACTOR);
-    expect(h.sleeps.slice(1)).toEqual([24_500, 24_500]);
+    expect(h.sleeps.slice(1)).toEqual([PRUNE_GAP_MS, PRUNE_GAP_MS]);
     expect(h.engine.status().state).toBe('done');
     h.store.close();
   });
@@ -626,7 +626,7 @@ describe('PruneEngine — 2-step run (scan then consume)', () => {
     await h.engine.scan();
     expect(h.engine.status().scanReady).toBe(true);
 
-    h.clock.advance(PRUNE_SCAN_FRESH_MS + 1); // age the cache out
+    h.clock.advance(CENSUS_FRESH_MS + 1); // age the cache out (the plan's census freshness)
     expect(h.engine.status().scanReady).toBe(false);
 
     await h.engine.run();
@@ -788,63 +788,45 @@ test('consecutive FAILED unfollows halt the run (actions-failing) with the remai
   expect(h.completedAt.length).toBe(0); // never stamped as a clean run
 });
 
-describe('PruneEngine — daily cap counts from the active-hours cycle start', () => {
-  test('prune work recorded BEFORE the current cycle opened does not spend the cap', async () => {
-    const h = build({
-      following: ['a', 'b'],
-      followers: [],
-      cfg: { dailyLimit: 1 },
-      // The current cycle opened 30 minutes ago (same calendar day).
-      cycleStartMs: (now) => now - 30 * 60_000,
-    });
-    // An unfollow from an hour ago: same day, but the PREVIOUS cycle's work.
+describe("PruneEngine — the day's cleanup is the plan's", () => {
+  test("the cap trips at the plan's unfollow budget for the day, counted from its plan-day start", async () => {
+    const h = build({ following: ['a', 'b'], followers: [] });
+    const plan = fakePrunePlan(h.store, { limit: 1 });
+    const engine = build({ following: ['a', 'b'], followers: [], plan }).engine;
+    expect(engine.atDailyCap(h.clock.now())).toBe(false);
     h.store.recordPruneAction('x', 'ok', h.clock.now());
-    h.clock.advance(3_600_000);
-    expect(h.engine.atDailyCap(h.clock.now())).toBe(false);
-    expect(h.engine.status().dailyDone).toBe(0);
+    expect(engine.atDailyCap(h.clock.now())).toBe(true);
+    expect(engine.status()).toMatchObject({ dailyDone: 1, dailyLimit: 1 });
   });
 
-  test('without an injected cycle boundary the cap falls back to local midnight', async () => {
-    const h = build({ following: ['a', 'b'], followers: [], cfg: { dailyLimit: 1 } });
-    h.store.recordPruneAction('x', 'ok', h.clock.now());
-    h.clock.advance(3_600_000); // same local day
-    expect(h.engine.atDailyCap(h.clock.now())).toBe(true);
+  test("a run ends with the plan's typed refusal before any visit, the remainder runnable", async () => {
+    const plan = fakePrunePlan({ pruneCountSince: () => 0 }, { refuse: () => ({ ok: false, reason: 'day-done', until: null }) });
+    const h = build({ following: ['a', 'b'], followers: [], plan });
+    await h.engine.scan();
+    await h.engine.run();
+    expect(h.churn.unfollows).toEqual([]);
+    expect(h.engine.status()).toMatchObject({ state: 'done', remaining: 2 });
+  });
+
+  test('an owed deadline before a candidate is served exactly, then the same candidate goes', async () => {
+    let first = true;
+    const plan = fakePrunePlan({ pruneCountSince: () => 0 }, { refuse: (_pk, now) => {
+      if (!first) return null;
+      first = false;
+      return { ok: false, reason: 'deadline', until: now + 45_000 };
+    } });
+    const h = build({ following: ['a'], followers: [], plan });
+    await h.engine.scan();
+    await h.engine.run();
+    expect(h.sleeps).toContain(45_000);
+    expect(h.churn.unfollows).toEqual(['ua']);
   });
 });
 
 // Bio words, people and verified accounts shield a prune candidate now (spec §7): see prune-protection.test.ts.
 
-describe('PruneEngine — per-cycle plan (fluctuates just under the daily limit)', () => {
-  const CYCLE_START = T0 - 30 * 60_000;
-
-  test('the cap trips at the cycle plan, before the configured limit', async () => {
-    const h = build({
-      following: ['a', 'b'],
-      followers: [],
-      cfg: { dailyLimit: 50 },
-      cycleStartMs: () => CYCLE_START,
-    });
-    const plan = pruneDailyPlan(50, CYCLE_START);
-    expect(plan).toBeLessThan(50);
-    for (let i = 0; i < plan - 1; i += 1) h.store.recordPruneAction(`p${i}`, 'ok', h.clock.now());
-    expect(h.engine.atDailyCap(h.clock.now())).toBe(false);
-    h.store.recordPruneAction('last', 'ok', h.clock.now());
-    expect(h.engine.atDailyCap(h.clock.now())).toBe(true);
-  });
-
-  test('status reports the plan as the daily limit so the meter can complete', async () => {
-    const h = build({
-      following: ['a', 'b'],
-      followers: [],
-      cfg: { dailyLimit: 50 },
-      cycleStartMs: () => CYCLE_START,
-    });
-    expect(h.engine.status().dailyLimit).toBe(pruneDailyPlan(50, CYCLE_START));
-  });
-});
-
-describe('PruneEngine — scan freshness window', () => {
-  test('a completed scan stays runnable for 4 days, then expires', async () => {
+describe('PruneEngine — scan freshness window (the plan\'s census freshness)', () => {
+  test('a completed scan stays runnable for the patience wait (4 days at the defaults), then expires', async () => {
     const h = build({ following: ['a', 'b'], followers: [] });
     await h.engine.scan();
     h.clock.advance(3 * 24 * 3_600_000); // 3 days on — still fresh
@@ -1139,7 +1121,7 @@ describe('PruneEngine — pause/resume (unified transport)', () => {
   const settle = async (): Promise<void> => {
     for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
   };
-  const DELAY = 24_500; // the rng=0.5 sampled 73.5s gap × the prune ⅓ factor
+  const DELAY = PRUNE_GAP_MS; // the deadline each dispatch arms (the shared gap)
 
   test('pause parks the run between unfollows; resume serves the owed remainder first', async () => {
     const hs = new HangingSleep();

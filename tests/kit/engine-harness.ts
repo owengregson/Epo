@@ -36,6 +36,7 @@ import {
   type PruneEngineDeps,
   type PruneOwnFollowers,
   type PruneOwnFollowing,
+  type PrunePlan,
   type PruneScanFetch,
   type PruneScanOpts,
   type PruneStatus,
@@ -50,7 +51,7 @@ import type { AccountFields, FollowRecord } from '@/store/types';
 import { DelayManager, type DelayManagerDeps } from '@/timing/delay-manager';
 import { DEFAULT_CONFIGS } from './configs';
 import { FakeActions, FakePruneActions, NO_UNFOLLOW_FEED } from './harness-journal';
-import { FakePlan, memorySweepCadence } from './harness-plan';
+import { FakePlan, fakePrunePlan, memorySweepCadence } from './harness-plan';
 import { FakeFollowback } from './harness-reopen';
 import { openTestStore } from './store';
 
@@ -59,8 +60,10 @@ export { FakeActions, FakeFollowback, FakePruneActions, memorySweepCadence, NO_U
 
 /** Local noon — every harness starts here unless a test says otherwise. */
 export const T0 = Date.parse('2026-08-12T12:00:00');
-/** The growth harness's fixed paced delay (min = max, jitter 0). */
+/** The growth harness's fixed paced delay: the gap each dispatch arms. */
 export const DELAY_MS = 240_000;
+/** The prune harness's dispatch gap: the shared deadline a cleanup run waits between unfollows. */
+export const PRUNE_GAP_MS = 20_000;
 export const HOUR = 3_600_000;
 export const OWN_PK = 'ME';
 
@@ -475,7 +478,8 @@ export interface PruneHarnessOpts {
   sentinel?: FakeSentinel;
   sleep?: SleepFn;
   refreshOwnStats?: () => Promise<void>;
-  cycleStartMs?: (now: number) => number;
+  /** The plan the run answers to (absent: every candidate admitted, no shared deadline armed). */
+  plan?: PrunePlan;
   /** build the shared DelayManager (a spy, to observe registered wait keys) */
   delays?: (deps: DelayManagerDeps) => DelayManager;
 }
@@ -505,6 +509,13 @@ export const makePruneHarness = (opts: PruneHarnessOpts): PruneHarness => {
   const ownFollowing = new FakeListSource(opts.following);
   const ownFollowers = new FakeListSource(opts.followers);
   const churn = new FakePruneActions();
+  // The dispatch closure arms the shared gap (the cadence in production): the run waits it between unfollows.
+  const unfollow = churn.unfollow.bind(churn);
+  churn.unfollow = async (username: string) => {
+    const outcome = await unfollow(username);
+    if (outcome.status === 'ok' || outcome.status === 'failed') store.setActionDelayDeadline(clock.now() + PRUNE_GAP_MS);
+    return outcome;
+  };
   const sentinel = opts.sentinel ?? new FakeSentinel();
   const sleeps: number[] = [];
   const statuses: PruneStatus[] = [];
@@ -548,7 +559,7 @@ export const makePruneHarness = (opts: PruneHarnessOpts): PruneHarness => {
     onStatus: (s) => statuses.push(s),
     onRunComplete: (at) => completedAt.push(at),
     refreshOwnStats: opts.refreshOwnStats,
-    cycleStartMs: opts.cycleStartMs,
+    plan: opts.plan ?? fakePrunePlan(store, { limit: opts.cfg?.dailyLimit ?? PRUNE_CFG.dailyLimit }),
   };
   return {
     engine: new PruneEngine(deps),

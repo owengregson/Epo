@@ -6,8 +6,10 @@
 
 import type { EnginePacing, SweepCadence } from '@/engine/engine';
 import type { EngineWriteKind } from '@/engine/plan-port';
+import type { PrunePlan } from '@/engine/prune-types';
 import { UnconfirmedBreaker } from '@/engine/unconfirmed-breaker';
 import type { Clock } from '@/governors/clock';
+import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { PlanService } from '@/governors/plan-service';
 import type { Admission, PlanPreviewPort, PlanView } from '@/governors/plan-types';
 import { viewPlan } from '@/governors/plan-view';
@@ -261,4 +263,37 @@ export function sessionPlanRig(settings: Settings = DEFAULT_SETTINGS, from = Dat
   const host = fakePlanHost(settings);
   const plan = storePlanWiring(store, clock, host);
   return { store, clock, host, plan, day, dispose: () => { plan.dispose(); store.close(); } };
+}
+
+/** The default census freshness a prune rig's plan holds: the patience wait (four days at the defaults). */
+export const CENSUS_FRESH_MS = 4 * MS_PER_DAY;
+
+/**
+ * A prune rig's plan port: every candidate admitted (unless `refuse` answers), no gap owed, the real
+ * breaker, the day's cleanup counted from local midnight against `limit`, the census fresh for `freshMs`.
+ */
+export function fakePrunePlan(store: Pick<KnowledgeStore, 'pruneCountSince'>, o: { limit?: number; freshMs?: number;
+  refuse?: (pk: string, now: number) => Admission | null } = {}): PrunePlan & { readonly practices: number[] } {
+  const breaker = new UnconfirmedBreaker();
+  const day = (now: number) => calendarPlanDayClock({ now: () => now }).window(now);
+  const practices: number[] = [];
+  return {
+    practices,
+    preflight: (now, pk) => {
+      const refused = o.refuse?.(pk, now) ?? null;
+      if (refused !== null) return refused;
+      // The day's unfollow budget spent: the plan's own refusal, until the next plan-day.
+      if (store.pruneCountSince(day(now).startsAt) >= (o.limit ?? Number.POSITIVE_INFINITY)) {
+        return { ok: false, reason: 'kind-spent', until: day(now).endsAt };
+      }
+      return { ok: true };
+    },
+    practiced: (now) => {
+      practices.push(now);
+    },
+    noteOutcome: (unverified, now) => breaker.note('unfollow', unverified, now, day(now).endsAt),
+    cleanupToday: (now) => ({ done: store.pruneCountSince(day(now).startsAt), limit: o.limit ?? Number.POSITIVE_INFINITY }),
+    censusFreshMs: () => o.freshMs ?? CENSUS_FRESH_MS,
+    dayWindow: (now) => day(now),
+  };
 }

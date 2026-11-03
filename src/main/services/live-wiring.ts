@@ -4,7 +4,7 @@
  * and are built at launch. It returns its startup steps and status contributors like every other wiring module.
  */
 
-import { PRUNE_SCAN_FRESH_MS, type PruneStatus } from '@/engine/prune-engine';
+import type { PruneStatus } from '@/engine/prune-engine';
 import type { RecoveryIncident, RecoverySnapshot } from '@/engine/recovery';
 import { peekResumeTarget, type ResumeFrontier } from '@/engine/resume-target';
 import { SourceFrontier } from '@/engine/source-frontier';
@@ -80,9 +80,9 @@ export interface LiveSources {
 }
 
 /** When the cached census stops being runnable; one still runnable past that is re-checked at the next push. */
-export function censusFreshEnd(prune: Pick<PruneStatus, 'scanReady' | 'scanAt'>, now: number): number | null {
+export function censusFreshEnd(prune: Pick<PruneStatus, 'scanReady' | 'scanAt'>, now: number, freshMs: number): number | null {
   if (!prune.scanReady || prune.scanAt === null) return null;
-  return Math.max(prune.scanAt + PRUNE_SCAN_FRESH_MS, now) + 1;
+  return Math.max(prune.scanAt + freshMs, now) + 1;
 }
 
 function parseMeta<T>(raw: string | null, key: string): Partial<T> | null {
@@ -119,8 +119,8 @@ function lastShutdown(incidents: RuntimeIncidents['incidents']): number | null {
 export function liveSources(
   graph: LiveGraph,
   runtime: () => RuntimeIncidents,
-  /** The plan's plan-day boundary: the feed's day groups and its expiry roll there (spec §4.4). */
-  opts: { planDay: PlanDayClock; now?: () => number },
+  /** The plan's plan-day boundary: the feed's day groups and its expiry roll there (spec §4.4); the plan's census freshness. */
+  opts: { planDay: PlanDayClock; censusFreshMs: () => number; now?: () => number },
 ): LiveSources {
   const { planDay } = opts;
   const now = opts.now ?? (() => Date.now());
@@ -145,7 +145,7 @@ export function liveSources(
     expiresAt: () => {
       const t = now();
       const roll = planDay.window(t).endsAt;
-      const census = censusFreshEnd(graph.pruneEngine.status(), t);
+      const census = censusFreshEnd(graph.pruneEngine.status(), t, opts.censusFreshMs());
       return census === null ? roll : Math.min(roll, census);
     },
   };

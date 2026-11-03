@@ -97,7 +97,7 @@ test('manual prune runs and scans are refused while a Boost is on', () => {
   let boost = false;
   const deps = {
     runtime: { ready: () => true }, lease: { owner: () => null }, online: () => true, manualDriving: () => false,
-    boostActive: () => boost,
+    boostActive: () => boost, graph: () => null,
   } as unknown as PruneControlDeps;
   const prune = new PruneControl(deps);
   expect(prune.pruneRefusalReason()).toBeNull();

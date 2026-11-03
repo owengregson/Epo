@@ -316,8 +316,7 @@ export function buildGraph(
     delays,
     installEntropy,
     lastRunAt: settings.pruneLastRunAt,
-    // The prune cap shares the growth budget's boundary: the plan-day start.
-    cycleStartMs: (now: number): number => rate.dayStart(now),
+    plan: plan.prunePlan,
     onStatus: (s) => d.onPruneStatus(s),
     ...pruneUnfollowDeps(d, { settings, policy, ownUsername, dayClock: plan.dayClock }),
   });

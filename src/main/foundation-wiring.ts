@@ -41,7 +41,6 @@ import type { BootSequencer } from '@/main/modules/boot-sequencer';
 import { notBuiltPruneStatus, notBuiltStatus } from '@/main/modules/not-built';
 import { Projections, type PushFn, UNWIRED_SOURCES } from '@/main/modules/projections';
 import { PruneControl } from '@/main/modules/prune-control';
-import { PruneSchedule } from '@/main/modules/prune-schedule';
 import { SeedCheckService } from '@/main/modules/seed-check';
 import { GraphSession } from '@/main/modules/session';
 import { settingsFactsSource } from '@/main/modules/settings-facts';
@@ -214,7 +213,6 @@ export class Foundation {
   readonly settings: SettingsService;
   /** The manual prune controls and the scheduled prune over them. */
   private readonly prune: PruneControl;
-  private readonly pruneSchedule: PruneSchedule;
   readonly seed: SeedCheckService;
   readonly facts = settingsFactsSource(() => this.graph, () => this.settings, () => this.seed);
   /** The boot sequence (spec §12.8) and its graph-independent `boot` / `account` status contributors. */
@@ -286,7 +284,7 @@ export class Foundation {
       graph.engine.setOnline(this.lastOnline);
       this.settings.bindStore(settingsBinding(graph));
       this.projections.bind(graph.store, { status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock }), settingsFacts: () => this.facts.facts() });
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock, censusFreshMs: () => graph.plan.service.snapshot(Date.now()).intent.patienceWaitMs }), settingsFacts: () => this.facts.facts() });
     });
     this.session.session.onClose(() => {
       this.scheduler.stop('store:retention');
@@ -310,10 +308,6 @@ export class Foundation {
       manualDriving: () => this.manualDriving || this.boot.busy(), abortPreparation: () => this.preparation?.abort(),
       prepareMutation: (graph) => this.prepareMutation(graph), resumeDesiredRun: () => this.resumeDesiredRun(),
       notBuiltPruneStatus: () => this.notBuiltPruneStatus() });
-    this.pruneSchedule = new PruneSchedule({ control: this.prune, runtime: this.runtime, lease: this.lease,
-      scheduler: this.scheduler, disposeSignal: this.disposeAbort.signal, graph: () => this.graph,
-      builtGraph: () => this.builtGraph(), disposing: () => this.disposing,
-      resolveSettings: () => this.resolveSettings(), updateSettings: (partial) => this.updateSettings(partial) });
     this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
       graph: () => this.graph, planDay: openGraphPlanDay(() => this.graph), busyDriverReason: () => this.busyDriverReason(),
       setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun(), changed: () => this.projections.pushAll() });
@@ -776,9 +770,6 @@ export class Foundation {
     }
     // Release: restore the pre-tour state (the boot sequence heard the release and runs its deferred steps).
     this.lease.returnToGrowth('tour', this.graph?.engine ?? null);
-    // A scheduled prune that came due during the hold runs now, not one
-    // watcher interval later (docs/PRINCIPLES.md §3 — schedules are durable).
-    void this.maybeRunScheduledPrune();
   }
 
   /** Stop and drain all drivers before closing their store. Idempotent. */
@@ -861,9 +852,6 @@ export class Foundation {
       throw error;
     }
   }
-
-  /** Durable maintenance gets a bounded handoff from continuous growth. */
-  startScheduledPruneWatcher(intervalMs?: number): void { this.pruneSchedule.startScheduledPruneWatcher(intervalMs); }
 
   /** Observe useful progress; intentional waits and offline periods are exempt. */
   startEngineStepWatchdog(intervalMs = RECOVERY.STEP_WATCHDOG_CHECK_MS): void {
@@ -1115,9 +1103,6 @@ export class Foundation {
       logger.warn('foundation: halt diagnostics errored', { error: String(e) });
     }
   }
-
-  /** One scheduled-prune check (see {@link PruneSchedule.maybeRunScheduledPrune}). */
-  private maybeRunScheduledPrune(): Promise<void> { return this.pruneSchedule.maybeRunScheduledPrune(); }
 
   /** Drain manual operations before closing their store; disposal aborts their waits. */
   private async drainManualOps(): Promise<void> {

@@ -3,11 +3,11 @@
   "allow": [
     {
       "file": "src/main/foundation-wiring.ts",
-      "lines": 1408
+      "lines": 1393
     },
     {
       "file": "src/engine/prune-engine.ts",
-      "lines": 1127
+      "lines": 1123
     },
     {
       "file": "src/kernel/derive.ts",
@@ -59,7 +59,7 @@
     },
     {
       "file": "src/main/services/graph-builder.ts",
-      "lines": 358
+      "lines": 357
     },
     {
       "file": "src/types.ts",

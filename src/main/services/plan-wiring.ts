@@ -8,6 +8,7 @@
 import type { EngineWaitKey } from '@/engine/engine-waits';
 import { journalBlocks } from '@/engine/journal';
 import type { EnginePlan } from '@/engine/plan-port';
+import type { PrunePlan } from '@/engine/prune-types';
 import { UnconfirmedBreaker } from '@/engine/unconfirmed-breaker';
 import type { Clock, SystemClock } from '@/governors/clock';
 import { projectBoost } from '@/governors/plan-boost';
@@ -50,6 +51,8 @@ export interface PlanWiring extends GraphPlan {
   nextSessionAt(now: number): number | null;
   /** The open session's start and planned unfollows, or null between sessions (spec §9.7). */
   reviewBound(now: number): { readonly since: number; readonly planned: number } | null;
+  /** The plan's face toward cleanup: the run's admission, its gap, the breaker, the day's cleanup. */
+  readonly prunePlan: PrunePlan;
 }
 
 /** The loop's waits a re-plan can move: the plan's own parks. */
@@ -116,11 +119,25 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   };
   const dayClock = service.planDayClock();
   const ratePlan: RatePlan = { day: dayClock };
+  const prunePlan: PrunePlan = {
+    preflight: (now, pk) => cadence.preflight('unfollow', 'cleanup-run', now, { pk }),
+    practiced: (now) => {
+      cadence.armPractice(now);
+    },
+    noteOutcome: (unverified, now) => enginePlan.noteOutcome('unfollow', unverified, now),
+    cleanupToday: (now) => {
+      const view = service.view(now);
+      return { done: view.used.unfollow, limit: view.plan.kinds.unfollow };
+    },
+    censusFreshMs: () => service.snapshot(clock.now()).intent.patienceWaitMs,
+    dayWindow: (now) => dayClock.window(now),
+  };
   return {
     service,
     dayClock,
     cadence,
     breaker,
+    prunePlan,
     nextSessionAt: (now) => service.view(now).nextSessionAt,
     reviewBound: (now) => {
       const open = service.view(now).open;

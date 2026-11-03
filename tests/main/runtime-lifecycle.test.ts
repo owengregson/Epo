@@ -15,7 +15,6 @@ const internal = (f: Foundation) => f as unknown as {
   runtime: RuntimeCoordinator;
   driverSignal(): AbortSignal;
   checkEngineStepWatchdog(): Promise<void> | void;
-  maybeRunScheduledPrune(): Promise<void>;
   recoverWedgedEngine(): Promise<void>;
 };
 
@@ -262,21 +261,6 @@ test('Stop during watchdog repair is never undone', async () => {
   await repair;
   expect((await foundation.status()).state).toBe('idle');
   expect(foundation.runtimeSnapshot().desired).toBe('stopped');
-  await foundation.dispose();
-});
-
-test('scheduled maintenance can borrow from continuously running growth', async () => {
-  const { foundation } = await running();
-  // The watcher's bulk-run branch (until the scheduled prune retires with the cadence switch, step 12).
-  await foundation.updateSettings({ pruneScheduleDays: 1, pruneLastRunAt: null, pacingModel: 'legacy' });
-  const graph = internal(foundation).session.current();
-  const run = jest.spyOn(graph.pruneEngine, 'run').mockResolvedValue(undefined);
-  const random = jest.spyOn(Math, 'random').mockReturnValue(0);
-  await internal(foundation).maybeRunScheduledPrune();
-  await flush();
-  expect(run).toHaveBeenCalledTimes(1);
-  expect(internal(foundation).lease.owner()).toBe('growth');
-  random.mockRestore();
   await foundation.dispose();
 });
 

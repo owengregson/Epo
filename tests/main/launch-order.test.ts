@@ -40,7 +40,6 @@ jest.mock('@/main/foundation-wiring', () => ({
       restoreRuntimeIntent: jest.fn(async () => {}),
       landOnOwnProfile: jest.fn(async () => {}),
       startBoot: jest.fn(async () => { order.push('boot.start'); }),
-      startScheduledPruneWatcher: jest.fn(),
       startEngineStepWatchdog: jest.fn(),
     };
   }),
