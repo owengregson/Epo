@@ -44,6 +44,7 @@ import { PruneControl } from '@/main/modules/prune-control';
 import { PruneSchedule } from '@/main/modules/prune-schedule';
 import { SeedCheckService } from '@/main/modules/seed-check';
 import { GraphSession } from '@/main/modules/session';
+import { settingsFactsSource } from '@/main/modules/settings-facts';
 import { SettingsService, settingsBinding } from '@/main/modules/settings-service';
 import { createStartup } from '@/main/modules/startup-steps';
 import { composeStatus, type StatusContributor } from '@/main/modules/status-compose';
@@ -215,6 +216,7 @@ export class Foundation {
   private readonly prune: PruneControl;
   private readonly pruneSchedule: PruneSchedule;
   readonly seed: SeedCheckService;
+  readonly facts = settingsFactsSource(() => this.graph, () => this.settings, () => this.seed);
   /** The boot sequence (spec §12.8) and its graph-independent `boot` / `account` status contributors. */
   private readonly boot: BootSequencer;
   private readonly bootFields: readonly StatusContributor[];
@@ -264,6 +266,7 @@ export class Foundation {
     this.projections = new Projections({ push: deps.push });
     this.settings = new SettingsService({ userDataDir: deps.userDataDir, now: () => Date.now(), graph: () => this.graph,
       knowledgeDbExists: () => fs.existsSync(path.join(deps.userDataDir, IG_DB_FILE)), push: (view) => deps.push?.('settings', view) });
+    this.settings.onChange(() => this.projections.pushAll());
     this.session = new GraphSession({
       igSession: deps.igSession,
       build: (ownPk, ownUsername) => this.build(ownPk, ownUsername),
@@ -283,7 +286,7 @@ export class Foundation {
       graph.engine.setOnline(this.lastOnline);
       this.settings.bindStore(settingsBinding(graph));
       this.projections.bind(graph.store, { status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot()) });
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot()), settingsFacts: () => this.facts.facts() });
     });
     this.session.session.onClose(() => {
       this.scheduler.stop('store:retention');
@@ -313,7 +316,7 @@ export class Foundation {
       resolveSettings: () => this.resolveSettings(), updateSettings: (partial) => this.updateSettings(partial) });
     this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
       graph: () => this.graph, busyDriverReason: () => this.busyDriverReason(),
-      setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun() });
+      setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun(), changed: () => this.projections.pushAll() });
     ({ boot: this.boot, contributors: this.bootFields } = createStartup({ tab: this.tab, runtime: this.runtime,
       lease: this.lease, activity: this.activity, session: this.session, igSession: this.igSession,
       tabFirstLoad: deps.tabFirstLoad ?? Promise.resolve('ready'), disposing: () => this.disposing,

@@ -49,6 +49,8 @@ export const SETTINGS_POLICY = {
   DOC_VERSION: 2,
   /** Typed Advanced values snap to these steps: a finer grid than anyone can tell apart is noise. */
   PARAM_STEP: { whole: 1, share: 0.01, hours: 0.05, factor: 0.1 },
+  /** Protection lists: a suggestion list longer than one glance is a search result, and one kept page fills a screen. */
+  FACTS: { SUGGEST_LIMIT: 8, KEPT_PAGE_SIZE: 50 },
 } as const;
 
 const NO_MAX = Number.POSITIVE_INFINITY;

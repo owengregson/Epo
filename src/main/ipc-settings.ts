@@ -21,9 +21,9 @@ export function settingsHandlers(foundation: Foundation): Pick<IpcHandlers, Sett
     applySettings: (ops) => settings.apply(ops, 'user'),
     previewSettings: (ops) => settings.preview(ops),
     settingsBasis: () => settings.basis(),
-    settingsFacts: () => notBuiltFacts('error'),
-    suggestAccounts: () => ({ kind: 'unavailable' }),
-    keptList: () => ({ kind: 'unavailable' }),
+    settingsFacts: () => foundation.facts.facts(),
+    suggestAccounts: (query, scope) => foundation.facts.suggest(query, scope),
+    keptList: (page) => foundation.facts.kept(page),
     checkSeed: async (handle) => toLegacySeedCheck(await foundation.seed.check(handle)),
     getSettings: () => settings.getSettings(),
     updateSettings: (partial) => {

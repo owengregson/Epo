@@ -7,6 +7,7 @@ import type { IpcFallbacks, IpcHandlers } from '@/ipc/register';
 import { registerIpc } from '@/ipc/register';
 import type { Foundation } from '@/main/foundation-wiring';
 import { settingsFallbacks, settingsHandlers } from '@/main/ipc-settings';
+import { settingsFactsSource } from '@/main/modules/settings-facts';
 import { SettingsService } from '@/main/modules/settings-service';
 import { SETTINGS_FILES as F } from '@/settings/persist';
 import { setLevel } from '@/utils/logger';
@@ -27,7 +28,8 @@ function rig() {
   const settings = new SettingsService({ userDataDir: '/u', fs: m.fs, knowledgeDbExists: () => false, math: FAKE_PLAN_MATH,
     now: () => 1_000, push: () => {} });
   const seed = { check: async () => ({ kind: 'ok', pk: '1', isPrivate: false, followersVisible: true, followers: null, observedAt: 1, fromStore: true }) };
-  const foundation = { settings, seed } as unknown as Foundation;
+  const facts = settingsFactsSource(() => null, () => settings, () => ({ status: () => ({ kind: 'none' }) }));
+  const foundation = { settings, seed, facts } as unknown as Foundation;
   // Every other row is someone else's: a placeholder keeps registerIpc total.
   const total = <T extends object>(rows: Partial<T>): T =>
     new Proxy(rows, { get: (t, k) => (t as Record<string | symbol, unknown>)[k] ?? (() => null) }) as T;
