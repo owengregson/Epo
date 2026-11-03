@@ -111,6 +111,37 @@ left, follow-backs) and who is in progress (Up next · Waiting · Following back
 · Leaving soon · Kept), in plain words. The detailed source is
 `status.resumeTarget` while Epo is stopped, so the page and the engine agree.
 
+**The live column (SB).** `src/renderer/sidebar/**` replaces the overview: the
+masthead, Now (the one raised surface), Today, Results and Recent activity over
+the footer, at fixed zone heights with reserved slots, so a posture change only
+changes content. The posture is `derivePosture` over the shell's signals in one
+cached computed (`sidebar/posture-signal.ts`; a push that changes no part of it
+keeps the previous object, so no deadline animation re-arms). Now shows one
+posture-derived primary plus Stop, a reason line for typed refusals of the
+person's own commands (never a raw-key toast), and a Why? popover. Stop asks
+nothing; its toast offers Undo. Today carries the one Boost control: one tap with
+the saved length (Start Epo and Boost while stopped), a band with one-tap End
+while a window is open, and an honest wait while the plan is not wired, the
+account is signed out or has no seed, attention is needed, or the preview says
+nothing would change or the backlog is unpaid. Results counts nothing from a
+not-built status (final-size skeletons) and every Instagram-observed number
+carries its age. The feed groups by plan-day, keeps "Since you left" a strict
+time boundary, files a single new follow or unfollow from the now line into its
+row, and holds still with "↑ N new" while scrolled away. Every sentence comes
+from the copy decks under `sidebar/copy/*` (law L-COPY: no banned word, no raw
+key, headlines ≤ 15 characters, Prune for the cleanup feature, no literal number).
+
+**The renderer's boot (SB).** The inline splash in `index.html` shows before any
+script; `boot/BootGate` renders the app under it and reveals once R4 ∧ R5 hold
+(main's boot ready, the first frame's data here, Instagram decided) with the
+fonts loaded and the shortest dwell passed, or at main's `revealBy`. The intro
+(`boot/intro.ts`) flies the mark into the masthead while the app rises under the
+fading splash; the native page stays covered until the reveal and uncovers only
+once its first load settled (else the Live placeholder shows); `bootRevealed()`
+goes to main exactly once, and a renderer reload while main is live skips the
+intro. The first-launch tour opens right after the reveal. Diagnostics streams
+the raw log only while its panel is mounted.
+
 ## Consequences
 
 - Launch adds zero Instagram traffic: the home load and the own-profile landing
@@ -128,7 +159,13 @@ left, follow-backs) and who is in progress (Up next · Waiting · Following back
   longer streams to the window (it lives in Diagnostics).
 - Until the sidebar lands, the console column keeps the interim overview, so the
   integration build has no Start/Pause/Stop buttons between the two merges; the
-  controls exist in `useShellControls()` for the sidebar to render.
+  controls exist in `useShellControls()` for the sidebar to render. (SB: the live
+  column now renders them; the overview, its cards and their literal-duration
+  copy are deleted.)
+- A refused command explains itself where the person pressed it; an unknown
+  attention reads neutrally and shows its code only on a muted line.
+- The app is on screen only once the first frame's numbers are true or plainly
+  absent; numbers never count up at boot (tickers arm one frame after mount).
 
 ## Alternatives rejected
 
