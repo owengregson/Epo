@@ -14,6 +14,7 @@ import { CensusRepo } from './repos/census';
 import { CursorRepo } from './repos/cursors';
 import { EffectIntentRepo } from './repos/effect-intents';
 import { FollowRecordRepo } from './repos/follow-records';
+import { GrowthRepo } from './repos/growth';
 import { LedgerRepo } from './repos/ledgers';
 import { MetaRepo } from './repos/meta';
 import { PruneScanRepo } from './repos/prune-scan';
@@ -44,6 +45,8 @@ export class KnowledgeStoreBase {
   protected readonly relationships: RelationshipRepo;
   /** Read-only analysis over the whole graph. */
   protected readonly analytics: AnalyticsRepo;
+  /** The own-follower growth reads (baseline-aware). */
+  protected readonly growth: GrowthRepo;
   /** The two write paths that span several tables (reconcile, census ingest). */
   protected readonly census: CensusRepo;
   /** Durable timers and the span log (migration 12); consumed in wave B. */
@@ -78,7 +81,8 @@ export class KnowledgeStoreBase {
     this.relationships = new RelationshipRepo(this.db, changed, this.meta);
     this.effects = new EffectIntentRepo(this.db, { records: this.records, relationships: this.relationships, ledgers: this.ledgers, changed });
     this.pruneRetainedLogs();
-    this.analytics = new AnalyticsRepo(this.db, () => this.relationships.baselineAt());
+    this.analytics = new AnalyticsRepo(this.db);
+    this.growth = new GrowthRepo(this.db, () => this.relationships.baselineAt());
     this.chronos = new Chronos(this.db, { now: this.now });
     this.spans = new SpanSink(this.db, { now: this.now, rng: this.rng });
     this.census = new CensusRepo(this.db, this.accounts, this.records, this.relationships, this.meta);

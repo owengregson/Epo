@@ -1,9 +1,10 @@
 import * as logger from '../utils/logger';
 import { KnowledgeStoreBase } from './knowledge-store-base';
 import type { PruneCensusRecord } from './knowledge-types';
-import type { GrowthPoint, TargetYield } from './repos/analytics';
+import type { TargetYield } from './repos/analytics';
 import type { CensusAuthority, ReconcileOutcome } from './repos/census';
 import type { HealResult } from './repos/follow-records';
+import type { GrowthPoint } from './repos/growth';
 import type { RelationshipCounts } from './repos/relationships';
 import type {
   AccountState,
@@ -532,7 +533,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
    * followers baseline count, so initializing the app never charts a cliff.
    */
   netGrowthSeries(days: number, ownPk: string, now: number = this.now()): GrowthPoint[] {
-    return this.analytics.netGrowthSeries(days, ownPk, now);
+    return this.growth.netGrowthSeries(days, ownPk, now);
   }
 
   /**
@@ -540,7 +541,7 @@ export class KnowledgeStore extends KnowledgeStoreBase {
    * baseline-aware. 0 when the own pk is unset.
    */
   netFollowersSince(sinceMs: number): number {
-    return this.ownPk === null ? 0 : this.analytics.netFollowersSince(sinceMs, this.ownPk);
+    return this.ownPk === null ? 0 : this.growth.netFollowersSince(sinceMs, this.ownPk);
   }
 
   /**
