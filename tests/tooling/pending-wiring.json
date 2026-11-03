@@ -39,6 +39,11 @@
       "module": "src/governors/plan-state.ts",
       "stream": "PR",
       "reason": "PlanService (the plan core) reads and writes meta.plan_state through it; plan-wiring.ts builds the service"
+    },
+    {
+      "module": "src/governors/plan-view.ts",
+      "stream": "PR",
+      "reason": "PlanService.view builds it; the engine reads it through the plan port (facts-plan.ts, PR S1)"
     }
   ]
 }

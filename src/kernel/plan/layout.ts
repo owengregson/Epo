@@ -7,7 +7,7 @@
 
 import { EMPIRICAL } from '../fundamentals';
 import { MS_PER_MINUTE } from '../units';
-import { inQuietHours, massCurve, quantileOf } from './circadian';
+import { inQuietHours, localMinuteOf, massCurve, quantileOf } from './circadian';
 import { PLAN_BOUNDS } from './policy';
 import { u, z } from './seed';
 import { sessionTempo } from './tempo';
@@ -78,8 +78,7 @@ export function availableBlocks(window: PlanDayWindow, intent: PlanIntent): Bloc
   const blocks: Block[] = [];
   let from: number | null = null;
   for (let t = window.startsAt; t < window.endsAt; t += step) {
-    const d = new Date(t);
-    const free = !inQuietHours(d.getHours() * 60 + d.getMinutes(), intent.quietHours);
+    const free = !inQuietHours(localMinuteOf(t), intent.quietHours);
     if (free && from === null) from = t;
     if (!free && from !== null) {
       blocks.push({ from, to: t });

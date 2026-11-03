@@ -8,7 +8,7 @@
 import { EMPIRICAL } from '../fundamentals';
 import { MS_PER_MINUTE } from '../units';
 import { kindsOf } from './assemble';
-import { inQuietHours, massCurve } from './circadian';
+import { inQuietHours, localMinuteOf, massCurve } from './circadian';
 import { apportion, availableBlocks, type LaidSession, placeSessions, sessionKinds } from './layout';
 import { PLAN_BOUNDS } from './policy';
 import { planReads } from './reads';
@@ -30,8 +30,7 @@ export function boostSpan(boost: BoostWindow | null, window: PlanDayWindow): { r
 
 /** May a session open at `now`: inside the day's central λ_eff mass and outside quiet hours. */
 export function insertableAt(input: DrawInput, window: PlanDayWindow, now: number): boolean {
-  const d = new Date(now);
-  if (inQuietHours(d.getHours() * 60 + d.getMinutes(), input.intent.quietHours)) return false;
+  if (inQuietHours(localMinuteOf(now), input.intent.quietHours)) return false;
   const curve = massCurve(window.startsAt, window.endsAt, input.intent.shape, input.phaseOffsetHours, input.intent.quietHours);
   const total = curve.cum[curve.cum.length - 1];
   const i = Math.min(curve.cum.length - 1, Math.max(0, Math.floor((now - window.startsAt) / (PLAN_BOUNDS.GRID_MINUTES * MS_PER_MINUTE))));

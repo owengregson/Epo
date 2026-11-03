@@ -56,14 +56,15 @@ export function inQuietHours(minuteOfDay: number, quiet: QuietHours | null): boo
     : minuteOfDay >= quiet.startMinute || minuteOfDay < quiet.endMinute;
 }
 
-const minuteOf = (t: number): number => {
+/** The local minute of the day at `t` (0..1439). */
+export function localMinuteOf(t: number): number {
   const d = new Date(t);
   return d.getHours() * MINUTES_PER_HOUR + d.getMinutes();
-};
+}
 
 /** λ masked by quiet hours at an instant (0 inside quiet hours). */
 export function maskedIntensityAt(t: number, shape: CircadianShape, phase: number, quiet: QuietHours | null): number {
-  return inQuietHours(minuteOf(t), quiet) ? 0 : intensityAt(t, shape, phase);
+  return inQuietHours(localMinuteOf(t), quiet) ? 0 : intensityAt(t, shape, phase);
 }
 
 /**

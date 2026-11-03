@@ -2,6 +2,9 @@
  * Plan-core fakes (ADR 0607): a balanced Standard intent built straight from the kernel, an empty
  * demand, and helpers that draw a plan-day for a window. Suites override only what they test.
  */
+
+import type { UsageTally } from '@/governors/plan-types';
+import type { PlanViewInputs } from '@/governors/plan-view';
 import {
   ACTIVITY,
   CAUTION,
@@ -17,8 +20,9 @@ import {
 } from '@/kernel/derive';
 import { EMPIRICAL } from '@/kernel/fundamentals';
 import { planDayWindow, quietMinute } from '@/kernel/plan/circadian';
-import type { CircadianShape, DrawInput, PlanDayWindow, PlanDemand, PlanIntent } from '@/kernel/plan/types';
+import type { CircadianShape, DayPlan, DrawInput, PlanDayWindow, PlanDemand, PlanIntent } from '@/kernel/plan/types';
 import { POLICY, SCALES } from '@/kernel/policy';
+import { REFERENCE_TEMPO } from '@/kernel/tempo';
 import { MS_PER_DAY, MS_PER_SECOND } from '@/kernel/units';
 
 /** The balanced day shape over the realistic week. */
@@ -104,6 +108,37 @@ export function drawInput(at: number, over: Partial<DrawInput> = {}): DrawInput 
     firstOpenAt: window.startsAt,
     boost: null,
     runIntent: 'running',
+    ...over,
+  };
+}
+
+/** A usage tally with nothing used; override what a case needs. */
+export function noUse(over: Partial<UsageTally> = {}): UsageTally {
+  return { all: 0, auto: 0, manual: 0, follow: 0, unfollow: 0, accept: 0, perSession: [], outside: 0, ...over };
+}
+
+/** View inputs for a plan at `now`: running, no Boost, no ledger, nothing blocked. */
+export function viewInputs(plan: DayPlan, now: number, over: Partial<PlanViewInputs> = {}): PlanViewInputs {
+  const intent = over.intent ?? testIntent();
+  const qm = quietMinute(intent.shape, 0, intent.quietHours);
+  return {
+    now,
+    used: noUse(),
+    boost: null,
+    runIntent: 'running',
+    hourly: { lastHour: 0, recentTimes: [] },
+    deadline: null,
+    tomorrow: () => null,
+    journal: { blocks: () => false },
+    lastMutationBefore: () => null,
+    unconfirmed: null,
+    surfacePaused: () => false,
+    intent,
+    ambient: REFERENCE_TEMPO,
+    probationTempo: (idx) => ({ ...plan.sessions[idx].tempo, probation: true }),
+    windowOf: (t) => planDayWindow(t, qm),
+    provisional: false,
+    upgradeProbation: false,
     ...over,
   };
 }
