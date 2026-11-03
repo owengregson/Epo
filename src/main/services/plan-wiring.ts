@@ -15,6 +15,7 @@ import { projectPlan } from '@/governors/plan-projection';
 import { PlanService } from '@/governors/plan-service';
 import { RateGovernor, type RateGovernorConfig, type RatePlan } from '@/governors/rate-governor';
 import { ReadBudget } from '@/governors/read-budget';
+import type { PlanDayClock } from '@/kernel/plan';
 import { MS_PER_HOUR } from '@/kernel/units';
 import { PlanControl } from '@/main/modules/plan-control';
 import { toPlanIntent } from '@/settings/plan-intent';
@@ -114,6 +115,17 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
       triggers.dispose();
       host.settings.setPlanPort(null);
       host.settings.setCapabilities({ plan: false });
+    },
+  };
+}
+
+/** The open graph's plan-day, for a service that outlives graphs and reads the boundary only while one is open. */
+export function openGraphPlanDay(graph: () => { readonly plan: Pick<GraphPlan, 'dayClock'> } | null): Pick<PlanDayClock, 'window'> {
+  return {
+    window: (t) => {
+      const open = graph();
+      if (open === null) throw new Error('plan-day: read while no graph is open');
+      return open.plan.dayClock.window(t);
     },
   };
 }

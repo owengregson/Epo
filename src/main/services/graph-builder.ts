@@ -83,7 +83,7 @@ export function buildGraph(
     observer: d.cursorObserver,
   });
 
-  const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, rate, reentry, readBudget,
+  const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, rate, reentry, readBudget, dayClock: plan.dayClock,
     profiles: () => profiles, followback: () => followback });
 
   // The adapter owns the single Actor + Sentinel instances the whole rim shares;
@@ -193,7 +193,7 @@ export function buildGraph(
     minPoolSize: settings.minPoolSize,
   });
 
-  const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings });
+  const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock: plan.dayClock });
   prepareReentry(reentry, clock);
   const scanner = new Scanner({
     store,
@@ -201,7 +201,7 @@ export function buildGraph(
     cfg: toScannerConfig(settings),
   });
   const followback = wireFollowback(d, { store, clock, ownPk, ownUsername, settings, readBudget, policy,
-    adapter, reader, sentinel, profiles, liveOwnFollowers });
+    adapter, reader, sentinel, profiles, liveOwnFollowers, dayClock: plan.dayClock });
 
   // Live discovery over the already-harvested graph: propose the biggest
   // enriched PUBLIC hubs inside the exhausted target's audience, projected at
@@ -242,7 +242,7 @@ export function buildGraph(
     reentry,
     validateIdentity: d.validateIdentity,
     onProgress: d.onProgress,
-    settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget }),
+    settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget, dayClock: plan.dayClock }),
     store,
     clock,
     rate,
@@ -324,7 +324,7 @@ export function buildGraph(
     // start, not calendar midnight.
     cycleStartMs: (now: number): number => rate.cycleStartMs(now),
     onStatus: (s) => d.onPruneStatus(s),
-    ...pruneUnfollowDeps(d, { settings, policy, ownUsername }),
+    ...pruneUnfollowDeps(d, { settings, policy, ownUsername, dayClock: plan.dayClock }),
   });
   // Back the woven-feed adapter now that the PruneEngine exists.
   pruneEngineRef = pruneEngine;

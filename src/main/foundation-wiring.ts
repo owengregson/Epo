@@ -50,12 +50,12 @@ import { createStartup } from '@/main/modules/startup-steps';
 import { composeStatus, type StatusContributor } from '@/main/modules/status-compose';
 import { DriverSignal } from '@/main/services/driver-signal';
 import {
-  type BuiltGraph,
-  buildGraph,
+  type BuiltGraph, buildGraph,
   type GraphBuildDeps,
 } from '@/main/services/graph-builder';
 import type { IgSessionPort } from '@/main/services/ig-session';
 import { liveSources } from '@/main/services/live-wiring';
+import { openGraphPlanDay } from '@/main/services/plan-wiring';
 import { RuntimeCoordinator, type RuntimeSnapshot } from '@/main/services/runtime-coordinator';
 import { TabLease } from '@/main/services/tab-lease';
 import { TabActivity } from '@/main/tab-activity';
@@ -315,7 +315,7 @@ export class Foundation {
       builtGraph: () => this.builtGraph(), disposing: () => this.disposing,
       resolveSettings: () => this.resolveSettings(), updateSettings: (partial) => this.updateSettings(partial) });
     this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
-      graph: () => this.graph, busyDriverReason: () => this.busyDriverReason(),
+      graph: () => this.graph, planDay: openGraphPlanDay(() => this.graph), busyDriverReason: () => this.busyDriverReason(),
       setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun(), changed: () => this.projections.pushAll() });
     ({ boot: this.boot, contributors: this.bootFields } = createStartup({ tab: this.tab, runtime: this.runtime,
       lease: this.lease, activity: this.activity, session: this.session, igSession: this.igSession,

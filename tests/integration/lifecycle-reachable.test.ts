@@ -12,6 +12,7 @@ import { UNCONFIGURED_PROTECTION } from '@/engine/protection-port';
 import { ReentrySupervisor } from '@/engine/reentry';
 import type { SourceFrontier } from '@/engine/source-frontier';
 import { FakeClock, type SystemClock } from '@/governors/clock';
+import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import { RateGovernor } from '@/governors/rate-governor';
 import { ReadBudget } from '@/governors/read-budget';
 import type { GraphBuildDeps } from '@/main/services/graph-types';
@@ -63,10 +64,12 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
   const rate = new RateGovernor(store, clock, toRateGovernorConfig(settings));
   const readBudget = new ReadBudget({ store, clock, limits: readLimits() });
   const profiles = { visit } as unknown as TabProfileVisitor;
+  // The kit's plan-day boundary: local midnight over the fake clock (the build hands the plan's).
+  const dayClock = calendarPlanDayClock({ now: () => clock.now() });
   const followback = new FollowbackWatcher({ store, clock, ownPk: 'me',
     notifications: { fetchRecent: async () => ({ ok: false, events: [] }) } });
   const policy = wireMutationPolicy(d, { store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock,
-    rate, reentry, readBudget, profiles: () => profiles, followback: () => followback });
+    rate, reentry, readBudget, dayClock, profiles: () => profiles, followback: () => followback });
   const presses: string[] = [];
   const tab = { currentUrl: () => url, goto: async (to: string) => { url = to; } };
   const actor = {
@@ -82,10 +85,10 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
   const adapter = { sentinel: new FakeSentinel(), actor } as unknown as InstagramAdapter;
   const churnActions = new AdapterBackedChurnActions({ adapter, store, ownPk: 'me', dryRun: false, clock });
   const churn = wireChurn(d, { frontier: { pickQueued: () => null } as unknown as SourceFrontier, store,
-    clock: clock as unknown as SystemClock, rate, churnActions, ownPk: 'me', settings });
+    clock: clock as unknown as SystemClock, rate, churnActions, ownPk: 'me', settings, dayClock });
   const engine = new Engine(testDeps({ store, clock, rate, churn, reentry, followback, settings,
     delays: new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); } }),
-    settleJournal: journalSettler(d, { store, profiles, ownPk: 'me', clock, readBudget }) }));
+    settleJournal: journalSettler(d, { store, profiles, ownPk: 'me', clock, readBudget, dayClock }) }));
   const stepUntilPressed = async (n: number, maxSteps = 10): Promise<void> => {
     for (let step = 0; step < maxSteps && presses.length < n; step++) await engine.stepOnce();
   };
