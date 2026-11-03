@@ -7,7 +7,6 @@
 import { notBuiltStatus } from '@/main/modules/not-built';
 import { type BaseStatus, composeStatus, type StatusContributor } from '@/main/modules/status-compose';
 import type { BuiltGraph } from '@/main/services/graph-types';
-import { liveWiringParts } from '@/main/services/live-wiring';
 import { planWiringParts } from '@/main/services/plan-wiring';
 import { reopenWiringParts } from '@/main/services/reopen-wiring';
 import { surfaceWiringParts } from '@/main/services/surface-wiring';
@@ -54,7 +53,7 @@ test('the not-built status sets basis and nulls every optional status field', ()
 });
 
 test('every wiring module returns its startup steps and status contributors (none yet)', () => {
-  for (const parts of [planWiringParts(), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts()]) {
+  for (const parts of [planWiringParts(), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts()]) {
     expect(parts).toEqual({ startupSteps: [], statusContributors: [] });
   }
 });
