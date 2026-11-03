@@ -8,13 +8,17 @@ const order: string[] = [];
 let rendererLoad: (() => void) | null = null;
 const shellOpts: Array<Record<string, unknown>> = [];
 
-jest.mock('electron', () => ({ app: { getPath: () => '/tmp/epo-launch-test' } }));
+const menus: unknown[] = [];
+jest.mock('electron', () => ({
+  app: { getPath: () => '/tmp/epo-launch-test', isPackaged: true },
+  Menu: { buildFromTemplate: (template: unknown) => ({ template }), setApplicationMenu: (m: unknown) => menus.push(m) },
+}));
 jest.mock('@/main/window/shell', () => ({
   createAppShell: jest.fn((opts: Record<string, unknown>) => {
     shellOpts.push(opts);
     order.push('shell');
     return {
-      win: { on: jest.fn() },
+      win: { on: jest.fn(), setAutoHideMenuBar: jest.fn(), setTitle: jest.fn() },
       tab: {},
       veil: {},
       igFirstLoad: Promise.resolve('ready'),
@@ -81,6 +85,12 @@ test("the dashboard's first load reveals the window; nothing replays the updater
   rendererLoad?.();
   expect(order.filter((o) => o === 'reveal')).toHaveLength(1);
   expect(order).not.toContain('send:epo:update-status');
+});
+
+test('the application menu is installed before the dashboard loads', async () => {
+  menus.length = 0;
+  await launchWindow({ handles: handles() });
+  expect(menus).toHaveLength(1);
 });
 
 test('the fallback timer reveals a window whose dashboard never finishes loading', async () => {

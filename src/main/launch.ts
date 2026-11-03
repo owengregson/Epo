@@ -4,7 +4,7 @@
  */
 
 import * as path from 'node:path';
-import { app, type BaseWindow } from 'electron';
+import { app, type BaseWindow, Menu } from 'electron';
 import type { InstagramTab } from '@/adapter/tab';
 import { PUSH, type PushContract, type PushMethod } from '@/ipc/contract';
 import { BOOT } from '@/kernel/boot-policy';
@@ -14,6 +14,7 @@ import { Foundation } from '@/main/foundation-wiring';
 import { registerEpoIpc } from '@/main/ipc';
 import type { OverlayVeil } from '@/main/overlay/veil-view';
 import { electronIgSession } from '@/main/services/ig-session';
+import { buildAppMenu } from '@/main/window/app-menu';
 import { createAppShell } from '@/main/window/shell';
 import { createStageController, statusPosture } from '@/main/window/stage-controller';
 import type { LogEntry, LogLevel } from '@/shared/log-entry';
@@ -68,6 +69,10 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
     shell.send(PUSH[channel], payload);
     if (channel === 'status') stage.onPosture(statusPosture(payload as PushContract['status'], Date.now()));
   };
+  // ⌘1–⌘5 and ⌘, work while Instagram has focus; Windows and Linux hide the menu bar until Alt.
+  const isMac = process.platform === 'darwin';
+  Menu.setApplicationMenu(buildAppMenu({ onStage: (mode) => push('stageRequest', mode), isPackaged: app.isPackaged, isMac }));
+  if (!isMac) win.setAutoHideMenuBar(true);
 
   // Stream structured logs to the renderer's log pane.
   logger.setSink((level: LogLevel, message: string, meta?: unknown) => {
