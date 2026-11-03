@@ -1,3 +1,4 @@
+import { RUNTIME_BOUNDS } from '@/kernel/runtime-bounds';
 import type { KnowledgeStore } from '../store/knowledge-store';
 
 export interface RuntimeHealthSnapshot {
@@ -30,10 +31,10 @@ export class RuntimeHealth {
   snapshot(): RuntimeHealthSnapshot { return { ...this.state }; }
   failure(error: unknown, now: number): boolean {
     this.state.consecutiveErrors++;
-    this.state.lastError = String(error).slice(0, 2000);
+    this.state.lastError = String(error).slice(0, RUNTIME_BOUNDS.HEALTH_ERROR_CHARS);
     this.state.lastErrorAt = now;
     this.save();
-    return this.state.consecutiveErrors >= 5 || /SQLITE|disk (?:full|I\/O)|database.*(?:corrupt|locked|closed)/i.test(String(error));
+    return this.state.consecutiveErrors >= RUNTIME_BOUNDS.HEALTH_ERROR_STREAK || /SQLITE|disk (?:full|I\/O)|database.*(?:corrupt|locked|closed)/i.test(String(error));
   }
   responsive(): void {
     if (this.state.consecutiveErrors === 0) return;

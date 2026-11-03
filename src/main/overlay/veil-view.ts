@@ -12,14 +12,15 @@
 
 import * as path from 'node:path';
 import { type BaseWindow, type Rectangle, WebContentsView } from 'electron';
+import { BOOT } from '@/kernel/boot-policy';
 import { type ActivityInfo, toVeilInfo } from '@/shared/live-op';
 import * as logger from '@/utils/logger';
 
-/** Must match the veil page's opacity transition (`veil.html`). */
-const FADE_MS = 400;
+/** The veil page's opacity transition (`veil.html`; a kernel law pins the two equal). */
+const FADE_MS = BOOT.VEIL_FADE_MS;
 
-/** Cursor pushes are coalesced to ~one frame; the page interpolates between them. */
-const CURSOR_FLUSH_MS = 16;
+/** Cursor pushes are coalesced to one frame; the page interpolates between them. */
+const CURSOR_FLUSH_MS = BOOT.VEIL_CURSOR_FLUSH_MS;
 
 export class OverlayVeil {
   private readonly view: WebContentsView;

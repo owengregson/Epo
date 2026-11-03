@@ -6,6 +6,7 @@
 import { TabUnresponsiveError } from '@/adapter/errors';
 import { usernameFromProfileUrl } from '@/adapter/identity';
 import type { InstagramTab } from '@/adapter/tab';
+import { RUNTIME_BOUNDS } from '@/kernel/runtime-bounds';
 import type { BuiltGraph } from '@/main/services/graph-types';
 import type { IgSessionPort } from '@/main/services/ig-session';
 import type { RuntimeCoordinator } from '@/main/services/runtime-coordinator';
@@ -81,7 +82,7 @@ export function landingStep(d: LandingStepDeps): StartupStep {
       if (onProfile()) return;
 
       await d.activity.with('open-profile', async () => {
-        for (let attempt = 0; attempt < 2; attempt++) {
+        for (let attempt = 0; attempt < RUNTIME_BOUNDS.PROFILE_LAND_CLICK_ATTEMPTS; attempt++) {
           if (d.disposing() || d.lease.owner() !== null) return;
           let clicked = false;
           try {
