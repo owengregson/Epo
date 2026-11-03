@@ -1,10 +1,12 @@
 /**
  * The store reads the plan service consumes (spec §16.3, Appendix A `PlanStore`):
  * the raw plan state, the write-budget tally over the rate governor's ledger
- * union, the recent mutation times, and the repo skeletons the facade exposes.
+ * union, the recent mutation times, whether any write exists, and the repo
+ * skeletons the facade exposes.
  */
 
 import { FakeClock } from '@/governors/clock';
+import type { PlanStore } from '@/governors/plan-types';
 import { RateGovernor } from '@/governors/rate-governor';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { META_KEYS } from '@/store/repos/meta';
@@ -74,6 +76,22 @@ test('recentMutationTimes lists the same writes, oldest first', () => {
     expect([...times]).toEqual([...times].sort((a, b) => a - b));
     expect(times[0]).toBe(NOON - 60_000);
   });
+});
+
+test("the facade is the plan service's PlanStore; hasAnyMutation sees any write in the union, however old", () => {
+  const anyAfter = (seed: (s: KnowledgeStore) => void) => withStore((s) => {
+    const port: PlanStore = s;
+    seed(s);
+    return port.hasAnyMutation();
+  });
+  return Promise.all([
+    anyAfter(() => undefined),
+    anyAfter((s) => s.recordPruneAction('p0', 'simulated', 1)),
+    anyAfter((s) => s.recordAction('a0', 'follow', 'ok', 1)),
+    anyAfter((s) => s.recordPruneAction('p1', 'fail', 1)),
+    anyAfter((s) => s.markEffectUncertain(s.beginEffectIntent({ accountPk: 'g', username: 'g', action: 'follow',
+      channel: 'growth', at: 1 }).id, 1)),
+  ]).then((seen) => expect(seen).toEqual([false, false, true, true, true]));
 });
 
 test('the facade exposes the journal, record and new repo skeletons as public fields', () => {

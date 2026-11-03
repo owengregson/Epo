@@ -27,6 +27,19 @@ const decode = (r: IntentRow): EffectIntent => ({
   attempts: r.attempts, nextAttemptAt: r.next_attempt_at,
 });
 
+/** The rate governor's write union: one row per write at or after `@since`. */
+const UNION_SINCE = `
+  SELECT at, action AS kind, 0 AS manual FROM action_ledger WHERE at >= @since
+  UNION ALL SELECT at, 'unfollow', 0 FROM prune_ledger WHERE at >= @since AND result IN ('ok','fail')
+  UNION ALL SELECT COALESCE(dispatched_at, created_at), action, channel = 'manual' FROM effect_intents
+    WHERE state IN ('dispatched','uncertain') AND COALESCE(dispatched_at, created_at) >= @since
+  UNION ALL SELECT dispatched_at, action, channel = 'manual' FROM effect_intents
+    WHERE state = 'settled' AND result IN ('external','cancelled','expired') AND dispatched_at IS NOT NULL
+      AND dispatched_at >= @since AND COALESCE(ledger, 'none') = 'none'
+  UNION ALL SELECT settled_at, action, channel = 'manual' FROM effect_intents
+    WHERE state = 'settled' AND action = 'accept-request' AND result IN ('ok','fail')
+      AND COALESCE(ledger, 'none') = 'none' AND settled_at >= @since`;
+
 /** Write-ahead effects survive an acknowledgement loss. Settlement is idempotent. */
 export class EffectIntentRepo {
   constructor(private readonly db: SqliteDriver, private readonly deps: {
@@ -134,19 +147,13 @@ export class EffectIntentRepo {
     return this.unionSince(since).map((r) => r.at);
   }
 
+  /** Whether the union holds any write at all, however old: an install with a ledger. */
+  hasAnyMutation(): boolean {
+    return this.db.prepare(`SELECT EXISTS(${UNION_SINCE}) AS hit`).get<{ hit: number }>({ since: 0 })?.hit === 1;
+  }
+
   private unionSince(since: number): Array<{ at: number; kind: string; manual: number }> {
-    return this.db.prepare(`
-      SELECT at, action AS kind, 0 AS manual FROM action_ledger WHERE at >= @since
-      UNION ALL SELECT at, 'unfollow', 0 FROM prune_ledger WHERE at >= @since AND result IN ('ok','fail')
-      UNION ALL SELECT COALESCE(dispatched_at, created_at), action, channel = 'manual' FROM effect_intents
-        WHERE state IN ('dispatched','uncertain') AND COALESCE(dispatched_at, created_at) >= @since
-      UNION ALL SELECT dispatched_at, action, channel = 'manual' FROM effect_intents
-        WHERE state = 'settled' AND result IN ('external','cancelled','expired') AND dispatched_at IS NOT NULL
-          AND dispatched_at >= @since AND COALESCE(ledger, 'none') = 'none'
-      UNION ALL SELECT settled_at, action, channel = 'manual' FROM effect_intents
-        WHERE state = 'settled' AND action = 'accept-request' AND result IN ('ok','fail')
-          AND COALESCE(ledger, 'none') = 'none' AND settled_at >= @since
-      ORDER BY 1`).all<{ at: number; kind: string; manual: number }>({ since });
+    return this.db.prepare(`${UNION_SINCE} ORDER BY 1`).all<{ at: number; kind: string; manual: number }>({ since });
   }
 
   /** Terminal intent detail is operational history; unresolved intent and outcome ledgers are durable. */

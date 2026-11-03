@@ -135,6 +135,9 @@ export class KnowledgeStoreBase {
   /** When each write in {@link tallySince}'s union happened, oldest first. */
   recentMutationTimes(since: number): readonly number[] { return this.effectIntents.mutationTimesSince(since); }
 
+  /** Whether that union holds any write at all, however old (the plan's upgrade probation). */
+  hasAnyMutation(): boolean { return this.effectIntents.hasAnyMutation(); }
+
   // --- Mutation notifications (docs/PRINCIPLES.md §2 — the UI mirrors the graph) ----
 
   protected readonly mutationPulse = new MutationPulse();
