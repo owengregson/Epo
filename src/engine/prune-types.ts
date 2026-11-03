@@ -182,12 +182,8 @@ export interface PruneScanEstimates {
 
 /** Settings-derived knobs (see `toPruneConfig` in `settings/settings.ts`). */
 export interface PruneConfig {
+  /** The cap a rig without the plan reads (the plan's cleanup budget binds in main). */
   dailyLimit: number;
-  /** Usernames (case-insensitive) or pks never pruned. */
-  whitelist: string[];
-  minDelayMs: number;
-  maxDelayMs: number;
-  jitterPercent: number;
   /** SCAN pacing: each inter-scroll wait is a fresh jittered draw in [min,max] ms. */
   scanMinMs: number;
   scanMaxMs: number;

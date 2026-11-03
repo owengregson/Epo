@@ -19,7 +19,7 @@ import type { ProtectionSettings } from '@/shared/settings-model';
 import { compileProtection } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeActions } from '../kit/engine-harness';
-import { kitPlan, PLAN_TEST_RNG } from '../kit/harness-plan';
+import { fakePlanHost, kitPlan, PLAN_TEST_RNG } from '../kit/harness-plan';
 import { readLimits } from '../kit/read-limits';
 import { memoryStore } from '../kit/store';
 
@@ -36,7 +36,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 const deps = (): GraphBuildDeps => ({
-  resolveSettings: () => DEFAULT_SETTINGS,
+  resolveSettings: () => DEFAULT_SETTINGS, plan: fakePlanHost(DEFAULT_SETTINGS),
   protection: { index: () => compileProtection(rules, 'ready', rev), setCapabilities: () => undefined },
 }) as unknown as GraphBuildDeps;
 

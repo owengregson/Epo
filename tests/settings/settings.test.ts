@@ -155,14 +155,15 @@ describe('projections from DEFAULT_SETTINGS', () => {
   });
 
   test('toChurnConfig converts days → ms (4 days → 345600000 ms); a click re-hold earns the follow-back hold', () => {
-    // No bio list here: protection is the predicate's, on every path (spec §7); held mutuals rotate.
-    expect(toChurnConfig({ ...DEFAULT_SETTINGS, pruneBioFilterWords: ['cafe'] })).toEqual({
+    // No bio list here: protection is the predicate's, on every path (spec §7); the intent's mutuals choice rides.
+    expect(toChurnConfig({ ...DEFAULT_SETTINGS, rotateMutuals: true })).toEqual({
       maxWaitForFollowbackMs: 345_600_000,
       holdAfterFollowbackMs: toFollowbackConfig(DEFAULT_SETTINGS).holdAfterFollowbackMs,
       maxRetries: 3,
       rotateMutuals: true,
     });
-    expect(toChurnConfig(DEFAULT_SETTINGS).maxWaitForFollowbackMs).toBe(4 * 24 * 3600 * 1000);
+    expect(toChurnConfig({ ...DEFAULT_SETTINGS, rotateMutuals: false }).rotateMutuals).toBe(false);
+    expect(toChurnConfig({ ...DEFAULT_SETTINGS, rotateMutuals: true }).maxWaitForFollowbackMs).toBe(4 * 24 * 3600 * 1000);
   });
 
   test('toRateGovernorConfig carries the hard ceiling only (the plan paces, spec §5.13 S2)', () => {
@@ -189,32 +190,10 @@ describe('projections from DEFAULT_SETTINGS', () => {
     expect(toChainConfig(DEFAULT_SETTINGS)).toEqual({ minFollowBackRate: 0.15, minPoolSize: 300 });
   });
 
-  test('toPruneConfig carries the prune cap/whitelist and shares the delay knobs (minutes → ms)', () => {
-    expect(toPruneConfig(DEFAULT_SETTINGS)).toEqual({
-      dailyLimit: 50,
-      whitelist: [],
-      minDelayMs: 180_000,
-      maxDelayMs: 420_000,
-      jitterPercent: 30,
-      scanMinMs: 1_000,
-      scanMaxMs: 3_000,
-    });
-    expect(
-      toPruneConfig({
-        ...DEFAULT_SETTINGS,
-        pruneWhitelist: ['Keep_Me'],
-        pruneDailyLimit: 5,
-        pruneBioFilterWords: ['dog mom'],
-      }),
-    ).toEqual({
-      dailyLimit: 5,
-      whitelist: ['Keep_Me'],
-      minDelayMs: 180_000,
-      maxDelayMs: 420_000,
-      jitterPercent: 30,
-      scanMinMs: 1_000,
-      scanMaxMs: 3_000,
-    });
+  test('toPruneConfig carries the cap and the scan pacing only: the plan paces, protection is the predicate (spec §5.13)', () => {
+    expect(toPruneConfig(DEFAULT_SETTINGS)).toEqual({ dailyLimit: 50, scanMinMs: 1_000, scanMaxMs: 3_000 });
+    expect(toPruneConfig({ ...DEFAULT_SETTINGS, pruneWhitelist: ['Keep_Me'], pruneDailyLimit: 5, minDelayMinutes: 9 }))
+      .toEqual({ dailyLimit: 5, scanMinMs: 1_000, scanMaxMs: 3_000 });
   });
 
   test('toPruneConfig maps the scan pacing knobs (seconds → ms) and clamps max ≥ min ≥ 0', () => {
@@ -261,7 +240,7 @@ describe('projections from DEFAULT_SETTINGS', () => {
       maxWaitForFollowbackDays: 1,
       minDelayMinutes: 5,
     };
-    expect(toChurnConfig(custom).maxWaitForFollowbackMs).toBe(24 * 3600 * 1000);
+    expect(toChurnConfig({ ...custom, rotateMutuals: true }).maxWaitForFollowbackMs).toBe(24 * 3600 * 1000);
   });
 });
 

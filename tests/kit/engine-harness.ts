@@ -463,10 +463,6 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
 
 export const PRUNE_CFG: PruneConfig = {
   dailyLimit: 50,
-  whitelist: [],
-  minDelayMs: 60_000,
-  maxDelayMs: 60_000, // equal bounds; the harness RNG pins the positive offset
-  jitterPercent: 0,
   scanMinMs: 1_000,
   scanMaxMs: 3_000,
 };

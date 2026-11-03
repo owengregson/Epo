@@ -3,11 +3,13 @@
  * the old Settings UI: `toV1Settings` fills the frozen v1 `Settings` from the effective record, and
  * `opsFromV1Partial` turns an old renderer's partial into keyed v2 ops (lists diffed, never replaced).
  */
+import { MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
 import type { ParamValue, RatioCurve } from '@/shared/settings-model';
 import type { SettingsOp } from '@/shared/settings-ops';
 import type { ParamKey } from '@/shared/settings-params';
-import { DEFAULT_DOC, type LegacyCarry, type SettingsDocV2 } from './doc';
+import { DEFAULT_DOC, type SettingsDocV2 } from './doc';
 import type { EffectiveSettings } from './effective';
+import { RETIRED_PACER_KEYS } from './legacy-pacing-migration';
 import { quietHoursOfActive } from './migrate-v1';
 import { migrateAccountList, migrateWordList } from './migrate-v1-lists';
 import { sameValue } from './params-spec';
@@ -23,14 +25,23 @@ export interface V1Bookkeeping {
   readonly pruneLastRunAt: number | null;
 }
 
+const MINUTES_PER_HOUR = MS_PER_HOUR / MS_PER_MINUTE;
+
+/** v1's active hours from the resolved quiet window (the inverse of `quietHoursOfActive`; none is start = end). */
+const activeHoursOf = (q: EffectiveSettings['quietHours']): { readonly start: number; readonly end: number } =>
+  q === null ? { start: 0, end: 0 } : { start: Math.floor(q.endMinute / MINUTES_PER_HOUR), end: Math.floor(q.startMinute / MINUTES_PER_HOUR) };
+
 export function toV1Settings(e: EffectiveSettings, doc: SettingsDocV2, bk: V1Bookkeeping | null): Settings {
+  const active = activeHoursOf(e.quietHours);
   return {
     seed: e.seed, bandLow: e.bandLow, bandHigh: e.bandHigh, peakLow: e.peakLow, peakHigh: e.peakHigh, hardLow: e.hardLow,
     hardHigh: e.hardHigh, minFollowers: e.minFollowers, maxFollowers: e.maxFollowers, privateBoost: e.privateBoost,
     maxWaitForFollowbackDays: e.maxWaitForFollowbackDays, holdAfterFollowbackDays: e.holdAfterFollowbackDays,
     maxRetries: e.maxRetries, dailyHardCeiling: e.dailyHardCeiling, dailyOperatingRate: e.dailyOperatingRate,
-    minDelayMinutes: e.minDelayMinutes, maxDelayMinutes: e.maxDelayMinutes, jitterPercent: e.jitterPercent,
-    activeHoursStart: e.activeHoursStart, activeHoursEnd: e.activeHoursEnd, followbackSweepHours: e.followbackSweepHours,
+    // The retired pacer's knobs read as v1's defaults (the day plan paces); active hours mirror the quiet window.
+    minDelayMinutes: DEFAULT_SETTINGS.minDelayMinutes, maxDelayMinutes: DEFAULT_SETTINGS.maxDelayMinutes,
+    jitterPercent: DEFAULT_SETTINGS.jitterPercent, activeHoursStart: active.start, activeHoursEnd: active.end,
+    followbackSweepHours: e.followbackSweepHours,
     sweepLastRunAt: bk?.sweepLastRunAt ?? null, sweepIntervalFactor: bk?.sweepIntervalFactor ?? DEFAULT_SETTINGS.sweepIntervalFactor,
     autoAcceptFollowRequests: e.autoAcceptFollowRequests, dailyPlanSize: e.dailyPlanSize,
     lowWaterCandidates: e.lowWaterCandidates, minFollowBackRate: e.minFollowBackRate, minPoolSize: e.minPoolSize,
@@ -40,7 +51,7 @@ export function toV1Settings(e: EffectiveSettings, doc: SettingsDocV2, bk: V1Boo
     pruneWhitelist: doc.protection.accounts.flatMap((a) => (a.pk !== null && a.pk !== a.username ? [a.username, a.pk] : [a.username])),
     pruneBioFilterWords: doc.protection.words.map((w) => w.text),
     pruneDailyLimit: e.pruneDailyLimit, pruneScheduleDays: e.pruneScheduleDays, pruneLastRunAt: bk?.pruneLastRunAt ?? null,
-    pruneScanMinSeconds: e.pruneScanMinSeconds, pruneScanMaxSeconds: e.pruneScanMaxSeconds, pacingModel: e.pacingModel,
+    pruneScanMinSeconds: e.pruneScanMinSeconds, pruneScanMaxSeconds: e.pruneScanMaxSeconds, pacingModel: 'organic',
     dailyVolumeVariancePct: e.dailyVolumeVariancePct, restDayChancePct: e.restDayChancePct,
     sessionsPerDayMin: e.sessionsPerDayMin, sessionsPerDayMax: e.sessionsPerDayMax, gapMedianSeconds: e.gapMedianSeconds,
     gapFloorSeconds: e.gapFloorSeconds, hourlyVelocityCap: e.hourlyVelocityCap, weaveEnabled: e.weaveEnabled,
@@ -66,17 +77,13 @@ const INTENT_OF = {
   activityLevel: 'activity', consistency: 'consistency', rhythm: 'rhythm', dayShape: 'dayShape', weeklyShape: 'weeklyShape',
   caution: 'caution', patience: 'patience',
 } as const;
-/** Reference-scale gaps v2 no longer has: an old renderer's write of them is dropped (and logged by the caller). */
-const DROPPED = new Set<keyof Settings>(['gapMedianSeconds', 'gapFloorSeconds']);
-/** The legacy pacer's knobs: carried in the document while that pacer still reads them (spec §6.10). */
-const CARRIED = ['pacingModel', 'minDelayMinutes', 'maxDelayMinutes', 'jitterPercent', 'activeHoursStart', 'activeHoursEnd'] as const;
+/** Knobs v2 no longer has (reference-scale gaps, the retired pacer): an old renderer's write is dropped and logged. */
+const DROPPED = new Set<keyof Settings>(['gapMedianSeconds', 'gapFloorSeconds', ...RETIRED_PACER_KEYS]);
 
 export interface V1Translation {
   readonly ops: readonly SettingsOp[];
   readonly dropped: readonly string[];
   readonly bookkeeping: Partial<V1Bookkeeping>;
-  /** The legacy pacer's knobs the partial changed. */
-  readonly carry: Partial<LegacyCarry>;
 }
 
 type OwnedStamps = V1Bookkeeping & { readonly forPk: string | null };
@@ -112,14 +119,6 @@ export function refusedState(raw: string, now: number):
   const doc: SettingsDocV2 = { ...DEFAULT_DOC, seed: v1.seed, protection, protectionState: 'needs-review',
     prefs: { ...DEFAULT_DOC.prefs, practice: v1.dryRun, acceptRequests: v1.autoAcceptFollowRequests } };
   return { kind: 'v1', v1, doc };
-}
-
-/** The carried knobs as the effective record holds them (frozen v1 defaults when the document has none). */
-export function carryOf(e: EffectiveSettings): LegacyCarry {
-  return {
-    pacingModel: e.pacingModel, minDelayMinutes: e.minDelayMinutes, maxDelayMinutes: e.maxDelayMinutes,
-    jitterPercent: e.jitterPercent, activeHoursStart: e.activeHoursStart, activeHoursEnd: e.activeHoursEnd,
-  };
 }
 
 /** Translate an old renderer's partial into keyed ops against the current state (unchanged keys emit nothing). */
@@ -194,11 +193,10 @@ export function opsFromV1Partial(partial: Partial<Settings>, current: Settings, 
   if ('sweepLastRunAt' in partial) bookkeeping.sweepLastRunAt = partial.sweepLastRunAt ?? null;
   if ('sweepIntervalFactor' in partial) bookkeeping.sweepIntervalFactor = partial.sweepIntervalFactor ?? null;
   if ('pruneLastRunAt' in partial) bookkeeping.pruneLastRunAt = partial.pruneLastRunAt ?? null;
-  const carry = Object.fromEntries(CARRIED.flatMap((k) => (changed(k) ? [[k, partial[k]]] : []))) as Partial<LegacyCarry>;
   if (changed('activeHoursStart') || changed('activeHoursEnd')) {
     const quiet = quietHoursOfActive(partial.activeHoursStart ?? current.activeHoursStart, partial.activeHoursEnd ?? current.activeHoursEnd);
     ops.push({ op: 'intent', key: 'quietHours', value: quiet });
   }
   for (const k of DROPPED) if (changed(k)) dropped.push(k);
-  return { ops, dropped, bookkeeping, carry };
+  return { ops, dropped, bookkeeping };
 }

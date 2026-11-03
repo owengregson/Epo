@@ -12,6 +12,7 @@ import type { ParamKey } from '@/shared/settings-params';
 import type { MigrationBasis } from './basis';
 import { DEFAULT_DOC, type MigrationNote, type OverrideEntry, type SettingsDocV2 } from './doc';
 import { type EffectiveSettings, effectiveFrom } from './effective';
+import { retireLegacyPacing } from './legacy-pacing-migration';
 import { migrateAccountList, migrateWordList } from './migrate-v1-lists';
 import { PARAM_SPECS } from './params';
 import type { ResolvedPattern } from './pattern-map';
@@ -197,15 +198,12 @@ export function migrateV1(raw: string, opts: MigrateOptions): MigrationOutcome {
           sweepIntervalFactor: v1.sweepIntervalFactor, pruneLastRunAt: v1.pruneLastRunAt,
         },
       },
-      legacyCarry: {
-        pacingModel: v1.pacingModel, minDelayMinutes: v1.minDelayMinutes, maxDelayMinutes: v1.maxDelayMinutes,
-        jitterPercent: v1.jitterPercent, activeHoursStart: v1.activeHoursStart, activeHoursEnd: v1.activeHoursEnd,
-      },
   };
-  if (opts.resolve === undefined) return { kind: 'migrated', doc };
+  // The kept numbers are checked against v1 first; the retired pacer then maps once, as for a carried document.
+  if (opts.resolve === undefined) return { kind: 'migrated', doc: retireLegacyPacing(doc, v1.pacingModel, now) };
   const pinned = pinChained(v1, doc, opts.resolve, now);
   const broken = effectiveMismatches(v1, pinned, opts.resolve(pinned), notes);
-  return broken.length > 0 ? { kind: 'refused', reasons: broken } : { kind: 'migrated', doc: pinned };
+  return broken.length > 0 ? { kind: 'refused', reasons: broken } : { kind: 'migrated', doc: retireLegacyPacing(pinned, v1.pacingModel, now) };
 }
 
 /**

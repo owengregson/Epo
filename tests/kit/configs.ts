@@ -12,7 +12,8 @@ import {
 export function configsFrom(settings: Settings = DEFAULT_SETTINGS) {
   return {
     scorer: toScorerConfig(settings),
-    churn: toChurnConfig(settings),
+    // The v1 view carries no mutuals choice: the recommended intent rotates held mutuals.
+    churn: toChurnConfig({ ...settings, rotateMutuals: true }),
     followback: toFollowbackConfig(settings),
     chain: toChainConfig(settings),
     prune: toPruneConfig(settings),

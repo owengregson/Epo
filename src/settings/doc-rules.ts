@@ -134,7 +134,6 @@ export const DOC_RULES = {
     dismissedNotices: listOf((v) => (typeof v === 'string' ? v : null)),
   }, raw, fb),
   migration: structured((v) => isObj(v) && isNum(v.at) && Array.isArray(v.notes)),
-  legacyCarry: structured((v) => isObj(v) && (v.pacingModel === 'legacy' || v.pacingModel === 'organic')),
 } satisfies { [K in keyof SettingsDocV2]: Rule<SettingsDocV2[K]> };
 
 /** Repair a parsed document; never throws. `dropped` counts every piece of garbage removed. */

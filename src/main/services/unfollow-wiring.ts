@@ -115,7 +115,7 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
     rate,
     actions: churnActions,
     ownPk,
-    cfg: toChurnConfig(settings),
+    cfg: toChurnConfig(d.plan.settings.effective()),
     protection: port,
     reconciler,
     parkSlots: () => planDaySlots(dayClock, clock.now(), next(clock.now())),

@@ -9,6 +9,7 @@ import type { SettingsHealth } from '@/shared/settings-view';
 import * as logger from '@/utils/logger';
 import type { SettingsDocV2 } from './doc';
 import { coerceDoc, DOC_RULES } from './doc-rules';
+import { carriedPacingModel, retireLegacyPacing } from './legacy-pacing-migration';
 
 export interface SettingsFs {
   exists(p: string): boolean;
@@ -93,8 +94,8 @@ export type ReadPlan =
   | { readonly kind: 'migrate'; readonly raw: string; readonly mtimeMs: number; readonly health: SettingsHealth; readonly review: boolean }
   | { readonly kind: 'defaults'; readonly health: SettingsHealth; readonly review: boolean };
 
-/** Parse and coerce a v2 file; null when it is unreadable. Protection garbage puts protection under review. */
-function parseV2(fs: SettingsFs, p: string): { doc: SettingsDocV2; review: boolean } | null {
+/** Parse and coerce a v2 file (a carried legacy pacer maps once); null when unreadable. Protection garbage → review. */
+function parseV2(fs: SettingsFs, p: string, now: number): { doc: SettingsDocV2; review: boolean } | null {
   let raw: unknown;
   try {
     raw = JSON.parse(fs.readFile(p));
@@ -104,7 +105,7 @@ function parseV2(fs: SettingsFs, p: string): { doc: SettingsDocV2; review: boole
   }
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const protection = DOC_RULES.protection((raw as Record<string, unknown>).protection, coerceDoc(undefined).value.protection);
-  return { doc: coerceDoc(raw).value, review: protection.dropped > 0 };
+  return { doc: retireLegacyPacing(coerceDoc(raw).value, carriedPacingModel(raw), now), review: protection.dropped > 0 };
 }
 
 /** Read the settings files: the first matching row of the §6.6 table wins. */
@@ -121,7 +122,7 @@ export function readSettings(fs: SettingsFs, dir: string, o: { readonly knowledg
   };
   let quarantined: string | null = null;
   if (fs.exists(at(SETTINGS_FILES.v2))) {
-    const v2 = parseV2(fs, at(SETTINGS_FILES.v2));
+    const v2 = parseV2(fs, at(SETTINGS_FILES.v2), o.now);
     if (v2 !== null) return { kind: 'doc', doc: v2.doc, health: { kind: 'ok' }, review: v2.review };
     try {
       fs.rename(at(SETTINGS_FILES.v2), at(SETTINGS_FILES.corrupt(o.now)));
@@ -141,7 +142,7 @@ export function readSettings(fs: SettingsFs, dir: string, o: { readonly knowledg
       : { kind: 'defaults', health: { kind: 'ok' }, review: false };
   }
   // A previous v2 existed: never a silent re-migration (it would drop every later protection edit).
-  const bak = fs.exists(at(SETTINGS_FILES.bak)) ? parseV2(fs, at(SETTINGS_FILES.bak)) : null;
+  const bak = fs.exists(at(SETTINGS_FILES.bak)) ? parseV2(fs, at(SETTINGS_FILES.bak), o.now) : null;
   if (bak !== null) return { kind: 'doc', doc: bak.doc, health: { kind: 'restored-from-backup', quarantined: quarantined ?? '' }, review: true };
   if (old !== null) return { kind: 'migrate', ...old, health: { kind: 'remigrated-from-v1', quarantined }, review: true };
   return { kind: 'defaults', health: { kind: 'defaults-after-unreadable', quarantined }, review: true };

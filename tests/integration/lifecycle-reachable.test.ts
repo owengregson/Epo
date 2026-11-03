@@ -23,7 +23,7 @@ import { DelayManager } from '@/timing/delay-manager';
 import { setLevel } from '@/utils/logger';
 import { ok } from '@/utils/result';
 import { FakeSentinel, kitStore, testDeps } from '../kit/engine-harness';
-import { intoSession, kitPlan, PLAN_TEST_RNG } from '../kit/harness-plan';
+import { fakePlanHost, intoSession, kitPlan, PLAN_TEST_RNG } from '../kit/harness-plan';
 import { readLimits } from '../kit/read-limits';
 
 const DAY = 86_400_000;
@@ -58,7 +58,7 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
     return { ok: true, obs: { accountPk: a.pk, observedAt: clock.now(), source: 'profile', fields: { username } },
       viewer: { following: true, requested: false, followsUs: false } };
   });
-  const d = { resolveSettings: () => settings, driverSignal: () => undefined,
+  const d = { resolveSettings: () => settings, driverSignal: () => undefined, plan: fakePlanHost(settings),
     protection: { index: () => UNCONFIGURED_PROTECTION, setCapabilities: () => undefined } } as unknown as GraphBuildDeps;
   // The production plan over the store: its cadence admits every write, the loop acts inside its session.
   const plan = kitPlan(store, clock, settings);
