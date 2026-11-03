@@ -10,14 +10,15 @@ import { journalBlocks } from '@/engine/journal';
 import type { EnginePlan } from '@/engine/plan-port';
 import type { PrunePlan } from '@/engine/prune-types';
 import { UnconfirmedBreaker } from '@/engine/unconfirmed-breaker';
-import type { Clock, SystemClock } from '@/governors/clock';
+import type { Clock } from '@/governors/clock';
 import { projectBoost } from '@/governors/plan-boost';
 import { projectPlan } from '@/governors/plan-projection';
 import { PlanService } from '@/governors/plan-service';
 import { RateGovernor, type RateGovernorConfig, type RatePlan } from '@/governors/rate-governor';
-import { ReadBudget } from '@/governors/read-budget';
+import { ReadBudget, type ReadBudgetConfig } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
 import { PlanControl } from '@/main/modules/plan-control';
+import type { EffectiveSettings } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
 import { toReadAllowance } from '@/settings/read-allowance';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -28,13 +29,15 @@ import { createMutationCadence, type MutationCadence } from './mutation-cadence'
 import { lastMutationBefore, planDemand } from './plan-demand';
 import { surfaceGateOf } from './surface-wiring';
 
-/** The durable read budget; its limits re-derive from the live settings on every read. */
-export function wireReadBudget(
-  store: KnowledgeStore,
-  clock: SystemClock,
-  d: Pick<GraphBuildDeps, 'resolveSettings'>,
-): ReadBudget {
-  return new ReadBudget({ store, clock, limits: () => toReadAllowance(d.resolveSettings()) });
+/**
+ * The durable read budget's limits on every read (spec §5.8 layer 1): the plan-day totals from the live
+ * settings and the plan's own census sizing, the plan-day window they reset at (the trailing-24 h
+ * backstop binds as well), and the plan's explore sub-limit for the day.
+ */
+export function planReadLimits(service: Pick<PlanService, 'view'>, effective: () => EffectiveSettings, now: number): ReadBudgetConfig {
+  const view = service.view(now);
+  return { ...toReadAllowance(effective(), view.plan.demand), window: view.window,
+    explore: { profiles: view.plan.reads.explore, pages: view.plan.reads.explorePages } };
 }
 
 /** What the plan wiring hands the graph: the graph's plan, the loop's plan port and the rate governor over it. */
@@ -53,6 +56,8 @@ export interface PlanWiring extends GraphPlan {
   reviewBound(now: number): { readonly since: number; readonly planned: number } | null;
   /** The plan's face toward cleanup: the run's admission, its gap, the breaker, the day's cleanup. */
   readonly prunePlan: PrunePlan;
+  /** The durable read budget on the plan's plan-day limits. */
+  readonly readBudget: ReadBudget;
 }
 
 /** The loop's waits a re-plan can move: the plan's own parks. */
@@ -138,6 +143,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     cadence,
     breaker,
     prunePlan,
+    readBudget: new ReadBudget({ store, clock, limits: () => planReadLimits(service, effective, clock.now()) }),
     nextSessionAt: (now) => service.view(now).nextSessionAt,
     reviewBound: (now) => {
       const open = service.view(now).open;

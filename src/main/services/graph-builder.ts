@@ -39,7 +39,7 @@ import { DelayManager } from '@/timing/delay-manager';
 import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import { liveWiringParts } from './live-wiring';
-import { planWiringParts, wirePlan, wireReadBudget } from './plan-wiring';
+import { planWiringParts, wirePlan } from './plan-wiring';
 import {
   noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry, wireSweepCadence,
 } from './reopen-wiring';
@@ -63,13 +63,13 @@ export function buildGraph(
   const clock = new SystemClock();
   const frontier = new SourceFrontier({ store, clock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
   const reentry = wireReentry(store, clock);
-  const readBudget = wireReadBudget(store, clock, d);
   // The shared wait owner: growth and prune wait through ONE DelayManager
   // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
   // from a single registry.
   const delays = new DelayManager({ clock });
   const { settings, driverSignal } = d;
   const plan = wirePlan(store, clock, ownPk, delays, d);
+  const readBudget = plan.readBudget;
   const rate = plan.rateGovernor(toRateGovernorConfig(settings));
 
   // Interactor: every Actor click/scroll becomes native input events

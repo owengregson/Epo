@@ -55,6 +55,9 @@ function policy() {
   });
 }
 
+/** The profile reads an account may spend outside the click's verify reserve (spec §5.8). */
+const nonVerifyRoom = (): number => readLimits()().profiles - readLimits()().verifyReserve;
+
 /** An unfollow record the plan's demand counts: the day's kinds re-derive with it (the census re-plan). */
 function queued(over: Partial<Parameters<KnowledgeStore['upsertFollowRecord']>[0]> = {}): void {
   store.upsertFollowRecord({ accountPk: 'a', targetPk: 'seed', state: 'unfollow_queued', retryCount: 0,
@@ -187,7 +190,7 @@ test.each(['gone', 'wrong-pk', 'stale', 'missing-counts'] as const)('own-header 
 
 test('own-header success is fresh and budget deferral carries a restart-stable retry time', async () => {
   expect(await policy().refreshOwnStats()).toMatchObject({ ok: true, header: { followers: 500, following: 550 } });
-  budget.consume('profile', 'reconciliation', readLimits()().profiles - 1); // the rest of the derived allowance
+  budget.consume('profile', 'reconciliation', nonVerifyRoom() - 1); // the rest of the room outside the verify reserve
   const calls = visit.mock.calls.length;
   expect(await policy().refreshOwnStats()).toEqual({ ok: false, reason: 'read-budget', retryAt: clock.now() + 86_400_000 });
   expect(visit).toHaveBeenCalledTimes(calls);
@@ -195,7 +198,7 @@ test('own-header success is fresh and budget deferral carries a restart-stable r
 
 test('manual identity resolution spends the same durable profile allowance and refuses after exhaustion', async () => {
   expect(await policy().resolveIdentity('new-person')).toBe('a');
-  budget.consume('profile', 'reconciliation', readLimits()().profiles - 1); // the rest of the derived allowance
+  budget.consume('profile', 'reconciliation', nonVerifyRoom() - 1); // the rest of the room outside the verify reserve
   expect(await policy().resolveIdentity('another-person')).toBeNull();
   expect(visit).toHaveBeenCalledTimes(1);
 });

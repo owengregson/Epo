@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 const reads = (s: KnowledgeStore, clock: { now(): number }) =>
-  new ReadBudget({ store: s, clock, limits: () => toReadAllowance(DEFAULT_SETTINGS) });
+  new ReadBudget({ store: s, clock, limits: () => toReadAllowance(effectiveFromV1(DEFAULT_SETTINGS)) });
 
 describe('registration', () => {
   test('the build writes the plan once; the preview port and the plan capability come and go with the graph', () => {

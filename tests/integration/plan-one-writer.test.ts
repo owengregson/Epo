@@ -13,6 +13,7 @@ import { ReadBudget } from '@/governors/read-budget';
 import { MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
 import type { PlanWiring } from '@/main/services/plan-wiring';
 import { planWiringParts } from '@/main/services/plan-wiring';
+import { effectiveFromV1 } from '@/settings/effective';
 import { toReadAllowance } from '@/settings/read-allowance';
 import { DEFAULT_SETTINGS, toRateGovernorConfig } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -69,7 +70,7 @@ describe('I4 — status reads never write plan_state', () => {
     wirings.push(plan);
     const raw = store.getPlanState();
     expect(raw).not.toBeNull();
-    const reads = new ReadBudget({ store, clock, limits: () => toReadAllowance(DEFAULT_SETTINGS) });
+    const reads = new ReadBudget({ store, clock, limits: () => toReadAllowance(effectiveFromV1(DEFAULT_SETTINGS)) });
     const contributors = planWiringParts(plan, reads, store, { plan: host }).statusContributors;
     const writes = jest.spyOn(store, 'setPlanState');
     for (let t = clock.t; t < day.window.endsAt; t += 7 * MS_PER_MINUTE) {
