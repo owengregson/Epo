@@ -1,13 +1,15 @@
 /**
  * The live wiring's projection sources (spec §12.9, §13): the feed shaped from the graph's store over the plan-day
  * clock, stable while nothing changed; the expiry at the earlier of the plan-day roll and the census freshness end
- * (the prune source's declaration); the recovery episode and the runtime's resume and quit as feed moments; and a
- * built Foundation pushing the real feed when a write settles.
+ * (the prune source's declaration); the recovery episode and the runtime's resume and quit as feed moments; a
+ * built Foundation pushing the real feed when a write settles; and the resume target riding the status.
  */
 
 import { PRUNE_SCAN_FRESH_MS } from '@/engine/prune-engine';
+import { type FrontierSource, SourceFrontier, type SourceFrontierSnapshot } from '@/engine/source-frontier';
 import type { PlanDayClock } from '@/kernel/plan';
-import { censusFreshEnd, liveSources } from '@/main/services/live-wiring';
+import type { BuiltGraph } from '@/main/services/graph-types';
+import { censusFreshEnd, liveSources, liveWiringParts } from '@/main/services/live-wiring';
 import type { FeedView } from '@/shared/feed';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import * as logger from '@/utils/logger';
@@ -131,4 +133,65 @@ test('a built Foundation pushes the real feed when a write settles', async () =>
     expect.objectContaining({ kind: 'followed', via: 'you', people: [{ pk: 'p1', username: 'jane' }] }),
   ]);
   await foundation.dispose();
+});
+
+describe('the resume target', () => {
+  const graphOf = (s: KnowledgeStore): BuiltGraph => ({ store: s, clock: { now: () => NOW } }) as unknown as BuiltGraph;
+  const contributor = (frontier?: SourceFrontier) => {
+    const parts = liveWiringParts(frontier === undefined ? {} : { frontier });
+    expect(parts.startupSteps).toEqual([]);
+    const [resume] = parts.statusContributors;
+    expect(resume.name).toBe('resumeTarget');
+    return resume;
+  };
+  const due = (pk: string): FrontierSource => ({ pk, source: 'discovered', status: 'ready', resumeAt: NOW - 1, lastVisitedAt: 0,
+    totalFollows: 0, visit: null, lastReason: null });
+  const frontierState = (currentTargetPk: string | null, sources: FrontierSource[]): void => {
+    const snapshot: SourceFrontierSnapshot = { version: 1, currentTargetPk, sources, recentFollowSources: [], totalFollows: 0 };
+    store.setSourceFrontierState(JSON.stringify(snapshot));
+  };
+
+  test('none before a graph exists, or when nothing is left to resume', () => {
+    expect(contributor().contribute(null, NOW)).toEqual({ resumeTarget: null });
+    expect(contributor().contribute(graphOf(store), NOW)).toEqual({ resumeTarget: null });
+  });
+
+  test("the engine's frontier: the visit in progress, else the next source, with its username", () => {
+    store.observe({ accountPk: 'p1', observedAt: NOW, source: 'profile', fields: { username: 'lumen' } });
+    store.observe({ accountPk: 'p2', observedAt: NOW, source: 'profile', fields: { username: 'atlas' } });
+    store.addTarget({ accountPk: 'p1', source: 'discovered', status: 'active', chainIndex: 1 });
+    const engineFrontier = new SourceFrontier({ store, clock: { now: () => NOW } as never });
+    frontierState('p1', [due('p1'), due('p2')]);
+    expect(contributor(engineFrontier).contribute(graphOf(store), NOW)).toEqual({ resumeTarget: { pk: 'p1', username: 'lumen' } });
+    frontierState(null, [due('p2')]);
+    expect(contributor(engineFrontier).contribute(graphOf(store), NOW)).toEqual({ resumeTarget: { pk: 'p2', username: 'atlas' } });
+  });
+
+  test('the pick is ranked again when the frontier or the targets change, and each new minute, never otherwise', () => {
+    store.observe({ accountPk: 'p3', observedAt: NOW, source: 'profile', fields: { username: 'three' } });
+    frontierState(null, [due('p3')]);
+    const engineFrontier = new SourceFrontier({ store, clock: { now: () => NOW } as never });
+    const next = jest.spyOn(engineFrontier, 'next');
+    const resume = contributor(engineFrontier);
+    resume.contribute(graphOf(store), NOW);
+    resume.contribute(graphOf(store), NOW + 1_000);
+    expect(next).toHaveBeenCalledTimes(1);
+    resume.contribute(graphOf(store), NOW + MIN);
+    expect(next).toHaveBeenCalledTimes(2);
+    store.addTarget({ accountPk: 'p4', source: 'discovered', status: 'active', chainIndex: 4 });
+    resume.contribute(graphOf(store), NOW + MIN);
+    expect(next).toHaveBeenCalledTimes(3);
+    frontierState(null, [due('p3'), due('p4')]);
+    resume.contribute(graphOf(store), NOW + MIN);
+    expect(next).toHaveBeenCalledTimes(4);
+  });
+
+  test('with no frontier handed in, a read-only one over the graph store answers, and the peek writes nothing', () => {
+    store.observe({ accountPk: 'p9', observedAt: NOW, source: 'profile', fields: { username: 'nine' } });
+    frontierState(null, [due('p9')]);
+    const before = store.getSourceFrontierState();
+    expect(contributor().contribute(graphOf(store), NOW)).toEqual({ resumeTarget: { pk: 'p9', username: 'nine' } });
+    expect(store.getSourceFrontierState()).toBe(before);
+    expect(store.getTarget('p9')).toBeNull();
+  });
 });

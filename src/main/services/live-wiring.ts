@@ -6,17 +6,57 @@
 
 import { PRUNE_SCAN_FRESH_MS, type PruneStatus } from '@/engine/prune-engine';
 import type { RecoveryIncident, RecoverySnapshot } from '@/engine/recovery';
+import { peekResumeTarget, type ResumeFrontier } from '@/engine/resume-target';
+import { SourceFrontier } from '@/engine/source-frontier';
 import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { PlanDayClock } from '@/kernel/plan';
+import { MS_PER_MINUTE } from '@/kernel/units';
 import { type FeedContext, keepShapedAt, shapeFeed } from '@/main/modules/feed-projection';
 import type { FeedView } from '@/shared/feed';
+import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import * as logger from '@/utils/logger';
-import type { WiringParts } from './graph-types';
+import type { BuiltGraph, StatusContributor, WiringParts } from './graph-types';
 
-/** The live wiring's startup steps and status contributors (none yet). */
-export function liveWiringParts(): WiringParts {
-  return { startupSteps: [], statusContributors: [] };
+export interface LiveWiringDeps {
+  /** The engine's own source frontier, so the resume target is the pick a start adopts (L-RESUME). */
+  readonly frontier?: ResumeFrontier;
+}
+
+/** The live wiring's startup steps (none) and status contributors (the resume target). */
+export function liveWiringParts(deps: LiveWiringDeps = {}): WiringParts {
+  return { startupSteps: [], statusContributors: [resumeTargetContributor(deps)] };
+}
+
+/**
+ * `status.resumeTarget` (spec §13, §15.3): the target a start resumes, from the same pure pick the pipeline adopts,
+ * with no write. Without the engine's frontier it peeks through a read-only one over the graph's store, whose
+ * multi-source ranking uses the exploration policy's outcome window rather than the configured follow-back wait.
+ */
+function resumeTargetContributor(deps: LiveWiringDeps): StatusContributor {
+  let readOnly: { store: BuiltGraph['store']; frontier: ResumeFrontier } | null = null;
+  let memo: { store: BuiltGraph['store']; key: string; minute: number; value: StatusFields['resumeTarget'] } | null = null;
+  const frontierOf = (graph: BuiltGraph): ResumeFrontier => {
+    if (deps.frontier !== undefined) return deps.frontier;
+    if (readOnly?.store !== graph.store) {
+      readOnly = { store: graph.store, frontier: new SourceFrontier({ store: graph.store, clock: graph.clock }) };
+    }
+    return readOnly.frontier;
+  };
+  return {
+    name: 'resumeTarget',
+    contribute: (graph, now) => {
+      if (graph === null) return { resumeTarget: null };
+      // Ranking sources reads every follow record; a pick holds while the frontier and targets hold, re-ranked each minute.
+      const key = JSON.stringify([graph.store.getSourceFrontierState(), graph.store.listTargets()]);
+      const minute = Math.floor(now / MS_PER_MINUTE);
+      if (memo !== null && memo.store === graph.store && memo.key === key && memo.minute === minute) return { resumeTarget: memo.value };
+      const pick = peekResumeTarget({ store: graph.store, frontier: frontierOf(graph) });
+      const value = pick === null ? null : { pk: pick.pk, username: graph.store.getAccount(pick.pk)?.username ?? null };
+      memo = { store: graph.store, key, minute, value };
+      return { resumeTarget: value };
+    },
+  };
 }
 
 /** The runtime incident a deliberate quit records: the "Since you left" divider sits there. */
