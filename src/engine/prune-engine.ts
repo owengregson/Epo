@@ -29,7 +29,6 @@ import {
   type Rng,
   sleep as timingSleep,
 } from '../timing/primitives';
-import { MS_PER_DAY } from '../timing/units';
 import { WaitRunner } from '../timing/wait-runner';
 import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
@@ -43,20 +42,6 @@ import { type AnnotatedCandidate, decidePruneCandidate, pruneDeferral } from './
 import { nextFeedCandidate, type PruneFeedContext } from './prune-feed';
 import { PrunePacing } from './prune-pacing';
 import { assertFetchComplete, assertScanCoverage } from './prune-scan-guards';
-
-/**
- * Whether a scheduled prune run is due now. Pure and opt-in: `scheduleDays <= 0`
- * (the default) disables scheduling entirely and always returns `false`; a run is
- * due when it has never run (`lastRunAt === null`) or at least `scheduleDays` have
- * elapsed since the last run. The composition root polls this and only auto-starts
- * a run when it is ALSO safe (logged in, growth idle, inside active hours).
- */
-export function pruneDue(scheduleDays: number, lastRunAt: number | null, now: number): boolean {
-  if (!Number.isFinite(scheduleDays) || scheduleDays <= 0) return false;
-  if (lastRunAt === null) return true;
-  return now - lastRunAt >= scheduleDays * MS_PER_DAY;
-}
-
 import type { PruneCandidate, PruneConfig, PruneEngineDeps, PruneScanEstimates, PruneScanOpts, PruneState, PruneStatus } from './prune-types';
 
 export type { PruneCandidate, PruneChurnActions, PruneConfig, PruneEngineDeps, PruneOwnFollowers, PruneOwnFollowing, PrunePlan, PruneScanEstimates, PruneScanFetch, PruneScanOpts, PruneSentinel, PruneState, PruneStatus } from './prune-types';

@@ -7,7 +7,7 @@
  * `checking` flag. Task exceptions are caught and logged; a bad tick never
  * kills the loop. `after()` arms one replaceable one-shot (the plan's edge).
  *
- * `cadence()` models due-by-timestamp scheduling (follow-back sweep, pruneDue):
+ * `cadence()` models due-by-timestamp scheduling (the follow-back sweep):
  * "due when never run, or when everyMs has elapsed since the recorded last run" —
  * with the timestamp read/written through the caller (so it can live in
  * persisted Settings and survive restarts). `everyMs` is an `isDue` parameter,
