@@ -122,7 +122,7 @@ export function loadSettings(filePath: string): Settings {
  * numeric knobs survive instead of being re-derived from a nominal pattern.
  * Runs BEFORE the sanitizer, which is where the derivation happens.
  */
-function migrateLegacyPattern(parsed: Partial<Settings>): Settings {
+export function migrateLegacyPattern(parsed: Partial<Settings>): Settings {
   const legacyNoPattern = !('pattern' in parsed);
   if (!('persona' in parsed)) parsed.persona = 'custom';
   const merged = { ...DEFAULT_SETTINGS, ...parsed };

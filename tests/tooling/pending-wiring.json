@@ -11,14 +11,24 @@
       "reason": "the settings facts ride the settings IPC rows and the facts projection"
     },
     {
-      "module": "src/shared/unfollow-protection.ts",
-      "stream": "F2b step 9",
-      "reason": "the settings migration normalizes the protection lists through this one predicate"
-    },
-    {
       "module": "src/shared/posture.ts",
       "stream": "BL",
       "reason": "the stage controller derives the window title and Dock badge from the posture; SB's live column follows"
+    },
+    {
+      "module": "src/settings/doc-rules.ts",
+      "stream": "SC",
+      "reason": "the settings service coerces epo-settings-v2.json through these rules when it reads the document"
+    },
+    {
+      "module": "src/settings/migrate-v1.ts",
+      "stream": "SC",
+      "reason": "the settings service runs the v1 migration at construction, with the kernel-derived basis"
+    },
+    {
+      "module": "src/settings/effective.ts",
+      "stream": "F2b step 10",
+      "reason": "the re-typed settings service serves effective() from today's v1 settings"
     }
   ]
 }
