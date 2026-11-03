@@ -10,8 +10,8 @@
  */
 
 import type { ConfirmCfg } from '@/adapter/page';
-import { locateConfirm } from '@/adapter/page';
-import { box, mount, rx } from '../kit/adapter-dom';
+import { confirmLayer, locateConfirm } from '@/adapter/page';
+import { box, DEFAULT_BOX, hitTest, mount, rx } from '../kit/adapter-dom';
 
 const CFG: ConfirmCfg = {
   rx: rx(/^\s*(unfollow|cancel request)\b/i),
@@ -34,7 +34,7 @@ describe('primary pass: role-marked, visible controls', () => {
     `);
     box(document.getElementById('hit') as Element, { x: 400, y: 500, width: 200, height: 44 });
 
-    expect(locateConfirm(CFG)).toEqual({
+    expect(locateConfirm(CFG)).toMatchObject({
       found: true,
       rect: { x: 400, y: 500, width: 200, height: 44 },
       fallback: false,
@@ -120,15 +120,89 @@ describe('self-recovery pass: a menu shipped as bare divs', () => {
     // The wrapper holds more children than a menu row ever does, so it is not a
     // candidate itself; the deepest matching label is, and the rect resolves
     // back up to the pressable ancestor.
-    expect(locateConfirm(CFG)).toEqual({
+    expect(locateConfirm(CFG)).toMatchObject({
       found: true,
       fallback: true,
       rect: { x: 400, y: 500, width: 260, height: 48 },
     });
   });
 
-  test('an empty menu reports not-found (the Actor escalates to stale)', () => {
+  test('an empty menu reports not-found (nothing is pressed)', () => {
     mount('<div role="dialog"><div role="menuitem">Report</div></div>');
     expect(locateConfirm(CFG)).toEqual({ found: false });
+  });
+});
+
+describe('confirm layers (ADR 0308): newest first, on top, signed', () => {
+  const LAYERED: ConfirmCfg = { ...CFG, companionRx: rx(/^\s*cancel\s*$/i) };
+  const MENU_ROW = { x: 400, y: 500, width: 260, height: 48 };
+  const DIALOG_BUTTON = { x: 500, y: 300, width: 300, height: 44 };
+
+  /** The menu sheet, then the dialog a private account's unfollow opens on top of it. */
+  function menuThenDialog(): void {
+    mount(`
+      <div role="dialog" id="menu"><div role="button">Mute</div><div role="button" id="row">Unfollow</div></div>
+      <div role="dialog" id="dialog"><span>If you change your mind…</span>
+        <button id="confirm">Unfollow</button><button>Cancel</button></div>
+    `);
+    box(document.getElementById('row') as Element, MENU_ROW);
+    box(document.getElementById('confirm') as Element, DIALOG_BUTTON);
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(document, 'elementFromPoint');
+  });
+
+  test('the dialog appended last is searched first: the portal on top wins over the menu beneath it', () => {
+    menuThenDialog();
+    expect(locateConfirm(LAYERED)).toMatchObject({ found: true, rect: DIALOG_BUTTON, layer: 'dialog' });
+  });
+
+  test('a row a press would not reach is skipped: the menu still fading out beneath the dialog', () => {
+    menuThenDialog();
+    const dialogEl = document.getElementById('dialog') as HTMLElement;
+    const confirm = document.getElementById('confirm') as HTMLElement;
+    // The dialog's backdrop covers the page while its button is still scaling in.
+    hitTest(() => dialogEl);
+    confirm.style.opacity = '0';
+    expect(locateConfirm(LAYERED)).toEqual({ found: false });
+    confirm.style.opacity = '1';
+    hitTest(() => confirm);
+    expect(locateConfirm(LAYERED)).toMatchObject({ found: true, rect: DIALOG_BUTTON });
+  });
+
+  test('a layer without the companion is a menu; its signature holds across re-locates and changes with the layer', () => {
+    mount('<div role="dialog"><div role="button">Mute</div><div role="button">Unfollow</div></div>');
+    const first = locateConfirm(LAYERED);
+    expect(first).toMatchObject({ found: true, layer: 'menu' });
+    expect(locateConfirm(LAYERED).sig).toBe(first.sig);
+    document.body.insertAdjacentHTML('beforeend', '<div role="dialog"><button>Unfollow</button><button>Cancel</button></div>');
+    for (const el of Array.from(document.querySelectorAll('*'))) box(el, DEFAULT_BOX);
+    const second = locateConfirm(LAYERED);
+    expect(second).toMatchObject({ found: true, layer: 'dialog' });
+    expect(second.sig).not.toBe(first.sig);
+  });
+
+  test('a later layer searches the dialog scopes only: the page behind it is never one', () => {
+    mount('<main><button>Unfollow</button></main>');
+    expect(locateConfirm(LAYERED).found).toBe(true);
+    expect(locateConfirm({ ...LAYERED, dialogsOnly: true })).toEqual({ found: false });
+  });
+
+  test('the layer report names the top layer, whether the confirm text is in it, and its markup on request', () => {
+    mount('<main></main>');
+    expect(confirmLayer(LAYERED)).toEqual({ present: false });
+    menuThenDialog();
+    const report = confirmLayer({ ...LAYERED, withMarkup: true });
+    expect(report).toMatchObject({ present: true, layer: 'dialog', controls: 2, matches: true, structural: 'Unfollow' });
+    expect(report.sig).toBe(locateConfirm(LAYERED).sig);
+    expect(report.markup).toContain('If you change your mind');
+    expect(confirmLayer(LAYERED).markup).toBeUndefined();
+  });
+
+  test('an unknown two-button dialog: its control is reported for the capture, and nothing is found to press', () => {
+    mount('<div role="dialog"><span>Restrict @someone?</span><button>Restrict</button><button>Cancel</button></div>');
+    expect(locateConfirm({ ...LAYERED, dialogsOnly: true })).toEqual({ found: false });
+    expect(confirmLayer(LAYERED)).toMatchObject({ present: true, layer: 'dialog', matches: false, structural: 'Restrict' });
   });
 });
