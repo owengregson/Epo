@@ -16,9 +16,9 @@
       "reason": "the plan status contributor in plan-wiring.ts projects the view into EpoStatus.plan"
     },
     {
-      "module": "src/settings/plan-intent.ts",
-      "stream": "PR",
-      "reason": "plan-wiring.ts feeds the plan service toPlanIntent(effective()); the settings core wraps it for the PlanPreviewPort fingerprint"
+      "module": "src/settings/plan-math.ts",
+      "stream": "SC",
+      "reason": "the composition root hands KERNEL_PLAN_MATH to the v2 settings service when SC wires it"
     }
   ]
 }

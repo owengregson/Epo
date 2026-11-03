@@ -17,8 +17,9 @@ import type { ParamKey } from '@/shared/settings-params';
 const MEAN_OVER_MEDIAN = 103.9 / 95;
 
 export const FAKE_PLAN_MATH: PlanMath = {
-  gapTypicalSeconds: (cap) => (3600 * POLICY.CEILING_HEADROOM) / cap / BOUNDS.NOISE.BEAT_MIN_FACTOR,
-  gapMinimumSeconds: (g) => g.floorSeconds * Math.max(1, g.typicalSeconds / (g.medianSeconds * MEAN_OVER_MEDIAN)),
+  gapTypicalSeconds: (g) => Math.max((3600 * POLICY.CEILING_HEADROOM) / g.hourlyCap / BOUNDS.NOISE.BEAT_MIN_FACTOR,
+    g.medianSeconds * MEAN_OVER_MEDIAN),
+  gapMinimumSeconds: (g, typical) => g.floorSeconds * Math.max(1, typical / (g.medianSeconds * MEAN_OVER_MEDIAN)),
   automaticDayMax: (p0) => (p0 < 10 ? p0 : Math.min(p0 - 1, Math.ceil(0.97 * p0 - 0.5))),
   dayLaw: ({ operatingRate: p0 }) => ({ low: Math.round(0.58 * p0), typical: Math.round(0.88 * p0), high: Math.round(0.94 * p0) }),
   retryLimit: () => 3,

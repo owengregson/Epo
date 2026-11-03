@@ -6,12 +6,25 @@ import { ACTIVITY, CAUTION, derivePattern, REST_DAY_PCT, RHYTHM, VARIANCE_PCT } 
 import { burstFloorSeconds, ENVELOPE } from '@/kernel/derive-envelope';
 import { POLICY } from '@/kernel/policy';
 import { SETTINGS_GUARDS as G, SETTINGS_POLICY } from '@/kernel/settings-policy';
-import { patternOf } from './basis';
+import { type GapInputs, patternOf } from './basis';
 import { type DeriveCtx, num, type ParamSpec } from './params-spec';
 
 const { whole } = SETTINGS_POLICY.PARAM_STEP;
 
 const ROW = { kind: 'int', step: whole, needs: null, deps: [] } as const;
+
+/** The rows the plan's gap solve reads: the cap, the daily target and the sessions it spreads over. */
+const GAP_DEPS = ['pace.hourlyCap', 'pace.dailyVolume', 'sessions.perDayMin', 'sessions.perDayMax'] as const;
+
+/** The gap inputs from the effective upstream rows and the intent's reference shape. */
+function gapInputs(c: DeriveCtx): GapInputs {
+  const shape = derivePattern(patternOf(c.intent));
+  return {
+    hourlyCap: num(c, 'pace.hourlyCap'), medianSeconds: shape.gapMedianSeconds, floorSeconds: shape.gapFloorSeconds,
+    operatingRate: num(c, 'pace.dailyVolume'),
+    sessions: { min: num(c, 'sessions.perDayMin'), max: num(c, 'sessions.perDayMax') },
+  };
+}
 
 export const PACE_SPECS = {
   'pace.dailyVolume': {
@@ -56,22 +69,16 @@ export const PACE_SPECS = {
   },
   'sessions.gapTypical': {
     ...ROW, section: 'timing', unit: 'seconds', risk: 'lower-is-riskier', applies: 'replan', needs: 'plan',
-    deps: ['pace.hourlyCap'],
-    derive: (c: DeriveCtx) => Math.round(c.math.gapTypicalSeconds(num(c, 'pace.hourlyCap'))),
+    deps: GAP_DEPS,
+    derive: (c: DeriveCtx) => Math.round(c.math.gapTypicalSeconds(gapInputs(c))),
     // Slower only: never below the plan's own typical pause.
     bounds: (_c: DeriveCtx, rec: unknown) =>
       ({ min: rec as number, max: (rec as number) * SETTINGS_POLICY.TEMPO_OVERRIDE_MAX_FACTOR }),
   },
   'sessions.gapMinimum': {
     ...ROW, section: 'timing', unit: 'seconds', risk: 'lower-is-riskier', applies: 'replan', needs: 'plan',
-    deps: ['pace.hourlyCap', 'sessions.gapTypical'],
-    derive: (c: DeriveCtx) => {
-      const shape = derivePattern(patternOf(c.intent));
-      return Math.round(c.math.gapMinimumSeconds({
-        hourlyCap: num(c, 'pace.hourlyCap'), medianSeconds: shape.gapMedianSeconds, floorSeconds: shape.gapFloorSeconds,
-        typicalSeconds: num(c, 'sessions.gapTypical'),
-      }));
-    },
+    deps: [...GAP_DEPS, 'sessions.gapTypical'],
+    derive: (c: DeriveCtx) => Math.round(c.math.gapMinimumSeconds(gapInputs(c), num(c, 'sessions.gapTypical'))),
     // Slower only, never under the burst floor of the effective cap, never above the typical pause.
     bounds: (c: DeriveCtx, rec: unknown) => ({
       min: Math.max(rec as number, burstFloorSeconds(num(c, 'pace.hourlyCap'))), max: num(c, 'sessions.gapTypical'),
