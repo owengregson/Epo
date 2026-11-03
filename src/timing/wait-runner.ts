@@ -9,6 +9,7 @@
  */
 
 import type { Clock } from '../governors/clock';
+import type { TempoSource } from '../kernel/tempo';
 import type { DelayManager, WaitResult } from './delay-manager';
 import { boundarySeedKey, jitterBoundary, noisify, type WaitClass } from './noise';
 import type { DelayPolicy, Rng } from './primitives';
@@ -34,6 +35,8 @@ export interface WaitRunnerDeps<K extends string, P extends string> {
    * not shift the draw order any seeded test depends on.
    */
   noiseRng: Rng;
+  /** The session tempo a local beat's band follows (`pause.retry`); the reference when absent. */
+  tempo?: TempoSource;
   /** Per-install entropy seeding restart-stable daily-boundary jitter. */
   installEntropy?: number;
   /** Which keys are LONG parks the status surfaces; null for step-scale waits. */
@@ -89,7 +92,7 @@ export class WaitRunner<K extends string, P extends string = never> {
       const resumeAt = this.deps.clock.now() + base;
       return jitterBoundary(base, boundarySeedKey(resumeAt, key), this.deps.installEntropy ?? 0);
     }
-    return noisify(cls, policyOrMs, this.deps.noiseRng);
+    return noisify(cls, policyOrMs, this.deps.noiseRng, this.deps.tempo);
   }
 
   /** The deadline of the in-flight wait under `key`, or null when none is pending. */

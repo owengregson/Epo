@@ -13,6 +13,7 @@
  */
 import { ENGINE_WAIT_CLASS, type EngineWaitKey } from '@/engine/engine';
 import { PRUNE_WAIT_CLASS, type PruneWaitKey } from '@/engine/prune-engine';
+import { REFERENCE_TEMPO, type TempoSource, tempoSource } from '@/kernel/tempo';
 import { ENGINE, NOISE } from '@/timing/config';
 import { DelayManager } from '@/timing/delay-manager';
 import {
@@ -25,6 +26,7 @@ import {
   type WaitClass,
 } from '@/timing/noise';
 import { type DelayPolicy, sample, uniform } from '@/timing/primitives';
+import { WaitRunner } from '@/timing/wait-runner';
 import { makeEngineHarness, makePruneHarness } from '../kit/engine-harness';
 
 const BASE_MS = 60_000;
@@ -282,5 +284,43 @@ describe('noise — daily-boundary seed keys on the RESUME day (iv, v)', () => {
     expect(monOffset).not.toBe(tueOffset); // per-day seed component
     const otherInstall = jitterBoundary(BASE_MS, boundarySeedKey(mon, key), ENTROPY + 1);
     expect(monOffset).not.toBe(otherInstall); // per-install seed component
+  });
+});
+
+describe('noise — the beat band and the rest stride follow the session tempo', () => {
+  const at = (pace: number, depth = 1): TempoSource => tempoSource({ current: () => ({ ...REFERENCE_TEMPO, pace, depth }) });
+  const meanOf = (p: DelayPolicy): number => Array.from({ length: 400 }, () => p.sample(Math.random)).reduce((a, b) => a + b, 0) / 400;
+
+  test('a local beat is one pause.retry draw around its base at the tempo in force', () => {
+    for (const tempo of [at(1), at(0.8), at(1.4)]) {
+      const beat = noisify('local-beat', BASE_MS, mulberry32(5), tempo) as DelayPolicy;
+      const twin = mulberry32(5);
+      for (let i = 0; i < 200; i += 1) expect(beat.sample(Math.random)).toBe(tempo.policy('pause.retry', { baseMs: BASE_MS }).sample(twin));
+    }
+    const slow = meanOf(noisify('sub-cadence', BASE_MS, mulberry32(9), at(1.4)) as DelayPolicy);
+    expect(slow).toBeGreaterThan(meanOf(noisify('sub-cadence', BASE_MS, mulberry32(9)) as DelayPolicy));
+  });
+
+  test('the rest stride is one walk.rest-every draw at the tempo in force; a deeper session rests less often', () => {
+    const deep = at(1, 1.4);
+    const rng = mulberry32(21);
+    const twin = mulberry32(21);
+    for (let i = 0; i < 200; i += 1) expect(nextRestStride(rng, deep)).toBe(deep.policy('walk.rest-every').sample(twin));
+    const strides = new Set(Array.from({ length: 400 }, () => nextRestStride(rng, deep)));
+    expect(Math.min(...strides)).toBeGreaterThan(NOISE.LIST_WALK_REST_EVERY_MIN);
+  });
+
+  test('the wait runner hands its tempo to a local beat', async () => {
+    const waited: (DelayPolicy | number)[] = [];
+    const delays = { wait: async (_key: string, p: DelayPolicy | number) => {
+      waited.push(p);
+      return { completed: true };
+    }, nextDeadline: () => null } as unknown as DelayManager;
+    const tempo = at(1.3);
+    const runner = new WaitRunner<'beat'>({ delays, clock: { now: () => 0 }, classes: { beat: 'local-beat' }, noiseRng: mulberry32(3),
+      tempo, signal: () => new AbortController().signal });
+    await runner.wait('beat', BASE_MS);
+    const twin = mulberry32(3);
+    expect((waited[0] as DelayPolicy).sample(Math.random)).toBe(tempo.policy('pause.retry', { baseMs: BASE_MS }).sample(twin));
   });
 });
