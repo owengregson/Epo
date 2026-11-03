@@ -24,10 +24,8 @@ export interface PruneFeedContext {
 }
 
 /**
- * The next actionable unfollow, or null. Skips (consuming them) protected, followed-back-since and
- * no-username rows, and passes over (keeping them) accounts with their own unsettled write; null when
- * the feed is halted, no fresh scan exists, the daily cap is hit, or protection is paused (the feed
- * yields to follows). The returned candidate is consumed on execute.
+ * The next actionable unfollow, or null (halted, no fresh scan, the cap hit, protection paused). Skips — consuming
+ * them — protected, followed-back and no-username rows; passes over, keeping them, accounts with an unsettled write.
  */
 export function nextFeedCandidate(f: PruneFeedContext, now: number): { pk: string; username: string } | null {
   if (f.feedHalted || !f.hasFreshScan() || f.atDailyCap(now)) return null;

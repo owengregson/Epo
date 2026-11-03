@@ -1,9 +1,6 @@
 /**
- * Checkpoint (spec §20.3, kept green from UD-b through RO-b): a due lifecycle unfollow is executed end
- * to end, and no reconcile phase wedges admission. Composed from the production wiring — the unfollow
- * wiring's mutation policy, churn and journal step, the click review and the one-admission dispatch
- * closure — over a real store, a fake clock and a fake tab. Plus reopen I5: a deleted account at the
- * queue head parks and the next record proceeds.
+ * Checkpoint (spec §20.3, green from UD-b through RO-b): a due lifecycle unfollow executes end to end and no
+ * reconcile phase wedges admission, over the production unfollow wiring, a real store, a fake clock and a fake tab.
  */
 import { prepareAction } from '@/adapter/action-admission';
 import { ActionDeferredError } from '@/adapter/errors';

@@ -43,7 +43,7 @@
     },
     {
       "file": "src/engine/churn-scheduler.ts",
-      "lines": 471
+      "lines": 456
     },
     {
       "file": "src/engine/target-pipeline.ts",

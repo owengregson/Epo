@@ -46,10 +46,8 @@ export class ChurnPick {
   }
 
   /**
-   * The single most-due record needing Instagram traffic, or `null`. Reclaimed slots first
-   * (`unfollow_queued` by `unfollowDueAt`, then `accountPk`), then the best-scored `queued`
-   * record. Never one whose re-check lies ahead, whose own write is unsettled, or — for an
-   * unfollow — that is retained or requesting. `kind` narrows the pick to one verb.
+   * The most-due record, or null: reclaimed slots first (by `unfollowDueAt`), then the best-scored follow;
+   * never one parked ahead, one with its own write unsettled, or a retained or requesting unfollow.
    */
   nextDue(now: number, kind?: 'follow' | 'unfollow'): FollowRecord | null {
     const queued = kind === 'unfollow' ? []

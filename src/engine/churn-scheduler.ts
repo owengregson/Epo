@@ -17,20 +17,9 @@ import { type ProtectionPort, unconfiguredProtection } from './protection-port';
 export type { ChurnActionOutcome, ChurnActions, ChurnConfig, ChurnDeps } from './churn-types';
 
 /**
- * Drives every `FollowRecord` through the churn lifecycle:
- *
- * ```
- * queued             → FOLLOW ok → pending_followback; fail → retry, then abandoned
- * pending_followback → (past the wait, no open follower edge, no request) unfollow_queued
- * followed_back      → (hold elapsed; never with mutuals kept) unfollow_queued
- * pending_followback | followed_back | unfollow_queued → (protected at selection) kept
- * unfollow_queued    → the click review decides (spec §9.7): UNFOLLOW ok → unfollowed; a
- *                      consuming verdict re-holds, parks or closes it; fail → retry, then abandoned
- * ```
- *
- * {@link advanceTimers} makes the store-only transitions, {@link nextDue} picks the single most-due
- * record (never a parked, journal-blocked or requesting one: no head-of-line) and {@link execute}
- * performs that ONE action. Gating is the Engine's job: a closed gate leaves every record in place.
+ * The churn lifecycle (queued → pending_followback → followed_back | unfollow_queued → unfollowed, kept on
+ * protection): {@link advanceTimers} moves records in the store, {@link nextDue} picks one with no head-of-line,
+ * {@link execute} performs that ONE action, verified at its click (spec §9.7); gating is the Engine's job.
  */
 export class ChurnScheduler {
   private readonly store: KnowledgeStore;
@@ -120,10 +109,8 @@ export class ChurnScheduler {
   }
 
   /**
-   * The store-only transitions, with zero calls to `actions` — protection first (spec §7.4, §9.7):
-   * P1 a `pending_followback` past the wait reclaims its slot unless it requested to follow us or
-   * an open follower edge says it followed back; P2 a held mutual rotates out (never with mutuals
-   * kept); P3/P4 a queued unfollow a rule now protects is kept. The click verifies each, once.
+   * Store-only transitions, protection first (spec §7.4, §9.7): P1 a wait past its end reclaims the slot unless
+   * a request or an open follower edge says otherwise; P2 a held mutual rotates out; P3/P4 a protected queued one is kept.
    */
   advanceTimers(now: number = this.clock.now()): void {
     this.reconciler?.sync(now);
@@ -169,10 +156,8 @@ export class ChurnScheduler {
   }
 
   /**
-   * Perform exactly ONE record's Instagram action and apply its result (no delay inside: the
-   * Engine paces). `queued` follows, `unfollow_queued` unfollows, anything else is a no-op.
-   * Returns the outcome for the Engine to route: `'blocked'` parks and feeds the recovery
-   * ladder's streak; `'noop'` touched nothing on Instagram.
+   * Perform ONE record's action and apply its result (the Engine paces): `queued` follows, `unfollow_queued`
+   * unfollows. `'blocked'` parks and feeds the ladder's streak; `'noop'` touched nothing on Instagram.
    */
   async execute(
     rec: FollowRecord,
