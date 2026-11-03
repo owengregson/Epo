@@ -1,15 +1,14 @@
 /**
  * Seeds (and re-seeds) the line-budget allow-list — see ADR 1003.
  *
- *   node scripts/gen-line-budget.mjs                  rewrite the allow-list from the tree
- *   node scripts/gen-line-budget.mjs --print           show what it would write
- *   node scripts/gen-line-budget.mjs --against <ref>   rewrite, refusing any entry above <ref>'s list
+ *   node scripts/gen-line-budget.mjs           rewrite the allow-list from the tree
+ *   node scripts/gen-line-budget.mjs --print    show what it would write
+ *   node scripts/gen-line-budget.mjs --against <ref>  rewrite unless an entry rises above <ref>'s
  *
  * The allow-list is NOT a config knob: `tests/tooling/line-budget.test.ts` fails
  * when a listed file grows, so re-seeding upward is a visible, reviewable diff
  * that has to be argued for in a PR. Re-seeding DOWNWARD (after a split) is the
- * normal use, and every line removed is permanent. Streams and merges re-seed
- * with --against, which refuses a new oversize file or a ceiling that rose.
+ * normal use, and every line removed is permanent.
  */
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';

@@ -1,15 +1,7 @@
 /**
- * The static-timing allow-list is a ratchet (spec §20.4): `tests/tooling/no-static-timing.test.ts`
- * fails on any finding the list does not cover and on any entry that no longer matches.
- *
- *   node scripts/gen-static-timing-allow.mjs                     prune: drop gone entries, lower counts; never add
- *   node scripts/gen-static-timing-allow.mjs --move <old> <new>  re-key a moved literal; class and reason travel
- *   node scripts/gen-static-timing-allow.mjs --against <ref>     prune, then refuse any key or count absent at <ref>
- *   node scripts/gen-static-timing-allow.mjs --seed              the one-time initial list: every finding, classed
- *   add --print to write the result to stdout instead of the file
- *
- * Only --seed adds entries, and it runs once (F2c, on the merged F2b head); a new entry afterwards
- * is a stop-and-ask to the lead. Keys are `file :: declaration :: callee or property :: text`.
+ * The static-timing allow-list ratchet (spec §20.4): `node scripts/gen-static-timing-allow.mjs` prunes;
+ * `--move <old> <new>` re-keys, `--against <ref>` refuses growth, `--seed` (once) seeds, `--print` prints.
+ * Only --seed adds; a new entry after the seed is a stop-and-ask to the lead.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';

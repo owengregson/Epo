@@ -1,21 +1,11 @@
 /**
- * The static-timing scanner (spec §20.4): one definition of a violation, shared by
- * `tests/tooling/no-static-timing.test.ts` and `scripts/gen-static-timing-allow.mjs`.
- *
- *   node scripts/static-timing-scan.mjs              summary of every finding in scope
- *   node scripts/static-timing-scan.mjs --json [f…]  the findings as JSON (all of scope, or files f…)
- *
- * Scope is every .ts/.tsx under src except src/kernel (the home of every allowed constant) and
- * src/renderer (spec §3 deviation 1). Three kinds of finding, in any syntactic position:
- *   literal — a numeric literal other than 0, 1, -1, or a kernel/units multiplier used as one;
- *   prior   — a property read of a key a tempo spec claims (generated from the specs);
- *   random  — Math.random.
- * Each finding has a line-free key: `file :: enclosing declaration :: callee or property :: text`.
- * TypeScript 7 no longer ships a JS compiler API, so the parse is SWC's (the jest transform's).
+ * The static-timing scanner (spec §20.4), the one definition of a violation for the gate's test and
+ * its generator. `node scripts/static-timing-scan.mjs [--json] [file…]` prints a summary or the JSON.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// TypeScript 7 ships no JS compiler API, so the parse is SWC's: the parser the jest transform uses.
 import { parseSync } from '@swc/core';
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -24,6 +14,7 @@ export const UNITS_FILE = 'src/kernel/units.ts';
 /** Groups every key of which is a prior: spec §20.4 names `MOTION.*` and `PACING_BASE_MS.*` whole. */
 export const WHOLE_GROUPS = ['MOTION', 'PACING_BASE_MS'];
 
+/** Out of scope: the kernel (the home of every allowed constant) and the renderer (spec §3 deviation 1). */
 const OUT_OF_SCOPE = /^src\/(kernel|renderer)\//;
 const SKIP = /([.]generated[.]tsx?|[.]d[.]ts)$/;
 const read = (file) => readFileSync(join(ROOT, file), 'utf8');
@@ -229,7 +220,11 @@ function lineOf(source) {
   };
 }
 
-/** Every finding in one file: `{key, file, scope, context, text, kind, line}`, in source order. */
+/**
+ * Every finding in one file, in any syntactic position: `literal` (not 0, ±1, or a kernel/units
+ * multiplier used as one), `prior` (a read of a claimed key), `random` (Math.random). Line-free key:
+ * `file :: enclosing declaration :: callee or property :: text`.
+ */
 export function scanSource(file, source, ctx) {
   const ast = parse(file, source);
   const line = lineOf(source);
