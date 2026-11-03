@@ -18,9 +18,14 @@
  * fresh the moment the graph exists" opening push, and the same guard that a
  * timer which fires after teardown pushes nothing. `tests/main/*` are the
  * oracle.
+ *
+ * Two additions (spec §13, §15.2): a `dedupe` row pushes only when its shaped
+ * JSON changed, and one expiry timer re-pushes every row at the earliest
+ * instant a source declares, so a verdict that ages out moves with no write.
  */
 
 import type { PushContract, PushMethod } from '@/ipc/contract';
+import { MS_PER_DAY } from '@/kernel/units';
 import { notBuiltFacts, notBuiltFeed } from '@/main/modules/not-built';
 import type { FeedView } from '@/shared/feed';
 import type { SettingsFacts } from '@/shared/settings-facts';
@@ -97,6 +102,8 @@ export interface ProjectionsDeps {
   push?: PushFn;
   /** Trailing coalescing window. Defaults to the shared graph-push throttle. */
   throttleMs?: number;
+  /** The wall clock the expiry timer measures against. */
+  now?: () => number;
 }
 
 /**
@@ -109,7 +116,10 @@ export interface ProjectionsDeps {
 export class Projections {
   private readonly push?: PushFn;
   private readonly throttleMs: number;
+  private readonly now: () => number;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** The one timer armed at the earliest instant a source declared (see {@link armExpiry}). */
+  private expiry: ReturnType<typeof setTimeout> | null = null;
   private unsub: (() => void) | null = null;
   private source: ProjectionSource | null = null;
   private stopped = false;
@@ -119,6 +129,7 @@ export class Projections {
   constructor(deps: ProjectionsDeps = {}) {
     this.push = deps.push;
     this.throttleMs = deps.throttleMs ?? POLL.GRAPH_PUSH_THROTTLE_MS;
+    this.now = deps.now ?? (() => Date.now());
   }
 
   /**
@@ -135,7 +146,7 @@ export class Projections {
     this.pushAll();
   }
 
-  /** Push every projection now, off the throttle. */
+  /** Push every projection now, off the throttle, then re-arm the expiry timer. */
   pushAll(): void {
     const source = this.source;
     if (source === null || this.stopped) return;
@@ -148,6 +159,29 @@ export class Projections {
       }
       this.push?.(projection.channel, payload);
     }
+    this.armExpiry(source);
+  }
+
+  /**
+   * One timer at the earliest instant a shown verdict changes with no mutation (the census freshness end, the
+   * plan-day roll), never sooner than the throttle and never longer than a day. An instant at or before now was
+   * already reflected by the push that just ran, so it arms nothing and can never loop.
+   */
+  private armExpiry(source: ProjectionSource): void {
+    this.clearExpiry();
+    const at = source.expiresAt?.() ?? null;
+    const now = this.now();
+    if (at === null || !(at > now)) return;
+    this.expiry = setTimeout(() => {
+      this.expiry = null;
+      this.pushAll();
+    }, Math.min(Math.max(at - now, this.throttleMs), MS_PER_DAY));
+  }
+
+  private clearExpiry(): void {
+    if (this.expiry === null) return;
+    clearTimeout(this.expiry);
+    this.expiry = null;
   }
 
   /** Push ONE projection now (the engine's own status emit path). */
@@ -185,6 +219,7 @@ export class Projections {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.clearExpiry();
     this.source = null;
   }
 

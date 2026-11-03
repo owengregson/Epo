@@ -54,6 +54,7 @@ import {
   type GraphBuildDeps,
 } from '@/main/services/graph-builder';
 import type { IgSessionPort } from '@/main/services/ig-session';
+import { liveSources } from '@/main/services/live-wiring';
 import { RuntimeCoordinator, type RuntimeSnapshot } from '@/main/services/runtime-coordinator';
 import { TabLease } from '@/main/services/tab-lease';
 import { TabActivity } from '@/main/tab-activity';
@@ -281,10 +282,8 @@ export class Foundation {
         if (this.graph === graph && !this.disposing) graph.store.pruneRetainedLogs();
       }, { unref: true });
       graph.engine.setOnline(this.lastOnline);
-      this.projections.bind(graph.store, {
-        status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES,
-      });
+      this.projections.bind(graph.store, { status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot()) });
     });
     this.session.session.onClose(() => {
       this.scheduler.stop('store:retention');

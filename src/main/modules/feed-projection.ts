@@ -188,6 +188,12 @@ export function feedDays(clock: Pick<PlanDayClock, 'window'>, now: number): Feed
   }
 }
 
+/** The previous view when only the shaping instant moved, so the deduplicated feed row sends nothing. */
+export function keepShapedAt(prev: FeedView | null, next: FeedView): FeedView {
+  if (prev === null) return next;
+  return JSON.stringify({ ...prev, shapedAt: 0 }) === JSON.stringify({ ...next, shapedAt: 0 }) ? prev : next;
+}
+
 /** The feed over whole plan-days: grouped, newest first, at most `LIVE.FEED_LIMIT` rows. */
 export function shapeFeed(reads: FeedReads, ctx: FeedContext): FeedView {
   const days = feedDays(ctx.planDay, ctx.now);

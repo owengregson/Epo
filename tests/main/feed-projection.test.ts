@@ -8,7 +8,9 @@
 import fc from 'fast-check';
 import { LIVE } from '@/kernel/live-policy';
 import type { PlanDayClock } from '@/kernel/plan';
-import { type FeedContext, type FeedReads, feedDays, notBuiltFeed, shapeFeed } from '@/main/modules/feed-projection';
+import {
+  type FeedContext, type FeedReads, feedDays, keepShapedAt, notBuiltFeed, shapeFeed,
+} from '@/main/modules/feed-projection';
 import type { FeedItem } from '@/shared/feed';
 import type { EdgeFeedRow, EffectFeedRow, FollowBackFeedRow, LostFollowersRow } from '@/store/repos/feed-reads';
 
@@ -209,6 +211,15 @@ describe('the window', () => {
 
 test('the not-built feed is empty and says so', () => {
   expect(notBuiltFeed(NOW)).toEqual({ items: [], awayFrom: null, windowStart: NOW, shapedAt: NOW });
+});
+
+test('a reshape that only moved the clock keeps the previous view, so the deduplicated row stays quiet', () => {
+  const rows = reads({ effects: [effect(5)] });
+  const first = shapeFeed(rows, ctx());
+  expect(keepShapedAt(null, first)).toBe(first);
+  expect(keepShapedAt(first, shapeFeed(rows, ctx({ now: NOW + MIN })))).toBe(first);
+  const moved = shapeFeed(reads({ effects: [effect(1, { action: 'unfollow' }), effect(5)] }), ctx({ now: NOW + MIN }));
+  expect(keepShapedAt(first, moved)).toBe(moved);
 });
 
 describe('L-FEED', () => {

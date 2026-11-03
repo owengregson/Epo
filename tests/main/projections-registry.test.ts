@@ -140,3 +140,124 @@ test('until their streams land, the facts and feed rows serve honest not-built s
   expect(UNWIRED_SOURCES.settingsFacts()).toMatchObject({ built: false, protection: null, cleanup: null });
   expect(UNWIRED_SOURCES.feed()).toMatchObject({ items: [], awayFrom: null });
 });
+
+describe('the feed row and the expiry timer', () => {
+  const T = 1_800_000_000_000;
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(T);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  /** A source whose feed and declared expiry the test moves. */
+  function liveSource(over: Partial<ProjectionSource> = {}) {
+    const state = { feed: notBuiltFeed(T), expiresAt: null as number | null };
+    const src: ProjectionSource = { ...source, feed: () => state.feed, expiresAt: () => state.expiresAt, ...over };
+    return { state, src };
+  }
+
+  test('an unchanged feed does not push; a changed one does; a rebind sends it again', () => {
+    const pushed: [PushMethod, unknown][] = [];
+    const store = fakeStore();
+    const { state, src } = liveSource();
+    const projections = new Projections({ push: (c, p) => pushed.push([c, p]), throttleMs: 20 });
+    projections.bind(store, src);
+    const feeds = () => pushed.filter(([c]) => c === 'feed').map(([, p]) => p);
+    expect(feeds()).toEqual([state.feed]);
+
+    store.fire();
+    jest.advanceTimersByTime(20);
+    expect(feeds()).toHaveLength(1);
+
+    state.feed = { ...state.feed, awayFrom: T - 1 };
+    store.fire();
+    jest.advanceTimersByTime(20);
+    expect(feeds()).toEqual([notBuiltFeed(T), state.feed]);
+
+    projections.unbind();
+    projections.bind(store, src);
+    expect(feeds()).toHaveLength(3);
+    projections.dispose();
+  });
+
+  test('the expiry timer pushes every row at the declared instant, with no mutation', () => {
+    const pushed: PushMethod[] = [];
+    const store = fakeStore();
+    const { state, src } = liveSource();
+    state.expiresAt = T + 5_000;
+    const projections = new Projections({ push: (c) => pushed.push(c), throttleMs: 300 });
+    projections.bind(store, src);
+    pushed.length = 0;
+
+    jest.advanceTimersByTime(4_999);
+    expect(pushed).toEqual([]);
+    state.expiresAt = T + 9_000;
+    jest.advanceTimersByTime(1);
+    expect(pushed).toEqual(['status', 'pruneStatus', 'chainList', 'settingsFacts']);
+
+    pushed.length = 0;
+    jest.advanceTimersByTime(4_000);
+    expect(pushed).toEqual(['status', 'pruneStatus', 'chainList', 'settingsFacts']);
+    projections.dispose();
+  });
+
+  test('never sooner than the throttle; a past or absent instant arms nothing, so nothing loops', () => {
+    const pushed: PushMethod[] = [];
+    const store = fakeStore();
+    const { state, src } = liveSource();
+    state.expiresAt = T + 10;
+    const projections = new Projections({ push: (c) => pushed.push(c), throttleMs: 300 });
+    projections.bind(store, src);
+    pushed.length = 0;
+    state.expiresAt = T - 1;
+    jest.advanceTimersByTime(299);
+    expect(pushed).toEqual([]);
+    jest.advanceTimersByTime(1);
+    expect(pushed).toHaveLength(4);
+
+    pushed.length = 0;
+    jest.advanceTimersByTime(60_000);
+    expect(pushed).toEqual([]);
+    expect(jest.getTimerCount()).toBe(0);
+    projections.dispose();
+  });
+
+  test('a mutation push re-arms the one timer at the new earliest instant; unbind and dispose clear it', () => {
+    const pushed: PushMethod[] = [];
+    const store = fakeStore();
+    const { state, src } = liveSource();
+    state.expiresAt = T + 60_000;
+    const projections = new Projections({ push: (c) => pushed.push(c), throttleMs: 20 });
+    projections.bind(store, src);
+    state.expiresAt = T + 1_000;
+    store.fire();
+    jest.advanceTimersByTime(20);
+    expect(jest.getTimerCount()).toBe(1);
+    pushed.length = 0;
+    jest.advanceTimersByTime(980);
+    expect(pushed).toHaveLength(4);
+
+    state.expiresAt = T + 120_000;
+    store.fire();
+    jest.advanceTimersByTime(20);
+    projections.unbind();
+    expect(jest.getTimerCount()).toBe(0);
+    projections.bind(store, src);
+    projections.dispose();
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  test('a far instant re-checks within a day instead of overflowing the platform timer', () => {
+    const pushed: PushMethod[] = [];
+    const { state, src } = liveSource();
+    state.expiresAt = T + 40 * 24 * 3_600_000;
+    const projections = new Projections({ push: (c) => pushed.push(c), throttleMs: 20 });
+    projections.bind(fakeStore(), src);
+    pushed.length = 0;
+    jest.advanceTimersByTime(1_000);
+    expect(pushed).toEqual([]);
+    jest.advanceTimersByTime(24 * 3_600_000);
+    expect(pushed).toHaveLength(4);
+    projections.dispose();
+  });
+});

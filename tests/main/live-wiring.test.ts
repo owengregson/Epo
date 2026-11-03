@@ -1,0 +1,134 @@
+/**
+ * The live wiring's projection sources (spec §12.9, §13): the feed shaped from the graph's store over the plan-day
+ * clock, stable while nothing changed; the expiry at the earlier of the plan-day roll and the census freshness end
+ * (the prune source's declaration); the recovery episode and the runtime's resume and quit as feed moments; and a
+ * built Foundation pushing the real feed when a write settles.
+ */
+
+import { PRUNE_SCAN_FRESH_MS } from '@/engine/prune-engine';
+import type { PlanDayClock } from '@/kernel/plan';
+import { censusFreshEnd, liveSources } from '@/main/services/live-wiring';
+import type { FeedView } from '@/shared/feed';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import * as logger from '@/utils/logger';
+import { cleanupMainHarness, foundationStore, newFoundation } from '../kit/main-harness';
+import { openTestStore } from '../kit/store';
+
+afterAll(cleanupMainHarness);
+
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
+const NOW = 1_800_000_000_000 - (1_800_000_000_000 % DAY) + 10 * HOUR;
+
+const utcDays: PlanDayClock = {
+  window: (t) => {
+    const start = t - (((t % DAY) + DAY) % DAY);
+    return { key: `d${start / DAY}`, startsAt: start, endsAt: start + DAY, quietMinute: 0 };
+  },
+  dayKey: (t) => `d${Math.floor(t / DAY)}`,
+  onRoll: () => () => {},
+};
+
+let store: KnowledgeStore;
+beforeEach(() => {
+  store = openTestStore();
+  store.setOwnPk('own');
+});
+afterEach(() => store.close());
+
+function follow(pk: string, at: number): void {
+  const intent = store.beginEffectIntent({ accountPk: pk, username: `u${pk}`, action: 'follow', channel: 'growth', at });
+  store.markEffectDispatched(intent.id, at);
+  store.settleEffectIntent(intent.id, { at, result: 'ok', ledger: 'none' });
+}
+
+function sources(over: { now?: () => number; incidents?: { at: number; reason: string }[]; prune?: { scanReady: boolean; scanAt: number | null } } = {}) {
+  const prune = over.prune ?? { scanReady: false, scanAt: null };
+  return liveSources(
+    { store, ownPk: 'own', pruneEngine: { status: () => prune } },
+    () => ({ incidents: over.incidents ?? [] }),
+    { planDay: utcDays, now: over.now ?? (() => NOW) },
+  );
+}
+
+test("the feed reads the graph's store and keeps its view while only the clock moves", () => {
+  let now = NOW;
+  const live = sources({ now: () => now });
+  follow('a', NOW - 5 * MIN);
+  const first = live.feed();
+  expect(first.items.map((i) => i.kind)).toEqual(['followed']);
+  expect(first.days?.[0]).toEqual({ key: utcDays.window(NOW).key, startsAt: utcDays.window(NOW).startsAt });
+  now += 2 * MIN;
+  expect(live.feed()).toBe(first);
+  follow('b', now - MIN);
+  const second: FeedView = live.feed();
+  expect(second).not.toBe(first);
+  expect(second.items).toHaveLength(1);
+  expect(second.items[0]).toMatchObject({ kind: 'followed', people: [{ pk: 'b' }, { pk: 'a' }] });
+});
+
+test('the expiry is the next plan-day roll, or the census freshness end when that comes first', () => {
+  expect(sources().expiresAt()).toBe(utcDays.window(NOW).endsAt);
+  const scanAt = NOW - PRUNE_SCAN_FRESH_MS + HOUR;
+  expect(sources({ prune: { scanReady: true, scanAt } }).expiresAt()).toBe(scanAt + PRUNE_SCAN_FRESH_MS + 1);
+  expect(sources({ prune: { scanReady: false, scanAt } }).expiresAt()).toBe(utcDays.window(NOW).endsAt);
+});
+
+test('a census still runnable past its end is re-checked at the next push; a spent one declares nothing', () => {
+  expect(censusFreshEnd({ scanReady: true, scanAt: NOW - PRUNE_SCAN_FRESH_MS - 5 }, NOW)).toBe(NOW + 1);
+  expect(censusFreshEnd({ scanReady: true, scanAt: null }, NOW)).toBeNull();
+  expect(censusFreshEnd({ scanReady: false, scanAt: NOW }, NOW)).toBeNull();
+});
+
+test("the recovery ladder's open episode, else its last one, reads as slowed down; a resume and a quit come from the runtime", () => {
+  store.setRecoveryLastIncident(JSON.stringify({ enteredAt: NOW - 5 * HOUR, resolvedAt: NOW - 4 * HOUR, attempts: 2, kindTally: {}, healed: null }));
+  const live = sources({ incidents: [
+    { at: NOW - 3 * HOUR, reason: 'intentional-shutdown' },
+    { at: NOW - 2 * HOUR, reason: 'process-recovery-start' },
+    { at: NOW - 9 * HOUR, reason: 'intentional-shutdown' },
+  ] });
+  const closed = live.feed();
+  expect(closed.items).toEqual([
+    { id: `resumed:${NOW - 2 * HOUR}`, at: NOW - 2 * HOUR, kind: 'resumed', after: 'restart' },
+    { id: `slowed:${NOW - 5 * HOUR}`, at: NOW - 5 * HOUR, kind: 'slowed-down', until: null },
+  ]);
+  expect(closed.awayFrom).toBe(NOW - 3 * HOUR);
+
+  store.setRecoveryState(JSON.stringify({ phase: 'holding', attempt: 1, holdUntil: NOW + HOUR, enteredAt: NOW - HOUR, kindTally: {} }));
+  expect(live.feed().items[0]).toEqual({ id: `slowed:${NOW - HOUR}`, at: NOW - HOUR, kind: 'slowed-down', until: NOW + HOUR });
+});
+
+test('unreadable recovery meta is reported once and adds no row', () => {
+  const warnings: string[] = [];
+  logger.setLevel('warn');
+  logger.setSink((level, message) => { if (level === 'warn') warnings.push(message); });
+  const quiet = jest.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    store.setRecoveryState('{not json');
+    const live = sources();
+    expect(live.feed().items).toEqual([]);
+    expect(live.feed().items).toEqual([]);
+    expect(warnings.filter((m) => m.startsWith('live: unreadable recovery meta'))).toHaveLength(1);
+  } finally {
+    quiet.mockRestore();
+    logger.setSink(null);
+    logger.setLevel('error');
+  }
+});
+
+test('a built Foundation pushes the real feed when a write settles', async () => {
+  const feeds: FeedView[] = [];
+  const { foundation } = newFoundation({ push: (channel, payload) => { if (channel === 'feed') feeds.push(payload as FeedView); } });
+  await foundation.ensureBuilt();
+  expect(feeds.at(-1)?.items).toEqual([]);
+  const real = foundationStore(foundation);
+  const intent = real.beginEffectIntent({ accountPk: 'p1', username: 'jane', action: 'follow', channel: 'manual', at: Date.now() });
+  real.markEffectDispatched(intent.id, Date.now());
+  real.settleEffectIntent(intent.id, { at: Date.now(), result: 'ok', ledger: 'none' });
+  for (let i = 0; i < 100 && (feeds.at(-1)?.items.length ?? 0) === 0; i++) await new Promise((r) => setTimeout(r, 20));
+  expect(feeds.at(-1)?.items).toEqual([
+    expect.objectContaining({ kind: 'followed', via: 'you', people: [{ pk: 'p1', username: 'jane' }] }),
+  ]);
+  await foundation.dispose();
+});
