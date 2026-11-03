@@ -14,8 +14,26 @@
  * Settings, which is why the prune shape takes it.
  */
 
+import type { FeedView } from '@/shared/feed';
+import type { SettingsFacts } from '@/shared/settings-facts';
 import { NOT_BUILT_FIELDS } from '@/shared/status-fields';
 import type { EpoStatus, PruneStatus, Settings } from '@/types';
+
+/** The Settings facts before the store opens (`why` is the caller's reason): every field honest-unknown. */
+export function notBuiltFacts(_why: 'signed-out' | 'loading' | 'error'): SettingsFacts {
+  return {
+    built: false,
+    seed: { kind: 'loading' },
+    ownAccount: { isPrivate: null },
+    protection: null,
+    cleanup: null,
+  };
+}
+
+/** The feed before the graph exists: empty, nothing to narrate yet. */
+export function notBuiltFeed(now: number): FeedView {
+  return { items: [], awayFrom: null, windowStart: now, shapedAt: now };
+}
 
 /** The prune projection before a graph exists: idle, zeroed, settings-seeded. */
 export function notBuiltPruneStatus(s: Settings): PruneStatus {

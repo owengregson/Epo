@@ -209,7 +209,7 @@ export class Foundation {
   private readonly signals = new DriverSignal();
 
   /** Settings load, cache, persist and live reload. */
-  private readonly settings: SettingsService;
+  readonly settings: SettingsService;
   /** The manual prune controls and the scheduled prune over them. */
   private readonly prune: PruneControl;
   private readonly pruneSchedule: PruneSchedule;

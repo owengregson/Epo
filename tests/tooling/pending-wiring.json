@@ -1,16 +1,6 @@
 {
   "pending": [
     {
-      "module": "src/shared/settings-ops.ts",
-      "stream": "F2b step 5",
-      "reason": "the settings ops and results ride the settings IPC contract rows"
-    },
-    {
-      "module": "src/shared/settings-facts.ts",
-      "stream": "F2b step 5",
-      "reason": "the settings facts ride the settings IPC rows and the facts projection"
-    },
-    {
       "module": "src/shared/posture.ts",
       "stream": "BL",
       "reason": "the stage controller derives the window title and Dock badge from the posture; SB's live column follows"
