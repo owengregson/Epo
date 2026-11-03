@@ -11,6 +11,8 @@ import { setLevel } from '@/utils/logger';
 beforeAll(() => setLevel('error'));
 
 const row = (pk: string) => ({ accountPk: pk, observedAt: 7, source: 'friend-requests' as const, fields: { username: `u${pk}` } });
+const page = (observations: FollowersListResult['observations']): FollowersListResult =>
+  ({ observations, cursor: null, hasMore: false, continuation: { kind: 'end', evidence: 'flags-false' }, quarantined: 0 });
 
 /** A reader stub that records what each extractor was handed. */
 const stub = (events: FollowEvent[] | null, list: FollowersListResult) => {
@@ -26,7 +28,7 @@ const stub = (events: FollowEvent[] | null, list: FollowersListResult) => {
 
 test('a feed body yields its events through today\'s strict feed parse', () => {
   const events: FollowEvent[] = [{ pk: '1', username: 'u1', atMs: 5 }];
-  const s = stub(events, { observations: [], cursor: null, hasMore: false });
+  const s = stub(events, page([]));
   const read = readDrawerBody({ kind: 'activity-feed', body: { b: 1 } }, { reader: s.reader, now: 99 });
   expect(read).toEqual({ events, pendingPreview: [], requests: { rows: [], pendingComplete: false },
     tier: 'canonical', partial: false });
@@ -34,7 +36,7 @@ test('a feed body yields its events through today\'s strict feed parse', () => {
 });
 
 test('a drifted feed body reads as a shape mismatch, never as an empty feed', () => {
-  const s = stub(null, { observations: [], cursor: null, hasMore: false });
+  const s = stub(null, page([]));
   const read = readDrawerBody({ kind: 'activity-feed', body: {} }, { reader: s.reader, now: 99 });
   expect(read.events).toBeNull();
   expect(read.failure).toBe('shape-mismatch');
@@ -42,7 +44,7 @@ test('a drifted feed body reads as a shape mismatch, never as an empty feed', ()
 
 test('a requests body yields its rows, read at `now`, complete as today\'s lenient read assumes', () => {
   const rows = [row('7'), row('8')];
-  const s = stub([], { observations: rows, cursor: null, hasMore: false });
+  const s = stub([], page(rows));
   const read = readDrawerBody({ kind: 'friend-requests', body: { r: 1 } }, { reader: s.reader, now: 1_234 });
   expect(read).toEqual({ events: null, pendingPreview: [], requests: { rows, pendingComplete: true },
     tier: 'canonical', partial: false });

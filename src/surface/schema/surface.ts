@@ -20,6 +20,7 @@ import type { ProjectCtx, Projection } from '@/surface/schema/projection';
 
 // The fact types live in `projection.ts`; re-exported so consumers keep one import site.
 export {
+  type Continuation,
   emptyProjection,
   type FollowEvent,
   type ProjectCtx,

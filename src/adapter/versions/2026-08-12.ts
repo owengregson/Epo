@@ -33,6 +33,7 @@ import {
   extractShowMany,
 } from '@/adapter/versions/2026-08-12.extractors';
 import { extractMutationVerdict, matchMutation } from '@/adapter/versions/2026-08-12.mutations';
+import { CONTINUATION } from '@/surface/versions/2026-08-12/continuation-decl';
 import {
   AVATAR_ALT_RE,
   BODY_MIME_PARSEABLE,
@@ -211,14 +212,12 @@ export const SURFACE_2026_08_12: IgSurface = {
           ? ''
           : ` + '&max_id=' + encodeURIComponent(${JSON.stringify(maxId)})`),
     ),
-  // The friendships list `max_id` is a ROW OFFSET (verified live: pages hand
-  // back "50", "100", …), so the window just past everything received starts
-  // at the number of rows fetched. Used to verify an end-of-list claim that
-  // arrived WITHOUT a resume cursor. Failure mode is safe either way: if a
-  // future capture makes cursors opaque, IG ignores the bogus offset and
-  // returns head rows — all duplicates — which still reads as "nothing new
-  // past the end" (a confirmation, never a false continuation).
+  // The friendships list `max_id` is a ROW OFFSET (live: "50", "100", …), so the window just
+  // past everything received starts at the rows fetched. An OPAQUE space is never probed so:
+  // the server ignores the offset and returns the head, which is no evidence (spec §10.4).
   listEndProbeCursor: (rowsFetched: number): string => String(rowsFetched),
+  listForm: (which) => CONTINUATION.composedForm[which],
+  listCursorForm: (cursor) => (CONTINUATION.offsetCursor.test(cursor) ? 'offset' : 'opaque'),
 
   bodyTextProbeScript: (): string =>
     callPage('blockText', {

@@ -1,6 +1,7 @@
 import type { Sentinel } from '@/adapter/sentinel';
 import type { ReadPurpose } from '@/governors/read-budget';
 import type { ReadUse } from '@/kernel/plan/types';
+import type { StopDetail } from '@/rim/list-walk-end';
 import type { Observation } from '@/store/types';
 
 export interface WalkArgs {
@@ -61,10 +62,19 @@ export interface WalkResult {
   retryAt?: number;
   pks: string[];
   pages: number;
-  /** True ONLY when the API reported no further pages — a genuine full walk. */
+  /** True ONLY when the end was verified (a probe) or the server's own flags ended an opaque walk. */
   complete: boolean;
-  /** True when the past-the-end probe came back empty of new rows (complete walks only). */
+  /** True when the past-the-end probe came back empty of new rows, or was rejected past the limit. */
   endConfirmed: boolean;
+  /** What proved the end of a complete walk. */
+  endEvidence?: 'probe' | 'probe-rejected' | 'server-flags';
+  /** Why a `shape-mismatch` walk stopped (spec §10.4). */
+  stopDetail?: StopDetail;
+  /**
+   * Rows on the walked pages that did not read. A complete walk with quarantined rows still
+   * misses accounts, so every absence verdict refuses it (spec §10.4).
+   */
+  quarantined: number;
   /**
    * Why the walk ended. Genuine completion: 'no-more-pages'. Demand stops:
    * 'target-reached' | 'no-new-for-caller'. Bounds: 'max-pages' | 'stagnant'.

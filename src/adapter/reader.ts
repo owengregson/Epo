@@ -143,18 +143,6 @@ export class Reader {
   }
 
   /**
-   * Parse one paginated followers page into observations plus the resume
-   * cursor. Lenient variant for callers that only merge facts: drift collapses
-   * to the typed empty result. Anything deriving an end-of-list or
-   * completeness claim MUST use {@link parseFollowersListStrict} instead.
-   */
-  parseFollowersList(body: unknown, at: number): FollowersListResult {
-    return (
-      this.parseFollowersListStrict(body, at) ?? { observations: [], cursor: null, hasMore: false }
-    );
-  }
-
-  /**
    * STRICT parse of one paginated FOLLOWING page (`null` on SHAPE_MISMATCH —
    * see {@link parseFollowersListStrict}). The following-list body carries the
    * exact followers-list shape (a `users` array + `next_max_id`), so this is a
@@ -175,16 +163,6 @@ export class Reader {
       return null;
     }
     return legacy;
-  }
-
-  /**
-   * Lenient FOLLOWING-page variant: drift collapses to the typed empty result.
-   * Completeness-deriving callers use {@link parseFollowingListStrict}.
-   */
-  parseFollowingList(body: unknown, at: number): FollowersListResult {
-    return (
-      this.parseFollowingListStrict(body, at) ?? { observations: [], cursor: null, hasMore: false }
-    );
   }
 
   /**
@@ -236,7 +214,8 @@ export class Reader {
    * provenance. Typed empty result on no-match.
    */
   parsePendingRequests(body: unknown, at: number): FollowersListResult {
-    const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false };
+    const empty: FollowersListResult = { observations: [], cursor: null, hasMore: false,
+      continuation: { kind: 'end', evidence: 'no-flags' }, quarantined: 0 };
     const result = SURFACE.extractFollowersList(
       coerceBody(body, 'friend-requests'),
       at,

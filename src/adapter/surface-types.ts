@@ -4,6 +4,7 @@
  */
 
 import type { Observation } from '@/store/types';
+import type { Continuation } from '@/surface/schema/projection';
 
 /** The store fact the extractors yield, named here for the surface interface. */
 export type { Observation };
@@ -42,9 +43,14 @@ export interface FollowEvent {
 /** Result of parsing one paginated followers page. */
 export interface FollowersListResult {
   observations: Observation[];
-  /** Resume cursor for the next page; `null` when there is no next page. */
+  /** Resume cursor for the next page; `null` when there is no next page (from `continuation`). */
   cursor: string | null;
+  /** Whether more pages may exist: anything but an end (from `continuation`). */
   hasMore: boolean;
+  /** What the page says about the rest of the list (spec §10.4). */
+  continuation: Continuation;
+  /** Rows on the page that did not read: counted, never silently dropped. */
+  quarantined: number;
 }
 
 /**

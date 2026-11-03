@@ -22,7 +22,9 @@ import type {
 } from '@/adapter/surface-types';
 import { activityFeedRoot, followRequestsPage } from '@/adapter/versions/2026-08-12.notifications';
 import type { Observation } from '@/store/types';
+import { continuationOf } from '@/surface/read/continuation';
 import { readRelationship } from '@/surface/read/relationship';
+import { CONTINUATION } from '@/surface/versions/2026-08-12/continuation-decl';
 import { JSON_PATHS } from '@/surface/versions/2026-08-12/literals';
 
 /** Every relationship flag is read by presence: a renamed key is unknown, never `false`. */
@@ -59,17 +61,12 @@ export function extractFollowersList(
     });
   }
 
-  const nextMaxId = getPath(body, p.nextMaxId);
-  const cursor = typeof nextMaxId === 'string' && nextMaxId.length > 0
-    ? nextMaxId
-    : null;
-  // More-pages detection must be resilient to which flag this response carries:
-  // `has_more`, the alternate `big_list`, or neither — a present pagination
-  // cursor ALWAYS means another page exists. A false negative here ends the
-  // scroll loop after one page and silently truncates a whole-list scan.
-  const hasMore =
-    getPath(body, p.hasMore) === true || getPath(body, p.bigList) === true || cursor !== null;
-  return { observations, cursor, hasMore };
+  // A present cursor ALWAYS means another page; without one, the declared more-flags decide,
+  // and a flag set with no cursor is drift — never an end (spec §10.4).
+  const { continuation } = continuationOf(body, CONTINUATION, { final: null });
+  const cursor = continuation.kind === 'next' ? continuation.cursor : null;
+  const quarantined = users.length - observations.length;
+  return { observations, cursor, hasMore: continuation.kind !== 'end', continuation, quarantined };
 }
 
 /**

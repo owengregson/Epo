@@ -36,6 +36,15 @@ export interface RelationshipFact {
   isPrivate?: boolean;
 }
 
+/**
+ * What a list page says about the rest of the list (spec §10.4): a next cursor and its form, an
+ * end and its evidence (with the first unexplained cursor-like key, if any), or drift.
+ */
+export type Continuation =
+  | { readonly kind: 'next'; readonly cursor: string; readonly form: 'offset' | 'opaque' }
+  | { readonly kind: 'end'; readonly evidence: 'flags-false' | 'no-flags'; readonly vetoKey?: string }
+  | { readonly kind: 'drift'; readonly reason: 'more-without-cursor' | 'incomplete-stream'; readonly key?: string };
+
 /** A row the row schema rejected — counted drift evidence, never silently dropped. */
 export interface RowIssue {
   /** Index of the offending row inside its container. */

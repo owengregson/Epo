@@ -181,12 +181,15 @@ export interface IgSurface {
    */
   listPageScript(pk: string, which: 'followers' | 'following', maxId: string | null, endProbe?: boolean): string;
   /**
-   * A synthesized cursor pointing just PAST `rowsFetched` rows — used to probe
-   * one page beyond a claimed end-of-list so the end is VERIFIED, not trusted.
-   * Must be safe when cursor semantics drift: a bogus value should make IG
-   * return already-seen rows (a confirmation), never new phantom data.
+   * A synthesized cursor pointing just PAST `rowsFetched` rows — used to probe one page beyond
+   * a claimed end-of-list in an OFFSET cursor space. An opaque space is never probed this way
+   * (an offset there only returns the head; spec §10.4).
    */
   listEndProbeCursor(rowsFetched: number): string;
+  /** How each list is requested: page by page, or the whole list in one response. */
+  listForm(which: 'followers' | 'following'): 'paged' | 'whole-list';
+  /** A list cursor's form: a row offset, or opaque. */
+  listCursorForm(cursor: string): 'offset' | 'opaque';
 
   // --- In-page non-fetch probes -------------------------------------------
   /** Read the page's visible body text (Sentinel's block-text backstop). */

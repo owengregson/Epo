@@ -54,10 +54,6 @@
       "lines": 410
     },
     {
-      "file": "src/rim/list-page-walker.ts",
-      "lines": 400
-    },
-    {
       "file": "src/main/services/graph-builder.ts",
       "lines": 367
     },
@@ -80,6 +76,10 @@
     {
       "file": "src/engine/recovery.ts",
       "lines": 340
+    },
+    {
+      "file": "src/rim/list-page-walker.ts",
+      "lines": 332
     },
     {
       "file": "src/kernel/policy.ts",
