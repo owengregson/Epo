@@ -103,3 +103,42 @@ censuses spent it, and return probation restarted at every session.
   until the allowance's known reopen time, with a positive-only offset. It
   does not use the retry park's 0.5–2× noise, which stretched an 11.5 h wait
   to 19.9 h. It surfaces as `read-budget`, not as a failed follow-back read.
+
+## Amendment — 2026-11-02: a per-account journal and a complete settlement table
+
+Written with ADR 0213 (frontiers and verify-at-act), which supersedes "Knowledge on
+return" above. Live, one unfollow stalled at its confirm dialog. Its intent became
+uncertain, and the global block then refused every write on every account. The
+reconciliation that would settle it read whole batches, and an unreadable account
+in a batch halted the engine after five failures. When it did settle, a stranded
+unfollow (still following) was marked terminal `external`, so Epo never unfollowed
+that account (U06 F6).
+
+- **The gate is per account.** `journalBlocks(pk)` holds while an intent for that
+  account is `dispatched` or `uncertain`, the caller's own intent excepted. It is
+  checked at selection (the churn and the woven feed pass the account over, so
+  nothing waits behind it), at the click before any read (a typed `journal`
+  deferral), and on standalone writes (a typed `journal` refusal for that account
+  only). The global block and the return's reconcile phase no longer gate
+  admission. Unknown dispatched writes still reserve quota.
+- **One intent per step, no batch, no halt.** The `journal` rule runs after the
+  safety prefix and pacing. Each step settles the oldest due intent with one read
+  of its account (`journalDue`: open, and any park served). The runner, its
+  batches and the `reconciliation-failed` halt are gone. An incomplete follow-back
+  read ends its sweep, and growth goes on.
+- **The settlement table is complete (`settlementFor`, pure).** A follow seen
+  following or requested settles `external`, and its record waits for a follow-back
+  from its dispatch (no longer leaked as `external`). A follow seen neither is
+  `cancelled` and spends one retry. **F6:** an unfollow seen following or requested
+  is `cancelled`, and its record stays `unfollow_queued`. An unfollow seen neither
+  is `external`, and the record is `unfollowed`. An accept seen followed settles
+  `external` and closes the request; otherwise it is `cancelled`; channel evidence
+  settles it with zero reads.
+- **Unavailable accounts park on the plan and end honestly.** A gone or renamed
+  page parks the intent and its record to the next plan-day. The second sighting
+  expires the intent (`expired`, a new result that keeps its dispatch-day quota)
+  and closes the record as `external`. An unreadable page parks to the next session,
+  then to later plan-days. Past the retry limit it expires, and the record is
+  `abandoned`, which the recovery healer can requeue. A wall counts no attempt and
+  goes to the recovery ladder. A refused read waits for the allowance. `prepared`
+  intents left by an earlier run are cancelled at graph open, with no read.
