@@ -82,11 +82,14 @@ export function ProgressPanel({ active }: { active: boolean }): JSX.Element {
   const kept = useKeptPage(active, lanes?.kept ?? null);
   const counts = laneCounts(statusSignal.value, kept?.kind === 'ok' ? kept.total : null);
   const hint = LANES.find((l) => l.key === lane)?.hint ?? '';
+  // Until the following check (step G) accounts for them, outside changes stay marked (spec Appendix E.2).
+  const unverified = (statusSignal.value?.own?.followingUnverified ?? 0) !== 0;
 
   return (
     <Fragment>
       <QueuePipeline counts={counts} active={lane} onSelect={setLane} />
       <p class="people-lanes__hint">{hint}</p>
+      {unverified ? <p class="people-lanes__hint">Changed outside Epo · not yet verified</p> : null}
       <div class="qrows">
         <div class="qlist" id={QUEUE_STAGE_PANEL_ID} role="tabpanel" key={lane}>
           {lane === 'kept' ? (

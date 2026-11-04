@@ -48,10 +48,9 @@ export function toRateGovernorConfig(s: Settings): RateGovernorConfig {
   return { dailyHardCeiling: s.dailyHardCeiling };
 }
 
-/** Project the Follow-back Watcher's config out of Settings (days → ms). */
+/** Project the follow-back appliers' config out of Settings (days → ms). */
 export function toFollowbackConfig(s: Settings): FollowbackConfig {
   return {
-    maxWaitForFollowbackMs: s.maxWaitForFollowbackDays * MS_PER_DAY,
     holdAfterFollowbackMs: s.holdAfterFollowbackDays * MS_PER_DAY,
     autoAcceptRequests: s.autoAcceptFollowRequests,
   };

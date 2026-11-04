@@ -40,9 +40,7 @@ import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import { liveWiringParts } from './live-wiring';
 import { planWiringParts, wirePlan } from './plan-wiring';
-import {
-  noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry, wireSweepCadence,
-} from './reopen-wiring';
+import { noteMutationFor, wireFollowback } from './reopen-wiring';
 import { surfaceGateOf, surfaceWiringParts, wireSurface } from './surface-wiring';
 import { journalSettler, pruneUnfollowDeps, unfollowWiringParts, wireChurn, wireMutationPolicy } from './unfollow-wiring';
 
@@ -62,7 +60,6 @@ export function buildGraph(
   const ownUsername = given ?? store.getAccount(ownPk)?.username;
   const clock = new SystemClock();
   const frontier = new SourceFrontier({ store, clock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
-  const reentry = wireReentry(store, clock);
   // The shared wait owner: growth and prune wait through ONE DelayManager
   // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
   // from a single registry.
@@ -194,14 +191,14 @@ export function buildGraph(
   });
 
   const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock: plan.dayClock, nextSessionAt: plan.nextSessionAt, reviewBound: plan.reviewBound });
-  prepareReentry(reentry, clock);
+  churn.advanceTimers(clock.now()); // timers that came due while Epo was closed move now, store-only (spec §9.2 T)
   const scanner = new Scanner({
     store,
     scorerCfg: toScorerConfig(settings),
     cfg: toScannerConfig(settings),
   });
-  const followback = wireFollowback(d, { store, clock, ownPk, ownUsername, settings, readBudget, policy, tempo: plan.tempo,
-    adapter, reader, sentinel, profiles, liveOwnFollowers, dayClock: plan.dayClock });
+  const { watcher: followback, sweep, cadence: sweepCadence, parts: reopenParts } = wireFollowback(d, { store, clock, ownPk, settings,
+    readBudget, policy, adapter, reader, sentinel, walker: listWalker, plan, rate });
 
   // Live discovery over the already-harvested graph: propose the biggest
   // enriched PUBLIC hubs inside the exhausted target's audience, projected at
@@ -218,8 +215,6 @@ export function buildGraph(
     ownFollowers: ownFollowersTarget,
     cfg: toChainConfig(settings),
   });
-
-  const sweepCadence = wireSweepCadence(d);
 
   // Woven prune feed: the growth loop drains unfollows from the PruneEngine's
   // scanned census, interleaved with its follows. The PruneEngine is built
@@ -239,7 +234,6 @@ export function buildGraph(
 
   const engine = createEngine({ tempo: plan.tempo,
     frontier,
-    reentry,
     validateIdentity: d.validateIdentity,
     onProgress: d.onProgress,
     settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget, dayClock: plan.dayClock, nextSessionAt: plan.nextSessionAt }),
@@ -250,7 +244,7 @@ export function buildGraph(
     churn,
     scanner,
     chain,
-    followback,
+    followback: sweep,
     acquisition,
     enricher,
     settings,
@@ -303,7 +297,7 @@ export function buildGraph(
     : unresolvedUsernameSource('prune scan');
   const pruneOwnFollowers: PruneOwnFollowers =
     liveOwnFollowers ?? unresolvedUsernameSource('prune followers scan');
-  const noteMutation = noteMutationFor(reentry, clock, d);
+  const noteMutation = noteMutationFor(d);
   const pruneEngine = createPruneEngine({ tempo: plan.tempo,
     onMutation: noteMutation,
     store,
@@ -323,7 +317,7 @@ export function buildGraph(
   // Back the woven-feed adapter now that the PruneEngine exists.
   pruneEngineRef = pruneEngine;
   // Once per build: a rebuild or account switch starts from a fresh list, never a duplicate.
-  const parts = [planWiringParts(plan, readBudget, store, d), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts({ frontier })];
+  const parts = [planWiringParts(plan, readBudget, store, d), reopenParts(engine), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts({ frontier })];
 
   return {
     prepareMutation: policy.prepareMutation,

@@ -7,7 +7,6 @@
 import { notBuiltStatus } from '@/main/modules/not-built';
 import { type BaseStatus, composeStatus, type StatusContributor } from '@/main/modules/status-compose';
 import type { BuiltGraph } from '@/main/services/graph-types';
-import { reopenWiringParts } from '@/main/services/reopen-wiring';
 import { surfaceWiringParts } from '@/main/services/surface-wiring';
 import { unfollowWiringParts } from '@/main/services/unfollow-wiring';
 import { NOT_BUILT_FIELDS } from '@/shared/status-fields';
@@ -51,10 +50,7 @@ test('the not-built status sets basis and nulls every optional status field', ()
   expect(Object.values(NOT_BUILT_FIELDS).filter((v) => v !== null)).toEqual(['not-built']);
 });
 
-test('every wiring module returns its startup steps and status contributors (none yet but the surface, plan and unfollow ones)', () => {
-  for (const parts of [reopenWiringParts()]) {
-    expect(parts).toEqual({ startupSteps: [], statusContributors: [] });
-  }
+test('every wiring module returns its startup steps and status contributors (reopen: tests/main/reopen-status.test.ts)', () => {
   const surface = surfaceWiringParts();
   expect(surface.startupSteps).toEqual([]);
   expect(surface.statusContributors.map((c) => c.name)).toEqual(['surface']);

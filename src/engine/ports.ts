@@ -2,7 +2,7 @@
  * The Engine's ports: the narrow, structural slices of each collaborator it
  * needs, plus the status projection and the dependency bundle the composition
  * root fills in. The real components (ChurnScheduler, Scanner, ChainController,
- * FollowbackWatcher, RateGovernor, Sentinel) satisfy these by structural
+ * FrontierSweep, RateGovernor, Sentinel) satisfy these by structural
  * subtyping; tests inject plain fakes without touching the concrete classes.
  *
  * `engine.ts` re-exports every name here, so consumers may import from either.
@@ -18,7 +18,6 @@ import type { DelayManager } from '../timing/delay-manager';
 import type { AdvanceResult } from './chain-controller';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import type { EnginePacing, EngineRate } from './plan-port';
-import type { ReentrySupervisor } from './reentry';
 import type { ScanPlan } from './scanner';
 import type { SourceFrontier, SourceVisitEndReason } from './source-frontier';
 import type { EngineStatus } from './status';
@@ -42,15 +41,19 @@ export type StepResult =
 
 export type EngineState = 'idle' | 'running' | 'paused' | 'halted';
 
-/** The follow-back sweep's due-by-timestamp port (see {@link EngineDeps.sweepCadence}). */
+/** The follow-back sweep's cadence port (see {@link EngineDeps.sweepCadence}). */
 export interface SweepCadence {
+  /** Due when no plan is consulted (the legacy model): `everyMs` since the last sweep ended. */
   isDue(now: number, everyMs: number): boolean;
+  /** A sweep ended (the in-memory kit records it; production's frontier sweep persists its own end). */
   markRun(now: number): void;
+  /** The last sweep's end, the plan's check anchor (spec C11); absent in kits that keep the legacy cadence. */
+  lastSweepEndedAt?(): number | null;
 }
 
 // ---------------------------------------------------------------------------------
 // Ports: the narrow, structural slices of each collaborator the Engine needs.
-// The real components (ChurnScheduler, Scanner, ChainController, FollowbackWatcher,
+// The real components (ChurnScheduler, Scanner, ChainController, FrontierSweep,
 // RateGovernor, Sentinel) satisfy these by structural subtyping;
 // tests inject plain fakes without touching the concrete classes.
 // ---------------------------------------------------------------------------------
@@ -148,15 +151,12 @@ export const ACQUIRE_DRAIN_REASONS: ReadonlySet<AcquireEndReason> = new Set([
   'coverage-cap',
 ]);
 
-/** The Follow-back Watcher's single verb: one request-bounded sweep. */
+/**
+ * The frontier sweep's verb (spec §9.6): one sweep in session or check mode. A step's failure ends that
+ * step only, so a sweep always resolves; it persists its own frontiers and its end.
+ */
 export interface EngineFollowback {
-  check(opts?: { requireFresh?: boolean; freshSinceAt?: number }): Promise<{
-    detected: string[];
-    outcome?: 'complete' | 'partial' | 'failed';
-    deferred?: 'read-budget' | 'pending-requests' | 'reconciliation-progress';
-    retryAt?: number;
-    reconciledAt?: number | null;
-  }>;
+  run(mode: 'session' | 'check', signal: AbortSignal): Promise<unknown>;
 }
 
 /**
@@ -200,7 +200,6 @@ export type { EngineStatus } from './status';
 /** Everything the Engine composes, already constructed (composition root's job). */
 export interface EngineDeps {
   frontier?: SourceFrontier;
-  reentry?: ReentrySupervisor;
   validateIdentity?: () => Promise<boolean>;
   onProgress?: (phase: string) => void;
   /** The journal's step: settle the oldest due intent with one read (spec §9.8). */
@@ -249,10 +248,9 @@ export interface EngineDeps {
    */
   installEntropy: number;
   /**
-   * Due-by-timestamp cadence for the follow-back sweep. The composition root
-   * injects a PERSISTED cadence (Settings.sweepLastRunAt) so the 4h rhythm
-   * survives restarts (PRINCIPLES §3); the test kit supplies an in-memory one
-   * that starts due, so a fresh Engine's first eligible step catches up.
+   * The follow-back sweep's cadence: production anchors it on the frontier sweep's persisted end, so
+   * the plan's check is due from the last sweep (PRINCIPLES §3); the test kit supplies an in-memory
+   * one that starts due, so a fresh Engine's first eligible step catches up.
    */
   sweepCadence: SweepCadence;
   /**

@@ -1,7 +1,11 @@
 import type { LocateConfirmRequestResult } from '@/adapter/ig-surface';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
+import type { FollowEvent } from '@/adapter/surface-types';
+import type { FeedWatermark } from '@/rim/feed-watermark';
+import {
+  AdapterBackedFollowNotifications, type FeedPanel, type FeedReadResult, type FeedRequester,
+} from '@/rim/follow-notifications';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { setLevel } from '@/utils/logger';
 import { FakeSentinel, FakeTab, mkResp } from '../kit/fakes';
@@ -9,403 +13,284 @@ import { openTestStore } from '../kit/store';
 
 beforeAll(() => setLevel('error'));
 
-const INBOX_URL = 'https://www.instagram.com/api/v1/news/inbox/';
+const GRAPHQL_URL = 'https://www.instagram.com/api/graphql';
+const GRAPHQL_QUERY_URL = 'https://www.instagram.com/graphql/query';
+const FEED_OP = { 'x-fb-friendly-name': 'PolarisActivityFeedStoriesViewQuery' };
+const PANEL_OP = { 'x-fb-friendly-name': 'PolarisActivityFeedFollowRequestsViewQuery' };
 const reader = new Reader();
-
-/** A news-inbox body: follow stories split across the new/old sections. */
-const inboxBody = (newStories: unknown[], oldStories: unknown[]): unknown => ({
-  counts: {},
-  new_stories: newStories,
-  old_stories: oldStories,
-});
 
 /** Story epochs sit in the plausible range the reader enforces (I9: [2010, now + 1 day]). */
 const EPOCH_S = 1_700_000_000;
+/** A story's time in ms, `s` seconds past the base. */
+const at = (s: number): number => (EPOCH_S + s) * 1_000;
 const followStory = (pk: string, atSec: number): unknown => ({
   story_type: 101,
-  args: {
-    profile_id: pk,
-    profile_name: `u${pk}`,
-    timestamp: EPOCH_S + atSec,
-    text: `u${pk} started following you.`,
+  args: { profile_id: pk, profile_name: `u${pk}`, timestamp: EPOCH_S + atSec, text: `u${pk} started following you.` },
+});
+const likeStory = (pk: string): unknown => ({ story_type: 60, args: { profile_id: pk, text: 'liked', timestamp: EPOCH_S + 1_000 } });
+
+/** The GraphQL feed body; `preview` fills the sibling requester list. */
+const feed = (stories: unknown[], preview: Array<{ pk: string; username: string }> = []): unknown => ({
+  data: {
+    xdt_activity_inbox: { new_stories: [], old_stories: stories },
+    ...(preview.length > 0 ? { xdt_api__v1__friendships__pending: {
+      users: preview.map((r) => ({ pk: r.pk, username: r.username, is_private: false, is_verified: false })) } } : {}),
   },
+  extensions: { is_final: true },
+});
+const panel = (rows: Array<{ pk: string; username: string }>, hasNext = false): unknown => ({
+  data: { xdt_friendships_pending_users: { users: {
+    edges: rows.map((r) => ({ node: { pk: r.pk, id: r.pk, username: r.username }, cursor: null })),
+    page_info: { end_cursor: null, has_next_page: hasNext },
+  } } },
 });
 
-const likeStory = (pk: string): unknown => ({
-  story_type: 60,
-  args: { profile_id: pk, text: `u${pk} liked your photo.`, timestamp: 1_000 },
-});
-
-/** A scripted notifications actor: each click optionally emits the inbox response. */
-class FakeNotificationsActor {
+/** A scripted drawer: the bell, a chip that may need a few tries, a scrollable list, the requests panel. */
+class FakeDrawer {
   clicks = 0;
-  onClick?: () => void;
+  onOpen?: () => void;
+  chipReadyAfter = 1;
+  filterClicks = 0;
+  onFilter?: () => void;
+  closeClicks = 0;
+  scrolls = 0;
+  onScroll?: () => boolean;
+  entryExists = false;
+  entryClicks = 0;
+  onEntry?: () => void;
+  requestQueue: string[] = [];
+  confirmClicks = 0;
   async clickNotifications(): Promise<boolean> {
     this.clicks += 1;
-    this.onClick?.();
+    if (this.clicks === 1) this.onOpen?.();
     return true;
   }
-
-  // --- Drawer niceties (soft: default "not present") ---
-  filterClicks = 0;
-  closeClicks = 0;
   async clickNotificationsFollowsFilter(): Promise<boolean> {
     this.filterClicks += 1;
-    return false; // no filter chip in the scripted drawer
+    if (this.filterClicks < this.chipReadyAfter) return false;
+    this.onFilter?.();
+    return true;
   }
   async clickNotificationsClose(): Promise<boolean> {
     this.closeClicks += 1;
-    return true; // X exists and closes
+    return true;
   }
   async scrollNotificationsList(): Promise<boolean> {
-    return false; // list fits — nothing to scroll
+    this.scrolls += 1;
+    return this.onScroll?.() ?? false;
   }
-
-  // --- Follow-requests surface (scripted) ---
-  entryClicks = 0;
-  entryExists = false;
-  onEntryClick?: () => void;
   async clickFollowRequestsEntry(): Promise<boolean> {
     if (!this.entryExists) return false;
     this.entryClicks += 1;
-    this.onEntryClick?.();
+    this.onEntry?.();
     return true;
   }
-
-  /** Head-of-list script: shift()ed per confirm click; probes see the head. */
-  requestQueue: string[] = [];
-  confirmClicks = 0;
-  async confirmNextFollowRequest(): Promise<{
-    clicked: boolean;
-    username: string | null;
-    remaining: number;
-  }> {
+  async confirmNextFollowRequest(onDispatch?: (u: string | null) => void | Promise<void>): Promise<{ clicked: boolean; username: string | null; remaining: number }> {
     const head = this.requestQueue[0];
     if (head === undefined) return { clicked: false, username: null, remaining: 0 };
+    await onDispatch?.(head);
     this.confirmClicks += 1;
     const remaining = this.requestQueue.length;
-    this.requestQueue.shift(); // the click consumes the row
+    this.requestQueue.shift();
     return { clicked: true, username: head, remaining };
   }
-
-  /** The read-only head probe the accept loop uses to verify progress. */
   async probeFollowRequestHead(): Promise<LocateConfirmRequestResult> {
     const head = this.requestQueue[0];
-    return head === undefined
-      ? { found: false, username: null, remaining: 0 }
+    return head === undefined ? { found: false, username: null, remaining: 0 }
       : { found: true, username: head, remaining: this.requestQueue.length };
   }
 }
 
-const build = (opts?: { sentinel?: FakeSentinel; waitMs?: number; store?: KnowledgeStore }) => {
+const build = (o: { sentinel?: FakeSentinel; store?: KnowledgeStore; waitMs?: number } = {}) => {
   const tab = new FakeTab();
-  const actor = new FakeNotificationsActor();
+  const drawer = new FakeDrawer();
   const source = new AdapterBackedFollowNotifications({
-    tab,
-    actor,
-    reader,
-    sentinel: (opts?.sentinel ?? new FakeSentinel()) as unknown as Sentinel,
-    store: opts?.store,
-    responseWaitMs: opts?.waitMs ?? 500,
-    acceptVerifyMs: 300,
-    sleep: async () => {}, // poll spins without real waiting
+    tab, actor: drawer, reader, sentinel: (o.sentinel ?? new FakeSentinel()) as unknown as Sentinel, store: o.store,
+    ownPk: o.store ? 'ME' : undefined, responseWaitMs: o.waitMs ?? 300, acceptVerifyMs: 100, sleep: async () => {},
   });
-  return { tab, actor, source };
+  return { tab, drawer, source };
 };
 
-test('clicks the bell, observes the inbox response, and returns the follow events', async () => {
-  const { tab, actor, source } = build();
-  actor.onClick = () => {
-    if (actor.clicks === 1) {
-      tab.emit(
-        mkResp(
-          INBOX_URL,
-          inboxBody([followStory('111', 2_000)], [followStory('222', 1_500), likeStory('333')]),
-        ),
-      );
-    }
+interface Heard { events: FollowEvent[]; undated: FollowEvent[]; requesters: FeedRequester[]; accepted: string[] }
+const pass = async (source: AdapterBackedFollowNotifications, w: FeedWatermark | null, p: FeedPanel = null,
+  onEvent?: (e: FollowEvent) => void): Promise<{ res: FeedReadResult; heard: Heard }> => {
+  const heard: Heard = { events: [], undated: [], requesters: [], accepted: [] };
+  const res = await source.fetchSince(w, { use: 'check', signal: new AbortController().signal, panel: p,
+    onEvent: (e) => { heard.events.push(e); onEvent?.(e); }, onUndated: (e) => heard.undated.push(e),
+    onRequester: (r) => heard.requesters.push(r), onAccepted: (a) => heard.accepted.push(a.username) });
+  return { res, heard };
+};
+const mark = (atMs: number): FeedWatermark => ({ atMs, keysAtMs: [], readAt: 1, filteredAt: null, gap: null });
+
+test('a first pass reads one body, hands every dated event over, and sets the watermark to the newest', async () => {
+  const { tab, drawer, source } = build();
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([followStory('111', 2_000), followStory('222', 1_500), likeStory('9')]), FEED_OP));
+  const { res, heard } = await pass(source, null);
+  expect(heard.events.map((e) => e.pk)).toEqual(['111', '222']);
+  expect(res).toMatchObject({ ok: true, bodies: 1, fresh: 2, requesters: { source: 'none', count: 0 } });
+  if (res.ok) expect(res.next).toMatchObject({ atMs: at(2_000), keysAtMs: [`111|${at(2_000)}`], gap: null });
+  expect(drawer.scrolls).toBe(0);
+  expect(drawer.closeClicks).toBe(1);
+});
+
+test('per-body streaming: an event is written before the pass resolves', async () => {
+  const store = openTestStore(':memory:');
+  const { tab, drawer, source } = build();
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([followStory('111', 2_000)]), FEED_OP));
+  let atClose: boolean | null = null;
+  const close = drawer.clickNotificationsClose.bind(drawer);
+  drawer.clickNotificationsClose = async () => {
+    atClose = store.getAccount('111') !== null;
+    return close();
   };
-
-  const res = await source.fetchRecent();
-
-  expect(res.ok).toBe(true);
-  expect(res.events).toEqual([
-    { pk: '111', username: 'u111', atMs: (EPOCH_S + 2_000) * 1_000 },
-    { pk: '222', username: 'u222', atMs: (EPOCH_S + 1_500) * 1_000 },
-  ]);
-  // The drawer is left via its X control — the bell is clicked only to open.
-  expect(actor.clicks).toBe(1);
-  expect(actor.closeClicks).toBe(1);
-  // The Follows filter was attempted (soft-absent in this scripted drawer).
-  expect(actor.filterClicks).toBe(1);
+  await pass(source, null, null, (e) => store.observe({ accountPk: e.pk, observedAt: 1, source: 'activity-feed',
+    fields: { username: e.username ?? 'x' } }));
+  expect(atClose).toBe(true);
+  store.close();
 });
 
-test('an inbox with no follow stories is a VALID empty result (ok: true)', async () => {
-  const { tab, actor, source } = build();
-  actor.onClick = () => {
-    if (actor.clicks === 1) tab.emit(mkResp(INBOX_URL, inboxBody([], [likeStory('9')])));
+test('events at or below the watermark write nothing; the reached watermark is never scrolled past', async () => {
+  const { tab, drawer, source } = build();
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([followStory('111', 3_000), followStory('222', 1_000)]), FEED_OP));
+  drawer.onScroll = () => true;
+  const { res, heard } = await pass(source, mark(at(2_000)));
+  expect(heard.events.map((e) => e.pk)).toEqual(['111']);
+  expect(drawer.scrolls).toBe(0);
+  if (res.ok) expect(res.next.gap).toBeNull();
+});
+
+test('an unreached watermark scrolls at most the runaway rounds, stops when a round adds nothing, and records the gap', async () => {
+  const { tab, drawer, source } = build();
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([followStory('111', 9_000)]), FEED_OP));
+  drawer.onScroll = () => {
+    if (drawer.scrolls === 1) tab.emit(mkResp(GRAPHQL_URL, feed([followStory('222', 8_000)]), FEED_OP));
+    return true;
   };
-
-  const res = await source.fetchRecent();
-
-  expect(res).toMatchObject({ ok: true, events: [] });
+  const { res, heard } = await pass(source, mark(at(1_000)));
+  expect(heard.events.map((e) => e.pk)).toEqual(['111', '222']);
+  expect(drawer.scrolls).toBe(2); // the second round added nothing
+  if (res.ok) expect(res.next.gap).toEqual({ fromAtMs: at(1_000), toAtMs: at(8_000) });
 });
 
-test('a shape-drifted inbox body is a TYPED failure (feed-shape-drift), never an empty success', async () => {
-  const { tab, actor, source } = build();
-  actor.onClick = () => {
-    // The response ARRIVES but carries a drifted/unrecognized shape (an IG
-    // change or a {status:'fail'} interstitial) — no stories arrays at all.
-    if (actor.clicks === 1) tab.emit(mkResp(INBOX_URL, { status: 'fail', message: 'drifted' }));
-  };
-
-  const res = await source.fetchRecent();
-
-  expect(res.ok).toBe(false);
-  expect(res.reason).toBe('feed-shape-drift');
-  expect(res.events).toEqual([]);
+test('the Follows chip is pressed once ready, and the body after the press counts as filtered', async () => {
+  const { tab, drawer, source } = build();
+  drawer.chipReadyAfter = 3;
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([likeStory('1')]), FEED_OP));
+  drawer.onFilter = () => tab.emit(mkResp(GRAPHQL_URL, feed([followStory('5', 4_000)]), FEED_OP));
+  const { res, heard } = await pass(source, null);
+  expect(drawer.filterClicks).toBe(3);
+  expect(heard.events.map((e) => e.pk)).toEqual(['5']);
+  expect(res).toMatchObject({ ok: true, filtered: true, bodies: 2 });
 });
 
-test('a drifted page mixed with a well-formed page still succeeds on the good page', async () => {
-  const { tab, actor, source } = build();
-  actor.onClick = () => {
-    if (actor.clicks === 1) {
-      tab.emit(mkResp(INBOX_URL, { status: 'fail', message: 'drifted' }));
-      tab.emit(mkResp(INBOX_URL, inboxBody([followStory('111', 2_000)], [])));
-    }
-  };
-
-  const res = await source.fetchRecent();
-
-  expect(res.ok).toBe(true);
-  expect(res.events).toEqual([{ pk: '111', username: 'u111', atMs: (EPOCH_S + 2_000) * 1_000 }]);
+test('no body after the press reads the full feed and records filtered: false', async () => {
+  const { tab, drawer, source } = build({ waitMs: 60 });
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([followStory('5', 4_000)]), FEED_OP));
+  const { res } = await pass(source, null);
+  expect(res).toMatchObject({ ok: true, filtered: false });
+  if (res.ok) expect(res.next.filteredAt).toBeNull();
 });
 
-test('no response within the wait window is a TYPED failure, never an empty success', async () => {
-  const { source } = build({ waitMs: 200 });
-  // Click succeeds; the response never arrives.
-  const res = await source.fetchRecent();
-
-  expect(res.ok).toBe(false);
-  expect(res.reason).toBe('no-response');
-  expect(res.events).toEqual([]);
+test('sibling requesters reach the caller row by row; the panel stays closed without an errand', async () => {
+  const { tab, drawer, source } = build();
+  drawer.entryExists = true;
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([], [{ pk: '901', username: 'req_a' }]), FEED_OP));
+  const { res, heard } = await pass(source, null);
+  expect(heard.requesters.map((r) => r.pk)).toEqual(['901']);
+  expect(res).toMatchObject({ ok: true, requesters: { source: 'sibling', count: 1, complete: false } });
+  expect(drawer.entryClicks).toBe(0);
 });
 
-test('a blocked sentinel skips the check without touching the tab', async () => {
-  const { actor, source } = build({ sentinel: new FakeSentinel(['challenge']) });
-
-  const res = await source.fetchRecent();
-
-  expect(res.ok).toBe(false);
-  expect(res.reason).toBe('sentinel:challenge');
-  expect(actor.clicks).toBe(0);
+test('a verification read opens the panel, reads every row, accepts nothing, and reports completeness', async () => {
+  const { tab, drawer, source } = build();
+  drawer.entryExists = true;
+  drawer.requestQueue = ['req_a'];
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([]), FEED_OP));
+  drawer.onEntry = () => tab.emit(mkResp(GRAPHQL_QUERY_URL, panel([{ pk: '901', username: 'req_a' }]), PANEL_OP));
+  const { res, heard } = await pass(source, null, { mode: 'verify' });
+  expect(heard.requesters.map((r) => r.pk)).toEqual(['901']);
+  expect(drawer.confirmClicks).toBe(0);
+  expect(res).toMatchObject({ ok: true, accepted: 0, requesters: { source: 'panel', count: 1, complete: true } });
 });
 
-test('an unlocatable notifications control is a typed failure (control-not-located)', async () => {
-  const tab = new FakeTab();
-  const source = new AdapterBackedFollowNotifications({
-    tab,
-    actor: {
-      clickNotifications: async () => false,
-      clickNotificationsFollowsFilter: async () => false,
-      clickNotificationsClose: async () => false,
-      scrollNotificationsList: async () => false,
-      clickFollowRequestsEntry: async () => false,
-      confirmNextFollowRequest: async () => ({ clicked: false, username: null, remaining: 0 }),
-      probeFollowRequestHead: async () => ({ found: false }),
-    },
-    reader,
-    sentinel: new FakeSentinel() as unknown as Sentinel,
-    responseWaitMs: 200,
-    sleep: async () => {},
+test('a panel with a next page is never complete', async () => {
+  const { tab, drawer, source } = build();
+  drawer.entryExists = true;
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([]), FEED_OP));
+  drawer.onEntry = () => tab.emit(mkResp(GRAPHQL_QUERY_URL, panel([{ pk: '901', username: 'req_a' }], true), PANEL_OP));
+  const { res } = await pass(source, null, { mode: 'verify' });
+  expect(res).toMatchObject({ ok: true, requesters: { source: 'panel', complete: false } });
+});
+
+test('an accept pass accepts up to its allowance, journals each, and closes the requester edge exactly at the accept', async () => {
+  const store = openTestStore(':memory:');
+  store.setOwnPk('ME');
+  store.ensureFollowersBaseline(1);
+  const { tab, drawer, source } = build({ store });
+  drawer.entryExists = true;
+  drawer.requestQueue = ['req_a', 'req_b', 'req_c'];
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([]), FEED_OP));
+  drawer.onEntry = () => tab.emit(mkResp(GRAPHQL_QUERY_URL, panel([
+    { pk: '901', username: 'req_a' }, { pk: '902', username: 'req_b' }, { pk: '903', username: 'req_c' }]), PANEL_OP));
+  const { res, heard } = await pass(source, null, { mode: 'accept', allowed: 2 }, undefined);
+  for (const r of heard.requesters) store.observeEdge(r.pk, 'ME', 'requests', true, 2);
+  expect(heard.accepted).toEqual(['req_a', 'req_b']);
+  expect(res).toMatchObject({ ok: true, accepted: 2 });
+  expect(store.getEdge('901', 'ME', 'follows')?.status).toBe('active');
+  const gain = store.growth.latestGain('901');
+  expect(gain?.source).toBe('accept');
+  expect(gain?.lo).toBe(gain?.hi);
+  store.observeEdge('902', 'ME', 'follows', true, Date.now());
+  expect(store.hasActiveRequest('902')).toBe(false);
+  expect(store.hasActiveRequest('903')).toBe(true);
+  store.close();
+});
+
+test('an accept errand with no allowance never opens the panel', async () => {
+  const { tab, drawer, source } = build();
+  drawer.entryExists = true;
+  drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([]), FEED_OP));
+  await pass(source, null, { mode: 'accept', allowed: 0 });
+  expect(drawer.entryClicks).toBe(0);
+});
+
+describe('typed failures end the pass only', () => {
+  test('a refused read budget is typed and opens nothing', async () => {
+    const tab = new FakeTab();
+    const drawer = new FakeDrawer();
+    const source = new AdapterBackedFollowNotifications({ tab, actor: drawer, reader,
+      sentinel: new FakeSentinel() as unknown as Sentinel, sleep: async () => {},
+      readBudget: { consume: () => ({ allowed: false, resumeAt: 77 }) } as never });
+    expect((await pass(source, null)).res).toEqual({ ok: false, reason: 'read-budget', retryAt: 77, opened: false });
+    expect(drawer.clicks).toBe(0);
   });
 
-  const res = await source.fetchRecent();
+  test('a blocked sentinel and an unlocatable bell are typed, before the drawer opens', async () => {
+    const blocked = build({ sentinel: new FakeSentinel(['challenge']) });
+    expect((await pass(blocked.source, null)).res).toEqual({ ok: false, reason: 'sentinel:challenge', opened: false });
+    const { drawer, source } = build();
+    drawer.clickNotifications = async () => false;
+    expect((await pass(source, null)).res).toMatchObject({ ok: false, reason: 'control-not-located', opened: false });
+  });
 
-  expect(res).toMatchObject({ ok: false, reason: 'control-not-located' });
-});
+  test('no response, a drifted body and a walled body are typed after the open', async () => {
+    const silent = build({ waitMs: 40 });
+    expect((await pass(silent.source, null)).res).toEqual({ ok: false, reason: 'no-response', opened: true });
+    const drift = build();
+    drift.drawer.onOpen = () => drift.tab.emit(mkResp(GRAPHQL_URL, { status: 'fail' }, FEED_OP));
+    expect((await pass(drift.source, null)).res).toMatchObject({ ok: false, reason: 'feed-shape-drift', opened: true });
+    const walled = build();
+    walled.drawer.onOpen = () => walled.tab.emit({ ...mkResp(GRAPHQL_URL, '<html>wait</html>', FEED_OP),
+      status: 429, mimeType: 'text/html' });
+    expect((await pass(walled.source, null)).res).toMatchObject({ ok: false, reason: 'walled', opened: true });
+  });
 
-test('non-inbox responses are ignored; only the activity feed is parsed', async () => {
-  const { tab, actor, source } = build();
-  actor.onClick = () => {
-    if (actor.clicks !== 1) return;
-    tab.emit(mkResp('https://www.instagram.com/api/v1/users/web_profile_info/?username=x', { data: {} }));
-    tab.emit(mkResp(INBOX_URL, inboxBody([followStory('7', 1_000)], [])));
-  };
-
-  const res = await source.fetchRecent();
-
-  expect(res.ok).toBe(true);
-  expect(res.events.map((e) => e.pk)).toEqual(['7']);
-});
-
-// --- Follow requests (private accounts): observe + auto-accept ----------------------
-
-const PENDING_URL = 'https://www.instagram.com/api/v1/friendships/pending/';
-
-/** A friendships/pending body (followers-list shape). */
-const pendingBody = (rows: Array<{ pk: string; username: string }>): unknown => ({
-  users: rows.map((r) => ({ pk: r.pk, username: r.username, is_private: true, is_verified: false })),
-  next_max_id: null,
-  has_more: false,
-});
-
-const emptyInbox = (): unknown => ({ counts: {}, new_stories: [], old_stories: [] });
-
-test('accepts pending requests via Confirm clicks and returns WHO with resolved pks', async () => {
-  const store = openTestStore(':memory:');
-  const { tab, actor, source } = build({ store });
-  actor.entryExists = true;
-  actor.requestQueue = ['req_a', 'req_b'];
-  actor.onClick = () => {
-    if (actor.clicks === 1) tab.emit(mkResp(INBOX_URL, emptyInbox()));
-  };
-  actor.onEntryClick = () =>
-    tab.emit(
-      mkResp(PENDING_URL, pendingBody([
-        { pk: '901', username: 'req_a' },
-        { pk: '902', username: 'req_b' },
-      ])),
-    );
-
-  const res = await source.fetchRecent({ acceptRequests: true });
-
-  expect(res.ok).toBe(true);
-  expect(res.accepted).toEqual([
-    { pk: '901', username: 'req_a' },
-    { pk: '902', username: 'req_b' },
-  ]);
-  expect(actor.confirmClicks).toBe(2);
-  // §1 facts stream: the requester rows were stored as they parsed.
-  expect(store.getAccount('901')?.username).toBe('req_a');
-  expect(store.getAccount('902')?.username).toBe('req_b');
-  store.close();
-});
-
-test('without acceptRequests the requests subtab is never touched', async () => {
-  const { tab, actor, source } = build();
-  actor.entryExists = true;
-  actor.requestQueue = ['req_a'];
-  actor.onClick = () => {
-    if (actor.clicks === 1) tab.emit(mkResp(INBOX_URL, emptyInbox()));
-  };
-
-  const res = await source.fetchRecent();
-
-  expect(res.ok).toBe(true);
-  expect(res.accepted).toEqual([]);
-  expect(actor.entryClicks).toBe(0);
-  expect(actor.confirmClicks).toBe(0);
-});
-
-test('no Follow requests entry (public account / nothing pending) is a soft skip', async () => {
-  const { tab, actor, source } = build();
-  actor.entryExists = false;
-  actor.onClick = () => {
-    if (actor.clicks === 1) tab.emit(mkResp(INBOX_URL, emptyInbox()));
-  };
-
-  const res = await source.fetchRecent({ acceptRequests: true });
-
-  expect(res).toMatchObject({ ok: true, accepted: [] });
-  expect(actor.confirmClicks).toBe(0);
-});
-
-test('an accept click that never consumes its row stops the loop (no hammering)', async () => {
-  const { tab, actor, source } = build();
-  actor.entryExists = true;
-  actor.requestQueue = ['stuck'];
-  // Sabotage: the click reports success but the row never disappears.
-  actor.confirmNextFollowRequest = async () => ({ clicked: true, username: 'stuck', remaining: 1 });
-  actor.probeFollowRequestHead = async () => ({ found: true, username: 'stuck', remaining: 1 });
-  actor.onClick = () => {
-    if (actor.clicks === 1) tab.emit(mkResp(INBOX_URL, emptyInbox()));
-  };
-  actor.onEntryClick = () =>
-    tab.emit(mkResp(PENDING_URL, pendingBody([{ pk: '1', username: 'stuck' }])));
-
-  const res = await source.fetchRecent({ acceptRequests: true });
-
-  expect(res.ok).toBe(true);
-  expect(res.accepted).toEqual([]); // never verified → never counted
-});
-
-// ---------------------------------------------------------------------------
-// Live 2026-11-02 (`EPO_PROBE=verify`): the drawer's own client stopped calling
-// `news/inbox` and `friendships/pending`. It reads the SAME stories and rows
-// through GraphQL — `PolarisActivityFeedStoriesViewQuery` on `/api/graphql`
-// (`data.xdt_activity_inbox`) and `PolarisActivityFeedFollowRequestsViewQuery`
-// on `/graphql/query` (`data.xdt_friendships_pending_users.users.edges[].node`).
-// Matched by URL alone they were invisible: "no activity-feed response after click".
-// ---------------------------------------------------------------------------
-
-const GRAPHQL_URL = 'https://www.instagram.com/api/graphql';
-const GRAPHQL_QUERY_URL = 'https://www.instagram.com/graphql/query';
-const op = (name: string): Record<string, string> => ({ 'x-fb-friendly-name': name });
-
-/** The GraphQL feed: the inbox body, wrapped. */
-const graphqlInbox = (newStories: unknown[], oldStories: unknown[]): unknown => ({
-  data: { xdt_activity_inbox: { new_stories: newStories, old_stories: oldStories } },
-  extensions: { is_final: true },
-});
-
-/** The GraphQL follow-requests panel: a connection of user nodes. */
-const graphqlPending = (rows: Array<{ pk: string; username: string }>): unknown => ({
-  data: {
-    xdt_friendships_pending_users: {
-      users: {
-        edges: rows.map((r) => ({ node: { pk: r.pk, id: r.pk, username: r.username }, cursor: null })),
-        page_info: { end_cursor: null, has_next_page: false },
-      },
-    },
-  },
-});
-
-test('GraphQL feed: the drawer query is observed by its operation name and parsed', async () => {
-  const { tab, actor, source } = build();
-  actor.onClick = () => {
-    if (actor.clicks === 1) {
-      tab.emit(mkResp(GRAPHQL_URL, graphqlInbox([], [followStory('111', 2_000), likeStory('9')]),
-        op('PolarisActivityFeedStoriesViewQuery')));
-    }
-  };
-
-  const res = await source.fetchRecent();
-
-  expect(res.ok).toBe(true);
-  expect(res.events).toEqual([{ pk: '111', username: 'u111', atMs: (EPOCH_S + 2_000) * 1_000 }]);
-});
-
-test('GraphQL: an unrelated query on the same path is never read as the feed', async () => {
-  const { tab, actor, source } = build({ waitMs: 200 });
-  actor.onClick = () => {
-    if (actor.clicks === 1) {
-      tab.emit(mkResp(GRAPHQL_URL, graphqlInbox([], [followStory('111', 2_000)]),
-        op('PolarisSuggestedUserListQuery')));
-    }
-  };
-
-  expect(await source.fetchRecent()).toMatchObject({ ok: false, reason: 'no-response' });
-});
-
-test('GraphQL follow requests: the panel query resolves requester pks for the accepts', async () => {
-  const store = openTestStore(':memory:');
-  const { tab, actor, source } = build({ store });
-  actor.entryExists = true;
-  actor.requestQueue = ['req_a'];
-  actor.onClick = () => {
-    if (actor.clicks === 1) {
-      tab.emit(mkResp(GRAPHQL_URL, graphqlInbox([], []), op('PolarisActivityFeedStoriesViewQuery')));
-    }
-  };
-  actor.onEntryClick = () =>
-    tab.emit(mkResp(GRAPHQL_QUERY_URL, graphqlPending([{ pk: '901', username: 'req_a' }]),
-      op('PolarisActivityFeedFollowRequestsViewQuery')));
-
-  const res = await source.fetchRecent({ acceptRequests: true });
-
-  expect(res.ok).toBe(true);
-  expect(res.accepted).toEqual([{ pk: '901', username: 'req_a' }]);
-  expect(store.getAccount('901')?.username).toBe('req_a');
-  store.close();
+  test('a drifted body beside a well-formed one still reads the good one', async () => {
+    const { tab, drawer, source } = build();
+    drawer.onOpen = () => {
+      tab.emit(mkResp(GRAPHQL_URL, { status: 'fail' }, FEED_OP));
+      tab.emit(mkResp(GRAPHQL_URL, feed([followStory('111', 2_000)]), FEED_OP));
+    };
+    expect((await pass(source, null)).res).toMatchObject({ ok: true, fresh: 1 });
+  });
 });

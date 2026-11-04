@@ -5,7 +5,7 @@ import type {
 } from '../types';
 import type { FollowRecordRepo } from './follow-records';
 import type { LedgerRepo } from './ledgers';
-import type { RelationshipRepo } from './relationships';
+import type { EdgeDating, RelationshipRepo } from './relationships';
 
 interface IntentRow {
   id: string;
@@ -28,6 +28,13 @@ const decode = (r: IntentRow): EffectIntent => ({
   dispatchedAt: r.dispatched_at, settledAt: r.settled_at, result: r.result,
   attempts: r.attempts, nextAttemptAt: r.next_attempt_at,
 });
+
+/** An accepted request's follower edge: exact when its click registered, else from its dispatch (spec §9.8). */
+function acceptDating(intent: EffectIntent, outcome: EffectSettlement): EdgeDating | undefined {
+  if (intent.action !== 'accept-request') return undefined;
+  if (outcome.result === 'ok') return { source: 'accept' };
+  return intent.dispatchedAt === null ? { source: 'visit' } : { source: 'visit', lo: intent.dispatchedAt };
+}
 
 /** The rate governor's write union: one row per write at or after `@since`. */
 const UNION_SINCE = `
@@ -138,7 +145,8 @@ export class EffectIntentRepo {
     if (outcome.record) this.deps.records.upsert(outcome.record);
     if (outcome.edge) {
       const e = outcome.edge;
-      this.deps.relationships.observeEdge(e.srcPk, e.dstPk, 'follows', e.active, e.observedAt ?? outcome.at);
+      this.deps.relationships.observeEdge(e.srcPk, e.dstPk, 'follows', e.active, e.observedAt ?? outcome.at,
+        acceptDating(intent, outcome));
     }
     if (outcome.result === 'ok' || outcome.result === 'fail') {
       if (outcome.ledger === 'growth') {

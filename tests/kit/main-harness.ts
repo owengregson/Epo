@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import type { InstagramTab } from '@/adapter/tab';
 import type { PushContract, PushMethod } from '@/ipc/contract';
 import { Foundation, type FoundationDeps } from '@/main/foundation-wiring';
-import type { BuiltGraph } from '@/main/services/graph-types';
+import type { BuiltGraph, GraphBuildDeps } from '@/main/services/graph-types';
 import type { IgSessionPort } from '@/main/services/ig-session';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { ChainTargetView, EpoStatus, PruneStatus } from '@/types';
@@ -118,8 +118,10 @@ export interface MainHarness {
 /**
  * A Foundation over a fresh temp userData directory and a logged-in fake
  * session. Pass `igSession: makeIgSession(null)` for the logged-out paths.
+ * The launch catch-up reads the drawer and the followers head through the tab, which a fake tab never answers
+ * (every read waits out its deadline), so a suite opts in with `catchUp: true`.
  */
-export function newFoundation(over: Partial<FoundationDeps> & PushSpies = {}): MainHarness {
+export function newFoundation(over: Partial<FoundationDeps> & PushSpies & { catchUp?: boolean } = {}): MainHarness {
   const userDataDir = over.userDataDir ?? tempUserData();
   const tab = over.tab ?? makeFakeTab();
   const session = (over.igSession as FakeIgSession | undefined) ?? makeIgSession();
@@ -130,6 +132,11 @@ export function newFoundation(over: Partial<FoundationDeps> & PushSpies = {}): M
     igSession: session,
     push: pushFrom(over, over.push),
   });
+  if (over.catchUp !== true) {
+    const built = foundation as unknown as { graphBuildDeps(): GraphBuildDeps };
+    const deps = built.graphBuildDeps.bind(foundation);
+    built.graphBuildDeps = () => ({ ...deps(), launch: undefined });
+  }
   return { foundation, tab, session, userDataDir };
 }
 

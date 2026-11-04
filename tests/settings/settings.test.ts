@@ -172,7 +172,6 @@ describe('projections from DEFAULT_SETTINGS', () => {
 
   test('toFollowbackConfig converts hold days → ms and carries auto-accept', () => {
     expect(toFollowbackConfig(DEFAULT_SETTINGS)).toEqual({
-      maxWaitForFollowbackMs: 345_600_000,
       holdAfterFollowbackMs: 172_800_000,
       autoAcceptRequests: true,
     });

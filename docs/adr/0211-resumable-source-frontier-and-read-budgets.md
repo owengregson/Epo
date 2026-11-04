@@ -125,3 +125,12 @@ covers the plan size, a full census walk fits, and every sweep can read the
 feed. Every ceiling is non-decreasing in the activity knob. On the live install
 (ceiling 98, plan size 90, hourly sweeps, ≤4 sessions) the allowance is 415
 profiles (189 exploration), 227 pages (27 exploration) and 28 notifications.
+
+## Amendment — 2026-11-02: the reopen reads are planned inside D6 (ADR 0213)
+
+The plan-day read allowance carries the reopen sweep's reads as terms of their own: the frontier term
+(the launch catch-up plus one head walk per session start, `FRONTIER_PAGES_MAX` pages each) and the
+following check's two composed requests inside the census term. The plan, the read budget and the
+Settings view size the census term with the same read facts, so the plan's own reads always fit the D6
+the budget enforces (law L8). The sweep's reads are tagged by use (`catch-up`, `check`); a refused
+read ends its step only, and the next planned check retries it.

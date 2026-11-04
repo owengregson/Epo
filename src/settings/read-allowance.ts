@@ -6,7 +6,8 @@
  */
 import type { PlanReadAllowance } from '../kernel/derive-reads';
 import type { PlanDemand } from '../kernel/plan';
-import { planReadAllowance } from '../kernel/plan/reads';
+import { type PlanReadFacts, planReadAllowance } from '../kernel/plan/reads';
+import { BOUNDS_REENTRY } from '../kernel/reentry-policy';
 import type { EffectiveSettings } from './effective';
 import { toPlanIntent } from './plan-intent';
 
@@ -24,6 +25,9 @@ const NO_DEMAND: Omit<PlanDemand, keyof CensusSizing> = {
   followsDoneToday: 0, outsideToday: 0, pendingRequests: 0, acceptsRecent: 0,
 };
 
+/** The census term's following pages (spec §9.2 step G): the plan and every allowance size with the same facts. */
+export const PLAN_READ_FACTS: PlanReadFacts = { followingWalkPages: BOUNDS_REENTRY.FOLLOWING_WALK_PAGES };
+
 export function toReadAllowance(e: EffectiveSettings, sizing: CensusSizing = UNKNOWN_HEADER): PlanReadAllowance {
-  return planReadAllowance(toPlanIntent(e), { ...NO_DEMAND, ownHeader: sizing.ownHeader, census: sizing.census });
+  return planReadAllowance(toPlanIntent(e), { ...NO_DEMAND, ownHeader: sizing.ownHeader, census: sizing.census }, PLAN_READ_FACTS);
 }

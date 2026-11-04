@@ -10,4 +10,6 @@ export const BOUNDS_REENTRY = {
   MIN_ROWS_PER_PAGE: 10,
   /** About a week of gains at measured page sizes; a longer gap stops with `gap` and waits for the census. */
   FRONTIER_PAGES_MAX: 5,
+  /** The ordered following form answers the whole list in one response; one plain probe proves its end. */
+  FOLLOWING_WALK_PAGES: 2,
 } as const;

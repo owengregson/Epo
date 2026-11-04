@@ -22,7 +22,15 @@ What streams (per row / per event, at observation time):
   immediately; an own-following row reconciles the we-follow edge immediately
   (`reconcileOwnFollow`, which also heals drift on sight); a notifications
   follow event writes the follows-us edge (and username) per event, at the
-  event's own timestamp.
+  event's own timestamp, as each drawer body parses — an event is in the store
+  before the drawer pass resolves, and a pass that stops early keeps every
+  event it delivered (ADR 0213).
+- Follower changes: every transition of an own-follower edge writes its dated
+  change row in the edge's own write (ADR 0704). **Dating waits for the
+  frontier**: a followers-head row is written at once with its conservative
+  interval, and is narrowed by list position only after the walk found the
+  frontier and the order self-check says newest-first — the row streams, its
+  sharper date is the verdict that waits.
 - Actions and their outcomes: every follow/unfollow/prune attempt writes its
   ledger row and record transition as it happens.
 
@@ -43,7 +51,7 @@ Enforcement points: the rim sources' `ingestRow` helpers
 `onObservation` callbacks in `followers-page-reader.ts` /
 `list-page-walker.ts` / `follower-acquisition.ts` (each row is delivered as it
 parses — consumers must write it through, not collect it), the follow-back
-watcher's per-event loop, and `ingestScanCensus`'s doc contract. Tests assert
+appliers (one write per drawer event), and `ingestScanCensus`'s doc contract. Tests assert
 that a stopped/truncated walk still leaves its observed rows and edges in the
 store.
 
@@ -86,20 +94,21 @@ being closed must never silently skip a cycle.** In-memory timers alone are a
 
 How it is implemented:
 
-- Cadences go through `ScheduleManager.cadence()` with `getLastRunAt` /
-  `setLastRunAt` backed by persisted Settings (follow-back check →
-  `sweepLastRunAt`; scheduled prune → `pruneLastRunAt`). `isDue` reads the
-  persisted value, so a restart changes nothing: elapsed is elapsed.
-- Startup evaluation is immediate: watcher loops register with
-  `immediate: true` (the scheduled-prune watcher fires its due-check at
-  launch, still behind the safety gates), and the engine's step order puts
-  the follow-back cadence check BEFORE candidate refill and actions — an
-  overdue check is the first thing a freshly started engine does.
+- The follow-back check is a **planned check** anchored on the last sweep's
+  persisted end (`reopen_state.lastSweep`, ADR 0213): the plan's `checkDue`
+  reads it, so a restart changes nothing — elapsed is elapsed. The v1
+  `sweepLastRunAt` stamp is carried once into that anchor at the first build.
+- Startup evaluation is immediate: the **launch catch-up** (startup step 3,
+  after the reveal) reads what changed while Epo was closed — the landing's
+  header, the drawer since its watermark, the followers head to its frontier —
+  before any Start, and the engine's step order puts the planned check BEFORE
+  candidate refill and actions in each session.
 - Interrupted work resumes, not restarts: the inter-action delay deadline
   persists (`action_delay_deadline_at`) and is served on relaunch; churn
-  timers catch up at graph build (`advanceTimers`); a stopped/truncated
-  prune run hands its unvisited remainder back as the runnable set, durable
-  in the scan snapshot.
+  timers catch up at graph build (`advanceTimers`, store-only); every sweep
+  frontier persists after its own step's facts, so a crash re-reads at most
+  one step's span; a stopped/truncated prune run hands its unvisited
+  remainder back as the runnable set, durable in the scan snapshot.
 
 Rule for new scheduled work: persist its last-run timestamp through Settings
 or store meta, gate on `isDue` against that persisted value, and make the

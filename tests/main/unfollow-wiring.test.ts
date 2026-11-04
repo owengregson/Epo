@@ -3,7 +3,6 @@
  * the churn scheduler runs on it, and the graph-open pass re-judges the kept records at build.
  */
 import type { FollowbackWatcher } from '@/engine/followback-watcher';
-import { ReentrySupervisor } from '@/engine/reentry';
 import type { SourceFrontier } from '@/engine/source-frontier';
 import { FakeClock, type SystemClock } from '@/governors/clock';
 import { calendarPlanDayClock } from '@/governors/plan-day-clock';
@@ -96,15 +95,13 @@ test('the churn reports the live protection state', () => {
 
 describe('the wired journal (spec §9.8)', () => {
   const policyFor = (clock: FakeClock, visit: ProfileVisitor['visit']) => {
-    const reentry = new ReentrySupervisor({ store, clock });
-    reentry.prepare(clock.now());
     const policy = wireMutationPolicy({ ...deps(), driverSignal: () => undefined } as GraphBuildDeps, {
       store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock, cadence: kitPlan(store, clock).cadence,
       readBudget: new ReadBudget({ store, clock, limits: readLimits() }), dayClock: dayOf(clock),
       profiles: () => ({ visit }) as unknown as TabProfileVisitor,
       followback: () => ({ check: async () => ({ detected: [], outcome: 'complete' }) }) as unknown as FollowbackWatcher,
     });
-    return { policy, reentry };
+    return { policy };
   };
   const stuck = (pk: string, at: number) => {
     const i = store.beginEffectIntent({ accountPk: pk, username: pk, action: 'unfollow', channel: 'growth', at });
@@ -114,10 +111,9 @@ describe('the wired journal (spec §9.8)', () => {
 
   test('admission has no global block: an absence or another account\'s unsettled write never stops a write', async () => {
     const clock = new FakeClock(T0);
-    const { policy, reentry } = policyFor(clock, async () => ({ ok: false, kind: 'tab', detail: {} }));
+    const { policy } = policyFor(clock, async () => ({ ok: false, kind: 'tab', detail: {} }));
     stuck('x', clock.now());
     clock.advance(7 * 86_400_000);
-    expect(reentry.requiresReconciliation(clock.now())).toBe(true);
     await expect(policy.beforeMutation()).resolves.toBeUndefined();
   });
 

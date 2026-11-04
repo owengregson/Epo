@@ -1,110 +1,91 @@
 /**
- * The notifications drawer's response capture: subscribed before any click, it
- * merges every observed feed page and stores each pending-request row as it parses.
+ * The notifications drawer's response capture (spec §9.4, C20): subscribed before any click, it reads
+ * every observed drawer body through the parse stream's `readDrawerBody` and hands each one to the
+ * pass as it parses (facts stream), counting what arrived so the pass can tell a post-chip body.
  */
 
-import { readDrawerBody } from '@/adapter/drawer-read';
-import type { FollowEvent, Reader } from '@/adapter/reader';
+import { type DrawerRead, readDrawerBody } from '@/adapter/drawer-read';
+import type { Reader } from '@/adapter/reader';
+import type { FollowEvent, Observation } from '@/adapter/surface-types';
 import type { RimTab } from '@/rim/types';
-import type { KnowledgeStore } from '@/store/knowledge-store';
-import { RIM } from '@/timing/config';
 import * as logger from '@/utils/logger';
 
-/** What the capture has observed (object properties, so callback writes stay visible to CFA). */
-export interface FeedCaptured {
-  /** Accumulated follow events across ALL observed WELL-FORMED feed pages (deduped). */
-  events: FollowEvent[] | null;
-  sawInbox: boolean;
-  /** A feed body arrived but shape-mismatched (IG drift / fail interstitial). */
-  feedDrift: boolean;
-  /** username(lower) → pk from the observed pending-requests rows. */
-  pendingPks: Map<string, string> | null;
+/** What the pass does with each body, the moment it parses. */
+export interface CaptureHandlers {
+  /** One well-formed feed body: its follow events and its requester preview. */
+  onFeed(events: readonly FollowEvent[], preview: readonly Observation[]): void;
+  /** One follow-requests panel body: its readable rows and whether they are the whole pending list. */
+  onRequests(rows: readonly Observation[], complete: boolean): void;
 }
 
-/** A live capture: its state, the event dedupe keys, the in-flight body reads, its unsubscribe. */
+/** What the capture observed so far (object properties, so callback writes stay visible to the waits). */
+export interface CaptureState {
+  /** A feed response arrived (read or not). */
+  sawFeed: boolean;
+  /** Well-formed feed bodies read so far. */
+  feedBodies: number;
+  /** A feed body arrived but did not read as the feed's shape. */
+  feedDrift: boolean;
+  /** A feed body was a wall (a throttle or interstitial), never drift. */
+  feedWalled: boolean;
+  /** Follow-requests panel bodies read so far (strict). */
+  requestBodies: number;
+  /** The panel came back walled or mostly unreadable. */
+  requestsFailure: Extract<DrawerRead['failure'], 'requests-walled' | 'requests-unreadable'> | null;
+}
+
+/** A live capture: its state, the in-flight body reads, its unsubscribe. */
 export interface FeedCapture {
-  readonly captured: FeedCaptured;
-  readonly seenEvents: Set<string>;
+  readonly state: CaptureState;
   readonly pendingReads: Promise<void>[];
   readonly unsubscribe: ReturnType<RimTab['onResponse']>;
 }
 
-/**
- * Capture the FIRST activity-feed response — and, when accepting, the
- * pending-requests response — that land after the clicks. Subscribing
- * BEFORE clicking closes the race where a fast response beats the handler.
- */
-export function captureFeed(deps: {
-  tab: RimTab;
-  reader: Reader;
-  store?: KnowledgeStore;
-}): FeedCapture {
-  const captured: FeedCaptured = { events: null, sawInbox: false, feedDrift: false, pendingPks: null };
-  const seenEvents = new Set<string>();
+/** Subscribe before the first click, so a fast response never beats the handler. */
+export function captureFeed(deps: { tab: RimTab; reader: Reader; now: () => number }, h: CaptureHandlers): FeedCapture {
+  const state: CaptureState = { sawFeed: false, feedBodies: 0, feedDrift: false, feedWalled: false,
+    requestBodies: 0, requestsFailure: null };
   const pendingReads: Promise<void>[] = [];
   const unsubscribe = deps.tab.onResponse((resp) => {
     const kind = deps.reader.kindOf(resp); // URL + operation name: the drawer reads via GraphQL
     if (kind !== 'activity-feed' && kind !== 'friend-requests') return;
-    if (kind === 'activity-feed') captured.sawInbox = true;
-    pendingReads.push(
-      resp
-        .getBody()
-        .then((body) => {
-          if (kind === 'friend-requests' && captured.pendingPks !== null) return;
-          const read = readDrawerBody({ kind, body }, { reader: deps.reader, now: Date.now() });
-          if (kind === 'activity-feed') {
-            // MERGE every observed feed page (the initial open, the Follows
-            // filter refetch, scroll-loaded older pages) — deduped. STRICT
-            // parse per page: a drifted body leaves `events` untouched (so
-            // it can never read as a successful empty check) but flags the
-            // drift; one well-formed page among drifted ones still succeeds.
-            if (read.events === null) {
-              captured.feedDrift = true;
-              return;
-            }
-            const merged = captured.events ?? [];
-            for (const e of read.events) {
-              const key = `${e.pk}|${e.atMs ?? ''}`;
-              if (seenEvents.has(key)) continue;
-              seenEvents.add(key);
-              merged.push(e);
-            }
-            captured.events = merged;
-            return;
-          }
-          const map = new Map<string, string>();
-          for (const obs of read.requests.rows) {
-            // §1: every requester row is a fact — store it as it parses.
-            deps.store?.observe(obs);
-            if (typeof obs.fields.username === 'string') {
-              map.set(obs.fields.username.toLowerCase(), obs.accountPk);
-            }
-          }
-          captured.pendingPks = map;
-        })
-        .catch((e: unknown) => {
-          logger.warn('rim.follow-notifications: response body read failed', {
-            kind,
-            error: String(e),
-          });
-        }),
-    );
+    if (kind === 'activity-feed') state.sawFeed = true;
+    pendingReads.push(resp.getBody().then((body) => {
+      const read = readDrawerBody({ kind, body, status: resp.status, mime: resp.mimeType },
+        { reader: deps.reader, now: deps.now() });
+      if (kind === 'activity-feed') {
+        if (read.failure === 'feed-walled') state.feedWalled = true;
+        else if (read.events === null) state.feedDrift = true;
+        else {
+          state.feedBodies += 1;
+          h.onFeed(read.events, read.pendingPreview);
+        }
+        return;
+      }
+      if (read.failure === 'requests-walled') {
+        state.requestsFailure = read.failure;
+        return;
+      }
+      if (read.failure === 'requests-unreadable') state.requestsFailure = read.failure;
+      state.requestBodies += 1;
+      // A panel whose rows mostly fail to read is drift; its readable rows are still facts.
+      h.onRequests(read.requests.rows, read.requests.pendingComplete);
+    }).catch((e: unknown) => {
+      logger.warn('rim.follow-notifications: response body read failed', { kind, error: String(e) });
+    }));
   });
-  return { captured, seenEvents, pendingReads, unsubscribe };
+  return { state, pendingReads, unsubscribe };
 }
 
-/** Bounded poll for an observed response (interruptible by a stop()). */
-export async function awaitCaptured(
-  done: () => boolean,
-  pendingReads: Promise<void>[],
-  signal: AbortSignal | undefined,
-  waitMs: number,
-  sleep: (ms: number, signal?: AbortSignal) => Promise<void>,
-): Promise<void> {
-  const deadline = Date.now() + waitMs;
-  while (!done() && Date.now() < deadline) {
-    if (signal?.aborted) return;
-    await sleep(RIM.NOTIFICATIONS_POLL_MS, signal);
+/** Poll until `done` or the deadline, flushing body reads (interruptible by a stop()). */
+export async function awaitCaptured(done: () => boolean, pendingReads: Promise<void>[], o: {
+  signal: AbortSignal | undefined; deadline: number; now: () => number; pollMs: number;
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+}): Promise<void> {
+  await Promise.all(pendingReads.splice(0));
+  while (!done() && o.now() < o.deadline) {
+    if (o.signal?.aborted) return;
+    await o.sleep(o.pollMs, o.signal);
     await Promise.all(pendingReads.splice(0));
   }
 }

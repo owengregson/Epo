@@ -12,7 +12,8 @@ import { LIVE } from '@/kernel/live-policy';
 import type { PlanDayClock } from '@/kernel/plan';
 import { MS_PER_MINUTE } from '@/kernel/units';
 import { type BoostWindowLite, type FeedContext, keepShapedAt, shapeFeed } from '@/main/modules/feed-projection';
-import type { FeedView } from '@/shared/feed';
+import type { AwaySummaryLite, FeedView } from '@/shared/feed';
+import type { AwaySummary } from '@/shared/reopen-view';
 import type { StatusFields } from '@/shared/status-fields';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import * as logger from '@/utils/logger';
@@ -65,7 +66,7 @@ export const SHUTDOWN_INCIDENT = 'intentional-shutdown';
 /** What the live sources read from a built graph. */
 export interface LiveGraph {
   readonly store: Pick<
-    KnowledgeStore, 'feed' | 'followersBaselineAt' | 'getRecoveryState' | 'getRecoveryLastIncident' | 'protectionFacts'
+    KnowledgeStore, 'feed' | 'followersBaselineAt' | 'getRecoveryState' | 'getRecoveryLastIncident' | 'protectionFacts' | 'reopen'
   >;
   readonly ownPk: string;
   readonly pruneEngine: { status(): Pick<PruneStatus, 'scanReady' | 'scanAt'> };
@@ -108,6 +109,12 @@ function recoveryEpisode(stateRaw: string | null, lastRaw: string | null): FeedC
   return last !== null && typeof last.enteredAt === 'number' ? { at: last.enteredAt, resumeAt: null } : null;
 }
 
+/** The last launch catch-up as the feed's caught-up row: from the previous sweep's end to the check (spec §9.6). */
+function awayRow(s: AwaySummary | null | undefined): AwaySummaryLite | null {
+  return s == null ? null : { awayFrom: s.from, checkedAt: s.to, newFollowers: s.newFollowers, followBacks: s.followBacks,
+    left: s.lostIdentified };
+}
+
 /** The last deliberate quit, or null when Epo never closed on purpose. */
 function lastShutdown(incidents: RuntimeIncidents['incidents']): number | null {
   let at: number | null = null;
@@ -146,9 +153,11 @@ export function liveSources(
     feed: () => {
       const { incidents } = runtime();
       const t = now();
+      // The catch-up's own window replaces the last-quit divider once a launch sweep has run.
+      const away = awayRow(graph.store.reopen.get()?.lastCatchUp);
       shown = keepShapedAt(shown, shapeFeed(graph.store.feed, {
         now: t, ownPk: graph.ownPk, baselineAt: graph.store.followersBaselineAt(), planDay, incidents,
-        recoveryIncident: recovery(), awayFrom: lastShutdown(incidents), kept: keptRows(graph),
+        recoveryIncident: recovery(), awayFrom: away?.awayFrom ?? lastShutdown(incidents), away, kept: keptRows(graph),
         boost: opts.boost?.(t) ?? null,
       }));
       return shown;

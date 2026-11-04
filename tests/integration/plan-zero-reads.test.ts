@@ -56,7 +56,7 @@ function rig(o: { settings?: Partial<Settings>; before?: (store: KnowledgeStore,
   const policy = createMutationPolicy({ store, clock, ownPk: 'me', ownUsername: 'me', cadence: plan.cadence, readBudget: reads,
     profiles: () => ({ visit }), settings: () => settings, protection: () => o.protection ?? UNCONFIGURED_PROTECTION,
     signal: () => undefined, surfaceGate: o.gate,
-    followback: () => new FollowbackWatcher({ store, clock, ownPk: 'me', notifications: { fetchRecent: async () => ({ ok: true, events: [] }) } }) });
+    followback: () => new FollowbackWatcher({ store, clock, ownPk: 'me', cfg: { holdAfterFollowbackMs: 0, autoAcceptRequests: false } }) });
   return { store, clock, plan, reads, visit, policy };
 }
 

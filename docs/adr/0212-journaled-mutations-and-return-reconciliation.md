@@ -142,3 +142,12 @@ that account (U06 F6).
   `abandoned`, which the recovery healer can requeue. A wall counts no attempt and
   goes to the recovery ladder. A refused read waits for the allowance. `prepared`
   intents left by an earlier run are cancelled at graph open, with no read.
+
+## Amendment — 2026-11-02: "Knowledge on return" is superseded by frontiers (ADR 0213)
+
+The return supervisor and its phases are deleted: what changed since Epo last looked is read from
+persisted frontiers by one sweep (the header, the drawer since its watermark, the followers head to its
+frontier, the following check), every unfollow decision is verified once at the click, and probation
+derives from the ledger and the plan-day windows. Requests are a live predicate: an open request keeps a
+record out of every timer and pick, and only a complete requests panel ends one. Where "Knowledge on
+return" says "the bot cannot expire them", read "Epo does not expire them"; the section stays for history.

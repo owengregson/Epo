@@ -85,7 +85,7 @@ async function rig(before?: (store: KnowledgeStore, session: PlanView) => void):
       viewer: { following: true, requested: false, followsUs: false } };
   };
   const profiles = { visit } as unknown as TabProfileVisitor;
-  const followback = new FollowbackWatcher({ store, clock, ownPk: 'me', notifications: { fetchRecent: async () => ({ ok: true, events: [] }) } });
+  const followback = new FollowbackWatcher({ store, clock, ownPk: 'me', cfg: { holdAfterFollowbackMs: 0, autoAcceptRequests: false } });
   const d = { resolveSettings: () => SETTINGS, driverSignal: () => undefined, plan: host,
     protection: { index: () => UNCONFIGURED_PROTECTION, setCapabilities: () => undefined } } as unknown as GraphBuildDeps;
   let engine: PruneEngine | null = null;

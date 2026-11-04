@@ -21,7 +21,7 @@ import type { TempoSource } from '@/kernel/tempo';
 import { PlanControl } from '@/main/modules/plan-control';
 import type { EffectiveSettings } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
-import { toReadAllowance } from '@/settings/read-allowance';
+import { PLAN_READ_FACTS, toReadAllowance } from '@/settings/read-allowance';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DelayManager } from '@/timing/delay-manager';
 import * as logger from '@/utils/logger';
@@ -93,7 +93,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     // The real gate of this store's graph, read at each ask (the plan mix and the admission).
     surfaceGate: gate,
     onChanged: () => control?.changed(),
-  }, { log: logger });
+  }, { log: logger, readFacts: PLAN_READ_FACTS });
   const wake = (): void => {
     for (const key of PLAN_PARKS) delays.cancel(key);
   };

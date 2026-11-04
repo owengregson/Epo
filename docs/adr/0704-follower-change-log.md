@@ -1,6 +1,6 @@
 # 0704 — Follower change log and own counts
 
-Status: draft (plan-derived overhaul, reopen stream; finalized at integration)
+Status: accepted (plan-derived overhaul, reopen stream); numbers and cross-links checked at integration
 
 ## Context
 
@@ -53,6 +53,11 @@ bounds arrive through `StorePolicy` (spec §14 C24).
   was closed that no single day holds is reported once, not smeared onto the day it was found.
 - The legacy edge reads stay for the current UI until the sidebar and the People page read the log.
 - `outsideSince` folds the retained ledgers per call; it is memoized until the next store write.
+- The frontier sweep (ADR 0213) writes the dated rows: a drawer event is exact; a followers-head row is
+  interval-dated from the frontier and narrowed by list position only after the order self-check; a
+  head walk never writes a loss. Its `AwaySummary` is a window read over this log.
+- The following check (step G) records the exact outside follows and unfollows it identified; the
+  ceiling still charges the header estimate until the exact count is wired into the charge.
 
 ## Alternatives rejected
 

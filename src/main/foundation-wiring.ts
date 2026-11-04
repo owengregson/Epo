@@ -217,6 +217,7 @@ export class Foundation {
   /** The boot sequence (spec §12.8) and its graph-independent `boot` / `account` status contributors. */
   private readonly boot: BootSequencer;
   private readonly bootFields: readonly StatusContributor[];
+  private readonly landOwnProfile: (signal: AbortSignal) => Promise<void>;
   /**
    * In-flight MANUAL operations (read-followers, follow/unfollow-one,
    * seed-check). Teardown awaits these before closing the store — an
@@ -310,7 +311,7 @@ export class Foundation {
     this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
       graph: () => this.graph, planDay: openGraphPlanDay(() => this.graph), busyDriverReason: () => this.busyDriverReason(),
       setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun(), changed: () => this.projections.pushAll() });
-    ({ boot: this.boot, contributors: this.bootFields } = createStartup({ tab: this.tab, runtime: this.runtime,
+    ({ boot: this.boot, contributors: this.bootFields, land: this.landOwnProfile } = createStartup({ tab: this.tab, runtime: this.runtime,
       lease: this.lease, activity: this.activity, session: this.session, igSession: this.igSession,
       tabFirstLoad: deps.tabFirstLoad ?? Promise.resolve('ready'), disposing: () => this.disposing,
       blockRuntime: (reason) => this.blockRuntime(reason), startEngine: (opts) => this.startEngine(opts),
@@ -1134,17 +1135,16 @@ export class Foundation {
 
   private graphBuildDeps(): GraphBuildDeps {
     return {
-      tab: this.tab, userDataDir: this.userDataDir,
-      dbFile: IG_DB_FILE,
-      reporter: this.reporter, cursorObserver: this.cursorObserver,
-      scheduler: this.scheduler,
-      settings: this.resolveSettings(),
-      resolveSettings: () => this.resolveSettings(),
+      tab: this.tab, userDataDir: this.userDataDir, dbFile: IG_DB_FILE,
+      reporter: this.reporter, cursorObserver: this.cursorObserver, scheduler: this.scheduler,
+      settings: this.resolveSettings(), resolveSettings: () => this.resolveSettings(),
       protection: { index: () => this.settings.protection(), setCapabilities: (p) => this.settings.setCapabilities(p) },
       plan: { runIntent: () => this.runtime.snapshot().desired, settings: this.settings, pushStatus: () => this.pushStatus() },
-      updateSettings: (partial) => {
-        void this.updateSettings(partial);
-      },
+      updateSettings: (partial) => { void this.updateSettings(partial); },
+      bookkeeping: { take: () => this.settings.takeBookkeeping(), consume: () => { this.settings.apply([{ op: 'consume-bookkeeping' }], 'system'); } },
+      launch: { signedInPk: () => this.igSession.readCookie('ds_user_id'), online: () => this.lastOnline, block: () => this.runtime.snapshot().blockedReason,
+        tabFree: () => !this.lease.tourHeld() && !this.manualDriving && !this.isEngineDriving() && [null, 'startup'].includes(this.lease.owner()),
+        land: (signal) => this.landOwnProfile(signal), hold: (run) => this.activity.with('catch-up', run) },
       driverSignal: () => this.driverSignal(),
       recoverTab: (reason) => this.recoverTab(reason),
       validateIdentity: () => this.validateIdentity(),

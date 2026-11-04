@@ -61,6 +61,16 @@ export class GrowthRepo {
       .get<OwnHeader>() ?? null;
   }
 
+  /** The newest header at or before `t`, and the oldest one kept. */
+  headerAtOrBefore(t: number): OwnHeader | null {
+    return this.db.prepare(`SELECT at, followers, following FROM own_counts WHERE at <= ? ORDER BY at DESC LIMIT 1`)
+      .get<OwnHeader>(t) ?? null;
+  }
+
+  oldestHeader(): OwnHeader | null {
+    return this.db.prepare(`SELECT at, followers, following FROM own_counts ORDER BY at LIMIT 1`).get<OwnHeader>() ?? null;
+  }
+
   headersSince(t: number): OwnHeader[] {
     return this.db.prepare(`SELECT at, followers, following FROM own_counts WHERE at >= ? ORDER BY at`).all<OwnHeader>(t);
   }
@@ -154,7 +164,7 @@ export class GrowthRepo {
   }
 
   /** Managed records whose follow-back interval lies inside the window. */
-  private followBacksIn(w: DayWindow): number {
+  followBacksIn(w: DayWindow): number {
     return this.db.prepare(`SELECT COALESCE(followback_after, followed_back_at, followed_at) AS lo FROM follow_records
       WHERE COALESCE(followed_back_at, followback_observed_at) >= @s AND COALESCE(followed_back_at, followback_observed_at) < @e`)
       .all<{ lo: number | null }>({ s: w.startsAt, e: w.endsAt }).filter((r) => r.lo !== null && r.lo >= w.startsAt).length;
