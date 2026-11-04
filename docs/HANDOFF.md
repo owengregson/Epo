@@ -1,5 +1,17 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-04 (authorized second L1 attempt; parsing observed, navigation step stopped) —** After the
+> owner explicitly overrode the same-day restriction, one verify run at `7cb5cdf` used the replacement
+> public, followed target. Own/target profiles, nonexistent-profile detection, notifications feed,
+> follow requests and drawer closure succeeded. The final own-profile navigation raised
+> `input:document-changed-after-press`; **L1 still did not pass**. There were 27 `ok` sentinel checks,
+> six canonical/non-partial profile/feed/requests bodies and zero shadow disagreements. Of 94 API
+> exchanges, 92 returned 200 with saved bodies; two remained incomplete. One auxiliary posts response
+> carried a server field error without an account-wall signature. No account mutation was observed.
+> Epo exited; all 15 critical store/settings/runtime hashes remain unchanged and run intent is stopped.
+> Evidence: `results/live-l1-second-2026-11-04T092100Z/`. See the
+> [second-attempt record](qa/plan-derived-overhaul-2026-11.md#second-live-attempt-2026-11-04).
+
 > **2026-11-04 (first authorized L1 attempt; stopped at target eligibility) —** The owner supplied a
 > target and authorized live testing. One verify run at `4760f43` stopped because that account is
 > private; it was followed and mutual. Own and target profiles parsed canonically and completely,

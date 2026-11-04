@@ -8,8 +8,9 @@ cleanup, including the native-QA repairs, passed the final source gate at `4a2bb
 `aa31274`, normal and reduced-motion native checks at `d80c5dd`, and the final keyboard-only reduced-motion run at
 `4a2bbcc` passed with the limits recorded below. Gallery results remain tied to their measured revisions; all six
 renderer artifacts at `4a2bbcc` are byte-identical to `d80c5dd`. **Implementation and technical offline verification
-are complete.** The first live parsing attempt on November 4 stopped at target eligibility;
-its partial evidence is recorded below and does not qualify L1 or the remaining live sequence.
+are complete at those recorded revisions.** On November 4, the first live parsing attempt stopped at target
+eligibility; the authorized second attempt reached the final navigation step and exposed a probe settlement gap.
+Their partial evidence is recorded below and does not qualify L1 or the remaining live sequence.
 
 Owner visual confirmation under workplan I.4.6 is now recorded after the subsequent
 [UI cleanup and interactive browser review](ui-cleanup-2026-11.md#interactive-browser-preview-and-owner-acceptance):
@@ -365,6 +366,41 @@ The integrated corpus change at `8ae9706` passed the complete offline gate: **43
 one suite and six tests skipped, boundaries **0 errors / 56 warnings**. The explicit differential leak
 and expected-field run passed 47 tests with no skips against the new private capture. Full integration
 log: `results/codex-design-cleanup/post-l1-corpus-gate.log`. No parser behavior changed.
+
+### Second live attempt, 2026-11-04
+
+The owner explicitly authorized another attempt that day. The full profile was backed up again with Epo
+closed and run intent stopped: 33,445 files, sizes verified, and all 15 critical hashes verified unchanged
+from the original backup. The private backup record is `results/codex-design-cleanup/pre-second-l1-backup.json`.
+One verify run at `7cb5cdf` began at 09:21:00 UTC and exited at 09:22:27 UTC; its evidence is in
+`results/live-l1-second-2026-11-04T092100Z/`.
+
+- The replacement target was public, followed and not requested. Own and target decision-bearing fields
+  were readable; all three captured profile bodies were canonical and non-partial.
+- The nonexistent profile returned `gone`. Every drawer press returned true, and the drawer was confirmed
+  closed. Saved screenshots show the requests panel and its subsequent closure.
+- Two activity-feed bodies and one friend-requests body parsed canonically and completely. The saved raw
+  response roots reconcile with those inventories; no relevant unrouted response was found. All 27 recorded
+  sentinel checks were `ok`, with no drift or shadow disagreement.
+- Of 94 API exchanges, 92 returned 200 with saved decoded bodies. Two had no status/body at stop: an initial
+  feed subscription and a final profile-suggestions request. They remain incomplete evidence, not successful
+  responses. A posts query returned one auxiliary GraphQL server field error alongside its timeline data;
+  no authentication, challenge, rate-limit or refusal signature was found in that error.
+- The final own-profile-link step stopped with `input:document-changed-after-press`. The destination's
+  canonical profile body arrived, but the step never completed its URL verification. The error's 15-second
+  text is the configured input budget, not evidence that the code actually waited 15 seconds.
+- No follow, unfollow or accept operation was observed or scripted. Epo exited; the critical store/settings/
+  runtime hashes still match the refreshed backup, and saved run intent remains stopped.
+
+**L1 did not pass.** The production input guard correctly treats an old-document click acknowledgment as
+uncertain. Production identity/startup callers already re-observe the URL after this navigation race; the
+verify step lacked that handling. The repair records only the two named document-change uncertainties,
+then re-observes the exact own-profile destination on the expected origin without another click. Other
+input failures remain fatal. The probe also now requires real activity-feed and friend-requests body
+coverage; successful button results alone cannot certify parsing. The recorder retains CDP request IDs
+and audits every exchange after pending reads drain, including an earlier entry displaced by a reused
+request ID. Existing failure reasons survive that audit; subscriptions receive no exemption.
+The incomplete exchanges and auxiliary server error remain part of this run's evidence after the repairs.
 
 ### Remaining live sequence
 
