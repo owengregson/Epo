@@ -7,7 +7,6 @@
 
 import type { AcquireEndReason } from '../rim/follower-acquisition';
 import type { AccountState, FollowRecord, FollowState } from '../store/types';
-import { EXPLORATION_POLICY } from './exploration-policy';
 import type { FailureKind } from './recovery';
 
 /** The read-only store slice these decisions consult. */
@@ -23,26 +22,24 @@ export function queuedCountFor(store: DecisionStore, targetPk: string): number {
 }
 
 /**
- * Up to `cap` usernames from the target's raw pool that still lack counts and
- * are worth an enrichment fetch: not yet `profiled`, username known, and not
- * outside the failed-enrichment cooldown. Changed profiles and old failures
- * become eligible for a bounded retry after the freshness window.
+ * Up to `cap` usernames from the target's raw pool worth an enrichment fetch: username known, neither
+ * profiled nor failed since `freshSince` (the weekly cycle of plan-days, spec §5.16; absent, nothing
+ * observed lapses). A changed profile or an old failure is retried once its window lapses.
  */
 export function unenrichedUsernames(
   store: DecisionStore,
   targetPk: string,
   cap: number,
-  now: number = 0,
+  freshSince: number = Number.NEGATIVE_INFINITY,
 ): string[] {
   const usernames: string[] = [];
   for (const pk of store.candidatePksForTarget(targetPk)) {
     if (usernames.length >= cap) break;
     const acc = store.getAccount(pk);
     if (acc === null) continue;
-    if (acc.enrichment === 'profiled' &&
-      (now === 0 || acc.statsObservedAt === undefined || now - acc.statsObservedAt < EXPLORATION_POLICY.profileFreshMs)) continue;
+    if (acc.enrichment === 'profiled' && (acc.statsObservedAt === undefined || acc.statsObservedAt >= freshSince)) continue;
     if (acc.username === undefined) continue;
-    if (acc.enrichFailedAt !== undefined && now - acc.enrichFailedAt < EXPLORATION_POLICY.enrichmentRetryMs) continue;
+    if (acc.enrichFailedAt !== undefined && acc.enrichFailedAt >= freshSince) continue;
     usernames.push(acc.username);
   }
   return usernames;

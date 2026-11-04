@@ -46,12 +46,12 @@
       "lines": 452
     },
     {
-      "file": "src/engine/target-pipeline.ts",
-      "lines": 408
-    },
-    {
       "file": "src/main/foundation-reads.ts",
       "lines": 404
+    },
+    {
+      "file": "src/engine/target-pipeline.ts",
+      "lines": 390
     },
     {
       "file": "src/rim/follower-acquisition.ts",

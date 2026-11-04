@@ -1,13 +1,7 @@
 /**
- * The target pipeline: which chain target the loop is working, and the bounded
- * refill cycle that keeps its candidate queue stocked.
- *
- * A "cycle" is ONE bounded attempt to refill the current target's queue: at most
- * one acquisition, at most {@link MAX_ENRICH_PASSES_PER_CYCLE} enrichment passes,
- * then a final plan. Only demonstrated progress (a plan that enqueued something)
- * opens another cycle, so the loop can never hammer Instagram on a dry target.
- * See `docs/adr/0203-refill-cycle.md` for the evidence rules behind the
- * exhaustion latch.
+ * The target pipeline: which chain target the loop works, and the bounded refill cycle that stocks its
+ * queue — at most one acquisition, {@link MAX_ENRICH_PASSES_PER_CYCLE} enrichment passes, then a plan;
+ * only a plan that enqueued something opens another cycle (`docs/adr/0203-refill-cycle.md`).
  */
 
 import type { Clock } from '../governors/clock';
@@ -15,13 +9,14 @@ import { tempoOrReference } from '../kernel/tempo';
 import { type AcquireEndReason, isAcquireFailure } from '../rim/follower-acquisition';
 import type { Settings } from '../settings/settings';
 import type { KnowledgeStore } from '../store/knowledge-store';
-import { ENGINE as ENGINE_TIMING, RECOVERY as RECOVERY_TIMING } from '../timing/config';
+import { RECOVERY as RECOVERY_TIMING } from '../timing/config';
+import type { WaitResult } from '../timing/delay-manager';
 import * as log from '../utils/logger';
 import { unenrichedUsernames } from './decisions';
 import type { EngineWait } from './engine-waits';
-import { EXPLORATION_POLICY } from './exploration-policy';
+import { EXPLORATION_POLICY, weeklyCycleSince } from './exploration-policy';
 import type { HaltReason } from './halt-reason';
-import type { EngineTempo } from './plan-port';
+import type { EnginePlan, EngineTempo } from './plan-port';
 import { ACQUIRE_DRAIN_REASONS, type CurrentTarget, type EngineAcquisition, type EngineEnricher, type EngineScanner,
   type StepResult } from './ports';
 import type { FailureKind } from './recovery';
@@ -32,18 +27,11 @@ import { acquisitionFailureBackoff, reviveRecentExhausted } from './target-recov
 /** At most this many candidate usernames are enriched per pass. */
 export const ENRICH_BATCH_SIZE = EXPLORATION_POLICY.profilesPerSlice;
 
-/**
- * One bounded profile slice before planning. Empty plans defer a visit; only
- * verified list evidence can conclude that the audience ended.
- */
-export const MAX_ENRICH_PASSES_PER_CYCLE = 1;
+/** One bounded profile slice before planning; only verified list evidence concludes an audience ended. */
+export const MAX_ENRICH_PASSES_PER_CYCLE = EXPLORATION_POLICY.maxEnrichPassesPerCycle;
 
-/**
- * Acquisition is skipped while the raw not-yet-acted-on pool already holds this
- * many PLANS' worth of prospects (pool >= factor x dailyPlanSize). The bar is a
- * MULTIPLE of a plan so selection never runs pool-starved.
- */
-export const ACQUIRE_SKIP_POOL_FACTOR = 4;
+/** Acquisition waits while the unacted pool holds this many plans' worth: selection never runs pool-starved. */
+export const ACQUIRE_SKIP_POOL_FACTOR = EXPLORATION_POLICY.skipPoolFactor;
 
 /** Everything the pipeline needs; the Engine supplies its own gates as callbacks. */
 export interface TargetPipelineDeps extends EngineTempo {
@@ -57,6 +45,10 @@ export interface TargetPipelineDeps extends EngineTempo {
   settings(): Settings;
   /** The Engine's noise-gated wait. */
   wait: EngineWait;
+  /** The plan the slice, the read deferral and the freshness windows read (spec §5.16, §17.8). */
+  plan: Pick<EnginePlan, 'view' | 'dayWindow'>;
+  /** The loop's idle beat until the earliest of `events` and the plan's own (spec §5.16): exact, bounded, never hot. */
+  idle(events: readonly number[]): Promise<WaitResult>;
   /** Route a repeatedly-walled read into the recovery ladder. */
   recover(token: AbortController, kind: FailureKind): Promise<StepResult>;
   /** Terminal stop with a typed reason. */
@@ -69,12 +61,7 @@ export class TargetPipeline {
   /** The target being worked, or null before the first resolution. */
   current: CurrentTarget | null = null;
 
-  /**
-   * Refill-cycle guards. `acquiredThisCycle` means an acquisition GENUINELY
-   * completed (or was rightly skipped); a FAILED read leaves it unset so the
-   * retry re-acquires instead of planning an empty pool into exhaustion.
-   * `targetExhausted` latches only on positive drain evidence.
-   */
+  /** Refill-cycle guards: a FAILED read leaves `acquiredThisCycle` unset (the retry re-acquires); exhaustion needs drain evidence. */
   private acquiredThisCycle = false;
   private enrichPassesThisCycle = 0;
   /** Profiles enriched this cycle — "pool being worked through" vs "walled". */
@@ -109,9 +96,10 @@ export class TargetPipeline {
 
   refillAvailableAt(): number { return this.readDeferredUntil; }
 
-  private deferReads(retryAt: number | undefined): 'idle' {
-    this.readDeferredUntil = retryAt ?? this.deps.clock.now() + EXPLORATION_POLICY.lowYieldRevisitMs;
-    log.info('engine: optional reads deferred by durable budget', { resumesAt: this.readDeferredUntil });
+  /** Optional reads wait until `retryAt`; a refusal naming no instant waits for the plan-day's end (spec §17.8). */
+  private deferReads(retryAt: number | undefined, why = 'durable budget'): 'idle' {
+    this.readDeferredUntil = retryAt ?? this.deps.plan.view(this.deps.clock.now()).window.endsAt;
+    log.info('engine: optional reads deferred', { why, resumesAt: this.readDeferredUntil });
     return 'idle';
   }
 
@@ -158,8 +146,8 @@ export class TargetPipeline {
    */
   async bootstrapSeedTarget(): Promise<StepResult> {
     if (this.deps.frontier !== undefined && this.deps.frontier.snapshot().sources.length > 0) {
-      const resumeAt = this.deps.frontier.nextResumeAt() ?? this.deps.clock.now() + EXPLORATION_POLICY.lowYieldRevisitMs;
-      await this.deps.wait('engine:idle', Math.min(ENGINE_TIMING.IDLE_MS, Math.max(1, resumeAt - this.deps.clock.now())));
+      const resumeAt = this.deps.frontier.nextResumeAt();
+      await this.deps.idle(resumeAt === null ? [] : [resumeAt]);
       return 'idle';
     }
     const seed = this.deps.settings().seed.trim();
@@ -168,21 +156,15 @@ export class TargetPipeline {
     const acquired = await this.deps.acquisition.acquire(seed);
     if (acquired.endReason === 'read-budget') {
       this.deferReads('retryAt' in acquired && typeof acquired.retryAt === 'number' ? acquired.retryAt : undefined);
-      await this.deps.wait('engine:idle', ENGINE_TIMING.IDLE_MS);
+      await this.deps.idle([this.readDeferredUntil]);
       return 'idle';
     }
     const targetPk = acquired.targetPk;
     if (targetPk === null) return this.deps.halt({ kind: 'seed-unresolved' });
 
-    // NEVER silently resurrect a burned-out chain: with no ACTIVE target and
-    // the seed already exhausted (a prior chain ran it dry), re-adding it at
-    // index 0 would re-acquire, re-exhaust, and corrupt the chain lineage on
-    // every restart. But before the terminal halt, the chain self-heal gets
-    // its chance: a RECENT evidence-stamped exhaustion (the front of the
-    // chain, possibly this very seed) may be an outage artifact, not a dry
-    // chain — re-verify it once. Otherwise halting keeps the state visible;
-    // an explicit restart-from-seed (the Settings action) is the sanctioned
-    // way back in.
+    // NEVER silently resurrect a burned-out chain (re-adding an exhausted seed corrupts the lineage on
+    // every restart); a RECENT evidence-stamped exhaustion may be an outage artifact, so it is
+    // re-verified once before the terminal halt. Restart-from-seed is the sanctioned way back in.
     if (this.deps.store.getTarget(targetPk)?.status === 'exhausted') {
       const revived = this.reviveRecentExhausted();
       if (revived === null) return this.deps.halt({ kind: 'chain-exhausted' });
@@ -250,15 +232,14 @@ export class TargetPipeline {
   async refillPool(current: CurrentTarget, token: AbortController): Promise<StepResult> {
     this.deps.scanner.reconsiderTarget?.(current.pk, this.deps.clock.now());
 
-    // (1) At most one acquisition per cycle — and NONE when the store already
-    // holds several plans' worth of raw not-yet-acted-on followers for this
-    // target: scraping more pages while un-scored prospects sit locally is
-    // pure request waste. The bar is a MULTIPLE of a plan (not one plan) so
-    // the Scanner always selects from a deep pool — a bar of exactly one plan
-    // starved selection and queued whatever ratios the last shallow batch had.
+    // (1) At most one acquisition per cycle — and NONE while the store holds several plans' worth of
+    // unscored prospects for this target (more pages would be pure request waste).
+    const now = this.deps.clock.now();
+    const view = this.deps.plan.view(now);
     if (!this.acquiredThisCycle) {
       const rawPool = this.deps.store.candidatePksForTarget(current.pk).length;
-      const planCapacity = Math.min(this.deps.settings().dailyPlanSize, EXPLORATION_POLICY.queuedPerSource);
+      // The skip bar: the factor times one source's share of today's follows (spec §17.8).
+      const planCapacity = Math.min(view.plan.kinds.follow, EXPLORATION_POLICY.queuedPerSource);
       if (rawPool >= planCapacity * ACQUIRE_SKIP_POOL_FACTOR) {
         this.acquiredThisCycle = true;
         log.info('engine: raw pool sufficient, skipping acquisition', {
@@ -287,8 +268,14 @@ export class TargetPipeline {
       }
     }
 
-    // (2) Select up to a batch of candidate usernames still lacking counts.
-    const usernames = unenrichedUsernames(this.deps.store, current.pk, ENRICH_BATCH_SIZE, this.deps.clock.now());
+    // (2) Up to one slice of candidates still lacking counts: the smaller of a slice and the open session's
+    // explore reads (spec §5.16). A session with none leaves them to the next session — a zero slice is no wall.
+    const freshSince = weeklyCycleSince((t) => this.deps.plan.dayWindow(t), now);
+    const slice = Math.min(ENRICH_BATCH_SIZE, view.open?.readsLeft.explore ?? 0);
+    const usernames = unenrichedUsernames(this.deps.store, current.pk, slice, freshSince);
+    if (slice === 0 && unenrichedUsernames(this.deps.store, current.pk, 1, freshSince).length > 0) {
+      return this.deferReads(view.nextSessionAt ?? view.window.endsAt, 'no explore reads this session');
+    }
 
     // (3) Enrich them (bounded per cycle); the next firing scores what came back.
     if (usernames.length > 0 && this.enrichPassesThisCycle < MAX_ENRICH_PASSES_PER_CYCLE) {
@@ -323,15 +310,10 @@ export class TargetPipeline {
       this.enrichedThisCycle = 0;
       this.walledCycles = 0; // real progress — the read side is not walled
       this.sliceReopens = 0; // real progress — the list is still yielding
-    } else if (unenrichedUsernames(this.deps.store, current.pk, 1, this.deps.clock.now()).length > 0) {
-      // NOT exhaustion: candidates remain that were never successfully
-      // enriched. Two very different situations land here:
-      //  - enrichment IS delivering but everything scored so far was rejected
-      //    (a deep pool being worked through) → open the next cycle promptly;
-      //  - enrichment delivered NOTHING (rate wall / sentinel window) → park
-      //    LONG and retry; latching exhaustion here would burn the chain
-      //    irreversibly over a transient outage. The WALLED_CYCLES_ENTRY-th
-      //    walled cycle escalates to the recovery ladder.
+    } else if (unenrichedUsernames(this.deps.store, current.pk, 1, freshSince).length > 0) {
+      // NOT exhaustion: candidates were never enriched. Enrichment delivering (a deep pool being worked
+      // through) opens the next cycle; delivering NOTHING (a wall) parks LONG and retries — latching here
+      // would burn the chain over an outage. The WALLED_CYCLES_ENTRY-th walled cycle enters recovery.
       const walled = this.enrichedThisCycle === 0;
       this.enrichPassesThisCycle = 0;
       this.enrichedThisCycle = 0;

@@ -4,6 +4,7 @@
  */
 
 import type { PlanView } from '../governors/plan-types';
+import type { PlanDayWindow } from '../kernel/plan';
 import type { TempoSource } from '../kernel/tempo';
 
 /** The tempo the loop's wait bases resolve from; the plan's source is swapped in at wiring (default: reference). */
@@ -38,6 +39,8 @@ export interface EnginePlan {
   noteOutcome(kind: EngineWriteKind, unverified: boolean, at: number): number;
   /** The surface gate (spec §10.6): unfollows, or finding new people, paused until a fix confirms the change. */
   paused(activity: 'unfollows' | 'exploration'): boolean;
+  /** The plan-day holding `t` (the one boundary, spec §4.4): revisit and freshness windows step through it. */
+  dayWindow(t: number): PlanDayWindow;
 }
 
 /** The loop's plan dep, under the name the dep and the fact group keep. */

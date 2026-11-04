@@ -218,14 +218,14 @@ export class Engine {
       rng: deps.rng,
     });
     this.targets = new TargetPipeline({
-      frontier: deps.frontier,
-      store: deps.store,
-      clock: deps.clock, tempo: deps.tempo,
+      frontier: deps.frontier, store: deps.store,
+      clock: deps.clock, tempo: deps.tempo, plan: deps.pacing,
       acquisition: deps.acquisition,
       scanner: deps.scanner,
       enricher: deps.enricher,
       settings: (): Settings => this.settings,
       wait: (key, policyOrMs) => this.engineWait(key, policyOrMs),
+      idle: (events) => this.idleWait(this.deps.clock.now(), events),
       recover: (token, kind) => this.enterRecovery(token, kind),
       halt: (reason) => this.halt(reason),
     });

@@ -112,6 +112,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
   // The legacy planner's phase is migrated by the plan's first write; its snapshot is retired.
   if (store.getPlanState() !== null && store.getPacingState() !== null) store.setPacingState(null);
   const cadence = createMutationCadence({ plan: service, store });
+  const dayClock = service.planDayClock();
   const enginePlan: EnginePlan = {
     view: (now) => service.view(now),
     ensureIfProvisional: (now) => {
@@ -129,8 +130,8 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
       return breaker.note(kind, unverified, at, view.nextSessionAt ?? view.window.endsAt);
     },
     paused: (activity) => gate.paused(activity),
+    dayWindow: (t) => dayClock.window(t),
   };
-  const dayClock = service.planDayClock();
   const ratePlan: RatePlan = { day: dayClock };
   const prunePlan: PrunePlan = {
     preflight: (now, pk) => cadence.preflight('unfollow', 'cleanup-run', now, { pk }),

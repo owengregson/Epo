@@ -1,4 +1,7 @@
+import { EXPLORATION_POLICY } from '@/kernel/exploration-policy';
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
+import type { ProfileEnricher } from '@/rim/profile-enricher';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { openTestStore } from '../kit/store';
 
@@ -43,4 +46,37 @@ test('returns null when we have no eligible followers', async () => {
   addFollower('a', 100);
   store.addTarget({ accountPk: 'a', source: 'own_followers', status: 'active', chainIndex: 0 });
   expect(await source().pick()).toBeNull();
+});
+
+/** An own follower listed without counts, so a pick has to enrich before it can rank. */
+const addCountless = (pk: string): void => {
+  store.observe({ accountPk: pk, observedAt: 100, source: 'followers-list', fields: { username: pk } });
+  store.observeEdge(pk, OWN, 'follows', true, 100);
+};
+
+test('a pick enriches at most EXPLORATION_POLICY.ownFollowersPickMax count-less followers first', async () => {
+  for (let i = 0; i < EXPLORATION_POLICY.ownFollowersPickMax + 4; i += 1) addCountless(`p${i}`);
+  const batches: string[][] = [];
+  const enricher: ProfileEnricher = {
+    enrich: async (usernames) => {
+      batches.push(usernames);
+      return 0;
+    },
+  };
+  await new AdapterBackedOwnFollowersTargetSource({ store, ownPk: OWN, enricher }).pick();
+  expect(batches.map((b) => b.length)).toEqual([EXPLORATION_POLICY.ownFollowersPickMax]);
+});
+
+test('with no pool floor handed in, the recommended one applies', async () => {
+  addFollower('small', SETTINGS_POLICY.RECOMMENDED.minPoolSize - 1);
+  addFollower('enough', SETTINGS_POLICY.RECOMMENDED.minPoolSize);
+  expect(await source().candidates()).toEqual(['enough']);
+});
+
+test('ties on count rank by profile completeness, then pk', async () => {
+  addFollower('b', 500);
+  addFollower('a', 500);
+  store.observe({ accountPk: 'c', observedAt: 100, source: 'followers-list', fields: { username: 'c', followers: 500 } });
+  store.observeEdge('c', OWN, 'follows', true, 100);
+  expect(await source().candidates()).toEqual(['a', 'b', 'c']);
 });
