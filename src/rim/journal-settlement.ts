@@ -56,7 +56,7 @@ async function observe(d: JournalSettlementDeps, intent: EffectIntent, stopped: 
   const permit = d.readBudget.consume('profile', 'reconciliation', 1, 'reconcile');
   if (!permit.allowed) return { kind: 'read-budget', at: d.clock.now(), resumeAt: permit.resumeAt };
   const started = d.clock.now();
-  const seen = await d.profiles.visit(d.store.getAccount(intent.accountPk)?.username ?? intent.username);
+  const seen = await d.profiles.visit(d.store.getAccount(intent.accountPk)?.username ?? intent.username, { pk: intent.accountPk });
   if (stopped()) return null;
   const at = d.clock.now();
   if (!seen.ok) return { kind: seen.kind === 'gone' ? 'absent' : seen.kind === 'walled' ? 'walled' : 'unreadable', at };

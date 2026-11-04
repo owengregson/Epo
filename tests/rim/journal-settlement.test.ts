@@ -88,7 +88,7 @@ test('a renamed page (another pk under the old name) is unreachable; the visit u
     obs: { accountPk: 'someone-else', observedAt: clock.now(), source: 'profile', fields: { username } } }));
   const i = open();
   expect(await settleNextIntent(deps())).toEqual({ outcome: 'parked' });
-  expect(visit).toHaveBeenCalledWith('alice.new');
+  expect(visit).toHaveBeenCalledWith('alice.new', { pk: 'a' });
   expect(store.getEffectIntent(i.id)?.attempts).toBe(1);
 });
 

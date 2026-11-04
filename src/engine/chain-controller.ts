@@ -1,8 +1,9 @@
 import { type Clock, SystemClock } from '../governors/clock';
+import type { PlanDayClock } from '../kernel/plan';
 import { SETTINGS_POLICY } from '../kernel/settings-policy';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { info } from '../utils/logger';
-import { EXPLORATION_POLICY } from './exploration-policy';
+import { EXPLORATION_POLICY, explorationDayClock } from './exploration-policy';
 import type { SourceFrontier, SourceVisitEndReason } from './source-frontier';
 
 /**
@@ -66,6 +67,7 @@ interface ChainDeps {
   ownFollowers: OwnFollowersTargetSource;
   /** Time source for the exhaustion evidence stamp; defaults to wall-clock. */
   clock?: Clock;
+  planDay?: Pick<PlanDayClock, 'window'>;
   cfg?: ChainConfig;
   frontier?: SourceFrontier;
 }
@@ -82,6 +84,7 @@ export class ChainController {
   private readonly discovery: TargetDiscovery;
   private readonly ownFollowers: OwnFollowersTargetSource;
   private readonly clock: Clock;
+  private readonly planDay: Pick<PlanDayClock, 'window'>;
   private cfg: ChainConfig;
   private readonly frontier?: SourceFrontier;
 
@@ -96,6 +99,7 @@ export class ChainController {
     this.discovery = deps.discovery;
     this.ownFollowers = deps.ownFollowers;
     this.clock = deps.clock ?? new SystemClock();
+    this.planDay = deps.planDay ?? explorationDayClock();
     this.cfg = deps.cfg ?? CHAIN_DEFAULTS;
     this.frontier = deps.frontier;
   }
@@ -200,7 +204,7 @@ export class ChainController {
     const next = frontier.next(currentPk) ?? frontier.next();
     if (next === null) {
       return { nextTargetPk: null, source: 'none', reason: 'sources-deferred',
-        retryAt: frontier.nextResumeAt() ?? this.clock.now() + EXPLORATION_POLICY.lowYieldRevisitMs };
+        retryAt: frontier.nextResumeAt() ?? this.planDay.window(this.clock.now()).endsAt };
     }
     const previous = this.store.getTarget(next.pk);
     this.store.addTarget({ accountPk: next.pk, source: next.source, status: 'active',

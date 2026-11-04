@@ -20,13 +20,14 @@ import { ReadBudget, type ReadBudgetConfig } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
 import type { TempoSource } from '@/kernel/tempo';
 import { PlanControl } from '@/main/modules/plan-control';
-import { createIgActivityClock, type IgActivityClock } from '@/rim/ig-activity-clock';
+import { createIgActivityClock } from '@/rim/ig-activity-clock';
 import type { EffectiveSettings } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
 import { PLAN_READ_FACTS, toReadAllowance } from '@/settings/read-allowance';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DelayManager } from '@/timing/delay-manager';
 import * as logger from '@/utils/logger';
+import { censusBounds } from './census-bounds';
 import type { GraphBuildDeps, GraphPlan, StatusContributor, WiringParts } from './graph-types';
 import { createMutationCadence, type MutationCadence } from './mutation-cadence';
 import { lastMutationBefore, planDemand } from './plan-demand';
@@ -63,8 +64,6 @@ export interface PlanWiring extends GraphPlan {
   readonly readBudget: ReadBudget;
   /** The plan-backed tempo (spec §5.9, §5.11): every Instagram-facing wait, dwell and gesture follows the session. */
   readonly tempo: TempoSource;
-  /** The graph's one activity clock (spec §5.16): each visit, walk and drawer enters a drawn dwell after the last. */
-  readonly activity: IgActivityClock;
 }
 
 /** The loop's waits a re-plan can move: the plan's own parks. */
@@ -144,6 +143,8 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
       return { done: view.used.unfollow, limit: view.plan.kinds.unfollow };
     },
     censusFreshMs: () => service.snapshot(clock.now()).intent.patienceWaitMs,
+    censusBounds: (now, header) => censusBounds(service.view(now), header,
+      store.reopen.get()?.head?.rowsPerPage ?? store.getPruneCensus()?.rowsPerPage ?? null),
     dayWindow: (now) => dayClock.window(now),
   };
   const tempo = service.tempo();

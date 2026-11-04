@@ -126,6 +126,10 @@ async function rig(before?: (store: KnowledgeStore, session: PlanView) => void):
     tempo: plan.tempo, delays: new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); r.afterSleep?.(); } }) });
   r.engine = engine;
 
+  store.observe({ accountPk: 'me', source: 'profile', observedAt: clock.now(),
+    fields: { followers: MUTUALS.length, following: CANDIDATES.length + MUTUALS.length } });
+  intoSession(plan, { now: () => clock.now(), set: (t: number) => { clock.t = t; } });
+
   // The census lands and re-plans the demand (the scan command's trigger); the next plan-day sizes cleanup from it.
   expect((await engine.scan()).aborted).toBe(false);
   plan.demandChanged();

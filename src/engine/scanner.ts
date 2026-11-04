@@ -1,6 +1,7 @@
+import type { PlanDayClock } from '../kernel/plan';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import * as logger from '../utils/logger';
-import { EXPLORATION_POLICY } from './exploration-policy';
+import { EXPLORATION_POLICY, explorationDayClock, weeklyCycleSince } from './exploration-policy';
 import { type ScorerConfig, scoreCandidate } from './scorer';
 
 /**
@@ -44,9 +45,11 @@ export class Scanner {
   private readonly store: KnowledgeStore;
   private scorerCfg?: ScorerConfig;
   private cfg: ScannerConfig;
+  private readonly planDay: Pick<PlanDayClock, 'window'>;
 
-  constructor(deps: { store: KnowledgeStore; scorerCfg?: ScorerConfig; cfg?: ScannerConfig }) {
+  constructor(deps: { store: KnowledgeStore; scorerCfg?: ScorerConfig; cfg?: ScannerConfig; planDay?: Pick<PlanDayClock, 'window'> }) {
     this.store = deps.store;
+    this.planDay = deps.planDay ?? explorationDayClock();
     this.scorerCfg = deps.scorerCfg;
     // Unconfigured, a target yields at most what one source may queue (the cap applied below anyway).
     this.cfg = deps.cfg ?? { dailyPlanSize: EXPLORATION_POLICY.queuedPerSource };
@@ -66,7 +69,7 @@ export class Scanner {
       const acc = this.store.getAccount(pk);
       if (acc?.role !== 'skipped') continue;
       const stale = now > 0 && acc.statsObservedAt !== undefined &&
-        now - acc.statsObservedAt >= EXPLORATION_POLICY.profileFreshMs;
+        acc.statsObservedAt < weeklyCycleSince((t) => this.planDay.window(t), now);
       if (stale || scoreCandidate(acc, this.scorerCfg).eligible) this.store.setRole(pk, 'observed');
     }
   }

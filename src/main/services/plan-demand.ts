@@ -15,7 +15,7 @@ import type { FollowRecord } from '@/store/types';
 export type DemandStore = Pick<KnowledgeStore, 'followRecordsByState' | 'tallySince'
   | 'pruneScanRemainingCount' | 'getAccount' | 'getPruneCensus' | 'activeRequestPks'> & {
   readonly followRecords: Pick<KnowledgeStore['followRecords'], 'recheckDue'>;
-  readonly growth: Pick<KnowledgeStore['growth'], 'outsideSince'>;
+  readonly growth: Pick<KnowledgeStore['growth'], 'outsideSince' | 'headGainsHint'>;
   readonly effectIntents: Pick<KnowledgeStore['effectIntents'], 'due'>;
   readonly reopen: Pick<KnowledgeStore['reopen'], 'get'>;
 };
@@ -39,11 +39,13 @@ export function planDemand(store: DemandStore, s: EffectiveSettings, ownPk: stri
   now: number): PlanDemand {
   const own = store.getAccount(ownPk);
   const census = store.getPruneCensus();
+  const head = store.reopen.get()?.head;
   // The window is [startsAt, endsAt): its last instant is the one before the next plan-day begins.
   const last = window.endsAt - 1;
   // A trailing week of plan-days, as whole days: an average, never a boundary.
   const weekAgo = window.startsAt - WEEKLY_CYCLE * MS_PER_DAY;
   return {
+    headGainsHint: store.growth.headGainsHint(head?.walkedAt ?? census?.at ?? null),
     lifecycleDueByDayEnd: lifecycleDueBy(store, s, last),
     lifecycleBacklog: lifecycleDueBy(store, s, now),
     pruneStock: store.pruneScanRemainingCount(),
@@ -54,7 +56,7 @@ export function planDemand(store: DemandStore, s: EffectiveSettings, ownPk: stri
     pendingRequests: store.activeRequestPks().length,
     acceptsRecent: (store.tallySince(weekAgo).accept - store.tallySince(window.startsAt).accept) / WEEKLY_CYCLE,
     ownHeader: { followers: own?.followers ?? null, following: own?.following ?? null },
-    census: { lastCompleteAt: census?.at ?? null, rowsPerPage: store.reopen.get()?.head?.rowsPerPage ?? null },
+    census: { lastCompleteAt: census?.at ?? null, rowsPerPage: head?.rowsPerPage ?? census?.rowsPerPage ?? null },
   };
 }
 

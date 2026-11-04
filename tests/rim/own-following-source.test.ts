@@ -151,7 +151,7 @@ test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape'
   const { pks: stopped } = await source.fetchAllPks({ shouldStop: () => stop });
   expect(actor.scrollCalls).toBe(0);
   expect(sleeps).toEqual([]);
-  expect(stopped).toEqual(['36']); // the open-page capture is still returned
+  expect(stopped).toEqual([]); // a stopped caller never opens the dialog
 });
 
 test('fetchAllPks threads onProgress into the scrape (live mid-scan counts)', async () => {
@@ -246,8 +246,10 @@ test('every parsed row reconciles the we-follow edge IMMEDIATELY — a stopped w
   const tab = new FakeTab();
   const actor = new FakeActor();
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
-  actor.onOpen = () =>
+  let stopped = false;
+  actor.onOpen = () => { stopped = true;
     tab.emit(mkResp(followingUrl('42'), followersBody(['11', '12'], 'C1', true)));
+  };
 
   store.setOwnPk('me-pk');
   const source = new AdapterBackedOwnFollowingSource({
@@ -259,8 +261,8 @@ test('every parsed row reconciles the we-follow edge IMMEDIATELY — a stopped w
     cfg: { maxRounds: 5, noNewStop: 2 },
   });
 
-  // Immediate stop: only the on-open page lands; the walk is INCOMPLETE.
-  const res = await source.fetchAllPks({ shouldStop: () => true });
+  // Stop during open: only the on-open page lands; the walk is INCOMPLETE.
+  const res = await source.fetchAllPks({ shouldStop: () => stopped });
   expect(res.complete).toBe(false);
 
   // The knowledge already paid for is in the graph anyway: accounts AND edges.
@@ -274,8 +276,10 @@ test('a following row for a still-QUEUED candidate heals the drift on sight (ext
   const tab = new FakeTab();
   const actor = new FakeActor();
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
-  actor.onOpen = () =>
+  let stopped = false;
+  actor.onOpen = () => { stopped = true;
     tab.emit(mkResp(followingUrl('42'), followersBody(['27'], null, false)));
+  };
 
   store.setOwnPk('me-pk');
   // A queued candidate we ALREADY follow (externally) — the row must drop it.
@@ -289,7 +293,7 @@ test('a following row for a still-QUEUED candidate heals the drift on sight (ext
     ownPk: 'me-pk',
     cfg: { maxRounds: 5, noNewStop: 2 },
   });
-  await source.fetchAllPks({ shouldStop: () => true });
+  await source.fetchAllPks({ shouldStop: () => stopped });
 
   expect(store.getFollowRecord('27')!.state).toBe('external');
 });

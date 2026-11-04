@@ -1,44 +1,10 @@
-/**
- * AdapterBackedAcquisition — the live implementation of the `FollowerAcquisition`
- * port (§2/§6). One scraping implementation shared by the Scanner/Engine refill
- * and the manual IPC handler.
- *
- * Request-efficiency design (the polling rework):
- *
- *  1. RESOLVE, don't scrape: the target pk comes from the store when we have
- *     ever seen the username; only a never-seen target (the seed's first
- *     contact) costs ONE profile visit — which doubles as the target's
- *     enrichment (counts, mutuals, privacy) for free.
- *  2. DIRECT API paging: with the pk known, the followers list is paged
- *     straight off the paginated friendships API at full page size (~50/page)
- *     via the shared {@link ListPageWalker} — no profile navigation, no dialog,
- *     no scroll rounds at ~12 users a fetch.
- *  3. CURSOR RESUME: each walk starts from the per-target persisted
- *     `next_max_id` (`getScrapeCursor`) and persists where it stopped, so
- *     successive refills NEVER re-fetch a page already consumed. The old
- *     dialog scrape restarted at the head every cycle and re-downloaded the
- *     same rows each refill.
- *  4. DEMAND-DRIVEN stop: the walk ends as soon as `targetNewPks` accounts
- *     were observed (`maxNewPks`) — a refill fetches the two-or-so pages it
- *     needs, not a census.
- *  5. FALLBACK, not replacement: when the direct walk cannot fetch at all
- *     (`fetch-failed`), the dialog-scroll scrape
- *     ({@link FollowersPageReader}) runs instead — same degradation contract
- *     as the prune scan's census path. A `shape-mismatch` walk does NOT fall
- *     back (the dialog parses through the same drifted extractor); it — like
- *     every end — surfaces on the result as a typed {@link AcquireEndReason},
- *     so callers can tell a failed read from genuine audience exhaustion.
- *
- * Edges (`follower → target (follows)`) are written as each observation
- * arrives on BOTH paths (docs/PRINCIPLES.md §1): the direct walk knows the pk
- * before the first page, and the dialog fallback is handed it the moment the
- * first list URL names it. Each path persists its own resume cursor.
- */
+/** Source acquisition keeps per-row facts and resumable cursors; freshness follows the plan-day clock. */
 
 import type { Sentinel } from '@/adapter/sentinel';
-import { EXPLORATION_POLICY } from '@/engine/exploration-policy';
+import { EXPLORATION_POLICY, explorationDayClock, weeklyCycleSince } from '@/engine/exploration-policy';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { ReadBudget } from '@/governors/read-budget';
+import type { PlanDayClock } from '@/kernel/plan';
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { ListPageWalker } from '@/rim/list-page-walker';
@@ -108,6 +74,7 @@ export interface AcquisitionDeps {
   /** Our own account pk (unused for edges here; reserved for symmetry with the rim). */
   ownPk?: string;
   clock?: Clock;
+  planDay?: Pick<PlanDayClock, 'window'>;
   cfg?: AcquisitionConfig;
   /** The tempo the dialog fallback's scroll waits resolve from (default: the reference tempo). */
   tempo?: TempoSource;
@@ -123,6 +90,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
   private readonly walker?: ListPageWalker;
   private readonly visitor?: ProfileVisitor;
   private readonly clock: Clock;
+  private readonly planDay: Pick<PlanDayClock, 'window'>;
   private readonly cfg: AcquisitionConfig;
   private readonly tempo: TempoSource;
 
@@ -135,6 +103,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     this.walker = deps.walker;
     this.visitor = deps.visitor;
     this.clock = deps.clock ?? new SystemClock();
+    this.planDay = deps.planDay ?? explorationDayClock();
     this.cfg = deps.cfg ?? ACQUISITION_DEFAULTS;
     this.tempo = tempoOrReference(deps.tempo);
   }
@@ -160,10 +129,10 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     if (targetPk !== null && this.visitor !== undefined) {
       const account = this.store.getAccount(targetPk);
       const observedAt = account?.statsObservedAt;
-      if (observedAt !== undefined && this.clock.now() - observedAt >= EXPLORATION_POLICY.profileFreshMs) {
+      if (observedAt !== undefined && observedAt < weeklyCycleSince((t) => this.planDay.window(t), this.clock.now())) {
         const permit = this.readBudget?.consume('profile');
         if (permit !== undefined && !permit.allowed) return { observed: 0, targetPk, endReason: 'read-budget', retryAt: permit.resumeAt ?? undefined };
-        const visit = await this.visitor.visit(targetUsername);
+        const visit = await this.visitor.visit(targetUsername, { pk: targetPk });
         if (!visit.ok) return { observed: 0, targetPk, endReason: 'fetch-failed' };
         this.onProgress?.('source-profile-refreshed');
       }
@@ -173,7 +142,7 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
     if (targetPk !== null && this.walker !== undefined) {
       const pk = targetPk;
       const cursorState = this.store.getScrapeCursorState(pk);
-      const refreshDue = cursorState !== null && this.clock.now() - cursorState.updatedAt >= EXPLORATION_POLICY.endedRevisitMs;
+      const refreshDue = cursorState !== null && cursorState.updatedAt < weeklyCycleSince((t) => this.planDay.window(t), this.clock.now());
 
       // Coverage cap: never scrape past `maxCoverageFraction` of the target's
       // audience across all acquires. `budget` is what remains of that cap after

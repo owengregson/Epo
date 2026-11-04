@@ -241,10 +241,8 @@ export interface EngineDeps {
   rng?: () => number;
   /**
    * Per-install noise entropy (store meta `install_entropy`, drawn once and
-   * persisted): seeds the DEDICATED timing-noise rng and the restart-stable
-   * daily-boundary jitter, so no two installs share wake offsets while one
-   * install's offset survives a mid-park relaunch. Absent (plain test
-   * fakes pass 0), keeping every noise draw deterministic under a fake clock.
+   * persisted): seeds the dedicated timing-noise stream and stable plan-day draws.
+   * Test rigs pass zero to keep their draws deterministic.
    */
   installEntropy: number;
   /**

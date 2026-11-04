@@ -65,6 +65,9 @@ export interface PruneCandidateView extends PruneCandidate {
   readonly bioUnread: boolean;
 }
 
+export type PruneCandidatesResult = { readonly ok: true; readonly candidates: PruneCandidateView[] }
+  | { readonly ok: false; readonly reason: 'unavailable' };
+
 /**
  * Bridge method → IPC channel. The ONLY place a channel string appears.
  *
@@ -144,7 +147,7 @@ export interface IpcContract extends SettingsIpcContract, PlanIpcContract, LiveI
   /** READ-ONLY prune scan: the raw following − followers census (no unfollows). */
   scanPrune: { req: []; res: PruneScanResult };
   /** The persisted scan's not-yet-visited candidates (raw census), annotated by protection. */
-  pruneCandidates: { req: []; res: PruneCandidateView[] };
+  pruneCandidates: { req: []; res: PruneCandidatesResult };
   /** Start one prune run (mutually exclusive with the growth engine). */
   startPrune: { req: []; res: PruneControlResult };
   /** Stop an active prune scan/run between actions. */

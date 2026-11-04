@@ -88,8 +88,6 @@ interface LiveTestConfig {
   dryRun: boolean;
   opDelayMinMs: number;
   opDelayMaxMs: number;
-  enrichPaceMinMs: number;
-  enrichPaceMaxMs: number;
   followUnfollowGapMs: number;
   acquireMaxRounds: number;
   enrichCap: number;
@@ -132,8 +130,6 @@ export class LiveTestHarness {
       dryRun: process.env.EPO_TEST_DRY === '1',
       opDelayMinMs: envInt('EPO_TEST_OP_DELAY_MIN_MS', HARNESS.OP_DELAY_MIN_MS),
       opDelayMaxMs: envInt('EPO_TEST_OP_DELAY_MAX_MS', HARNESS.OP_DELAY_MAX_MS),
-      enrichPaceMinMs: envInt('EPO_TEST_ENRICH_PACE_MIN_MS', HARNESS.ENRICH_PACE_MIN_MS),
-      enrichPaceMaxMs: envInt('EPO_TEST_ENRICH_PACE_MAX_MS', HARNESS.ENRICH_PACE_MAX_MS),
       followUnfollowGapMs: envInt('EPO_TEST_FOLLOW_UNFOLLOW_GAP_MS', HARNESS.FOLLOW_UNFOLLOW_GAP_MS),
       acquireMaxRounds: envInt('EPO_TEST_ACQUIRE_ROUNDS', 3),
       enrichCap: envInt('EPO_TEST_ENRICH_CAP', 5),

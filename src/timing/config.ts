@@ -31,7 +31,7 @@ export {
   CIRCADIAN,
   /** Connectivity probe cadence and per-probe deadline. */
   CONNECTIVITY,
-  /** Growth loop: idle beat, refill pacing, enrichment backoff, velocity park. */
+  /** Growth loop: idle beats and candidate bounds. */
   ENGINE,
   /** Timing-noise layer (timing/noise.ts): jitter ceilings, sigmas, clamp bands. */
   NOISE,
@@ -39,13 +39,13 @@ export {
   PATTERN,
   /** Renderer keep-alive and the graph-mutation push throttle. */
   POLL,
-  /** Prune loop: pace factor, blocked park, scan freshness, hand-off timeout. */
+  /** Prune loop: failure bounds and hand-off timeout. */
   PRUNE,
   /** Recovery: step watchdog, the hold ladder, breaker streaks, healer bounds. */
   RECOVERY,
-  /** Rim: scroll/enrichment pacing, walk bounds, notification drawer timings. */
+  /** Rim: walk bounds and notification drawer deadlines. */
   RIM,
-  /** Scheduled-prune watcher, username resolution/recovery, teardown drain. */
+  /** Prune hand-off, username resolution/recovery, teardown drain. */
   SCHEDULER,
   /**
    * Level-INDEPENDENT session structure. The per-level pacing values (sessions/
@@ -81,9 +81,6 @@ export const HARNESS = {
   /** livetest defaults (env-overridable in steps.ts): paced op delay band. */
   OP_DELAY_MIN_MS: 4_000,
   OP_DELAY_MAX_MS: 9_000,
-  /** livetest defaults: enrichment pacing band. */
-  ENRICH_PACE_MIN_MS: 3_000,
-  ENRICH_PACE_MAX_MS: 5_000,
   /** livetest default: follow→unfollow gap before the multiplicative jitter. */
   FOLLOW_UNFOLLOW_GAP_MS: 45_000,
 } as const;

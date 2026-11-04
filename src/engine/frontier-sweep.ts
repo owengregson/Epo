@@ -237,7 +237,7 @@ export class FrontierSweep {
           log.info('engine.frontier-sweep: the following check ended early', { reason: res.reason });
           return { state: 'failed', why: res.reason === 'read-budget' ? 'read-budget' : 'unreadable' };
         }
-        persist({ ...pass.state, following: { checkedAt: clock.now(), count: res.count, complete: true } });
+        persist({ ...pass.state, following: { checkedAt: clock.now(), count: res.count, complete: true, added: res.added } });
         pass.outsideEpo = res.added - res.removed;
         return { state: 'done', found: res.added + res.removed };
       }

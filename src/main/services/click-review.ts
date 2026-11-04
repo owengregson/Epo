@@ -68,7 +68,7 @@ export function createClickReview(d: ClickReviewDeps) {
   /** Steps 1–4: the visit's own outcome. A wall goes to the recovery ladder, unchanged. */
   const visit = async (username: string, pk: string, token: AbortSignal | undefined): Promise<ProfileSeen> => {
     const started = clock.now();
-    const seen = await d.profiles().visit(username);
+    const seen = await d.profiles().visit(username, { pk });
     if (!await active() || token?.aborted || token !== d.signal()) throw new ActionAbortedError('profile-admission');
     if (!seen.ok && seen.kind === 'walled') throw new ActionDeferredError('profile walled', { reason: 'walled', until: null });
     if (!seen.ok) throw reviewed({ kind: 'unavailable', evidence: seen.kind === 'gone' ? 'absent' : 'unreadable' });

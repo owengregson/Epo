@@ -79,11 +79,11 @@ const RESPONSES: Record<string, unknown> = {
   growthSeries: { points: [], baselineAt: null },
   graphSnapshot: null,
   // Annotated as main serves them: two to prune (one bio not read yet), one kept by the protection list.
-  pruneCandidates: [
+  pruneCandidates: { ok: true, candidates: [
     { pk: '9001', username: 'sunny.loops', protectedBy: null, bioUnread: false },
     { pk: '9002', username: 'quiet.harbor', protectedBy: null, bioUnread: true },
     { pk: '2001', username: 'theo.park', protectedBy: 'account', bioUnread: false },
-  ],
+  ] },
   checkSeed: { kind: 'ok', pk: '1001', isPrivate: false, followersVisible: true, followers: 12_400, observedAt: 0, fromStore: true },
   checkForUpdate: { state: 'idle', mode: 'notify', current: '0.0.0', version: null, percent: null, error: null, checkedAt: null },
   // The Settings stage: no main process saves here, so every change answers honestly that nothing was saved.

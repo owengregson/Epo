@@ -2,10 +2,11 @@ import type { GrowthPointV2, TodayCounts } from '../../shared/reopen-view';
 import { startOfLocalDay } from '../../timing/units';
 import type { SqliteDriver } from '../driver/driver';
 import {
-  type ChangeSource, type DayWindow, type EpoWrite, type FollowerAccounting, type FollowerChange, followerAccounting,
-  type OwnHeader, outsideCharges, type WindowOf,
+  type ChangeSource, type DayWindow, type FollowerAccounting, type FollowerChange, followerAccounting,
+  type OwnHeader, type WindowOf,
 } from '../folds/growth';
 import type { MetaRepo } from './meta';
+import { OutsideFollowingRepo } from './outside-following';
 
 export type { ChangeSource, FollowerChange, OwnHeader } from '../folds/growth';
 
@@ -29,16 +30,6 @@ interface ChangeRow { id: number; account_pk: string; delta: 1 | -1; lo: number;
 const decode = (r: ChangeRow): FollowerChange =>
   ({ id: r.id, accountPk: r.account_pk, delta: r.delta, lo: r.lo, hi: r.hi, source: r.source, foundAt: r.found_at });
 
-/** Epo's writes that landed (ledger rows and ledger-less intents), with the account's privacy. */
-const EPO_WRITES = `
-  SELECT w.at AS at, w.action AS action, COALESCE(a.is_private, 0) AS private FROM (
-    SELECT at, action, account_pk FROM action_ledger WHERE result = 'ok' AND at >= @since
-    UNION ALL SELECT at, 'unfollow', account_pk FROM prune_ledger WHERE result = 'ok' AND at >= @since
-    UNION ALL SELECT dispatched_at, action, account_pk FROM effect_intents
-      WHERE state = 'settled' AND result IN ('ok', 'external') AND action IN ('follow', 'unfollow')
-        AND COALESCE(ledger, 'none') = 'none' AND dispatched_at >= @since
-  ) w LEFT JOIN accounts a ON a.pk = w.account_pk`;
-
 /**
  * The follower change log and the own header series (migration 15, ADR 0704), and the legacy
  * edge reads the backfill reproduces (law L8). Windows arrive as arguments, never computed here.
@@ -46,7 +37,10 @@ const EPO_WRITES = `
 export class GrowthRepo {
   private outsideMemo: { since: number; value: number } | null = null;
 
-  constructor(private readonly db: SqliteDriver, private readonly d: GrowthDeps) {}
+  readonly outsideFollowing: OutsideFollowingRepo;
+  constructor(private readonly db: SqliteDriver, private readonly d: GrowthDeps) {
+    this.outsideFollowing = new OutsideFollowingRepo(d.meta, d.changed, db, d.lookbackMs);
+  }
 
   /** Forget memoized reads; the store calls it on every committed write. */
   invalidate(): void { this.outsideMemo = null; }
@@ -192,6 +186,22 @@ export class GrowthRepo {
     });
   }
 
+  /** Header delta plus identified gains gives a conservative allowance before a new head walk. */
+  headGainsHint(frontierAt: number | null): number {
+    if (frontierAt === null) return 0;
+    const changes = this.changesSince(frontierAt).filter((c) => c.hi > frontierAt);
+    const known = changes.filter((c) => c.delta === 1).length;
+    const before = this.headerAtOrBefore(frontierAt);
+    const after = this.latestOwnHeader();
+    const residual = before === null || after === null ? 0
+      : Math.max(0, after.followers - before.followers - changes.reduce((sum, c) => sum + c.delta, 0));
+    return known + residual;
+  }
+
+  completeOutsideFollowing(seen: ReadonlySet<string>, dayStart: number, at: number): number {
+    return this.outsideFollowing.complete(seen, dayStart, at, at - this.d.lookbackMs);
+  }
+
   /** The identified net change since `since` (the legacy `netFollowersSince`, identical at migration). */
   netSince(since: number): number {
     const floor = this.d.baselineAt() ?? Number.NEGATIVE_INFINITY;
@@ -206,13 +216,7 @@ export class GrowthRepo {
     return value;
   }
 
-  private outsideIn(from: number, to: number): number {
-    const lookback = from - this.d.lookbackMs;
-    const writes = this.db.prepare(EPO_WRITES).all<{ at: number; action: EpoWrite['action']; private: number }>({ since: lookback })
-      .map((w): EpoWrite => ({ at: w.at, action: w.action, private: w.private === 1 }));
-    return outsideCharges(this.headersSince(lookback), writes)
-      .filter((w) => w.from >= from && w.to < to).reduce((s, w) => s + w.charge, 0);
-  }
+  private outsideIn(from: number, to: number): number { return this.outsideFollowing.outsideIn(from, to); }
 
   // --- The legacy edge reads (the current UI; the backfill reproduces them) -------------
 

@@ -12,8 +12,9 @@
  */
 
 import type { OwnFollowersTargetSource } from '@/engine/chain-controller';
-import { EXPLORATION_POLICY } from '@/engine/exploration-policy';
+import { EXPLORATION_POLICY, explorationDayClock, weeklyCycleSince } from '@/engine/exploration-policy';
 import { type Clock, SystemClock } from '@/governors/clock';
+import type { PlanDayClock } from '@/kernel/plan';
 import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import type { ProfileEnricher } from '@/rim/profile-enricher';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -38,6 +39,7 @@ export interface OwnFollowersTargetSourceDeps {
    */
   enricher?: ProfileEnricher;
   clock?: Clock;
+  planDay?: Pick<PlanDayClock, 'window'>;
   minPoolSize?: number;
 }
 
@@ -46,6 +48,7 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
   private readonly ownPk: string;
   private readonly enricher?: ProfileEnricher;
   private readonly clock: Clock;
+  private readonly planDay: Pick<PlanDayClock, 'window'>;
   private readonly minPoolSize: number;
 
   constructor(deps: OwnFollowersTargetSourceDeps) {
@@ -53,6 +56,7 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
     this.ownPk = deps.ownPk;
     this.enricher = deps.enricher;
     this.clock = deps.clock ?? new SystemClock();
+    this.planDay = deps.planDay ?? explorationDayClock();
     this.minPoolSize = deps.minPoolSize ?? SETTINGS_POLICY.RECOMMENDED.minPoolSize;
   }
 
@@ -71,7 +75,7 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
       for (const c of candidates) {
         if (usernames.length >= EXPLORATION_POLICY.ownFollowersPickMax) break;
         if (c.followers !== undefined || c.username === undefined || (c.enrichFailedAt !== undefined &&
-          this.clock.now() - c.enrichFailedAt < EXPLORATION_POLICY.enrichmentRetryMs)) continue;
+          c.enrichFailedAt >= weeklyCycleSince((t) => this.planDay.window(t), this.clock.now()))) continue;
         usernames.push(c.username);
       }
       if (usernames.length > 0) {

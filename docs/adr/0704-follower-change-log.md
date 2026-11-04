@@ -56,8 +56,19 @@ bounds arrive through `StorePolicy` (spec §14 C24).
 - The frontier sweep (ADR 0213) writes the dated rows: a drawer event is exact; a followers-head row is
   interval-dated from the frontier and narrowed by list position only after the order self-check; a
   head walk never writes a loss. Its `AwaySummary` is a window read over this log.
-- The following check (step G) records the exact outside follows and unfollows it identified; the
-  ceiling still charges the header estimate until the exact count is wired into the charge.
+- The first complete following check establishes stock: it charges none of the preexisting list
+  as new actions and preserves earlier header estimates. Later complete checks replace the header
+  estimate only after that baseline, through their checked time. New outside
+  follows lack event dates, so their ceiling charge belongs to the plan-day in which the complete
+  check observes them. This is a conservative admission charge, not a dated growth event. The
+  complete count anchors subsequent header estimates; Epo's later writes and outstanding requests
+  are still subtracted. Landed ledger and settled manual-intent follows count as Epo actions even
+  without a managed follow record; an old follow followed by a verified removal cannot exempt a
+  later outside refollow. Repeated checks add zero for edges already observed.
+- `meta.outside_following` retains per-pk discoveries through an interrupted read, then atomically
+  records the complete check and clears its pending set. `reopen_state.following.added` records that
+  check's additions. Checks persist through the store retention horizon; a restart does not charge
+  the same discovery twice.
 
 ## Alternatives rejected
 
