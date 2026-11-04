@@ -13,8 +13,10 @@
  */
 import { livePlan } from '@/renderer/gallery/fixtures-live-data';
 import type {
+  ChainTargetDetail,
   ChainTargetView,
   EpoStatus,
+  GrowthSeriesRead,
   LogEntry,
   PruneStatus,
   QueueRow,
@@ -112,6 +114,33 @@ export const GALLERY_CHAIN: ChainTargetView[] = [
     },
   },
 ];
+
+/** The current source's measured counts, for the three populated Working stories. */
+export const GALLERY_TARGET_DETAIL: ChainTargetDetail = {
+  ...GALLERY_CHAIN[1],
+  funnel: { queued: 1_284, pending_followback: 87, followed_back: 51, unfollow_queued: 17,
+    unfollowed: 50, abandoned: 3, external: 5, kept: 9 },
+  trueFollowers: 24_800,
+  scanned: 8_150,
+  remainingActionable: 1_620,
+  resolvedOutcomes: 127,
+  medianFollowbackMs: 31 * 60 * MIN,
+  runway: { days: 54, overCap: false },
+};
+
+const growthStart = new Date();
+growthStart.setHours(0, 0, 0, 0);
+growthStart.setDate(growthStart.getDate() - 13);
+
+/** Net +83 from a 1,201 baseline to the Working header's 1,284; the last day's +12 matches today.net. */
+export const GALLERY_GROWTH_SERIES: GrowthSeriesRead = {
+  baselineAt: growthStart.getTime(),
+  points: [0, -3, -1, 5, 12, 10, 20, 31, 38, 49, 57, 64, 71, 83].map((cumulativeNet, i) => {
+    const day = new Date(growthStart);
+    day.setDate(day.getDate() + i);
+    return { dayStartMs: day.getTime(), cumulativeNet };
+  }),
+};
 
 /** Rows for whichever queue stage the Queues view is showing. */
 export const GALLERY_QUEUE: QueueRow[] = Array.from({ length: 8 }, (_, i) => ({
