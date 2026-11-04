@@ -18,6 +18,7 @@ import { SURFACE } from '@/adapter/ig-surface';
 import { InputDispatch } from '@/adapter/input-dispatch';
 import { pageCall } from '@/adapter/page-call';
 import { assessRendererCanary, rendererCanaryScript } from '@/adapter/renderer-canary';
+import { evaluateMainDocument, loadMainDocument, reloadMainDocument } from '@/adapter/tab-document';
 import { TabPlacement } from '@/adapter/tab-placement';
 import { toCdpMouseParams } from '@/interaction/cdp-input';
 import type { PointerInputEvent } from '@/interaction/input-driver';
@@ -226,32 +227,15 @@ export class InstagramTab {
 
   /**
    * Navigate the tab to a URL (e.g. Instagram home for login). Deadline-bounded:
-   * a navigation that never settles (wedged renderer) throws
+   * a navigation whose main document never becomes ready throws
    * `TabUnresponsiveError` instead of parking the caller forever.
    */
   async goto(url: string): Promise<void> {
     logger.info('tab.goto', { url });
     this.input.invalidate();
-    try {
-      // Start the first renderer before awaiting CDP setup (cold views have none).
-      const settled = await withTimeout(this.liveContents().loadURL(url), this.timeouts.gotoMs);
-      if (settled === TIMED_OUT) {
-        throw new TabUnresponsiveError('goto', this.timeouts.gotoMs);
-      }
-      await this.debuggerSetup;
-    } catch (e) {
-      // ERR_ABORTED (-3) means the navigation was superseded — a concurrent
-      // loadURL (e.g. the startup nav racing the build-flow's username resolve)
-      // or an Instagram client-side redirect. The winning navigation is the one
-      // that matters, so this is benign; rethrow anything else (a timeout falls
-      // through here unmatched and stays a loud TabUnresponsiveError).
-      const err = e as { code?: string; errno?: number };
-      if (err && (err.code === 'ERR_ABORTED' || err.errno === -3)) {
-        logger.debug('tab.goto: navigation superseded (ERR_ABORTED), ignoring', { url });
-        return;
-      }
-      throw e;
-    }
+    // Start the first renderer before awaiting CDP setup (cold views have none).
+    await loadMainDocument(this.liveContents(), url, this.timeouts.gotoMs);
+    await this.debuggerSetup;
   }
 
   /**
@@ -278,14 +262,7 @@ export class InstagramTab {
       typeof fnOrString === 'function'
         ? `(${fnOrString.toString()})()`
         : fnOrString;
-    const result = await withTimeout(
-      this.liveContents().executeJavaScript(code, false) as Promise<T>,
-      this.timeouts.evaluateMs,
-    );
-    if (result === TIMED_OUT) {
-      throw new TabUnresponsiveError('evaluate', this.timeouts.evaluateMs);
-    }
-    return result;
+    return evaluateMainDocument<T>(this.liveContents(), code, this.timeouts.evaluateMs, () => this.input.version());
   }
 
   /** Acknowledged CDP input; never fall back to focus-dependent Electron input. */
@@ -432,20 +409,11 @@ export class InstagramTab {
     dbg.removeListener('message', this.onDebuggerMessage);
     this.debuggerReady = false;
 
-    // Reload, waiting (bounded) for the load to settle. `did-stop-loading`
-    // fires on success AND failure; a renderer too wedged to emit even that
-    // just runs out the deadline and we re-attach anyway.
-    const onLoadStop = { fn: (): void => {} };
-    const loaded = new Promise<void>((resolve) => {
-      onLoadStop.fn = (): void => resolve();
-      wc.once('did-stop-loading', onLoadStop.fn);
-    });
-    wc.reload();
-    const settled = await withTimeout(loaded, this.timeouts.gotoMs);
-    if (settled === TIMED_OUT) {
-      wc.removeListener('did-stop-loading', onLoadStop.fn);
-      this.markUnhealthy('recovery-reload-timeout');
-      throw new TabUnresponsiveError('recovery-reload', this.timeouts.gotoMs);
+    try {
+      await reloadMainDocument(wc, this.timeouts.gotoMs);
+    } catch (error) {
+      this.markUnhealthy(error instanceof TabUnresponsiveError ? 'recovery-reload-timeout' : 'recovery-reload-failed');
+      throw error;
     }
     this.attachDebugger();
     await this.debuggerSetup;

@@ -1,15 +1,4 @@
-/**
- * Tab health eventing (cdp-detach-undetected fix). A Chromium-side debugger
- * detach, a renderer crash, or a hung renderer used to be observed by NOTHING:
- * onResponse consumers just went quiet forever and input silently fell back to
- * the focus-dependent transport. The tab must now mark itself unhealthy and
- * fire the `onUnhealthy` callback on every such event — and `recoverTab()`
- * must clear the mark and RE-ARM the listeners so the next event reports too.
- *
- * Electron is mocked at module scope with a small event-keyed emitter so tests
- * can fire `detach` / `render-process-gone` / `unresponsive` like Chromium
- * would, and flip the debugger's attached state to force the input fallback.
- */
+/** Tab health remains fail-closed across detach, renderer failure and recovery. */
 
 jest.mock('electron', () => {
   type Handler = (...args: unknown[]) => void;
@@ -46,6 +35,7 @@ jest.mock('electron', () => {
     attached: false,
     inputEvents: [] as unknown[],
     reloads: 0,
+    reloadFails: false,
     wcEvents,
     dbgEvents,
   };
@@ -65,8 +55,12 @@ jest.mock('electron', () => {
     setUserAgent: (): void => {},
     isDestroyed: (): boolean => false,
     loadURL: async (): Promise<void> => {},
-    executeJavaScript: async (code: string): Promise<unknown> =>
-      code.includes('1 + 1') ? 2 : { rafTicks: 7, elapsedMs: 100 },
+    mainFrame: {
+      isDestroyed: (): boolean => false,
+      detached: false,
+      executeJavaScript: async (code: string): Promise<unknown> =>
+        code.includes('1 + 1') ? 2 : { rafTicks: 7, elapsedMs: 100 },
+    },
     on: (event: string, fn: Handler): void => wcEvents.add(event, fn),
     once: (event: string, fn: Handler): void => {
       const wrapped: Handler = (...args) => {
@@ -79,7 +73,11 @@ jest.mock('electron', () => {
     reload: (): void => {
       state.reloads += 1;
       // A real reload settles asynchronously; recoverTab waits (bounded) on it.
-      setTimeout(() => wcEvents.emit('did-stop-loading'), 0);
+      setTimeout(() => {
+        wcEvents.emit('did-frame-navigate', {}, 'https://fixture.invalid/', 200, '', true);
+        if (state.reloadFails) wcEvents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://fixture.invalid/', true);
+        else wcEvents.emit('dom-ready');
+      }, 0);
     },
     sendInputEvent: (event: unknown): void => {
       state.inputEvents.push(event);
@@ -110,6 +108,7 @@ interface TabMockState {
   attached: boolean;
   inputEvents: unknown[];
   reloads: number;
+  reloadFails: boolean;
   wcEvents: Emitter;
   dbgEvents: Emitter;
 }
@@ -137,6 +136,7 @@ beforeEach(() => {
   mock.attached = false;
   mock.inputEvents.length = 0;
   mock.reloads = 0;
+  mock.reloadFails = false;
   // Each test builds a fresh tab over the one shared mock — drop the previous
   // tab's listeners so events (and listener counts) stay per-test.
   mock.wcEvents.reset();
@@ -218,6 +218,18 @@ describe('a refused input dispatch is a hard stop, reported once per attach epoc
 });
 
 describe('recoverTab clears the mark and re-arms everything', () => {
+  test('a failed main reload stays unhealthy and does not reattach a ready transport', async () => {
+    const { tab, reasons } = await makeAttachedTab();
+    mock.reloadFails = true;
+    await expect(tab.recoverTab()).rejects.toMatchObject({ errno: -105 });
+    expect(tab.isMarkedUnhealthy()).toBe(true);
+    expect(mock.attached).toBe(false);
+    expect(reasons).toEqual(['recovery-reload-failed']);
+    expect(mock.wcEvents.count('dom-ready')).toBe(0);
+    expect(mock.wcEvents.count('did-fail-load')).toBe(0);
+    tab.dispose();
+  });
+
   test('recovery clears the unhealthy mark without firing a deliberate-detach event', async () => {
     const { tab, reasons } = await makeAttachedTab();
     mock.dbgEvents.emit('detach', null, 'target closed');

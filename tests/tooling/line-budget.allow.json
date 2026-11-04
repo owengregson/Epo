@@ -31,7 +31,7 @@
     },
     {
       "file": "src/adapter/tab.ts",
-      "lines": 646
+      "lines": 614
     },
     {
       "file": "src/store/knowledge-store.ts",
