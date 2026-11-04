@@ -7,7 +7,7 @@
  * load settled; main hears `bootRevealed()` exactly once; a reload while main is live skips the intro; a
  * deadline reveal shows final-size skeletons and the Live placeholder; the tour waits for the reveal.
  */
-import { act, render, waitFor } from '@testing-library/preact';
+import { act, fireEvent, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
 import { BootGate } from '@/renderer/boot/BootGate';
 import { SPLASH, splashCaption } from '@/renderer/boot/boot-copy';
@@ -107,12 +107,33 @@ describe('the launch gate', () => {
     expect(revealed()).toBe(1);
   });
 
-  it('a first load that failed offers to try again on the Live stage', async () => {
-    await mount(idleStatus({ boot: ready({ ig: 'placeholder', tab: 'failed' }) }));
+  it('an offline first load offers to try again on the Live stage', async () => {
+    await mount(idleStatus({ online: false, boot: ready({ ig: 'placeholder', tab: 'failed' }) }));
     await waitFor(() => expect(splash()).toBeNull(), { timeout: 2_000 });
     const placeholder = document.querySelector('.live-placeholder');
     expect(placeholder?.textContent).toContain('Instagram can’t load while you’re offline.');
     expect(placeholder?.querySelector('button')?.textContent).toBe('Try again');
+  });
+
+  it('an online load failure stays covered and offers retry without claiming the connection is offline', async () => {
+    const failed = idleStatus({ online: true, boot: ready({ ig: 'placeholder', tab: 'failed' }) });
+    await mount(failed);
+    await waitFor(() => expect(splash()).toBeNull(), { timeout: 2_000 });
+    const placeholder = document.querySelector('.live-placeholder') as HTMLElement;
+    expect(placeholder.textContent).toContain('Epo couldn’t finish opening Instagram.');
+    expect(placeholder.textContent).not.toContain('offline');
+    expect(stages().every((c) => c[2] === true)).toBe(true);
+    expect(bridge.calls.some((c) => c[0] === 'login')).toBe(false);
+    await act(async () => { fireEvent.click(placeholder.querySelector('button') as HTMLButtonElement); });
+    expect(bridge.calls.filter((c) => c[0] === 'login')).toHaveLength(1);
+    expect(stages().at(-1)?.[2]).toBe(true);
+
+    await push({ ...failed, online: false });
+    expect(placeholder.textContent).toContain('Instagram can’t load while you’re offline.');
+    await push(failed);
+    expect(placeholder.textContent).toContain('Epo couldn’t finish opening Instagram.');
+    expect(stages().at(-1)?.[2]).toBe(true);
+    expect(bridge.calls.filter((c) => c[0] === 'login')).toHaveLength(1);
   });
 
   it('the first-launch tour opens only after the reveal', async () => {

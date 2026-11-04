@@ -14,6 +14,7 @@ export const SPLASH = {
 export const PLACEHOLDER = {
   loading: 'Opening Instagram…',
   offline: 'Instagram can’t load while you’re offline. Epo reloads it when you’re back online.',
+  failed: 'Epo couldn’t finish opening Instagram. Try again.',
   retry: 'Try again',
 } as const;
 
