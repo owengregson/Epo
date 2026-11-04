@@ -119,7 +119,7 @@ export const GALLERY_CHAIN: ChainTargetView[] = [
 export const GALLERY_TARGET_DETAIL: ChainTargetDetail = {
   ...GALLERY_CHAIN[1],
   funnel: { queued: 1_284, pending_followback: 87, followed_back: 51, unfollow_queued: 17,
-    unfollowed: 42, abandoned: 3, external: 5, kept: 9 },
+    unfollowed: 50, abandoned: 3, external: 5, kept: 9 },
   trueFollowers: 24_800,
   scanned: 8_150,
   remainingActionable: 1_620,

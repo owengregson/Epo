@@ -56,7 +56,11 @@ interface Live {
 /** One scenario: its status (and prune), plus what the column reads beyond them. */
 function scenario(key: string, label: string, status: EpoStatus, live: Live = {}, prune: PruneStatus = basePrune()): Scenario {
   return {
-    key: `live-${key}`, label, status, prune,
+    key: `live-${key}`, label,
+    status: live.populatedPeople
+      ? { ...status, pendingFollowback: GALLERY_TARGET_DETAIL.funnel.pending_followback }
+      : status,
+    prune,
     apply() {
       feedSignal.value = live.emptyFeed ? { ...liveFeed(false), items: [] } : liveFeed(live.away ?? false);
       activitySignal.value = live.op === undefined ? null : { activity: { info: { kind: 'page', op: live.op }, since: NOW }, busy: true, holds: [] };
