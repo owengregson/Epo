@@ -12,6 +12,7 @@ import { chainListSignal, growthSeriesSignal, queueLanesSignal } from '@/rendere
 import { type ShellControls, ShellControlsContext, settingsViewSignal, stageSignal, statusSignal } from '@/renderer/app/shell-context';
 import { runwayText } from '@/renderer/cards/chain/PoolRunwayCard';
 import { keptWhy } from '@/renderer/cards/queues/QueueRowItem';
+import { GALLERY_TARGET_DETAIL } from '@/renderer/gallery/fixtures';
 import { crumbTier, detailTargetPk } from '@/renderer/hooks/useTargetDetail';
 import { PeoplePage } from '@/renderer/pages/PeoplePage';
 import { chainTarget, type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
@@ -108,6 +109,33 @@ describe('PeoplePage', () => {
     mount();
     await act(async () => {});
     expect(document.querySelector('[aria-label="Loading your sources"]')).not.toBeNull();
+  });
+
+  it('uses one shared source-detail empty state and keeps the trail available', async () => {
+    statusSignal.value = idleStatus();
+    stageSignal.value = 'people';
+    mount();
+    await act(async () => {});
+    expect(screen.getAllByText('Epo isn’t exploring a source yet.')).toHaveLength(1);
+    expect(screen.getByText('Show every step')).toBeTruthy();
+    for (const heading of ['Through this source', 'How many are left', 'Follow-backs']) {
+      expect(screen.queryByText(heading)).toBeNull();
+    }
+  });
+
+  it('keeps every populated source section and returns to one empty state after clearing the source', async () => {
+    bridge.stub('chainDetail', GALLERY_TARGET_DETAIL);
+    stageSignal.value = 'people';
+    mount();
+    await act(async () => {});
+    for (const heading of ['Through this source', 'How many are left', 'Follow-backs']) {
+      expect(screen.getByText(heading)).toBeTruthy();
+    }
+    expect(screen.getByText('Enough people for about 54 days')).toBeTruthy();
+    expect(screen.queryByText('Epo isn’t exploring a source yet.')).toBeNull();
+    await act(async () => { statusSignal.value = idleStatus(); });
+    expect(screen.getAllByText('Epo isn’t exploring a source yet.')).toHaveLength(1);
+    expect(screen.queryByText('Enough people for about 54 days')).toBeNull();
   });
 });
 

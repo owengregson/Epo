@@ -22,9 +22,13 @@ export function FindsPanel({ chain, active }: { chain: ChainList; active: boolea
   return (
     <Fragment>
       <ChainBreadcrumb chain={chain} currentPk={currentPk} viewingPk={detailPk} />
-      <TargetFunnelCard detail={detail} current={currentPk !== null && detailPk === currentPk} />
-      <PoolRunwayCard detail={detail} />
-      <ConversionCard detail={detail} />
+      {detail === null ? <p class="hint">Epo isn’t exploring a source yet.</p> : (
+        <Fragment>
+          <TargetFunnelCard detail={detail} current={currentPk !== null && detailPk === currentPk} />
+          <PoolRunwayCard detail={detail} />
+          <ConversionCard detail={detail} />
+        </Fragment>
+      )}
     </Fragment>
   );
 }
