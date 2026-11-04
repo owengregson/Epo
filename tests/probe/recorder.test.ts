@@ -17,7 +17,7 @@ function harness(post?: Promise<unknown>, body?: Promise<unknown>) {
       ? post ?? Promise.resolve({ postData: 'doc_id=123' })
       : body ?? Promise.resolve({ body: '{"status":"ok"}', base64Encoded: false })),
   });
-  const wc = { debugger: dbg } as unknown as WebContents;
+  const wc = Object.assign(new EventEmitter(), { debugger: dbg }) as unknown as WebContents;
   const emit = (method: string, params: object) => dbg.emit('message', {}, method, params);
   const request = (extra: object = {}) => emit('Network.requestWillBeSent', {
     requestId: 'one', request: { url: 'https://www.instagram.com/api/graphql', method: 'POST', ...extra },

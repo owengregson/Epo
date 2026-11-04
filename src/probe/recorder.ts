@@ -9,10 +9,14 @@
  * listener, so production code is untouched and nothing extra is requested.
  */
 
+import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import type { WebContents } from 'electron';
 import { SURFACE } from '@/adapter/ig-surface';
+import { isProbeApiUrl } from '@/probe/native-traffic';
+import { NetworkTrace } from '@/probe/network-trace';
+import { inlineRequestData } from '@/probe/request-data';
 import { gateObserved } from '@/surface/read/gate';
 import { decodeBody } from '@/surface/transport/decode';
 import { TAB } from '@/timing/config';
@@ -22,6 +26,15 @@ export interface Exchange {
   n: number;
   /** CDP identity, retained even when a redirect reuses it for another exchange. */
   requestId: string;
+  url: string;
+  startedAt: number;
+  sessionId: string;
+  resourceType?: string;
+  frameId?: string;
+  loaderId?: string;
+  postDataSource?: 'postData' | 'postDataEntries' | 'getter';
+  postSha256?: string;
+  captureErrors?: string[];
   /** Ms since the recorder started. */
   at: number;
   /** The browse step that was running when the request left. */
@@ -45,14 +58,14 @@ export interface Exchange {
   textHead?: string;
   body?: string;
   failed?: string;
+  transportError?: string;
+  canceled?: boolean;
 }
 
 /** Request headers whose VALUE is a session secret: recorded as present only. */
 const SECRET_HEADERS = /^(?:cookie|x-csrftoken|x-ig-www-claim|x-fb-lsd|x-web-session-id|x-mid|authorization|x-ig-set-www-claim)$/;
 /** Form fields worth keeping verbatim; every other key is listed by name only. */
 const FORM_KEEP = /^(?:doc_id|fb_api_req_friendly_name|fb_api_caller_class|variables|server_timestamps|query_hash)$/;
-/** Only API traffic — page documents, static assets and logging are noise here. */
-const API_PATH = /^\/(?:api\/|graphql|ajax\/(?!bz|bulk-route))/;
 
 function shapeOf(v: unknown, depth = 0): unknown {
   if (Array.isArray(v)) return v.length === 0 ? [] : [`len ${v.length}`, shapeOf(v[0], depth + 1)];
@@ -77,13 +90,14 @@ function formOf(raw: string): { form: Record<string, string>; formKeys: string[]
 
 export class TrafficRecorder {
   readonly exchanges: Exchange[] = [];
+  readonly trace: NetworkTrace;
   private readonly byId = new Map<string, Exchange>();
   private readonly t0 = Date.now();
   private step = 'start';
   private readonly bodies: string;
   private readonly pending = new Set<Promise<void>>();
-  private readonly listener = (_e: unknown, method: string, params: unknown): void => {
-    const task = this.onMessage(method, params as Record<string, unknown>)
+  private readonly listener = (_e: unknown, method: string, params: unknown, sessionId?: string): void => {
+    const task = this.onMessage(method, params as Record<string, unknown>, sessionId ?? '')
       .catch((error: unknown) => this.onFailure?.({ step: this.step, detail: String(error) }))
       .finally(() => this.pending.delete(task));
     this.pending.add(task);
@@ -93,16 +107,20 @@ export class TrafficRecorder {
     private readonly wc: WebContents,
     out: string,
     private readonly onFailure?: (failure: { step: string; detail: string; exchange?: number }) => void,
+    private readonly independentTransport = false,
   ) {
+    this.trace = new NetworkTrace(wc);
     this.bodies = path.join(out, 'bodies');
     mkdirSync(this.bodies, { recursive: true });
   }
 
   start(): void {
+    this.trace.start();
     this.wc.debugger.on('message', this.listener);
   }
 
   stop(): void {
+    this.trace.stop();
     this.wc.debugger.off('message', this.listener);
   }
 
@@ -110,7 +128,7 @@ export class TrafficRecorder {
   async drain(): Promise<void> {
     await Promise.all([...this.pending]);
     for (const ex of this.exchanges) {
-      if (ex.failed === undefined && (ex.status === undefined || ex.body === undefined)) {
+      if (!this.independentTransport && ex.failed === undefined && (ex.status === undefined || ex.body === undefined)) {
         this.fail(ex, 'incomplete exchange at recorder stop');
       }
     }
@@ -123,27 +141,48 @@ export class TrafficRecorder {
     this.onFailure?.({ step: ex.step, detail, exchange: ex.n });
   }
 
-  private async command<T>(method: string, requestId: string): Promise<T> {
-    const result = await withTimeout(this.wc.debugger.sendCommand(method, { requestId }) as Promise<T>, TAB.GET_BODY_TIMEOUT_MS);
-    if (result === TIMED_OUT) throw new Error(`${method}: timed out`);
-    return result;
+  private captureFailure(ex: Exchange, detail: string): void {
+    ex.captureErrors ??= [];
+    ex.captureErrors.push(detail);
+    // An independent session observer must resolve the missing evidence before qualification.
+    // Without it, preserve the standalone recorder's strict failure behavior.
+    if (!this.independentTransport) this.fail(ex, detail);
+  }
+
+  private async command<T>(method: string, ex: Exchange): Promise<T> {
+    const fields = { method, requestId: ex.requestId, sessionId: ex.sessionId, exchange: ex.n };
+    this.trace.add('command-issued', fields);
+    try {
+      const sent = ex.sessionId === '' ? this.wc.debugger.sendCommand(method, { requestId: ex.requestId })
+        : this.wc.debugger.sendCommand(method, { requestId: ex.requestId }, ex.sessionId);
+      const result = await withTimeout(sent as Promise<T>, TAB.GET_BODY_TIMEOUT_MS);
+      if (result === TIMED_OUT) throw new Error(`${method}: timed out`);
+      this.trace.add('command-resolved', fields);
+      return result;
+    } catch (error) {
+      this.trace.add('command-rejected', { ...fields, error: String(error) });
+      throw error;
+    }
   }
 
   setStep(step: string): void {
     this.step = step;
   }
 
-  private async onMessage(method: string, p: Record<string, unknown>): Promise<void> {
+  private async onMessage(method: string, p: Record<string, unknown>, sessionId: string): Promise<void> {
+    this.trace.message(method, p, sessionId);
     const id = String(p.requestId ?? '');
+    const key = JSON.stringify([sessionId, id]);
     if (method === 'Network.requestWillBeSent') {
-      const req = p.request as { url: string; method: string; headers?: Record<string, string>; postData?: string; hasPostData?: boolean };
+      const req = p.request as { url: string; method: string; headers?: Record<string, string>; postData?: string;
+        hasPostData?: boolean; postDataEntries?: Array<{ bytes?: string }> };
       let url: URL;
       try {
         url = new URL(req.url);
       } catch {
         return;
       }
-      if (!url.hostname.endsWith('instagram.com') || !API_PATH.test(url.pathname)) return;
+      if (!isProbeApiUrl(req.url)) return;
       const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(req.headers ?? {})) {
         const key = k.toLowerCase();
@@ -153,6 +192,12 @@ export class TrafficRecorder {
       const ex: Exchange = {
         n: this.exchanges.length + 1,
         requestId: id,
+        url: req.url,
+        startedAt: typeof p.wallTime === 'number' ? p.wallTime * 1000 : Date.now(),
+        sessionId,
+        resourceType: p.type as string | undefined,
+        frameId: p.frameId as string | undefined,
+        loaderId: p.loaderId as string | undefined,
         at: Date.now() - this.t0,
         step: this.step,
         method: req.method,
@@ -164,16 +209,23 @@ export class TrafficRecorder {
       };
       // Publish before asynchronous POST metadata: response events can arrive during that CDP await.
       this.exchanges.push(ex);
-      this.byId.set(id, ex);
-      let post = req.postData;
+      this.byId.set(key, ex);
+      const inline = inlineRequestData(req);
+      let post = inline?.value;
+      ex.postDataSource = inline?.source;
       if (post === undefined && req.hasPostData === true) {
-        post = await this.command<{ postData: string }>('Network.getRequestPostData', id)
-          .then((r) => r.postData, (error: unknown) => { this.fail(ex, `request metadata: ${String(error)}`); return undefined; });
+        post = await this.command<{ postData: string }>('Network.getRequestPostData', ex)
+          .then((r) => r.postData, (error: unknown) => { this.captureFailure(ex, `request metadata: ${String(error)}`); return undefined; });
+        if (post !== undefined) ex.postDataSource = 'getter';
       }
-      if (post !== undefined) Object.assign(ex, formOf(post));
+      if (post !== undefined) {
+        ex.postSha256 = createHash('sha256').update(post).digest('hex');
+        Object.assign(ex, formOf(post));
+        ex.epoKind = SURFACE.matchEndpoint(req.url, headers['x-fb-friendly-name'] ?? ex.form?.fb_api_req_friendly_name);
+      }
       return;
     }
-    const ex = this.byId.get(id);
+    const ex = this.byId.get(key);
     if (ex === undefined) return;
     if (method === 'Network.responseReceived') {
       const res = p.response as { status: number; mimeType: string };
@@ -183,16 +235,18 @@ export class TrafficRecorder {
         this.fail(ex, `unsafe API response: ${res.status} ${res.mimeType}`);
       }
     } else if (method === 'Network.loadingFailed') {
-      this.fail(ex, String(p.errorText ?? 'failed'));
-      this.byId.delete(id);
+      ex.transportError = String(p.errorText ?? 'failed');
+      ex.canceled = p.canceled === true;
+      if (!this.independentTransport || !ex.canceled || ex.transportError !== 'net::ERR_ABORTED') this.fail(ex, ex.transportError);
+      this.byId.delete(key);
     } else if (method === 'Network.loadingFinished') {
-      this.byId.delete(id);
-      const got = await this.command<{ body: string; base64Encoded: boolean }>('Network.getResponseBody', id)
+      this.byId.delete(key);
+      const got = await this.command<{ body: string; base64Encoded: boolean }>('Network.getResponseBody', ex)
         .then(
           (r: { body: string; base64Encoded: boolean }) =>
             r.base64Encoded ? Buffer.from(r.body, 'base64').toString('utf8') : r.body,
           (e: unknown) => {
-            this.fail(ex, `body: ${String(e)}`);
+            this.captureFailure(ex, `body: ${String(e)}`);
             return null;
           },
         );

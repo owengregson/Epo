@@ -78,6 +78,8 @@ export const HARNESS = {
   CAPTURE_NAV_SETTLE_MS: 4_000,
   CAPTURE_DIALOG_SETTLE_MS: 2_500,
   CAPTURE_SHORT_SETTLE_MS: 1_500,
+  /** Probe-only join tolerance for native/CDP timestamps; ambiguity still fails rather than choosing a nearest request. */
+  CAPTURE_EVENT_SKEW_MS: 250,
   /** livetest defaults (env-overridable in steps.ts): paced op delay band. */
   OP_DELAY_MIN_MS: 4_000,
   OP_DELAY_MAX_MS: 9_000,

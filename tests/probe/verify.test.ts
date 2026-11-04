@@ -51,16 +51,39 @@ function profile(username: string): ProfileVisit {
 function harness(opts: { initial?: () => void; ready?: Promise<void>; recorder?: boolean } = {}) {
   const out = mkdtempSync(path.join(tmpdir(), 'epo-verify-'));
   dirs.push(out);
+  const responseBodies = new Map<string, string>();
   const dbg = Object.assign(new EventEmitter(), { isAttached: () => true,
-    sendCommand: jest.fn(async () => ({ body: '{"status":"ok"}', base64Encoded: false })) });
-  const wc = { debugger: dbg } as unknown as WebContents;
+    sendCommand: jest.fn(async (_method: string, params: { requestId: string }) =>
+      ({ body: responseBodies.get(params.requestId) ?? '{"status":"ok"}', base64Encoded: false })) });
+  const nativeListeners = new Map<string, (...args: unknown[]) => void>();
+  const webRequest = Object.fromEntries(['onBeforeRequest', 'onBeforeSendHeaders', 'onHeadersReceived',
+    'onBeforeRedirect', 'onCompleted', 'onErrorOccurred'].map((name) => [name,
+    (listener: ((...args: unknown[]) => void) | null) => { if (listener) nativeListeners.set(name, listener); else nativeListeners.delete(name); }]));
+  const wc = Object.assign(new EventEmitter(), { id: 1, debugger: dbg, session: { webRequest } }) as unknown as WebContents;
   const handlers = new Set<ResponseHandler>();
   const tab = { goto: jest.fn(async () => {}), currentUrl: () => 'https://www.instagram.com/owner/',
     evaluate: jest.fn(async () => ({ found: false })), captureScreenshot: jest.fn(async () => Buffer.from('png')),
     onResponse: (f: ResponseHandler) => { handlers.add(f); return () => handlers.delete(f); },
   } as unknown as InstagramTab;
+  let nextId = 0;
+  const transport = (id: string, url: string, status: number, mimeType: string, op?: string) => {
+    const timestamp = Date.now();
+    const native = { id: ++nextId, webContentsId: 1, url, method: 'POST', timestamp, resourceType: 'xhr', uploadData: [] };
+    const headers = op ? { 'x-fb-friendly-name': op } : {};
+    nativeListeners.get('onBeforeRequest')?.(native, () => {});
+    nativeListeners.get('onBeforeSendHeaders')?.({ ...native, requestHeaders: headers }, () => {});
+    dbg.emit('message', {}, 'Network.requestWillBeSent', { requestId: id, wallTime: timestamp / 1000,
+      request: { url, method: 'POST', headers } });
+    const response = { ...native, statusCode: status, responseHeaders: { 'content-type': [mimeType] }, error: 'net::OK' };
+    nativeListeners.get('onHeadersReceived')?.(response, () => {});
+    dbg.emit('message', {}, 'Network.responseReceived', { requestId: id, response: { status, mimeType } });
+    dbg.emit('message', {}, 'Network.loadingFinished', { requestId: id });
+    nativeListeners.get('onCompleted')?.(response);
+  };
   const observed = (file: string, op: string, route: string) => {
     const body = readFileSync(path.join(__dirname, '../fixtures/surface/2026-11-02/bodies', file), 'utf8');
+    responseBodies.set(file, body);
+    transport(file, `https://www.instagram.com${route}`, 200, 'text/javascript', op);
     for (const f of handlers) f({ requestId: file, url: `https://www.instagram.com${route}`, method: 'POST', status: 200,
       mimeType: 'text/javascript', requestHeaders: { 'x-fb-friendly-name': op }, getBody: async () => body });
   };
@@ -73,10 +96,7 @@ function harness(opts: { initial?: () => void; ready?: Promise<void>; recorder?:
     return true;
   });
   const traffic = (status: number, mimeType = 'application/json') => {
-    dbg.emit('message', {}, 'Network.requestWillBeSent', { requestId: 'unsafe',
-      request: { url: 'https://www.instagram.com/api/graphql', method: 'POST' } });
-    dbg.emit('message', {}, 'Network.responseReceived', { requestId: 'unsafe', response: { status, mimeType } });
-    dbg.emit('message', {}, 'Network.loadingFinished', { requestId: 'unsafe' });
+    transport('unsafe', 'https://www.instagram.com/api/graphql', status, mimeType);
   };
   jest.mocked(openToolWindow).mockImplementation(() => {
     if (opts.recorder !== false) app.emit('web-contents-created', {}, wc);

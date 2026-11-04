@@ -6,7 +6,9 @@ import { Reader } from '@/adapter/reader';
 import { Sentinel } from '@/adapter/sentinel';
 import type { InstagramTab } from '@/adapter/tab';
 import { SystemClock } from '@/governors/clock';
-import { TrafficRecorder } from '@/probe/recorder';
+import { NativeTraffic } from '@/probe/native-traffic';
+import { type Exchange, TrafficRecorder } from '@/probe/recorder';
+import { qualifyTraffic } from '@/probe/traffic-qualification';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { MemorySink } from '@/surface/sink';
 import * as logger from '@/utils/logger';
@@ -24,6 +26,7 @@ export class VerifyEvidence {
   } });
   observer: ProfileObserver | null = null;
   recorder: TrafficRecorder | null = null;
+  native: NativeTraffic | null = null;
   failure: { step: string; reason: string; detail?: unknown } | null = null;
   step = 'initial-home';
   private readonly pending = new Set<Promise<void>>();
@@ -38,7 +41,9 @@ export class VerifyEvidence {
   record(contents: WebContents): void {
     if (this.recorder !== null) { this.stop('ambiguous-recorder'); return; }
     this.contents = contents;
-    this.recorder = new TrafficRecorder(contents, this.out, (failure) => this.stop('traffic', failure));
+    this.native = new NativeTraffic(contents, (failure) => this.stop('traffic', { source: 'native', ...failure }));
+    this.native.start();
+    this.recorder = new TrafficRecorder(contents, this.out, (failure) => this.stop('traffic', failure), true);
     this.recorder.setStep(this.step);
     this.recorder.start();
   }
@@ -57,7 +62,7 @@ export class VerifyEvidence {
       if (kind !== 'profile-info' && kind !== 'profile-graphql' && kind !== 'activity-feed' && kind !== 'friend-requests') return;
       const step = this.step;
       const task = this.reader.observed.read(response)?.then(({ read }) => {
-        this.bodies.push({ step, kind, method: response.method, status: response.status,
+        this.bodies.push({ step, kind, requestId: response.requestId, method: response.method, status: response.status,
           ...(read.ok ? { tier: read.tier, partial: read.partial, followEvents: read.projection.events.length,
             rows: read.projection.facts.length, continuation: read.projection.continuation?.kind ?? null }
             : { failure: read.kind }) });
@@ -109,9 +114,22 @@ export class VerifyEvidence {
 
   /** Independent writes: a failed screenshot/body/traffic write cannot suppress the run's stop evidence. */
   async finish(): Promise<void> {
+    if (this.failure === null && this.native !== null && !(await this.native.settle())) this.stop('native-settlement-timeout');
     for (const dispose of this.disposers) dispose();
+    this.native?.stop();
     this.recorder?.stop();
-    await Promise.all([this.recorder?.drain(), ...this.pending]);
+    await Promise.all([this.recorder?.drain(), this.native?.drain(), ...this.pending]);
+    const qualification = qualifyTraffic(this.recorder?.exchanges ?? [], this.native?.exchanges ?? [],
+      this.recorder?.trace.events ?? [], (id) => this.native?.getPostData(id));
+    this.result.transport = qualification;
+    if (this.failure === null && !qualification.ok) this.stop('transport-unqualified', qualification.errors);
+    if (this.failure === null && this.native?.exchanges.length === 0) this.stop('missing-native-coverage');
+    for (const ex of qualification.exchanges) {
+      if (!['profile-info', 'profile-graphql', 'activity-feed', 'friend-requests'].includes(ex.kind ?? '')) continue;
+      if (!hasCanonicalBody(this.recorder?.exchanges ?? [], ex.cdpExchange, ex.kind, this.bodies)) {
+        this.stop('missing-canonical-body', { nativeId: ex.nativeId, kind: ex.kind });
+      }
+    }
     const health = this.sink.snapshot();
     this.result.sentinels = this.sentinels;
     this.result.profileBodies = this.bodies.filter((body) => String(body.kind).startsWith('profile-'));
@@ -124,8 +142,22 @@ export class VerifyEvidence {
     this.result.exchanges = this.recorder?.exchanges.length ?? 0;
     try { writeFileSync(path.join(this.out, 'traffic.json'), JSON.stringify(this.recorder?.exchanges ?? [], null, '  '), 'utf8'); }
     catch (error) { this.result.trafficWriteError = String(error); this.stop('traffic-write', String(error)); }
+    try { writeFileSync(path.join(this.out, 'network-lifecycle.json'), JSON.stringify(this.recorder?.trace.events ?? [], null, '  '), 'utf8'); }
+    catch (error) { this.result.lifecycleWriteError = String(error); this.stop('lifecycle-write', String(error)); }
+    try { writeFileSync(path.join(this.out, 'native-traffic.json'), JSON.stringify(this.native?.exchanges ?? [], null, '  '), 'utf8'); }
+    catch (error) { this.result.nativeWriteError = String(error); this.stop('native-write', String(error)); }
     this.result.outcome = this.failure === null ? 'passed' : 'stopped';
     this.result.stop = this.failure;
     writeFileSync(path.join(this.out, 'verify.json'), JSON.stringify(this.result, null, '  '), 'utf8');
   }
+}
+
+/** Production Tab emits root-session responses; a shared request ID must never certify another session. */
+export function hasCanonicalBody(exchanges: readonly Exchange[], n: number | undefined, kind: string | null,
+  bodies: readonly Record<string, unknown>[]): boolean {
+  const request = exchanges.find((ex) => ex.n === n);
+  return request !== undefined && request.sessionId === ''
+    && exchanges.filter((ex) => ex.requestId === request.requestId).length === 1
+    && bodies.some((body) => body.requestId === request.requestId && body.kind === kind
+      && body.tier === 'canonical' && body.partial === false);
 }

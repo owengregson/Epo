@@ -20,7 +20,7 @@ import { createTabInteractor } from '@/adapter/tab-interactor';
 import { classifyRequest } from '@/capture/classify';
 import { SystemClock } from '@/governors/clock';
 import { awaitLogin, bootstrapApp, ensureInstagramOrigin, openToolWindow } from '@/main/bootstrap';
-import { electronIgSession } from '@/main/services/ig-session';
+import { applyNetworkBlock, electronIgSession } from '@/main/services/ig-session';
 import { SOLO_PHASES } from '@/probe/phases';
 import { launchVerify } from '@/probe/verify-launch';
 import { ListPageWalker } from '@/rim/list-page-walker';
@@ -265,12 +265,12 @@ async function settle(run: () => Promise<unknown>): Promise<unknown> {
     return { threw: (e as Error)?.constructor?.name ?? 'unknown', message: String(e) };
   }
 }
-
 async function main(): Promise<void> {
   if (OUT === '' || path.resolve(OUT).startsWith(process.cwd())) {
     throw new Error('EPO_PROBE_OUT must name a directory OUTSIDE the repository');
   }
   mkdirSync(OUT, { recursive: true });
+  await applyNetworkBlock();
   if (PHASE === 'verify') return launchVerify(OUT, TARGET);
   const tool = openToolWindow({ title: `Epo — live probe (${PHASE})` });
   await tool.ready;
