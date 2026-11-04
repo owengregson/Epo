@@ -114,7 +114,7 @@ describe('the reopen status contributors', () => {
 
 describe('the legacy seed (spec §9.11)', () => {
   const bk = (stamp: { forPk: string | null; sweepLastRunAt: number | null } | null) => {
-    const consume = jest.fn();
+    const consume = jest.fn(() => true);
     return { take: () => stamp, consume };
   };
 
@@ -137,5 +137,14 @@ describe('the legacy seed (spec §9.11)', () => {
   test('nothing carried, nothing seeded: the first sweep starts from the baseline', () => {
     seedReopenState(store, 'me', undefined);
     expect(store.reopen.get()).toBeNull();
+  });
+
+  test('a failed settings consume still permits this store\'s own legacy seed', () => {
+    store.setLifecycleState(JSON.stringify({ v: 1, phase: 'ready', lastActiveAt: NOW - 2 * HOUR }));
+    seedReopenState(store, 'me', {
+      take: () => ({ forPk: 'me', sweepLastRunAt: NOW - HOUR }), consume: () => false,
+    });
+    expect(store.reopen.get()?.lastSweep).toMatchObject({ endedAt: NOW - 2 * HOUR });
+    expect(store.getLifecycleState()).toBeNull();
   });
 });
