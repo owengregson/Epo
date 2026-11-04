@@ -22,12 +22,6 @@ export function todaySummary(plan: Plan, withApprovals: boolean): string {
   return parts.length === 0 ? 'Nothing planned today' : parts.join(' · ');
 }
 
-/** The approvals the short summary leaves out, for the line's tooltip. */
-export function approvalsNote(plan: Plan): string | null {
-  const a = plan.kinds.accept;
-  return a.planned > 0 ? `Also ${count(a.done)} of ${count(a.planned)} follow-request approvals` : null;
-}
-
 /** The line under the strip: this session, the next one, or why there is none. */
 export function todayNext(plan: Plan, now: number): string {
   const { day, totals } = plan;
@@ -60,9 +54,11 @@ export function todayLines(plan: Plan, now: number, withApprovals: boolean): { r
 
 /** A plan block's tooltip. */
 export function sessionTip(s: Session): string {
-  if (s.state === 'skipped') return 'Skipped — Epo wasn’t running';
-  if (s.state === 'before-open') return 'Before Epo opened';
-  return `Session ${s.idx + 1} · ${clock(s.startAt)}–${clock(s.endAt)} · ${count(s.done)} of ${count(s.planned)} · ${s.pace} pace`;
+  const state = {
+    done: 'Done', partial: 'Partly done', now: 'Current', next: 'Next', later: 'Planned',
+    skipped: 'Skipped — Epo wasn’t running', 'before-open': 'Before Epo opened',
+  }[s.state];
+  return `Session ${s.idx + 1} · ${clock(s.startAt)}–${clock(s.endAt)} · ${state} · ${count(s.done)} of ${count(s.planned)} · ${s.pace} pace`;
 }
 
 export const RESULTS = {
@@ -77,7 +73,6 @@ export const RESULTS = {
   updating: 'updating…',
   signedOut: 'Your numbers appear after you sign in.',
   loading: 'Loading your numbers…',
-  spark: (days: number): string => `last ${count(days)} days`,
 } as const;
 
 export const GET_STARTED = {

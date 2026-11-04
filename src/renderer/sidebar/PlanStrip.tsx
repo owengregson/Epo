@@ -36,12 +36,15 @@ function stripSpan(sessions: readonly Session[], now: number): { start: number; 
   return { start, end: Math.max(ceilHour(last), start + HOUR_MS) };
 }
 
-/** Axis ticks on local hours: every hour on a short strip, every two or three on a longer one. */
+/** Both bounds and up to three interior hours: labels have room at the native sidebar width. */
 function stripTicks(start: number, end: number): number[] {
   const hours = (end - start) / HOUR_MS;
-  const step = hours <= 6 ? 1 : hours <= 12 ? 2 : 3;
-  const ticks: number[] = [];
-  for (let t = start; t <= end; t += HOUR_MS) if (new Date(t).getHours() % step === 0) ticks.push(t);
+  const step = Math.max(1, Math.ceil(hours / 4));
+  const ticks: number[] = [start];
+  for (let t = start + step * HOUR_MS; t < end; t += step * HOUR_MS) {
+    if (end - t >= step * HOUR_MS / 2) ticks.push(t);
+  }
+  ticks.push(end);
   return ticks;
 }
 
@@ -76,6 +79,7 @@ export function PlanStrip({ plan, band }: PlanStripProps): JSX.Element {
   const { start, end } = stripSpan(plan.sessions, now);
   const marker = useRef<HTMLSpanElement>(null);
   const at = share(now, start, end);
+  const ticks = stripTicks(start, end);
 
   // One linear move from now to the strip's end, landing as the span runs out.
   useLayoutEffect(() => {
@@ -89,8 +93,9 @@ export function PlanStrip({ plan, band }: PlanStripProps): JSX.Element {
   }, [start, end, reduced]);
 
   return (
-    <div class="sb-strip">
+    <div class="sb-strip" role="group" aria-label="Today’s session schedule">
       <div class="sb-strip__track">
+        {ticks.map((t) => <i key={t} class="sb-strip__grid" style={{ left: pct(share(t, start, end)) }} aria-hidden="true" />)}
         {plan.sessions.map((s) => (
           <Block key={s.idx} s={s} start={start} end={end} />
         ))}
@@ -106,11 +111,17 @@ export function PlanStrip({ plan, band }: PlanStripProps): JSX.Element {
         )}
       </div>
       <div class="sb-strip__axis" aria-hidden="true">
-        {stripTicks(start, end).map((t) => (
+        {ticks.map((t) => (
           <span key={t} class={t === start ? 'is-first' : t === end ? 'is-last' : undefined} style={{ left: pct(share(t, start, end)) }}>
             {hourLabel(t)}
           </span>
         ))}
+      </div>
+      <div class="sb-strip__legend" aria-hidden="true">
+        <span class="is-done">Done</span>
+        <span class="is-now">Current</span>
+        <span class="is-later">Planned</span>
+        <span class="is-marker">Now</span>
       </div>
     </div>
   );

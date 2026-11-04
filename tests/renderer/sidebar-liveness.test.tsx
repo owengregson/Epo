@@ -5,8 +5,10 @@
  * The live column mirrors the graph live (PRINCIPLES §2, spec §12.1): a pushed status, feed or activity
  * moves the rendered value at once, with no pull behind it.
  */
-import { act, render, waitFor } from '@testing-library/preact';
+import type { Signal } from '@preact/signals';
+import { act, fireEvent, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
+import { reducedMotionSignal } from '@/renderer/app/motion-signal';
 import type { FeedView } from '@/shared/feed';
 import type { LiveTab } from '@/shared/live-op';
 import type { EpoStatus } from '@/types';
@@ -87,5 +89,56 @@ describe('the live column follows its pushes', () => {
     await act(async () => bridge.emit('activity', { activity: null, busy: false, holds: [] }));
     expect(text('.sb-now__line')).not.toContain('Following @jane');
     expect(pulls('activityNow')).toBe(before);
+  });
+
+  it('known progress appears only while a measured operation is in flight', async () => {
+    await mount();
+    await act(async () => bridge.emit('status', idleStatus({ ...RUNNING, nextActionAt: T + 60_000 })));
+    const pushProgress = async (total: number | null): Promise<void> => {
+      await act(async () => bridge.emit('activity', {
+        activity: { info: { kind: 'page', op: { op: 'read-list', list: 'followers', of: 'studio', done: 10, total } }, since: T },
+        busy: true, holds: [],
+      }));
+    };
+    await pushProgress(null);
+    expect(document.querySelector('.sb-now__progress')).toBeNull();
+    await pushProgress(20);
+    expect(document.querySelector('.sb-now__progress i')).not.toBeNull();
+    await act(async () => bridge.emit('activity', { activity: null, busy: false, holds: [] }));
+    expect(document.querySelector('.sb-now__progress')).toBeNull();
+  });
+
+  it('the shared middle owns new-activity navigation and clearing, including reduced motion', async () => {
+    const item = (id: string): FeedView['items'][number] => ({
+      id, at: T, kind: 'followed-back', person: { pk: id, username: id }, afterMs: null, dated: false,
+    });
+    bridge.data.feed = feed([item('a')]);
+    await mount();
+    const middle = document.querySelector('.sb-middle') as HTMLElement;
+    const list = document.querySelector('.sb-feed__list') as HTMLElement;
+    const section = document.querySelector('.sb-feed') as HTMLElement;
+    const rect = (top: number): DOMRect => ({ top, bottom: top + 100, left: 0, right: 400, width: 400, height: 100, x: 0, y: top, toJSON: () => ({}) });
+    jest.spyOn(middle, 'getBoundingClientRect').mockImplementation(() => rect(100));
+    const listRect = jest.spyOn(list, 'getBoundingClientRect').mockImplementation(() => rect(0));
+    jest.spyOn(section, 'getBoundingClientRect').mockImplementation(() => rect(-40));
+    middle.scrollTop = 300;
+    middle.scrollTo = jest.fn();
+    await act(async () => bridge.emit('feed', feed([item('b'), item('a')])));
+    expect(text('.sb-pill--new')).toContain('1 new');
+    listRect.mockImplementation(() => rect(150));
+    fireEvent.scroll(middle);
+    expect(document.querySelector('.sb-pill--new')).toBeNull();
+    listRect.mockImplementation(() => rect(0));
+    await act(async () => bridge.emit('feed', feed([item('c'), item('b'), item('a')])));
+    const motion = reducedMotionSignal as Signal<boolean>;
+    const previous = motion.peek();
+    try {
+      motion.value = true;
+      fireEvent.click(document.querySelector('.sb-pill--new') as HTMLElement);
+      expect(middle.scrollTo).toHaveBeenCalledWith({ top: 160, behavior: 'instant' });
+    } finally {
+      motion.value = previous;
+    }
+    expect(document.querySelector('.sb-pill--new')).toBeNull();
   });
 });

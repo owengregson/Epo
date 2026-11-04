@@ -1,8 +1,8 @@
 /**
  * The live column (spec §12.1–12.2, ADR 1010): instruments only — the masthead, Now, Today, Results and
- * Recent activity over the footer, at fixed heights with reserved slots, so a posture change never reflows
- * it. A first run shows Get started in Today's and Results' place; before the store is built both zones hold
- * final-size skeletons, never a digit (law L-ZERO). Short windows scroll everything under Now (CSS only).
+ * Recent activity over the footer. Zones size to their content; everything under Now scrolls together.
+ * A first run shows Get started in Today's and Results' place; before the store is built both zones hold
+ * skeletons, never a digit (law L-ZERO).
  */
 import { computed } from '@preact/signals';
 import type { JSX } from 'preact';
@@ -52,7 +52,7 @@ const transportSignal = computed(() => {
   return statusSignal.value?.state ?? 'idle';
 });
 
-/** The two zones' final size while the store is not built yet. */
+/** The two zones while the store is not built yet. */
 function Waiting(): JSX.Element {
   return (
     <>

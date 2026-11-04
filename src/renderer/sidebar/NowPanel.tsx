@@ -1,7 +1,7 @@
 /**
  * Now (spec §12.2): the column's one raised surface — the ring, the posture word with its indicator pills,
  * what is happening (the live-op sentence, else the posture's own), when the next thing happens with a
- * "Why?", a reserved progress hairline, the controls, and the reserved reason line.
+ * "Why?", progress when known, the controls, and a reason only when there is something to explain.
  */
 import type { JSX } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
@@ -19,7 +19,6 @@ import { clearReason, reasonSignal } from '@/renderer/sidebar/reason-line';
 import { partsOf } from '@/renderer/sidebar/Said';
 import { StatusRing } from '@/renderer/sidebar/StatusRing';
 import { TransportRow } from '@/renderer/sidebar/TransportRow';
-import { useOneLine } from '@/renderer/sidebar/use-one-line';
 import { Icon } from '@/renderer/ui/Icon';
 import { liveOpProgress, liveOpText } from '@/shared/live-op';
 import type { Posture } from '@/shared/posture';
@@ -142,9 +141,6 @@ export function NowPanel(): JSX.Element {
   const fraction = progress !== null && progress.total !== null && progress.total > 0 ? Math.min(1, progress.done / progress.total) : null;
   const glyph = p.kind === 'working' && p.overlay.boost ? 'bolt' : RING_GLYPH[p.kind];
   const why = reasonOf(p);
-  // Beside a next line the now line has one line at 17 px; a longer sentence takes two smaller lines.
-  const [lineEl, oneLine] = useOneLine<HTMLParagraphElement>(line);
-  const lineClass = next === null ? 'sb-now__line is-two' : oneLine ? 'sb-now__line' : 'sb-now__line is-fit';
 
   return (
     <section class="sb-now" data-zone="now" data-tour="now" data-tone={p.tone} data-kind={p.kind}>
@@ -161,7 +157,7 @@ export function NowPanel(): JSX.Element {
               ) : null}
               {p.overlay.practice ? <span class="sb-pill">{PILL.practice}</span> : null}
             </div>
-            <p class={lineClass} ref={lineEl} data-now-line="">
+            <p class="sb-now__line" data-now-line="">
               <NowWords text={line} />
             </p>
             {next !== null ? (
@@ -170,20 +166,20 @@ export function NowPanel(): JSX.Element {
                 <WhyButton posture={p} />
               </p>
             ) : null}
-            <span class="sb-now__progress" aria-hidden="true">
-              {fraction === null ? null : <i style={{ transform: `scaleX(${fraction})` }} />}
-            </span>
+            {fraction === null ? null : (
+              <span class="sb-now__progress" aria-hidden="true">
+                <i style={{ transform: `scaleX(${fraction})` }} />
+              </span>
+            )}
           </div>
         </div>
         <TransportRow posture={p} />
-        <p class="sb-now__reason" role="status">
-          {why === null ? null : (
-            <>
-              <Icon name="circle-exclamation" />
-              <span>{why}</span>
-            </>
-          )}
-        </p>
+        {why === null ? null : (
+          <p class="sb-now__reason" role="status">
+            <Icon name="circle-exclamation" />
+            <span>{why}</span>
+          </p>
+        )}
       </div>
     </section>
   );

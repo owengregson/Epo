@@ -83,6 +83,8 @@ describe('every posture renders its headline and primary', () => {
 
   it('an attention names its fix and holds scheduled work, in plain words', async () => {
     await mount();
+    expect(q('.sb-now__reason')).toBeNull();
+    expect(q('.sb-now__progress')).toBeNull();
     await push({ state: 'halted', haltReason: 'sentinel:logged-out' });
     expect(q('.sb-now__line')?.textContent).toBe('Instagram signed you out. Sign in on the Live tab, then press Start.');
     expect(primary()).toBe('Open Live');
@@ -90,6 +92,8 @@ describe('every posture renders its headline and primary', () => {
     await push({ state: 'halted', haltReason: 'brand-new-key' });
     expect(q('.sb-now__line')?.textContent).toContain('Something needs a look');
     expect(reason()).toBe('Code: brand-new-key');
+    await push({});
+    expect(q('.sb-now__reason')).toBeNull();
   });
 });
 
@@ -154,6 +158,7 @@ describe('the Boost control', () => {
     await mount();
     await push({ state: 'running', runtime: RUNTIME, lastStep: 'acted', boost: band({}) });
     expect(q('.sb-band')?.getAttribute('data-boost')).toBe('on');
+    expect(q('.sb-today__title h3')?.textContent).toBe('Today’s plan');
     expect(q('.sb-band__text')?.textContent).toMatch(/^Boost on · ends .+ · 2 h 0 m left$/);
     expect(q('.sb-now .sb-pill--boost')?.tagName).toBe('SPAN');
     await push({ boost: band({ state: 'paused' }) });
@@ -192,6 +197,9 @@ describe('Today and Results', () => {
     await push({ plan: plan() });
     expect(q('.sb-today__sum')?.textContent).toBe('18 of 30 follows · 6 of 10 unfollows · 2 of 4 approvals');
     expect(document.querySelectorAll('.sb-strip__block')).toHaveLength(3);
+    expect([...document.querySelectorAll('.sb-strip__block')].map((el) => el.getAttribute('aria-label'))).toEqual([
+      expect.stringContaining(' · Done · '), expect.stringContaining(' · Current · '), expect.stringContaining(' · Next · '),
+    ]);
     expect(q('.sb-today__next')?.textContent).toMatch(/^This session until about /);
   });
 
@@ -202,12 +210,22 @@ describe('Today and Results', () => {
     expect(q('.sb-strip')).toBeNull();
   });
 
+  it('a day without sessions explains itself without an empty time rail', async () => {
+    await mount();
+    const empty = plan({ sessions: [], totals: { ...plan().totals, planned: 0, done: 0, remaining: 0 },
+      day: { ...plan().day, dayOff: true }, now: { sessionIdx: null, nextAt: null, closesAt: null } });
+    await push({ plan: empty });
+    expect(q('.sb-today__sum')?.textContent).toBe('Day off — Epo does no automatic work today.');
+    expect(q('.sb-strip')).toBeNull();
+    expect(q('.sb-today__next')).toBeNull();
+  });
+
   it('law L-FRESH: the follower count always carries its age', async () => {
     await mount();
     await push({ own: { followers, following: null } });
-    expect(q('.sb-results__followers')?.textContent).toMatch(/^1,284 followers · checked /);
+    expect(q('.sb-results__followers')?.textContent).toMatch(/^1,284 followers checked /);
     await push({ own: { followers, following: null }, catchUp: { state: 'running', mode: 'launch', skipped: null, isReturn: true, since: null, startedAt: T, finishedAt: null, steps: [], summary: null } });
-    expect(q('.sb-results__followers')?.textContent).toBe('1,284 followers · checking now…');
+    expect(q('.sb-results__followers')?.textContent).toBe('1,284 followers checking now…');
     await push({ own: { followers: null, following: null } });
     expect(q('.sb-results__followers')?.textContent).toBe('Epo shows your follower count after it opens your profile.');
   });

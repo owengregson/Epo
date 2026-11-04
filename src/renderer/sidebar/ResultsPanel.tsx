@@ -8,7 +8,6 @@ import { useState } from 'preact/hooks';
 import { statusSignal } from '@/renderer/app/shell-context';
 import { RESULTS } from '@/renderer/sidebar/copy/zone-copy';
 import { count } from '@/renderer/sidebar/format';
-import { Spark7 } from '@/renderer/sidebar/Spark7';
 import { NumberTicker } from '@/renderer/ui/NumberTicker';
 
 /** The chip floats for one arrival; a new increase replaces it. */
@@ -40,17 +39,16 @@ export function ResultsPanel(): JSX.Element {
           </div>
           <div class="sb-results__label">{RESULTS.heroLabel}</div>
         </div>
-        <Spark7 values={null} label={RESULTS.spark} />
+        <p class="sb-results__followers num">
+          {followers === null ? (
+            <span class="sb-muted">{catching ? RESULTS.checkingNow : RESULTS.neverSeen}</span>
+          ) : (
+            <>
+              {RESULTS.followers(followers.count)} <span class="sb-muted sb-results__age">{age}</span>
+            </>
+          )}
+        </p>
       </div>
-      <p class="sb-results__followers num">
-        {followers === null ? (
-          <span class="sb-muted">{catching ? RESULTS.checkingNow : RESULTS.neverSeen}</span>
-        ) : (
-          <>
-            {RESULTS.followers(followers.count)} <span class="sb-muted">· {age}</span>
-          </>
-        )}
-      </p>
       <p class="sb-results__backs">
         {RESULTS.backs(today?.followBacks ?? null, status?.pendingFollowback ?? 0)}
         {catching ? <span> · {RESULTS.updating}</span> : null}

@@ -1,8 +1,7 @@
 /**
  * The one Boost control (spec §8.6): one tap starts a Boost of the length saved in Settings, and while a
- * Boost window is open the title row becomes its band with one-tap End. The button waits, with its reason,
- * until Boost can change something; what one tap would do shows on hover or focus. Both rows share one
- * fixed height, so Boost never moves the strip.
+ * Boost window is open its footer shows the window and one-tap End. The button waits, with its reason,
+ * until Boost can change something; what one tap would do shows on hover or focus.
  */
 import { signal } from '@preact/signals';
 import type { JSX } from 'preact';
@@ -13,8 +12,7 @@ import { settingsViewSignal, statusSignal, useShell, useShellControls } from '@/
 import { BOOST_COPY } from '@/renderer/copy/boost';
 import { DUR } from '@/renderer/design/motion-scale';
 import { armDeadline } from '@/renderer/lib/deadline-anim';
-import { BOOST_NEEDS_PLAN, bandLine, buttonLabel, fill, previewLine } from '@/renderer/sidebar/boost-copy';
-import { TODAY_TITLE } from '@/renderer/sidebar/copy/zone-copy';
+import { BOOST_NEEDS_PLAN, bandLine, buttonLabel, previewLine } from '@/renderer/sidebar/boost-copy';
 import { postureSignal } from '@/renderer/sidebar/posture-signal';
 import { noteFailure, noteRefusal } from '@/renderer/sidebar/reason-line';
 import { Icon } from '@/renderer/ui/Icon';
@@ -119,8 +117,7 @@ export function BoostControl(): JSX.Element {
   };
   const label = buttonLabel(hours, stopped && capable);
   return (
-    <div class="sb-today__title">
-      <h3>{TODAY_TITLE}</h3>
+    <div class="sb-boostrow">
       {/* A disabled button gets no pointer events, so its reason rides the wrapper's tooltip. */}
       <span class="sb-boost" data-tip={reason ?? undefined}>
         <button
@@ -139,8 +136,8 @@ export function BoostControl(): JSX.Element {
           {label}
         </button>
       </span>
-      <button type="button" class="sb-sr-only" onClick={() => controls.openSettings({ section: 'boost' })}>
-        {fill(BOOST_COPY.control.changeLength)}
+      <button type="button" class="sb-link sb-boostrow__settings" onClick={() => controls.openSettings({ section: 'boost' })}>
+        {BOOST_COPY.control.changeLength}
       </button>
     </div>
   );
@@ -164,9 +161,26 @@ function closeSoon(): void {
 export function BoostCard(): JSX.Element | null {
   const card = boostCardSignal.value;
   const controls = useShellControls();
+  const el = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = el.current;
+    const column = node?.closest<HTMLElement>('.sidebar');
+    if (node == null || column == null || card === null) return;
+    // A footer near the bottom of a short window opens upward rather than clipping its explanation.
+    node.style.top = `${Math.max(8, Math.min(card.top + 8, column.clientHeight - node.offsetHeight - 8))}px`;
+    const close = (): void => { boostCardSignal.value = null; };
+    const middle = column.querySelector('.sb-middle');
+    middle?.addEventListener('scroll', close);
+    window.addEventListener('resize', close);
+    return () => {
+      middle?.removeEventListener('scroll', close);
+      window.removeEventListener('resize', close);
+    };
+  }, [card]);
   if (card === null) return null;
   return (
     <div
+      ref={el}
       class="sb-boostcard"
       role="tooltip"
       style={{ top: `${card.top + 8}px` }}

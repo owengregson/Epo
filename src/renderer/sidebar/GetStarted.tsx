@@ -34,7 +34,7 @@ export function GetStarted({ started }: { started: boolean }): JSX.Element {
         {steps.map((s) => (
           <li key={s.key} class={s.done ? 'is-done' : s.key === current ? 'is-now' : undefined}>
             <span class="sb-start__tick">{s.done ? <Icon name="check" /> : null}</span>
-            {s.label}
+            <span class="sb-start__label">{s.label}</span>
             {s.key === 'seed' && !s.done ? (
               <button type="button" class="sb-btn sb-btn--small" onClick={() => controls.openSettings(SEED_TARGET)}>
                 {GET_STARTED.choose} <Icon name="arrow-right-long" />

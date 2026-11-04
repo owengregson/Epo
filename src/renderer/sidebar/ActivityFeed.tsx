@@ -1,5 +1,5 @@
 /**
- * Recent activity (spec §12.2, §12.7): the column's only scroller, the store-derived feed as it grows. New
+ * Recent activity (spec §12.2, §12.7): a store-derived feed in the column's shared middle scroller. New
  * rows rise into place while the rows already there glide down (one FLIP per change; a single new follow or
  * unfollow travels from the now line into its row). Scrolled away, the view holds still and an "↑ N new"
  * pill offers the top. Rows are announced nowhere (`aria-live="off"`): the now line already says it.
@@ -8,6 +8,7 @@ import type { JSX } from 'preact';
 import { render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { feedSignal } from '@/renderer/app/live-signals';
+import { reducedMotionSignal } from '@/renderer/app/motion-signal';
 import { openPerson, openSettings } from '@/renderer/app/shell-services';
 import { DUR } from '@/renderer/design/motion-scale';
 import { flipInsert } from '@/renderer/lib/flip';
@@ -26,16 +27,14 @@ const openCompatibility = (): void => openSettings({ section: 'diagnostics', foc
 /** How far from its top the list may sit and still count as "at the top". */
 const NEAR_TOP_PX = 8;
 
-/** The element that scrolls the list: the list itself, or (in a short window) the column's middle. */
+/** The middle always owns scrolling, so resizing never changes the feed's scroll owner. */
 function scrollerOf(list: HTMLElement): HTMLElement | null {
-  if (list.scrollHeight > list.clientHeight) return list;
   return list.closest<HTMLElement>('.sb-middle');
 }
 
 function awayFromTop(list: HTMLElement): boolean {
   const scroller = scrollerOf(list);
   if (scroller === null) return false;
-  if (scroller === list) return list.scrollTop > NEAR_TOP_PX;
   return list.getBoundingClientRect().top < scroller.getBoundingClientRect().top - NEAR_TOP_PX;
 }
 
@@ -79,7 +78,13 @@ export function ActivityFeed(): JSX.Element {
 
   useEffect(() => {
     const el = list.current;
+    const scroller = el === null ? null : scrollerOf(el);
+    const onScroll = (): void => {
+      if (el !== null && !awayFromTop(el)) setUnseen(0);
+    };
+    scroller?.addEventListener('scroll', onScroll);
     return () => {
+      scroller?.removeEventListener('scroll', onScroll);
       if (el !== null) render(null, el);
     };
   }, []);
@@ -87,11 +92,12 @@ export function ActivityFeed(): JSX.Element {
   const toTop = (): void => {
     const el = list.current;
     const scroller = el === null ? null : scrollerOf(el);
-    scroller?.scrollTo({ top: 0, behavior: 'smooth' });
+    if (el !== null && scroller !== null) {
+      const section = el.closest<HTMLElement>('.sb-feed') ?? el;
+      const top = scroller.scrollTop + section.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      scroller.scrollTo({ top, behavior: reducedMotionSignal.peek() ? 'instant' : 'smooth' });
+    }
     setUnseen(0);
-  };
-  const onScroll = (): void => {
-    if (unseen > 0 && list.current !== null && !awayFromTop(list.current)) setUnseen(0);
   };
 
   return (
@@ -106,7 +112,7 @@ export function ActivityFeed(): JSX.Element {
       </div>
       <CompatibilityNotice onDetails={openCompatibility} />
       {feed !== null && feed.items.length === 0 ? <p class="sb-feed__empty">{FEED_EMPTY}</p> : null}
-      <div class="sb-feed__list" ref={list} aria-live="off" onScroll={onScroll} />
+      <div class="sb-feed__list" ref={list} aria-live="off" />
     </section>
   );
 }

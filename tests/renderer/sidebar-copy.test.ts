@@ -19,7 +19,7 @@ import { FEED_EMPTY, rowFace, SOMEONE, sinceYouLeft } from '@/renderer/sidebar/c
 import { headlineOf, nextLineOf, PILL, PRIMARY_FACE, RING_GLYPH, SECONDARY_LABEL, sentenceOf } from '@/renderer/sidebar/copy/posture-copy';
 import { COMMAND_FAILED, KNOWN_REFUSALS, refusalText } from '@/renderer/sidebar/copy/refusal-copy';
 import {
-  approvalsNote, FEED_TITLE, FOOTER, freshPill, GET_STARTED, NO_PLAN, RESULTS, sessionTip, TODAY_TITLE, todayLines, todayNext,
+  FEED_TITLE, FOOTER, freshPill, GET_STARTED, NO_PLAN, RESULTS, sessionTip, TODAY_TITLE, todayLines, todayNext,
   todaySummary,
 } from '@/renderer/sidebar/copy/zone-copy';
 import { BRAND_ICONS, ICONS } from '@/renderer/ui/icons';
@@ -159,7 +159,7 @@ function everySentence(): string[] {
     out.push(explainText(topic, { sessions: null, visitsAt: null, attempt: null, lateOrLight: false }));
     out.push(explainText(topic, { sessions: 4, visitsAt: T + HOUR, attempt: { n: 2, max: 3 }, lateOrLight: true }));
   }
-  out.push(TODAY_TITLE, NO_PLAN, FEED_TITLE, freshPill(2), todaySummary(plan, true), todaySummary(plan, false), approvalsNote(plan) ?? '');
+  out.push(TODAY_TITLE, NO_PLAN, FEED_TITLE, freshPill(2), todaySummary(plan, true), todaySummary(plan, false));
   const days = [
     ...statuses.map((s) => s.plan).filter((x): x is PlanProjection => x != null),
     { ...plan, day: { ...plan.day, dayOff: true } }, { ...plan, now: { sessionIdx: 0, nextAt: null, closesAt: T + HOUR } },
@@ -172,7 +172,7 @@ function everySentence(): string[] {
   for (const s of plan.sessions) out.push(sessionTip(s));
   out.push(RESULTS.heroLabel, RESULTS.heroTip(T), RESULTS.followers(1), RESULTS.followers(1284), RESULTS.checked(T - MIN, T));
   out.push(RESULTS.checked(T - 30 * HOUR, T), RESULTS.checkingNow, RESULTS.neverSeen, RESULTS.backs(null, 4), RESULTS.backs(1, 0));
-  out.push(RESULTS.updating, RESULTS.signedOut, RESULTS.loading, RESULTS.spark(7));
+  out.push(RESULTS.updating, RESULTS.signedOut, RESULTS.loading);
   out.push(GET_STARTED.title, GET_STARTED.progress(1, 3), GET_STARTED.signIn, GET_STARTED.seed, GET_STARTED.start, GET_STARTED.choose);
   out.push(FOOTER.version('3.4.1'), FOOTER.ready, FOOTER.available, FOOTER.diagnostics);
   for (const item of feedItems) {
