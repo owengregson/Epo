@@ -10,6 +10,7 @@ cleanup, including the native-QA repairs, passed the final source gate at `4a2bb
 renderer artifacts at `4a2bbcc` are byte-identical to `d80c5dd`. **Implementation and technical offline verification
 are complete at those recorded revisions.** On November 4, the first live parsing attempt stopped at target
 eligibility; the authorized second attempt reached the final navigation step and exposed a probe settlement gap.
+After that gap was repaired offline, a follow-up stopped on unavailable CDP capture data before the drawer.
 Their partial evidence is recorded below and does not qualify L1 or the remaining live sequence.
 
 Owner visual confirmation under workplan I.4.6 is now recorded after the subsequent
@@ -352,7 +353,8 @@ The lead and an independent agent reviewed saved artifacts only after the run:
   store/settings/runtime hashes still match the backup and saved run intent remains stopped.
 
 **L1 did not pass.** The owner supplied a replacement target after this result; its exact handle is
-kept in the private evidence folder's `next-target.json`, and its public status remains unverified.
+kept in the private evidence folder's `next-target.json`. Its public status was unverified at that point
+and was subsequently confirmed by the second attempt below.
 The default one-run-per-day handoff rule initially paused further live work. The owner then explicitly
 overrode it: "we can re run now because its fine, you didnt do anything. you can do the live test."
 This authorizes one same-day read-only attempt against the replacement target. L4/L5 have not run, and
@@ -401,6 +403,92 @@ coverage; successful button results alone cannot certify parsing. The recorder r
 and audits every exchange after pending reads drain, including an earlier entry displaced by a reused
 request ID. Existing failure reasons survive that audit; subscriptions receive no exemption.
 The incomplete exchanges and auxiliary server error remain part of this run's evidence after the repairs.
+
+The combined repairs at `5d83f35` passed the full offline gate: **438 suites / 4,502 tests**, one suite
+and six tests skipped, boundaries **0 errors / 56 warnings**. The focused regressions cover expected
+navigation races, wrong identities/origins, retained cancellation and genuine input failures, missing or
+delayed drawer bodies, reused request IDs and preservation of earlier transport failures. Independent
+review found no blocker. Evidence: `results/codex-design-cleanup/post-live-navigation-gate.log`.
+
+### Repaired live follow-up, 2026-11-04
+
+Using the owner's authorization to continue live testing that day, the lead made one follow-up run
+after the combined gate. Epo was closed and the full profile was backed up again: 33,693 files with
+sizes verified and all 15 critical hashes unchanged. Private backup record:
+`results/codex-design-cleanup/pre-repaired-l1-backup.json`. The run at `5d83f35` began at 09:34:28 UTC
+and exited at 09:35:02 UTC; evidence is in `results/live-l1-repaired-2026-11-04T093428Z/`.
+
+The first failure was CDP `Network.getRequestPostData` returning "No resource with given id was found"
+for auxiliary AJAX exchange 56 during `visit-nonexistent`. That exchange returned HTTP 200 with
+JavaScript MIME, but its subsequent body retrieval also failed. `verify.stop` correctly retained the
+metadata failure; the exchange's `failed` field was overwritten by the later body error. The subsequent
+reporting fix at `36c492a`, reproduced by a metadata-then-body failure regression, preserves the first
+failure consistently. It changes no admission gate or captured-request scope.
+
+The lead and an independent agent reviewed the saved run:
+
+- 56 API exchanges: 55 recorded HTTP 200 responses; 54 saved, decodable bodies. No observed non-2xx,
+  HTML response or non-final decoded body. The initial subscription again has no status/body, while
+  exchange 56 has a status but no body. Neither qualifies as complete evidence.
+- Every exchange now has a CDP request ID; no IDs were duplicated in this run. Reused-ID accounting
+  was therefore not the cause of these two incomplete records.
+- Own and eligible public target profiles parsed canonically and completely. Nine sentinel checks
+  were `ok`; no drift or shadow disagreement was recorded. A posts response again carried one
+  auxiliary server field error without an account-wall signature.
+- No completed nonexistent-profile result, drawer result or final navigation result was recorded.
+  Only own/target screenshots exist. The navigation repair was **not exercised live** in this run.
+- No known relationship-mutation operation/path or scripted follow/unfollow/accept call was found.
+  The debugger detach followed the stop during shutdown. Epo exited; all critical hashes remain
+  unchanged and run intent remains stopped.
+
+**L1 remains unqualified.** Do not infer a rate limit from a CDP retrieval error, or infer a successful
+response from an incomplete record. Investigate capture lifecycle locally before further account traffic;
+the original stopped artifacts stay intact. L4/L5 and comparator removal remain pending.
+
+The final reporting fix at `36c492a` passed the complete gate: **438 suites / 4,503 tests**, one suite
+and six tests skipped; boundaries **0 errors / 56 warnings**, all other gates green. Full log:
+`results/codex-design-cleanup/post-live-recorder-gate.log`. The development renderer build was restored
+by that gate for the existing browser preview; no UI source changed during these probe repairs.
+
+### Local capture lifecycle experiment
+
+After the stopped follow-up, the lead ran one isolated diagnostic using installed Electron 44.1.1,
+synthetic payloads and a loopback-only server. It imported no Epo modules, used a fresh temporary
+profile and non-persistent partitions, and allowed only the exact local test origins. The run made
+no account requests. Evidence, runner sources and their hashes are retained outside the repository
+under `results/capture-lifecycle-repro/`; the result directory is
+`run-2026-11-04T09-46-40-457Z/`. An independent agent reviewed the saved result.
+
+Nine cases completed in 5.039 seconds (5.503 seconds including the launcher); the process exited
+normally and removed its temporary profile. All stable POST controls passed. The navigation cases
+recorded a change in the renderer's OS process ID, rather than assuming a process change from the URL.
+
+| Synthetic case | Default capture | Bounded buffers | Bounded buffers with durable response storage |
+|---|---|---|---|
+| Stable POST, early and late request/body retrieval | Passed | Passed | Passed |
+| Completed POST, late request metadata after process change | Resource unavailable | Resource unavailable | Resource unavailable |
+| Completed POST, late response body after process change | Resource unavailable | Resource unavailable | Exact expected body retained |
+| Pagehide beacon, server receipt versus CDP observation | Server received; no matching CDP events within 1 s | Same | Same |
+
+The server independently verified the synthetic payload hashes. Inline POST data and early
+`getRequestPostData` succeeded in all POST cases, including the default, so this experiment shows
+no benefit from increasing the inline POST limit. The beacon cases are missing observations,
+not passes: completion of the planned matrix does not establish complete capture. No non-loopback
+URL appeared in recorded events, and the network allowlist recorded no blocked requests.
+
+This reproduces a possible capture-loss mechanism, **not the established cause of live exchange 56**.
+The live run did not record process/frame lifecycle evidence sufficient to establish that it was a
+process change or pagehide beacon. The diagnostic also does not explain the response-less subscription.
+Durable response storage alone is not a complete repair, so no production capture setting changed.
+The next investigation must reconcile request metadata and response events with the debugger session,
+frame/loader and renderer lifecycle, while retaining the first-failure and complete-coverage gates.
+The current source requests missing POST metadata immediately on `requestWillBeSent`; a late-read
+synthetic failure alone does not demonstrate a deferred-read bug in that path.
+
+The final branch/ref, backup and store-state checkpoint is
+`results/codex-design-cleanup/post-live-ref-state.json`. The last code gate remains the passing
+`36c492a` run above; subsequent edits only document the evidence. L1, the overnight reopen and the
+planned action checks remain unqualified.
 
 ### Remaining live sequence
 

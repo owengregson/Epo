@@ -1,5 +1,24 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-04 (repaired L1 follow-up; capture retrieval stopped the run) —** The authorized follow-up
+> at `5d83f35` stopped during the nonexistent-profile visit when CDP could no longer retrieve request
+> metadata for an auxiliary AJAX exchange; response-body retrieval also failed. Of 56 exchanges,
+> 55 returned 200 and 54 have saved bodies. Own/target profiles parsed canonically and completely,
+> nine sentinel checks were `ok`, and no shadow disagreement or account mutation was observed.
+> The drawer and repaired final navigation step were not reached, so **L1 remains unqualified**.
+> All 15 critical profile hashes remain unchanged; Epo is closed and desired run state is stopped.
+> Evidence: `results/live-l1-repaired-2026-11-04T093428Z/`. The reporting fix at `36c492a` preserves
+> the first exchange failure instead of allowing a later failure to overwrite it. Its full gate passed
+> **438 suites / 4,503 tests**, boundaries **0 errors / 56 warnings**. A nine-case loopback-only
+> experiment reproduced late capture loss after measured renderer process changes. Durable storage
+> retained the response body in that synthetic case, but late POST metadata still failed and pagehide
+> beacons were received by the server without matching CDP events. This does not establish the live
+> failure's cause or justify a complete fix; production capture settings are unchanged. Continue with
+> capture lifecycle diagnosis before more account traffic; do not exempt incomplete responses or
+> remove comparators. See the [follow-up record](qa/plan-derived-overhaul-2026-11.md#repaired-live-follow-up-2026-11-04)
+> and [local experiment](qa/plan-derived-overhaul-2026-11.md#local-capture-lifecycle-experiment).
+> The final private checkpoint is `results/codex-design-cleanup/post-live-ref-state.json`.
+
 > **2026-11-04 (authorized second L1 attempt; parsing observed, navigation step stopped) —** After the
 > owner explicitly overrode the same-day restriction, one verify run at `7cb5cdf` used the replacement
 > public, followed target. Own/target profiles, nonexistent-profile detection, notifications feed,
