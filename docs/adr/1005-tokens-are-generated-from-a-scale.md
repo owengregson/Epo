@@ -76,3 +76,10 @@ in the scale module puts all type in one file without pretending they derive.
 - Changing a fundamental now changes thirteen custom properties at once — which
   is the point, and also the risk: the golden test is what keeps that power from
   becoming an accidental retune.
+
+## Amendment — 2026-11-03: the readable type ladder (ADR 0405)
+
+The overhaul deliberately replaces the fitted 12 px ladder with semantic text roles based on a
+15 px body, larger controls and extended spacing. The fluid type-role table is retired. Tokens still
+derive from `design/scale.ts` and are regenerated, with goldens for the chosen values and contrast
+checks for the revised palette. Bundled Inter and tabular numerals keep layout stable during updates.

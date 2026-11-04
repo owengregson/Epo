@@ -1,7 +1,7 @@
 # 0105 — Settings v2: one global document, one writer, persist-first saves
 
-**Status:** draft (SC stream; finalized in Phase I) · **Area:** `src/settings/{doc,doc-rules,ops,ops-protection,persist,
-migrate-v1,effective,view,v1-adapter}.ts`, `src/main/modules/{settings-service,settings-reload}.ts`
+**Status:** accepted · **Area:** `src/settings/{doc,doc-rules,ops,ops-protection,persist,
+migrate-v1,effective,view}.ts`, `src/main/modules/{settings-service,settings-reload}.ts`
 
 ## Context
 
@@ -12,7 +12,7 @@ wholesale (a lost update between two windows), and re-derived every number on sa
 ## Decision
 
 1. **One global document**, `userData/epo-settings-v2.json` (`SettingsDocV2`): intent, sparse overrides, seed,
-   protection, preferences, app state, the migration record and the transitional legacy carry. v1 is never written
+   protection, preferences, app state and the migration record. v1 is never written
    again; older builds keep reading it.
 2. **One writer**, `SettingsService.apply(ops, origin)`: ops apply atomically and in order, coerced to the nearest
    safe value (ADR 0103); every result is typed (`saved` with its undo, `not-saved` when nothing changed, `refused`).
@@ -30,13 +30,14 @@ wholesale (a lost update between two windows), and re-derived every number on sa
    at launch, and only its additions to the two lists are offered back (`import-older-version`, or a dismissed
    notice). Removals made there never apply.
 6. **Keyed list ops** (`protect-add`/`protect-remove`/`word-add`/…) replace whole-list writes.
-7. **Transitional**: until the old Settings UI is deleted, `getSettings/updateSettings/resetSettings` go through a v1
-   adapter (`toV1Settings`, `opsFromV1Partial`); a failed save rejects so the old UI shows "Not saved".
+7. **One live interface.** Renderer changes use typed v2 operations. The frozen v1 model remains only for migration
+   and compatibility evidence; it is not a second writable settings interface.
 
 ## Consequences
 
 - A failed save can no longer read as saved; a crash mid-write leaves the previous file or its backup.
-- Run stamps leave Settings once the reopen state holds them (`takeBookkeeping` → `consume-bookkeeping`).
+- Run stamps leave Settings before the reopen state adopts them (`takeBookkeeping` → durable `consume-bookkeeping`
+  → seed); a failed save leaves the carried timestamp unused.
 - Deleting the v2 file is not a reset: the backup or the older version's settings return under review.
 
 ## Alternatives rejected
@@ -44,3 +45,19 @@ wholesale (a lost update between two windows), and re-derived every number on sa
 - **Per-account settings**: protection by pk is safe across accounts; run state already lives in each account's store.
 - **A meta key for run stamps**: two homes for one fact would drift (spec C13).
 - **Debounced saves**: a loss window at quit; every control now commits on its own gesture.
+
+## Amendment — pre-live review: refused migration still constrains the plan
+
+A refused migration preserves v1's active-hours window, slower check/scan choices and custom cleanup/census limits
+in the effective plan inputs. Raw protection drop counts remain visible for review, and a completed intro stays
+completed through refusal and the explicit recovery choice. A non-object JSON value is unreadable settings, not a
+usable v1 document. Refusal keeps protection paused and writes no v2 file until recovery succeeds.
+
+## Amendment — pre-live review: account ownership survives failed saves and backup restoration
+
+The first account reading an unowned migration stamp claims it in memory. Consumption first persists that account's
+pk, then clears the stamp, and only a successful clear permits the account store to adopt it. This preserves explicit
+ownership in the normal settings backup. A failed write cannot mark two accounts freshly checked, and restoring a
+backup cannot turn an already-used stamp into an unowned one. The account store's own legacy lifecycle timestamp can
+still seed independently. A crash after consumption but before store seeding loses an optimization and causes a
+conservative check; it does not invent freshness.

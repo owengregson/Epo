@@ -50,3 +50,12 @@ at once, which blocked the queue behind it.
 - **A deferral for unreadable records:** it re-offered the same unfollow every step, and a protected or unreadable
   head blocked the queue.
 - **Former usernames as a rule:** someone else could take an old handle and inherit the protection.
+
+## Amendment — edits while an action is being prepared
+
+The fresh profile visit produces a local guard bound to that action's own observation. Before the first dispatch
+and every later confirmation-layer press, the guard reads the current protection index, source/request membership
+and surface pause. A new keyword, account entry, verified rule or paused protection state can therefore stop the
+press even when saved after the visit. It never repeats the visit, admission or journal-dispatch mark. Practice
+mode is also read again before a physical press. A refusal after the initial header press remains an uncertain
+action for ordinary journal settlement; the guard does not guess whether the server changed the relationship.

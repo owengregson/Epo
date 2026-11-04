@@ -1,6 +1,6 @@
 # 0608 — The settings envelope rule
 
-**Status:** draft (SC stream; finalized in Phase I) · **Area:** kernel (`src/kernel/{settings-policy,derive-envelope,
+**Status:** accepted · **Area:** kernel (`src/kernel/{settings-policy,derive-envelope,
 derive-schedule,derive-audience,catalog}.ts`), `src/settings/{params*,resolve}.ts`
 
 ## Context
@@ -24,7 +24,7 @@ plain choices with an Advanced view; A3/A4 ask that no override raise a ceiling 
    ceiling ≥ volume, burst floor ≤ minimum gap ≤ typical gap, pruning ≤ ceiling, ordered ranges and curves.
 4. **`SETTINGS_POLICY`** is a tier-1 module: the quiet-hours rule (λ < 0.2 × peak, a 30-minute grid, ≤ 16 h), the
    typical-day z, the audience sizes and curve, the private edge, the recommendations no choice moves (the follow-back
-   floor linked to the exploration prior), the interim recommendations until the plan port registers, the risk
+   floor linked to the exploration prior), the frozen migration baselines, the risk
    rungs, the Boost lengths, the tempo-override factor bound, the document version and the step grid.
 5. **The plan core's numbers** (the effective gap at pace 1, the day law and its maximum, the retry limit) reach the
    settings core through one port, `PlanMath`, so the catalog, the view and the migration read them from one place.

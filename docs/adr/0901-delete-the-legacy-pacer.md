@@ -1,6 +1,6 @@
 # 0901 — Delete the legacy pacer (deletion list; wave B)
 
-**Status:** proposed — deletion scheduled for wave B · **Area:** engine, settings,
+**Status:** executed by the plan-derived overhaul (ADR 0607; amendment below) · **Area:** engine, settings,
 renderer, main
 **Refines:** ADR 0202 (pacing models), which already says removing it is "a
 one-file change plus a settings key". This ADR is the audited version of that

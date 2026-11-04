@@ -51,3 +51,10 @@ places already covered by two keyframes — a dependency to delete eight lines.
   render tests see cards at their end state rather than a mid-animation opacity.
 - Re-running cancels the previous pass, so rapid tab presses always animate the
   latest activation instead of stacking delays.
+
+## Amendment — 2026-11-03: stage motion and live preferences (ADR 0405)
+
+The larger stage pages use the shared semantic motion scale and `staggerSections`; deadline rings,
+number changes, feed arrivals and the launch sequence use the same gesture vocabulary. Reduced motion
+is a live preference, including the native stage transition, which cuts without its curtain. Infinite
+animation is limited to the mark ring and Live dot; loading placeholders do not add another loop.

@@ -58,3 +58,10 @@ from the knowledge graph, so neither belongs on a store-mutation push.
   the `status`/`engineStatus` channel pair and `EpoBridge`'s
   `onPruneStatus`/`offPruneStatus` sugar. Both delete once the renderer
   migrates.
+
+## Amendment — 2026-11-03: settings, activity and the live console
+
+The typed contract includes settings views, settings facts, activity and feed updates used by the live
+console (ADRs 0105, 1010, 1011). The five store projection rows remain registered centrally; projection
+deduplication and timed expiry preserve live updates without waiting for a scan or action to finish.
+Settings pushes follow persisted writes, and diagnostics subscribe to the log stream only while open.

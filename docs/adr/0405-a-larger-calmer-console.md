@@ -1,6 +1,6 @@
 # 0405 — A larger, calmer console: semantic type ladder, AA palette, bundled Inter, motion vocabulary
 
-Status: proposed (draft, plan-derived overhaul stream TK; the integration lead finalizes)
+Status: accepted
 
 ## Context
 
@@ -80,10 +80,10 @@ app is shown. The intro: the mark flies into the masthead over `--dur-4` while t
 - Every renderer number now has a rule or a test: `tokens.test.ts` (golden, L-TOKENS, the restyle laws, the bundled
   face), `contrast.test.ts` (L-CONTRAST, measured from the stylesheet), `motion-scale.test.ts` (L-MOTION),
   `geometry.test.ts` (L-GEOMETRY), `brand-mark.test.ts` (L-MARK), `direction-boards.test.ts`.
-- Text is about three pixels larger everywhere and controls are 8–14 px taller, so the old console scrolls more. SB's
-  live column (fixed zones) replaces it; until then the old console stays legible and nothing clips at 1024 px.
-- `settings.css` (the old settings UI) still reads `--fs-xs`/`--fs-sm`; two aliases in `tokens.palette.css` keep it
-  whole until that sheet leaves with SU's Settings stage.
+- Text is about three pixels larger everywhere and controls are 8–14 px taller. The fixed-zone live column
+  replaces the old scrolling console.
+- The Settings stage replaces the old `settings.css`; its temporary `--fs-xs`/`--fs-sm` aliases are removed from
+  `tokens.palette.css`.
 - `scale.ts` drops to 226 lines and leaves the line-budget list.
 
 ## Alternatives rejected

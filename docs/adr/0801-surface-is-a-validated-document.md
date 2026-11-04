@@ -87,3 +87,11 @@ is deleted once every endpoint is `enforce`.
   scrubber and the novelty pass.
 - **Keep `IgSurface` and add tests.** The duplication between the eight extractors
   and the eight interfaces is the defect; testing both copies does not remove it.
+
+## Amendment — 2026-11-03: enforcing reads and witnessed recovery (ADR 0806)
+
+Every endpoint now enforces the surface read pipeline. Canonical and declared-normalization reads
+carry presence and completeness evidence; witnessed recovery adds facts without granting destructive
+verdicts. `ObservedReads` memoizes each response for its consumers. Legacy extractors run only as
+reverse-shadow comparators until L1 and L4 record zero disagreement; their final removal remains
+conditional on that live evidence, as recorded in the overhaul QA document.

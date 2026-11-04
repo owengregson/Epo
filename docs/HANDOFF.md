@@ -1,5 +1,55 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-03 (plan-derived overhaul continuation; offline verification in progress) —** Owner:
+> "Read docs/superpowers/plans/2026-11-03-plan-derived-overhaul-handoff.md and continue the overhaul from it until completion."
+> The final retirement stream is merged, including the Cautious floor change to 70 s. The integration now uses the day
+> plan for action spacing and interaction timing, with durable Boost, bounded reopen checks, Settings Easy/Advanced,
+> Prune, the new sidebar and the store-first launch. Review reproduced these remaining causes:
+>
+> 1. Session boundaries lost planned actions, while repeated re-plans could count used work twice or reclaim discarded
+>    work. Prune also needed the ledger's per-session unfollow share.
+> 2. The first following list mixed existing stock with today's outside activity; later Epo follows and delayed private
+>    acceptances could be charged again as manual follows.
+> 3. Recovery, mutation arbitration and list completion had paths around transport or partial-evidence checks. Stored
+>    profile counts could substitute for missing fresh follow proof.
+> 4. Protection and Practice edits during a visit or between confirmation layers could arrive after the last policy
+>    check. An already-open accept pass could likewise keep a stale allowance.
+> 5. Delayed renderer reads could overwrite pushes; derived Settings views can change without a document revision;
+>    initial queued or parked work could show an incorrect posture.
+> 6. Numeric cleanup-share overrides did not reach plan allocation. Refused v1 migration lost schedule constraints,
+>    and failed bookkeeping consumption or backup restoration could reuse another account's freshness stamp.
+> 7. Probation slowed sessions after placement without respecting the quiet-hours wall, leaving planned actions
+>    that could never run.
+>
+> FIXES (ADR 0105, 0607, 0608, 0213, 0214, 0308, 0806, 0904, 1010, 1011):
+>
+> - Realize session budgets at their exact boundaries; preserve used and forfeited work through re-plans, respect the
+>   quiet-hours wall, and apply the ledger's kind budgets to Prune.
+> - Separate following stock from dated outside gains and exclude successful Epo/manual writes from duplicate charges.
+> - Require transport-qualified, complete evidence for destructive verdicts and current count proof before a follow.
+> - Recheck current protection and Practice at each press using the action's existing visit, with one admission and
+>   journal dispatch. Revalidate accept passes against the current plan.
+> - Retire the v1 runtime bridge, fixed scan timing and obsolete renderer state; preserve frozen migration inputs and
+>   raw protection. Keep current pushed state authoritative through bootstrap and Settings changes.
+> - Apply numeric cleanup-share overrides to the plan and its digest. Preserve refused-v1 quiet hours, slower reads,
+>   lower caps, slower motion and tour state; bind migration bookkeeping durably to its account before consumption.
+> - Fit probation inside the same quiet-aware close as normal sessions, reduce its kind allocations to fit, and carry
+>   probation to the next viable session when the current slot cannot hold one slower action.
+>
+> Implementation and closing cleanup are merged through `42ee233`; its full gate is running. The latest completed
+> shared gate (`44ea8d4`, chart and card style restoration) passed **424 suites / 4,387 tests**, five skipped, zero TODO,
+> and boundaries **0 errors / 56 warnings** (97 at the original overhaul start). The recorded plan QC had zero breaches
+> across 1,260 days, and all three lifecycle reachability tests passed; final-head results remain pending.
+> The isolated normal-motion gallery at `44ea8d4` passed **756 checks** (63 scenarios at 12 sizes). The recorded
+> background probe passed **10/10 scenarios**, including stage-hidden and never-shown boot, at about **120 callbacks/s**;
+> its exact bundle hash is in the validation record. Final reduced-motion, native-shell and checkpoint evidence is
+> still pending. The exact revisions, artifacts and upgrade notes are in the
+> [validation record](qa/plan-derived-overhaul-2026-11.md).
+> No live-account check has run in this continuation. The integration has not opened the real Epo profile. Phase L
+> remains sequential and supervised; back up the full profile again before L1, mutations require explicit target
+> consent, and L4 requires a night away. Empty/null biography semantics still need live evidence; null remains absent
+> and fail safe. Legacy parser comparators stay until L1 and L4 show zero disagreements.
+
 > **2026-11-02 (read allowance derived, not hardcoded) —** Owner: "it
 > shouldnt be hardcoded everything should be via our dynamic limit system."
 > `ReadBudget`'s 80/40/200/24/24 defaults are gone. Kernel D6

@@ -659,7 +659,7 @@ export declare function referenceTempoSource(launchSeed?: number): TempoSource; 
 | Priors | `PACING_BASE_MS`, `MOTION` durations, the RIM/ENGINE/PRUNE/NOISE/RECOVERY keys a spec claims (incl. `ENGINE.IDLE_MS`, `ENGINE.ENRICH_BACKOFF_MS`, `PRUNE.PARK_MS`, `RIM.SCROLL_WAIT_MS`, the rest stride, the resume settle) | reached **only** through `resolve()` at tempo 1; outside `src/kernel/tempo` no code reads them — `no-static-timing` flags any **property access** to a claimed key (`RIM.SCROLL_WAIT_MS`, `MOTION.x`, …), not only imports |
 | D4 deadlines and polls | `timeoutFor(op) = p99·TIMEOUT_SLACK`, `pollEveryFor(op)` | **never plan-derived**: a relaxed session must not loosen failure detection; tempo floors use the same seeds' p50; law: every D4 value identical at every tempo |
 | D3/D5 | holds, cool-down, breaker posteriors | physics and statistics; the plan only decides *when* work runs |
-| `HARNESS` (11 dev keys) | — | never derives (ADR 0605) |
+| `HARNESS` (9 dev keys) | — | never derives (ADR 0605) |
 
 **ADR 0607** redefines the golden invariant:
 1. The snapshot (`tests/kernel/legacy-config.snapshot.ts`) is never edited.
@@ -675,7 +675,7 @@ export declare function referenceTempoSource(launchSeed?: number): TempoSource; 
 5. Laws hold over plan × tempo space (§20).
 6. The provenance tally is asserted against a reviewed literal, updated in the commit that retires keys.
 
-**Retired registry keys (18)** [recomputed in r2 from `derive-provenance.ts`; all in PR S2r, after the last consumer is
+**Retired registry keys (20)** [finalized from `registry-changes.ts`; all in PR S2r, after the last consumer is
 gone]:
 - derived (9): `ENGINE.VELOCITY_PARK_{MEDIAN_MS,SIGMA,MIN_MS,MAX_MS}`; `RIM.ENRICH_PACE_{MIN,MAX}_MS`;
   `NOISE.PRUNE_LAUNCH_JITTER_MAX_MS` (C14); `NOISE.CADENCE_SIGMA` (derived from the retired
@@ -685,10 +685,11 @@ gone]:
 - policy (7): `PRUNE.DELAY_FACTOR`; `RIM.ACQUIRE_MAX_ROUNDS` (dead); `SCHEDULER.AUTO_PRUNE_CHECK_MS`,
   `PRUNE.SCAN_FRESH_MS`, `NOISE.CADENCE_{MIN,MAX}_FACTOR` (C14 and the retired sweep factor);
   `SCHEDULER.USERNAME_REBUILD_BACKOFF_MS`;
-- override (2): `ENGINE.REFILL_PACING_{MIN,MAX}_MS` with their two `OVERRIDES` entries (the activity-clock slice).
+- override (2): `ENGINE.REFILL_PACING_{MIN,MAX}_MS` with their two `OVERRIDES` entries (the activity-clock slice);
+- harness (2): the unused `HARNESS.ENRICH_PACE_{MIN,MAX}_MS`; the harness visitor shares the visit cadence.
 
 **Kept, re-roled:** `PATTERN.CYCLE_PLAN_{MIN_FRACTION,MAX_FRACTION,MIN_CAP}` are the automatic-day band (§5.4; values
-unchanged). **Expected tally after S2r:** derived 40 / policy 34 / override 16 / harness 11 (101 keys; today
+unchanged). **Final tally after S2r:** derived 40 / policy 34 / override 16 / harness 9 (99 keys; previously
 49/41/18/11 = 119, `derive-golden.test.ts:184`). **Non-registry `OVERRIDES` changes** (not part of the tally, covered by
 the overrides tests): the advisory `ENGINE.ACTIONS_FAILING_HALT` entry is removed (the engine reads
 `coldFailingThreshold()` = 7); `CAUTION.cautious.floorSeconds` is removed (the derived 70 applies; grid point and
@@ -1328,7 +1329,7 @@ becomes 70 (owner Q11). A normal install of any persona migrates with **zero ove
 | `minDelayMinutes`, `maxDelayMinutes`, `jitterPercent`, `pacingModel` | `legacyCarry` (before S2) / intent (after S2) | carried verbatim until §5.13 S2 deletes the pacer [lead]; from S2 on, `migrate-v1` applies `legacy-pacing-migration.ts` directly (legacy → consistency `clockwork` (Even) + rhythm `trickle`, notice) |
 | `activeHoursStart`, `activeHoursEnd` | `legacyCarry` + `intent.quietHours` | carried until S2; default (8, 22) → `{kind:'derived'}`; hand-edited → `{kind:'custom', startMinute: end·60, endMinute: start·60}` (notice) |
 | `followbackSweepHours` | `checks.everyHours` | override if ≠ 1 **and** ≥ 0.85 h (the envelope); a faster value is dropped with a notice |
-| `sweepLastRunAt`, `sweepIntervalFactor` | `migration.bookkeeping` → seeds `reopen_state.lastSweep` (§9) at the first store open whose pk matches; then `consume-bookkeeping` | the factor is dropped (the sweep factor retires) |
+| `sweepLastRunAt`, `sweepIntervalFactor` | `migration.bookkeeping` → persist the first account's ownership → durable `consume-bookkeeping` → seed `reopen_state.lastSweep` (§9) only after success | the factor is dropped; ownership remains explicit in the normal settings backup (ADR 0105) |
 | `autoAcceptFollowRequests` | `prefs.acceptRequests` | copy |
 | `lowWaterCandidates` | `explore.refillBelow` | override if ≠ 5; clamped ≤ 10 (it was inert above 10) with a notice |
 | `minFollowBackRate`, `minPoolSize` | `explore.moveOnRate`, `explore.moveOnPool` | override if ≠ 0.15 / 300 |
@@ -1433,9 +1434,11 @@ export function normalizeHandle(raw: string): { handle: string; valid: boolean }
 ```
 
 `whole-word` uses `(?<![\p{L}\p{N}])…(?![\p{L}\p{N}])` with the `u` flag. Blank words never protect. A bio arriving as
-`null` is treated as **absent** (fail safe) until it is resolved **offline before L4** from the 2026-11-02 corpus
-(how Instagram sends an empty bio: `null` or `''`; `endpoints.ts:188,199` declares both `biography` and `is_verified`
-nullish). `biography` and `is_verified` join `EXPECTED_KEYS['profile-graphql']` (§10.3), so if Instagram omits either
+`null` is treated as **absent** (fail safe) until corpus or live evidence establishes how Instagram sends an empty bio
+(`null` or `''`; `endpoints.ts:188,199` declares both `biography` and `is_verified` nullish). The scrubbed 2026-11-02
+corpus contains no empty/null biography example, so `EMPTY_BIO` remains unresolved (ADR 0806). L1 uses an empty-bio
+target if the owner can name one; no such target means no new evidence, not an inferred resolution.
+`biography` and `is_verified` join `EXPECTED_KEYS['profile-graphql']` (§10.3), so if Instagram omits either
 the profiles area shows `paused` with a reason in the compatibility panel and the sidebar, instead of every unfollow
 silently becoming `kept('unreadable-*')`.
 
@@ -2543,7 +2546,7 @@ same function for the window title and Dock badge. Precedence (first match wins;
 | 7 | `offline` | `online === false` and work intended | Offline | hold | pause |
 | 8 | `cleaning-up` | prune scanning/running/paused | Cleaning up / Clean-up paused | live / hold | pause-cleanup / resume-cleanup |
 | 9 | `catching-up` | a startup step runs, or `catchUp.state === 'running'` | Catching up | live | starting (if a Start is queued) / pause / start (queues) |
-| 10 | `starting` | pending start, or running with no step yet | Starting | live | starting (disabled) |
+| 10 | `starting` | queued/pending Start, or running first step before any action, deadline, recovery or planned wait is known | Starting | live | starting (disabled) |
 | 11 | `paused` | paused, or desired paused and idle | Paused | hold | resume (calls `startEngine` when idle) |
 | 12 | `needs-seed` | idle and no seed | Let's get set up | idle | set-up |
 | 13 | `stopped` | idle | Stopped | idle | start |
@@ -3517,7 +3520,7 @@ an agent): update `unified-transport-and-bio-keep-list` (protection now covers e
 ### 20.2 Goldens and identity
 
 `derive-golden.test.ts` (snapshot − RETIRED ⊕ CHANGED = registry, grid, personas and profiles; the deliberate-change
-test equals the `CHANGED` ledger; reviewed tally 40/34/16/11); `tempo-identity.test.ts` (every spec at
+test equals the `CHANGED` ledger; reviewed tally 40/34/16/9); `tempo-identity.test.ts` (every spec at
 `REFERENCE_TEMPO` = its prior; every RIM/ENGINE/NOISE band and MOTION duration claimed exactly once or listed in
 `NOT_TEMPO`; every `TempoKey` has ≥ 1 call site or sits in `PENDING_CONSUMERS`, which Phase I empties);
 `motion-golden.test.ts` (frozen snapshot + `ADDED` + `MOTION_ROLE` coverage); `gap-model.test.ts` (Balanced 303.9 s
@@ -3545,7 +3548,8 @@ to RO-b. Reopen: T5 I1–I12 (overnight reopen; a week away; DST fall-back; draw
 head; a private account with 5 requesters; a manual unfollow after a week away; crash after N; a 4 500-follower header;
 conversion parity; Boost active; upgrade of the live store's shape: exactly one head page) + the following check
 (outside follow and unfollow identified; charge replaced by the exact count). Settings: service write failure →
-`not-saved` with no reload/push/re-plan; bookkeeping never writes settings; seed check never at launch; facts not-built
+`not-saved` with no reload/push/re-plan for user settings; run bookkeeping stays in the account store. The one-time
+migration claim/consume persists ownership before clearing, and failed consumption cannot seed freshness; seed check never at launch; facts not-built
 shape; migration refusal keeps practice mode and writes no v2 after a user op; v2 deleted with `.bak` present →
 `restored-from-backup` + `needs-review`. Boot: R2 → R3 → landing behind the splash → ready; the IG deadline falls back
 to the placeholder; steps in order under the lease; queued Start never `manual-running`; settle-deadline fallback; no
@@ -3661,7 +3665,7 @@ confirm dialog, `capture` while the owner clicks Unfollow, repeated `verify` run
 | Step | What | Requests | Pass | Stop |
 |---|---|---|---|---|
 | **L0** offline gate (mandatory) | `npm run check`; the U06 actor tests (P, R, public, stall, F6); seed-never-at-launch; reentry DST tests; corpus replay + leak; `node scripts/background-probe.mjs --soak-ms 10000 --output "$SCRATCH/bg.json"`; `plan-qc` | 0 | all green | any red |
-| **L1** `EPO_PROBE=verify`, once, post-merge (mandatory) | parsers on the visit and drawer paths (the probe builds its own interactor and actor and drives the drawer directly with its own settles, `probe/verify.ts:44-46,81-85`, so it can observe **parsing**, never the plan's timings) | 0 composed, 0 mutations; ≈ 90 IG-client exchanges; ≈ 2 min | own and target `ok` with counts and viewer flags; `biography` and `is_verified` present on both bodies (and, if the owner can name a followed public account with an **empty bio**, use it as `EPO_PROBE_TARGET` so `null` vs `''` is observed; otherwise it was resolved offline from the corpus before L4); nonexistent `gone`; drawer steps true; every exchange 2xx; every profile/feed/requests body `canonical`, not partial; 0 `shadow-disagreed` | any non-2xx, HTML, sentinel ≠ ok, shadow disagreement |
+| **L1** `EPO_PROBE=verify`, once, post-merge (mandatory) | parsers on the visit and drawer paths (the probe builds its own interactor and actor and drives the drawer directly with its own settles, `probe/verify.ts:44-46,81-85`, so it can observe **parsing**, never the plan's timings) | 0 composed, 0 mutations; ≈ 90 IG-client exchanges; ≈ 2 min | own and target `ok` with counts and viewer flags; `biography` and `is_verified` present on both bodies; `EPO_PROBE_TARGET` is a public account the owner follows, mutual preferred (use an **empty-bio** account if the owner can name one, to observe `null` vs `''`; without supporting corpus/live evidence, `EMPTY_BIO` stays unresolved and null stays absent/fail safe); nonexistent `gone`; drawer steps true; every exchange 2xx; every profile/feed/requests body `canonical`, not partial; 0 `shadow-disagreed` | any non-2xx, HTML, sentinel ≠ ok, shadow disagreement |
 | **L4** supervised production relaunch after ≥ 1 night away (mandatory) | reopen catch-up, seed, boot, geometry, Boost durability, the production tempo | the home load + the landing behind the splash (1 navigation); 1 drawer pass (≈ 2 feed bodies); **exactly 1 composed list page** on this first launch after the upgrade (no `reopen_state` → `initialized`); **0 third-party visits before Start**; after Start: 1 journal visit (the 18:30 intent), then planned work | before the reveal only the home load, the landing press and its URL wait (no drawer, no list read); no seed-check hold at launch; the intro lands on the own profile, already settled; `confirm-account` confirms; catch-up steps `done` or typed skips; the summary agrees with the header (conservation); the head walk reads one page and initializes the frontier; `filtered: true`; the drawer's step pauses (`ui.step-pause`) present between bell, chip and close; "checked …" moves to now; the feed shows "While you were away"; no "0 / 0", no "not available", no count-up (screen recording); the stuck intent settles `cancelled` with its record still `unfollow_queued`; no census; no following check before Start; the compatibility panel reads "Working normally"; list pages read with 0 `shadow-disagreed`; if a Boost was left on before the quit: `paused` while stopped ("Boost is on, but Epo is stopped"), then `on` after Start with its original end time | sentinel ≠ ok; a drawer opened > 2× in 5 min; more than one list page before Start; any census start; any visit before Start |
 | **L5** same session continuing: the first due unfollows (mandatory; consented; planned mutations only) | confirm layers (item 5), the DayPlan cadence and in-action pacing | nothing extra: the engine takes its next due unfollows — the stranded Requested record (cancel request), the next public, the next private | exactly one admission per unfollow, before the header press; the look-before-act dwell (≈ 2.5–4.5 s at a normal-pace session) precedes each header press; a `ui.step-pause` precedes each confirm-layer press; the mutation observed and arbitrated `ok` (cancel-request op name captured if not unfollow-named); header `Follow` within the DOM window; no dialog left on screen; the record → `unfollowed`, never `external`; the capture hook wrote the layer DOM; the first 2–3 dispatch-to-dispatch gaps match the session's GapSpec; the trailing-hour count ≤ H; the session layout matches the plan projection; the first session runs in probation | `throttled`/`walled`/`refused`; `TabUnresponsive post-click`; a dialog still visible; a second admission; any press on an unrecognized dialog; any record → `external` |
 | L5b Boost (optional, same session, after L5) | start a Boost (one tap, the saved length), watch the first 2–3 follows (re-verifies the follow press), end it early | planned follows only | the preview line matched what happened (act-now session, follows instead of the remaining unfollows); follows only; no unfollow/census during Boost; the own header still read at the session start; the band and countdown render; End Boost restores the normal mix | any unfollow during Boost |
@@ -5521,7 +5525,7 @@ export interface RelationshipFact {                                             
 export type Presence = 'read' | 'absent' | 'null' | 'invalid' | 'partial' | 'withheld';
 export interface ProfilePresence {
   readonly counts: Presence;        // 'read' only for a valid pair
-  readonly bio: Presence;           // 'read' covers '' and text; 'null' = explicit null (resolved offline before L4, §7.3)
+  readonly bio: Presence;           // 'read' covers '' and text; 'null' = explicit null (empty-bio form unresolved, §7.3)
   readonly isPrivate: Presence; readonly isVerified: Presence;
   readonly relationship: Presence | 'self';
 }
