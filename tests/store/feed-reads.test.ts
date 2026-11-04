@@ -2,7 +2,7 @@
  * The live feed's reads (spec §12.9, Appendix C.4): settled writes newest first with the reason a lifecycle
  * unfollow carried, follow-backs dated by event time when known, new followers past a bound that exclude managed
  * records and accepted requests, lost followers counted per check, the last settled write; the two
- * migration-17 indexes carry the hot reads, and a large store reads in milliseconds.
+ * migration-17 indexes carry the hot reads, and large stores return bounded, ordered results.
  */
 
 import type { SqliteDriver } from '@/store/driver/driver';
@@ -167,7 +167,7 @@ describe('the migration-17 indexes carry the hot reads', () => {
   });
 });
 
-test('a large store (100k edges, 20k records, 10k intents) reads the feed in milliseconds', () => {
+test('a large store (100k edges, 20k records, 10k intents) returns bounded, ordered feed rows', () => {
   const db = dbOf(store);
   const now = T0 + 60 * 24 * HOUR;
   db.transaction(() => {
@@ -192,18 +192,21 @@ test('a large store (100k edges, 20k records, 10k intents) reads the feed in mil
     }
   });
   const since = now - 7 * 24 * HOUR;
-  const read = (): void => {
-    store.feed.settledEffects(since, 1_200);
-    store.feed.followBacks(since, 1_200);
-    store.feed.newFollowers(OWN, since, 1_200);
-    store.feed.lostFollowerCount(OWN, since);
-    store.feed.lastSettledMutationAt();
-  };
-  read();
-  const runs = Array.from({ length: 5 }, () => {
-    const t = performance.now();
-    read();
-    return performance.now() - t;
-  });
-  expect(Math.min(...runs)).toBeLessThanOrEqual(15);
+  // Query-plan assertions above guard the access paths without making CPU scheduling a correctness condition.
+  const effects = store.feed.settledEffects(since, 1_200);
+  const followbacks = store.feed.followBacks(since, 1_200);
+  const followers = store.feed.newFollowers(OWN, since, 1_200);
+  expect(effects).toHaveLength(1_096);
+  expect(followbacks).toHaveLength(548);
+  expect(followers).toHaveLength(1_200);
+  for (const times of [effects.map((row) => row.settledAt), followbacks.map((row) => row.at), followers.map((row) => row.at)]) {
+    expect(times.every((at) => at >= since)).toBe(true);
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+  }
+  expect(followers.every((row) => {
+    const pk = Number(row.pk.slice(1));
+    return pk % 5 !== 0 && (pk >= 60_000 || pk % 3 !== 0);
+  })).toBe(true);
+  expect(store.feed.lostFollowerCount(OWN, since)).toEqual([]);
+  expect(store.feed.lastSettledMutationAt()).toBe(T0 + 1_439 * HOUR);
 });

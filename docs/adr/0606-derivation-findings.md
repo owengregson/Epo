@@ -170,3 +170,9 @@ removed (owner Q11). A cleanup run's failed-unfollow halt is now the applied ove
 ADR 0607's `CHANGED` ledger (the `caution=cautious` grid point and the `casual` persona, 60 → 70). It
 lands once the frozen v1 pipeline resolves a named persona through `V1_DERIVED`, so the migration reads
 what a v1 file holds and no install gets a spurious gap override. `CAUTION.bold` stays pinned at 35 s.
+
+## Amendment — 2026-11-03: §4 applied (ADR 0607)
+
+The Cautious floor is now the derived 70 s. The v1 sanitizer uses `v1Derived` for both named personas
+and custom patterns, preserving the historical migration basis. The CHANGED ledger records both
+affected snapshot paths, and migration tests retain zero overrides for every default persona.
