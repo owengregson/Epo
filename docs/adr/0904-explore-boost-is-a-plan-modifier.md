@@ -51,3 +51,22 @@ the bounded alternative).
 - Raising `M` or `H` for the window: ceilings never rise for convenience.
 - Inserting the act-now session after starting the engine: it would wait for the next planned
   session instead (the ordered command is a tested contract).
+
+## Amendment — replay and lower targets
+
+The lift accounts for volume already planned, including a skipped act-now session. Replaying an
+overlay cannot grant the same headroom twice, extend an ended session, or reopen a skipped session.
+Frozen allocations count against the future allocation, so `volume.planned` remains the sum of all
+session budgets and stays within the automatic ceiling, rather than relying on the admission cap to
+hide an inflated projection.
+
+When a lower target removes unspent allocations, the persisted optional `volume.forfeited` records
+them (older plans read it as zero). Later settings changes, Boost overlays and repairs retain that
+charge; lowering and raising the target cannot refund it. Session kind budgets resize with their
+parent allocation. Actual ledger usage is never reduced: if it already exceeds a newly lowered
+target, the projection keeps those actual counts and admission permits no further automatic work.
+Repeated replay laws cover every `ReplanCause`, plus this lower/raise case and direct overlay replay.
+
+The act-now session and its lift obey the same quiet-hours, next-session and day-end walls as the
+ordinary layout, including its reserved tail. If the remaining sessions cannot fit after an insertion,
+their original slots survive; the overlay does not move their whole budget into an unchecked head.

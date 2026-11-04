@@ -27,6 +27,8 @@ export interface UsageTally {
   readonly unfollow: number;
   readonly accept: number;
   readonly perSession: readonly number[];
+  /** Ledger kind totals inside each session window; older callers may omit them and fail closed. */
+  readonly perSessionKinds?: readonly KindBudgets[];
   readonly outside: number;
 }
 

@@ -133,7 +133,8 @@ function sized(seed: number, input: DrawInput, volume: number, boost: boolean) {
   const budgets = apportion(volume, weights, 1);
   const tempos = budgets.map((b, s) =>
     sessionTempo(seed, s, input.intent, { mix: boost ? 'boost' : 'normal', probation: false }, input.intent.hourlyCap, b));
-  return { weights, budgets, tempos, lengths: budgets.map((b, s) => b * tempos[s].gap.targetMeanMs) };
+  // L4 bounds a gap plus pre-action work by the boundary; reserve that span beyond the expected length.
+  return { weights, budgets, tempos, lengths: budgets.map((b, s) => b * tempos[s].gap.targetMeanMs + SESSION_BOUNDARY_MS) };
 }
 
 /** The largest volume ≤ `volume` whose sessions fit the window's free time (spec §5.4 step 10). */
@@ -166,14 +167,14 @@ export function layoutSessions(seed: number, input: DrawInput, volume: number, k
     budgets = [...budgets.slice(0, pair), budgets[pair] + budgets[pair + 1], ...budgets.slice(pair + 2)];
     weights = [...weights.slice(0, pair), weights[pair] + weights[pair + 1], ...weights.slice(pair + 2)];
     tempos = budgets.map((b, s) => sessionTempo(seed, s, input.intent, { mix: 'normal', probation: false }, input.intent.hourlyCap, b));
-    lengths = budgets.map((b, s) => b * tempos[s].gap.targetMeanMs);
+    lengths = budgets.map((b, s) => b * tempos[s].gap.targetMeanMs + SESSION_BOUNDARY_MS);
     starts = placeSessions(seed, input, lengths, blocks);
   }
   if (starts === null) return [];
   const mixes = sessionKinds(budgets, weights, kinds, boost);
   return budgets.map((budget, idx) => {
     const startAt = (starts as number[])[idx];
-    const expectedEndAt = Math.round(startAt + lengths[idx]);
+    const expectedEndAt = Math.round(startAt + budget * tempos[idx].gap.targetMeanMs);
     const prorated = expectedEndAt <= input.firstOpenAt;
     return {
       idx, startAt, expectedEndAt, tempo: tempos[idx],
@@ -185,7 +186,8 @@ export function layoutSessions(seed: number, input: DrawInput, volume: number, k
 }
 
 /** A late join's effective budget: what still fits before the expected end at the session's target gap. */
-export function lateJoinBudget(session: Pick<PlannedSession, 'budget' | 'expectedEndAt' | 'tempo'>, joinAt: number): number {
+export function lateJoinBudget(session: Pick<PlannedSession, 'budget' | 'startAt' | 'expectedEndAt' | 'tempo'>, joinAt: number): number {
+  if (joinAt <= session.startAt) return session.budget;
   const fit = Math.floor((session.expectedEndAt - joinAt) / Math.max(1, session.tempo.gap.targetMeanMs));
   return Math.max(0, Math.min(session.budget, fit));
 }

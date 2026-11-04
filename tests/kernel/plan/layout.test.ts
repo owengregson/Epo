@@ -74,6 +74,17 @@ describe('L5: the layout', () => {
     expect(laid(3, 40).sessions).toEqual(laid(3, 40).sessions);
   });
 
+  test('placement reserves one bounded action span beyond the expected length, including the final tail', () => {
+    for (let day = 0; day < 14; day += 1) {
+      const { input, sessions } = laid(day, 47);
+      for (const [i, s] of sessions.entries()) {
+        const hardEnd = sessions[i + 1]?.startAt ?? input.window.endsAt;
+        const separation = i + 1 < sessions.length ? SESSION_BOUNDARY_MS : 0;
+        expect(s.expectedEndAt + SESSION_BOUNDARY_MS).toBeLessThanOrEqual(hardEnd - separation + 1);
+      }
+    }
+  });
+
   test('proration never grows as the first open moves later, and zeroes only sessions already over', () => {
     const base = laid(5, 44);
     let prev = Number.POSITIVE_INFINITY;
@@ -104,7 +115,7 @@ describe('L5: the layout', () => {
 
   test('a late join gets only what still fits before the expected end', () => {
     const s = laid(1, 40).sessions[0];
-    expect(lateJoinBudget(s, s.startAt)).toBe(Math.min(s.budget, Math.floor((s.expectedEndAt - s.startAt) / s.tempo.gap.targetMeanMs)));
+    expect(lateJoinBudget(s, s.startAt)).toBe(s.budget);
     expect(lateJoinBudget(s, s.expectedEndAt - s.tempo.gap.targetMeanMs)).toBe(Math.min(1, s.budget));
     expect(lateJoinBudget(s, s.expectedEndAt + 1)).toBe(0);
   });

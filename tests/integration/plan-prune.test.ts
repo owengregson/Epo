@@ -184,6 +184,8 @@ describe('I3: a cleanup run under the plan', () => {
     // The run spends only what the plan holds for cleanup today; its remainder stays runnable.
     const day = r.plan.service.view(r.clock.now());
     expect(presses.length).toBeLessThanOrEqual(day.plan.kinds.unfollow);
+    const session = r.session.plan.sessions[r.session.open?.idx ?? 0];
+    expect(presses.length).toBeLessThanOrEqual(session.mix.unfollow);
     expect(r.store.pruneScanRemainingCount()).toBe(CANDIDATES.length - of(r.events, 'consumed').length);
     expect(r.engine.status().state).toBe('done');
   });
