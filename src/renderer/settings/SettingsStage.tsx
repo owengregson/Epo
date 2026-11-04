@@ -26,10 +26,6 @@ import type { StageApi } from './stage-api';
 export interface SettingsStageProps {
   /** The updater's state, owned by the shell (the Practice & app section shows it honestly). */
   updateStatus?: UpdateStatus | null;
-  /** @deprecated interim props the old stage read; ignored (deep links ride `settingsTargetSignal`). */
-  goTo?: (view: 'overview' | 'chain' | 'queues' | 'settings') => void;
-  seedPrompt?: number;
-  onReplayTour?: () => void;
 }
 
 /** Scroll a row (or its section) into view and give it a brief highlight. */

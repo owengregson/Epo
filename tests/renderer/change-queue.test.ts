@@ -103,6 +103,25 @@ describe('ChangeQueue', () => {
     expect(q.state().view?.rev).toBe(6);
   });
 
+  it('adopts derived capability changes at the same document revision without losing pending edits', () => {
+    const q = new ChangeQueue(gatedSend().send);
+    const before = viewAt(5);
+    q.adopt(before);
+    q.submit('intent:activity', [op('light')], 'light');
+    q.adopt({ ...before, capabilities: { ...before.capabilities, boost: !before.capabilities.boost } });
+    expect(q.state().view?.capabilities.boost).toBe(!before.capabilities.boost);
+    expect(q.valueOf('intent:activity', 'moderate')).toBe('light');
+  });
+
+  it('adopts an in-memory mode change while migration remains refused', async () => {
+    const g = gatedSend();
+    const q = new ChangeQueue(g.send);
+    q.adopt(viewAt(5));
+    q.submit('ui:mode', [{ op: 'ui', mode: 'advanced' }], 'advanced');
+    await g.answer({ ...saved(5), view: { ...viewAt(5), mode: 'advanced' } });
+    expect(q.state().view?.mode).toBe('advanced');
+  });
+
   it('keeps a pending overlay on top of a newer pushed view', async () => {
     const g = gatedSend();
     const q = new ChangeQueue(g.send);

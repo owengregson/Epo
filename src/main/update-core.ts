@@ -7,6 +7,7 @@
  */
 
 import type { UpdateMode, UpdateStatus } from '@/shared/update-status';
+import { version as packageVersion } from '../../package.json';
 
 export interface UpdateEnvironment {
   /** `process.platform`. */
@@ -15,6 +16,11 @@ export interface UpdateEnvironment {
   isPackaged: boolean;
   /** `process.env.PORTABLE_EXECUTABLE_DIR` — set by electron-builder's portable launcher. */
   portableDir: string | undefined;
+}
+
+/** Direct-script development launches report Electron's version; packaged installs report their app version. */
+export function resolveAppVersion(isPackaged: boolean, runtimeVersion: string): string {
+  return isPackaged ? runtimeVersion : packageVersion;
 }
 
 /**

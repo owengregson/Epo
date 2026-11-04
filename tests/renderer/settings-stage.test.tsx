@@ -72,6 +72,17 @@ describe('the Settings stage shell', () => {
     expect(titles).toEqual(['Growth pace', 'When Epo works', 'Who to follow', 'Unfollowing', 'Protection', 'Boost', 'Practice & app']);
   });
 
+  it('reveals newly available sections when startup changes capabilities without changing the document', async () => {
+    const starting = view({ mode: 'advanced', capabilities: { plan: false, tempo: false, boost: false, protectionEverywhere: true } });
+    await mount(starting);
+    expect(screen.queryByRole('heading', { name: 'Boost' })).toBeNull();
+    await act(async () => {
+      settingsViewSignal.value = { ...starting, capabilities: { ...starting.capabilities, plan: true, tempo: true, boost: true } };
+    });
+    expect(screen.getByRole('heading', { name: 'Boost' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Timing' })).toBeTruthy();
+  });
+
   it('a newer pushed view replaces the shown one; an older one is ignored', async () => {
     await mount(view({ rev: 7 }));
     await act(async () => {
