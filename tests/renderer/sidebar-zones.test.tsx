@@ -49,6 +49,7 @@ describe('every posture renders its headline and primary', () => {
   const cases: Array<[string, Partial<EpoStatus>, string, string]> = [
     ['working', running({ nextActionAt: T + 60_000 }), 'Working', 'Pause'],
     ['resting', running({ parkReason: 'session', parkedUntil: T + 3_600_000 }), 'Resting', 'Pause'],
+    ['first step resting', running({ lastStep: null, parkReason: 'session', parkedUntil: T + 3_600_000 }), 'Resting', 'Pause'],
     ['pacing', running({ parkReason: 'velocity', parkedUntil: T + 600_000 }), 'Pacing', 'Pause'],
     ['retrying', running({ parkReason: 'enrich-backoff', parkedUntil: T + 60_000 }), 'Retrying soon', 'Pause'],
     ['done for today', running({ parkReason: 'daily-ceiling', parkedUntil: T + 9_000_000 }), 'Done for today', 'Pause'],
@@ -61,6 +62,7 @@ describe('every posture renders its headline and primary', () => {
     ['needs attention', { state: 'halted', haltReason: 'seed-unresolved' }, 'Needs attention', 'Choose account'],
     ['signed out', { loggedIn: false }, 'Signed out', 'Sign in'],
     ['catching up', { boot: { ...BOOT, startup: { step: 'catch-up', startQueued: false, done: false } } }, 'Catching up', 'Start'],
+    ['start queued between steps', { boot: { ...BOOT, startup: { step: null, startQueued: true, done: false } } }, 'Starting', 'Starting…'],
     ['data unavailable', { boot: { ...BOOT, data: 'unavailable', dataProblem: 'locked' } }, "Can't open data", 'Diagnostics'],
   ];
   it.each(cases)('%s', async (_name, over, headline, button) => {

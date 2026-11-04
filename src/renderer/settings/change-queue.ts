@@ -62,9 +62,9 @@ export class ChangeQueue {
     return () => this.listeners.delete(fn);
   }
 
-  /** Adopt a pulled or pushed view unless it is older than (or as old as) the one held. */
+  /** Document rev rejects older settings; equal rev can carry new startup capabilities or preview data. */
   adopt(view: SettingsView | null): void {
-    if (view === null || (this.view !== null && view.rev <= this.view.rev)) return;
+    if (view === null || view === this.view || (this.view !== null && view.rev < this.view.rev)) return;
     this.view = view;
     this.emit();
   }
@@ -122,7 +122,7 @@ export class ChangeQueue {
     this.inFlight = null;
     const newest = this.latest.get(c.key) === c.seq;
     if (r !== null && r.kind === 'saved') {
-      if (r.view.rev > (this.view?.rev ?? -1)) this.view = r.view;
+      if (r.view.rev >= (this.view?.rev ?? -1)) this.view = r.view;
       if (newest) this.overlay.delete(c.key);
       this.failed = null;
       this.conflicts = r.conflicts;

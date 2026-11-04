@@ -11,6 +11,7 @@ import { act, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
 import { BootGate } from '@/renderer/boot/BootGate';
 import { SPLASH, splashCaption } from '@/renderer/boot/boot-copy';
+import { BOOT_UI } from '@/renderer/design/motion-scale';
 import type { BootView } from '@/shared/boot';
 import type { EpoStatus } from '@/types';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
@@ -141,6 +142,18 @@ test('the splash waits for the store-only graph preload before revealing Live', 
   bridge.stub('graphSnapshot', () => new Promise<null>((resolve) => { finish = () => resolve(null); }));
   await mount(idleStatus({ boot: ready({ ig: 'ready', tab: 'settled' }) }));
   await act(() => sleep(700));
+  expect(splash()).not.toBeNull();
+  expect(revealed()).toBe(0);
+  await act(async () => finish());
+  await waitFor(() => expect(splash()).toBeNull());
+  await waitFor(() => expect(revealed()).toBe(1));
+});
+
+test('main becoming ready before the settings read cannot reveal an unprepared first frame', async () => {
+  let finish!: () => void;
+  bridge.stub('settingsView', () => new Promise((resolve) => { finish = () => resolve(bridge.data.settingsView); }));
+  await mount(idleStatus({ boot: ready({ ig: 'ready', tab: 'settled' }) }));
+  await act(() => sleep(BOOT_UI.MIN_SPLASH_MS));
   expect(splash()).not.toBeNull();
   expect(revealed()).toBe(0);
   await act(async () => finish());

@@ -84,6 +84,18 @@ describe('useLiveFeeds', () => {
     expect(pulls('chainList')).toBe(before + 1);
   });
 
+  it('a chain backstop response cannot replace a newer pushed chain', async () => {
+    render(<Feeds />);
+    await waitFor(() => expect(chainListSignal.value).not.toBeNull());
+    let finish!: (list: ReturnType<typeof chainTarget>[]) => void;
+    bridge.stub('chainList', () => new Promise<ReturnType<typeof chainTarget>[]>((resolve) => { finish = resolve; }));
+    const { statusSignal } = await import('@/renderer/app/shell-context');
+    await act(async () => { statusSignal.value = idleStatus({ queued: 1 }); });
+    await act(async () => bridge.emit('chainList', [chainTarget({ username: 'fresh' })]));
+    await act(async () => finish([chainTarget({ username: 'stale' })]));
+    expect(chainListSignal.value?.[0]?.username).toBe('fresh');
+  });
+
   it('unsubscribes every channel on unmount', async () => {
     const { unmount } = render(<Feeds />);
     await waitFor(() => expect(queueLanesSignal.value).not.toBeNull());

@@ -29,21 +29,34 @@ export function useKeepAlivePoll<T>(opts: {
 
   useEffect(() => {
     let alive = true;
+    let revision = 0;
     const { subscribe, pull, sink, onError } = optsRef.current;
-    const failed = (error: unknown): void => {
-      if (alive) onError?.(error);
-    };
     const apply = (v: T): void => {
       if (!alive) return;
       lastUpdateAt.current = Date.now();
       sink.value = v;
     };
-    const unsubscribe = subscribe(apply);
+    const unsubscribe = subscribe((v) => {
+      revision += 1;
+      apply(v);
+    });
+    const refresh = (): void => {
+      const request = ++revision;
+      const previous = sink.peek();
+      // A newer push or pull supersedes this request, including its failure.
+      // A direct save/retry may also have published to the shared signal.
+      const current = (): boolean => alive && request === revision && sink.peek() === previous;
+      pull().then((v) => {
+        if (current()) apply(v);
+      }, (error: unknown) => {
+        if (current()) onError?.(error);
+      });
+    };
     // One pull on mount so the first paint reflects real state.
-    pull().then(apply).catch(failed);
+    refresh();
     const keepalive = window.setInterval(() => {
       if (Date.now() - lastUpdateAt.current < POLL.KEEPALIVE_MS) return;
-      pull().then(apply).catch(failed);
+      refresh();
     }, POLL.KEEPALIVE_MS);
     return () => {
       alive = false;
