@@ -1,18 +1,9 @@
-/**
- * Renderer test bed: a fake `window.epo` bridge.
- *
- * Every bridge method resolves from a mutable `data` bag so a suite can stage a
- * projection before render; `emit(channel, payload)` drives the push channels the
- * renderer subscribes to (`status`, `pruneStatus`, `chainList`, `log`,
- * `updateStatus`, `settings`, `settingsFacts`, `feed`, `activity`, `stageRequest`),
- * which is how §2 liveness is exercised without a main process.
- * `calls` records every invocation so control wiring can be asserted.
- */
 import type { PruneStatus } from '@/engine/prune-engine';
 import { NO_ACTIVITY } from '@/main/ipc-live';
 import { BOOST_OFF } from '@/main/ipc-plan';
 import { notBuiltFacts, notBuiltFeed, notBuiltSurfaceReport } from '@/main/modules/not-built';
 import { resetShellSignals } from '@/renderer/app/shell-context';
+import { NEW_LOOK_VERSION } from '@/renderer/tour/steps';
 import { DEFAULT_DOC } from '@/settings/doc';
 import { effectiveFrom } from '@/settings/effective';
 import { resolveParams } from '@/settings/resolve';
@@ -20,6 +11,7 @@ import { buildView } from '@/settings/view';
 import type { FeedView } from '@/shared/feed';
 import type { LiveTab } from '@/shared/live-op';
 import type { SettingsFacts } from '@/shared/settings-facts';
+import type { SettingsOp } from '@/shared/settings-ops';
 import type { SettingsCapabilities, SettingsView } from '@/shared/settings-view';
 import type { SurfaceReport } from '@/shared/surface-health';
 import type {
@@ -32,7 +24,6 @@ import type {
   UpdateStatus,
 } from '@/types';
 import { FAKE_PLAN_MATH } from './settings';
-
 /** A neutral idle engine status — the shape every projection starts from. */
 export function idleStatus(over: Partial<EpoStatus> = {}): EpoStatus {
   return {
@@ -65,7 +56,6 @@ export function idleStatus(over: Partial<EpoStatus> = {}): EpoStatus {
     ...over,
   };
 }
-
 /** A neutral idle prune status. */
 export function idlePruneStatus(over: Partial<PruneStatus> = {}): PruneStatus {
   return {
@@ -92,7 +82,6 @@ export function idlePruneStatus(over: Partial<PruneStatus> = {}): PruneStatus {
     ...over,
   };
 }
-
 /** One chain-lineage row — the `chainList` push payload's element. */
 export function chainTarget(over: Partial<ChainTargetView> = {}): ChainTargetView {
   return {
@@ -108,12 +97,9 @@ export function chainTarget(over: Partial<ChainTargetView> = {}): ChainTargetVie
 
 const NOTHING_WIRED: SettingsCapabilities = { plan: false, tempo: false, boost: false, protectionEverywhere: false };
 
-/**
- * The Settings view main builds for a fresh document carrying the older settings' seed and tour stamp, with
- * no capability wired: the same `buildView` main serves, over the plan-math fake.
- */
+/** Build the view main serves, with the fake's seed and acknowledged tour version. */
 export function v2ViewFor(settings: Settings): SettingsView {
-  const doc = { ...DEFAULT_DOC, seed: settings.seed, app: { ...DEFAULT_DOC.app, tourCompletedAt: settings.tourCompletedAt } };
+  const doc = { ...DEFAULT_DOC, seed: settings.seed, app: { ...DEFAULT_DOC.app, tourCompletedAt: settings.tourCompletedAt, tourVersionSeen: NEW_LOOK_VERSION } };
   const resolved = resolveParams({ intent: doc.intent, overrides: doc.overrides, plan: false, math: FAKE_PLAN_MATH });
   const effective = effectiveFrom(doc, resolved);
   return buildView({ doc, health: { kind: 'ok' }, capabilities: NOTHING_WIRED, resolved, effective, math: FAKE_PLAN_MATH, week: null });
@@ -191,7 +177,6 @@ export function installFakeBridge(settings: Settings): FakeBridge {
     surfaceReport: notBuiltSurfaceReport(0),
   };
 
-  /** Every promise-returning method routes through here: record, then resolve. */
   const call = <T>(method: string, args: unknown[], fallback: () => T): Promise<T> => {
     calls.push([method, ...args]);
     const failure = failures.get(method);
@@ -256,7 +241,18 @@ export function installFakeBridge(settings: Settings): FakeBridge {
     bootRevealed: (...a: unknown[]) => call('bootRevealed', a, () => undefined),
     settingsView: (...a: unknown[]) => call('settingsView', a, () => data.settingsView),
     applySettings: (...a: unknown[]) =>
-      call('applySettings', a, () => ({ kind: 'refused', reason: 'internal', detail: 'fake', view: data.settingsView })),
+      call('applySettings', a, () => {
+        const ops = a[0] as SettingsOp[];
+        if (ops.some((op) => op.op !== 'tour-completed' && op.op !== 'tour-version-seen'))
+          return { kind: 'refused', reason: 'internal', detail: 'fake', view: data.settingsView };
+        const app = { ...data.settingsView.app };
+        for (const op of ops) {
+          if (op.op === 'tour-completed') app.tourCompletedAt = op.at;
+          if (op.op === 'tour-version-seen') app.tourVersionSeen = op.version;
+        }
+        data.settingsView = { ...data.settingsView, rev: data.settingsView.rev + 1, app };
+        return { kind: 'saved', view: data.settingsView, adjustments: [], conflicts: [], applies: [], inverse: [] };
+      }),
     previewSettings: (...a: unknown[]) => call('previewSettings', a, () => ({ kind: 'unavailable' })),
     settingsBasis: (...a: unknown[]) => call('settingsBasis', a, () => ({ kind: 'unavailable' })),
     settingsFacts: (...a: unknown[]) => call('settingsFacts', a, () => data.settingsFacts),

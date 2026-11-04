@@ -67,7 +67,7 @@
     },
     {
       "file": "src/types.ts",
-      "lines": 350
+      "lines": 345
     },
     {
       "file": "src/engine/recovery.ts",
@@ -76,10 +76,6 @@
     {
       "file": "src/rim/list-page-walker.ts",
       "lines": 326
-    },
-    {
-      "file": "src/renderer/charts/GrowthChart.tsx",
-      "lines": 325
     },
     {
       "file": "src/kernel/policy.ts",

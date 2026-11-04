@@ -40,11 +40,14 @@ body {
   flex: 0 0 auto;
 }
 .icon-spin {
-  animation: icon-spin 2s linear infinite;
+  animation: icon-settle var(--dur-3) var(--ease-out);
 }
-@keyframes icon-spin {
+@keyframes icon-settle {
+  from {
+    opacity: 0.55;
+  }
   to {
-    transform: rotate(360deg);
+    opacity: 1;
   }
 }
 

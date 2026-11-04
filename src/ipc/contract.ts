@@ -39,7 +39,7 @@ import type {
   ChainTargetView,
   EpoStatus,
   FollowState,
-  GraphSnapshot,
+  GraphSnapshotRead,
   GrowthSeriesRead,
   LogEntry,
   PruneCandidate,
@@ -172,13 +172,13 @@ export interface IpcContract extends SettingsIpcContract, PlanIpcContract, LiveI
   /** Wipe the knowledge DB + IG session (logout); settings kept. */
   clearData: { req: []; res: EpoStatus };
   /** The full knowledge graph shaped for the Graph view (null before login). */
-  graphSnapshot: { req: []; res: GraphSnapshot | null };
+  graphSnapshot: { req: []; res: GraphSnapshotRead };
   /**
    * Swap the window region right of the console. `covered` hides the native
    * views even on 'tab' while a renderer modal is open — they float above
    * anything the renderer draws, so no CSS stacking can put a dialog over them.
    */
-  setStage: { req: [mode: StageMode, covered: boolean]; res: void };
+  setStage: { req: [mode: StageMode, covered: boolean, reducedMotion: boolean]; res: void };
   /** Park/unpark the app while the intro tour is on screen. */
   setTourHold: { req: [held: boolean]; res: void };
   /** Ask the updater to check the release feed now. */

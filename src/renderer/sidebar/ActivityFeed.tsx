@@ -8,7 +8,7 @@ import type { JSX } from 'preact';
 import { render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { feedSignal } from '@/renderer/app/live-signals';
-import { openSettings, showStage } from '@/renderer/app/shell-services';
+import { openPerson, openSettings } from '@/renderer/app/shell-services';
 import { DUR } from '@/renderer/design/motion-scale';
 import { flipInsert } from '@/renderer/lib/flip';
 import { EASE_OUT } from '@/renderer/lib/motion';
@@ -20,7 +20,6 @@ import { type FeedEntry, feedEntries } from '@/renderer/sidebar/feed-entries';
 import { Icon } from '@/renderer/ui/Icon';
 import type { FeedView } from '@/shared/feed';
 
-const openPeople = (): void => showStage('people');
 /** The compatibility panel lives in Settings › Advanced › Diagnostics. */
 const openCompatibility = (): void => openSettings({ section: 'diagnostics', focus: 'compatibility' });
 
@@ -57,7 +56,7 @@ export function ActivityFeed(): JSX.Element {
     const keys = rowKeys(entries);
     const before = drawn.current;
     const fresh = before === null ? new Set<string>() : new Set([...keys].filter((k) => !before.keys.has(k)));
-    const tree = <FeedRows entries={entries} fresh={fresh} onPerson={openPeople} />;
+    const tree = <FeedRows entries={entries} fresh={fresh} onPerson={openPerson} />;
     drawn.current = { feed, keys };
     if (before === null) {
       render(tree, el);

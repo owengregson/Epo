@@ -8,7 +8,7 @@
  */
 import { act, fireEvent, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
-import { stageSignal } from '@/renderer/app/shell-context';
+import { peopleTargetSignal, stageSignal } from '@/renderer/app/shell-context';
 import { rowFace } from '@/renderer/sidebar/copy/feed-copy';
 import { feedEntries } from '@/renderer/sidebar/feed-entries';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
@@ -148,5 +148,7 @@ describe('rendered rows', () => {
       fireEvent.click(document.querySelector('[data-zone="activity"] .sb-handle') as HTMLButtonElement);
     });
     expect(stageSignal.value).toBe('people');
+    expect(peopleTargetSignal.value).toEqual(person('jane'));
+    await waitFor(() => expect(document.querySelector('[data-person-pk="jane"]')?.textContent).toContain('stored details'));
   });
 });

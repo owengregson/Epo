@@ -1,14 +1,12 @@
-import { computeGrowthOverlay } from '@/renderer/charts/growth-overlay';
 import {
   computeMomentum,
   GROWTH_WINDOW_FALLBACK_DAYS,
   hasMeasuredSignal,
-  overlayHorizonDays,
   startOfLocalDay,
   windowDays,
 } from '@/renderer/charts/growth-window';
 import { MS_PER_DAY } from '@/timing/units';
-import { CONVERSION_VERDICT_MIN, type NetGrowthPoint } from '@/types';
+import type { NetGrowthPoint } from '@/types';
 
 /** `k` days before now, same time of day (Date arithmetic — DST-safe). */
 function daysAgo(k: number, from = Date.now()): number {
@@ -121,74 +119,5 @@ describe('computeMomentum', () => {
     const pts = series([0, 2, 3, 4]);
     const m = computeMomentum(pts, pts[0].dayStartMs + 1000);
     expect(m.ready).toBe(true);
-  });
-});
-
-describe('overlayHorizonDays', () => {
-  it('projects half the window, clamped to [7, 30]', () => {
-    expect(overlayHorizonDays(14)).toBe(7);
-    expect(overlayHorizonDays(30)).toBe(15);
-    expect(overlayHorizonDays(90)).toBe(30);
-    expect(overlayHorizonDays(365)).toBe(30);
-    expect(overlayHorizonDays(6)).toBe(7);
-    expect(overlayHorizonDays(0)).toBe(7);
-  });
-});
-
-describe('computeGrowthOverlay', () => {
-  const base = {
-    rate: 55,
-    privateBoost: 0.15,
-    bandWidth: 0.6,
-    waitDays: 4,
-    holdDays: 2,
-    horizonDays: 10,
-    realizedEnd: 37,
-    sample: null,
-  };
-
-  it('re-anchors every path exactly at the realized endpoint', () => {
-    const o = computeGrowthOverlay(base);
-    expect(o.cautious[0]).toBe(37);
-    expect(o.expected[0]).toBe(37);
-    expect(o.optimistic[0]).toBe(37);
-    // Negative realized nets anchor too — churn-heavy accounts stay honest.
-    const neg = computeGrowthOverlay({ ...base, realizedEnd: -5 });
-    expect(neg.expected[0]).toBe(-5);
-  });
-
-  it('emits one point per day 0..horizon, never dipping below the anchor', () => {
-    const o = computeGrowthOverlay(base);
-    for (const path of [o.cautious, o.expected, o.optimistic]) {
-      expect(path).toHaveLength(base.horizonDays + 1);
-      for (const v of path) expect(v).toBeGreaterThanOrEqual(base.realizedEnd);
-    }
-  });
-
-  it('orders the fan cautious ≤ expected ≤ optimistic at the horizon', () => {
-    const o = computeGrowthOverlay(base);
-    const last = base.horizonDays;
-    expect(o.cautious[last]).toBeLessThanOrEqual(o.expected[last]);
-    expect(o.expected[last]).toBeLessThanOrEqual(o.optimistic[last]);
-  });
-
-  it('keeps the settings-derived yield below the sample gate', () => {
-    const small = computeGrowthOverlay({
-      ...base,
-      sample: { followedBack: 3, total: CONVERSION_VERDICT_MIN - 1 },
-    });
-    expect(small.measuredYield).toBe(false);
-    const none = computeGrowthOverlay(base);
-    expect(none.measuredYield).toBe(false);
-    expect(small.expectedP).toBeCloseTo(none.expectedP, 10);
-  });
-
-  it('centers the expected path on the measured rate once the sample clears the gate', () => {
-    const o = computeGrowthOverlay({ ...base, sample: { followedBack: 25, total: 100 } });
-    expect(o.measuredYield).toBe(true);
-    expect(o.expectedP).toBeCloseTo(0.25, 10);
-    // A stronger measured yield grows the expected endpoint.
-    const weak = computeGrowthOverlay({ ...base, sample: { followedBack: 10, total: 100 } });
-    expect(o.expected[base.horizonDays]).toBeGreaterThan(weak.expected[base.horizonDays]);
   });
 });

@@ -1,5 +1,5 @@
 /**
- * `chainListKey` — the belt-and-braces refetch key behind `useChainList`.
+ * `chainListKey` — the belt-and-braces refetch key behind `useLiveFeeds`.
  *
  * The pushed `chainList` projection is the primary live source (§2); the pull
  * keyed here backstops it. The key must move on every lifecycle transition the
@@ -7,7 +7,7 @@
  * not only at a chain hop, which historically happened weeks apart and left
  * the Now Targeting yields frozen at their launch values.
  */
-import { chainListKey } from '@/renderer/hooks/useChainList';
+import { chainListKey } from '@/renderer/hooks/chain-list-key';
 import type { EpoStatus } from '@/types';
 
 const base = {
