@@ -303,6 +303,13 @@
     display: none;
   }
 }
+/* The graph repeats its total in its own legend. Secondary counts yield before
+   navigation labels when the stage cannot give each tab enough room. */
+@container (max-width: 900px) {
+  .stagebar .stageseg-aux {
+    display: none;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .stageseg-dot {
     animation: none;

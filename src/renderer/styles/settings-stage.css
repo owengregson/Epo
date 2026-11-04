@@ -2044,11 +2044,21 @@ textarea.set-input {
 }
 
 @container setcontent (min-width: 700px) {
-  .set-basis__table th:nth-child(1) { width: 28%; }
-  .set-basis__table th:nth-child(2) { width: 16%; }
-  .set-basis__table th:nth-child(3) { width: 10%; }
-  .set-basis__table th:nth-child(4) { width: 20%; }
-  .set-basis__table th:nth-child(5) { width: 26%; }
+  .set-basis__table th:nth-child(1) {
+    width: 28%;
+  }
+  .set-basis__table th:nth-child(2) {
+    width: 16%;
+  }
+  .set-basis__table th:nth-child(3) {
+    width: 10%;
+  }
+  .set-basis__table th:nth-child(4) {
+    width: 20%;
+  }
+  .set-basis__table th:nth-child(5) {
+    width: 26%;
+  }
 }
 
 /* A narrow column reads each catalog or kept row as a short stack instead of scrolling sideways. */
