@@ -180,6 +180,7 @@ app.whenReady().then(async () => {
     if (selected.size > 0 && !selected.has(name)) return;
     await change();
     await delay(350);
+    const dashboardFocusBefore = dashboard.webContents.isFocused();
     console.log(JSON.stringify({ starting: name }));
     const healthBefore = await tab!.checkHealth();
     const before = await tab!.evaluate<Snapshot>('probeSnapshot()');
@@ -215,10 +216,12 @@ app.whenReady().then(async () => {
       const delta = (key: keyof Snapshot): number => Number(after[key]) - Number(before[key]);
       const elapsed = performance.now() - start;
       const healthAfter = await tab!.checkHealth();
+      const dashboardFocusAfter = dashboard.webContents.isFocused();
       const windowStateMatches = name === 'minimized' ? win!.isMinimized()
         : name.startsWith('hidden') || name === 'window-hidden' || name === 'app-hidden' ? !win!.isVisible()
         : name === 'occluded-unfocused' ? !win!.isFocused() : true;
-      const passed = windowStateMatches && healthBefore.healthy && healthAfter.healthy &&
+      const focusMatches = name !== 'stage-hidden-dashboard-focused' || (dashboardFocusBefore && dashboardFocusAfter);
+      const passed = windowStateMatches && focusMatches && healthBefore.healthy && healthAfter.healthy &&
         delta('clicks') === 8 && delta('trustedClicks') === 8 &&
         delta('asyncAcks') === 8 && delta('trustedWheels') >= 1 &&
         after.scrollTop > before.scrollTop && delta('frames') > elapsed / 100 &&
@@ -229,6 +232,7 @@ app.whenReady().then(async () => {
         window: { visible: win!.isVisible(), minimized: win!.isMinimized(), focused: win!.isFocused(),
           appHidden: process.platform === 'darwin' ? app.isHidden() : undefined },
         page: { visibility: after.visibility, focused: after.focused },
+        dashboardFocus: { before: dashboardFocusBefore, after: dashboardFocusAfter },
         frames: delta('frames'), timerTicks: delta('timers'),
         maximumRendererTimerGapMs: after.maximumTimerGap,
         maximumMainTimerGapMs: Math.max(...mainGaps),
@@ -262,6 +266,13 @@ app.whenReady().then(async () => {
   await scenario('stage-hidden', () => {
     win!.showInactive();
     tab!.hide();
+  });
+  // Settings and renderer modals own native keyboard focus while the working tab stays underneath.
+  await scenario('stage-hidden-dashboard-focused', () => {
+    win!.show();
+    win!.focus();
+    tab!.hide();
+    dashboard.webContents.focus();
   });
   tab.show();
   win.hide();
