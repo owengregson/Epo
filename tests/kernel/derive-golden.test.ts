@@ -4,9 +4,13 @@
  * key, no tolerance. Editing `legacy-config.snapshot.ts` to make this pass is never the fix.
  */
 
-import { PROVENANCE } from '@/kernel/derive';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { PROVENANCE, pollEveryFrom } from '@/kernel/derive';
 import { appliedOverrides, OVERRIDES } from '@/kernel/overrides';
+import { POLICY } from '@/kernel/policy';
 import { CHANGED, RETIRED } from '@/kernel/registry-changes';
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import { NOT_TEMPO } from '@/kernel/tempo';
 import {
   type PatternSettings,
@@ -169,6 +173,25 @@ describe('the RETIRED ledger', () => {
 
   test('no group, grid point, persona or profile CHANGED a retired key', () => {
     for (const change of CHANGED) expect(change.path.slice('groups.'.length) in RETIRED).toBe(false);
+  });
+});
+
+describe('the derivations hold no unnamed literal (spec §17.3)', () => {
+  const source = readFileSync(join(__dirname, '..', '..', 'src', 'kernel', 'derive.ts'), 'utf8');
+
+  test('the 10–90 z is the POLICY dial the typical-day band shares', () => {
+    expect(POLICY.DRAW_DECILE_Z).toBe(SETTINGS_POLICY.TYPICAL_DAY_Z);
+    expect(source).not.toMatch(/1\.2816/);
+  });
+
+  test('the poll divisor, its band and the four derivation factors are named, not inline', () => {
+    for (const inline of [/p50Ms \/ 4\b/, /100, 1_000\)/, /GAP_CAP_MS \/ 8\b/, /frameMs \* 30\b/, /p90 \* 2\b/,
+      /perceptionMs \* 3\b/, /DESYNC_WIDTH_MS \/ 2\b/]) expect(source).not.toMatch(inline);
+  });
+
+  test('a poll is a quarter of its p50, inside [100 ms, 1 s], on the 50 ms grid', () => {
+    expect([pollEveryFrom(40), pollEveryFrom(1_000), pollEveryFrom(1_100), pollEveryFrom(9_000)])
+      .toEqual([100, 250, 300, 1_000]);
   });
 });
 

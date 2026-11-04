@@ -1,28 +1,17 @@
 /**
- * Tier 2 — every operational constant, as a function of tier 0 and tier 1.
+ * Tier 2 — every operational constant, as a function of tier 0 and tier 1: `EMPIRICAL × POLICY`, a
+ * `BOUNDS`/`PREFERENCES` passthrough, a named factor beside its derivation, or an `OVERRIDES` entry with
+ * a reason. The golden (`tests/kernel/derive-golden.test.ts`) pins the registry against the frozen
+ * snapshot minus the keys the plan retired (`registry-changes.ts`, ADR 0607).
  *
- * Nothing here holds a magic number. Every value is `EMPIRICAL × POLICY`, a
- * `BOUNDS`/`PREFERENCES` passthrough, or an entry in `OVERRIDES` with a stated
- * reason. The exported group shapes are byte-compatible with the registry
- * `src/timing/config.ts` shipped before this refactor, and
- * `tests/kernel/legacy-config.snapshot.ts` is the golden oracle that proves it.
- *
- * Read the derivations in this order — later ones depend on earlier ones:
- *   D1 operating rate → D2 gaps → D3 recovery ladder & jitter → D4 timeouts &
- *   polls → D5 breaker thresholds → the group tables.
- *
- * Layering: `src/kernel/**` imports NOTHING from the rest of `src/`. The unit
- * multipliers are declared locally, on purpose (the kernel's `units.ts` lands in
- * the same wave and is adopted in the next one).
- *
- * See docs/adr/0605-constants-derive-from-fundamentals.md.
+ * Read in order — D1 operating rate → D2 gaps → D3 recovery ladder & jitter → D4 timeouts & polls →
+ * D5 breaker thresholds → the group tables. Layering: `src/kernel/**` imports NOTHING from the rest of
+ * `src/`; the unit multipliers are local on purpose. See docs/adr/0605-constants-derive-from-fundamentals.md.
  */
 
 import { EMPIRICAL } from './fundamentals';
 import { overridden } from './overrides';
 import { BOUNDS, PACING_BASE_MS, POLICY, PREFERENCES, SCALES } from './policy';
-
-// --- units (local by design; see the layering note above) ---------------------
 
 const MS_PER_SECOND = 1_000;
 const MS_PER_MINUTE = 60_000;
@@ -100,11 +89,7 @@ export interface OrdinalPattern {
 // D1 — the operating rate
 // =============================================================================
 
-/**
- * The empirical quantities D1 and D2 consume, lifted into a record so a test can
- * perturb them (the envelope law) and so a future wave can feed measured values
- * in without touching a call site.
- */
+/** The empirical quantities D1 and D2 consume, as a record a test can perturb (the envelope law). */
 export interface RateInputs {
   hourlyWallTypical: number;
   hourlyWallLow: number;
@@ -292,11 +277,11 @@ export function holdMediansMs(): number[] {
  * Log-space spread of a hold draw. Requirement: the 10–90 spread of the FIRST
  * rung must be at least `DESYNC_WIDTH_MS`, so two installs that hit the same
  * wall at the same moment do not retry together.
- * `median × 2·sinh(1.2816σ) ≥ DESYNC_WIDTH_MS`.
+ * `median × 2·sinh(DRAW_DECILE_Z·σ) ≥ DESYNC_WIDTH_MS`.
  */
 export function holdSigma(): number {
   const median = holdMediansMs()[0];
-  const needed = asinh(POLICY.DESYNC_WIDTH_MS / median / 2) / 1.2816;
+  const needed = asinh(POLICY.DESYNC_WIDTH_MS / median / 2) / POLICY.DRAW_DECILE_Z;
   return roundTo(needed, 0.05);
 }
 
@@ -341,9 +326,16 @@ export function pollEveryFor(op: LatencyOp): number {
   return pollEveryFrom(EMPIRICAL.LATENCY[op].p50);
 }
 
-/** A poll interval from a p50: a quarter of it, bounded to `[100 ms, 1 s]`. */
+/** A poll is this share of its operation's p50: the median answer lands within one extra tick. */
+const POLL_FRACTION_OF_P50 = 0.25;
+/** No poll runs faster than this: each poll is a page evaluate, never a busy loop. */
+const POLL_MIN_MS = 100;
+/** No poll runs slower than this: a fast answer is never read a second late. */
+const POLL_MAX_MS = 1 * MS_PER_SECOND;
+
+/** A poll interval from a p50: a quarter of it, bounded to `[POLL_MIN_MS, POLL_MAX_MS]`, on a 50 ms grid. */
 export function pollEveryFrom(p50Ms: number): number {
-  return roundTo(clamp(p50Ms / 4, 100, 1_000), 50);
+  return roundTo(clamp(p50Ms * POLL_FRACTION_OF_P50, POLL_MIN_MS, POLL_MAX_MS), 50);
 }
 
 /**
@@ -533,6 +525,15 @@ const NOTIF_SCROLL = band(PACING_BASE_MS.notificationsScroll);
 const ACCEPT_PACE = band(PACING_BASE_MS.acceptPace);
 const RESUME_SETTLE = band(PACING_BASE_MS.resumeSettle);
 
+/** The step watchdog checks this many times per stale window: a wedged step is caught within an eighth of it. */
+const WATCHDOG_CHECKS_PER_WINDOW = 8;
+/** The tab-health canary watches this many frames: one dropped frame never reads as a hung renderer. */
+const CANARY_FRAMES = 30;
+/** An exhaustion stamped within this many p90 walls is re-verified once: the worst wall and a ladder's holds. */
+const EXHAUSTED_REVERIFY_P90_WALLS = 2;
+/** A graph push trails a mutation by this many perception instants: counts tick visibly, a walk never floods. */
+const PUSH_THROTTLE_INSTANTS = 3;
+
 const GAP_CAP_MS = gapCapMs();
 const HOLD_MEDIANS = holdMediansMs();
 const HOLD_SIGMA = holdSigma();
@@ -544,12 +545,7 @@ const PROFILE_LAND_RETRY_MS = retryWait(GOTO_TIMEOUT_MS, BOUNDS.ADAPTER.PROFILE_
 export const ENGINE = {
   /** How long an iteration idles when nothing is due yet (the loop's final gate). */
   IDLE_MS: BOUNDS.ENGINE.IDLE_MS,
-  /**
-   * Park after an enrichment-starved refill cycle (a plan that queued nothing
-   * while un-enriched candidates remain — a rate wall / sentinel window, not a
-   * dry target). Long, so repeated walled cycles cannot hammer the profile
-   * endpoint; the target is retried, never burned.
-   */
+  /** Park after an enrichment-starved refill cycle: walled cycles cannot hammer the profile endpoint. */
   ENRICH_BACKOFF_MS: BOUNDS.ENGINE.ENRICH_BACKOFF_MS,
 } as const;
 
@@ -626,7 +622,7 @@ export const RECOVERY = {
    */
   STEP_WATCHDOG_MS: GAP_CAP_MS,
   /** How often the step watchdog evaluates its fire predicate (cheap in-memory checks). */
-  STEP_WATCHDOG_CHECK_MS: roundTo(GAP_CAP_MS / 8, MS_PER_MINUTE),
+  STEP_WATCHDOG_CHECK_MS: roundTo(GAP_CAP_MS / WATCHDOG_CHECKS_PER_WINDOW, MS_PER_MINUTE),
   /** Ladder hold medians (rungs 1..N): `W_p50 × 0.33 × 1.5^(n-1)`. */
   HOLD_MEDIANS_MS: HOLD_MEDIANS,
   /** Log-space spread of each hold draw — sized so rung 1's 10–90 spread covers `DESYNC_WIDTH_MS`. */
@@ -644,7 +640,7 @@ export const RECOVERY = {
   /** Consecutive walled enrichment cycles that enter recovery instead of looping the flat park. */
   WALLED_CYCLES_ENTRY: blockedStreakThreshold(),
   /** rAF-canary observation window for the tab-health check — thirty frames. */
-  CANARY_WINDOW_MS: roundTo(EMPIRICAL.DISPLAY.frameMs * 30, 100),
+  CANARY_WINDOW_MS: roundTo(EMPIRICAL.DISPLAY.frameMs * CANARY_FRAMES, 100),
   /**
    * Scheduled prune stays off the tab this long after a rate-limit-classified
    * halt — a census walk into the same wall would deepen the block. Sized to
@@ -665,7 +661,7 @@ export const RECOVERY = {
    * absence of evidence. Two p90 soft walls — comfortably outlasting the worst
    * observed window AND a full run of the ladder's holds.
    */
-  EXHAUSTED_REVERIFY_WINDOW_MS: EMPIRICAL.SOFT_WALL_DURATION_H.p90 * 2 * MS_PER_HOUR,
+  EXHAUSTED_REVERIFY_WINDOW_MS: EMPIRICAL.SOFT_WALL_DURATION_H.p90 * EXHAUSTED_REVERIFY_P90_WALLS * MS_PER_HOUR,
   /** Requeue-healer batch cap: far above any honest incident window, far below "the whole table". */
   HEAL_MAX_RECORDS: BOUNDS.RECOVERY.HEAL_MAX_RECORDS,
   /** Requeue-healer pre-entry grace: the entry streak's victims are stamped just before the ladder woke. */
@@ -762,7 +758,7 @@ export const POLL = {
    * visibly tick, cheap enough that a thousand-row walk doesn't emit a
    * thousand statuses.
    */
-  GRAPH_PUSH_THROTTLE_MS: EMPIRICAL.DISPLAY.perceptionMs * 3,
+  GRAPH_PUSH_THROTTLE_MS: EMPIRICAL.DISPLAY.perceptionMs * PUSH_THROTTLE_INSTANTS,
 } as const;
 
 // ---------------------------------------------------------------------------------

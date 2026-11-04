@@ -24,10 +24,8 @@ const MIN = 60_000;
 const HOUR = 3_600_000;
 
 /**
- * The five numbers the owner argues about, plus the three shape choices the
- * recovery ladder needs. Changing one of these moves a whole family of derived
- * constants at once — which is the point.
- */
+ * The dials the owner argues about and the shape choices the derivations need: changing one moves a
+ * whole family of derived constants at once — which is the point. */
 export const POLICY = {
   /** Fraction of the TYPICAL observed wall we choose to operate at. THE dial. */
   SAFETY_MARGIN: 0.37,
@@ -57,6 +55,8 @@ export const POLICY = {
   DRAW_CENTRAL_Z: 1.96,
   /** z for the 99th percentile — sizes a sigma against its clamp band. */
   DRAW_TAIL_Z: 2.326,
+  /** z for the 90th percentile — a draw's 10–90 spread is `median × 2·sinh(z·σ)` ("most days", "most holds"). */
+  DRAW_DECILE_Z: 1.2816,
 
   /** Hard ceiling as a fraction above the daily operating rate. */
   CEILING_HEADROOM: 1.3,
