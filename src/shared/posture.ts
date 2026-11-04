@@ -93,6 +93,15 @@ const running = (s: S): boolean => s.state === 'running';
 const pruneActive = (i: PostureInput): boolean =>
   i.prune !== null && (i.prune.state === 'scanning' || i.prune.state === 'running' || i.prune.state === 'paused');
 
+/** A first step publishes its action or long wait before it completes; those facts already name its posture. */
+function starting(i: PostureInput, s: S): boolean {
+  if (i.boot?.startup.startQueued) return true;
+  if (!running(s)) return i.pending === 'start';
+  return !s.hasStepped && s.parkReason === null && s.nextActionAt === null && s.recovery === null
+    && !i.liveOpInFlight
+    && (i.plan === null || (!i.plan.dayOff && i.plan.remaining > 0 && i.plan.sessionIdx !== null));
+}
+
 /** One precedence row: the kind and the condition that selects it. */
 export interface PostureRule {
   readonly kind: PostureKind;
@@ -110,7 +119,7 @@ export const POSTURE_RULES: readonly PostureRule[] = [
   { kind: 'offline', when: (_, s) => !s.online && (s.runtime?.desired === 'running' || running(s)) },
   { kind: 'cleaning-up', when: (i) => pruneActive(i) },
   { kind: 'catching-up', when: (i) => (i.boot?.startup.step ?? null) !== null || i.catchUpRunning },
-  { kind: 'starting', when: (i, s) => i.pending === 'start' || (running(s) && !s.hasStepped) },
+  { kind: 'starting', when: starting },
   { kind: 'paused', when: (_, s) => s.state === 'paused' || (s.runtime?.desired === 'paused' && s.state === 'idle') },
   { kind: 'needs-seed', when: (i, s) => s.state === 'idle' && !i.seedSet },
   { kind: 'stopped', when: (_, s) => s.state === 'idle' },

@@ -123,9 +123,9 @@ test('with the port, the save note says re-planned exactly when the plan intent 
 test('migration bookkeeping remains readable until the reopen state consumes it once', () => {
   const raw = JSON.stringify({ ...DEFAULT_SETTINGS, sweepLastRunAt: 5, pruneLastRunAt: 9 });
   const { svc, m } = service({ [F.v1]: raw });
-  expect(svc.takeBookkeeping()).toMatchObject({ forPk: null, sweepLastRunAt: 5, pruneLastRunAt: 9 });
+  expect(svc.takeBookkeeping('me')).toMatchObject({ forPk: 'me', sweepLastRunAt: 5, pruneLastRunAt: 9 });
   expect(svc.apply([{ op: 'consume-bookkeeping' }], 'system').kind).toBe('saved');
-  expect(svc.takeBookkeeping()).toBeNull();
+  expect(svc.takeBookkeeping('me')).toBeNull();
   expect(JSON.parse(m.data.get(F.v2) ?? '{}').migration.bookkeeping).toBeNull();
   expect(m.data.get(F.v1)).toBe(raw);
 });

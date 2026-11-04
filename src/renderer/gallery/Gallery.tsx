@@ -75,7 +75,7 @@ function Surface({ surface }: { surface: SurfaceKey }): JSX.Element {
     case 'prune':
       return <PruneView />;
     case 'settings':
-      return <SettingsStage goTo={noop} seedPrompt={0} onReplayTour={noop} updateStatus={null} />;
+      return <SettingsStage updateStatus={null} />;
     case 'live':
       return <LivePlaceholder />;
     case 'diagnostics':

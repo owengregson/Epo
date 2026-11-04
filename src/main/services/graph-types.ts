@@ -150,7 +150,7 @@ export interface GraphBuildDeps {
   protection: { index(): ProtectionIndex; setCapabilities(patch: Partial<SettingsCapabilities>): void };
   plan: PlanHost;
   /** The v1 sweep stamp the settings migration carried: taken once by the reopen state, then consumed (spec §9.11). */
-  bookkeeping?: { take(): { readonly forPk: string | null; readonly sweepLastRunAt: number | null } | null; consume(): void };
+  bookkeeping?: { take(ownPk: string): { readonly forPk: string | null; readonly sweepLastRunAt: number | null } | null; consume(): boolean };
   /** The launch's state the catch-up admits on, and BL's landing (spec §9.6); absent: no catch-up step. */
   launch?: CatchUpLaunch;
   /** The ACTIVE driver's run token; adapter/rim waits link to it so stop() interrupts. */
@@ -159,4 +159,3 @@ export interface GraphBuildDeps {
   onPruneStatus(status: PruneStatus): void;
   onHalt(reason: string): void;
 }
-

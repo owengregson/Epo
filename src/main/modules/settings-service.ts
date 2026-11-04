@@ -61,6 +61,7 @@ export class SettingsService {
   private refused: Refused | null;
   private capabilities: SettingsCapabilities = OFF;
   private port: PlanPreviewPort | null = null;
+  private bookkeepingOwner: string | null = null;
   private planPreview: SettingsPlanPreview | null = null;
   private readonly listeners = new Set<(e: SettingsChangeEvent) => void>();
   private readonly fs: SettingsFs;
@@ -140,12 +141,16 @@ export class SettingsService {
     return () => this.listeners.delete(fn);
   }
 
-  /** The v1 sweep and prune stamps the migration carried, until the reopen state takes them (then consumed). */
-  takeBookkeeping(): NonNullable<SettingsDocV2['migration']>['bookkeeping'] {
-    return this.doc.migration?.bookkeeping ?? null;
+  /** An unowned migration stamp belongs to the first opened account, even if its consumption cannot save. */
+  takeBookkeeping(ownPk: string): NonNullable<SettingsDocV2['migration']>['bookkeeping'] {
+    const carried = this.doc.migration?.bookkeeping ?? null;
+    if (carried === null) return null;
+    if (carried.forPk === null) this.bookkeepingOwner ??= ownPk;
+    const forPk = carried.forPk ?? this.bookkeepingOwner;
+    return forPk === ownPk ? { ...carried, forPk } : null;
   }
 
-  /** Apply ops through the one writer: persist first; a failed write changes nothing at all. */
+  /** Apply ops through the one writer; failed saves leave user settings unchanged. */
   apply(ops: readonly SettingsOp[], origin: 'user' | 'system'): SettingsSaveResult {
     if (ops.length === 1 && ops[0].op === 'migration') return this.recover(ops[0].action);
     const r = applyOps(this.doc, ops, this.opsCtx(origin));
@@ -155,6 +160,10 @@ export class SettingsService {
       this.doc = r.doc;
       return { kind: 'saved', view: this.view(), adjustments: r.adjustments, conflicts: [], applies: [], inverse: r.inverse };
     }
+    if (ops.some((op) => op.op === 'consume-bookkeeping')) {
+      const claim = this.claimBookkeeping();
+      if (!claim.ok) return { kind: 'not-saved', view: this.view(), detail: claim.detail };
+    }
     const before = this.core();
     const written = this.commit({ ...r.doc, rev: this.doc.rev + 1 }, origin, r.touched);
     if (!written.ok) return { kind: 'not-saved', view: this.view(), detail: written.detail };
@@ -163,6 +172,16 @@ export class SettingsService {
       : this.planPreview.fingerprint(before.effective) !== this.planPreview.fingerprint(after.effective);
     return { kind: 'saved', view: this.view(), adjustments: r.adjustments, conflicts: overrideConflicts(before.resolved, after.resolved),
       applies: applyNotes(before.resolved, after.resolved, this.capabilities.plan, replanned), inverse: r.inverse };
+  }
+
+  /** Persist ownership before clearing, so the normal backup cannot resurrect an unowned stamp. */
+  private claimBookkeeping(): WriteResult {
+    const migration = this.doc.migration;
+    const bookkeeping = migration?.bookkeeping;
+    if (migration === null || bookkeeping == null || bookkeeping.forPk !== null) return { ok: true };
+    if (this.bookkeepingOwner === null) return { ok: false, detail: 'bookkeeping needs an account before consumption' };
+    return this.commit({ ...this.doc, rev: this.doc.rev + 1,
+      migration: { ...migration, bookkeeping: { ...bookkeeping, forPk: this.bookkeepingOwner } } }, 'system', new Set());
   }
 
   /** What the ops would do: pure — nothing persists, nothing is pushed, the plan is not touched. */

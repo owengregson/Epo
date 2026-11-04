@@ -210,6 +210,27 @@ test('a queued Start can be stopped while the startup sequence runs', () => {
   };
   const p = derivePosture(input({ boot, status: status({ state: 'idle' }) }), T);
   expect(p).toMatchObject({ kind: 'catching-up', primary: 'starting', secondary: 'stop' });
+  const betweenSteps = { ...boot, startup: { ...boot.startup, step: null } };
+  expect(derivePosture(input({ boot: betweenSteps, status: status({ state: 'idle' }) }), T))
+    .toMatchObject({ kind: 'starting', primary: 'starting', secondary: 'stop' });
+});
+
+test.each([
+  ['session', 'resting'], ['daily-ceiling', 'done-for-today'], ['velocity', 'pacing'],
+  ['read-budget', 'pacing'], ['enrich-backoff', 'retrying'],
+] as const)('a first step already parked for %s shows %s before its wait finishes', (parkReason, kind) => {
+  const s = status({ hasStepped: false, parkReason, parkedUntil: T + 1 });
+  expect(derivePosture(input({ status: s }), T)).toMatchObject({ kind, primary: 'pause', busy: false });
+});
+
+test('first-step active work and planned waits supersede Starting', () => {
+  const s = status({ hasStepped: false });
+  expect(derivePosture(input({ status: s, liveOpInFlight: true }), T).kind).toBe('working');
+  expect(derivePosture(input({ status: { ...s, nextActionAt: T + 1 } }), T).kind).toBe('working');
+  expect(derivePosture(input({ status: s, plan: plan({ dayOff: true }) }), T).kind).toBe('day-off');
+  expect(derivePosture(input({ status: s, plan: plan({ remaining: 0 }) }), T).kind).toBe('done-for-today');
+  expect(derivePosture(input({ status: s, plan: plan({ sessionIdx: null }) }), T).kind).toBe('resting');
+  expect(derivePosture(input({ status: { ...s, recovery: { phase: 'holding', resumeAt: T + 1 } } }), T).kind).toBe('taking-a-break');
 });
 
 test('Boost and practice explain themselves when the posture has no topic of its own', () => {

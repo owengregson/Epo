@@ -88,7 +88,7 @@ export const LIVE_SCENARIOS: Scenario[] = [
   scenario('done-late', 'Done · opened late', park('session', 14 * 60, { plan: lateStartPlan() })),
   scenario('done-light', 'Done · light day', park('session', 14 * 60, { plan: lightPlan() })),
   scenario('day-off', 'Day off', park('session', 14 * 60, { plan: dayOffPlan() })),
-  scenario('starting', 'Starting', running({ lastStep: null, lastActionAt: NOW - 20 * HOUR })),
+  scenario('starting', 'Starting', running({ lastStep: null, nextActionAt: null, lastActionAt: NOW - 20 * HOUR })),
   scenario('catching-up', 'Catching up', day({ boot: boot({ startup: { step: 'catch-up', startQueued: true, done: false } }), catchUp: catchingUp() }), { away: true }),
   scenario('paused', 'Paused', day({ state: 'paused', runtime: { ...RUNTIME, desired: 'paused' } })),
   scenario('stopped', 'Stopped', day({ runtime: { ...RUNTIME, desired: 'stopped' } })),

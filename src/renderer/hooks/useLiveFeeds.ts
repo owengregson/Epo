@@ -45,16 +45,21 @@ export async function loadLanes(): Promise<QueueLanes> {
 /** A status push that reports a lifecycle move re-pulls the chain (the push stays primary). */
 function chainBackstop(): () => void {
   let last: string | null = null;
-  return effect(() => {
+  let alive = true;
+  let revision = 0;
+  const stop = effect(() => {
     const key = chainListKey(statusSignal.value);
     const first = last === null;
     if (key === last) return;
     last = key;
     if (first) return;
+    const request = ++revision;
+    const previous = chainListSignal.peek();
     window.epo.chainList().then((list) => {
-      chainListSignal.value = list;
+      if (alive && request === revision && chainListSignal.peek() === previous) chainListSignal.value = list;
     }, keepLast);
   });
+  return () => { alive = false; stop(); };
 }
 
 /** The People page's data, fetched before the reveal so the page renders at once when opened. */

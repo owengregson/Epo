@@ -51,6 +51,38 @@
 }
 
 /* ============ PRUNE ============ */
+/* Run progress shares the old Overview markup; its layout belongs to Prune. */
+.prune-page .hero-today {
+  margin-top: var(--sp-3);
+}
+.prune-page .ht-top,
+.prune-page .ht-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+.prune-page .ht-top .k,
+.prune-page .ht-top .dim {
+  color: var(--muted);
+}
+.prune-page .ht-top .v {
+  font-weight: 600;
+  color: var(--text);
+}
+.prune-page .ht-top b {
+  color: var(--chrome);
+}
+.prune-page .ht-foot {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-small);
+  color: var(--faint);
+}
+.prune-page .ht-foot b {
+  color: var(--silver);
+  font-weight: 600;
+}
+
 /* Candidates list: contained scroll so a thousand-row scan can't swallow the view. */
 .prune-list {
   max-height: 320px;

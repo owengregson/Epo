@@ -21,7 +21,7 @@
 import { app, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import {
-  initialStatus, isBenignFeedError, nextUpdateStatus, resolveUpdateMode, type UpdateEvent,
+  initialStatus, isBenignFeedError, nextUpdateStatus, resolveAppVersion, resolveUpdateMode, type UpdateEvent,
 } from '@/main/update-core';
 import type { UpdateStatus } from '@/shared/update-status';
 import { UPDATER } from '@/timing/config';
@@ -46,7 +46,7 @@ export class EpoUpdater {
       isPackaged: app.isPackaged,
       portableDir: process.env.PORTABLE_EXECUTABLE_DIR,
     });
-    this.status = initialStatus(mode, app.getVersion());
+    this.status = initialStatus(mode, resolveAppVersion(app.isPackaged, app.getVersion()));
     if (mode === 'off') return;
 
     autoUpdater.autoDownload = false;

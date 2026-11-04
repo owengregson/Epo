@@ -1,5 +1,5 @@
 import { type JSX } from 'preact';
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo } from 'preact/hooks';
 import { ConfirmHost } from '@/renderer/app/ConfirmHost';
 import { liveRevealedSignal, liveSlotSignal } from '@/renderer/app/live-signals';
 import { reducedMotionSignal } from '@/renderer/app/motion-signal';
@@ -11,7 +11,6 @@ import {
   ShellContext,
   ShellControlsContext,
   type ShellServices,
-  settingsTargetSignal,
   stageSignal,
 } from '@/renderer/app/shell-context';
 import { showStage, useProvideShellControls } from '@/renderer/app/shell-services';
@@ -33,9 +32,6 @@ import { SettingsStage } from '@/renderer/settings/SettingsStage';
 import { Sidebar } from '@/renderer/sidebar/Sidebar';
 import { Tour } from '@/renderer/tour/Tour';
 import { PruneView } from '@/renderer/views/PruneView';
-
-/** The interim Settings stage's navigation: the old console views map onto stages. */
-const VIEW_STAGE = { overview: 'tab', chain: 'people', queues: 'people', settings: 'settings' } as const;
 
 /**
  * The dashboard shell (spec §12.4, ADR 1010): the console column on the left,
@@ -79,16 +75,6 @@ export function App(): JSX.Element {
   useStageRequest(showStage, !tour.open);
   useUpdateToasts(updateStatus, tour.open, toasts.push);
 
-  // The interim Settings stage focuses its starting-account field on a bumped prompt.
-  const [seedPrompt, setSeedPrompt] = useState(0);
-  useEffect(
-    () =>
-      settingsTargetSignal.subscribe((target) => {
-        if (target?.focus === 'seed') setSeedPrompt((n) => n + 1);
-      }),
-    [],
-  );
-
   return (
     <ShellContext.Provider value={services}>
       <ShellControlsContext.Provider value={controls}>
@@ -111,12 +97,7 @@ export function App(): JSX.Element {
               <PruneView />
             </StageHost>
             <StageHost mode="settings" active={stage === 'settings'} mount="lazy">
-              <SettingsStage
-                goTo={(view) => showStage(VIEW_STAGE[view])}
-                seedPrompt={seedPrompt}
-                onReplayTour={tour.openTour}
-                updateStatus={updateStatus}
-              />
+              <SettingsStage updateStatus={updateStatus} />
             </StageHost>
           </div>
         </div>
