@@ -118,6 +118,7 @@ export class TrafficRecorder {
   }
 
   private fail(ex: Exchange, detail: string): void {
+    if (ex.failed !== undefined) return;
     ex.failed = detail;
     this.onFailure?.({ step: ex.step, detail, exchange: ex.n });
   }

@@ -125,6 +125,26 @@ test('body failures remain evidence and do not reject drain', async () => {
   expect(failure).toHaveBeenCalled();
 });
 
+test('a later body failure preserves the metadata failure that stopped verify', async () => {
+  let rejectBody!: (reason: Error) => void;
+  const h = harness(Promise.reject(new Error('metadata unavailable')), new Promise((_resolve, reject) => { rejectBody = reject; }));
+  let resolveFailure!: (failure: { detail: string; exchange?: number }) => void;
+  const firstFailure = new Promise<{ detail: string; exchange?: number }>((resolve) => { resolveFailure = resolve; });
+  const failure = jest.fn(resolveFailure);
+  const rec = new TrafficRecorder(h.wc, h.out, failure);
+  rec.start(); h.request({ hasPostData: true });
+  const stop = await firstFailure;
+  expect(stop).toMatchObject({ detail: 'request metadata: Error: metadata unavailable', exchange: 1 });
+  h.response(); h.emit('Network.loadingFinished', { requestId: 'one' });
+  rejectBody(new Error('body unavailable'));
+  rec.stop();
+  await rec.drain();
+  expect(h.wc.debugger.sendCommand).toHaveBeenCalledWith('Network.getResponseBody', { requestId: 'one' });
+  expect(rec.exchanges[0].failed).toBe(stop.detail);
+  expect(rec.exchanges[0].body).toBeUndefined();
+  expect(failure).toHaveBeenCalledTimes(1);
+});
+
 test('a stalled body read cannot hold shutdown beyond the existing tab deadline', async () => {
   jest.useFakeTimers();
   try {
