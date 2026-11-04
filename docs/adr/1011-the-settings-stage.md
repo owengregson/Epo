@@ -62,3 +62,10 @@ reason for:
   main resolves.
 - **A debounced draft with one save.** A quit inside the window lost the change, and one failure hid
   which control failed.
+
+## Amendment — search above Settings content (2026-11-03)
+
+Native QA reproduced search results painting beneath the plan summary: raising the dropdown alone did not lift it
+above the sibling sections' entrance-animation stacking contexts. The Settings header now has its own positioned
+stacking level above those sections, so its search results remain visible over the page. The repair is in `bd41d98`;
+focused renderer and build checks pass, with integrated and native verification pending in the overhaul QA record.
