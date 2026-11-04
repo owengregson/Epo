@@ -118,7 +118,7 @@ test('enrichment reserves before visiting and a spent budget stops without claim
     visitor: { visit: async (username) => {
       expect(budget.snapshot().debits).toHaveLength(1);
       visited.push(username);
-      return { ok: true, obs: { accountPk: username, observedAt: clock.now(), source: 'profile', fields: { username } },
+      return { ok: true, obs: { accountPk: username, observedAt: clock.now(), source: 'profile', fields: { username, followers: 10, following: 10 } },
         viewer: { following: null, requested: null, followsUs: null } };
     } },
   });

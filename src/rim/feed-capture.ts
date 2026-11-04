@@ -4,7 +4,8 @@
  * pass as it parses (facts stream), counting what arrived so the pass can tell a post-chip body.
  */
 
-import { type DrawerRead, readDrawerBody } from '@/adapter/drawer-read';
+import { type DrawerBodyKind, type DrawerRead, projectDrawerRead, readDrawerBody } from '@/adapter/drawer-read';
+import type { ArmedCandidates } from '@/adapter/observed-reads';
 import type { Reader } from '@/adapter/reader';
 import type { FollowEvent, Observation } from '@/adapter/surface-types';
 import type { RimTab } from '@/rim/types';
@@ -39,6 +40,9 @@ export interface FeedCapture {
   readonly state: CaptureState;
   readonly pendingReads: Promise<void>[];
   readonly unsubscribe: ReturnType<RimTab['onResponse']>;
+  recoverFeed(): Promise<void>;
+  armRequests(): void;
+  recoverRequests(): Promise<void>;
 }
 
 /** Subscribe before the first click, so a fast response never beats the handler. */
@@ -46,37 +50,47 @@ export function captureFeed(deps: { tab: RimTab; reader: Reader; now: () => numb
   const state: CaptureState = { sawFeed: false, feedBodies: 0, feedDrift: false, feedWalled: false,
     requestBodies: 0, requestsFailure: null };
   const pendingReads: Promise<void>[] = [];
+  const feedCandidates = deps.reader.observed.arm('drawer');
+  let requestCandidates: ArmedCandidates | null = null;
+  const accept = (kind: DrawerBodyKind, read: DrawerRead): void => {
+    if (kind === 'activity-feed') {
+      if (read.failure === 'feed-walled') state.feedWalled = true;
+      else if (read.events === null) state.feedDrift = true;
+      else { state.feedBodies += 1; h.onFeed(read.events, read.pendingPreview); }
+      return;
+    }
+    if (read.failure === 'requests-walled') { state.requestsFailure = read.failure; return; }
+    if (read.failure === 'requests-unreadable') state.requestsFailure = read.failure;
+    state.requestBodies += 1;
+    h.onRequests(read.requests.rows, read.requests.pendingComplete);
+  };
   const unsubscribe = deps.tab.onResponse((resp) => {
-    const kind = deps.reader.kindOf(resp); // URL + operation name: the drawer reads via GraphQL
+    const kind = deps.reader.kindOf(resp);
+    if (kind === null) { deps.reader.observed.offer(resp); return; }
     if (kind !== 'activity-feed' && kind !== 'friend-requests') return;
     if (kind === 'activity-feed') state.sawFeed = true;
     const observed = deps.reader.observed.read(resp, deps.now());
     if (observed === null) return;
-    pendingReads.push(observed.then((result) => {
-      const read = readDrawerBody({ kind, body: null, status: resp.status, mime: resp.mimeType },
-        { reader: deps.reader, now: deps.now(), observed: result });
-      if (kind === 'activity-feed') {
-        if (read.failure === 'feed-walled') state.feedWalled = true;
-        else if (read.events === null) state.feedDrift = true;
-        else {
-          state.feedBodies += 1;
-          h.onFeed(read.events, read.pendingPreview);
-        }
-        return;
-      }
-      if (read.failure === 'requests-walled') {
-        state.requestsFailure = read.failure;
-        return;
-      }
-      if (read.failure === 'requests-unreadable') state.requestsFailure = read.failure;
-      state.requestBodies += 1;
-      // A panel whose rows mostly fail to read is drift; its readable rows are still facts.
-      h.onRequests(read.requests.rows, read.requests.pendingComplete);
-    }).catch((e: unknown) => {
+    pendingReads.push(observed.then((result) => accept(kind,
+      readDrawerBody({ kind, body: null, status: resp.status, mime: resp.mimeType },
+        { reader: deps.reader, now: deps.now(), observed: result }))).catch((e: unknown) => {
       logger.warn('rim.follow-notifications: response body read failed', { kind, error: String(e) });
     }));
   });
-  return { state, pendingReads, unsubscribe };
+  return { state, pendingReads,
+    unsubscribe: () => { unsubscribe(); feedCandidates.dispose(); requestCandidates?.dispose(); },
+    recoverFeed: async () => {
+      if (state.feedBodies > 0 || state.feedDrift || state.feedWalled) return;
+      const recovered = await feedCandidates.recover();
+      if (recovered !== null) accept('activity-feed', projectDrawerRead('activity-feed', recovered));
+    },
+    armRequests: () => { requestCandidates?.dispose(); requestCandidates = deps.reader.observed.arm('requests-panel'); },
+    recoverRequests: async () => {
+      if (state.requestBodies > 0 || state.requestsFailure !== null) return;
+      const recovered = await requestCandidates?.recover();
+      if (recovered != null) accept('friend-requests', projectDrawerRead('friend-requests', recovered));
+    },
+  };
 }
 
 /** Poll until `done` or the deadline, flushing body reads (interruptible by a stop()). */

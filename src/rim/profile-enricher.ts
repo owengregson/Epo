@@ -145,10 +145,11 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         }
         continue;
       }
-      if (countsUnread(visit)) {
-        // A body without a valid count pair is a failed read (spec §10.4): it counts in the
-        // streak, so a drifted count ends the pass instead of re-visiting every pass.
-        logger.warn('rim.profile-enricher: profile read without its counts, skipping', { username });
+      if (countsUnread(visit) || visit.tier === 'recovered' || visit.partial === true
+        || typeof visit.obs.fields.followers !== 'number' || typeof visit.obs.fields.following !== 'number') {
+        // Incomplete/C2 facts remain in the observer, but cannot qualify a candidate (spec §10.6).
+        // Count failed reads toward the existing wall streak; never loop to re-request.
+        logger.warn('rim.profile-enricher: profile read did not qualify enrichment, skipping', { username });
         walledInARow += 1;
         if (walledInARow >= RECOVERY.BLOCKED_STREAK_ENTRY) break;
         continue;
