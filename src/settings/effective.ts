@@ -103,8 +103,10 @@ const quietByShape: Partial<Record<DayShape, QuietWindow>> = {};
 /** The window a quiet-hours choice resolves to (null: none). */
 export function quietWindowOf(q: QuietHours, dayShape: DayShape): QuietWindow | null {
   if (q.kind === 'none') return null;
-  return q.kind === 'derived' ? { ...(quietByShape[dayShape] ??= deriveQuietHours(dayShape)) }
-    : { startMinute: q.startMinute, endMinute: q.endMinute };
+  if (q.kind === 'custom') return { startMinute: q.startMinute, endMinute: q.endMinute };
+  const window = quietByShape[dayShape] ?? deriveQuietHours(dayShape);
+  quietByShape[dayShape] = window;
+  return { ...window };
 }
 
 const TEMPO_PREFIX = 'tempo.';
