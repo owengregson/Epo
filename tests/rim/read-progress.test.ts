@@ -15,7 +15,7 @@ test('a malformed list page or failed profile visit cannot count as useful runti
   const walker = new ListPageWalker({ tab, reader: new Reader(), onProgress, sleep: async () => {} });
   expect((await walker.walkAll({ pk: '11', which: 'followers', sentinel: sentinel(), onObservation: () => {} })).reason)
     .toBe('shape-mismatch');
-  const enricher = new AdapterBackedProfileEnricher({ onProgress, sentinel: sentinel(), paceMs: 0,
+  const enricher = new AdapterBackedProfileEnricher({ onProgress, sentinel: sentinel(),
     store: { markEnrichmentFailed: () => {} }, visitor: { visit: async () => ({ ok: false, kind: 'walled', detail: {} }) },
   });
   await enricher.enrich(['11']);

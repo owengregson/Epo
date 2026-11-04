@@ -122,7 +122,7 @@ describe('U07 count rows: the counts are one pair, and a count-less read ends th
       },
     };
     const enricher = new AdapterBackedProfileEnricher({ visitor, store, sentinel: new FakeSentinel() as unknown as Sentinel,
-      clock: new FakeClock(T0), sleep: async () => {} });
+      clock: new FakeClock(T0) });
     const usernames = Array.from({ length: RECOVERY.BLOCKED_STREAK_ENTRY + 3 }, (_, i) => `u${i}`);
     expect(await enricher.enrich(usernames)).toBe(0);
     expect(visited).toHaveLength(RECOVERY.BLOCKED_STREAK_ENTRY);

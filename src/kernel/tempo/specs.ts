@@ -107,8 +107,6 @@ export const TEMPO_SPECS = {
     floor: { kind: 'poll' }, identity: { registry: ['NOISE.BEAT_MIN_FACTOR', 'NOISE.BEAT_MAX_FACTOR'] } },
   'pause.wake-settle': { axis: 'pace', prior: band(RECOVERY.RESUME_SETTLE_MIN_MS, RECOVERY.RESUME_SETTLE_MAX_MS),
     floor: { kind: 'latency', op: 'probe' }, identity: { registry: ['RECOVERY.RESUME_SETTLE_MIN_MS', 'RECOVERY.RESUME_SETTLE_MAX_MS'] } },
-  'pause.after-task': { axis: 'pace', prior: band(ENGINE.REFILL_PACING_MIN_MS, ENGINE.REFILL_PACING_MAX_MS),
-    floor: PRIOR_MIN, identity: { registry: ['ENGINE.REFILL_PACING_MIN_MS', 'ENGINE.REFILL_PACING_MAX_MS'] } },
   'park.blocked': { axis: 'pace-up', prior: base(PRUNE.PARK_MS), floor: SAME, identity: { registry: ['PRUNE.PARK_MS'] } },
   'backoff.walled': { axis: 'pace-up', prior: base(ENGINE.ENRICH_BACKOFF_MS), floor: SAME,
     identity: { registry: ['ENGINE.ENRICH_BACKOFF_MS'] } },

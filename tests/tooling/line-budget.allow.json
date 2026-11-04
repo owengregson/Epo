@@ -11,11 +11,11 @@
     },
     {
       "file": "src/kernel/derive.ts",
-      "lines": 994
+      "lines": 990
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 945
+      "lines": 919
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -23,7 +23,7 @@
     },
     {
       "file": "src/livetest/steps.ts",
-      "lines": 723
+      "lines": 720
     },
     {
       "file": "src/adapter/actor.ts",
@@ -47,7 +47,7 @@
     },
     {
       "file": "src/engine/target-pipeline.ts",
-      "lines": 417
+      "lines": 408
     },
     {
       "file": "src/main/foundation-reads.ts",

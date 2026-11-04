@@ -1545,26 +1545,6 @@
    "provenance": []
   },
   {
-   "key": "tempo.pause.after-task",
-   "section": "timing",
-   "kind": "number",
-   "unit": "factor",
-   "step": 0.1,
-   "value": 1,
-   "recommended": 1,
-   "override": null,
-   "bounds": {
-    "kind": "number",
-    "min": 1,
-    "max": 3
-   },
-   "risk": "lower-is-riskier",
-   "applies": "replan",
-   "source": "recommended",
-   "inactive": null,
-   "provenance": []
-  },
-  {
    "key": "tempo.park.blocked",
    "section": "timing",
    "kind": "number",

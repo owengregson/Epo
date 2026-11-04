@@ -24,11 +24,12 @@ import { ActionAbortedError, TabUnavailableError, TabUnresponsiveError } from '@
 import { type LocateRectResult, type SentinelStatus, SURFACE } from '@/adapter/ig-surface';
 import type { Navigable } from '@/adapter/tab-ports';
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
+import { createIgActivityClock, type IgActivityClock } from '@/rim/ig-activity-clock';
 import type { ProfileExpectation } from '@/rim/profile-observer';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
 import type { DriftClass } from '@/surface/sink';
 import { ADAPTER } from '@/timing/config';
-import { type Rng, type SleepFn, sample, sleep } from '@/timing/primitives';
+import { type Rng, type SleepFn, sleep } from '@/timing/primitives';
 import { launchStream } from '@/utils/entropy';
 
 export interface TabProfileVisitorDeps {
@@ -45,54 +46,42 @@ export interface TabProfileVisitorDeps {
    */
   waitMs?: number;
   pollMs?: number;
-  /** The dwell's sleep, randomness and clock — injected by tests. */
+  /** The default clock's sleep, randomness and tempo, and the visit's clock — injected by tests. */
   sleep?: SleepFn;
   rng?: Rng;
   now?: () => number;
-  /** The tempo the dwell resolves from (default: the reference tempo). */
   tempo?: TempoSource;
+  /** The graph's activity clock, shared by every Instagram operation (default: this visitor's own). */
+  activity?: IgActivityClock;
 }
 
 export class TabProfileVisitor implements ProfileVisitor {
   private readonly waitMs: number;
   private readonly pollMs: number;
-  private readonly sleep: SleepFn;
-  private readonly rng: Rng;
   private readonly now: () => number;
-  private readonly tempo: TempoSource;
-  /** When the previous visit ENDED — the dwell is measured from here. */
-  private lastVisitAt: number | null = null;
+  /**
+   * Spaces each visit a drawn `dwell.visit` after the last Instagram operation ENDED. The ONE
+   * visitor serves every caller and the clock every operation, so no caller can burst.
+   */
+  private readonly activity: IgActivityClock;
 
   constructor(private readonly deps: TabProfileVisitorDeps) {
     this.waitMs = deps.waitMs ?? ADAPTER.POLL_TIMEOUT_MS;
     this.pollMs = deps.pollMs ?? ADAPTER.POLL_INTERVAL_MS;
-    this.sleep = deps.sleep ?? sleep;
-    this.rng = deps.rng ?? launchStream('rim/profile-visit');
     this.now = deps.now ?? Date.now;
-    this.tempo = tempoOrReference(deps.tempo);
+    this.activity = deps.activity ?? createIgActivityClock({ tempo: tempoOrReference(deps.tempo),
+      rng: deps.rng ?? launchStream('rim/profile-visit'), now: this.now, sleep: deps.sleep ?? sleep });
   }
 
   async visit(username: string, opts: { readonly pk?: string } = {}): Promise<ProfileVisit> {
     const signal = this.deps.abortSignal?.();
-    await this.dwell(signal);
+    await this.activity.spaceEntry(signal);
     if (signal?.aborted) throw new ActionAbortedError('profile.visit');
     try {
       return await this.load(username, opts, signal);
     } finally {
-      this.lastVisitAt = this.now();
+      this.activity.noteEnd(this.now());
     }
-  }
-
-  /**
-   * Rest a drawn dwell (`dwell.visit`) since the previous visit ended. The ONE
-   * visitor serves every caller, so their visits share one rhythm — no caller
-   * can burst. A visit long after the last waits nothing.
-   */
-  private async dwell(signal: AbortSignal | undefined): Promise<void> {
-    if (this.lastVisitAt === null) return;
-    const draw = sample(this.tempo.policy('dwell.visit'), this.rng);
-    const left = this.lastVisitAt + draw - this.now();
-    if (left > 0) await this.sleep(left, signal);
   }
 
   /**

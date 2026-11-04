@@ -26,7 +26,6 @@ export type EngineWaitKey =
   | 'engine:idle'
   | 'engine:transient-backoff'
   | 'engine:action-delay'
-  | 'engine:refill-pacing'
   | 'engine:recovery-hold';
 
 /**
@@ -44,7 +43,6 @@ export const ENGINE_WAIT_CLASS = {
   'engine:idle': 'local-beat',
   'engine:transient-backoff': 'local-beat',
   'engine:action-delay': 'exact',
-  'engine:refill-pacing': 'exact',
   'engine:session-park': 'exact',
   'engine:velocity-park': 'exact',
   'engine:recovery-hold': 'exact',
@@ -71,9 +69,9 @@ export type EngineParkReason =
 
 /**
  * Keys whose waits are LONG parks the status must surface. Short operational
- * waits (idle beat, refill pacing, transient backoff, the brief prune-park
- * retry) stay unlisted — they are step-scale, not hold-scale; the paced action
- * delay surfaces separately through `nextActionAt`.
+ * waits (idle beat, transient backoff, the brief prune-park retry) stay
+ * unlisted — they are step-scale, not hold-scale; the paced action delay
+ * surfaces separately through `nextActionAt`.
  */
 const PARK_REASON_BY_KEY = new Map<EngineWaitKey, EngineParkReason>([
   ['engine:daily-ceiling-park', 'daily-ceiling'],

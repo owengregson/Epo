@@ -17,6 +17,7 @@ import { awaitCaptured, type CaptureState, captureFeed } from '@/rim/feed-captur
 import type {FeedFailure, FeedPassOptions, FeedReadResult, FeedSource, NotificationsActor,
 } from '@/rim/feed-source';
 import { advanceWatermark, classifyBody, eventKey, type FeedWatermark, gapOf, reached } from '@/rim/feed-watermark';
+import { createIgActivityClock, type IgActivityClock } from '@/rim/ig-activity-clock';
 import type { RimTab } from '@/rim/types';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
@@ -52,6 +53,8 @@ export interface FollowNotificationsDeps {
   reporter?: ActivityReporter;
   /** The tempo the drawer's waits and step pauses resolve from (default: the reference tempo). */
   tempo?: TempoSource;
+  /** The graph's activity clock: the drawer opens a drawn dwell after the last operation ended (default: its own). */
+  activity?: IgActivityClock;
   /** Local time (default `Date.now`). */
   now?: () => number;
 }
@@ -84,6 +87,7 @@ export class AdapterBackedFollowNotifications implements FeedSource {
   private readonly reporter: ActivityReporter;
   private readonly tempo: TempoSource;
   private readonly now: () => number;
+  private readonly activity: IgActivityClock;
 
   constructor(deps: FollowNotificationsDeps) {
     this.d = deps;
@@ -93,11 +97,15 @@ export class AdapterBackedFollowNotifications implements FeedSource {
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
     this.tempo = tempoOrReference(deps.tempo);
     this.now = deps.now ?? Date.now;
+    this.activity = deps.activity ?? createIgActivityClock({ tempo: this.tempo, now: this.now, sleep: this.sleep });
   }
 
   async fetchSince(w: FeedWatermark | null, o: FeedPassOptions): Promise<FeedReadResult> {
     const permit = this.d.readBudget?.consume('notification', 'reconciliation', 1, o.use);
     if (permit && !permit.allowed) return { ok: false, reason: 'read-budget', retryAt: permit.resumeAt ?? undefined, opened: false };
+    // The drawer opens on the activity clock (spec §5.16), then looks at the page it opens on.
+    await this.activity.spaceEntry(o.signal);
+    if (o.signal.aborted) return { ok: false, reason: 'aborted', opened: false };
     const status = await this.d.sentinel.check();
     if (status !== 'ok') {
       logger.warn('rim.follow-notifications: sentinel non-ok, skipping the pass', { status });
@@ -107,6 +115,7 @@ export class AdapterBackedFollowNotifications implements FeedSource {
     try {
       return await this.pass(w, o);
     } finally {
+      this.activity.noteEnd(this.now());
       this.reporter.clear();
     }
   }

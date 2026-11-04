@@ -56,7 +56,6 @@ export const PARAM_COPY = {
   'tempo.walk.rest-every': tempo('Pages between rests'),
   'tempo.pause.retry': tempo('Wait before trying again'),
   'tempo.pause.wake-settle': tempo('Settle after the computer wakes'),
-  'tempo.pause.after-task': tempo('Pause after each task'),
   'tempo.park.blocked': tempo('Wait after Instagram says no'),
   'tempo.backoff.walled': tempo('Back off after reaching a limit'),
   'tempo.beat.transient': tempo('Wait after a brief hiccup'),

@@ -50,8 +50,6 @@
     {"key":"src/capture/capture-main.ts :: resolveSamples :: readSampleUsernamesFromFixtures :: 3","class":"HARNESS","reason":"harness: the capture tool (npm run capture) is dev-only; its values never reach production"},
     {"key":"src/engine/engine.ts :: ACTIONS_FAILING_HALT :: ACTIONS_FAILING_HALT :: 8","class":"PENDING","stream":"PR","reason":"PR: the halt reads the D5 coldFailingThreshold() (7) instead of 8 (spec §17.8)"},
     {"key":"src/engine/engine.ts :: Engine.constructor :: mulberry32 :: 0xffffffff","class":"GEOM","reason":"a 32-bit mask or hash-mixing constant, numeric"},
-    {"key":"src/engine/engine.ts :: REFILL_PACING_MAX_MS :: REFILL_PACING_MAX_MS :: ENGINE.REFILL_PACING_MAX_MS","class":"PENDING","stream":"PR","reason":"PR: S2b retires the refill beat (pause.after-task) with the activity clock (spec §5.11)"},
-    {"key":"src/engine/engine.ts :: REFILL_PACING_MIN_MS :: REFILL_PACING_MIN_MS :: ENGINE.REFILL_PACING_MIN_MS","class":"PENDING","stream":"PR","reason":"PR: S2b retires the refill beat (pause.after-task) with the activity clock (spec §5.11)"},
     {"key":"src/engine/prune-engine.ts :: PRUNE_CONSECUTIVE_FAIL_HALT :: PRUNE_CONSECUTIVE_FAIL_HALT :: 4","class":"PENDING","stream":"PR","reason":"PR: becomes the named override PRUNE.CONSECUTIVE_FAIL_HALT (spec §17.3)"},
     {"key":"src/engine/prune-engine.ts :: PruneEngine.constructor :: mulberry32 :: 0x51abc0de","class":"GEOM","reason":"a 32-bit mask or hash-mixing constant, numeric"},
     {"key":"src/engine/prune-engine.ts :: PruneEngine.constructor :: mulberry32 :: 0xffffffff","class":"GEOM","reason":"a 32-bit mask or hash-mixing constant, numeric"},

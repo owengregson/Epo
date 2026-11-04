@@ -10,14 +10,12 @@
 import type { SentinelStatus } from '../adapter/sentinel';
 import { tempoOrReference } from '../kernel/tempo';
 import type { Settings } from '../settings/settings';
-import { ENGINE as ENGINE_TIMING } from '../timing/config';
 import type { WaitResult } from '../timing/delay-manager';
 import { mulberry32 } from '../timing/noise';
 import { type DelayPolicy, type Rng, TIMED_OUT, withTimeout } from '../timing/primitives';
 import { WaitRunner } from '../timing/wait-runner';
 import * as log from '../utils/logger';
 import { absurd } from './absurd';
-import { queuedCountFor } from './decisions';
 import { actChurn, actWovenUnfollow, type EngineActionContext, performAction } from './engine-actions';
 import { buildEngineFactSources } from './engine-facts';
 import { type EngineJournalContext, settleJournalStep } from './engine-journal-effects';
@@ -55,10 +53,6 @@ import { TargetPipeline } from './target-pipeline';
 // Engine may wait un-interruptibly.
 export type { SleepFn } from '../timing/primitives';
 export { sleep as defaultSleep } from '../timing/primitives';
-
-/** Bounds of the short jittered pause ending every branch that issued IG traffic. */
-export const REFILL_PACING_MIN_MS = ENGINE_TIMING.REFILL_PACING_MIN_MS;
-export const REFILL_PACING_MAX_MS = ENGINE_TIMING.REFILL_PACING_MAX_MS;
 
 // The refill cycle's own knobs live with it; re-exported for consumers that
 // have always imported them from here.
@@ -233,7 +227,6 @@ export class Engine {
       enricher: deps.enricher,
       settings: (): Settings => this.settings,
       wait: (key, policyOrMs) => this.engineWait(key, policyOrMs),
-      pacingSleep: () => this.pacingSleep(),
       recover: (token, kind) => this.enterRecovery(token, kind),
       halt: (reason) => this.halt(reason),
     });
@@ -261,7 +254,8 @@ export class Engine {
       enterRecovery: (token, kind) => this.enterRecovery(token, kind),
       noteProgress: (phase) => this.noteProgress(phase),
       healIncidentWindow: (incident) => this.healIncidentWindow(incident),
-      pacingSleep: () => this.pacingSleep(),
+      // The activity clock spaces the next Instagram entry (spec §5.16), so a step's end waits nothing.
+      pacingSleep: () => Promise.resolve(),
     };
   }
 
@@ -602,13 +596,6 @@ export class Engine {
         to: advance.nextTargetPk,
         source: advance.source,
       });
-      // The next step will typically re-acquire for the new target right away —
-      // interpose the jittered pacing pause before it can.
-      if (
-        queuedCountFor(this.deps.store, advance.nextTargetPk) < this.settings.lowWaterCandidates
-      ) {
-        await this.pacingSleep();
-      }
       return 'advanced-chain';
     }
     if (advance.retryAt !== undefined) {
@@ -838,19 +825,6 @@ export class Engine {
   /** The CURRENT run-generation abort signal (adapter waits link to this). */
   runSignal(): AbortSignal {
     return this.runAbort.signal;
-  }
-
-  /**
-   * The short jittered pause ending every branch that issued Instagram traffic
-   * OUTSIDE the action gate (acquire / enrich / sweep / chain advance), so no
-   * branch can hammer back-to-back. The between-reads floor, not the paced
-   * inter-action delay.
-   */
-  private async pacingSleep(): Promise<void> {
-    await this.engineWait(
-      'engine:refill-pacing',
-      tempoOrReference(this.deps.tempo).policy('pause.after-task'),
-    );
   }
 
   // --- Pause gate --------------------------------------------------------------------

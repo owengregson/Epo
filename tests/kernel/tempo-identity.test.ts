@@ -52,7 +52,6 @@ const TODAY: Record<Exclude<TempoKey, 'gap.action' | 'motion.travel'>, Prior> = 
   'walk.rest-every': { shape: 'pages', min: NOISE.LIST_WALK_REST_EVERY_MIN, max: NOISE.LIST_WALK_REST_EVERY_MAX },
   'pause.retry': { shape: 'relative', lo: NOISE.BEAT_MIN_FACTOR, hi: NOISE.BEAT_MAX_FACTOR },
   'pause.wake-settle': band(RECOVERY.RESUME_SETTLE_MIN_MS, RECOVERY.RESUME_SETTLE_MAX_MS),
-  'pause.after-task': band(ENGINE.REFILL_PACING_MIN_MS, ENGINE.REFILL_PACING_MAX_MS),
   'park.blocked': { shape: 'base', value: PRUNE.PARK_MS },
   'backoff.walled': { shape: 'base', value: ENGINE.ENRICH_BACKOFF_MS },
   'beat.transient': { shape: 'base', value: ENGINE.IDLE_MS },
@@ -68,9 +67,9 @@ const TODAY: Record<Exclude<TempoKey, 'gap.action' | 'motion.travel'>, Prior> = 
 };
 
 describe('the registry', () => {
-  test('28 unique keys, and a spec for each — no more, no fewer', () => {
-    expect(TEMPO_KEYS).toHaveLength(28);
-    expect(new Set(TEMPO_KEYS).size).toBe(28);
+  test('27 unique keys, and a spec for each — no more, no fewer', () => {
+    expect(TEMPO_KEYS).toHaveLength(27);
+    expect(new Set(TEMPO_KEYS).size).toBe(27);
     expect(Object.keys(TEMPO_SPECS).sort()).toEqual([...TEMPO_KEYS].sort());
   });
 
@@ -176,7 +175,6 @@ describe('referenceTempoSource', () => {
     ['walk.page', RIM.LIST_WALK_PAGE_MIN_MS, RIM.LIST_WALK_PAGE_MAX_MS],
     ['walk.rest', RIM.LIST_WALK_REST_MIN_MS, RIM.LIST_WALK_REST_MAX_MS],
     ['pause.wake-settle', RECOVERY.RESUME_SETTLE_MIN_MS, RECOVERY.RESUME_SETTLE_MAX_MS],
-    ['pause.after-task', ENGINE.REFILL_PACING_MIN_MS, ENGINE.REFILL_PACING_MAX_MS],
   ] as const)('%s draws exactly what uniform(min, max) draws', (key, min, max) => {
     const r = twin(7, (rng) => sample(tempo.policy(key), rng), (rng) => sample(uniform(min, max), rng));
     expect(r.tempo).toEqual(r.today);

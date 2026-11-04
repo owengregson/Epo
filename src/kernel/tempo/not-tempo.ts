@@ -4,6 +4,8 @@
  * be claimed by exactly one spec or listed here.
  */
 export const NOT_TEMPO: Readonly<Record<string, string>> = {
+  'ENGINE.REFILL_PACING_MIN_MS': 'retired with the activity clock: a task ends without a beat, the next entry is spaced',
+  'ENGINE.REFILL_PACING_MAX_MS': 'retired with the activity clock: a task ends without a beat, the next entry is spaced',
   'ENGINE.VELOCITY_PARK_MEDIAN_MS': 'retired: the velocity park becomes the exact trailing-hour window (PR)',
   'ENGINE.VELOCITY_PARK_SIGMA': 'retired: the velocity park becomes the exact trailing-hour window (PR)',
   'ENGINE.VELOCITY_PARK_MIN_MS': 'retired: the velocity park becomes the exact trailing-hour window (PR)',

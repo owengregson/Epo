@@ -45,7 +45,7 @@ export interface FollowbackWiring {
   /** The composed list walker the head walk and the following check page with. */
   walker: ListPageWalker;
   /** The plan service, its plan-day boundary (spec §4.4) and its tempo (the drawer's waits follow the session). */
-  plan: Pick<PlanWiring, 'service' | 'dayClock' | 'tempo'>;
+  plan: Pick<PlanWiring, 'service' | 'dayClock' | 'tempo' | 'activity'>;
   rate: Pick<RateGovernor, 'actionsInLastHour'>;
 }
 
@@ -91,7 +91,7 @@ export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): Followba
   seedReopenState(store, ownPk, d.bookkeeping);
   const feed = new AdapterBackedFollowNotifications({ readBudget, ownPk, canAccept: policy.canAccept,
     onAccepted: policy.onAccepted, tab: d.tab, actor: adapter.actor, reader, sentinel, store,
-    abortSignal: d.driverSignal, reporter: d.reporter, tempo: w.plan.tempo });
+    abortSignal: d.driverSignal, reporter: d.reporter, tempo: w.plan.tempo, activity: w.plan.activity });
   const watcher = new FollowbackWatcher({ store, clock, ownPk, cfg: toFollowbackConfig(settings),
     // An open accept settles from what the drawer saw, with zero reads (spec §9.8).
     settleChannels: (e) => { settleFromChannels({ store, ownPk, now: clock.now() }, e); } });

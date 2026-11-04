@@ -114,7 +114,7 @@ test('enrichment reserves before visiting and a spent budget stops without claim
   const budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 1, verifyReserve: 0 }) });
   const visited: string[] = [];
   const enricher = new AdapterBackedProfileEnricher({ store, clock, readBudget: budget,
-    sentinel: new FakeSentinel() as unknown as Sentinel, sleep: async () => {}, paceMs: 0,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
     visitor: { visit: async (username) => {
       expect(budget.snapshot().debits).toHaveLength(1);
       visited.push(username);

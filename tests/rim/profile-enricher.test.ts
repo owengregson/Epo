@@ -3,9 +3,10 @@
  *
  * Since 2026-10-08 a profile is read by opening it (`rim/profile-visit.ts`):
  * the page's own GraphQL body carries the counts and the ProfileObserver
- * writes it to the store. The enricher owns the PASS — sentinel gating,
- * pacing, the wall streak, the permanent `gone` marker, progress — and is
- * tested here against a scripted visitor. The store write is the observer's,
+ * writes it to the store. The enricher owns the PASS — sentinel gating, the
+ * wall streak, the permanent `gone` marker, progress — and is tested here
+ * against a scripted visitor. The spacing between visits is the activity
+ * clock's (`ig-activity-clock.test.ts`); the store write is the observer's,
  * tested in `profile-visit.test.ts`.
  */
 import type { Sentinel } from '@/adapter/sentinel';
@@ -39,7 +40,6 @@ class ScriptedVisitor implements ProfileVisitor {
 }
 
 const clock = new FakeClock(5_000_000);
-const noSleep = async (): Promise<void> => {};
 
 let store: KnowledgeStore;
 beforeEach(() => {
@@ -49,7 +49,7 @@ afterEach(() => store.close());
 
 type Report = { kind: string; label: string; count?: number; total?: number } | null;
 
-const build = (opts?: { sentinel?: FakeSentinel; batchCap?: number; sleep?: (ms: number) => Promise<void> }) => {
+const build = (opts?: { sentinel?: FakeSentinel; batchCap?: number }) => {
   const visitor = new ScriptedVisitor();
   const activity: Report[] = [];
   const enricher = new AdapterBackedProfileEnricher({
@@ -58,7 +58,6 @@ const build = (opts?: { sentinel?: FakeSentinel; batchCap?: number; sleep?: (ms:
     sentinel: (opts?.sentinel ?? new FakeSentinel()) as unknown as Sentinel,
     clock,
     batchCap: opts?.batchCap,
-    sleep: opts?.sleep ?? noSleep,
     reporter: { report: (info) => activity.push(toVeilInfo(info)), clear: () => activity.push(null) },
   });
   return { enricher, visitor, activity };
@@ -72,26 +71,29 @@ test('visits each username and counts the profiles that answered', async () => {
   expect(visitor.visited).toEqual(['alice', 'bob']);
 });
 
-test('paces even when the sentinel blocks, so a persistent block cannot spin', async () => {
-  const sleeps: number[] = [];
-  const { enricher, visitor } = build({
-    sentinel: new FakeSentinel([], 'challenge'),
-    sleep: async (ms) => {
-      sleeps.push(ms);
-    },
-  });
+test('the pass waits nothing of its own: the visits go straight to the visitor, which spaces them', async () => {
+  const { enricher, visitor } = build(); // no sleep to inject: the enrich pace is gone (spec §5.16)
+  visitor.outcomes = { a: ok('1', 'a'), b: fail('walled'), c: ok('3', 'c') };
+
+  expect(await enricher.enrich(['a', 'b', 'c'])).toBe(2);
+  expect(visitor.visited).toEqual(['a', 'b', 'c']);
+});
+
+test('a non-ok sentinel ends the pass at once: nothing is visited and nothing spins', async () => {
+  const sentinel = new FakeSentinel([], 'challenge');
+  const { enricher, visitor } = build({ sentinel });
 
   expect(await enricher.enrich(['a', 'b', 'c'])).toBe(0);
   expect(visitor.visited).toEqual([]); // blocked before any page load
-  expect(sleeps).toHaveLength(2); // after the 1st and 2nd, none after the last
+  expect(sentinel.checks).toBe(1); // one look, then the pass ends (a future pass retries)
 });
 
-test('a non-ok sentinel skips that username and visits the rest', async () => {
-  const { enricher, visitor } = build({ sentinel: new FakeSentinel(['challenge']) });
-  visitor.outcomes = { alice: ok('101', 'alice'), bob: ok('102', 'bob') };
+test('a non-ok sentinel mid-pass ends it there; what was read stays read', async () => {
+  const { enricher, visitor } = build({ sentinel: new FakeSentinel(['ok', 'challenge']) });
+  visitor.outcomes = { alice: ok('101', 'alice'), bob: ok('102', 'bob'), carol: ok('103', 'carol') };
 
-  expect(await enricher.enrich(['alice', 'bob'])).toBe(1);
-  expect(visitor.visited).toEqual(['bob']);
+  expect(await enricher.enrich(['alice', 'bob', 'carol'])).toBe(1);
+  expect(visitor.visited).toEqual(['alice']);
 });
 
 test('`gone` marks the account permanently un-enrichable; `unanswered` does NOT', async () => {
@@ -163,7 +165,6 @@ test('an aborted driver signal ends the pass between usernames (nothing visited)
     store,
     sentinel: new FakeSentinel() as unknown as Sentinel,
     clock,
-    sleep: noSleep,
     abortSignal: () => ac.signal,
   });
 
