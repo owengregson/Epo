@@ -659,7 +659,7 @@ export declare function referenceTempoSource(launchSeed?: number): TempoSource; 
 | Priors | `PACING_BASE_MS`, `MOTION` durations, the RIM/ENGINE/PRUNE/NOISE/RECOVERY keys a spec claims (incl. `ENGINE.IDLE_MS`, `ENGINE.ENRICH_BACKOFF_MS`, `PRUNE.PARK_MS`, `RIM.SCROLL_WAIT_MS`, the rest stride, the resume settle) | reached **only** through `resolve()` at tempo 1; outside `src/kernel/tempo` no code reads them — `no-static-timing` flags any **property access** to a claimed key (`RIM.SCROLL_WAIT_MS`, `MOTION.x`, …), not only imports |
 | D4 deadlines and polls | `timeoutFor(op) = p99·TIMEOUT_SLACK`, `pollEveryFor(op)` | **never plan-derived**: a relaxed session must not loosen failure detection; tempo floors use the same seeds' p50; law: every D4 value identical at every tempo |
 | D3/D5 | holds, cool-down, breaker posteriors | physics and statistics; the plan only decides *when* work runs |
-| `HARNESS` (11 dev keys) | — | never derives (ADR 0605) |
+| `HARNESS` (9 dev keys) | — | never derives (ADR 0605) |
 
 **ADR 0607** redefines the golden invariant:
 1. The snapshot (`tests/kernel/legacy-config.snapshot.ts`) is never edited.
@@ -675,7 +675,7 @@ export declare function referenceTempoSource(launchSeed?: number): TempoSource; 
 5. Laws hold over plan × tempo space (§20).
 6. The provenance tally is asserted against a reviewed literal, updated in the commit that retires keys.
 
-**Retired registry keys (18)** [recomputed in r2 from `derive-provenance.ts`; all in PR S2r, after the last consumer is
+**Retired registry keys (20)** [finalized from `registry-changes.ts`; all in PR S2r, after the last consumer is
 gone]:
 - derived (9): `ENGINE.VELOCITY_PARK_{MEDIAN_MS,SIGMA,MIN_MS,MAX_MS}`; `RIM.ENRICH_PACE_{MIN,MAX}_MS`;
   `NOISE.PRUNE_LAUNCH_JITTER_MAX_MS` (C14); `NOISE.CADENCE_SIGMA` (derived from the retired
@@ -685,10 +685,11 @@ gone]:
 - policy (7): `PRUNE.DELAY_FACTOR`; `RIM.ACQUIRE_MAX_ROUNDS` (dead); `SCHEDULER.AUTO_PRUNE_CHECK_MS`,
   `PRUNE.SCAN_FRESH_MS`, `NOISE.CADENCE_{MIN,MAX}_FACTOR` (C14 and the retired sweep factor);
   `SCHEDULER.USERNAME_REBUILD_BACKOFF_MS`;
-- override (2): `ENGINE.REFILL_PACING_{MIN,MAX}_MS` with their two `OVERRIDES` entries (the activity-clock slice).
+- override (2): `ENGINE.REFILL_PACING_{MIN,MAX}_MS` with their two `OVERRIDES` entries (the activity-clock slice);
+- harness (2): the unused `HARNESS.ENRICH_PACE_{MIN,MAX}_MS`; the harness visitor shares the visit cadence.
 
 **Kept, re-roled:** `PATTERN.CYCLE_PLAN_{MIN_FRACTION,MAX_FRACTION,MIN_CAP}` are the automatic-day band (§5.4; values
-unchanged). **Expected tally after S2r:** derived 40 / policy 34 / override 16 / harness 11 (101 keys; today
+unchanged). **Final tally after S2r:** derived 40 / policy 34 / override 16 / harness 9 (99 keys; previously
 49/41/18/11 = 119, `derive-golden.test.ts:184`). **Non-registry `OVERRIDES` changes** (not part of the tally, covered by
 the overrides tests): the advisory `ENGINE.ACTIONS_FAILING_HALT` entry is removed (the engine reads
 `coldFailingThreshold()` = 7); `CAUTION.cautious.floorSeconds` is removed (the derived 70 applies; grid point and
@@ -3517,7 +3518,7 @@ an agent): update `unified-transport-and-bio-keep-list` (protection now covers e
 ### 20.2 Goldens and identity
 
 `derive-golden.test.ts` (snapshot − RETIRED ⊕ CHANGED = registry, grid, personas and profiles; the deliberate-change
-test equals the `CHANGED` ledger; reviewed tally 40/34/16/11); `tempo-identity.test.ts` (every spec at
+test equals the `CHANGED` ledger; reviewed tally 40/34/16/9); `tempo-identity.test.ts` (every spec at
 `REFERENCE_TEMPO` = its prior; every RIM/ENGINE/NOISE band and MOTION duration claimed exactly once or listed in
 `NOT_TEMPO`; every `TempoKey` has ≥ 1 call site or sits in `PENDING_CONSUMERS`, which Phase I empties);
 `motion-golden.test.ts` (frozen snapshot + `ADDED` + `MOTION_ROLE` coverage); `gap-model.test.ts` (Balanced 303.9 s

@@ -36,7 +36,8 @@ wholesale (a lost update between two windows), and re-derived every number on sa
 ## Consequences
 
 - A failed save can no longer read as saved; a crash mid-write leaves the previous file or its backup.
-- Run stamps leave Settings once the reopen state holds them (`takeBookkeeping` → `consume-bookkeeping`).
+- Run stamps leave Settings before the reopen state adopts them (`takeBookkeeping` → durable `consume-bookkeeping`
+  → seed); a failed save leaves the carried timestamp unused.
 - Deleting the v2 file is not a reset: the backup or the older version's settings return under review.
 
 ## Alternatives rejected
@@ -44,3 +45,19 @@ wholesale (a lost update between two windows), and re-derived every number on sa
 - **Per-account settings**: protection by pk is safe across accounts; run state already lives in each account's store.
 - **A meta key for run stamps**: two homes for one fact would drift (spec C13).
 - **Debounced saves**: a loss window at quit; every control now commits on its own gesture.
+
+## Amendment — pre-live review: refused migration still constrains the plan
+
+A refused migration preserves v1's active-hours window, slower check/scan choices and custom cleanup/census limits
+in the effective plan inputs. Raw protection drop counts remain visible for review, and a completed intro stays
+completed through refusal and the explicit recovery choice. A non-object JSON value is unreadable settings, not a
+usable v1 document. Refusal keeps protection paused and writes no v2 file until recovery succeeds.
+
+## Amendment — pre-live review: account ownership survives failed saves and backup restoration
+
+The first account reading an unowned migration stamp claims it in memory. Consumption first persists that account's
+pk, then clears the stamp, and only a successful clear permits the account store to adopt it. This preserves explicit
+ownership in the normal settings backup. A failed write cannot mark two accounts freshly checked, and restoring a
+backup cannot turn an already-used stamp into an unowned one. The account store's own legacy lifecycle timestamp can
+still seed independently. A crash after consumption but before store seeding loses an optimization and causes a
+conservative check; it does not invent freshness.

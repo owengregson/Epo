@@ -64,12 +64,12 @@ owner's first rule: everything timing- or limit-shaped is derived from the plan,
 - No caller can burst Instagram operations: an enrichment pass, a click review's verify visit, a
   journal settlement and a sweep's walk share one rhythm, each entry at least the `dwell.visit`
   floor after the last end at any pace (a law). The tempo registry holds 27 keys.
-- The registry holds 101 keys after the retirements; the reviewed provenance tally is derived 40 /
-  policy 34 / override 16 / harness 11 (was 49/41/18/11 = 119).
+- The registry holds 99 keys after the retirements; the reviewed provenance tally is derived 40 /
+  policy 34 / override 16 / harness 9 (was 49/41/18/11 = 119).
 
 ## The ledgers (`src/kernel/registry-changes.ts`)
 
-**RETIRED — 18 registry keys**, each recorded with `{adr: '0607', replacedBy, reason}`; their last
+**RETIRED — 20 registry keys**, each recorded with `{adr: '0607', replacedBy, reason}`; their last
 values stay readable in the frozen snapshot.
 
 | Keys | Tier | Replaced by |
@@ -86,6 +86,7 @@ values stay readable in the frozen snapshot.
 | `NOISE.CADENCE_{MIN,MAX}_FACTOR` | policy | the plan's check spacing; the `watcher-cadence` class retired |
 | `SCHEDULER.USERNAME_REBUILD_BACKOFF_MS` | policy | the boot sequence's `confirm-account` step |
 | `ENGINE.REFILL_PACING_{MIN,MAX}_MS` | override | the activity clock (their two `OVERRIDES` entries are gone) |
+| `HARNESS.ENRICH_PACE_{MIN,MAX}_MS` | harness | unused; the harness visitor shares the visit cadence |
 
 `POLICY.BACKOFF_BAND` (unused, a duplicate of the backoff clamp) is deleted with them. The frozen v1
 settings rules keep the retired sweep factor's range as `BOUNDS.SETTINGS_V1.SWEEP_FACTOR_{MIN,MAX}`

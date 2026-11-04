@@ -163,3 +163,11 @@ head with the walker's list-page script, and the following check reads our own f
 ordered whole-list response plus the plain end probe the web client itself makes; both are list-page
 reads under the walker's whole-list rule. No profile-info or friendship read is composed for them, and
 the own header comes from the landing's own profile load or one visit.
+
+## Amendment — 2026-11-03: one plan-derived activity clock (ADRs 0607, 0213)
+
+The visit-only dwell and reconciliation-batch rules above are superseded. The graph shares one activity clock
+across profile visits, list walks and the notifications drawer: each operation enters after a `dwell.visit` draw
+at the current session tempo, measured from the previous operation's end. The reference dwell remains a kernel
+prior, not a separate fixed visitor delay. Reconciliation batches are removed; persisted frontiers handle reopen
+reads, and the click-time visit verifies each unfollow once (ADR 0213).

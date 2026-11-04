@@ -30,12 +30,13 @@ table was fine and the page had simply stalled.
 
 1. **One admission per action (F1).** `prepareAction`'s dispatch closure runs `beforeMutation` and `onDispatch` at
    most once, before the header press and after the look-before-act dwell. Every later call — the later confirm
-   layers of the same action — re-runs only the check (the stop token, the same profile URL); a refused admission
+   layers of the same action — re-runs the stop, same-profile and local policy checks, including current protection
+   and Practice mode against the action's existing observation (ADR 0214); a refused admission
    refuses every later call too, so nothing is ever pressed after a refusal.
 2. **The confirm layers (F2, `unfollow-flow.ts`).** After the header press the flow polls, within the D4 control
    bounds, for evidence or a layer: the mutation's answer (`peek()`), a header flip to the settled state, or a
    pressable confirm control whose layer signature differs from the last one pressed. A located layer gets a
-   reading pause (`ui.step-pause`, off under the reference tempo until the plan's tempo is swapped in), then a
+   reading pause (`ui.step-pause`, drawn from the graph's plan tempo), then a
    settled press of that same layer only — a re-locate that finds a different signature presses nothing. At most
    `layers.length` presses happen: the surface lists the layers an unfollow can show (`CONFIRM_LAYERS = menu,
    dialog` in `versions/2026-08-12`), so the bound is surface data, not a literal. Later layers search the dialog
@@ -82,11 +83,10 @@ table was fine and the page had simply stalled.
 - Zero presses on every refusal path (a refused admission, a failed later check, a stop), and nothing in page code
   or the flow presses an unrecognized control; Cancel and the Close X are the only exits pressed.
 - `actor.ts` shrinks below its recorded length (757 → 655); the flow and the capture live in their own modules.
-- Two seams are still to be wired outside this stream: the production `SurfaceSink` (the parse-health stream's
-  surface wiring; until then `NO_SINK`), and the unverified classification's caller — the churn port's cause
-  vocabulary has no `unverified` member yet, so `churn-actions.ts` must pass the evidence (`'none'` for the Actor's
-  post-dispatch `err`) before F7 takes effect; until then today's mapping holds. A dedicated capture folder, if
-  wanted, is one injected `ConfirmCapture` at the composition root.
+- The composed graph supplies the production `SurfaceSink`, so unrecognized layers reach durable parse health.
+  `churn-actions.ts` passes `'none'` evidence for the Actor's post-dispatch `err`, applying F7's unverified park
+  without a rate-wall charge. A dedicated capture folder, if wanted, is one injected `ConfirmCapture` at the
+  composition root.
 - The mutation-arrival meter's samples shift down (they no longer include hydration and menu animation).
 
 ## Alternatives rejected

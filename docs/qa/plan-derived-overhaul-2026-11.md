@@ -27,18 +27,24 @@ both show zero disagreements. L4 also requires at least one night away with Epo 
 | Composition, `882c42c` | Full gate | 414 suites / 4,295 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 58 warnings |
 | Follow proof and dispatch guards, `dbd9193` | Full gate | 414 suites / 4,311 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 58 warnings |
 | Parser safety review, `0ee2605` | Full gate | 420 suites / 4,352 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 58 warnings |
+| Closing cleanup, `e1a744e` | Full gate | 420 suites / 4,360 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 56 warnings |
 | Final integrated checkout | Full gates, composition, cleanup audit, review, background and visual checks | Pending |
 
 The post-merge gate logs are stored outside the repository under the durable handoff folder's
 `results/codex-pr-s2r-merge-gates/`, `codex-cautious-floor-gates/`, `codex-cl-dials-gates/`,
 `codex-reads-merge-gates/`, `codex-ui-merge-gates/`, `codex-plan-merge-gates/`, `codex-composition-gates/` and
-`codex-click-review-gates/` and `codex-read-review-gates/`.
+`codex-click-review-gates/`, `codex-read-review-gates/` and `codex-cl-merge-gates/`.
 The plan/read/UI merges also passed the three lifecycle reachability tests, the 1,260-day plan QC with zero breaches,
 and the generated catalog check. Counts above describe the named
 checkouts only, not later unmerged work.
 
 Isolated worktrees skip the one differential leak test that needs git-ignored original captures; the shared checkout
 runs it. This accounts for their one-test difference. Structural leak checks over every committed corpus always run.
+
+The post-cleanup `knip` advisory was reviewed: its only four unused files are static-scanner input fixtures, read by
+the scanner tests rather than imported as modules. The removed runtime bridges and duplicate shared modules no longer
+appear. Remaining findings are exported helpers/types and the inherited unused `@testing-library/jest-dom` development
+dependency; these are not evidence of unwired runtime modules. The JSON report is in `results/codex-final-qa/`.
 
 ## Review and regression work
 
@@ -56,13 +62,16 @@ responses, fake clocks and disposable stores; no live response is requested to i
   facts must not authorize a follow using stale stored eligibility. Focused regression failures reproduce these
   parser and click-review seams. Both repairs are merged and passed their integrated full gates.
 - An already-open request-acceptance pass must recheck current caps and session identity. Its own pacing deadline
-  is the only deadline it may exempt. The lowered-target bypass is reproduced; its repair is in progress.
+  is the only deadline it may exempt. The lowered-target bypass is repaired and passed the integrated cleanup gate.
 - Protection edits and Practice toggles after a profile visit must still prevent the impending press, including
   subsequent confirm layers. Red tests reproduce both races; the local per-action guard uses the existing visit's
   evidence without another read or admission. The fix is merged and passed the integrated full gate.
 - Renderer review reproduced delayed bootstrap responses overwriting newer pushes, same-revision derived Settings
   views being ignored, and initial queued/parked postures showing the wrong state. Focused regressions pass; their
   integration verification is in progress.
+- A failed settings-bookkeeping consumption could seed a second account with the same unowned freshness stamp.
+  Backup restoration could resurrect the unowned stamp even after a successful consume. Both paths are reproduced;
+  ownership must persist before consumption, and consumption must succeed before store seeding.
 
 ## Upgrade behavior
 
