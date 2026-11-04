@@ -63,6 +63,10 @@ function queued(over: Partial<Parameters<KnowledgeStore['upsertFollowRecord']>[0
   store.upsertFollowRecord({ accountPk: 'a', targetPk: 'seed', state: 'unfollow_queued', retryCount: 0,
     followedAt: clock.now() - 7 * 86_400_000, ...over });
   rig.plan.demandChanged();
+  // Click-review cases need the session allocation as well as the day's unfollow demand.
+  const session = rig.plan.service.view(clock.now()).plan.sessions.find((s) => s.startAt >= clock.now() && s.mix.unfollow > 0);
+  if (session === undefined) throw new Error('the mutation-policy fixture has no allocated unfollow session');
+  clock.t = session.startAt;
 }
 
 test.each(['wrong-pk', 'stale', 'future', 'nan'] as const)('fresh target verification rejects %s without relationship evidence', async (kind) => {

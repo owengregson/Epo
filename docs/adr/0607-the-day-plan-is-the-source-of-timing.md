@@ -128,3 +128,19 @@ boundary). Spec §17.8's `RIM.LIST_WALK_FETCH_RETRIES` landed as `SURFACE_BOUNDS
 - A rolling 24 h as the reset boundary: it lets catch-up reads spend twice D6 around the boundary.
 - Plan-seeded micro-noise: the interactor is rebuilt every graph build, so it would replay paths.
 - A day-seeded phase: circular with the day key, and a repair would move the current window.
+
+## Amendment — session realization and unfollow shares
+
+An exact-start join keeps the entire session budget; rounding its expected end to milliseconds cannot
+forfeit an action. A genuinely late join retains the existing mean-gap proration. Once joined, the
+session may spend that effective budget until the next session minus the separation boundary, quiet
+hours, or the plan-day end. The old `expectedEnd + expectedLength` cutoff is removed. Placement reserves
+one existing session-boundary span beyond each expected length, including the final session; L4 already
+bounds one gap plus pre-action work by that span. No new timing dial or faster gap is introduced.
+
+The production ledger supplies kind counts per session. Every automatic unfollow writer, including
+Prune runs, spends only the open session's unfollow share and the day's unfollow budget. Follows and
+accepts no longer indirectly deplete that share through a proportional estimate of all session usage.
+Single-account manual actions retain their existing hard-day and hourly admission rules. The I11 test
+now asserts exact realization on every complete simulated day for every persona, alongside gap floors,
+hour caps and read-budget checks; the production Prune integration test pins the session share.

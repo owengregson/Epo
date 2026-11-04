@@ -356,6 +356,9 @@ export interface PlanIntent {
    `(s − 1 + u('start', s))/n` of `[S, E)`; `start_s = c_s − L_s/2`; a forward pass enforces
    `start_{s+1} ≥ start_s + L_s + SESSION_BOUNDARY`, a backward pass `start_n + L_n ≤ E`; also no session may intersect
    quiet hours (clip, then re-run the passes). Infeasible → merge the two smallest adjacent sessions and repeat.
+   Reserve one additional `SESSION_BOUNDARY` after each expected length, including the final session's tail;
+   L4 already bounds a drawn gap plus its pre-action work by that span. This reserve is part of placement and
+   feasibility, while `expectedEnd` continues to mean `start + b_s × targetMean_s`.
    Replaces the rejection sampler (`session-planner.ts:314-324`) and the 20-minute midnight tail (`:283`).
 9. **Reads** (§5.8). The census is **not** pinned here: `censusDue` is a durable predicate evaluated per session
    (§5.8.3).
@@ -377,12 +380,14 @@ For session `s`: `windowEnd_s = start_{s+1}` (or `E`); `used_s` = mutations (led
 `at ∈ [start_s, windowEnd_s)`.
 
 - `now < start_s` → `later` (the first is `next`).
-- **Unjoined** (`used_s = 0`): open while `now < expectedEnd_s` with `fit = ⌊(expectedEnd_s − now)/targetMean_s⌋`;
+- **Unjoined** (`used_s = 0`): at its exact start the full `b_s` is available, independent of millisecond
+  rounding. Later, open while `now < expectedEnd_s` with `fit = ⌊(expectedEnd_s − now)/targetMean_s⌋`;
   afterwards `skipped` (or `before-open`). The budget is forfeited: **missed sessions expire, no catch-up** [owner Q6
   default]. A late join's effective budget is `min(b_s, fit at the moment it joins)` [arch r2]: joining one action
-  before `expectedEnd_s` never unlocks the full `b_s` until `expectedEnd_s + L_s`.
+  before `expectedEnd_s` never unlocks the full `b_s`.
 - **Joined** (`used_s > 0`): open while `used_s < b'_s` (the effective budget), `now < closesAt_s`, day volume remains
-  and no cap binds; then `done` or `partial`. `closesAt_s = min(windowEnd_s − SESSION_BOUNDARY, expectedEnd_s + L_s)`.
+  and no cap binds; then `done` or `partial`. `closesAt_s` is the earliest of the next session's start minus
+  `SESSION_BOUNDARY`, the next quiet-hours start, and the plan-day end. The expected duration is not a hard close.
 - Start pressed between sessions **parks with a countdown** to the next session; **Boost is the act-now control**
   [owner Q4 default]. When no session remains before the next plan-day boundary, `nextSessionAt` is the next plan-day's
   first session (a pure draw of the next key); if that day is also empty (days off), parks end at the next plan-day
@@ -445,7 +450,9 @@ first.
 - **Run-time transfers** [arch r2]. An open session with unfollow budget but no unfollow work may use it for follows
   while `follows < min(F + slack, P0 − followsDoneToday)`; accepts use `A_s`, then slack, then the session's follow share
   (accepting is growth), **never** the unfollow share; unfollows never take follow or accept budget. `PlanView.admits
-  ('follow')` refuses `kind-spent` once today's follows (all writers) reach `P0`. Property: for any availability of
+  ('follow')` refuses `kind-spent` once today's follows (all writers) reach `P0`. Automatic unfollows, including
+  Prune runs, also refuse once the open session's unfollow allocation is spent; per-session ledger kind counts
+  distinguish those unfollows from follows and accepts. Property: for any availability of
   unfollow work and any arrival of requests, cumulative follows ≤ `P0` and the automatic total ≤ `V`.
 - **Where the mix is decided:** `src/engine/plan-mix.ts`, inside the `action` fact source. It asks churn for the best
   due unfollow and the best queued follow (`nextDue(now, kind)`), applies `admits`, draws `u('mix', s, k)` against
@@ -1610,6 +1617,12 @@ invariants (laws L13, L13b): Σ b_s(remainder) = R + lift exactly (lift only ins
 - **`boost-end`** (expiry or user): re-plan the remainder with normal mixes; session times kept. The first post-Boost
   sweep reads exactly the accumulated delta (frontiers, §9). Toast "Boost ended. Unfollows that waited will be spread
   over the next sessions."
+
+Replay uses already-planned volume when computing lift; a skipped or ended session is never extended by the
+overlay. Lowering a target may trim unspent allocations, recorded in optional persisted `volume.forfeited`
+(older plans: zero), and later replans cannot refund them. Actual ledger usage is preserved even if a newly
+lowered target is below it; in that case no additional automatic work is admitted. `volume.planned` is the sum
+of session budgets, with actual already-used volume the only possible exception to a newly lowered ceiling.
 
 ### 8.4 Behaviour per rule and source
 

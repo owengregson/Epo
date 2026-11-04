@@ -25,12 +25,14 @@ import { boostPreview, clampBoostHours, previewDays } from './plan-preview';
 import {
   initialPlanState,
   migratedPhase,
+  type ParsedPlanState,
   type PlanStateV1,
   parsePlanState,
   repairPlanState,
   serializePlanState,
 } from './plan-state';
 import type { PlanServiceDeps, PlanView, UsageTally } from './plan-types';
+import { planUsage } from './plan-usage';
 import { viewPlan } from './plan-view';
 
 export interface PlanServiceOptions {
@@ -68,7 +70,7 @@ export class PlanService {
   }
 
   /** The persisted state, repaired or initialized in memory (a pure read). */
-  private current(): { state: PlanStateV1; problem: string | null; fresh: boolean } {
+  private current(): { state: PlanStateV1; problem: string | null; fresh: boolean; forfeiture?: ParsedPlanState['forfeiture'] } {
     const raw = this.deps.store.getPlanState();
     const parsed = parsePlanState(raw);
     if (parsed.state !== null) return { state: parsed.state, problem: null, fresh: false };
@@ -76,7 +78,7 @@ export class PlanService {
       const phase = migratedPhase(this.deps.store.getPacingState(), this.deps.installEntropy);
       return { state: initialPlanState(phase.phase, this.deps.store.hasAnyMutation()), problem: phase.problem, fresh: true };
     }
-    return { state: repairPlanState(parsed, this.deps.installEntropy), problem: parsed.problem, fresh: false };
+    return { state: repairPlanState(parsed, this.deps.installEntropy), problem: parsed.problem, fresh: false, forfeiture: parsed.forfeiture };
   }
 
   /** The plan-day holding `t`: the plan's own window, a transition day after a boundary change, then the new days. */
@@ -118,19 +120,13 @@ export class PlanService {
 
   /** The ledger slice of a plan at `now`: today's tally, mutations per session window, outside actions. */
   usage(plan: DayPlan, now: number): UsageTally & { readonly joinedAt: readonly (number | null)[] } {
-    const tally = this.deps.store.tallySince(plan.window.startsAt);
-    const times = this.deps.store.recentMutationTimes(plan.window.startsAt).filter((t) => t < plan.window.endsAt && t <= now);
-    const inside = plan.sessions.map((s, i) => times.filter((t) => t >= s.startAt && t < windowEndOf(plan, i)));
-    return {
-      ...tally, perSession: inside.map((ts) => ts.length), joinedAt: inside.map((ts) => (ts.length > 0 ? Math.min(...ts) : null)),
-      outside: this.deps.outsideSince(plan.window.startsAt),
-    };
+    return planUsage(this.deps.store, plan, now, this.deps.outsideSince(plan.window.startsAt));
   }
 
   /** The state a write would hold at `now`, computed in memory (never writes). */
   step(now?: number, forced: ReplanCause | null = null, boostOverride?: BoostWindow | null): PlanStep {
     const t = this.at(now);
-    const { state: loaded, problem, fresh } = this.current();
+    const { state: loaded, problem, fresh, forfeiture } = this.current();
     const intent = this.deps.intent();
     const boost = clockBoost(boostOverride === undefined ? loaded.boost : boostOverride, t);
     const state = { ...loaded, boost };
@@ -148,7 +144,8 @@ export class PlanService {
     }
     let plan = prev as DayPlan;
     if (cause !== null) {
-      const opts = this.drawOptions(state, intent, t, cause);
+      const charge = forfeiture?.key === window.key && forfeiture.startsAt === window.startsAt ? forfeiture.amount : undefined;
+      const opts = { ...this.drawOptions(state, intent, t, cause), forfeited: charge };
       if (prev === null || newWindow) {
         const firstOpenAt = cause === 'repair' ? Math.min(t, this.deps.store.recentMutationTimes(window.startsAt)[0] ?? t) : t;
         plan = drawDayPlan(this.input(state, window, intent, t, firstOpenAt, boost), opts);
