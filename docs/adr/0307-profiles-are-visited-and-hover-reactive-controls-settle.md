@@ -155,3 +155,11 @@ the 24-a-day notification allowance in under twenty minutes.
   as bursts separated by holds.
 - **A continuation batch does not reopen the drawer** — the feed was read
   when the sequence began.
+
+## Amendment — 2026-11-02: the reopen sweep's composed reads stay list pages (ADR 0213)
+
+Decision 2 holds for the reopen sweep. The followers head walk reads our own followers list from the
+head with the walker's list-page script, and the following check reads our own following list with the
+ordered whole-list response plus the plain end probe the web client itself makes; both are list-page
+reads under the walker's whole-list rule. No profile-info or friendship read is composed for them, and
+the own header comes from the landing's own profile load or one visit.

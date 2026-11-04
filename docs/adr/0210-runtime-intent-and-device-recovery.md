@@ -101,3 +101,13 @@ Stop cancels the remaining steps and any queued Start. Manual one-offs and prune
 scan/run are refused with `'starting'`. The engine still starts idle at every
 other launch. A block raised before the graph exists pushes the real status
 (`loggedIn` from the cookie) instead of a signed-out one.
+
+## Amendment — 2026-11-02: passive catch-up reads under operational blocks (ADR 0213)
+
+The launch catch-up (startup step 3, after the reveal, under the startup lease) reads only: the landing's
+own header, one notifications pass with no requests panel, and a few followers pages. Those reads are
+not account activity in this ADR's sense, so an **operational** block — `chain-exhausted` or
+`seed-unresolved`, which only the user's next source choice clears — does not stop them. An identity
+block, a rate block (the halt vocabulary's rate set), an unknown block, a holding recovery ladder, an
+offline machine or a sentinel wall skips the catch-up with a typed reason the status shows. The block
+itself is unchanged: it still holds every write and every scheduled run until the user presses Start.
