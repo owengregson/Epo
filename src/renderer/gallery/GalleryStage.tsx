@@ -1,7 +1,6 @@
 import type { JSX } from 'preact';
 import { StageHost } from '@/renderer/app/StageHost';
 import { LivePlaceholder } from '@/renderer/boot/LivePlaceholder';
-import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
 import { GraphStage } from '@/renderer/graph/GraphStage';
 import { useGraphBoard } from '@/renderer/hooks/useGraphBoard';
 import { PeoplePage } from '@/renderer/pages/PeoplePage';
@@ -33,6 +32,5 @@ export function GalleryStage({ surface, graphKey }: { surface: GallerySurface; g
     <StageHost mode="prune" active={surface === 'prune'} mount="on-activation"><PruneView /></StageHost>
     <StageHost mode="settings" active={surface === 'settings'} mount="lazy"><SettingsStage updateStatus={null} /></StageHost>
     <StageHost mode="tab" active={surface === 'live'} mount="on-activation"><LivePlaceholder /></StageHost>
-    {surface === 'diagnostics' ? <section class="stage-view active" data-stage="diagnostics"><DiagnosticsPanel /></section> : null}
   </div>;
 }

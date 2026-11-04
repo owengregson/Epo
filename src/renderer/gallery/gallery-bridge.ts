@@ -40,6 +40,11 @@ export function answerInGallery(method: string, value: unknown): void {
   ANSWERS.set(method, value);
 }
 
+/** Drop a scenario override so the next story reads the bridge's default again. */
+export function clearGalleryAnswer(method: string): void {
+  ANSWERS.delete(method);
+}
+
 /** One page of fixture rows, cut like main cuts a long lane. */
 const LANE = { rows: GALLERY_QUEUE, truncated: true };
 

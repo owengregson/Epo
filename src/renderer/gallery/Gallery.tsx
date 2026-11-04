@@ -11,25 +11,29 @@ import {
   type ShellControls,
   ShellControlsContext,
   settingsTargetSignal,
+  settingsViewSignal,
   stageSignal,
   statusSignal,
 } from '@/renderer/app/shell-context';
+import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
 import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, type GalleryGraphState, galleryGraph, type Scenario } from '@/renderer/gallery/fixtures';
 import { LIVE_SCENARIOS, resetLiveGallery } from '@/renderer/gallery/fixtures-live';
+import { PRUNE_SCENARIOS } from '@/renderer/gallery/fixtures-prune';
 import { SETTINGS_SCENARIOS } from '@/renderer/gallery/fixtures-settings';
 import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
 import { GALLERY_SURFACES, GalleryStage, type GallerySurface } from '@/renderer/gallery/GalleryStage';
-import { answerInGallery, GALLERY_LANES, installGalleryBridge } from '@/renderer/gallery/gallery-bridge';
+import { answerInGallery, clearGalleryAnswer, GALLERY_LANES, installGalleryBridge } from '@/renderer/gallery/gallery-bridge';
 import { useConfirm } from '@/renderer/hooks/useConfirm';
 import type { ToastControls } from '@/renderer/hooks/useToasts';
+import { diagnosticsPanelSlot } from '@/renderer/settings/diagnostics-slot';
 import { Sidebar } from '@/renderer/sidebar/Sidebar';
 import { Tour } from '@/renderer/tour/Tour';
 import type { StageMode } from '@/shared/stage-mode';
 
 /** Every story: the console's, the live column's, the compatibility surfaces', Settings', then the direction boards. */
 const SCENARIOS: Scenario[] = [
-  ...BASE_SCENARIOS, ...LIVE_SCENARIOS, ...SURFACE_SCENARIOS, ...SETTINGS_SCENARIOS, ...DIRECTION_SCENARIOS,
+  ...BASE_SCENARIOS, ...LIVE_SCENARIOS, ...PRUNE_SCENARIOS, ...SURFACE_SCENARIOS, ...SETTINGS_SCENARIOS, ...DIRECTION_SCENARIOS,
 ];
 
 /** Publish one scenario onto the shell's signals — this IS mounting a story. */
@@ -40,6 +44,7 @@ function applyScenario(s: Scenario): void {
     : { ...s.prune, dailyLimit: allocation.planned, dailyDone: allocation.done };
   peopleTargetSignal.value = null;
   settingsTargetSignal.value = null;
+  clearGalleryAnswer('pruneCandidates');
   resetLiveGallery();
   s.apply?.();
 }
@@ -67,11 +72,26 @@ export function Gallery(): JSX.Element {
   const beforeTour = useRef<GallerySurface>('people');
   const confirmation = useConfirm();
   const [controlsHidden, setControlsHidden] = useState(false);
+  const graph = galleryGraph(graphState);
+  const graphCount = graph && !('unavailable' in graph) ? graph.pks.length : null;
 
   const selectSurface = useCallback((next: GallerySurface): void => {
-    setSurface(next);
-    if (next !== 'diagnostics') stageSignal.value = next === 'live' ? 'tab' : next;
+    const destination = next === 'diagnostics' ? 'settings' : next;
+    setSurface(destination);
+    stageSignal.value = destination === 'live' ? 'tab' : destination;
+    if (next === 'diagnostics') {
+      // Mode is fixture state here: the gallery deliberately refuses real saves.
+      const view = settingsViewSignal.value;
+      if (view !== null && view.mode !== 'advanced') {
+        const advanced = { ...view, mode: 'advanced' as const, rev: view.rev + 1 };
+        settingsViewSignal.value = advanced;
+        answerInGallery('settingsView', advanced);
+      }
+      settingsTargetSignal.value = { section: 'diagnostics' };
+    }
   }, []);
+  // Feed rows use the same signal-based navigation as the app, outside the controls context.
+  useEffect(() => stageSignal.subscribe((mode) => setSurface(mode === 'tab' ? 'live' : mode)), []);
   const showStage = useCallback((mode: StageMode): void => selectSurface(mode === 'tab' ? 'live' : mode), [selectSurface]);
   const openTour = (): void => { beforeTour.current = surface; setTourOpen(true); };
   const closeTour = (): void => { setTourOpen(false); selectSurface(beforeTour.current); };
@@ -98,7 +118,7 @@ export function Gallery(): JSX.Element {
       <div class="shell gallery">
         <Sidebar key={scenarioKey} toasts={NO_TOASTS} update={null} />
         <div class="stagepane">
-          <StageBar stage={stageSignal.value} onSelect={showStage} />
+          <StageBar stage={stageSignal.value} onSelect={showStage} graphCount={graphCount} />
           <GalleryStage key={scenarioKey} surface={surface} graphKey={graphState} />
         </div>
         {controlsHidden ? <button type="button" class="tbtn gallery-show" onClick={() => setControlsHidden(false)}>Show gallery controls</button> : null}
@@ -163,6 +183,7 @@ export function Gallery(): JSX.Element {
  */
 export function primeGallery(): void {
   installGalleryBridge();
+  diagnosticsPanelSlot.value = DiagnosticsPanel;
   answerInGallery('graphSnapshot', galleryGraph('populated'));
   peopleTargetSignal.value = null;
   settingsTargetSignal.value = null;

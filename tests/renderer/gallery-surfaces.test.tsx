@@ -3,7 +3,8 @@
  * @jest-environment-options {"customExportConditions": [""]}
  */
 import { act, fireEvent, render, within } from '@testing-library/preact';
-import { modalSignal, stageSignal } from '@/renderer/app/shell-context';
+import { modalSignal, pruneSignal, settingsFactsSignal, stageSignal } from '@/renderer/app/shell-context';
+import { openPerson } from '@/renderer/app/shell-services';
 import { galleryGraph } from '@/renderer/gallery/fixtures';
 import { Gallery, primeGallery } from '@/renderer/gallery/Gallery';
 import { GRAPH_NODE_STATUSES } from '@/types';
@@ -29,11 +30,11 @@ afterEach(() => jest.restoreAllMocks());
 test('the real StageBar selects pages and keeps the shared stage signal in sync', async () => {
   const view = await mount();
   const pages = within(view.getByRole('radiogroup', { name: 'Pages' }));
-  await act(async () => { fireEvent.click(pages.getByRole('radio', { name: 'Graph' })); });
+  await act(async () => { fireEvent.click(pages.getByRole('radio', { name: 'Graph 445' })); });
   expect(stageSignal.value).toBe('graph');
   expect(document.querySelector('.stage-view.active[data-stage="graph"] canvas')).not.toBeNull();
-  expect(pages.getByRole('radio', { name: 'Graph' }).getAttribute('aria-checked')).toBe('true');
-  await act(async () => { fireEvent.keyDown(pages.getByRole('radio', { name: 'Graph' }), { key: 'ArrowRight' }); });
+  expect(pages.getByRole('radio', { name: 'Graph 445' }).getAttribute('aria-checked')).toBe('true');
+  await act(async () => { fireEvent.keyDown(pages.getByRole('radio', { name: 'Graph 445' }), { key: 'ArrowRight' }); });
   expect(stageSignal.value).toBe('prune');
   expect(document.activeElement).toBe(pages.getByRole('radio', { name: 'Prune' }));
   await choose('Live placeholder');
@@ -44,6 +45,7 @@ test('the real StageBar selects pages and keeps the shared stage signal in sync'
 test('Graph uses real pull/filter/retry UI with isolated synthetic states', async () => {
   await mount();
   await choose('Graph empty');
+  expect(document.querySelector('.stageseg-aux')?.textContent).toBe('0');
   expect(document.querySelector('.graph-empty')?.textContent).toMatch(/graph is empty/);
   expect(document.querySelector('.graph-legend__total')?.textContent).toBe('0');
   await choose('Graph populated');
@@ -52,6 +54,7 @@ test('Graph uses real pull/filter/retry UI with isolated synthetic states', asyn
   await act(async () => { fireEvent.click(filter); });
   expect(filter.classList.contains('off')).toBe(true);
   await choose('Graph unavailable');
+  expect(document.querySelector('.stageseg-aux')).toBeNull();
   expect(document.querySelector('.graph-empty')?.textContent).toMatch(/can’t read the graph/);
   expect(within(document.querySelector('.graph-stage') as HTMLElement).getByRole('button', { name: 'Try again' })).toBeTruthy();
   await choose('Working · next step');
@@ -129,4 +132,45 @@ test('graph fixtures have consistent identities, columns, counts and cluster mem
       expect(graph.pks).not.toContain(hub.pk);
     }
   }
+});
+
+
+test('signal-based feed navigation opens People from another gallery stage', async () => {
+  await mount();
+  await choose('Prune');
+  await act(async () => { openPerson({ pk: 'gallery-person-0', username: 'person.0' }); });
+  expect(document.querySelector('.stage-view.active')?.getAttribute('data-stage')).toBe('people');
+  expect(document.querySelector('.stage-view.active [data-person-pk="gallery-person-0"]')).not.toBeNull();
+});
+
+test('Diagnostics opens its real Advanced Settings section with the populated log', async () => {
+  await mount();
+  await choose('Diagnostics');
+  expect(stageSignal.value).toBe('settings');
+  expect(document.querySelector('.stage-view.active .set-page')?.getAttribute('data-mode')).toBe('advanced');
+  expect(document.querySelector('#settings-diagnostics .diag-log')).not.toBeNull();
+});
+
+test('completed census, candidate list, protection toggle and composition share one basis without leaking', async () => {
+  await mount();
+  await choose('Prune · census ready');
+  await choose('Prune');
+  const read = await window.epo.pruneCandidates();
+  if (!read.ok) throw new Error('expected candidates');
+  const census = pruneSignal.value?.census;
+  expect(census?.candidates).toBe(read.candidates.length);
+  expect(pruneSignal.value?.rawRemaining).toBe(read.candidates.length);
+  expect(pruneSignal.value?.remaining).toBe(read.candidates.filter(row => row.protectedBy === null).length);
+  expect(settingsFactsSignal.value?.cleanup?.census?.candidates).toBe(read.candidates.length);
+  const composition = document.querySelector('.pcomp-bar');
+  expect(composition?.getAttribute('aria-label')).toContain('810 follow back, 37 are prunable, 3 are protected');
+  const sum = [...document.querySelectorAll<HTMLElement>('.pcomp-seg')].reduce((total, node) => total + parseFloat(node.style.width), 0);
+  expect(sum).toBeCloseTo(100, 1);
+  const page = within(document.querySelector('.prune-page') as HTMLElement);
+  await act(async () => { fireEvent.click(page.getByRole('button', { name: 'Show protected (3)' })); });
+  expect(page.getByText('@family.photographer')).toBeTruthy();
+  await choose('Working · next step');
+  const next = await window.epo.pruneCandidates();
+  expect(next.ok && next.candidates.length).toBe(3);
+  expect(document.querySelector('.pcomp-bar')).toBeNull();
 });
