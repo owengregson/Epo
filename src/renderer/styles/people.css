@@ -119,7 +119,7 @@
 }
 
 .growth-empty {
-  padding: var(--sp-4) 0;
+  padding-top: var(--sp-4);
   border-top: 1px solid var(--border);
   color: var(--muted);
 }
