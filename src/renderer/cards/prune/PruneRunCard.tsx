@@ -122,13 +122,10 @@ export function PruneRunCard({
 
   return (
     <Card>
-      <CardHeader icon="user-minus" aux={active ? `${commas(remaining)} remaining` : undefined}>
+      <CardHeader icon="user-minus" aux={<Badge tone={chip.tone}>{chip.label}</Badge>}>
         Prune · Run
       </CardHeader>
       <CardBody>
-        <KeyValue k="State">
-          <Badge tone={chip.tone}>{chip.label}</Badge>
-        </KeyValue>
         <div class="hero-today num">
           <div class="ht-top">
             <span class="k">This run</span>
@@ -141,11 +138,13 @@ export function PruneRunCard({
             <span>
               <b>{commas(remaining)}</b> remaining
             </span>
-            <span>
-              today <b>{commas(dailyDone)}</b> / {dailyLimit > 0 ? commas(dailyLimit) : '—'}
-            </span>
           </div>
         </div>
+        <KeyValue k={PRUNE_COPY.allowance}>
+          <span class="num">
+            {dailyLimit > 0 ? fill(PRUNE_COPY.allowanceLine, { used: dailyDone, n: dailyLimit }) : PRUNE_COPY.allowanceUnknown}
+          </span>
+        </KeyValue>
         {/* Stop here means stop the RUN — a live scan's stop (with its own
             confirm copy) lives on PruneScanCard, so mid-scan this card keeps
             its (locked) Run affordance instead of a second, mislabeled stop. */}
@@ -188,12 +187,7 @@ export function PruneRunCard({
         <div class="hint alarm" role="alert" hidden={!halted}>
           {haltText(prune?.haltReason ?? null, lastSentinel)}
         </div>
-        <KeyValue k={PRUNE_COPY.allowance}>
-          <span class="num">
-            {dailyLimit > 0 ? fill(PRUNE_COPY.allowanceLine, { used: dailyDone, n: dailyLimit }) : PRUNE_COPY.allowanceUnknown}
-          </span>
-        </KeyValue>
-        {gradual ?? null}
+        {gradual ? <div class="prune-gradual">{gradual}</div> : null}
       </CardBody>
     </Card>
   );
