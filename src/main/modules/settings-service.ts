@@ -97,7 +97,7 @@ export class SettingsService {
     logger.error('settings: the v1 migration was refused; running on the v1 settings as they were', { detail });
     const state = refusedState(raw, now);
     if (state.kind === 'unreadable') {
-      logger.error('settings: the v1 file is not JSON; defaults under review', { error: state.error });
+      logger.error('settings: the v1 file is not a readable settings object; defaults under review', { error: state.error });
       return { doc: reviewed(DEFAULT_DOC, true), health: { kind: 'defaults-after-unreadable', quarantined: null }, refused: null };
     }
     return { doc: state.doc, health: { kind: 'migration-refused', detail }, refused: { v1: state.v1, detail } };
@@ -188,7 +188,7 @@ export class SettingsService {
     if (action !== 'remigrate-from-v1' && this.refused === null) return { kind: 'refused', reason: 'invalid', detail: 'no migration is pending', view: this.view() };
     if (action === 'start-from-recommended') {
       const fresh: SettingsDocV2 = { ...DEFAULT_DOC, seed: this.doc.seed, protection: this.doc.protection,
-        protectionState: 'needs-review', prefs: this.doc.prefs, rev: 1 };
+        protectionState: 'needs-review', prefs: this.doc.prefs, app: this.doc.app, rev: 1 };
       return this.reopen({ doc: fresh, health: { kind: 'ok' }, refused: null }, fresh);
     }
     let raw: string;

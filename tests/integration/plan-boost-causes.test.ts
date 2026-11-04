@@ -13,7 +13,8 @@ import { type FakePlanHost, fakePlanHost, PLAN_TEST_RNG, type PlanClock, planClo
 import { openTestStore } from '../kit/store';
 
 const FROM = Date.parse('2026-11-10T10:00:00');
-const SETTINGS: Settings = { ...DEFAULT_SETTINGS, dryRun: false };
+// Isolate Boost admission at every plan-day edge; quiet-hours precedence has its own coverage.
+const SETTINGS: Settings = { ...DEFAULT_SETTINGS, dryRun: false, activeHoursStart: 0, activeHoursEnd: 0 };
 const plans: PlanWiring[] = [];
 let store: KnowledgeStore;
 let clock: PlanClock;

@@ -5,13 +5,12 @@
  */
 import { createHash } from 'node:crypto';
 import { SETTINGS_GUARDS, SETTINGS_POLICY } from '@/kernel/settings-policy';
-import { MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
 import type { AudienceSize, CleanupLevel, Intent, QuietHours } from '@/shared/settings-intent';
 import type { ParamValue, RatioCurve } from '@/shared/settings-model';
 import type { ParamKey } from '@/shared/settings-params';
 import type { MigrationBasis } from './basis';
 import { DEFAULT_DOC, type MigrationNote, type OverrideEntry, type SettingsDocV2 } from './doc';
-import { type EffectiveSettings, effectiveFrom } from './effective';
+import { type EffectiveSettings, effectiveFrom, quietHoursOfActive } from './effective';
 import { retireLegacyPacing } from './legacy-pacing-migration';
 import { migrateAccountList, migrateWordList } from './migrate-v1-lists';
 import { PARAM_SPECS } from './params';
@@ -48,15 +47,7 @@ const DERIVED_ROWS: ReadonlyArray<readonly [ParamKey, keyof ResolvedPattern]> = 
   ['unfollow.holdDays', 'holdAfterFollowbackDays'],
 ];
 
-const MINUTES_PER_HOUR = MS_PER_HOUR / MS_PER_MINUTE;
-
 const CURVE_KEYS = ['hardLow', 'bandLow', 'peakLow', 'peakHigh', 'bandHigh', 'hardHigh'] as const;
-
-/** v1's active hours as quiet hours: the default window is derived; [start, end) active is [end, start) quiet. */
-export function quietHoursOfActive(start: number, end: number): QuietHours {
-  if (start === DEFAULT_SETTINGS.activeHoursStart && end === DEFAULT_SETTINGS.activeHoursEnd) return { kind: 'derived' };
-  return start === end ? { kind: 'none' } : { kind: 'custom', startMinute: end * MINUTES_PER_HOUR, endMinute: start * MINUTES_PER_HOUR };
-}
 
 function quietHoursFrom(v1: Settings, notes: MigrationNote[]): QuietHours {
   const { activeHoursStart: start, activeHoursEnd: end } = v1;
