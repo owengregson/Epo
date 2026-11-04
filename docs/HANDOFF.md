@@ -16,8 +16,12 @@
 >    check. An already-open accept pass could likewise keep a stale allowance.
 > 5. Delayed renderer reads could overwrite pushes; derived Settings views can change without a document revision;
 >    initial queued or parked work could show an incorrect posture.
+> 6. Numeric cleanup-share overrides did not reach plan allocation. Refused v1 migration lost schedule constraints,
+>    and failed bookkeeping consumption or backup restoration could reuse another account's freshness stamp.
+> 7. Probation slowed sessions after placement without respecting the quiet-hours wall, leaving planned actions
+>    that could never run.
 >
-> FIXES (ADR 0607, 0213, 0214, 0308, 0806, 0904, 1010, 1011):
+> FIXES (ADR 0105, 0607, 0608, 0213, 0214, 0308, 0806, 0904, 1010, 1011):
 >
 > - Realize session budgets at their exact boundaries; preserve used and forfeited work through re-plans, respect the
 >   quiet-hours wall, and apply the ledger's kind budgets to Prune.
@@ -27,15 +31,24 @@
 >   journal dispatch. Revalidate accept passes against the current plan.
 > - Retire the v1 runtime bridge, fixed scan timing and obsolete renderer state; preserve frozen migration inputs and
 >   raw protection. Keep current pushed state authoritative through bootstrap and Settings changes.
+> - Apply numeric cleanup-share overrides to the plan and its digest. Preserve refused-v1 quiet hours, slower reads,
+>   lower caps, slower motion and tour state; bind migration bookkeeping durably to its account before consumption.
+> - Fit probation inside the same quiet-aware close as normal sessions, reduce its kind allocations to fit, and carry
+>   probation to the next viable session when the current slot cannot hold one slower action.
 >
-> The latest recorded shared gate (`dbd9193`) passed **4,311 tests**, zero TODO tests, and boundaries **0 errors /
-> 58 warnings** (97 at the original overhaul start); the 1,260-day plan QC had zero breaches and all three lifecycle
-> reachability tests passed. Parser integration, combined cleanup, final renderer verification and the full isolated
-> visual/background checks are still in progress. The exact revisions, evidence and upgrade notes are in the
+> Implementation and closing cleanup are merged through `42ee233`; its full gate is running. The latest completed
+> shared gate (`44ea8d4`, chart and card style restoration) passed **424 suites / 4,387 tests**, five skipped, zero TODO,
+> and boundaries **0 errors / 56 warnings** (97 at the original overhaul start). The recorded plan QC had zero breaches
+> across 1,260 days, and all three lifecycle reachability tests passed; final-head results remain pending.
+> The isolated normal-motion gallery at `44ea8d4` passed **756 checks** (63 scenarios at 12 sizes). The recorded
+> background probe passed **10/10 scenarios**, including stage-hidden and never-shown boot, at about **120 callbacks/s**;
+> its exact bundle hash is in the validation record. Final reduced-motion, native-shell and checkpoint evidence is
+> still pending. The exact revisions, artifacts and upgrade notes are in the
 > [validation record](qa/plan-derived-overhaul-2026-11.md).
 > No live-account check has run in this continuation. The integration has not opened the real Epo profile. Phase L
-> remains sequential and supervised; mutations require explicit target consent, and L4 requires a night away.
-> Legacy parser comparators stay until L1 and L4 show zero disagreements.
+> remains sequential and supervised; back up the full profile again before L1, mutations require explicit target
+> consent, and L4 requires a night away. Empty/null biography semantics still need live evidence; null remains absent
+> and fail safe. Legacy parser comparators stay until L1 and L4 show zero disagreements.
 
 > **2026-11-02 (read allowance derived, not hardcoded) —** Owner: "it
 > shouldnt be hardcoded everything should be via our dynamic limit system."
