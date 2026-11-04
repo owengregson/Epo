@@ -71,7 +71,7 @@ test('an in-flight reveal finishes across the resized plot instead of restoring 
       act(() => {
         const pending = [...frames.values()];
         frames.clear();
-        pending.forEach((callback) => callback(now));
+        pending.forEach((callback) => { callback(now); });
       });
     };
     tick(0);
