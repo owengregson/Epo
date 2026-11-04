@@ -8,6 +8,7 @@
  */
 
 import fc from 'fast-check';
+import { deriveQuietHours } from '@/kernel/derive-schedule';
 import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import { referenceTempoSource } from '@/kernel/tempo';
 import { MS_PER_SECOND } from '@/kernel/units';
@@ -189,8 +190,9 @@ describe('golden fixtures', () => {
 
   test('a refused migration still has an engine view: effectiveFromV1 is today\'s v1 resolution', () => {
     const e = effectiveFromV1(v1({ dryRun: true }));
-    expect(e).toMatchObject({ dryRun: true, dailyOperatingRate: 50, rotateMutuals: true, quietHours: null, daysOff: [] });
-    // Today's engine reads the scan band itself, so the v1 view carries no tempo override.
+    expect(e).toMatchObject({ dryRun: true, dailyOperatingRate: 50, rotateMutuals: true,
+      quietHours: deriveQuietHours(DEFAULT_SETTINGS.pattern.dayShape), daysOff: [] });
+    // The default scan band needs no override; custom slower bands still constrain the plan on refusal.
     expect(e.tempoOverrides).toEqual({});
     expect(e.boost).toEqual({ hours: SETTINGS_POLICY.BOOST.DEFAULT_HOURS, acceptRequests: true });
   });

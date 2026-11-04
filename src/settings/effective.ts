@@ -1,9 +1,11 @@
 /** The current engine settings, resolved from intent and Advanced overrides. Frozen v1 inputs are migration-only. */
 import { SCORER_DEFAULTS } from '@/engine/scorer';
 import { derivePattern } from '@/kernel/derive';
+import { ENVELOPE } from '@/kernel/derive-envelope';
 import { deriveQuietHours, type QuietWindow } from '@/kernel/derive-schedule';
-import { SETTINGS_POLICY } from '@/kernel/settings-policy';
+import { SETTINGS_GUARDS, SETTINGS_POLICY } from '@/kernel/settings-policy';
 import type { TempoKey } from '@/kernel/tempo';
+import { MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
 import type { DayOfWeek, DayShape, QuietHours } from '@/shared/settings-intent';
 import type { RatioCurve } from '@/shared/settings-model';
 import { type ParamKey, TEMPO_PARAM_KEYS } from '@/shared/settings-params';
@@ -11,6 +13,7 @@ import { patternOf } from './basis';
 import type { SettingsDocV2 } from './doc';
 import type { PatternSettings } from './pattern-map';
 import { numberOf, type ResolvedParams } from './resolve';
+import { DEFAULT_SETTINGS } from './v1/settings-v1';
 import type { Settings } from './v1/settings-v1-types';
 
 export interface EffectiveSettings {
@@ -52,6 +55,9 @@ export interface EffectiveSettings {
  * and what a refused migration serves from the readable v1 file.
  */
 export function effectiveFromV1(v1: Settings): EffectiveSettings {
+  const historical = SETTINGS_POLICY.V1_MIGRATION;
+  const scanFactor = (v1.pruneScanMinSeconds + v1.pruneScanMaxSeconds)
+    / (DEFAULT_SETTINGS.pruneScanMinSeconds + DEFAULT_SETTINGS.pruneScanMaxSeconds);
   return {
     seed: v1.seed,
     bandLow: v1.bandLow, bandHigh: v1.bandHigh, peakLow: v1.peakLow, peakHigh: v1.peakHigh,
@@ -68,10 +74,14 @@ export function effectiveFromV1(v1: Settings): EffectiveSettings {
     gapMedianSeconds: v1.gapMedianSeconds, gapFloorSeconds: v1.gapFloorSeconds,
     gapTargetOverrideSeconds: null, gapFloorOverrideSeconds: null,
     hourlyVelocityCap: v1.hourlyVelocityCap,
-    quietHours: null, daysOff: [],
-    checkSpacingHoursOverride: null, cleanupPerDayOverride: null, censusEveryDaysOverride: null,
-    // Refused migration runs under review; the v1 file has no plan tempo overrides.
-    tempoOverrides: {},
+    quietHours: quietWindowOf(quietHoursOfActive(v1.activeHoursStart, v1.activeHoursEnd), v1.pattern.dayShape), daysOff: [],
+    // Retired fields constrain the plan on refusal. Safe-side legacy waits must not shrink before recovery.
+    checkSpacingHoursOverride: v1.followbackSweepHours !== historical.followbackSweepHours
+      && v1.followbackSweepHours >= ENVELOPE.checksEveryHours.min ? v1.followbackSweepHours : null,
+    cleanupPerDayOverride: v1.pruneDailyLimit === historical.pruneDailyLimit ? null : Math.min(v1.pruneDailyLimit, v1.dailyHardCeiling),
+    censusEveryDaysOverride: v1.pruneScheduleDays > 0 && v1.pruneScheduleDays !== historical.pruneScheduleDays
+      ? Math.max(SETTINGS_GUARDS.censusEveryDays.min, v1.pruneScheduleDays) : null,
+    tempoOverrides: scanFactor > 1 ? { 'walk.page': Math.min(scanFactor, SETTINGS_POLICY.TEMPO_OVERRIDE_MAX_FACTOR) } : {},
     weaveEnabled: v1.weaveEnabled, maxUnfollowFractionPerSession: v1.maxUnfollowFractionPerSession,
     lowWaterCandidates: v1.lowWaterCandidates, minFollowBackRate: v1.minFollowBackRate, minPoolSize: v1.minPoolSize,
     dryRun: v1.dryRun,
@@ -80,10 +90,23 @@ export function effectiveFromV1(v1: Settings): EffectiveSettings {
   };
 }
 
+/** The shared migration/refusal mapping: default active hours derive; custom [start, end) becomes [end, start) quiet. */
+export function quietHoursOfActive(start: number, end: number): QuietHours {
+  if (start === DEFAULT_SETTINGS.activeHoursStart && end === DEFAULT_SETTINGS.activeHoursEnd) return { kind: 'derived' };
+  const minutesPerHour = MS_PER_HOUR / MS_PER_MINUTE;
+  return start === end ? { kind: 'none' } : { kind: 'custom', startMinute: end * minutesPerHour, endMinute: start * minutesPerHour };
+}
+
+// Finite ordinal inputs; copies keep callers from mutating a cached window.
+const quietByShape: Partial<Record<DayShape, QuietWindow>> = {};
+
 /** The window a quiet-hours choice resolves to (null: none). */
 export function quietWindowOf(q: QuietHours, dayShape: DayShape): QuietWindow | null {
   if (q.kind === 'none') return null;
-  return q.kind === 'derived' ? deriveQuietHours(dayShape) : { startMinute: q.startMinute, endMinute: q.endMinute };
+  if (q.kind === 'custom') return { startMinute: q.startMinute, endMinute: q.endMinute };
+  const window = quietByShape[dayShape] ?? deriveQuietHours(dayShape);
+  quietByShape[dayShape] = window;
+  return { ...window };
 }
 
 const TEMPO_PREFIX = 'tempo.';

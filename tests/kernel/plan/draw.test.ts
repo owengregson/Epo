@@ -3,10 +3,12 @@
  * the multi-day bound), and the probation rule.
  */
 import fc from 'fast-check';
+import { dayShapeBumps, overnightFloor } from '@/kernel/derive';
 import { applyBoost, boostSpan } from '@/kernel/plan/boost';
 import { drawBase, drawDayPlan, replanRemainder } from '@/kernel/plan/draw';
+import { SESSION_BOUNDARY_MS } from '@/kernel/plan/layout';
 import { probationOwed } from '@/kernel/plan/probation';
-import { keptRemainder, NO_USAGE } from '@/kernel/plan/status';
+import { closesAtOf, keptRemainder, NO_USAGE } from '@/kernel/plan/status';
 import type { BoostWindow, DayPlan, DrawInput, ReplanCause } from '@/kernel/plan/types';
 import { allocateKinds, automaticDayMax } from '@/kernel/plan/volume';
 import { MS_PER_DAY, MS_PER_HOUR } from '@/kernel/units';
@@ -159,5 +161,43 @@ describe('probation', () => {
     const first = plan.sessions.find((s) => s.budget > 0);
     expect(first?.tempo.probation).toBe(true);
     expect(plan.sessions.filter((s) => s.tempo.probation)).toHaveLength(1);
+  });
+
+  test('a slower final probation session fits before quiet hours with the existing boundary reserve', () => {
+    const base = testIntent();
+    const intent = testIntent({ quietHours: { startMinute: 270, endMinute: 480 }, restDayProbability: 0,
+      shape: { ...base.shape, bumps: dayShapeBumps('nightowl'), overnightFloor: overnightFloor('nightowl') } });
+    for (const installEntropy of [0x5eed, 0x6000, 1610612736]) {
+      const input = drawInput(new Date(2026, 10, 9, 12).getTime(), { intent, installEntropy });
+      const plain = drawBase(input);
+      const last = plain.sessions[plain.sessions.length - 1];
+      const plan = drawBase(input, { probationAt: (at) => at === last.startAt });
+      const i = plan.sessions.findIndex((s) => s.tempo.probation);
+      const s = plan.sessions[i];
+      expect(s.tempo.probation).toBe(true);
+      expect(s.expectedEndAt + SESSION_BOUNDARY_MS).toBeLessThanOrEqual(closesAtOf(plan, i, intent.quietHours));
+      expect(plan.volume.planned).toBeLessThanOrEqual(plain.volume.planned);
+      for (const session of plan.sessions) expect(session.mix.follow + session.mix.unfollow + session.mix.accept).toBeLessThanOrEqual(session.budget);
+      expect(plan.kinds.slack).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  test('a normal slot too short for probation contributes zero and leaves probation for the next viable session', () => {
+    const startsAt = new Date(2026, 10, 9).getTime();
+    const base = testIntent();
+    const intent = testIntent({ operatingRate: 5, hardCeiling: 10, volumeSigma: 0, restDayProbability: 0,
+      sessions: { min: 5, max: 5 }, quietHours: { startMinute: 35, endMinute: 480 },
+      shape: { ...base.shape, bumps: dayShapeBumps('nightowl'), overnightFloor: overnightFloor('nightowl') } });
+    const input = drawInput(startsAt, { intent, installEntropy: 12,
+      window: { key: '2026-11-09', startsAt, endsAt: startsAt + MS_PER_DAY, quietMinute: 0 }, firstOpenAt: startsAt });
+    expect(drawBase(input).sessions[0].budget).toBe(1);
+    const plan = drawBase(input, { upgradeProbation: true });
+    const first = plan.sessions[0];
+    expect(first).toMatchObject({ budget: 0, mix: { follow: 0, unfollow: 0, accept: 0 }, tempo: { probation: false } });
+    expect(first.expectedEndAt).toBe(first.startAt);
+    expect(plan.sessions[1]).toMatchObject({ budget: 1, tempo: { probation: true } });
+    expect(plan.sessions.filter((s) => s.tempo.probation)).toHaveLength(1);
+    expect(plan.volume.planned).toBe(4);
+    expect(plan.kinds.slack).toBeGreaterThanOrEqual(0);
   });
 });
