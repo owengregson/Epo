@@ -12,7 +12,7 @@ import { armDeadline, remainingFraction } from '@/renderer/lib/deadline-anim';
 import { Icon } from '@/renderer/ui/Icon';
 import type { Countdown } from '@/shared/posture';
 
-/** The ring is drawn on this box and scaled by CSS (88 px, 72 px in the compact column). */
+/** The ring's drawing coordinates; CSS scales it to the sidebar's 72 px status anchor. */
 const BOX = 88;
 const STROKE = 6;
 const R = (BOX - STROKE) / 2;

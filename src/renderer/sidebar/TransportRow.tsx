@@ -27,11 +27,12 @@ function pressPrimary(c: Controls, primary: NonNullable<PrimaryControl>): void {
   }
 }
 
-export function TransportRow({ posture }: { posture: Posture }): JSX.Element {
+export function TransportRow({ posture }: { posture: Posture }): JSX.Element | null {
   const controls = useShellControls();
   const pending = pendingControlSignal.value;
   const { primary, secondary } = posture;
   const face = primary === null ? null : PRIMARY_FACE[primary];
+  if (primary === null && secondary === null) return null;
   return (
     <div class="sb-now__buttons">
       {primary !== null && face !== null ? (

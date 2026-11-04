@@ -98,6 +98,13 @@ describe('every posture renders its headline and primary', () => {
 });
 
 describe('law L-ZERO and Get started', () => {
+  it('startup with no available command has no empty control row', async () => {
+    bridge.data.status = idleStatus({ boot: { ...BOOT, phase: 'starting' } });
+    await mount();
+    expect(word()).toBe('Starting up');
+    expect(q('.sb-now__buttons')).toBeNull();
+  });
+
   it('before the store is built Today and Results hold skeletons, never a digit', async () => {
     bridge.data.status = idleStatus({ basis: 'not-built', lastActionAt: T - 60_000 });
     await mount();
