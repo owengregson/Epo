@@ -137,6 +137,24 @@ export function createAppShell(opts: AppShellOptions): AppShell {
   // stage area (the stage bar and, in graph mode, the graph canvas).
   win.contentView.addChildView(dash);
   dash.setBackgroundColor(BACKGROUND);
+  let dashboardOwnsStage = false;
+  let handingOffFocus = false;
+  const focusDashboard = (): void => {
+    // WebContents.focus can activate its window: passive handoffs must never
+    // raise Epo over another app or focus its still-hidden boot window.
+    if (handingOffFocus || !revealed || !dashboardOwnsStage || win.isDestroyed()
+      || !win.isVisible() || !win.isFocused() || dash.webContents.isDestroyed()
+      || dash.webContents.isFocused()) return;
+    handingOffFocus = true;
+    try {
+      dash.webContents.focus();
+    } catch (error) {
+      logger.warn('shell: dashboard focus failed', { error: String(error) });
+    } finally {
+      handingOffFocus = false;
+    }
+  };
+  win.on('focus', focusDashboard);
   // CSS px always equal DIP: zoom would desync the native tab's bounds from the layout.
   void dash.webContents.setVisualZoomLevelLimits(1, 1).catch((error: unknown) =>
     logger.warn('shell: dashboard zoom limits failed', { error: String(error) }));
@@ -162,8 +180,14 @@ export function createAppShell(opts: AppShellOptions): AppShell {
   // --- Embedded Instagram tab (right) ---------------------------------------
   const tab = new InstagramTab();
   tab.attach(win);
-  const igFirstLoad = tab.goto(IG_HOME_URL).then(() => 'ready' as const, (error: unknown) => {
+  const igFirstLoad = tab.goto(IG_HOME_URL).then(() => {
+    focusDashboard();
+    return 'ready' as const;
+  }, (error: unknown) => {
     logger.warn('shell: initial tab load failed', { error: String(error) });
+    // The initial error document can finish after the tour took focus. Recheck
+    // current stage ownership once; later engine navigation owns its own input.
+    focusDashboard();
     return 'failed' as const;
   });
 
@@ -197,6 +221,7 @@ export function createAppShell(opts: AppShellOptions): AppShell {
     tab,
     veil,
     setStage: (mode, covered) => {
+      dashboardOwnsStage = mode !== 'tab' || covered;
       if (mode === 'tab' && !covered) {
         tab.show();
         veil.setObscured(false);
@@ -204,6 +229,7 @@ export function createAppShell(opts: AppShellOptions): AppShell {
         tab.hide();
         veil.setObscured(true);
       }
+      focusDashboard();
     },
     send: (channel, payload) => {
       if (!dash.webContents.isDestroyed()) dash.webContents.send(channel, payload);
@@ -219,6 +245,7 @@ export function createAppShell(opts: AppShellOptions): AppShell {
       if (state.maximized) win.maximize();
       else win.show();
       win.focus();
+      focusDashboard();
     },
   };
 }
