@@ -42,10 +42,11 @@ const HOUR = 3_600_000;
  *
  * Three families:
  *   1. UNIFORM PACING BANDS — the band SHAPE derives (`base × (1 ± 0.286)`), but
- *      the seven bands pinned here were hand-widened. 14 of the 20 entries.
- *   2. NUMBERS THE DERIVATION GENUINELY DISAGREES WITH — the two outer gap
- *      floors, ladder rung 3, the identity retry spacing, and a cleanup run's
- *      failure halt (read by `derive.ts` `pruneFailingThreshold`).
+ *      the seven bands pinned here were hand-widened. 14 of the 19 entries.
+ *   2. NUMBERS THE DERIVATION GENUINELY DISAGREES WITH — the bold gap floor,
+ *      ladder rung 3, the identity retry spacing, and a cleanup run's failure
+ *      halt (read by `derive.ts` `pruneFailingThreshold`). The Cautious floor
+ *      takes its derived 70 s (owner Q11; `registry-changes.ts` CHANGED).
  *   3. ONE DELIBERATE CHANGE — the prune cool-down, raised to the derived value.
  */
 export const OVERRIDES: Readonly<Record<string, Override>> = {
@@ -134,12 +135,6 @@ export const OVERRIDES: Readonly<Record<string, Override>> = {
     derived: 1_500,
     reason:
       'Retry spacing inside a 4-attempt identity ladder. The attempts × wait PRODUCT (4.8 s) is the real budget; the split between them is a startup-latency choice, not a measured quantile.',
-  },
-  'CAUTION.cautious.floorSeconds': {
-    value: 60,
-    derived: 70,
-    reason:
-      "Today's cautious floor does not scale with the cap it protects: at cap 14 the burst tolerance sanctions 70 s, so 60 s permits a 4.3× burst rather than the policy's 3.7×. Pinned for wave A (behaviour freeze); raising it to 70 s is a wave-B safety improvement.",
   },
   'CAUTION.bold.floorSeconds': {
     value: 35,

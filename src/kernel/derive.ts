@@ -213,7 +213,7 @@ export function gapMedianSeconds(rhythm: Rhythm): number {
  * Within-session gap FLOOR in seconds: the fastest instantaneous pace the burst
  * tolerance sanctions at this caution's hourly cap.
  * `3600 s / (cap × 3.7)`, rounded UP — rounding a floor down would permit a
- * faster burst than the policy allows. → 70 / 45 / 33 s (cautious/bold pinned).
+ * faster burst than the policy allows. → 70 / 45 / 33 s (bold pinned at 35 s).
  */
 export function gapFloorSeconds(caution: Caution): number {
   const derived = rateEnvelope(defaultRateInputs(), caution, 'moderate', 'sessions').gapFloorSeconds;
