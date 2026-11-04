@@ -5,6 +5,7 @@
  * reaching the other. The projections that extend a store row or an engine
  * status (`ChainTargetView`, `EpoStatus`, …) live in `src/ipc/types.ts`.
  */
+import { LIVE } from '../kernel/live-policy';
 
 /** Per-target yield, computed on demand from follow_records + edges (§3.5). */
 export interface TargetYield {
@@ -22,13 +23,13 @@ export interface TargetYield {
  * or ran out the follow-back wait). Below it the UI shows the raw n-of-m tally
  * and says the verdict is still forming.
  */
-export const CONVERSION_VERDICT_MIN = 20;
+export const CONVERSION_VERDICT_MIN = LIVE.CONVERSION_VERDICT_MIN;
 
 /**
  * Runway display clamp: past this many days the projection is noise, so the UI
  * reports "> N days" instead of false precision.
  */
-export const RUNWAY_CAP_DAYS = 90;
+export const RUNWAY_CAP_DAYS = LIVE.RUNWAY_CAP_DAYS;
 
 /** One follow_record row joined to its account, for a queue lifecycle tab. */
 export interface QueueRow {

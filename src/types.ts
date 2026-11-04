@@ -113,13 +113,11 @@ export interface ChainTargetView extends Target {
  * or ran out the follow-back wait). Below it the UI shows the raw n-of-m tally
  * and says the verdict is still forming.
  */
-export const CONVERSION_VERDICT_MIN = 20;
-
 /**
  * Runway display clamp: past this many days the projection is noise, so the UI
  * reports "> N days" instead of false precision.
  */
-export const RUNWAY_CAP_DAYS = 90;
+export { CONVERSION_VERDICT_MIN, RUNWAY_CAP_DAYS } from './shared/projections';
 
 /** Per-lifecycle-state follow_record counts for one chain target (the funnel). */
 export type TargetFunnelCounts = Record<FollowState, number>;
