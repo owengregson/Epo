@@ -131,7 +131,7 @@ test('bio words protect at the click whether or not they follow back; without th
   reciprocal = false;
   await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toMatchObject(kept);
   protection = UNCONFIGURED_PROTECTION;
-  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).resolves.toBeUndefined();
+  await expect(policy().prepareProfile('alice', 'a', 'unfollow')).resolves.toEqual(expect.any(Function));
 });
 
 test('growth, prune and accepted requests share the plan ceiling; a refused write spends no read', async () => {
@@ -159,7 +159,7 @@ test('the deadline armed at dispatch refuses the next write before its visit, th
   await expect(p.prepareProfile('alice', 'a', 'follow')).rejects.toMatchObject({ reason: 'deadline', until: owed });
   expect(visit).toHaveBeenCalledTimes(visits);
   clock.t = owed;
-  await expect(p.prepareProfile('alice', 'a', 'follow')).resolves.toBeUndefined();
+  await expect(p.prepareProfile('alice', 'a', 'follow')).resolves.toEqual(expect.any(Function));
 });
 
 test('the hourly cap governs request acceptance with the other writes (the trailing hour stays under H − 1)', async () => {
@@ -219,6 +219,52 @@ test('a replaced profile-read generation cannot alter mutation policy evidence',
   visit.mockImplementation(async (name) => { const result = await original(name); controller = new AbortController(); return result; });
   await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toBeInstanceOf(ActionAbortedError);
   expect(store.getEdge('a', 'me', 'follows')).toBeNull();
+});
+
+test.each(['word', 'verified-rule', 'paused'] as const)('a %s protection change after the visit prevents dispatch', async (change) => {
+  queued();
+  const p = policy();
+  await p.prepareProfile('alice', 'a', 'unfollow');
+  protection = compileProtection({ accounts: [], words: change === 'word' ? [{ text: 'ceramic', addedAt: clock.now() }] : [],
+    wordMatch: 'anywhere', keepVerified: change === 'verified-rule' }, change === 'paused' ? 'needs-review' : 'ready', 2);
+  const verdict = change === 'word' ? { kind: 'protected', by: 'bio-word', match: 'ceramic' }
+    : change === 'verified-rule' ? { kind: 'protection-unknown', missing: 'verified' }
+      : { kind: 'protection-paused', state: 'needs-review' };
+  await expect(p.beforeMutation()).rejects.toMatchObject({ verdict });
+  expect(store.getActionDelayDeadline()).toBeNull();
+  expect(visit).toHaveBeenCalledTimes(1);
+});
+
+test('unchanged clear protection dispatches after exactly one profile visit', async () => {
+  queued();
+  const p = policy();
+  await p.prepareProfile('alice', 'a', 'unfollow');
+  await expect(p.beforeMutation()).resolves.toBeUndefined();
+  expect(store.getActionDelayDeadline()).toBeGreaterThan(clock.now());
+  expect(visit).toHaveBeenCalledTimes(1);
+});
+
+test('the returned guard blocks a later confirm after Practice is switched on', async () => {
+  queued();
+  const p = policy();
+  const guard = await p.prepareProfile('alice', 'a', 'unfollow');
+  await p.beforeMutation();
+  const deadline = store.getActionDelayDeadline();
+  settings = { ...settings, dryRun: true };
+  expect(guard).toThrow(ActionAbortedError);
+  expect(store.getActionDelayDeadline()).toBe(deadline);
+  expect(visit).toHaveBeenCalledTimes(1);
+});
+
+test('the returned guard keeps enforcing protection after the initial dispatch', async () => {
+  queued();
+  const p = policy();
+  const guard = await p.prepareProfile('alice', 'a', 'unfollow');
+  await p.beforeMutation();
+  protection = compileProtection({ accounts: [], words: [{ text: 'ceramic', addedAt: clock.now() }],
+    wordMatch: 'anywhere', keepVerified: false }, 'ready', 2);
+  expect(guard).toThrow(expect.objectContaining({ verdict: { kind: 'protected', by: 'bio-word', match: 'ceramic' } }));
+  expect(visit).toHaveBeenCalledTimes(1);
 });
 
 
