@@ -62,6 +62,12 @@
 .graph-empty button {
   pointer-events: auto;
 }
+.graph-empty > div {
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-4);
+  max-width: 42ch;
+}
 @keyframes gsFade {
   from {
     opacity: 0;
@@ -137,6 +143,11 @@
 }
 .graph-legend__head:hover {
   color: var(--text);
+}
+.graph-legend__head:focus-visible,
+.gleg-row:focus-visible {
+  outline: 2px solid var(--silver);
+  outline-offset: -2px;
 }
 .graph-legend__total {
   margin-left: auto;

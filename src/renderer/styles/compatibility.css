@@ -80,6 +80,7 @@
 
 .compat-panel__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--sp-3);
   align-items: center;
   justify-content: space-between;
