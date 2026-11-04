@@ -1,3 +1,4 @@
+import * as logger from '@/utils/logger';
 import type { ActorOptions, AdapterTab } from './actor-types';
 import { ActionAbortedError, ActionBlockedError } from './errors';
 import { SURFACE } from './ig-surface';
@@ -36,6 +37,7 @@ export async function prepareAction(d: Pick<ActorOptions, 'prepareProfile' | 'be
       await d.beforeMutation?.();
       check();
       onDispatch?.();
+      logger.info('action: admitted', { action, username, at: Date.now(), dispatchNotified: onDispatch !== undefined });
     })();
     return admission;
   };

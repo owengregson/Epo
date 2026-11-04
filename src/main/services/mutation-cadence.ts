@@ -77,7 +77,7 @@ export function createMutationCadence(d: MutationCadenceDeps): MutationCadence {
   const persist = (at: number): number => {
     const next = Math.max(d.store.getActionDelayDeadline() ?? 0, at);
     d.store.setActionDelayDeadline(next);
-    logger.debug('cadence: deadline armed', { key: GAP_KEY, at: next });
+    logger.info('cadence: deadline armed', { key: GAP_KEY, at: next });
     return next;
   };
 

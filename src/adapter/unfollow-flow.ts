@@ -3,6 +3,7 @@
  * layer is located, paused on and pressed until Instagram answers; an exit that did not land is closed.
  */
 
+import { actionPause } from '@/adapter/action-pause';
 import { verdictToResult } from '@/adapter/action-result';
 import type { LocatedRect, LocateRectResult } from '@/adapter/ig-surface';
 import { SURFACE } from '@/adapter/ig-surface';
@@ -148,7 +149,8 @@ async function probe(f: LayerFlow, lastSig: string | null, later: boolean): Prom
 async function pressLayer(f: LayerFlow, located: ConfirmLocate, later: boolean): Promise<ConfirmLocate | null> {
   // A persistent self-recovery hit is early drift in the primary anchors, caught while the press still works.
   if (located.fallback) logger.warn(`${f.op}: the confirm's role-marked search missed; found by its text instead`);
-  if (f.tempo.enabled('ui.step-pause')) await f.sleep(f.tempo.draw('ui.step-pause'), f.signal());
+  if (f.tempo.enabled('ui.step-pause')) await actionPause('ui.step-pause', f.tempo.draw('ui.step-pause'),
+    f.sleep, f.signal(), { op: f.op, username: f.username, layer: located.layer, later });
   if (f.signal()?.aborted) throw new ActionAbortedError(f.op);
   await f.dispatch(); // the check (stop, same profile) before the cursor travels, again before the press
   const relocate = async (): Promise<ConfirmLocate> => {

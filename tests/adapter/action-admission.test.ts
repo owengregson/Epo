@@ -1,5 +1,6 @@
 import { prepareAction } from '@/adapter/action-admission';
 import { ActionAbortedError, ActionBlockedError, ActionDeferredError, ActionReviewedError } from '@/adapter/errors';
+import { setLevel, setSink } from '@/utils/logger';
 import { ScriptedTab } from '../kit/tabs';
 
 test('an expected PK requires a verifier, and dispatch is journaled only after admission', async () => {
@@ -69,11 +70,17 @@ describe('one admission per action (spec §11.1 F1)', () => {
 
   test('later calls — the later layers of the same action — admit and journal nothing again', async () => {
     const { admit, journal, dispatch } = await prepared();
-    await dispatch();
-    await dispatch();
-    await dispatch();
+    const events: unknown[] = [];
+    setLevel('info');
+    setSink((_level, message, meta) => { if (message === 'action: admitted') events.push(meta); });
+    try {
+      await dispatch();
+      await dispatch();
+      await dispatch();
+    } finally { setSink(null); setLevel('error'); }
     expect(admit).toHaveBeenCalledTimes(1);
     expect(journal).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([expect.objectContaining({ action: 'unfollow', username: 'alice', dispatchNotified: true })]);
   });
 
   test('a later call still checks the profile and the stop', async () => {

@@ -11,6 +11,7 @@
  * can log which Instagram surface these selectors were verified against.
  */
 
+import { actionPause } from '@/adapter/action-pause';
 import type { ActivityReporter } from '@/adapter/activity-reporter';
 import { Actor, type ActorInteractor, type ActorOptions, type AdapterTab } from '@/adapter/actor';
 import { SURFACE } from '@/adapter/ig-surface';
@@ -68,7 +69,8 @@ export function lookBeforeActing(review: ActorOptions['prepareProfile'], tempo: 
   if (review === undefined) return undefined;
   return async (username, expectedPk, action) => {
     const guard = await review(username, expectedPk, action);
-    if (tempo.enabled('dwell.before-press')) await pause(sample(tempo.policy('dwell.before-press')), abortSignal?.());
+    if (tempo.enabled('dwell.before-press')) await actionPause('dwell.before-press',
+      sample(tempo.policy('dwell.before-press')), pause, abortSignal?.(), { op: `actor.${action}`, username });
     return guard;
   };
 }
