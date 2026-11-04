@@ -1,18 +1,10 @@
 /**
- * README live panels — the two nightly charts committed to the `readme-live`
- * branch (README guide §5). The honesty of these panels is the point: the
- * growth chart runs the SAME `computeProjection` that ships in the app on the
- * default settings, and the pace chart draws one real plan-day with the SAME
- * day plan and gap the engine runs — no invented data. Only presentation lives here.
- *
- * Both themes render from one drawing function and the §3.4 palette table;
- * the drawing code is never forked per theme.
-  *
- * CI-ONLY: bundled by .github/workflows/readme-live.yml, never by the app.
+ * The README's live panel, committed nightly to the `readme-live` branch: one real plan-day drawn by the SAME
+ * day plan and gap the engine runs, in both themes from one drawing function. Growth is measured only (the
+ * simulated projection retired, owner Q30). CI-ONLY: bundled by .github/workflows/readme-live.yml.
  */
 
 import { drawDayPlan, drawGapMs, type PlanDemand, phaseOffsetHours, planDayWindow, quietMinute, u } from '@/kernel/plan';
-import { computeProjection } from '@/renderer/charts/growth-model';
 import { effectiveFromV1 } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
@@ -30,7 +22,6 @@ interface Palette {
   faint: string;
   grid: string;
   amber: string;
-  band: string;
   activeBand: string;
 }
 
@@ -42,7 +33,6 @@ const DARK: Palette = {
   faint: '#66666e',
   grid: 'rgba(255,255,255,0.05)',
   amber: '#d8b768',
-  band: 'rgba(216,221,227,0.07)',
   activeBand: 'rgba(255,255,255,0.035)',
 };
 
@@ -54,11 +44,10 @@ const LIGHT: Palette = {
   faint: '#8c959f',
   grid: 'rgba(9,10,12,0.07)',
   amber: '#9a6700',
-  band: 'rgba(9,10,12,0.06)',
   activeBand: 'rgba(9,10,12,0.04)',
 };
 
-// Both panels are 820×300 (§5).
+// The panel is 820×300 (§5).
 const W = 820;
 const H = 300;
 
@@ -71,80 +60,6 @@ function panelShell(c: Palette, kicker: string, stamp: string, body: string, lab
     body +
     `</svg>\n`
   );
-}
-
-// --- Growth chart (§5a: followers gained over 30 days on the default settings) ---
-
-/** Both themes of the growth chart, keyed by the run date. */
-export function growthCharts(dayOfYear: number, dateStamp: string): { light: string; dark: string } {
-  const s = DEFAULT_SETTINGS;
-  // The exact derivation ProjectionCard uses, on the shipped defaults.
-  const result = computeProjection({
-    rate: s.dailyOperatingRate,
-    yieldMult: 1,
-    privateBoost: s.privateBoost,
-    bandWidth: s.bandHigh - s.bandLow,
-    waitDays: s.maxWaitForFollowbackDays,
-    holdDays: s.holdAfterFollowbackDays,
-    days: 30,
-    noisePhase: dayOfYear * 13,
-  });
-
-  const L = 52;
-  const R = 756;
-  const T = 52;
-  const B = 262;
-  const days = result.days;
-  const ymax = Math.max(50, Math.ceil(result.vmax / 50) * 50);
-  const x = (t: number): number => L + ((R - L) * t) / days;
-  const y = (v: number): number => B - ((B - T) * v) / ymax;
-  const line = (pts: number[]): string => pts.map((v, t) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-
-  const [cautious, expected, optimistic] = result.scenarios;
-
-  const draw = (c: Palette): string => {
-    let g = '';
-    for (let v = 0; v <= ymax; v += 50) {
-      g += `<line x1="${L}" y1="${y(v)}" x2="${R}" y2="${y(v)}" stroke="${c.grid}"/>`;
-      g += `<text x="${L - 8}" y="${y(v) + 3.5}" text-anchor="end" font-family="${MONO_FONT}" font-size="10" fill="${c.faint}">${v}</text>`;
-    }
-    for (let t = 0; t <= days; t += 5) {
-      g += `<line x1="${x(t)}" y1="${T}" x2="${x(t)}" y2="${B}" stroke="${c.grid}"/>`;
-      g +=
-        t === 0
-          ? `<text x="${L}" y="${B + 17}" font-family="${MONO_FONT}" font-size="10" fill="${c.faint}">DAY 0</text>`
-          : `<text x="${x(t)}" y="${B + 17}" text-anchor="middle" font-family="${MONO_FONT}" font-size="10" fill="${c.faint}">${t}</text>`;
-    }
-    const optimisticReversed = optimistic.pts
-      .map((v, t) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`)
-      .reverse()
-      .join(' ');
-    const bandPts = `${line(cautious.pts)} ${optimisticReversed}`;
-    g += `<polygon points="${bandPts}" fill="${c.band}"/>`;
-    g += `<polyline points="${line(cautious.pts)}" fill="none" stroke="${c.muted}" stroke-width="1" stroke-dasharray="3 4"/>`;
-    g += `<polyline points="${line(optimistic.pts)}" fill="none" stroke="${c.muted}" stroke-width="1" stroke-dasharray="3 4"/>`;
-    g += `<polyline points="${line(expected.pts)}" fill="none" stroke="${c.text}" stroke-width="2"/>`;
-
-    // Endpoint labels; nudge apart by 6px when they would collide (§5a).
-    const yExp = y(expected.end);
-    let yBest = y(optimistic.end);
-    let yWorst = y(cautious.end);
-    if (yExp - yBest < 14) yBest = yExp - 14;
-    if (yWorst - yExp < 14) yWorst = yExp + 14;
-    g += `<circle cx="${x(days)}" cy="${y(expected.end)}" r="3.5" fill="${c.text}"/>`;
-    g += `<text x="${R + 10}" y="${yExp + 4.5}" font-family="${UI_FONT}" font-size="13" font-weight="700" fill="${c.text}">+${Math.round(expected.end)}</text>`;
-    g += `<text x="${R + 8}" y="${yBest + 3.5}" font-family="${MONO_FONT}" font-size="10" fill="${c.muted}">+${Math.round(optimistic.end)} best</text>`;
-    g += `<text x="${R + 8}" y="${yWorst + 3.5}" font-family="${MONO_FONT}" font-size="10" fill="${c.muted}">+${Math.round(cautious.end)} worst</text>`;
-    return panelShell(
-      c,
-      'FOLLOWERS GAINED — 30 DAYS ON DEFAULT SETTINGS',
-      `RE-SIMULATED NIGHTLY · ${dateStamp}`,
-      g,
-      'Followers gained over 30 days, simulated on the default settings',
-    );
-  };
-
-  return { light: draw(LIGHT), dark: draw(DARK) };
 }
 
 // --- Pace chart (§5b: one real plan-day drawn by the shipping day plan) ---

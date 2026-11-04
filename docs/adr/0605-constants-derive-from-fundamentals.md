@@ -136,3 +136,12 @@ test that shape.
 - **Derive the `HARNESS` group too.** Those are the timings of a human watching a
   debug run. Fabricating a fundamental to explain a 4-second capture settle would
   be the failure this ADR exists to prevent.
+
+## Amendment — 2026-11-02: the golden's invariant is ADR 0607's
+
+The snapshot stays frozen, but "exactly one key moved" no longer describes the gate. The registry,
+the grid, the personas and the profiles all expect `snapshot − RETIRED ⊕ CHANGED`
+(`src/kernel/registry-changes.ts`), and the moved leaves must equal the `CHANGED` ledger. Eighteen keys
+retired with the legacy pacer and the scheduled prune; the tally is derived 40 / policy 34 /
+override 16 / harness 11 (101 keys). The advisory override mechanism is gone: every `OVERRIDES` entry
+applies to the value it names. See ADR 0607, "The ledgers".

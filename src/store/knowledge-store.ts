@@ -343,12 +343,12 @@ export class KnowledgeStore extends KnowledgeStoreBase {
     return this.meta.number('actionDelayDeadlineAt');
   }
 
-  /** The SessionPlanner's durable snapshot (raw JSON, PRINCIPLES §3); `null` clears it; the planner owns the shape. */
+  /** The retired planner's snapshot (raw JSON): the plan wiring clears it once the day plan migrated its phase. */
   setPacingState(raw: string | null): void {
     this.meta.set('pacingState', raw);
   }
 
-  /** The persisted SessionPlanner snapshot JSON, or `null` when none exists. */
+  /** The retired planner's snapshot JSON, read once to migrate the plan's phase; `null` when none exists. */
   getPacingState(): string | null {
     return this.meta.get('pacingState');
   }

@@ -2,7 +2,7 @@
  * Qualitative pattern model (§5.6). Users tune *behavior* — eight ordinal knobs and a
  * handful of named personas — instead of raw distribution numbers. This pure,
  * renderer-safe module maps those qualitative choices to the numeric pacing config the
- * SessionPlanner / governors consume AND to the circadian λ(t) profile. The settings
+ * day plan and the governors consume AND to the circadian λ(t) profile. The settings
  * layer materializes the numbers from here; the settings-page live preview drives the
  * same functions, so what the user sees is exactly what the engine will do.
  *

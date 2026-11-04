@@ -18,7 +18,7 @@
  */
 
 import type { SentinelStatus } from '../adapter/sentinel';
-import { blockedStreakThreshold, driftConfirmThreshold } from '../kernel/derive';
+import { blockedStreakThreshold, driftConfirmThreshold, pruneFailingThreshold } from '../kernel/derive';
 import { tempoOrReference } from '../kernel/tempo';
 import type { PruneCensusRecord } from '../store/knowledge-store';
 import { POLL } from '../timing/config';
@@ -58,8 +58,8 @@ export const PRUNE_WAIT_CLASS = {
   'prune:action-delay': 'exact',
 } as const satisfies Record<PruneWaitKey, WaitClass>;
 
-/** Consecutive FAILED unfollows that halt a run (`actions-failing`): one can fail alone, several in a row is the machinery. */
-export const PRUNE_CONSECUTIVE_FAIL_HALT = 4;
+/** Consecutive FAILED unfollows that halt a run (`actions-failing`): the cold threshold, pinned lower (OVERRIDES). */
+export const PRUNE_CONSECUTIVE_FAIL_HALT = pruneFailingThreshold();
 
 /** Consecutive BLOCKED unfollows before the run halts and the woven feed suspends (one home, one count; D5). */
 export const PRUNE_CONSECUTIVE_BLOCK_HALT = blockedStreakThreshold();
@@ -159,7 +159,6 @@ export class PruneEngine {
       clock: deps.clock,
       classes: PRUNE_WAIT_CLASS,
       noiseRng: this.noiseRng,
-      installEntropy: deps.installEntropy,
       signal: () => this.runAbort.signal,
       hooks: {
         // The paced inter-unfollow delay publishes at REGISTRATION so the

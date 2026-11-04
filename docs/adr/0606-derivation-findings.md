@@ -159,3 +159,14 @@ requirement.
 | 6 | `ACTIONS_FAILING_HALT` 8 vs derived 7 | Advisory override |
 | 7 | Ladder rung 3 flattened (120 vs 135 min) | Pinned |
 | 8 | Sixteen hand-set pacing-band edges | Pinned |
+
+## Amendment — 2026-11-02: §6 applied; §4 decided (ADR 0607)
+
+**§6 is applied.** `ACTIONS_FAILING_HALT` reads `coldFailingThreshold()` = 7 and the advisory entry is
+removed (owner Q11). A cleanup run's failed-unfollow halt is now the applied override
+`PRUNE.CONSECUTIVE_FAIL_HALT` = 4 (derived 7): a bulk run halts sooner than the loop.
+
+**§4 is decided.** The Cautious floor takes its derived 70 s (owner Q11) in its own commit, recorded in
+ADR 0607's `CHANGED` ledger (the `caution=cautious` grid point and the `casual` persona, 60 → 70). It
+lands once the frozen v1 pipeline resolves a named persona through `V1_DERIVED`, so the migration reads
+what a v1 file holds and no install gets a spurious gap override. `CAUTION.bold` stays pinned at 35 s.

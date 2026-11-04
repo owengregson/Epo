@@ -1,12 +1,10 @@
 import { MS_PER_DAY, MS_PER_HOUR } from '@/timing/units';
-import { growthCharts, paceCharts, planOneDay } from '@/tools/readme/live-charts';
+import * as liveCharts from '@/tools/readme/live-charts';
+import { paceCharts, planOneDay } from '@/tools/readme/live-charts';
 
 /**
- * The README's nightly panels draw REAL data — the growth model and the
- * shipping day plan on the default settings. These pin the contract the
- * charts advertise: the plan keeps its actions inside its sessions and under
- * the daily cap, a given date always renders the same bytes, and different
- * dates visibly differ (the turbulence phase and the plan are keyed by the run date).
+ * The README's nightly panel draws REAL data — the shipping day plan on the default settings: the plan
+ * keeps its actions inside its sessions and under the daily cap, and a given date renders the same bytes.
  */
 describe('README live charts', () => {
   const dayStart = new Date(2026, 7, 24).getTime(); // a fixed local midnight
@@ -39,16 +37,7 @@ describe('README live charts', () => {
     }
   });
 
-  test('growth chart is deterministic per date and varies across dates', () => {
-    const a = growthCharts(236, '2026-08-24');
-    const b = growthCharts(236, '2026-08-24');
-    const c = growthCharts(237, '2026-08-25');
-    expect(a.dark).toBe(b.dark);
-    expect(a.dark).not.toBe(c.dark);
-    expect(a.dark).toContain('RE-SIMULATED NIGHTLY · 2026-08-24');
-    // The smooth endpoints come from the model alone — the date only moves the wiggle.
-    const end = /\+\d+ best/.exec(a.dark)?.[0];
-    expect(end).toBeDefined();
-    expect(c.dark).toContain(end as string);
+  test('no simulated growth panel: growth is measured only (owner Q30), so the projection left the charts', () => {
+    expect('growthCharts' in liveCharts).toBe(false);
   });
 });

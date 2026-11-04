@@ -50,3 +50,15 @@ Three guarantees make this safe, and each is pinned by a test:
   a real deadline the UI can count down to.
 - `exact` is a deliberate opt-out, not an oversight; its keys are listed in the
   table and asserted by name.
+
+## Amendment — 2026-11-02: the plan's parks are exact; two classes retire (ADR 0607)
+
+The plan names the instant every long park ends (the next session, the next plan-day's first session,
+the read allowance's reopening, the trailing-hour window), so those keys are `exact`. With them the
+`daily-boundary` class, its resume-day seeding (`jitterBoundary`, `boundarySeedKey`) and
+`NOISE.DAILY_BOUNDARY_JITTER_MAX_MS` are deleted, and the wait gate no longer takes an install entropy.
+The follow-back sweep's persisted cadence factor retired with the watcher (the plan's check spacing
+replaces it), and with it the `watcher-cadence` class and `NOISE.CADENCE_*`. The taxonomy is now
+`retry-backoff`, `local-beat`, `sub-cadence` and `exact`; a local beat is one draw of the reference
+`pause.retry` band around a base the plan already sets. Guarantees 1 and 3 stand; guarantee 2 is
+superseded: an exact plan park is restart-stable because the plan itself is.

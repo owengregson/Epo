@@ -3,7 +3,10 @@
  * between reads, never longer, so at most one visit per record per window. And the park schedule
  * of an unavailable record or intent (spec §9.9), with law L13.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import fc from 'fast-check';
+import { retryLimit } from '@/kernel/derive-lifecycle';
 import {
   goneConfirmations, keptRecheckPlanDays, type ParkKind, type ParkSlots, parkTerminal, parkUntil,
 } from '@/kernel/derive-parks';
@@ -43,6 +46,11 @@ describe('the park schedule of an unavailable record or intent (spec §9.9)', ()
     expect(goneConfirmations()).toBe(2);
     expect([1, 2, 3].map((k) => parkTerminal('unreachable', k))).toEqual([false, true, true]);
     expect([1, 2, 3, 4, 5].map((k) => parkTerminal('unreadable', k))).toEqual([false, false, false, true, true]);
+  });
+
+  test("the unreadable re-reads are the plan core's retryLimit(): one derivation (spec C18)", () => {
+    expect([parkTerminal('unreadable', retryLimit()), parkTerminal('unreadable', retryLimit() + 1)]).toEqual([false, true]);
+    expect(readFileSync(join(__dirname, '..', '..', 'src', 'kernel', 'derive-parks.ts'), 'utf8')).not.toMatch(/RETRY_CONFIDENCE/);
   });
 
   test('unreachable waits for a new plan-day each time; unreadable first for the next session', () => {

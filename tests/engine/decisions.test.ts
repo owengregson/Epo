@@ -10,6 +10,7 @@ import {
   queuedCountFor,
   unenrichedUsernames,
 } from '@/engine/decisions';
+import { planDayStartBefore, weeklyCycleSince } from '@/engine/exploration-policy';
 import type { AccountState, FollowRecord, FollowState } from '@/store/types';
 
 const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({
@@ -79,6 +80,42 @@ describe('unenrichedUsernames', () => {
 
   test('an unknown target yields nothing', () => {
     expect(unenrichedUsernames(s, 'nope', 10)).toEqual([]);
+  });
+
+  test('a profile or a failure observed before the freshness window opens is worth one more fetch', () => {
+    const since = 5_000;
+    const w = store({
+      pool: { t1: ['old', 'new', 'failedOld', 'failedNew'] },
+      accounts: [
+        acc({ pk: 'old', username: 'old', enrichment: 'profiled', statsObservedAt: since - 1 }),
+        acc({ pk: 'new', username: 'new', enrichment: 'profiled', statsObservedAt: since }),
+        acc({ pk: 'failedOld', username: 'failedold', enrichFailedAt: since - 1 }),
+        acc({ pk: 'failedNew', username: 'failednew', enrichFailedAt: since }),
+      ],
+    });
+    expect(unenrichedUsernames(w, 't1', 10, since)).toEqual(['old', 'failedold']);
+    expect(unenrichedUsernames(w, 't1', 10)).toEqual([]);
+  });
+});
+
+describe('the weekly cycle of plan-days (spec §5.16)', () => {
+  /** Plan-days of 24 h starting at 03:00 UTC, the shape a quiet-minute boundary has. */
+  const windowOf = (t: number) => {
+    const startsAt = Math.floor((t - 3 * 3_600_000) / 86_400_000) * 86_400_000 + 3 * 3_600_000;
+    return { key: String(startsAt), startsAt, endsAt: startsAt + 86_400_000, quietMinute: 180 };
+  };
+  const now = Date.parse('2026-11-12T15:00:00Z');
+
+  test('steps back through the plan-day boundary, never a calendar day of its own', () => {
+    expect(planDayStartBefore(windowOf, now, 0)).toBe(Date.parse('2026-11-12T03:00:00Z'));
+    expect(planDayStartBefore(windowOf, now, 2)).toBe(Date.parse('2026-11-10T03:00:00Z'));
+  });
+
+  test('a fact stays fresh through today and the six plan-days before it', () => {
+    expect(weeklyCycleSince(windowOf, now)).toBe(Date.parse('2026-11-06T03:00:00Z'));
+    // Observed on the 6th, so it lapses when the 7th plan-day after that day begins (the 13th, 03:00).
+    expect(weeklyCycleSince(windowOf, Date.parse('2026-11-13T02:59:00Z'))).toBe(Date.parse('2026-11-06T03:00:00Z'));
+    expect(weeklyCycleSince(windowOf, Date.parse('2026-11-13T03:00:00Z'))).toBe(Date.parse('2026-11-07T03:00:00Z'));
   });
 });
 

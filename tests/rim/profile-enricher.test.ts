@@ -148,6 +148,15 @@ test('a tab that cannot navigate ends the pass at once (retrying cannot revive i
   expect(visitor.visited).toEqual(['a']);
 });
 
+test('with no batchCap the caller bounds the slice: every username handed is visited', async () => {
+  const { enricher, visitor } = build();
+  const usernames = Array.from({ length: 30 }, (_, i) => `u${i}`);
+  visitor.outcomes = Object.fromEntries(usernames.map((u, i) => [u, ok(String(1_000 + i), u)]));
+
+  expect(await enricher.enrich(usernames)).toBe(30);
+  expect(visitor.visited).toEqual(usernames);
+});
+
 test('respects batchCap: only the first N usernames are visited', async () => {
   const { enricher, visitor } = build({ batchCap: 1 });
   visitor.outcomes = { alice: ok('101', 'alice'), bob: ok('102', 'bob') };

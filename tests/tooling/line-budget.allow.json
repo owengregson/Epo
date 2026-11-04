@@ -7,15 +7,15 @@
     },
     {
       "file": "src/engine/prune-engine.ts",
-      "lines": 1108
-    },
-    {
-      "file": "src/kernel/derive.ts",
-      "lines": 990
+      "lines": 1107
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 919
+      "lines": 918
+    },
+    {
+      "file": "src/kernel/derive.ts",
+      "lines": 910
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -46,12 +46,12 @@
       "lines": 452
     },
     {
-      "file": "src/engine/target-pipeline.ts",
-      "lines": 408
-    },
-    {
       "file": "src/main/foundation-reads.ts",
       "lines": 404
+    },
+    {
+      "file": "src/engine/target-pipeline.ts",
+      "lines": 390
     },
     {
       "file": "src/rim/follower-acquisition.ts",
@@ -74,16 +74,16 @@
       "lines": 339
     },
     {
-      "file": "src/kernel/policy.ts",
-      "lines": 331
-    },
-    {
       "file": "src/rim/list-page-walker.ts",
       "lines": 326
     },
     {
       "file": "src/renderer/charts/GrowthChart.tsx",
       "lines": 325
+    },
+    {
+      "file": "src/kernel/policy.ts",
+      "lines": 320
     }
   ]
 }

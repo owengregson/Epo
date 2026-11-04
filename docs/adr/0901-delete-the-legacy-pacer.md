@@ -83,3 +83,15 @@ this wave. Instead, wave A confined the model so the deletion is mechanical:
   than wiring.
 - Blocked on the owner's answer to open question 6 of the v4 design ("Delete the
   legacy pacing model?"), because it removes user-visible settings.
+
+## Amendment — 2026-11-02: executed (ADR 0607)
+
+The deletion ran with the day plan, in the cadence-switch merge. `LegacyPacer`, `legacyVerdict`,
+`OrganicPacer` and the `Pacer` port, `msUntilActiveWindow`, `cycle-plan.ts`, `action-gap.ts`,
+`session-planner.ts`, the active-hours park and the `RateGovernor` members `nextDelayMs`,
+`plannedToday`, `remainingToday`, `atOperatingRate`, `withinActiveHours` and `cycleStartMs` are gone;
+`pacingModel`, `minDelayMinutes`, `maxDelayMinutes`, `jitterPercent`, `activeHoursStart` and
+`activeHoursEnd` left the engine-facing settings (the frozen v1 pipeline still reads them to migrate).
+A legacy pacing setting maps once to Consistency = Even, Rhythm = trickle, with a notice ("Steady
+intervals is retired"). The registry keys only the legacy and scheduled paths read retired afterwards
+(ADR 0607, `RETIRED`).

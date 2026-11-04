@@ -13,7 +13,8 @@ import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { PlanService } from '@/governors/plan-service';
 import type { Admission, PlanPreviewPort, PlanView } from '@/governors/plan-types';
 import { viewPlan } from '@/governors/plan-view';
-import { drawDayPlan } from '@/kernel/plan';
+import { EXPLORATION_POLICY } from '@/kernel/exploration-policy';
+import { drawDayPlan, type PlanDayWindow } from '@/kernel/plan';
 import { MS_PER_DAY } from '@/kernel/units';
 import type { PlanHost } from '@/main/services/graph-types';
 import { type PlanWiring, wirePlan } from '@/main/services/plan-wiring';
@@ -147,12 +148,15 @@ export function busyDay(plan: PlanService, from: number, sessions = 3): PlanView
   throw new Error('no busy plan-day in four weeks');
 }
 
+/** One refill slice's explore reads: what a session with follows planned holds at least. */
+export const ONE_SLICE_READS = EXPLORATION_POLICY.profilesPerSlice + EXPLORATION_POLICY.sourceOpenReads;
+
 /** A plan view at `now` from a drawn plan, with the fields a loop test steers set. */
 export function stubPlanView(now: number, o: { open: boolean; nextSessionAt: number | null; target: number;
-  hourCap?: number; usedAuto?: number; mixDraw?: number | null; unfollowsLeft?: number }): PlanView {
+  hourCap?: number; usedAuto?: number; mixDraw?: number | null; unfollowsLeft?: number; exploreLeft?: number }): PlanView {
   const plan = drawDayPlan(drawInput(now));
   const base = viewPlan(plan, viewInputs(plan, now));
-  const reads = { reconcile: 0, explore: 0, explorePages: 0, checks: 0, checkPages: 0 };
+  const reads = { reconcile: 0, explore: o.exploreLeft ?? ONE_SLICE_READS, explorePages: 0, checks: 0, checkPages: 0 };
   const usedAuto = o.usedAuto ?? 0;
   // The admission the flags describe: closed between sessions, done once the target is spent, else open.
   const admits = (): Admission => {
@@ -192,6 +196,8 @@ export class FakePlan implements EnginePacing {
   mixDrawValue: number | null = null;
   /** The session's unfollow share left. */
   unfollowsLeft = 1;
+  /** The open session's explore reads (one slice's worth by default). */
+  exploreLeft = ONE_SLICE_READS;
   /** The exact velocity window the next read reports (null: the rolling hour has room). */
   velocityUntil: number | null = null;
   /** When each practice-mode write landed. */
@@ -202,7 +208,11 @@ export class FakePlan implements EnginePacing {
     private readonly deadlines?: Pick<KnowledgeStore, 'setActionDelayDeadline'>) {}
   view(now: number): PlanView {
     return stubPlanView(now, { open: this.open, nextSessionAt: this.nextStart, target: this.target, hourCap: this.hourCap,
-      usedAuto: this.usedAuto, mixDraw: this.mixDrawValue, unfollowsLeft: this.unfollowsLeft });
+      usedAuto: this.usedAuto, mixDraw: this.mixDrawValue, unfollowsLeft: this.unfollowsLeft, exploreLeft: this.exploreLeft });
+  }
+  /** Local-midnight plan-days: the Phase F default clock (the loop tests steer no boundary of their own). */
+  dayWindow(t: number): PlanDayWindow {
+    return calendarPlanDayClock({ now: () => t }).window(t);
   }
   ensureIfProvisional(now: number): PlanView {
     this.ensures += 1;

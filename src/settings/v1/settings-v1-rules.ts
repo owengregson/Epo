@@ -1,4 +1,4 @@
-import { NOISE } from '../../timing/config';
+import { BOUNDS } from '../../kernel/policy';
 import { type PatternSettings, PERSONAS, type PersonaId, resolvePattern } from '../pattern-map';
 import type { Settings } from './settings-v1-types';
 
@@ -139,7 +139,8 @@ export const RULES = {
   // run hourly (the old whole-list paged sweep budgeted for multi-hour gaps).
   followbackSweepHours: num(1, 0.5, 168),
   sweepLastRunAt: epoch(),
-  sweepIntervalFactor: num(1, NOISE.CADENCE_MIN_FACTOR, NOISE.CADENCE_MAX_FACTOR),
+  // The retired sweep factor's range, kept verbatim so a v1 file still coerces as it always did (ADR 0607).
+  sweepIntervalFactor: num(1, BOUNDS.SETTINGS_V1.SWEEP_FACTOR_MIN, BOUNDS.SETTINGS_V1.SWEEP_FACTOR_MAX),
   autoAcceptFollowRequests: bool(true),
 
   dailyPlanSize: int(BALANCED.dailyPlanSize, 1, 200),

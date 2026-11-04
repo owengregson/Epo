@@ -134,3 +134,15 @@ following check's two composed requests inside the census term. The plan, the re
 Settings view size the census term with the same read facts, so the plan's own reads always fit the D6
 the budget enforces (law L8). The sweep's reads are tagged by use (`catch-up`, `check`); a refused
 read ends its step only, and the next planned check retries it.
+
+## Amendment — 2026-11-02: the refill sizes its reads from the plan (ADR 0607)
+
+An enrichment slice is `min(profilesPerSlice, the open session's explore reads)`; a session with no
+explore reads leaves the enrichment to the next session instead of reading a zero slice as a wall. The
+acquisition's skip bar is `skipPoolFactor × min(F, queuedPerSource)` with F the plan's follows for the
+day. A read refusal that names no instant defers optional reads to the plan-day's end, and the
+bootstrap's waits are the loop's idle beat over known events (the frontier's resume instant, the read
+deferral), never a fixed beat or a hot loop on a past instant. The engine's freshness windows run in
+plan-days: a profile or a failed enrichment stays fresh through today and the six plan-days before it,
+so it lapses as `planDayStartAfter(WEEKLY_CYCLE)` of its own plan-day begins. The `ownFollowersPickMax`,
+`maxCoverageFraction` and `maxEnrichPassesPerCycle` bounds are read from `EXPLORATION_POLICY`.

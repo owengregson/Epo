@@ -82,7 +82,7 @@ export const ACQUISITION_DEFAULTS: AcquisitionConfig = {
   // repeated slices. Stored unscored candidates are reused before further reads.
   targetNewPks: EXPLORATION_POLICY.rowsPerSlice,
   maxPages: EXPLORATION_POLICY.pagesPerSlice,
-  maxCoverageFraction: 0.5,
+  maxCoverageFraction: EXPLORATION_POLICY.maxCoverageFraction,
   maxRounds: EXPLORATION_POLICY.pagesPerSlice,
   noNewStop: RIM.ACQUIRE_NO_NEW_STOP,
 };

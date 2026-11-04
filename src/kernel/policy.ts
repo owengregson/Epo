@@ -22,13 +22,10 @@
 const SEC = 1_000;
 const MIN = 60_000;
 const HOUR = 3_600_000;
-const DAY = 86_400_000;
 
 /**
- * The five numbers the owner argues about, plus the three shape choices the
- * recovery ladder needs. Changing one of these moves a whole family of derived
- * constants at once — which is the point.
- */
+ * The dials the owner argues about and the shape choices the derivations need: changing one moves a
+ * whole family of derived constants at once — which is the point. */
 export const POLICY = {
   /** Fraction of the TYPICAL observed wall we choose to operate at. THE dial. */
   SAFETY_MARGIN: 0.37,
@@ -58,8 +55,8 @@ export const POLICY = {
   DRAW_CENTRAL_Z: 1.96,
   /** z for the 99th percentile — sizes a sigma against its clamp band. */
   DRAW_TAIL_Z: 2.326,
-  /** A retry-backoff draw may at most double / at least halve its base. */
-  BACKOFF_BAND: [0.5, 2.0],
+  /** z for the 90th percentile — a draw's 10–90 spread is `median × 2·sinh(z·σ)` ("most days", "most holds"). */
+  DRAW_DECILE_Z: 1.2816,
 
   /** Hard ceiling as a fraction above the daily operating rate. */
   CEILING_HEADROOM: 1.3,
@@ -125,12 +122,8 @@ export const BOUNDS = {
     ENRICH_BACKOFF_MS: 10 * MIN,
   },
   PRUNE: {
-    /** Prune unfollows run at a THIRD of growth's inter-action pace (deliberate bulk cleanup). */
-    DELAY_FACTOR: 1 / 3,
     /** Brief park after a blocked action before continuing. */
     PARK_MS: 30 * SEC,
-    /** How long a completed scan's candidate set stays runnable; the run's live-graph guard is the real safety. */
-    SCAN_FRESH_MS: 4 * DAY,
     /** How long the prune hand-off waits for the growth loop to park before aborting. */
     PARK_TIMEOUT_MS: 90 * SEC,
   },
@@ -139,12 +132,8 @@ export const BOUNDS = {
     PROBE_INTERVAL_MS: 20 * SEC,
   },
   SCHEDULER: {
-    /** How often the opt-in scheduled-prune watcher re-checks `pruneDue` (local, no IG traffic). */
-    AUTO_PRUNE_CHECK_MS: 30 * MIN,
     /** Attempts before own-username resolution degrades the graph. */
     USERNAME_RESOLVE_ATTEMPTS: 4,
-    /** Backoff between username-recovery attempts: each costs real navigations, so never per-IPC-read. */
-    USERNAME_REBUILD_BACKOFF_MS: 5 * MIN,
   },
   ADAPTER: {
     /** identity.ts: attempts before own-username resolution gives up. */
@@ -185,8 +174,6 @@ export const BOUNDS = {
     FETCH_ALL_MAX_ROUNDS: 400,
     /** Consecutive no-new-item rounds before a whole-list scrape stops. */
     FETCH_ALL_NO_NEW_STOP: 5,
-    /** Follower-acquisition scrape bound (one refill slice). */
-    ACQUIRE_MAX_ROUNDS: 5,
     /** Consecutive no-new-item rounds before an acquisition slice stops. */
     ACQUIRE_NO_NEW_STOP: 2,
     /** Direct list-page walk runaway bound (~200 × 50-user pages = 10k accounts). */
@@ -201,10 +188,6 @@ export const BOUNDS = {
     BACKOFF_MIN_FACTOR: 0.5,
     /** …and its tail stays bounded. */
     BACKOFF_MAX_FACTOR: 2.0,
-    /** A drawn watcher interval never shrinks below half the configured one. */
-    CADENCE_MIN_FACTOR: 0.5,
-    /** …nor exceeds double it. */
-    CADENCE_MAX_FACTOR: 2.0,
     /** Local-beat band floor (idle beat, transient backoff) as a factor of the base. */
     BEAT_MIN_FACTOR: 0.7,
     /** Asymmetric ceiling so the mean beat drifts long, never a fixed beat. */
@@ -239,6 +222,12 @@ export const BOUNDS = {
   UPDATER: {
     /** Update-feed check cadence; the launch check covers work due while closed. */
     CHECK_INTERVAL_MS: 6 * HOUR,
+  },
+  SETTINGS_V1: {
+    /** The v1 file's sweep-interval factor floor, coerced verbatim by the migration (the factor itself retired). */
+    SWEEP_FACTOR_MIN: 0.5,
+    /** …and its ceiling. */
+    SWEEP_FACTOR_MAX: 2.0,
   },
 } as const;
 

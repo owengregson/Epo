@@ -1,28 +1,17 @@
 /**
- * Tier 2 — every operational constant, as a function of tier 0 and tier 1.
+ * Tier 2 — every operational constant, as a function of tier 0 and tier 1: `EMPIRICAL × POLICY`, a
+ * `BOUNDS`/`PREFERENCES` passthrough, a named factor beside its derivation, or an `OVERRIDES` entry with
+ * a reason. The golden (`tests/kernel/derive-golden.test.ts`) pins the registry against the frozen
+ * snapshot minus the keys the plan retired (`registry-changes.ts`, ADR 0607).
  *
- * Nothing here holds a magic number. Every value is `EMPIRICAL × POLICY`, a
- * `BOUNDS`/`PREFERENCES` passthrough, or an entry in `OVERRIDES` with a stated
- * reason. The exported group shapes are byte-compatible with the registry
- * `src/timing/config.ts` shipped before this refactor, and
- * `tests/kernel/legacy-config.snapshot.ts` is the golden oracle that proves it.
- *
- * Read the derivations in this order — later ones depend on earlier ones:
- *   D1 operating rate → D2 gaps → D3 recovery ladder & jitter → D4 timeouts &
- *   polls → D5 breaker thresholds → the group tables.
- *
- * Layering: `src/kernel/**` imports NOTHING from the rest of `src/`. The unit
- * multipliers are declared locally, on purpose (the kernel's `units.ts` lands in
- * the same wave and is adopted in the next one).
- *
- * See docs/adr/0605-constants-derive-from-fundamentals.md.
+ * Read in order — D1 operating rate → D2 gaps → D3 recovery ladder & jitter → D4 timeouts & polls →
+ * D5 breaker thresholds → the group tables. Layering: `src/kernel/**` imports NOTHING from the rest of
+ * `src/`; the unit multipliers are local on purpose. See docs/adr/0605-constants-derive-from-fundamentals.md.
  */
 
 import { EMPIRICAL } from './fundamentals';
 import { overridden } from './overrides';
 import { BOUNDS, PACING_BASE_MS, POLICY, PREFERENCES, SCALES } from './policy';
-
-// --- units (local by design; see the layering note above) ---------------------
 
 const MS_PER_SECOND = 1_000;
 const MS_PER_MINUTE = 60_000;
@@ -100,11 +89,7 @@ export interface OrdinalPattern {
 // D1 — the operating rate
 // =============================================================================
 
-/**
- * The empirical quantities D1 and D2 consume, lifted into a record so a test can
- * perturb them (the envelope law) and so a future wave can feed measured values
- * in without touching a call site.
- */
+/** The empirical quantities D1 and D2 consume, as a record a test can perturb (the envelope law). */
 export interface RateInputs {
   hourlyWallTypical: number;
   hourlyWallLow: number;
@@ -292,18 +277,17 @@ export function holdMediansMs(): number[] {
  * Log-space spread of a hold draw. Requirement: the 10–90 spread of the FIRST
  * rung must be at least `DESYNC_WIDTH_MS`, so two installs that hit the same
  * wall at the same moment do not retry together.
- * `median × 2·sinh(1.2816σ) ≥ DESYNC_WIDTH_MS`.
+ * `median × 2·sinh(DRAW_DECILE_Z·σ) ≥ DESYNC_WIDTH_MS`.
  */
 export function holdSigma(): number {
   const median = holdMediansMs()[0];
-  const needed = asinh(POLICY.DESYNC_WIDTH_MS / median / 2) / 1.2816;
+  const needed = asinh(POLICY.DESYNC_WIDTH_MS / median / 2) / POLICY.DRAW_DECILE_Z;
   return roundTo(needed, 0.05);
 }
 
 /**
- * Log-space spread of a CLAMPED backoff draw (cadence, retry park, velocity
- * park). The clamp band is the binding constraint, not de-synchronisation:
- * size σ so the band edge sits at the 99th percentile — `ln(maxFactor) / z99`.
+ * Log-space spread of a CLAMPED backoff draw (the retry-backoff park). The clamp band is the binding
+ * constraint, not de-synchronisation: σ puts the band edge at the 99th percentile — `ln(maxFactor) / z99`.
  */
 export function clampedSigma(maxFactor: number): number {
   return roundTo(Math.log(maxFactor) / POLICY.DRAW_TAIL_Z, 0.05);
@@ -314,18 +298,6 @@ export function drawClamp(sigma: number, step: number): { min: number; max: numb
   return {
     min: roundTo(Math.exp(-POLICY.DRAW_CENTRAL_Z * sigma), step),
     max: roundTo(Math.exp(POLICY.DRAW_CENTRAL_Z * sigma), step),
-  };
-}
-
-/** The same clamp, expressed as absolute bounds around a median duration. */
-export function drawClampMs(
-  medianMs: number,
-  sigma: number,
-  step: number,
-): { min: number; max: number } {
-  return {
-    min: roundTo(medianMs * Math.exp(-POLICY.DRAW_CENTRAL_Z * sigma), step),
-    max: roundTo(medianMs * Math.exp(POLICY.DRAW_CENTRAL_Z * sigma), step),
   };
 }
 
@@ -354,9 +326,16 @@ export function pollEveryFor(op: LatencyOp): number {
   return pollEveryFrom(EMPIRICAL.LATENCY[op].p50);
 }
 
-/** A poll interval from a p50: a quarter of it, bounded to `[100 ms, 1 s]`. */
+/** A poll is this share of its operation's p50: the median answer lands within one extra tick. */
+const POLL_FRACTION_OF_P50 = 0.25;
+/** No poll runs faster than this: each poll is a page evaluate, never a busy loop. */
+const POLL_MIN_MS = 100;
+/** No poll runs slower than this: a fast answer is never read a second late. */
+const POLL_MAX_MS = 1 * MS_PER_SECOND;
+
+/** A poll interval from a p50: a quarter of it, bounded to `[POLL_MIN_MS, POLL_MAX_MS]`, on a 50 ms grid. */
 export function pollEveryFrom(p50Ms: number): number {
-  return roundTo(clamp(p50Ms / 4, 100, 1_000), 50);
+  return roundTo(clamp(p50Ms * POLL_FRACTION_OF_P50, POLL_MIN_MS, POLL_MAX_MS), 50);
 }
 
 /**
@@ -390,6 +369,11 @@ export function breakerThreshold(prior: number, ordinaryRate: number): number {
 /** The cold breaker threshold: a standing start, no prior signal. */
 export function coldFailingThreshold(): number {
   return breakerThreshold(POLICY.PRIOR_SYSTEMIC.cold, EMPIRICAL.ORDINARY_FAIL_RATE.value);
+}
+
+/** A cleanup run's consecutive failed unfollows before it halts: the cold threshold, pinned lower in `OVERRIDES`. */
+export function pruneFailingThreshold(): number {
+  return overridden('PRUNE.CONSECUTIVE_FAIL_HALT', coldFailingThreshold());
 }
 
 /** Failures tolerated while PROBING after a served hold (we already suspect a wall). */
@@ -538,8 +522,6 @@ export function deriveOperatingPlan(
 // The registry: the same group shapes `src/timing/config.ts` has always exported
 // =============================================================================
 
-const REFILL = band(PACING_BASE_MS.read);
-const ENRICH = band(PACING_BASE_MS.read);
 const ACQUIRE_SCROLL = band(PACING_BASE_MS.acquireScroll);
 const LIST_WALK_PAGE = band(PACING_BASE_MS.listWalkPage);
 const LIST_WALK_REST = band(PACING_BASE_MS.listWalkRest);
@@ -548,12 +530,19 @@ const NOTIF_SCROLL = band(PACING_BASE_MS.notificationsScroll);
 const ACCEPT_PACE = band(PACING_BASE_MS.acceptPace);
 const RESUME_SETTLE = band(PACING_BASE_MS.resumeSettle);
 
+/** The step watchdog checks this many times per stale window: a wedged step is caught within an eighth of it. */
+const WATCHDOG_CHECKS_PER_WINDOW = 8;
+/** The tab-health canary watches this many frames: one dropped frame never reads as a hung renderer. */
+const CANARY_FRAMES = 30;
+/** An exhaustion stamped within this many p90 walls is re-verified once: the worst wall and a ladder's holds. */
+const EXHAUSTED_REVERIFY_P90_WALLS = 2;
+/** A graph push trails a mutation by this many perception instants: counts tick visibly, a walk never floods. */
+const PUSH_THROTTLE_INSTANTS = 3;
+
 const GAP_CAP_MS = gapCapMs();
 const HOLD_MEDIANS = holdMediansMs();
 const HOLD_SIGMA = holdSigma();
 const HOLD_CLAMP = drawClamp(HOLD_SIGMA, 0.1);
-const PARK_SIGMA = clampedSigma(BOUNDS.NOISE.BACKOFF_MAX_FACTOR);
-const PARK_CLAMP = drawClampMs(gapCapMs(), PARK_SIGMA, 5 * MS_PER_MINUTE);
 const GOTO_TIMEOUT_MS = timeoutFor('nav');
 const EVALUATE_TIMEOUT_MS = timeoutFor('evaluate');
 const PROFILE_LAND_RETRY_MS = retryWait(GOTO_TIMEOUT_MS, BOUNDS.ADAPTER.PROFILE_LAND_ATTEMPTS);
@@ -561,40 +550,13 @@ const PROFILE_LAND_RETRY_MS = retryWait(GOTO_TIMEOUT_MS, BOUNDS.ADAPTER.PROFILE_
 export const ENGINE = {
   /** How long an iteration idles when nothing is due yet (the loop's final gate). */
   IDLE_MS: BOUNDS.ENGINE.IDLE_MS,
-  /** Unread since the activity clock spaces each entry (spec §5.16); the RETIRED ledger deletes it (ADR 0607). */
-  REFILL_PACING_MIN_MS: overridden('ENGINE.REFILL_PACING_MIN_MS', REFILL.min),
-  REFILL_PACING_MAX_MS: overridden('ENGINE.REFILL_PACING_MAX_MS', REFILL.max),
-  /**
-   * Park after an enrichment-starved refill cycle (a plan that queued nothing
-   * while un-enriched candidates remain — a rate wall / sentinel window, not a
-   * dry target). Long, so repeated walled cycles cannot hammer the profile
-   * endpoint; the target is retried, never burned.
-   */
+  /** Park after an enrichment-starved refill cycle: walled cycles cannot hammer the profile endpoint. */
   ENRICH_BACKOFF_MS: BOUNDS.ENGINE.ENRICH_BACKOFF_MS,
-  /**
-   * Velocity-backstop park (organic mode): log-normal pause when the
-   * ledger-backed rolling-hour cap trips. DERIVED as the gap cap — the longest
-   * single pause the pacer may impose without ending the session — with the
-   * standard clamped-draw sigma so repeated parks never tick at a fixed period.
-   */
-  VELOCITY_PARK_MEDIAN_MS: GAP_CAP_MS,
-  VELOCITY_PARK_SIGMA: PARK_SIGMA,
-  VELOCITY_PARK_MIN_MS: PARK_CLAMP.min,
-  VELOCITY_PARK_MAX_MS: PARK_CLAMP.max,
 } as const;
 
 export const PRUNE = {
-  /** Prune unfollows run at a THIRD of growth's inter-action pace (deliberate bulk cleanup). */
-  DELAY_FACTOR: BOUNDS.PRUNE.DELAY_FACTOR,
   /** Brief park after a blocked action before continuing. */
   PARK_MS: BOUNDS.PRUNE.PARK_MS,
-  /**
-   * How long a completed scan's candidate set stays runnable for a 2-step run.
-   * Generous — the run's LIVE-GRAPH guard skips any candidate whose follows-us
-   * edge appeared after the scan, so staleness in the dangerous direction is
-   * caught per candidate, not by expiry.
-   */
-  SCAN_FRESH_MS: BOUNDS.PRUNE.SCAN_FRESH_MS,
   /** How long the prune hand-off waits for the growth loop to park before aborting. */
   PARK_TIMEOUT_MS: BOUNDS.PRUNE.PARK_TIMEOUT_MS,
 } as const;
@@ -607,18 +569,10 @@ export const CONNECTIVITY = {
 } as const;
 
 export const SCHEDULER = {
-  /** How often the opt-in scheduled-prune watcher re-checks `pruneDue`. */
-  AUTO_PRUNE_CHECK_MS: BOUNDS.SCHEDULER.AUTO_PRUNE_CHECK_MS,
   /** Wait between own-username resolution attempts (same ladder as `landOnOwnProfile`). */
   USERNAME_RESOLVE_RETRY_MS: PROFILE_LAND_RETRY_MS,
   /** How many username resolution attempts before degrading. */
   USERNAME_RESOLVE_ATTEMPTS: BOUNDS.SCHEDULER.USERNAME_RESOLVE_ATTEMPTS,
-  /**
-   * Backoff between username-recovery attempts once a graph is built DEGRADED:
-   * each attempt costs real tab navigations and page reads, so it
-   * must never run on every routine IPC read.
-   */
-  USERNAME_REBUILD_BACKOFF_MS: BOUNDS.SCHEDULER.USERNAME_REBUILD_BACKOFF_MS,
   /**
    * teardownGraph: bounded wait for in-flight manual ops to drain before the
    * store closes under them. The longest such op is one `evaluate`.
@@ -666,14 +620,10 @@ export const TAB = {
 } as const;
 
 export const RECOVERY = {
-  /**
-   * engine:step-watchdog — a 'running' engine that has emitted no status AND
-   * holds no pending `engine:` wait for this long is wedged, not parked. Sized
-   * to the gap cap: the longest silence the pacer may legitimately produce.
-   */
+  /** A running engine silent this long with no `engine:` wait pending is wedged: the gap cap, the longest planned silence. */
   STEP_WATCHDOG_MS: GAP_CAP_MS,
   /** How often the step watchdog evaluates its fire predicate (cheap in-memory checks). */
-  STEP_WATCHDOG_CHECK_MS: roundTo(GAP_CAP_MS / 8, MS_PER_MINUTE),
+  STEP_WATCHDOG_CHECK_MS: roundTo(GAP_CAP_MS / WATCHDOG_CHECKS_PER_WINDOW, MS_PER_MINUTE),
   /** Ladder hold medians (rungs 1..N): `W_p50 × 0.33 × 1.5^(n-1)`. */
   HOLD_MEDIANS_MS: HOLD_MEDIANS,
   /** Log-space spread of each hold draw — sized so rung 1's 10–90 spread covers `DESYNC_WIDTH_MS`. */
@@ -691,7 +641,7 @@ export const RECOVERY = {
   /** Consecutive walled enrichment cycles that enter recovery instead of looping the flat park. */
   WALLED_CYCLES_ENTRY: blockedStreakThreshold(),
   /** rAF-canary observation window for the tab-health check — thirty frames. */
-  CANARY_WINDOW_MS: roundTo(EMPIRICAL.DISPLAY.frameMs * 30, 100),
+  CANARY_WINDOW_MS: roundTo(EMPIRICAL.DISPLAY.frameMs * CANARY_FRAMES, 100),
   /**
    * Scheduled prune stays off the tab this long after a rate-limit-classified
    * halt — a census walk into the same wall would deepen the block. Sized to
@@ -706,13 +656,8 @@ export const RECOVERY = {
   /** Post-wake settle band (uniform draw) after a system resume. */
   RESUME_SETTLE_MIN_MS: overridden('RECOVERY.RESUME_SETTLE_MIN_MS', RESUME_SETTLE.min),
   RESUME_SETTLE_MAX_MS: overridden('RECOVERY.RESUME_SETTLE_MAX_MS', RESUME_SETTLE.max),
-  /**
-   * Chain self-heal window: a `chain-exhausted` stamp younger than this is
-   * re-verified once, because an exhaustion latched during a rate wall is
-   * absence of evidence. Two p90 soft walls — comfortably outlasting the worst
-   * observed window AND a full run of the ladder's holds.
-   */
-  EXHAUSTED_REVERIFY_WINDOW_MS: EMPIRICAL.SOFT_WALL_DURATION_H.p90 * 2 * MS_PER_HOUR,
+  /** A `chain-exhausted` stamp younger than this is re-verified once: an exhaustion latched in a rate wall is absence of evidence. */
+  EXHAUSTED_REVERIFY_WINDOW_MS: EMPIRICAL.SOFT_WALL_DURATION_H.p90 * EXHAUSTED_REVERIFY_P90_WALLS * MS_PER_HOUR,
   /** Requeue-healer batch cap: far above any honest incident window, far below "the whole table". */
   HEAL_MAX_RECORDS: BOUNDS.RECOVERY.HEAL_MAX_RECORDS,
   /** Requeue-healer pre-entry grace: the entry streak's victims are stamped just before the ladder woke. */
@@ -722,14 +667,10 @@ export const RECOVERY = {
 export const RIM = {
   /** Fixed pause after each scroll so the paginated response can land (growth path). */
   SCROLL_WAIT_MS: BOUNDS.RIM.SCROLL_WAIT_MS,
-  /** Unread since the activity clock spaces each visit (spec §5.16); the RETIRED ledger deletes it (ADR 0607). */
-  ENRICH_PACE_MIN_MS: ENRICH.min,
-  ENRICH_PACE_MAX_MS: ENRICH.max,
   /** Whole-list scrape bounds (prune census): generous but always finite. */
   FETCH_ALL_MAX_ROUNDS: BOUNDS.RIM.FETCH_ALL_MAX_ROUNDS,
   FETCH_ALL_NO_NEW_STOP: BOUNDS.RIM.FETCH_ALL_NO_NEW_STOP,
-  /** Follower-acquisition scrape bounds (one refill slice). */
-  ACQUIRE_MAX_ROUNDS: BOUNDS.RIM.ACQUIRE_MAX_ROUNDS,
+  /** Consecutive no-new-item rounds before an acquisition slice stops (one refill slice). */
   ACQUIRE_NO_NEW_STOP: BOUNDS.RIM.ACQUIRE_NO_NEW_STOP,
   /** Growth-acquisition DIALOG-FALLBACK scroll pacing band (uniform draw). */
   ACQUIRE_SCROLL_MIN_MS: overridden('RIM.ACQUIRE_SCROLL_MIN_MS', ACQUIRE_SCROLL.min),
@@ -785,26 +726,10 @@ export const RIM = {
 } as const;
 
 /**
- * Timing-noise layer (timing/noise.ts) — the fix for deterministic default-
- * config scheduling. Every sigma here is the SAME policy number
- * (`DESYNC_WIDTH_MS` for a spread requirement, the clamp band for a bounded
- * draw): one dial replaces six hand-tuned constants.
+ * Timing-noise layer (timing/noise.ts): the retry-backoff spread sized against its clamp band, the
+ * local-beat band and the list-walk rest stride (the beat band and the stride are tempo priors).
  */
 export const NOISE = {
-  /** Ceiling of the positive-only wake offset PAST a daily boundary. */
-  DAILY_BOUNDARY_JITTER_MAX_MS: POLICY.DESYNC_WIDTH_MS,
-  /** Log-space spread of the per-run watcher-cadence factor (follow-back sweep). */
-  CADENCE_SIGMA: clampedSigma(BOUNDS.NOISE.CADENCE_MAX_FACTOR),
-  /** Cadence-factor floor — a drawn interval never shrinks below half the configured one. */
-  CADENCE_MIN_FACTOR: BOUNDS.NOISE.CADENCE_MIN_FACTOR,
-  /** Cadence-factor ceiling — a drawn interval never exceeds double the configured one. */
-  CADENCE_MAX_FACTOR: BOUNDS.NOISE.CADENCE_MAX_FACTOR,
-  /**
-   * Ceiling of the uniform hold between "scheduled prune due" and its launch.
-   * Half the desync width: the poll tick itself is local (no IG traffic), so
-   * only the LAUNCH grid needs breaking.
-   */
-  PRUNE_LAUNCH_JITTER_MAX_MS: POLICY.DESYNC_WIDTH_MS / 2,
   /** Log-space spread of a retry-backoff park draw (enrich backoff, blocked/prune parks). */
   BACKOFF_SIGMA: clampedSigma(BOUNDS.NOISE.BACKOFF_MAX_FACTOR),
   /** Backoff draw floor as a factor of its base — a park always stays a real park. */
@@ -823,13 +748,8 @@ export const NOISE = {
 export const POLL = {
   /** Renderer keep-alive: pull only when the push stream has gone this quiet. */
   KEEPALIVE_MS: BOUNDS.POLL.KEEPALIVE_MS,
-  /**
-   * Trailing throttle for graph-mutation-driven status pushes (docs/
-   * PRINCIPLES.md §2): three perceptual "instants" — live enough that counts
-   * visibly tick, cheap enough that a thousand-row walk doesn't emit a
-   * thousand statuses.
-   */
-  GRAPH_PUSH_THROTTLE_MS: EMPIRICAL.DISPLAY.perceptionMs * 3,
+  /** Trailing throttle for graph-mutation-driven status pushes (PRINCIPLES §2): counts tick live, a walk never floods. */
+  GRAPH_PUSH_THROTTLE_MS: EMPIRICAL.DISPLAY.perceptionMs * PUSH_THROTTLE_INSTANTS,
 } as const;
 
 // ---------------------------------------------------------------------------------

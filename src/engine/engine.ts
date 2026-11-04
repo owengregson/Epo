@@ -8,6 +8,7 @@
  */
 
 import type { SentinelStatus } from '../adapter/sentinel';
+import { coldFailingThreshold } from '../kernel/derive';
 import { tempoOrReference } from '../kernel/tempo';
 import type { Settings } from '../settings/settings';
 import type { WaitResult } from '../timing/delay-manager';
@@ -63,12 +64,11 @@ export {
 } from './target-pipeline';
 
 /**
- * Consecutive failed actions (ACROSS records) that enter the recovery ladder from
- * a standing start — two full records' worth, since one dead account produces at
- * most `maxRetries + 1` fails before abandoning. While the ladder is PROBING the
- * re-entry threshold drops to `RECOVERY.REENTRY_FAILS`.
+ * Consecutive failed actions (ACROSS records) that enter the recovery ladder from a standing start:
+ * the D5 cold breaker threshold (7, spec §5.14). While the ladder is PROBING the re-entry threshold
+ * drops to `RECOVERY.REENTRY_FAILS`.
  */
-export const ACTIONS_FAILING_HALT = 8;
+export const ACTIONS_FAILING_HALT = coldFailingThreshold();
 
 export type { EngineParkReason, EngineWaitKey } from './engine-waits';
 export { ENGINE_WAIT_CLASS } from './engine-waits';
@@ -179,7 +179,6 @@ export class Engine {
       clock: deps.clock,
       classes: ENGINE_WAIT_CLASS,
       noiseRng: this.noiseRng,
-      installEntropy: this.installEntropy,
       parkReason: parkReasonFor,
       signal: () => this.runAbort.signal,
       hooks: {
@@ -219,14 +218,14 @@ export class Engine {
       rng: deps.rng,
     });
     this.targets = new TargetPipeline({
-      frontier: deps.frontier,
-      store: deps.store,
-      clock: deps.clock, tempo: deps.tempo,
+      frontier: deps.frontier, store: deps.store,
+      clock: deps.clock, tempo: deps.tempo, plan: deps.pacing,
       acquisition: deps.acquisition,
       scanner: deps.scanner,
       enricher: deps.enricher,
       settings: (): Settings => this.settings,
       wait: (key, policyOrMs) => this.engineWait(key, policyOrMs),
+      idle: (events) => this.idleWait(this.deps.clock.now(), events),
       recover: (token, kind) => this.enterRecovery(token, kind),
       halt: (reason) => this.halt(reason),
     });

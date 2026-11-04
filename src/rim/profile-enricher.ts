@@ -6,7 +6,7 @@
  * and the pool never shrinks. This class reads the profile of each candidate in
  * a batch so scoring can actually decide.
  *
- * Mechanism (since 2026-10-08): for each username (up to `batchCap`), if the
+ * Mechanism (since 2026-10-08): for each username the caller hands it, if the
  * Sentinel is `ok`, VISIT the profile (`ProfileVisitor`) — the page's own
  * client fetches the profile, and the ProfileObserver writes the counts to the
  * store as the body parses. Every REST profile read Epo used to compose is
@@ -30,9 +30,6 @@ import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RECOVERY } from '@/timing/config';
 import * as logger from '@/utils/logger';
 
-/** Default number of usernames enriched per pass. */
-const DEFAULT_BATCH_CAP = 25;
-
 /**
  * The enrichment port the Engine calls before planning a target (structurally
  * matches the Engine's `EngineEnricher`). Returns how many were enriched.
@@ -51,7 +48,7 @@ export interface ProfileEnricherDeps {
   store: Pick<KnowledgeStore, 'markEnrichmentFailed'>;
   sentinel: Sentinel;
   clock?: Clock;
-  /** Max usernames enriched per pass (default 25). */
+  /** Max usernames enriched per pass; absent, the caller's slice is the bound (`min(profilesPerSlice, explore left)`). */
   batchCap?: number;
   /** Provider of the ACTIVE driver's abort signal — a `stop()` ends the pass between usernames. */
   abortSignal?: () => AbortSignal | undefined;
@@ -67,7 +64,7 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
   private readonly store: Pick<KnowledgeStore, 'markEnrichmentFailed'>;
   private readonly sentinel: Sentinel;
   private readonly clock: Clock;
-  private readonly batchCap: number;
+  private readonly batchCap: number | undefined;
   private readonly abortSignal?: () => AbortSignal | undefined;
   private readonly reporter: ActivityReporter;
 
@@ -78,7 +75,7 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
     this.store = deps.store;
     this.sentinel = deps.sentinel;
     this.clock = deps.clock ?? new SystemClock();
-    this.batchCap = deps.batchCap ?? DEFAULT_BATCH_CAP;
+    this.batchCap = deps.batchCap;
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
   }

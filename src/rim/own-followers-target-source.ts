@@ -14,20 +14,15 @@
 import type { OwnFollowersTargetSource } from '@/engine/chain-controller';
 import { EXPLORATION_POLICY } from '@/engine/exploration-policy';
 import { type Clock, SystemClock } from '@/governors/clock';
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import type { ProfileEnricher } from '@/rim/profile-enricher';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { EnrichmentLevel } from '@/store/types';
 import * as logger from '@/utils/logger';
 
-/** Profile-completeness ordering for tie-breaks (higher is more complete). */
-const ENRICHMENT_RANK: Record<EnrichmentLevel, number> = {
-  stub: 0,
-  listed: 1,
-  profiled: 2,
-};
-
-/** How many un-profiled own followers one pick() may enrich before ranking. */
-const PICK_ENRICH_CAP = 15;
+/** Profile completeness, least to most: a tie on count goes to the more complete profile. */
+const ENRICHMENT_ORDER: readonly EnrichmentLevel[] = ['stub', 'listed', 'profiled'];
+const completeness = (level: EnrichmentLevel): number => ENRICHMENT_ORDER.indexOf(level);
 
 export interface OwnFollowersTargetSourceDeps {
   store: KnowledgeStore;
@@ -58,7 +53,7 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
     this.ownPk = deps.ownPk;
     this.enricher = deps.enricher;
     this.clock = deps.clock ?? new SystemClock();
-    this.minPoolSize = deps.minPoolSize ?? 300;
+    this.minPoolSize = deps.minPoolSize ?? SETTINGS_POLICY.RECOMMENDED.minPoolSize;
   }
 
   async pick(minPoolSize?: number): Promise<string | null> {
@@ -74,7 +69,7 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
     if (this.enricher && !candidates.some((c) => c.followers !== undefined && c.followers >= minPoolSize)) {
       const usernames: string[] = [];
       for (const c of candidates) {
-        if (usernames.length >= PICK_ENRICH_CAP) break;
+        if (usernames.length >= EXPLORATION_POLICY.ownFollowersPickMax) break;
         if (c.followers !== undefined || c.username === undefined || (c.enrichFailedAt !== undefined &&
           this.clock.now() - c.enrichFailedAt < EXPLORATION_POLICY.enrichmentRetryMs)) continue;
         usernames.push(c.username);
@@ -90,7 +85,7 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
 
     candidates = candidates.filter((c) => c.username !== undefined && c.followers !== undefined && c.followers >= minPoolSize);
     candidates.sort((a, b) => (b.followers ?? -1) - (a.followers ?? -1) ||
-      ENRICHMENT_RANK[b.enrichment] - ENRICHMENT_RANK[a.enrichment] || a.pk.localeCompare(b.pk));
+      completeness(b.enrichment) - completeness(a.enrichment) || a.pk.localeCompare(b.pk));
     return candidates.slice(0, EXPLORATION_POLICY.maxSources).map((c) => c.pk);
   }
 

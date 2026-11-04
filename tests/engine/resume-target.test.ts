@@ -67,7 +67,7 @@ function pipelineOver(store: KnowledgeStore, frontierPort: SourceFrontier | unde
   const inert = {} as never;
   const deps: TargetPipelineDeps = {
     store, clock: { now: () => 1_000_000 } as never, acquisition: inert, scanner: inert, enricher: inert,
-    frontier: frontierPort, settings: () => inert, wait: inert, recover: inert, halt: inert,
+    frontier: frontierPort, settings: () => inert, wait: inert, plan: inert, idle: inert, recover: inert, halt: inert,
   };
   return new TargetPipeline(deps);
 }

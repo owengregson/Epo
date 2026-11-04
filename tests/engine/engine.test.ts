@@ -10,6 +10,7 @@
 
 import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import {
+  ACTIONS_FAILING_HALT,
   ENRICH_BATCH_SIZE,
   Engine,
   type EngineUnfollowFeed,
@@ -72,15 +73,15 @@ describe('Engine.stepOnce — one major thing per iteration', () => {
     ]);
   });
 
-  test('a failing streak of 8 routes to a recovery HOLD, not a terminal halt', async () => {
+  test('a failing streak at the cold breaker routes to a recovery HOLD, not a terminal halt', async () => {
     const h = makeHarness();
     h.churn.due = [rec({ accountPk: 'a' })];
     h.churn.outcome = 'failed';
-    h.churn.failStreak = 7; // one below the breaker → keeps going
+    h.churn.failStreak = ACTIONS_FAILING_HALT - 1; // one below the breaker → keeps going
     expect(await h.engine.stepOnce()).toBe('acted');
 
     h.churn.due = [rec({ accountPk: 'b' })];
-    h.churn.failStreak = 8; // ACTIONS_FAILING_HALT → enter the recovery ladder
+    h.churn.failStreak = ACTIONS_FAILING_HALT; // the D5 cold threshold (7) → enter the recovery ladder
     expect(await h.engine.stepOnce()).toBe('recovering');
     expect(h.halts).toEqual([]); // no terminal halt
     expect(h.engine.status().state).not.toBe('halted');
@@ -296,9 +297,8 @@ describe('Engine — follow-back sweep cadence (precedence 6)', () => {
     expect(await h.engine.stepOnce()).toBe('idle');
     expect(h.followback.checks).toBe(1);
 
-    // Drive the FakeClock past the cadence — including the widest interval
-    // factor the noise layer can draw (≤ CADENCE_MAX_FACTOR): due again.
-    h.clock.advance(4 * HOUR * NOISE.CADENCE_MAX_FACTOR);
+    // Drive the FakeClock well past the cadence: due again.
+    h.clock.advance(2 * 4 * HOUR);
     expect(await h.engine.stepOnce()).toBe('swept-followback');
     expect(h.followback.checks).toBe(2);
   });
@@ -1049,6 +1049,43 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     }
     expect(await h.engine.stepOnce()).toBe('acquired');
     expect(h.enricher.calls[0]!.length).toBe(ENRICH_BATCH_SIZE);
+  });
+
+  test("an enrichment pass is the smaller of a slice and the open session's explore reads (spec §5.16)", async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    pacing.exploreLeft = 3;
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true, pacing });
+    for (let i = 0; i < ENRICH_BATCH_SIZE; i += 1) follower(h, `f${i}`, { username: `user${i}` });
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.enricher.calls[0]).toHaveLength(3);
+  });
+
+  test('a session with no explore reads leaves enrichment to the next session — never a walled pass', async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    pacing.exploreLeft = 0;
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true, pacing });
+    follower(h, 'f1', { username: 'fone' });
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(h.enricher.calls).toEqual([]);
+    expect(h.statuses.some((s) => s.parkReason === 'enrich-backoff')).toBe(false);
+    // Reads wait for the session that has explore reads: the end of today's plan-day here.
+    expect(h.engine.status().state).not.toBe('halted');
+    expect(h.acquisition.calls).toEqual(['targetone']);
+    await h.engine.stepOnce();
+    expect(h.acquisition.calls).toEqual(['targetone']);
+  });
+
+  test('a profile read before the weekly cycle of plan-days is read again; one inside it is still fresh', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
+    const DAY = 24 * HOUR;
+    const profiled = (pk: string, username: string, at: number): void => {
+      h.store.observe({ accountPk: pk, observedAt: at, source: 'profile', fields: { username, followers: 10, following: 11 } });
+      h.store.observeEdge(pk, 't1', 'follows', true, T0);
+    };
+    profiled('f6', 'inside', T0 - 6 * DAY - 11 * HOUR); // the sixth plan-day back, 01:00: fresh
+    profiled('f7', 'before', T0 - 6 * DAY - 13 * HOUR); // the seventh plan-day back, 23:00: stale
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.enricher.calls[0]).toEqual(['before']);
   });
 
   test('refill traffic ends without a beat of its own: the next entry is the activity clock\'s (spec §5.16)', async () => {
