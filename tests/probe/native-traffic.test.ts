@@ -158,6 +158,17 @@ test('binary bytes are hashed without being decoded into fabricated form text', 
   expect(h.native.getPostData(1)).toBeUndefined();
 });
 
+test.each(['GET', 'HEAD'])('a bodyless browser %s omits uploadData; supplied parts are never discarded', async (method) => {
+  const h = harness(); h.request({ method, uploadData: undefined }); h.complete();
+  h.native.stop(); await h.native.drain();
+  expect(h.native.exchanges[0].post).toEqual({ state: 'none' });
+  expect(qualifyTraffic([], h.native.exchanges, [], () => undefined).ok).toBe(true);
+  const withBody = harness(); withBody.request({ method });
+  withBody.native.stop(); await withBody.native.drain();
+  expect(withBody.native.exchanges[0].post.state).toBe('complete');
+  expect(withBody.native.getPostData(1)).toBe('variables=%7B%7D');
+});
+
 test('mixed inline and blob parts preserve their complete upload order for correlation', async () => {
   const h = harness(async () => Buffer.from('middle'));
   h.request({ uploadData: [{ bytes: Buffer.from('prefix-') }, { blobUUID: 'synthetic-blob' }, { bytes: Buffer.from('-suffix') }] });

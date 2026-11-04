@@ -198,7 +198,12 @@ export class NativeTraffic {
   };
 
   private async readPost(ex: NativeExchange, parts: UploadData[] | undefined): Promise<void> {
-    if (parts === undefined) { ex.post = { state: 'missing', detail: 'uploadData absent' }; return; }
+    if (parts === undefined) {
+      // Chromium omits uploadData for bodyless GET/HEAD. Preserve any supplied parts and all other missing uploads.
+      ex.post = ex.method === 'GET' || ex.method === 'HEAD'
+        ? { state: 'none' } : { state: 'missing', detail: 'uploadData absent' };
+      return;
+    }
     if (parts.length === 0) { ex.post = { state: 'none' }; return; }
     if (parts.some((part) => part.file !== undefined || (!Buffer.isBuffer(part.bytes) && !part.blobUUID))) {
       ex.post = { state: 'unsupported', detail: 'upload part is not bytes or a blob' }; return;

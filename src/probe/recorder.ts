@@ -34,6 +34,7 @@ export interface Exchange {
   loaderId?: string;
   postDataSource?: 'postData' | 'postDataEntries' | 'getter';
   postSha256?: string;
+  hasPostData?: boolean;
   captureErrors?: string[];
   /** Ms since the recorder started. */
   at: number;
@@ -201,6 +202,7 @@ export class TrafficRecorder {
         at: Date.now() - this.t0,
         step: this.step,
         method: req.method,
+        hasPostData: req.hasPostData === true || req.postData !== undefined || req.postDataEntries !== undefined,
         host: url.hostname,
         path: url.pathname,
         query: Object.fromEntries(url.searchParams),

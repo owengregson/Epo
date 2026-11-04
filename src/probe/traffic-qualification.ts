@@ -68,7 +68,8 @@ export function qualifyTraffic(
       : post !== undefined && ex.post.state === 'complete' ? 'native'
       : observed?.postSha256 !== undefined ? 'cdp' : 'unavailable';
     if (metadata === 'unavailable') issues.push('request metadata unavailable');
-    if (ex.post.state === 'none' && observed?.postSha256 !== undefined) issues.push('request payload presence disagreement');
+    if (ex.post.state === 'none' && (observed?.hasPostData === true || observed?.postSha256 !== undefined
+      || observed?.captureErrors?.some((error) => error.startsWith('request metadata:')))) issues.push('request payload presence disagreement');
     if (ex.failed !== undefined) issues.push(ex.failed);
     if (ex.status !== undefined && gateObserved(ex.status, ex.mime ?? '', SURFACE.transport.parseableMime).kind !== 'data') issues.push('unsafe response');
     if (observed?.status !== undefined && ex.status !== undefined && observed.status !== ex.status) issues.push('native/CDP response status disagreement');

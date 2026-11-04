@@ -86,6 +86,9 @@ test('request payload and status contradictions fail', () => {
   expect(qualify([cdp({ postSha256: 'a' })], [native({ post: { state: 'complete', sha256: 'b' } })], navigation, 'body').ok).toBe(false);
   expect(qualify([cdp({ postSha256: 'a' })], [native()]).ok).toBe(false);
   expect(qualify([cdp({ status: 201 })], [native()]).ok).toBe(false);
+  expect(qualify([cdp({ method: 'GET', hasPostData: true })], [native({ method: 'GET' })]).ok).toBe(false);
+  expect(qualify([cdp({ method: 'GET', captureErrors: ['request metadata: getter failed'] })],
+    [native({ method: 'GET' })]).ok).toBe(false);
 });
 
 test('identical concurrent candidates require reciprocal uniqueness, not a guessed ordering', () => {

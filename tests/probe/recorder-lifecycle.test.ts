@@ -37,11 +37,19 @@ test('complete event-carried POST entries avoid a renderer metadata lookup', asy
     { bytes: Buffer.from('secret=hidden').toString('base64') }] });
   h.finish(); h.rec.stop(); await h.rec.drain();
   expect(h.rec.exchanges[0]).toMatchObject({ form: { doc_id: 'event' }, postDataSource: 'postDataEntries',
-    sessionId: '', resourceType: 'Fetch', frameId: 'frame', loaderId: 'loader' });
+    hasPostData: true, sessionId: '', resourceType: 'Fetch', frameId: 'frame', loaderId: 'loader' });
   expect(h.dbg.sendCommand).not.toHaveBeenCalledWith('Network.getRequestPostData', expect.anything());
   expect(h.failure).not.toHaveBeenCalled();
   expect(JSON.stringify(h.rec.trace.events)).not.toContain('hidden');
   expect(JSON.stringify(h.rec.trace.events)).not.toContain('not-for-trace');
+});
+
+test('positive upload presence survives a failed getter even for an unexpected GET body', async () => {
+  const h = harness();
+  h.dbg.sendCommand.mockRejectedValueOnce(new Error('metadata unavailable'));
+  h.request({ method: 'GET', hasPostData: true });
+  h.finish(); h.rec.stop(); await h.rec.drain();
+  expect(h.rec.exchanges[0]).toMatchObject({ hasPostData: true, captureErrors: [expect.stringContaining('request metadata:')] });
 });
 
 test.each([

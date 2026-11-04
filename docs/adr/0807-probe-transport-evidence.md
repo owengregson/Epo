@@ -62,3 +62,18 @@ requests, ambiguous joins, payload/status contradictions, unsafe responses follo
 first-failure retention, blob ordering/caps, session identity and bounded settlement. Local
 experiments and the ensuing live result are recorded in the
 [overhaul QA record](../qa/plan-derived-overhaul-2026-11.md).
+
+## Bodyless request correction
+
+Electron 44.1.1 omits `uploadData` when its native request has no body
+([versioned implementation](https://github.com/electron/electron/blob/v44.1.1/shell/browser/api/electron_api_web_request.cc#L134-L139)).
+The native observer records an absent upload on GET/HEAD as `none`, retaining any supplied parts;
+an absent upload on other methods remains `missing`. Positive CDP upload evidence or a failed
+metadata getter contradicting native `none` still fails. Isolated Fetch/XHR controls confirmed
+the distinction, including empty versus absent POST uploads.
+
+The first independently captured live run completed every UI/read step but was marked stopped
+solely by this GET metadata classification bug. Its original report remains immutable. A separate,
+versioned offline qualification may apply the corrected rule to those retained native events and
+cross-check the saved CDP trace, body files and canonical Reader records. This sends no new account
+requests and does not rehabilitate earlier runs lacking independent native evidence.
