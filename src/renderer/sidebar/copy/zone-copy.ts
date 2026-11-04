@@ -58,7 +58,8 @@ export function sessionTip(s: Session): string {
     done: 'Done', partial: 'Partly done', now: 'Current', next: 'Next', later: 'Planned',
     skipped: 'Skipped — Epo wasn’t running', 'before-open': 'Before Epo opened',
   }[s.state];
-  return `Session ${s.idx + 1} · ${clock(s.startAt)}–${clock(s.endAt)} · ${state} · ${count(s.done)} of ${count(s.planned)} · ${s.pace} pace`;
+  const progress = s.planned > 0 ? ` · ${count(s.done)} of ${count(s.planned)}` : s.done > 0 ? ` · ${count(s.done)} done` : '';
+  return `Session ${s.idx + 1} · ${clock(s.startAt)}–${clock(s.endAt)} · ${state}${progress} · ${s.pace} pace`;
 }
 
 export const RESULTS = {
