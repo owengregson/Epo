@@ -95,6 +95,51 @@
   color: var(--faint);
 }
 
+/* The measured chart moved here from the retired Overview page. Paint only:
+   GrowthChart.tsx owns the reveal and its reduced-motion behavior. */
+.growth-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.growth-grid {
+  stroke: rgba(255, 255, 255, 0.05);
+  stroke-width: 1;
+}
+.growth-grid.dash {
+  stroke-dasharray: 2 4;
+}
+.growth-ylab {
+  fill: var(--faint);
+  font-size: var(--fs-caption);
+  font-family: var(--mono);
+}
+.growth-line {
+  stroke: var(--silver);
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.growth-area {
+  fill: url(#growthGrad);
+  opacity: 0;
+}
+.growth-dot {
+  fill: var(--chrome);
+  stroke: var(--bg);
+  stroke-width: 2;
+  opacity: 0;
+}
+.growth-x {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--sp-2);
+  font-size: var(--fs-small);
+  color: var(--faint);
+  letter-spacing: 0.03em;
+}
+
 /* ---------- where Epo finds people ---------- */
 .people-empty {
   display: flex;
