@@ -97,12 +97,12 @@ settings rules keep the retired sweep factor's range as `BOUNDS.SETTINGS_V1.SWEE
 | Path | From | To | ADR |
 |---|---|---|---|
 | `groups.RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS` | 2 h | 3 h | 0606 §1 |
+| `grid.caution=cautious.gapFloorSeconds` | 60 s | 70 s | 0606 §4 |
+| `personas.casual.gapFloorSeconds` | 60 s | 70 s | 0606 §4 |
 
-The Cautious gap floor 60 → 70 s (owner Q11, ADR 0606 §4) is decided and prepared as its own commit
-(`grid.caution=cautious.gapFloorSeconds` and `personas.casual.gapFloorSeconds`, 60 → 70). It lands once
-the frozen v1 pipeline resolves a named persona through `V1_DERIVED` instead of the live derivation:
-`sanitizeSettings` re-derives through `resolvePattern`, so the migration would otherwise read 70 from a
-v1 file that holds 60 and record a spurious `sessions.gapMinimum` override.
+The Cautious gap floor takes its derived 70 s (owner Q11, ADR 0606 §4). The frozen v1 sanitizer
+resolves named personas and custom patterns through `V1_DERIVED`, so migration still reads the
+historical 60 s value without inventing a `sessions.gapMinimum` override.
 
 **Overrides outside the registry** (covered by the override tests, not the tally): the advisory
 `ENGINE.ACTIONS_FAILING_HALT` entry and the advisory mechanism are gone — the loop reads

@@ -220,7 +220,7 @@
   "caution": {
    "cautious": {
     "hourlyCap": 14,
-    "minGapSeconds": 60
+    "minGapSeconds": 70
    },
    "standard": {
     "hourlyCap": 22,
