@@ -1,6 +1,5 @@
 import type { SentinelStatus } from '@/adapter/sentinel';
 import {
-  PRUNE_SCAN_FRESH_MS,
   PruneEngine,
   type PruneEngineDeps,
   type PruneScanFetch,
@@ -16,6 +15,7 @@ import {
   T0,
 } from '../kit/engine-harness';
 import { ProtectionRig } from '../kit/harness-journal';
+import { CENSUS_FRESH_MS, fakePrunePlan } from '../kit/harness-plan';
 
 interface World {
   store: KnowledgeStore;
@@ -52,6 +52,7 @@ const world = (following: string[], followers: string[]): World => {
       cfg: CFG,
       sleep: async () => {},
       rng: () => 0.5,
+      plan: fakePrunePlan(store),
       ...over,
     });
   return { store, clock, churn, boot };
@@ -89,7 +90,7 @@ describe('PruneEngine persistence across restarts', () => {
   test('a stale snapshot restores the counts but locks Run (freshness expired)', async () => {
     const w = world([OWN_PK, '1'], []);
     await w.boot().scan();
-    w.clock.advance(PRUNE_SCAN_FRESH_MS + 1);
+    w.clock.advance(CENSUS_FRESH_MS + 1);
 
     const s = w.boot().status();
     expect(s.candidates).toBe(1);
@@ -102,8 +103,13 @@ describe('PruneEngine persistence across restarts', () => {
     const w = world([OWN_PK, '1', '2', '3'], []);
     const first = w.boot();
     await first.scan();
-    // Stop the run after the first unfollow's delay begins — sleep interrupts it.
+    // Stop the run after the first unfollow's delay begins — sleep interrupts it (its dispatch armed the gap).
     let stopper!: PruneEngine;
+    const churn = w.churn.unfollow.bind(w.churn);
+    w.churn.unfollow = async (username: string) => {
+      w.store.setActionDelayDeadline(w.clock.now() + 60_000);
+      return churn(username);
+    };
     stopper = w.boot({ sleep: async () => stopper.stop() });
     await stopper.run();
     expect(w.churn.unfollows).toEqual(['u1']); // exactly one visited

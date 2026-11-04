@@ -1,6 +1,6 @@
 import { FakeClock } from '@/governors/clock';
 import { DelayManager } from '@/timing/delay-manager';
-import { jittered } from '@/timing/primitives';
+import { uniform } from '@/timing/primitives';
 
 /** A controllable sleep: records calls, resolves when released or aborted. */
 function makeSleepHarness() {
@@ -46,9 +46,9 @@ describe('DelayManager', () => {
   test('a policy wait samples with the injected rng', async () => {
     const clock = new FakeClock(0);
     const h = makeSleepHarness();
-    const rngValues = [0.5, 0.5]; // jittered midpoint, zero jitter term
+    const rngValues = [0.5]; // the uniform band's midpoint
     const dm = new DelayManager({ clock, sleep: h.sleep, rng: () => rngValues.shift() ?? 0.5 });
-    const p = dm.wait('k', jittered(60_000, 120_000, 30));
+    const p = dm.wait('k', uniform(60_000, 120_000));
     expect(h.calls).toEqual([90_000]);
     h.releases[0]();
     await p;

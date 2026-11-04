@@ -27,21 +27,16 @@ import {
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import type { EngineStatus } from '@/engine/engine';
 import { journaledMutation, refusalReason } from '@/engine/journaled-mutation';
-import type { PruneCandidate, PruneStatus } from '@/engine/prune-engine';
+import type { PruneStatus } from '@/engine/prune-engine';
 import { SystemClock } from '@/governors/clock';
 import type { CursorObserver } from '@/interaction/input-driver';
 import { referenceTempoSource } from '@/kernel/tempo';
-import {
-  shapeChainList,
-  shapeGraphSnapshot,
-  shapeQueueList,
-  shapeTargetDetail,
-} from '@/main/foundation-reads';
+import { shapeChainList, shapeGraphSnapshot, shapeQueueList, shapeTargetDetail } from '@/main/foundation-reads';
+import { boostControlOf, boostWindowOf } from '@/main/modules/boost-wiring';
 import type { BootSequencer } from '@/main/modules/boot-sequencer';
 import { notBuiltPruneStatus, notBuiltStatus } from '@/main/modules/not-built';
 import { Projections, type PushFn, UNWIRED_SOURCES } from '@/main/modules/projections';
 import { PruneControl } from '@/main/modules/prune-control';
-import { PruneSchedule } from '@/main/modules/prune-schedule';
 import { SeedCheckService } from '@/main/modules/seed-check';
 import { GraphSession } from '@/main/modules/session';
 import { settingsFactsSource } from '@/main/modules/settings-facts';
@@ -214,9 +209,11 @@ export class Foundation {
   readonly settings: SettingsService;
   /** The manual prune controls and the scheduled prune over them. */
   private readonly prune: PruneControl;
-  private readonly pruneSchedule: PruneSchedule;
   readonly seed: SeedCheckService;
   readonly facts = settingsFactsSource(() => this.graph, () => this.settings, () => this.seed);
+  /** The Boost commands (spec §8.5): the open graph's plan, the run intent, a Start queued like a user Start. */
+  readonly boost = boostControlOf({ graph: () => this.graph, runtime: () => this.runtime, startEngine: () => this.startEngine(),
+    seed: () => this.settings.effective().seed });
   /** The boot sequence (spec §12.8) and its graph-independent `boot` / `account` status contributors. */
   private readonly boot: BootSequencer;
   private readonly bootFields: readonly StatusContributor[];
@@ -286,7 +283,7 @@ export class Foundation {
       graph.engine.setOnline(this.lastOnline);
       this.settings.bindStore(settingsBinding(graph));
       this.projections.bind(graph.store, { status: () => this.builtStatus(), pruneStatus: () => graph.pruneEngine.status(),
-        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock }), settingsFacts: () => this.facts.facts() });
+        chainList: () => this.shapedChainList(graph), ...UNWIRED_SOURCES, ...liveSources(graph, () => this.runtime.snapshot(), { planDay: graph.plan.dayClock, censusFreshMs: () => graph.plan.service.snapshot(Date.now()).intent.patienceWaitMs, boost: (t) => boostWindowOf(graph, t) }), settingsFacts: () => this.facts.facts() });
     });
     this.session.session.onClose(() => {
       this.scheduler.stop('store:retention');
@@ -310,10 +307,6 @@ export class Foundation {
       manualDriving: () => this.manualDriving || this.boot.busy(), abortPreparation: () => this.preparation?.abort(),
       prepareMutation: (graph) => this.prepareMutation(graph), resumeDesiredRun: () => this.resumeDesiredRun(),
       notBuiltPruneStatus: () => this.notBuiltPruneStatus() });
-    this.pruneSchedule = new PruneSchedule({ control: this.prune, runtime: this.runtime, lease: this.lease,
-      scheduler: this.scheduler, disposeSignal: this.disposeAbort.signal, graph: () => this.graph,
-      builtGraph: () => this.builtGraph(), disposing: () => this.disposing,
-      resolveSettings: () => this.resolveSettings(), updateSettings: (partial) => this.updateSettings(partial) });
     this.seed = new SeedCheckService({ activity: this.activity, trackManualOp: (run) => this.trackManualOp(run),
       graph: () => this.graph, planDay: openGraphPlanDay(() => this.graph), busyDriverReason: () => this.busyDriverReason(),
       setManualDriving: (on) => { this.manualDriving = on; }, resumeDesiredRun: () => this.resumeDesiredRun(), changed: () => this.projections.pushAll() });
@@ -535,8 +528,8 @@ export class Foundation {
   // Auto-prune controls (Phase 5) — same tab/rim, mutually exclusive with growth
   // -------------------------------------------------------------------------
 
-  /** The persisted scan's candidates (see {@link PruneControl.pruneCandidates}). */
-  pruneCandidates(): Promise<PruneCandidate[]> { return this.prune.pruneCandidates(); }
+  /** The persisted scan's candidates, annotated by protection (see {@link PruneControl.pruneCandidates}). */
+  pruneCandidates(): ReturnType<PruneControl['pruneCandidates']> { return this.prune.pruneCandidates(); }
   /** Scan the own lists for prune candidates (see {@link PruneControl.scanPrune}); `'starting'` during startup. */
   scanPrune(): Promise<PruneScanResult> { return this.boot.busy() ? Promise.resolve({ ok: false, reason: 'starting', following: 0, followers: 0, candidates: [] }) : this.prune.scanPrune(); }
   /** Prepare, then start a prune run (see {@link PruneControl.startPrune}); `'starting'` during startup. */
@@ -776,9 +769,6 @@ export class Foundation {
     }
     // Release: restore the pre-tour state (the boot sequence heard the release and runs its deferred steps).
     this.lease.returnToGrowth('tour', this.graph?.engine ?? null);
-    // A scheduled prune that came due during the hold runs now, not one
-    // watcher interval later (docs/PRINCIPLES.md §3 — schedules are durable).
-    void this.maybeRunScheduledPrune();
   }
 
   /** Stop and drain all drivers before closing their store. Idempotent. */
@@ -861,9 +851,6 @@ export class Foundation {
       throw error;
     }
   }
-
-  /** Durable maintenance gets a bounded handoff from continuous growth. */
-  startScheduledPruneWatcher(intervalMs?: number): void { this.pruneSchedule.startScheduledPruneWatcher(intervalMs); }
 
   /** Observe useful progress; intentional waits and offline periods are exempt. */
   startEngineStepWatchdog(intervalMs = RECOVERY.STEP_WATCHDOG_CHECK_MS): void {
@@ -1116,9 +1103,6 @@ export class Foundation {
     }
   }
 
-  /** One scheduled-prune check (see {@link PruneSchedule.maybeRunScheduledPrune}). */
-  private maybeRunScheduledPrune(): Promise<void> { return this.pruneSchedule.maybeRunScheduledPrune(); }
-
   /** Drain manual operations before closing their store; disposal aborts their waits. */
   private async drainManualOps(): Promise<void> {
     if (this.inFlightManualOps.size === 0) return;
@@ -1215,7 +1199,7 @@ export class Foundation {
    */
   private shapedChainList(graph: BuiltGraph): ChainTargetView[] {
     try {
-      return shapeChainList(graph.store, graph.ownPk);
+      return shapeChainList(graph.store, graph.ownPk, { windowMs: this.resolveSettings().maxWaitForFollowbackDays * MS_PER_DAY, now: graph.clock.now() });
     } catch (e) {
       logger.error('foundation.chainList: failed', { error: String(e) });
       return [];
@@ -1236,8 +1220,8 @@ export class Foundation {
     if (graph === null) return null;
     try {
       return shapeTargetDetail(graph.store, graph.ownPk, targetPk, {
-        now: graph.clock.now(),
-        plannedToday: graph.rate.plannedToday(),
+        now: graph.clock.now(), followbackWindowMs: this.resolveSettings().maxWaitForFollowbackDays * MS_PER_DAY,
+        plannedToday: graph.plan.service.view(graph.clock.now()).plan.volume.planned,
       });
     } catch (e) {
       logger.error('foundation.chainDetail: failed', { error: String(e) });

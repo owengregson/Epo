@@ -180,10 +180,9 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   shell.loadDashboard();
 
   // The startup sequence (spec §12.8): R2/R3 store-first, the landing and confirm-account behind the splash,
-  // catch-up and a crash's resume after the reveal, all under the startup lease. The opt-in scheduled prune
-  // starts once that lease is released, so due work still runs at launch and never contends with it.
+  // catch-up and a crash's resume after the reveal, all under the startup lease. Cleanup runs inside the
+  // plan's sessions (spec §14 C14): there is no scheduled bulk prune to start after it.
   void found.startBoot()
-    .then(() => found.startScheduledPruneWatcher())
     .catch((error: unknown) => logger.error('launch: startup sequence failed', { error: String(error) }));
 
   // Engine step watchdog: recovers a growth loop wedged on a never-settling

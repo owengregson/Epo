@@ -24,7 +24,7 @@ interface Tab {
 const TABS: Readonly<Record<StageMode, Tab>> = {
   tab: { label: 'Live', icon: 'instagram', brand: true },
   people: { label: 'People', icon: 'users' },
-  graph: { label: 'Graph', icon: 'circle-nodes' },
+  graph: { label: 'Graph', icon: 'diagram-project' },
   prune: { label: 'Prune', icon: 'user-minus' },
   settings: { label: 'Settings', icon: 'sliders' },
 };

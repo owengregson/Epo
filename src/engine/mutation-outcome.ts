@@ -10,12 +10,11 @@ export type DispatchEvidence = 'instagram' | 'none';
 export function normalizeMutationOutcome(outcome: ChurnActionOutcome, dispatched: boolean,
   evidence: DispatchEvidence = 'instagram'): ChurnActionOutcome {
   if (!dispatched || outcome.status !== 'failed') return outcome;
-  // The churn port's cause vocabulary has no `unverified` yet: the absent cause on an unverified click is it.
-  if (evidence === 'none') return { status: 'blocked', unverifiedClick: true };
+  if (evidence === 'none') return { status: 'blocked', cause: 'unverified', unverifiedClick: true };
   return { status: 'blocked', cause: outcome.cause === 'rate-limited' ? 'rate-limited' : 'tab-unhealthy',
     unverifiedClick: true };
 }
 
 /** Whether an outcome is the unverified one: dispatched, unanswered, and no rate-wall signal by itself. */
 export const isUnverifiedOutcome = (outcome: ChurnActionOutcome | null | undefined): boolean =>
-  outcome?.status === 'blocked' && outcome.unverifiedClick === true && outcome.cause === undefined;
+  outcome?.status === 'blocked' && outcome.cause === 'unverified';

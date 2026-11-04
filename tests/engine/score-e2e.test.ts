@@ -30,10 +30,7 @@ test('E2E: Scanner ranking → persisted score → nextDue picks the best candid
 
   const sched = new ChurnScheduler({
     store, clock,
-    rate: new RateGovernor(store, clock, {
-      dailyHardCeiling: 100, dailyOperatingRate: 100, minDelayMs: 0, maxDelayMs: 0,
-      jitterPercent: 0, activeHoursStart: 0, activeHoursEnd: 24,
-    }),
+    rate: new RateGovernor(store, clock, { dailyHardCeiling: 100 }),
     actions: { follow: async () => ({ status: 'ok' as const }), unfollow: async () => ({ status: 'ok' as const }) },
     cfg: DEFAULT_CONFIGS.churn,
   });

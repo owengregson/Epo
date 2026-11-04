@@ -19,11 +19,15 @@ const FEED_OP = { 'x-fb-friendly-name': 'PolarisActivityFeedStoriesViewQuery' };
 const PANEL_OP = { 'x-fb-friendly-name': 'PolarisActivityFeedFollowRequestsViewQuery' };
 const reader = new Reader();
 
+/** Story epochs sit in the plausible range the reader enforces (I9: [2010, now + 1 day]). */
+const EPOCH_S = 1_700_000_000;
+/** A story's time in ms, `s` seconds past the base. */
+const at = (s: number): number => (EPOCH_S + s) * 1_000;
 const followStory = (pk: string, atSec: number): unknown => ({
   story_type: 101,
-  args: { profile_id: pk, profile_name: `u${pk}`, timestamp: atSec, text: `u${pk} started following you.` },
+  args: { profile_id: pk, profile_name: `u${pk}`, timestamp: EPOCH_S + atSec, text: `u${pk} started following you.` },
 });
-const likeStory = (pk: string): unknown => ({ story_type: 60, args: { profile_id: pk, text: 'liked', timestamp: 1_000 } });
+const likeStory = (pk: string): unknown => ({ story_type: 60, args: { profile_id: pk, text: 'liked', timestamp: EPOCH_S + 1_000 } });
 
 /** The GraphQL feed body; `preview` fills the sibling requester list. */
 const feed = (stories: unknown[], preview: Array<{ pk: string; username: string }> = []): unknown => ({
@@ -124,7 +128,7 @@ test('a first pass reads one body, hands every dated event over, and sets the wa
   const { res, heard } = await pass(source, null);
   expect(heard.events.map((e) => e.pk)).toEqual(['111', '222']);
   expect(res).toMatchObject({ ok: true, bodies: 1, fresh: 2, requesters: { source: 'none', count: 0 } });
-  if (res.ok) expect(res.next).toMatchObject({ atMs: 2_000_000, keysAtMs: ['111|2000000'], gap: null });
+  if (res.ok) expect(res.next).toMatchObject({ atMs: at(2_000), keysAtMs: [`111|${at(2_000)}`], gap: null });
   expect(drawer.scrolls).toBe(0);
   expect(drawer.closeClicks).toBe(1);
 });
@@ -149,7 +153,7 @@ test('events at or below the watermark write nothing; the reached watermark is n
   const { tab, drawer, source } = build();
   drawer.onOpen = () => tab.emit(mkResp(GRAPHQL_URL, feed([followStory('111', 3_000), followStory('222', 1_000)]), FEED_OP));
   drawer.onScroll = () => true;
-  const { res, heard } = await pass(source, mark(2_000_000));
+  const { res, heard } = await pass(source, mark(at(2_000)));
   expect(heard.events.map((e) => e.pk)).toEqual(['111']);
   expect(drawer.scrolls).toBe(0);
   if (res.ok) expect(res.next.gap).toBeNull();
@@ -162,10 +166,10 @@ test('an unreached watermark scrolls at most the runaway rounds, stops when a ro
     if (drawer.scrolls === 1) tab.emit(mkResp(GRAPHQL_URL, feed([followStory('222', 8_000)]), FEED_OP));
     return true;
   };
-  const { res, heard } = await pass(source, mark(1_000_000));
+  const { res, heard } = await pass(source, mark(at(1_000)));
   expect(heard.events.map((e) => e.pk)).toEqual(['111', '222']);
   expect(drawer.scrolls).toBe(2); // the second round added nothing
-  if (res.ok) expect(res.next.gap).toEqual({ fromAtMs: 1_000_000, toAtMs: 8_000_000 });
+  if (res.ok) expect(res.next.gap).toEqual({ fromAtMs: at(1_000), toAtMs: at(8_000) });
 });
 
 test('the Follows chip is pressed once ready, and the body after the press counts as filtered', async () => {

@@ -37,8 +37,8 @@ const buildSource = (opts: {
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
 
   const pages: TabResponse[] = [
-    mkResp(followersUrl('42'), followersBody(['a', 'b'], 'C1', true)), // on open
-    mkResp(followersUrl('42', 'C1'), followersBody(['c'], 'C2', true)), // scroll 1
+    mkResp(followersUrl('42'), followersBody(['11', '12'], 'C1', true)), // on open
+    mkResp(followersUrl('42', 'C1'), followersBody(['13'], 'C2', true)), // scroll 1
     mkResp(followersUrl('42', 'C2'), followersBody([], 'C2', true)), // scroll 2: no new
     mkResp(followersUrl('42', 'C2'), followersBody([], 'C2', true)), // scroll 3: no new → stop
   ];
@@ -64,10 +64,10 @@ test('fetchAllPks scrapes the whole followers list in one call and stores every 
 
   const { pks } = await source.fetchAllPks();
 
-  expect([...pks].sort()).toEqual(['a', 'b', 'c']);
+  expect([...pks].sort()).toEqual(['11', '12', '13']);
   expect(actor.openCalls).toBe(1); // the FOLLOWERS dialog, never following
   expect(actor.openFollowingCalls).toBe(0);
-  for (const pk of ['a', 'b', 'c']) {
+  for (const pk of ['11', '12', '13']) {
     expect(store.getAccount(pk)?.username).toBe(`u${pk}`);
   }
 });
@@ -77,9 +77,9 @@ test('f11: without an injected store the scrape still yields pks (no observation
 
   const { pks } = await source.fetchAllPks();
 
-  expect([...pks].sort()).toEqual(['a', 'b', 'c']);
+  expect([...pks].sort()).toEqual(['11', '12', '13']);
   // Nothing was written anywhere (the separate `store` fixture stays empty).
-  expect(store.getAccount('a')).toBeNull();
+  expect(store.getAccount('11')).toBeNull();
 });
 
 test('fetchAllPks threads onProgress into the scrape (live mid-scan counts)', async () => {
@@ -98,7 +98,7 @@ test('fetchAllPks threads shouldStop into the scrape (immediate stop: no scroll,
   const { pks } = await source.fetchAllPks({ shouldStop: () => true });
 
   expect(actor.scrollCalls).toBe(0);
-  expect([...pks].sort()).toEqual(['a', 'b']); // only the on-open page landed
+  expect([...pks].sort()).toEqual(['11', '12']); // only the on-open page landed
 });
 
 test('fetchAllPks threads the jittered scan pacing into the scrape', async () => {
@@ -116,7 +116,7 @@ test('fetchAllPks threads the jittered scan pacing into the scrape', async () =>
     },
     rng: () => 0.5,
   });
-  actor.onOpen = () => tab.emit(mkResp(followersUrl('42'), followersBody(['a'], null, false)));
+  actor.onOpen = () => tab.emit(mkResp(followersUrl('42'), followersBody(['11'], null, false)));
 
   const source = new AdapterBackedOwnFollowersSource({
     pageReader,
@@ -127,7 +127,7 @@ test('fetchAllPks threads the jittered scan pacing into the scrape', async () =>
 
   const { pks } = await source.fetchAllPks({ scrollMinMs: 1_000, scrollMaxMs: 3_000 });
 
-  expect(pks).toEqual(['a']);
+  expect(pks).toEqual(['11']);
   // Every wait the scrape took was the deterministic midpoint draw, not 2000ms fixed.
   expect(sleeps.length).toBeGreaterThan(0);
   for (const ms of sleeps) expect(ms).toBe(2_000);
@@ -178,14 +178,14 @@ describe('direct list-page walker fast path', () => {
 
   test('fetchAllPks pages the API directly — the followers dialog is never opened', async () => {
     const { source, actor } = buildWithWalker([
-      okEnv(followersBody(['a', 'b'], 'C1', true)),
-      okEnv(followersBody(['c'], null, false)),
+      okEnv(followersBody(['11', '12'], 'C1', true)),
+      okEnv(followersBody(['13'], null, false)),
       okEnv(followersBody([], null, false)), // the walker's end-verification probe
     ]);
 
     const { pks } = await source.fetchAllPks();
 
-    expect([...pks].sort()).toEqual(['a', 'b', 'c']);
+    expect([...pks].sort()).toEqual(['11', '12', '13']);
     expect(actor.openCalls).toBe(0);
     expect(actor.scrollCalls).toBe(0);
   });
@@ -195,11 +195,11 @@ describe('direct list-page walker fast path', () => {
       { ok: false, status: 429, contentType: 'text/html', textHead: 'wall' },
     ]);
     actor.onOpen = () =>
-      tab.emit(mkResp(followersUrl('42'), followersBody(['d'], null, false)));
+      tab.emit(mkResp(followersUrl('42'), followersBody(['14'], null, false)));
 
     const { pks } = await source.fetchAllPks();
 
-    expect(pks).toEqual(['d']);
+    expect(pks).toEqual(['14']);
     expect(actor.openCalls).toBe(1);
   });
 });
@@ -211,7 +211,7 @@ test('every parsed follower row writes its follows-us edge IMMEDIATELY — a sto
   const actor = new FakeActor();
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
   actor.onOpen = () =>
-    tab.emit(mkResp(followersUrl('42'), followersBody(['a', 'b'], 'C1', true)));
+    tab.emit(mkResp(followersUrl('42'), followersBody(['11', '12'], 'C1', true)));
 
   const source = new AdapterBackedOwnFollowersSource({
     pageReader,
@@ -227,7 +227,7 @@ test('every parsed follower row writes its follows-us edge IMMEDIATELY — a sto
 
   // The knowledge already paid for is in the graph anyway — accounts AND the
   // follows-us edges the follow-back watcher's zero-request pass reads.
-  for (const pk of ['a', 'b']) {
+  for (const pk of ['11', '12']) {
     expect(store.getAccount(pk)?.username).toBe(`u${pk}`);
     expect(store.getEdge(pk, 'me-pk', 'follows')?.status).toBe('active');
   }

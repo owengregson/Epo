@@ -36,6 +36,7 @@ import {
   type PruneEngineDeps,
   type PruneOwnFollowers,
   type PruneOwnFollowing,
+  type PrunePlan,
   type PruneScanFetch,
   type PruneScanOpts,
   type PruneStatus,
@@ -50,7 +51,7 @@ import type { AccountFields, FollowRecord } from '@/store/types';
 import { DelayManager, type DelayManagerDeps } from '@/timing/delay-manager';
 import { DEFAULT_CONFIGS } from './configs';
 import { FakeActions, FakePruneActions, NO_UNFOLLOW_FEED } from './harness-journal';
-import { memorySweepCadence } from './harness-plan';
+import { FakePlan, fakePrunePlan, memorySweepCadence } from './harness-plan';
 import { FakeFollowback } from './harness-reopen';
 import { openTestStore } from './store';
 
@@ -59,8 +60,10 @@ export { FakeActions, FakeFollowback, FakePruneActions, memorySweepCadence, NO_U
 
 /** Local noon — every harness starts here unless a test says otherwise. */
 export const T0 = Date.parse('2026-08-12T12:00:00');
-/** The growth harness's fixed paced delay (min = max, jitter 0). */
+/** The growth harness's fixed paced delay: the gap each dispatch arms. */
 export const DELAY_MS = 240_000;
+/** The prune harness's dispatch gap: the shared deadline a cleanup run waits between unfollows. */
+export const PRUNE_GAP_MS = 20_000;
 export const HOUR = 3_600_000;
 export const OWN_PK = 'ME';
 
@@ -76,9 +79,9 @@ export const rec = (over: Partial<FollowRecord> & { accountPk: string }): Follow
 
 const openStores: KnowledgeStore[] = [];
 
-/** Open a `:memory:` store the kit will close after the current test file. */
-export function kitStore(): KnowledgeStore {
-  const store = openTestStore(':memory:');
+/** Open a `:memory:` store the kit will close after the current test file (`rng` seeds its install entropy). */
+export function kitStore(rng?: () => number): KnowledgeStore {
+  const store = openTestStore(':memory:', rng === undefined ? {} : { rng });
   openStores.push(store);
   return store;
 }
@@ -156,19 +159,24 @@ export class FakeChurn implements EngineChurn {
   lastCause: 'rate-limited' | 'tab-unhealthy' | null = null;
   resetCalls = 0;
   resetBlockedCalls = 0;
+  /** The dispatch closure's arm (the cadence in production): called when an outcome dispatched. */
+  onDispatch: ((actAt: number) => void) | null = null;
   constructor(private readonly events: string[]) {}
   advanceTimers(): void {
     this.advanceCalls += 1;
   }
-  nextDue(): FollowRecord | null {
-    return this.due[0] ?? null;
+  /** The first due record of the asked kind (unfollows are `unfollow_queued`), or the first of any. */
+  nextDue(_now?: number, kind?: 'follow' | 'unfollow'): FollowRecord | null {
+    if (kind === undefined) return this.due[0] ?? null;
+    return this.due.find((r) => (r.state === 'unfollow_queued') === (kind === 'unfollow')) ?? null;
   }
-  async execute(r: FollowRecord): Promise<'ok' | 'failed' | 'blocked' | 'simulated' | 'noop'> {
+  async execute(r: FollowRecord, actAt = 0): Promise<'ok' | 'failed' | 'blocked' | 'simulated' | 'noop'> {
     // A blocked outcome leaves the record completely untouched (still due),
     // exactly like the real scheduler.
     if (this.outcome !== 'blocked') {
       this.due = this.due.filter((d) => d.accountPk !== r.accountPk);
     }
+    if (this.outcome === 'ok' || this.outcome === 'failed') this.onDispatch?.(actAt);
     this.executed.push(r);
     this.events.push(`execute:${r.accountPk}`);
     return this.outcome;
@@ -299,17 +307,7 @@ export const testDeps = (over: Partial<EngineDeps> = {}): EngineDeps => {
   const base: EngineDeps = {
     store,
     clock,
-    rate:
-      over.rate ??
-      new RateGovernor(store, clock, {
-        dailyHardCeiling: 1000,
-        dailyOperatingRate: 1000,
-        minDelayMs: DELAY_MS,
-        maxDelayMs: DELAY_MS,
-        jitterPercent: 0,
-        activeHoursStart: 0,
-        activeHoursEnd: 24,
-      }, () => 0),
+    rate: over.rate ?? new RateGovernor(store, clock, { dailyHardCeiling: 1000 }),
     sentinel: new FakeSentinel(),
     churn: new FakeChurn([]),
     scanner: new FakeScanner(store),
@@ -318,6 +316,8 @@ export const testDeps = (over: Partial<EngineDeps> = {}): EngineDeps => {
     acquisition: new FakeAcquisition(),
     enricher: { enrich: () => Promise.resolve(0) },
     settings: { ...DEFAULT_SETTINGS, seed: 'seeduser' },
+    // The plan: an open session with room (a suite steering it passes its own).
+    pacing: new FakePlan(clock.now() + HOUR, store),
     delays: new DelayManager({ clock, sleep: noopSleep }),
     unfollowFeed: NO_UNFOLLOW_FEED,
     sweepCadence: memorySweepCadence(),
@@ -334,7 +334,6 @@ export const testDeps = (over: Partial<EngineDeps> = {}): EngineDeps => {
 export interface EngineHarnessOpts {
   startAt?: number;
   ceiling?: number;
-  activeHours?: { start: number; end: number };
   settings?: Partial<Settings>;
   /** default true: t1/'targetone' active at chainIndex 0 */
   seedTarget?: boolean;
@@ -343,7 +342,7 @@ export interface EngineHarnessOpts {
   /** wire the REAL Scanner over the store (pool-refill pipeline tests) */
   useRealScanner?: boolean;
   rng?: () => number;
-  /** organic pacing model (absent → legacy metronome) */
+  /** The plan (absent: an open session with room, arming each dispatch DELAY_MS). */
   pacing?: EnginePacing;
   unfollowFeed?: EngineUnfollowFeed;
   sweepCadence?: { isDue(now: number, everyMs: number): boolean; markRun(now: number): void };
@@ -377,27 +376,16 @@ export interface EngineHarness {
 
 export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness => {
   const startAt = opts.startAt ?? T0;
-  const hours = opts.activeHours ?? { start: 0, end: 24 };
   const store = kitStore();
   const clock = new FakeClock(startAt);
   const events: string[] = [];
   const statuses: EngineStatus[] = [];
   const halts: string[] = [];
 
-  const rateCfg: RateGovernorConfig = {
-    dailyHardCeiling: opts.ceiling ?? 1000,
-    dailyOperatingRate: opts.ceiling ?? 1000,
-    minDelayMs: DELAY_MS,
-    maxDelayMs: DELAY_MS,
-    jitterPercent: 0,
-    activeHoursStart: hours.start,
-    activeHoursEnd: hours.end,
-  };
+  const rateCfg: RateGovernorConfig = { dailyHardCeiling: opts.ceiling ?? 1000 };
   const settings: Settings = {
     ...DEFAULT_SETTINGS,
     seed: 'seeduser',
-    activeHoursStart: hours.start,
-    activeHoursEnd: hours.end,
     followbackSweepHours: Number.POSITIVE_INFINITY, // sweeps off unless a test opts in
     lowWaterCandidates: 0, // refills off unless a test opts in
     ...opts.settings,
@@ -405,6 +393,8 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
 
   const sentinel = new FakeSentinel(opts.sentinel ?? []);
   const churn = new FakeChurn(events);
+  // The dispatch closure arms the gap (the cadence in production): the harness's fixed paced delay.
+  churn.onDispatch = (at) => store.setActionDelayDeadline(at + DELAY_MS);
   const scanner = new FakeScanner(store);
   const chain = new FakeChain();
   const followback = new FakeFollowback();
@@ -429,7 +419,7 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
       store,
       clock,
       reentry,
-      rate: new RateGovernor(store, clock, rateCfg, () => 0),
+      rate: new RateGovernor(store, clock, rateCfg),
       sentinel,
       churn,
       scanner: opts.useRealScanner === true ? new Scanner({ store }) : scanner,
@@ -441,7 +431,7 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
       delays: opts.delays?.({ clock, rng: opts.rng, sleep: sleep.fn }) ??
         new DelayManager({ clock, rng: opts.rng, sleep: sleep.fn }),
       rng: opts.rng,
-      pacing: opts.pacing,
+      pacing: opts.pacing ?? new FakePlan(startAt + HOUR, store),
       unfollowFeed: opts.unfollowFeed ?? NO_UNFOLLOW_FEED,
       sweepCadence: opts.sweepCadence ?? memorySweepCadence(),
       tabDiag: opts.tabDiag ?? HEALTHY_TAB,
@@ -473,10 +463,6 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
 
 export const PRUNE_CFG: PruneConfig = {
   dailyLimit: 50,
-  whitelist: [],
-  minDelayMs: 60_000,
-  maxDelayMs: 60_000, // equal bounds; the harness RNG pins the positive offset
-  jitterPercent: 0,
   scanMinMs: 1_000,
   scanMaxMs: 3_000,
 };
@@ -488,7 +474,8 @@ export interface PruneHarnessOpts {
   sentinel?: FakeSentinel;
   sleep?: SleepFn;
   refreshOwnStats?: () => Promise<void>;
-  cycleStartMs?: (now: number) => number;
+  /** The plan the run answers to (absent: every candidate admitted, no shared deadline armed). */
+  plan?: PrunePlan;
   /** build the shared DelayManager (a spy, to observe registered wait keys) */
   delays?: (deps: DelayManagerDeps) => DelayManager;
 }
@@ -518,6 +505,13 @@ export const makePruneHarness = (opts: PruneHarnessOpts): PruneHarness => {
   const ownFollowing = new FakeListSource(opts.following);
   const ownFollowers = new FakeListSource(opts.followers);
   const churn = new FakePruneActions();
+  // The dispatch closure arms the shared gap (the cadence in production): the run waits it between unfollows.
+  const unfollow = churn.unfollow.bind(churn);
+  churn.unfollow = async (username: string) => {
+    const outcome = await unfollow(username);
+    if (outcome.status === 'ok' || outcome.status === 'failed') store.setActionDelayDeadline(clock.now() + PRUNE_GAP_MS);
+    return outcome;
+  };
   const sentinel = opts.sentinel ?? new FakeSentinel();
   const sleeps: number[] = [];
   const statuses: PruneStatus[] = [];
@@ -561,7 +555,7 @@ export const makePruneHarness = (opts: PruneHarnessOpts): PruneHarness => {
     onStatus: (s) => statuses.push(s),
     onRunComplete: (at) => completedAt.push(at),
     refreshOwnStats: opts.refreshOwnStats,
-    cycleStartMs: opts.cycleStartMs,
+    plan: opts.plan ?? fakePrunePlan(store, { limit: opts.cfg?.dailyLimit ?? PRUNE_CFG.dailyLimit }),
   };
   return {
     engine: new PruneEngine(deps),
@@ -593,15 +587,7 @@ export const makeChurnHarness = (opts?: {
 }): ChurnHarness => {
   const store = kitStore();
   const clock = new FakeClock(T0);
-  const rate = new RateGovernor(store, clock, {
-    dailyHardCeiling: opts?.ceiling ?? 1000,
-    dailyOperatingRate: opts?.ceiling ?? 1000,
-    minDelayMs: 0,
-    maxDelayMs: 0,
-    jitterPercent: 0,
-    activeHoursStart: 0,
-    activeHoursEnd: 24,
-  });
+  const rate = new RateGovernor(store, clock, { dailyHardCeiling: opts?.ceiling ?? 1000 });
   const actions = new FakeActions();
   const sched = new ChurnScheduler({
     store,

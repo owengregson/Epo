@@ -4,13 +4,14 @@
  * and are built at launch. It returns its startup steps and status contributors like every other wiring module.
  */
 
-import { PRUNE_SCAN_FRESH_MS, type PruneStatus } from '@/engine/prune-engine';
+import type { PruneStatus } from '@/engine/prune-engine';
 import type { RecoveryIncident, RecoverySnapshot } from '@/engine/recovery';
 import { peekResumeTarget, type ResumeFrontier } from '@/engine/resume-target';
 import { SourceFrontier } from '@/engine/source-frontier';
+import { LIVE } from '@/kernel/live-policy';
 import type { PlanDayClock } from '@/kernel/plan';
 import { MS_PER_MINUTE } from '@/kernel/units';
-import { type FeedContext, keepShapedAt, shapeFeed } from '@/main/modules/feed-projection';
+import { type BoostWindowLite, type FeedContext, keepShapedAt, shapeFeed } from '@/main/modules/feed-projection';
 import type { AwaySummaryLite, FeedView } from '@/shared/feed';
 import type { AwaySummary } from '@/shared/reopen-view';
 import type { StatusFields } from '@/shared/status-fields';
@@ -64,7 +65,9 @@ export const SHUTDOWN_INCIDENT = 'intentional-shutdown';
 
 /** What the live sources read from a built graph. */
 export interface LiveGraph {
-  readonly store: Pick<KnowledgeStore, 'feed' | 'followersBaselineAt' | 'getRecoveryState' | 'getRecoveryLastIncident' | 'reopen'>;
+  readonly store: Pick<
+    KnowledgeStore, 'feed' | 'followersBaselineAt' | 'getRecoveryState' | 'getRecoveryLastIncident' | 'protectionFacts' | 'reopen'
+  >;
   readonly ownPk: string;
   readonly pruneEngine: { status(): Pick<PruneStatus, 'scanReady' | 'scanAt'> };
 }
@@ -81,9 +84,9 @@ export interface LiveSources {
 }
 
 /** When the cached census stops being runnable; one still runnable past that is re-checked at the next push. */
-export function censusFreshEnd(prune: Pick<PruneStatus, 'scanReady' | 'scanAt'>, now: number): number | null {
+export function censusFreshEnd(prune: Pick<PruneStatus, 'scanReady' | 'scanAt'>, now: number, freshMs: number): number | null {
   if (!prune.scanReady || prune.scanAt === null) return null;
-  return Math.max(prune.scanAt + PRUNE_SCAN_FRESH_MS, now) + 1;
+  return Math.max(prune.scanAt + freshMs, now) + 1;
 }
 
 function parseMeta<T>(raw: string | null, key: string): Partial<T> | null {
@@ -119,6 +122,12 @@ function lastShutdown(incidents: RuntimeIncidents['incidents']): number | null {
   return at;
 }
 
+/** The newest kept reviews (protection kept an account from an unfollow); the feed's window drops older ones. */
+function keptRows(graph: LiveGraph): NonNullable<FeedContext['kept']> {
+  return graph.store.protectionFacts.keptPage(0, LIVE.FEED_LIMIT).rows
+    .map((r) => ({ pk: r.pk, username: r.username, reason: r.reason, keptAt: r.keptAt }));
+}
+
 /**
  * The feed and expiry sources over one built graph: the feed keeps its previous view while only the clock moved
  * (so the deduplicated row stays quiet), and the expiry is the earlier of the plan-day roll and the census end.
@@ -126,8 +135,8 @@ function lastShutdown(incidents: RuntimeIncidents['incidents']): number | null {
 export function liveSources(
   graph: LiveGraph,
   runtime: () => RuntimeIncidents,
-  /** The plan's plan-day boundary: the feed's day groups and its expiry roll there (spec §4.4). */
-  opts: { planDay: PlanDayClock; now?: () => number },
+  /** The plan's plan-day boundary: the feed's day groups and its expiry roll there (spec §4.4); the plan's census freshness. */
+  opts: { planDay: PlanDayClock; censusFreshMs: () => number; now?: () => number; boost?: (now: number) => BoostWindowLite | null },
 ): LiveSources {
   const { planDay } = opts;
   const now = opts.now ?? (() => Date.now());
@@ -143,18 +152,20 @@ export function liveSources(
   return {
     feed: () => {
       const { incidents } = runtime();
+      const t = now();
       // The catch-up's own window replaces the last-quit divider once a launch sweep has run.
       const away = awayRow(graph.store.reopen.get()?.lastCatchUp);
       shown = keepShapedAt(shown, shapeFeed(graph.store.feed, {
-        now: now(), ownPk: graph.ownPk, baselineAt: graph.store.followersBaselineAt(), planDay, incidents,
-        recoveryIncident: recovery(), awayFrom: away?.awayFrom ?? lastShutdown(incidents), away,
+        now: t, ownPk: graph.ownPk, baselineAt: graph.store.followersBaselineAt(), planDay, incidents,
+        recoveryIncident: recovery(), awayFrom: away?.awayFrom ?? lastShutdown(incidents), away, kept: keptRows(graph),
+        boost: opts.boost?.(t) ?? null,
       }));
       return shown;
     },
     expiresAt: () => {
       const t = now();
       const roll = planDay.window(t).endsAt;
-      const census = censusFreshEnd(graph.pruneEngine.status(), t);
+      const census = censusFreshEnd(graph.pruneEngine.status(), t, opts.censusFreshMs());
       return census === null ? roll : Math.min(roll, census);
     },
   };

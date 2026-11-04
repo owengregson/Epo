@@ -1,10 +1,11 @@
-import { referenceGapMs } from '@/engine/pacers';
 import { PlanService } from '@/governors/plan-service';
 import { intensityAt } from '@/kernel/plan/circadian';
 import { automaticDayMax } from '@/kernel/plan/volume';
+import { createMutationCadence } from '@/main/services/mutation-cadence';
 import { NOISE } from '@/timing/config';
 import { boundarySeedKey, cadenceFactor, jitterBoundary } from '@/timing/noise';
-import { jittered, sample } from '@/timing/primitives';
+import { sample } from '@/timing/primitives';
+import { legacyJittered } from '../kit/legacy-pacer-oracle';
 import { memoryPlanStore, planDeps, testIntent } from '../kit/plan';
 
 /**
@@ -33,7 +34,9 @@ function simulatePlan(seed: number): { events: number[]; days: Map<string, numbe
   const store = memoryPlanStore();
   const clock = { t: START };
   const plan = new PlanService(planDeps(store, clock, { intent: () => INTENT, installEntropy: seed }));
-  const rng = mulberry32(seed);
+  // The production draw: the cadence arms the session's gap at each dispatch (no deadline store here).
+  const cadence = createMutationCadence({ plan, store: { getActionDelayDeadline: () => null,
+    setActionDelayDeadline: () => undefined, recentMutationTimes: (since) => store.recentMutationTimes(since) } });
   const events: number[] = [];
   const days = new Map<string, number>();
   const end = START + DAYS * MS_PER_DAY;
@@ -41,11 +44,15 @@ function simulatePlan(seed: number): { events: number[]; days: Map<string, numbe
   for (let guard = 0; t < end && guard < 200_000; guard += 1) {
     clock.t = t;
     const view = plan.ensure(t);
-    if (view.open !== null && view.used.auto < Math.max(view.plan.volume.drawn, view.plan.volume.planned)) {
+    const admission = cadence.preflight('follow', 'growth', t);
+    if (view.open !== null && admission.ok) {
+      const deadline = cadence.armAtDispatch('follow', 'growth', t);
       store.mutations.push({ at: t, kind: 'follow', auto: true });
       events.push(t);
       days.set(view.window.key, (days.get(view.window.key) ?? 0) + 1);
-      t += referenceGapMs(INTENT, store.recentMutationTimes(t - MS_PER_HOUR), t, rng);
+      t = deadline;
+    } else if (!admission.ok && admission.until !== null && admission.until > t && view.open !== null) {
+      t = admission.until;
     } else {
       const next = view.nextSessionAt ?? view.window.endsAt;
       t = next > t ? next : t + 60_000;
@@ -83,7 +90,7 @@ function simulateLegacy(seed: number): number[] {
     }
     events.push(t);
     perDay.set(k, count + 1);
-    t += sample(jittered(180_000, 420_000, 30), rng);
+    t += sample(legacyJittered(180_000, 420_000, 30), rng);
   }
   return events;
 }

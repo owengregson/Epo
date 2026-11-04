@@ -27,6 +27,7 @@ import { BOUNDS, PACING_BASE_MS, POLICY, PREFERENCES, SCALES } from './policy';
 import { BOUNDS_REENTRY } from './reentry-policy';
 import { RENDERER_HEALTH } from './renderer-health-policy';
 import { RUNTIME_BOUNDS } from './runtime-bounds';
+import { RUNTIME_POLICY } from './runtime-policy';
 import { SCRUB_POLICY } from './scrub-policy';
 import { SETTINGS_GUARDS, SETTINGS_POLICY } from './settings-policy';
 import { SHELL_GEOMETRY } from './shell-geometry';
@@ -77,7 +78,7 @@ const TABLES = {
   PACING_BASE_MS: [PACING_BASE_MS, 'policy'], PREFERENCES: [PREFERENCES, 'policy'],
   BOUNDS_REENTRY: [BOUNDS_REENTRY, 'bound'],
   RENDERER_HEALTH: [RENDERER_HEALTH, 'bound'],
-  RUNTIME_BOUNDS: [RUNTIME_BOUNDS, 'bound'],
+  RUNTIME_BOUNDS: [RUNTIME_BOUNDS, 'bound'], RUNTIME_POLICY: [RUNTIME_POLICY, 'bound'],
   SCRUB_POLICY: [SCRUB_POLICY, 'bound'],
   SETTINGS_POLICY: [SETTINGS_POLICY, 'policy'], SETTINGS_GUARDS: [SETTINGS_GUARDS, 'bound'],
   SHELL_GEOMETRY: [SHELL_GEOMETRY, 'bound'],

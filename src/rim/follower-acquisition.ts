@@ -197,8 +197,8 @@ export class AdapterBackedAcquisition implements FollowerAcquisition {
       let globallyNew = 0;
       const walk = await this.walker.walkAll({
         pk,
-        which: 'followers',
-        readPurpose: 'exploration',
+        which: 'followers', ofUsername: targetUsername,
+        readPurpose: 'exploration', arm: 'acquisition', // moved source rows feed the candidate pool (C2), then it stops
         startCursor,
         maxNewPks,
         maxPages: this.cfg.maxPages,

@@ -13,6 +13,7 @@
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
+import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { Settings } from '@/types';
 import { chainTarget, type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
@@ -44,17 +45,17 @@ const text = (selector: string): string =>
 const ticker = (selector: string): string | null =>
   document.querySelector(`${selector} .nt`)?.getAttribute('aria-label') ?? null;
 
-describe('The console column mirrors the status stream', () => {
-  it("the Actions-today readout follows every push, and doesn't wait for a pull", async () => {
+describe('The live column mirrors the status stream', () => {
+  it("today's net followers follow every push, and don't wait for a pull", async () => {
     await mountApp();
     const pulls = () => bridge.calls.filter((c) => c[0] === 'status').length;
     const before = pulls();
 
-    await act(async () => bridge.emit('status', idleStatus({ state: 'running', actionsToday: 4 })));
-    expect(ticker('#view-overview .hero-today')).toBe('4');
+    await act(async () => bridge.emit('status', idleStatus({ state: 'running', netToday: 4 })));
+    expect(ticker('[data-zone="results"]')).toBe('+4');
 
-    await act(async () => bridge.emit('status', idleStatus({ state: 'running', actionsToday: 11 })));
-    expect(ticker('#view-overview .hero-today')).toBe('11');
+    await act(async () => bridge.emit('status', idleStatus({ state: 'running', netToday: 11 })));
+    expect(ticker('[data-zone="results"]')).toBe('+11');
     expect(pulls()).toBe(before); // pushed, never polled
   });
 });
@@ -115,5 +116,38 @@ describe('Prune mirrors its own projection', () => {
     expect(text('.prune-page')).toContain('37');
     // The unified posture followed the prune too — one push, both surfaces.
     expect(document.querySelector('.console')?.getAttribute('data-state')).toBe('running');
+  });
+});
+
+describe('Settings mirrors its own pushes', () => {
+  it('a settings push and a settingsFacts push each move a rendered value with no pull', async () => {
+    bridge.data.settingsView = GALLERY_SETTINGS_VIEW;
+    bridge.data.settingsFacts = GALLERY_SETTINGS_FACTS;
+    await mountApp();
+    await open('settings');
+    await screen.findByRole('heading', { name: 'Growth pace' });
+    const pulls = () => bridge.calls.filter((c) => c[0] === 'settingsView' || c[0] === 'settingsFacts').length;
+    const before = pulls();
+
+    const balanced = (n: number) => ({
+      ...GALLERY_SETTINGS_VIEW,
+      rev: GALLERY_SETTINGS_VIEW.rev + n,
+      options: {
+        ...GALLERY_SETTINGS_VIEW.options,
+        paceCards: GALLERY_SETTINGS_VIEW.options.paceCards.map((p) => (p.id === 'balanced' ? { ...p, perDay: { ...p.perDay, typical: n } } : p)),
+      },
+    });
+    await act(async () => bridge.emit('settings', balanced(46)));
+    expect(ticker('.radio-card.is-on .radio-card__metric')).toBe('46');
+    await act(async () => bridge.emit('settings', balanced(47)));
+    expect(ticker('.radio-card.is-on .radio-card__metric')).toBe('47');
+
+    const p = GALLERY_SETTINGS_FACTS.protection;
+    if (p === null) throw new Error('fixture facts carry protection');
+    await act(async () => bridge.emit('settingsFacts', { ...GALLERY_SETTINGS_FACTS, protection: { ...p, protectedFollowing: 300 } }));
+    expect(ticker('#settings-protection .set-summary-box')).toBe('300');
+    await act(async () => bridge.emit('settingsFacts', { ...GALLERY_SETTINGS_FACTS, protection: { ...p, protectedFollowing: 301 } }));
+    expect(ticker('#settings-protection .set-summary-box')).toBe('301');
+    expect(pulls()).toBe(before);
   });
 });

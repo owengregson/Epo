@@ -1,7 +1,6 @@
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { EngineParkReason } from './engine-waits';
 import type { EngineState, StepResult } from './ports';
-import type { ReentrySnapshot } from './reentry';
 import type { RuntimeHealthSnapshot } from './runtime-health';
 import type { SourceFrontierSnapshot } from './source-frontier';
 
@@ -9,15 +8,16 @@ import type { SourceFrontierSnapshot } from './source-frontier';
 export interface EngineStatus {
   health?: RuntimeHealthSnapshot;
   frontier?: SourceFrontierSnapshot;
-  /** @deprecated The old renderer reads it; `status.catchUp`/`journal` replace it (removal sweep). */
-  reentry?: ReentrySnapshot;
+  /** @deprecated Never populated; the old renderer still reads it; `status.catchUp`/`journal` replace it (removal sweep). */
+  reentry?: Readonly<Record<string, unknown>> & {
+    readonly phase: 'reconcile' | 'probation' | 'ready'; readonly absentMs: number; readonly probationActions: number };
   state: EngineState;
   currentTargetPk: string | null;
   currentTargetUsername: string | null;
   chainIndex: number | null;
   actionsToday: number;
   remainingToday: number;
-  /** Today's planned volume (the fluctuating per-cycle stop, under the rate). */
+  /** Today's automatic volume: the plan-day's V (spec §5.4). */
   plannedToday: number;
   atHardCeiling: boolean;
   queued: number;

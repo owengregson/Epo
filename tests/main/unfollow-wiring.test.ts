@@ -7,18 +7,19 @@ import { ReentrySupervisor } from '@/engine/reentry';
 import type { SourceFrontier } from '@/engine/source-frontier';
 import { FakeClock, type SystemClock } from '@/governors/clock';
 import { calendarPlanDayClock } from '@/governors/plan-day-clock';
-import { RateGovernor } from '@/governors/rate-governor';
+import type { RateGovernor } from '@/governors/rate-governor';
 import { ReadBudget } from '@/governors/read-budget';
 import type { BuiltGraph, GraphBuildDeps } from '@/main/services/graph-types';
 import { unfollowWiringParts, wireChurn, wireMutationPolicy, wireProtection } from '@/main/services/unfollow-wiring';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
-import { DEFAULT_SETTINGS, toRateGovernorConfig } from '@/settings/settings';
+import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { ProtectionSettings } from '@/shared/settings-model';
 import { compileProtection } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeActions } from '../kit/engine-harness';
+import { fakePlanHost, kitPlan, PLAN_TEST_RNG } from '../kit/harness-plan';
 import { readLimits } from '../kit/read-limits';
 import { memoryStore } from '../kit/store';
 
@@ -27,7 +28,7 @@ let store: KnowledgeStore;
 let rules: ProtectionSettings;
 let rev: number;
 beforeEach(() => {
-  store = memoryStore();
+  store = memoryStore({ rng: PLAN_TEST_RNG });
   store.setOwnPk('me');
   rules = { accounts: [], words: [{ text: 'cafe', addedAt: 0 }], wordMatch: 'anywhere', keepVerified: false };
   rev = 1;
@@ -35,7 +36,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 const deps = (): GraphBuildDeps => ({
-  resolveSettings: () => DEFAULT_SETTINGS,
+  resolveSettings: () => DEFAULT_SETTINGS, plan: fakePlanHost(DEFAULT_SETTINGS),
   protection: { index: () => compileProtection(rules, 'ready', rev), setCapabilities: () => undefined },
 }) as unknown as GraphBuildDeps;
 
@@ -97,9 +98,8 @@ describe('the wired journal (spec §9.8)', () => {
   const policyFor = (clock: FakeClock, visit: ProfileVisitor['visit']) => {
     const reentry = new ReentrySupervisor({ store, clock });
     reentry.prepare(clock.now());
-    const rate = new RateGovernor(store, clock, toRateGovernorConfig(DEFAULT_SETTINGS));
     const policy = wireMutationPolicy({ ...deps(), driverSignal: () => undefined } as GraphBuildDeps, {
-      store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock, rate, reentry,
+      store, ownPk: 'me', ownUsername: 'me', clock: clock as unknown as SystemClock, cadence: kitPlan(store, clock).cadence,
       readBudget: new ReadBudget({ store, clock, limits: readLimits() }), dayClock: dayOf(clock),
       profiles: () => ({ visit }) as unknown as TabProfileVisitor,
       followback: () => ({ check: async () => ({ detected: [], outcome: 'complete' }) }) as unknown as FollowbackWatcher,

@@ -29,6 +29,7 @@
 
 import type { FeedView } from '@/shared/feed';
 import type { LiveTab } from '@/shared/live-op';
+import type { SeedCheckResult } from '@/shared/seed-check';
 import type { SettingsFacts } from '@/shared/settings-facts';
 import type { SettingsView } from '@/shared/settings-view';
 import type { ProtectedBy } from '@/shared/unfollow-protection';
@@ -47,7 +48,6 @@ import type {
   PruneStatus,
   QueueListResult,
   ReadFollowersResult,
-  SeedCheck,
   Settings,
   StageMode,
   UpdateStatus,
@@ -97,7 +97,6 @@ export const CHANNELS = {
   queueList: 'queue:list',
   getSettings: 'settings:get',
   updateSettings: 'settings:update',
-  resetSettings: 'settings:reset',
   clearData: 'data:clear',
   graphSnapshot: 'graph:snapshot',
   setStage: 'stage:set',
@@ -162,16 +161,14 @@ export interface IpcContract extends SettingsIpcContract, PlanIpcContract, LiveI
   chainDetail: { req: [targetPk: string]; res: ChainTargetDetail | null };
   /** Cumulative net own-follower growth per day, plus the measurement baseline. */
   growthSeries: { req: [days?: number]; res: GrowthSeriesRead };
-  /** Read-only precheck of a seed username (existence + followers visibility). */
-  checkSeed: { req: [username: string]; res: SeedCheck };
+  /** Check a starting account on explicit intent: a typed answer, where only evidence reads "not found" (spec §13). */
+  checkSeed: { req: [username: string]; res: SeedCheckResult };
   /** A capped page of follow_records in one lifecycle state, joined to accounts. */
   queueList: { req: [state: FollowState]; res: QueueListResult };
   /** The persisted settings object. */
   getSettings: { req: []; res: Settings };
   /** Merge a partial into settings, persist, and reload the live engine configs. */
   updateSettings: { req: [partial: Partial<Settings>]; res: Settings };
-  /** Reset all settings to defaults (data + session kept). */
-  resetSettings: { req: []; res: Settings };
   /** Wipe the knowledge DB + IG session (logout); settings kept. */
   clearData: { req: []; res: EpoStatus };
   /** The full knowledge graph shaped for the Graph view (null before login). */

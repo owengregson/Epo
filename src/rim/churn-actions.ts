@@ -115,7 +115,7 @@ export class AdapterBackedChurnActions implements ChurnActions {
       // `alreadyInState` so the scheduler reconciles instead of claiming it.
       return result.ok
         ? { status: 'ok', alreadyInState: !result.value.clicked }
-        : normalizeMutationOutcome({ status: 'failed' }, dispatched);
+        : normalizeMutationOutcome({ status: 'failed' }, dispatched, 'none');
     } catch (e) {
       if (dispatched && !(e instanceof ActionRateLimitedError)) {
         logger.warn('rim.churn-actions: dispatched action has no verified result', { username, action, error: String(e) });

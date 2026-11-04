@@ -110,7 +110,7 @@ test('an uncertain follow is observed by PK in the journal step: the follow mirr
   expect(f.actions.follow).not.toHaveBeenCalled();
 });
 
-test('cleanup obligations survive source rotation, with bounded fairness for new follows', async () => {
+test('cleanup obligations survive source rotation; the plan mix (not the churn) shares the session with follows', async () => {
   const f = fixture();
   f.store.setTargetStatus('hub', 'exhausted');
   for (const pk of ['u1', 'u2', 'u3']) {
@@ -122,7 +122,9 @@ test('cleanup obligations survive source rotation, with bounded fairness for new
   expect(f.churn.nextDue()?.state).toBe('unfollow_queued');
   await f.churn.execute(f.churn.nextDue()!);
   await f.churn.execute(f.churn.nextDue()!);
-  expect(f.churn.nextDue()?.accountPk).toBe('new');
+  // The reclaimed slots stay first; each kind's best is asked for separately by the plan's mix (spec §5.7).
+  expect(f.churn.nextDue()?.accountPk).toBe('u3');
+  expect(f.churn.nextDue(f.clock.now(), 'follow')?.accountPk).toBe('new');
 });
 
 test('the journal settles one open intent per step, never a batch or a halt; a prepared one is never read', async () => {

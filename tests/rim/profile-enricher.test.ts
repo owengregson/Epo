@@ -178,7 +178,7 @@ test('reports determinate progress for the veil, advancing on SKIPS too, then cl
   await enricher.enrich(['alice', 'bob', 'carol']);
 
   const reports = activity.filter(Boolean) as Array<Exclude<Report, null>>;
-  expect(reports.every((r) => r.kind === 'page' && r.label === 'Visiting profiles')).toBe(true);
+  expect(reports.every((r) => r.kind === 'page' && r.label === 'Looking at profiles')).toBe(true);
   expect(reports.every((r) => r.total === 3)).toBe(true);
   expect(reports.map((r) => r.count)).toEqual([0, 1, 2]);
   expect(activity[activity.length - 1]).toBeNull();

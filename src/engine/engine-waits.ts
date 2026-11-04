@@ -5,6 +5,7 @@
  * but separate from it so the tables are readable and unit-testable on their own.
  */
 
+import { RUNTIME_POLICY } from '../kernel/runtime-policy';
 import type { WaitResult } from '../timing/delay-manager';
 import type { WaitClass } from '../timing/noise';
 import type { DelayPolicy } from '../timing/primitives';
@@ -15,7 +16,6 @@ import type { DelayPolicy } from '../timing/primitives';
  * {@link ENGINE_WAIT_CLASS}, or tsc fails.
  */
 export type EngineWaitKey =
-  | 'engine:active-hours-park'
   | 'engine:daily-ceiling-park'
   | 'engine:session-park'
   | 'engine:velocity-park'
@@ -35,11 +35,10 @@ export type EngineWaitKey =
  * The `satisfies` makes an unclassified new key a tsc error.
  */
 export const ENGINE_WAIT_CLASS = {
-  'engine:active-hours-park': 'daily-boundary',
-  'engine:daily-ceiling-park': 'daily-boundary',
+  // The plan's parks end at instants it names (spec §5.16): exact, never jittered.
+  'engine:daily-ceiling-park': 'exact',
   'engine:enrich-backoff': 'retry-backoff',
-  // The allowance reopens at a KNOWN time: never wake before it, never stretch it 2×.
-  'engine:read-budget-park': 'daily-boundary',
+  'engine:read-budget-park': 'exact',
   'engine:prune-park': 'retry-backoff',
   'engine:blocked-park': 'retry-backoff',
   'engine:idle': 'local-beat',
@@ -58,6 +57,7 @@ export const ENGINE_WAIT_CLASS = {
  * one for the whole hold.
  */
 export type EngineParkReason =
+  /** @deprecated-renderer No wait parks under it any more (active hours retired); the old live-status card still names it. */
   | 'active-hours'
   | 'daily-ceiling'
   | 'session'
@@ -76,7 +76,6 @@ export type EngineParkReason =
  * delay surfaces separately through `nextActionAt`.
  */
 const PARK_REASON_BY_KEY = new Map<EngineWaitKey, EngineParkReason>([
-  ['engine:active-hours-park', 'active-hours'],
   ['engine:daily-ceiling-park', 'daily-ceiling'],
   ['engine:session-park', 'session'],
   ['engine:velocity-park', 'velocity'],
@@ -99,3 +98,14 @@ export type EngineWait = (
   key: EngineWaitKey,
   policyOrMs: DelayPolicy | number,
 ) => Promise<WaitResult>;
+
+/**
+ * The idle beat's base (spec §5.16): the time to the earliest FUTURE known event, never longer than
+ * `boundMs` (the staleness bound) and never shorter than the perception floor. An event already past
+ * is ignored, so a gate that keeps refusing at it cannot spin a zero-delay loop.
+ */
+export function idleBaseMs(now: number, events: readonly (number | null)[], boundMs: number): number {
+  let next = boundMs;
+  for (const at of events) if (at !== null && at > now) next = Math.min(next, at - now);
+  return Math.max(RUNTIME_POLICY.IDLE_FLOOR_MS, next);
+}

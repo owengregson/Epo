@@ -21,7 +21,7 @@ describe('nextDue(now, kind)', () => {
     expect(sched.nextDue(T0, 'unfollow')?.accountPk).toBe('u1');
   });
 
-  test('after two unfollows in a row the default turns to the follow; kind unfollow still picks one', async () => {
+  test('a reclaimed slot stays first however many unfollows ran (the plan mix shares the session); each kind picks its own', async () => {
     const { store, sched } = makeHarness();
     for (const pk of ['a', 'b']) {
       seedUsername(store, pk, `user-${pk}`);
@@ -32,7 +32,8 @@ describe('nextDue(now, kind)', () => {
     store.upsertFollowRecord(rec({ accountPk: 'f1', state: 'queued', score: 5 }));
     store.upsertFollowRecord(rec({ accountPk: 'u2', state: 'unfollow_queued', unfollowDueAt: T0 }));
 
-    expect(sched.nextDue(T0)?.accountPk).toBe('f1');
+    expect(sched.nextDue(T0)?.accountPk).toBe('u2');
+    expect(sched.nextDue(T0, 'follow')?.accountPk).toBe('f1');
     expect(sched.nextDue(T0, 'unfollow')?.accountPk).toBe('u2');
   });
 

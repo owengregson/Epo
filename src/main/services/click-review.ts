@@ -32,7 +32,7 @@ export interface ClickReviewDeps {
   onProgress?(phase: string): void;
   /** The identity and run-token check every write repeats. */
   active(): Promise<boolean>;
-  /** The plan's admission, asked BEFORE the visit (a refusal spends no read); the default admits. */
+  /** The plan's admission with this account's journal, asked BEFORE the visit (a refusal spends no read). */
   preflight?(kind: MutationKind, writer: Writer, now: number, subject?: { pk: string; intentId?: string }): Admission;
   /** Which loop asks for the action (default: the growth loop). */
   writer?(): Writer;
@@ -40,8 +40,10 @@ export interface ClickReviewDeps {
   surfaceGate?: SurfaceGate;
 }
 
-/** Phase F: the plan admits everything here; today's checks keep running at `beforeMutation`. */
-const ADMITS = (): Admission => ({ ok: true });
+/** With no plan wired, only the account's own journal refuses (the plan's preflight covers it otherwise). */
+const journalOnly = (store: KnowledgeStore) => (_kind: MutationKind, _w: Writer, _now: number, subject?: { pk: string }): Admission =>
+  subject !== undefined && journalBlocks(subject.pk, store.effectIntents.unsettledFor(subject.pk))
+    ? { ok: false, reason: 'journal', until: null } : { ok: true };
 
 const reviewed = (v: ClickVerdict): ActionReviewedError => new ActionReviewedError(v);
 const deferred = (reason: string, until: number | null): ActionDeferredError =>
@@ -53,9 +55,8 @@ export function createClickReview(d: ClickReviewDeps) {
 
   /** Steps 0a–0c: the plan with this account's journal, the surface gate, a paused index, the read. */
   const admit = (action: 'follow' | 'unfollow', pk: string): void => {
-    const admission = (d.preflight ?? ADMITS)(action, d.writer?.() ?? 'growth', clock.now(), { pk });
+    const admission = (d.preflight ?? journalOnly(store))(action, d.writer?.() ?? 'growth', clock.now(), { pk });
     if (!admission.ok) throw deferred(admission.reason, admission.until);
-    if (journalBlocks(pk, store.effectIntents.unsettledFor(pk))) throw deferred('journal', null);
     if (action === 'unfollow' && (d.surfaceGate ?? NEVER_PAUSED).paused('unfollows')) throw deferred('surface-paused', null);
     // A paused index refuses any unfollow whatever the subject, so it is judged before a read is spent.
     const index = d.protection();

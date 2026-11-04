@@ -3,6 +3,7 @@
  * stop/pause/resume, and the tab hand-off with growth (one driver at a time).
  */
 
+import { cleanupCooldown } from '@/engine/plan-mix';
 import type { PruneStatus } from '@/engine/prune-engine';
 import type { PruneCandidateView } from '@/ipc/contract';
 import type { BuiltGraph } from '@/main/services/graph-types';
@@ -247,6 +248,10 @@ export class PruneControl {
     if (this.deps.manualDriving()) return 'manual-running';
     if (this.lease.owner() === 'prune') return 'prune-running';
     if (this.deps.boostActive()) return 'boost-active';
+    // A census walk or a run into a fresh rate wall deepens the block (spec §5.7): cleanup waits out the cool-down.
+    const graph = this.graph;
+    if (graph !== null && cleanupCooldown({ lastHalt: graph.engine.lastHaltInfo(), ladder: graph.engine.recoverySnapshot() },
+      graph.clock.now())) return 'rate-cooldown';
     return null;
   }
 

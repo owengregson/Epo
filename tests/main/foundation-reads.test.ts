@@ -28,6 +28,9 @@ function account(pk: string, over: Partial<AccountState> = {}): AccountState {
   };
 }
 
+/** The follow-back window the yields classify in (law L7: the store's one classifier, the configured wait). */
+const WINDOW = { windowMs: 4 * MS_PER_DAY, now: 1_000 };
+
 const ZERO_YIELD: TargetYield = {
   total: 0,
   followedBack: 0,
@@ -53,13 +56,14 @@ describe('shapeChainList', () => {
     const store: ChainReadStore = {
       listTargets: () => targets,
       getAccount: (pk) => accounts[pk] ?? null,
-      targetYield: (pk, ownPk) => {
+      targetYield: (pk, ownPk, outcome) => {
         expect(ownPk).toBe('own');
+        expect(outcome).toEqual(WINDOW);
         return yields[pk];
       },
     };
 
-    const rows = shapeChainList(store, 'own');
+    const rows = shapeChainList(store, 'own', WINDOW);
 
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
@@ -78,7 +82,7 @@ describe('shapeChainList', () => {
       getAccount: () => null,
       targetYield: () => ZERO_YIELD,
     };
-    expect(shapeChainList(store, 'own')).toEqual([]);
+    expect(shapeChainList(store, 'own', WINDOW)).toEqual([]);
   });
 });
 
@@ -118,8 +122,9 @@ describe('shapeTargetDetail', () => {
           ? over.target
           : { accountPk: pk, source: 'seed', status: 'active', chainIndex: 0 },
       getAccount: () => (over.account !== undefined ? over.account : account('T')),
-      targetYield: (_pk, ownPk) => {
+      targetYield: (_pk, ownPk, outcome) => {
         expect(ownPk).toBe('own');
+        expect(outcome).toEqual({ windowMs: WINDOW.windowMs, now: NOW });
         return { ...ZERO_YIELD, ...over.yield };
       },
       targetFunnel: () => ({
@@ -136,7 +141,7 @@ describe('shapeTargetDetail', () => {
   }
 
   const shape = (store: TargetDetailReadStore, plannedToday = 0) =>
-    shapeTargetDetail(store, 'own', 'T', { now: NOW, plannedToday });
+    shapeTargetDetail(store, 'own', 'T', { now: NOW, plannedToday, followbackWindowMs: WINDOW.windowMs });
 
   test('null for a pk that is not a chain target', () => {
     expect(shape(detailStore({ target: null }))).toBeNull();

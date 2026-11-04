@@ -3,7 +3,6 @@ import { useState } from 'preact/hooks';
 import { chainListSignal, growthSeriesSignal, queueLanesSignal } from '@/renderer/app/live-signals';
 import {
   adoptSettings,
-  logSignal,
   pruneSignal,
   ShellContext,
   type ShellControls,
@@ -11,41 +10,43 @@ import {
   type ShellServices,
   stageSignal,
   statusSignal,
-  transportSignal,
 } from '@/renderer/app/shell-context';
+import { LivePlaceholder } from '@/renderer/boot/LivePlaceholder';
+import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
-import {
-  SCENARIOS as BASE_SCENARIOS,
-  GALLERY_CHAIN,
-  GALLERY_LOG,
-  GALLERY_SETTINGS,
-  type Scenario,
-} from '@/renderer/gallery/fixtures';
-import { LIVE_SCENARIOS } from '@/renderer/gallery/fixtures-live';
+import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, GALLERY_SETTINGS, type Scenario } from '@/renderer/gallery/fixtures';
+import { LIVE_SCENARIOS, resetLiveGallery } from '@/renderer/gallery/fixtures-live';
+import { SETTINGS_SCENARIOS } from '@/renderer/gallery/fixtures-settings';
 import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
 import { GALLERY_LANES, installGalleryBridge } from '@/renderer/gallery/gallery-bridge';
-import { staggerCards } from '@/renderer/lib/stagger';
+import type { ToastControls } from '@/renderer/hooks/useToasts';
 import { PeoplePage } from '@/renderer/pages/PeoplePage';
 import { SettingsStage } from '@/renderer/settings/SettingsStage';
-import { OverviewView } from '@/renderer/views/OverviewView';
+import { Sidebar } from '@/renderer/sidebar/Sidebar';
 import { PruneView } from '@/renderer/views/PruneView';
 
-/** The stage pages the picker can show beside the console column. */
+/** The stage pages the picker can show beside the live column. */
 const SURFACES = [
   { key: 'people', label: 'People' },
   { key: 'prune', label: 'Prune' },
   { key: 'settings', label: 'Settings' },
+  { key: 'live', label: 'Live placeholder' },
+  { key: 'diagnostics', label: 'Diagnostics' },
 ] as const;
 
 type SurfaceKey = (typeof SURFACES)[number]['key'];
 
-/** Every story: the console's, the live column's, the compatibility surfaces', then the direction boards. */
-const SCENARIOS: Scenario[] = [...BASE_SCENARIOS, ...LIVE_SCENARIOS, ...SURFACE_SCENARIOS, ...DIRECTION_SCENARIOS];
+/** Every story: the console's, the live column's, the compatibility surfaces', Settings', then the direction boards. */
+const SCENARIOS: Scenario[] = [
+  ...BASE_SCENARIOS, ...LIVE_SCENARIOS, ...SURFACE_SCENARIOS, ...SETTINGS_SCENARIOS, ...DIRECTION_SCENARIOS,
+];
 
 /** Publish one scenario onto the shell's signals — this IS mounting a story. */
 function applyScenario(s: Scenario): void {
   statusSignal.value = s.status;
   pruneSignal.value = s.prune;
+  resetLiveGallery();
+  s.apply?.();
 }
 
 const noop = (): void => undefined;
@@ -62,6 +63,9 @@ const NOOP_CONTROLS: ShellControls = {
   replayTour: noop,
 };
 
+/** The live column's toast stack, quiet in the gallery. */
+const NO_TOASTS: ToastControls = { toasts: [], push: noop, dismiss: noop };
+
 function Surface({ surface }: { surface: SurfaceKey }): JSX.Element {
   switch (surface) {
     case 'people':
@@ -70,6 +74,10 @@ function Surface({ surface }: { surface: SurfaceKey }): JSX.Element {
       return <PruneView />;
     case 'settings':
       return <SettingsStage goTo={noop} seedPrompt={0} onReplayTour={noop} updateStatus={null} />;
+    case 'live':
+      return <LivePlaceholder />;
+    case 'diagnostics':
+      return <DiagnosticsPanel />;
   }
 }
 
@@ -77,7 +85,7 @@ function Surface({ surface }: { surface: SurfaceKey }): JSX.Element {
  * The dev-only component gallery, reached at `?gallery=1` (ADR 1006 — why this
  * and not Storybook).
  *
- * It renders the REAL console column and the REAL stage pages, so container
+ * It renders the REAL live column and the REAL stage pages, so container
  * queries, the `[data-state]` cascade and the entrance all behave exactly as in
  * the app; a "story" is just a set of projections written to the shell signals.
  * Nothing here is reachable without the query flag, and no fixture is imported
@@ -91,18 +99,7 @@ export function Gallery(): JSX.Element {
     <ShellContext.Provider value={NOOP_SERVICES}>
       <ShellControlsContext.Provider value={NOOP_CONTROLS}>
       <div class="shell gallery">
-        <div class="console" data-state={transportSignal.value.state}>
-          <div class="viewstage">
-            <section
-              class="view active"
-              id="view-overview"
-              ref={(el) => staggerCards(el as HTMLElement | null)}
-              key={scenarioKey}
-            >
-              <OverviewView pending={null} onLogin={noop} />
-            </section>
-          </div>
-        </div>
+        <Sidebar key={scenarioKey} toasts={NO_TOASTS} update={null} />
         <div class="stagepane">
           <div class="stagepane-body">
             <section class="stage-view active" data-stage={surface} key={`${surface}:${scenarioKey}`}>
@@ -156,7 +153,6 @@ export function Gallery(): JSX.Element {
 export function primeGallery(): void {
   installGalleryBridge();
   adoptSettings(GALLERY_SETTINGS);
-  logSignal.value = GALLERY_LOG.map((entry, seq) => ({ ...entry, seq }));
   chainListSignal.value = GALLERY_CHAIN;
   growthSeriesSignal.value = { points: [], baselineAt: null };
   queueLanesSignal.value = GALLERY_LANES;

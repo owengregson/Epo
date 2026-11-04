@@ -23,9 +23,9 @@ describe('normalizeMutationOutcome', () => {
       { status: 'blocked', cause: 'rate-limited', unverifiedClick: true });
   });
 
-  test('a dispatched failure with no Instagram evidence is unverified: blocked, uncertain, no cause', () => {
+  test('a dispatched failure with no Instagram evidence is unverified: blocked, uncertain, its own cause', () => {
     const outcome = normalizeMutationOutcome({ status: 'failed' }, true, 'none');
-    expect(outcome).toEqual({ status: 'blocked', unverifiedClick: true });
+    expect(outcome).toEqual({ status: 'blocked', cause: 'unverified', unverifiedClick: true });
     expect(isUnverifiedOutcome(outcome)).toBe(true);
   });
 
@@ -51,6 +51,8 @@ describe('actChurn on a blocked outcome', () => {
     const ctx = {
       deps: {
         tempo: undefined,
+        // The plan's breaker: a first unverified write is below the ladder entry.
+        pacing: { noteOutcome: () => 1, practiced: () => undefined },
         churn: {
           execute: async () => outcome.status,
           lastBlockedCause: () => outcome.cause ?? null,
@@ -69,7 +71,7 @@ describe('actChurn on a blocked outcome', () => {
   const rec = { accountPk: 'a', state: 'unfollow_queued' } as FollowRecord;
 
   test('unverified: a blocked park, and no rate-wall signal', async () => {
-    const { ctx, noteOutcome, enterRecovery, engineWait } = context({ status: 'blocked', unverifiedClick: true });
+    const { ctx, noteOutcome, enterRecovery, engineWait } = context({ status: 'blocked', cause: 'unverified', unverifiedClick: true });
 
     expect(await actChurn(ctx, rec, 0, new AbortController())).toEqual({ step: 'idle' });
     expect(noteOutcome).not.toHaveBeenCalled();

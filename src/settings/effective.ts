@@ -50,9 +50,6 @@ export interface EffectiveSettings {
   // prefs
   dryRun: boolean;
   boost: { readonly hours: number; readonly acceptRequests: boolean };
-  /** @transitional — deleted with the legacy pacer. */
-  pacingModel: 'legacy' | 'organic'; minDelayMinutes: number; maxDelayMinutes: number; jitterPercent: number;
-  activeHoursStart: number; activeHoursEnd: number;
   /** @transitional — the sweep cadence moves to plan checks. */
   followbackSweepHours: number;
   /** @transitional — the prune daily plan and the scheduled prune are deleted. */
@@ -91,8 +88,6 @@ export function effectiveFromV1(v1: Settings): EffectiveSettings {
     dryRun: v1.dryRun,
     // v1 has no Boost; its preferences read as the defaults until a v2 document exists.
     boost: { hours: SETTINGS_POLICY.BOOST.DEFAULT_HOURS, acceptRequests: true },
-    pacingModel: v1.pacingModel, minDelayMinutes: v1.minDelayMinutes, maxDelayMinutes: v1.maxDelayMinutes,
-    jitterPercent: v1.jitterPercent, activeHoursStart: v1.activeHoursStart, activeHoursEnd: v1.activeHoursEnd,
     followbackSweepHours: v1.followbackSweepHours,
     pruneDailyLimit: v1.pruneDailyLimit, pruneScheduleDays: v1.pruneScheduleDays,
     pruneScanMinSeconds: v1.pruneScanMinSeconds, pruneScanMaxSeconds: v1.pruneScanMaxSeconds,
@@ -111,7 +106,7 @@ const TEMPO_PREFIX = 'tempo.';
 export function effectiveFrom(doc: SettingsDocV2, r: ResolvedParams): EffectiveSettings {
   const n = (k: ParamKey): number => numberOf(r, k);
   const overridden = (k: ParamKey): number | null => (r[k].override === null ? null : n(k));
-  const { intent, prefs, legacyCarry: carry } = doc;
+  const { intent, prefs } = doc;
   const pattern = patternOf(intent);
   const shape = derivePattern(pattern);
   const curve = r['audience.ratioCurve'].value as RatioCurve;
@@ -143,12 +138,6 @@ export function effectiveFrom(doc: SettingsDocV2, r: ResolvedParams): EffectiveS
     lowWaterCandidates: n('explore.refillBelow'), minFollowBackRate: n('explore.moveOnRate'), minPoolSize: n('explore.moveOnPool'),
     dryRun: prefs.practice,
     boost: { ...prefs.boost },
-    pacingModel: carry?.pacingModel ?? DEFAULT_SETTINGS.pacingModel,
-    minDelayMinutes: carry?.minDelayMinutes ?? DEFAULT_SETTINGS.minDelayMinutes,
-    maxDelayMinutes: carry?.maxDelayMinutes ?? DEFAULT_SETTINGS.maxDelayMinutes,
-    jitterPercent: carry?.jitterPercent ?? DEFAULT_SETTINGS.jitterPercent,
-    activeHoursStart: carry?.activeHoursStart ?? DEFAULT_SETTINGS.activeHoursStart,
-    activeHoursEnd: carry?.activeHoursEnd ?? DEFAULT_SETTINGS.activeHoursEnd,
     followbackSweepHours: n('checks.everyHours'),
     pruneDailyLimit: n('unfollow.cleanupPerDay'), pruneScheduleDays: cleanupOn ? n('unfollow.censusEveryDays') : 0,
     pruneScanMinSeconds: DEFAULT_SETTINGS.pruneScanMinSeconds * scanFactor,

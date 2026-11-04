@@ -39,9 +39,9 @@ import { DelayManager } from '@/timing/delay-manager';
 import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import { liveWiringParts } from './live-wiring';
-import { planWiringParts, wirePlan, wireReadBudget } from './plan-wiring';
+import { planWiringParts, wirePlan } from './plan-wiring';
 import { noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry } from './reopen-wiring';
-import { surfaceWiringParts, wireSurface } from './surface-wiring';
+import { surfaceGateOf, surfaceWiringParts, wireSurface } from './surface-wiring';
 import { journalSettler, pruneUnfollowDeps, unfollowWiringParts, wireChurn, wireMutationPolicy } from './unfollow-wiring';
 
 export type { BuiltGraph, GraphBuildDeps } from './graph-types';
@@ -61,13 +61,13 @@ export function buildGraph(
   const clock = new SystemClock();
   const frontier = new SourceFrontier({ store, clock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
   const reentry = wireReentry(store, clock);
-  const readBudget = wireReadBudget(store, clock, d);
   // The shared wait owner: growth and prune wait through ONE DelayManager
   // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
   // from a single registry.
   const delays = new DelayManager({ clock });
   const { settings, driverSignal } = d;
   const plan = wirePlan(store, clock, ownPk, delays, d);
+  const readBudget = plan.readBudget;
   const rate = plan.rateGovernor(toRateGovernorConfig(settings));
 
   // Interactor: every Actor click/scroll becomes native input events
@@ -78,18 +78,19 @@ export function buildGraph(
   // unchanged.
   const interactor = createTabInteractor(d.tab, {
     abortSignal: driverSignal,
-    observer: d.cursorObserver,
+    observer: d.cursorObserver, tempo: plan.tempo,
   });
 
-  const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, rate, reentry, readBudget, dayClock: plan.dayClock,
-    profiles: () => profiles, followback: () => followback });
+  const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, cadence: plan.cadence, readBudget, dayClock: plan.dayClock,
+    nextSessionAt: plan.nextSessionAt, surfaceGate: surfaceGateOf(store), cleanupRunning: () => pruneEngineRef?.status().state === 'running', profiles: () => profiles, followback: () => followback });
 
   // The adapter owns the single Actor + Sentinel instances the whole rim shares;
   // the Reader is pure and held directly.
+  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub, sink } = wireSurface({ tab: d.tab, store, ownPk, clock, day: plan.dayClock });
   const adapter = new InstagramAdapter(d.tab, {
     interactor,
-    abortSignal: driverSignal,
-    reporter: d.reporter,
+    abortSignal: driverSignal, tempo: plan.tempo,
+    reporter: d.reporter, sink, // an unrecognized confirm layer reaches the surface sink
     beforeMutation: policy.beforeMutation,
     prepareProfile: policy.prepareProfile,
   });
@@ -99,12 +100,11 @@ export function buildGraph(
   });
   const actor = adapter.actor;
   const sentinel = adapter.sentinel;
-  const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub } = wireSurface({ tab: d.tab, store, ownPk, clock, day: plan.dayClock });
   const profiles = new TabProfileVisitor({
     tab: d.tab,
     observer: profileObserver,
     sentinel,
-    abortSignal: driverSignal,
+    abortSignal: driverSignal, tempo: plan.tempo,
   });
 
   const pageReader = new FollowersPageReader({
@@ -113,7 +113,7 @@ export function buildGraph(
     tab: d.tab,
     reader,
     actor,
-    abortSignal: driverSignal,
+    abortSignal: driverSignal, tempo: plan.tempo,
     reporter: d.reporter,
   });
   // The prune scan's FAST census path: direct friendships-API pagination at
@@ -124,7 +124,7 @@ export function buildGraph(
     readBudget,
     tab: d.tab,
     reader,
-    abortSignal: driverSignal,
+    abortSignal: driverSignal, tempo: plan.tempo,
     reporter: d.reporter,
   });
 
@@ -139,7 +139,7 @@ export function buildGraph(
     sentinel,
     walker: listWalker,
     visitor: profiles,
-    ownPk,
+    ownPk, tempo: plan.tempo,
   });
   const churnActions = new AdapterBackedChurnActions({
     validateIdentity: d.validateIdentity,
@@ -191,7 +191,7 @@ export function buildGraph(
     minPoolSize: settings.minPoolSize,
   });
 
-  const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock: plan.dayClock });
+  const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock: plan.dayClock, nextSessionAt: plan.nextSessionAt, reviewBound: plan.reviewBound });
   prepareReentry(reentry, clock);
   const scanner = new Scanner({
     store,
@@ -233,12 +233,12 @@ export function buildGraph(
   // dedicated timing-noise rngs + the restart-stable daily-boundary jitter.
   const installEntropy = store.installEntropy();
 
-  const engine = createEngine({
+  const engine = createEngine({ tempo: plan.tempo,
     frontier,
     reentry,
     validateIdentity: d.validateIdentity,
     onProgress: d.onProgress,
-    settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget, dayClock: plan.dayClock }),
+    settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget, dayClock: plan.dayClock, nextSessionAt: plan.nextSessionAt }),
     store,
     clock,
     rate,
@@ -300,7 +300,7 @@ export function buildGraph(
   const pruneOwnFollowers: PruneOwnFollowers =
     liveOwnFollowers ?? unresolvedUsernameSource('prune followers scan');
   const noteMutation = noteMutationFor(reentry, clock, d);
-  const pruneEngine = createPruneEngine({
+  const pruneEngine = createPruneEngine({ tempo: plan.tempo,
     onMutation: noteMutation,
     store,
     clock,
@@ -312,13 +312,7 @@ export function buildGraph(
     delays,
     installEntropy,
     lastRunAt: settings.pruneLastRunAt,
-    // A run stops at the active-hours edge instead of rolling past local
-    // midnight (where the daily count re-zeroes and one run could spend 2× the
-    // cap). Same governor window the growth engine parks on.
-    withinActiveHours: (): boolean => rate.withinActiveHours(),
-    // The prune cap shares the growth budget's boundary: the active-hours cycle
-    // start, not calendar midnight.
-    cycleStartMs: (now: number): number => rate.cycleStartMs(now),
+    plan: plan.prunePlan,
     onStatus: (s) => d.onPruneStatus(s),
     ...pruneUnfollowDeps(d, { settings, policy, ownUsername, dayClock: plan.dayClock }),
   });

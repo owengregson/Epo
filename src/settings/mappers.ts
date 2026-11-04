@@ -5,7 +5,8 @@ import type { PruneConfig } from '../engine/prune-engine';
 import type { ScannerConfig } from '../engine/scanner';
 import { SCORER_DEFAULTS, type ScorerConfig } from '../engine/scorer';
 import type { RateGovernorConfig } from '../governors/rate-governor';
-import { MS_PER_DAY, MS_PER_MINUTE } from '../timing/units';
+import { MS_PER_DAY } from '../timing/units';
+import type { EffectiveSettings } from './effective';
 import type { Settings } from './v1/settings-v1-types';
 
 /**
@@ -29,30 +30,22 @@ export function toScorerConfig(s: Settings): ScorerConfig {
   };
 }
 
-/** Project the Churn Scheduler's config out of Settings (days → ms). The post-
- *  follow-back hold is deliberately absent: it belongs to the FollowbackWatcher
- *  (see `toFollowbackConfig`), which stamps `holdUntil` on each record. */
-export function toChurnConfig(s: Settings): ChurnConfig {
+/** The churn knobs: the follow-back windows, the attempts and the v2 mutuals choice (the effective record's). */
+export type ChurnKnobs = Pick<EffectiveSettings, 'maxWaitForFollowbackDays' | 'holdAfterFollowbackDays' | 'maxRetries' | 'rotateMutuals'>;
+
+/** Project the Churn Scheduler's config (days → ms); `rotateMutuals` is the intent's `mutuals` choice. */
+export function toChurnConfig(s: ChurnKnobs): ChurnConfig {
   return {
     maxWaitForFollowbackMs: s.maxWaitForFollowbackDays * MS_PER_DAY,
     holdAfterFollowbackMs: s.holdAfterFollowbackDays * MS_PER_DAY,
     maxRetries: s.maxRetries,
-    // v1 has no mutuals choice: held mutuals rotate (the v2 intent `mutuals` drives it).
-    rotateMutuals: true,
+    rotateMutuals: s.rotateMutuals,
   };
 }
 
-/** Project the Rate Governor's config out of Settings (minutes → ms). */
+/** Project the Rate Governor's config out of Settings: the hard ceiling (the plan paces; spec §5.13 S2). */
 export function toRateGovernorConfig(s: Settings): RateGovernorConfig {
-  return {
-    dailyHardCeiling: s.dailyHardCeiling,
-    dailyOperatingRate: s.dailyOperatingRate,
-    minDelayMs: s.minDelayMinutes * MS_PER_MINUTE,
-    maxDelayMs: s.maxDelayMinutes * MS_PER_MINUTE,
-    jitterPercent: s.jitterPercent,
-    activeHoursStart: s.activeHoursStart,
-    activeHoursEnd: s.activeHoursEnd,
-  };
+  return { dailyHardCeiling: s.dailyHardCeiling };
 }
 
 /** Project the follow-back appliers' config out of Settings (days → ms). */
@@ -79,23 +72,12 @@ export function toChainConfig(s: Settings): ChainConfig {
 }
 
 /**
- * Project the Prune Engine's config out of Settings (minutes → ms). The
- * inter-action delay knobs are shared with the growth engine, but prune scales
- * the resulting paced delay to a third (see `PRUNE_DELAY_FACTOR`) so it runs
- * ~3× faster than growth's follow cadence. The SCAN pacing knobs (seconds → ms)
- * are prune's own, clamped so `0 ≤ scanMinMs ≤ scanMaxMs` even when the
- * settings file carries a negative or inverted pair.
+ * Project the Prune Engine's config out of Settings: the cap a rig without the plan reads, and the SCAN
+ * pacing (seconds → ms) clamped so `0 ≤ scanMinMs ≤ scanMaxMs`. The plan paces the run (spec §5.13 S2);
+ * protection is the predicate's on every path, so no list rides here.
  */
 export function toPruneConfig(s: Settings): PruneConfig {
   const scanMinMs = Math.max(0, s.pruneScanMinSeconds * 1000);
   const scanMaxMs = Math.max(scanMinMs, s.pruneScanMaxSeconds * 1000);
-  return {
-    dailyLimit: s.pruneDailyLimit,
-    whitelist: s.pruneWhitelist,
-    minDelayMs: s.minDelayMinutes * MS_PER_MINUTE,
-    maxDelayMs: s.maxDelayMinutes * MS_PER_MINUTE,
-    jitterPercent: s.jitterPercent,
-    scanMinMs,
-    scanMaxMs,
-  };
+  return { dailyLimit: s.pruneDailyLimit, scanMinMs, scanMaxMs };
 }

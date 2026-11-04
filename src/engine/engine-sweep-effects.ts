@@ -9,8 +9,6 @@ import type { EngineDeps, StepResult, SweepCadence } from './ports';
 export interface EngineSweepContext {
   readonly deps: EngineDeps;
   readonly sweepCadence: SweepCadence;
-  /** The owed inter-action deadline, re-read after a pass that may accept requests. */
-  actionDelayDeadline: number | null;
   superseded(token: AbortController): boolean;
   noteProgress(phase: string): void;
   pacingSleep(): Promise<void>;
@@ -31,7 +29,6 @@ export async function runFollowbackSweep(ctx: EngineSweepContext, token: AbortCo
   const mode = sweepModeAt(ctx.deps, ctx.sweepCadence.lastSweepEndedAt?.() ?? null, clock.now());
   await followback.run(mode, token.signal);
   if (ctx.superseded(token)) return 'aborted';
-  ctx.actionDelayDeadline = ctx.deps.store.getActionDelayDeadline();
   const at = clock.now();
   ctx.sweepCadence.markRun(at);
   churn.advanceTimers(at);

@@ -1,6 +1,13 @@
 import { useEffect, useRef } from 'preact/hooks';
 import type { ToastKind } from '@/renderer/hooks/useToasts';
-import type { UpdateStatus } from '@/types';
+import type { UpdateStatus } from '@/shared/update-status';
+
+/** The two update toasts; the live column's footer holds the button each one names. */
+export const UPDATE_TOAST = {
+  ready: (version: string): string =>
+    `Epo ${version} is ready. Press Restart at the bottom of the left panel, or it installs when you quit.`,
+  available: (version: string): string => `Epo ${version} is available. Press View at the bottom of the left panel.`,
+} as const;
 
 /**
  * One toast per self-updater state transition. Suppressed while `quiet` (the
@@ -15,18 +22,15 @@ export function useUpdateToasts(
 ): void {
   const shown = useRef<string | null>(null);
   useEffect(() => {
-    if (update === null || quiet) return;
-    const key = `${update.state}:${update.version ?? ''}`;
+    if (update === null || quiet || update.version === null) return;
+    const key = `${update.state}:${update.version}`;
     if (shown.current === key) return;
     if (update.state === 'ready') {
       shown.current = key;
-      toast(
-        'info',
-        `Epo v${update.version} is downloaded — restart from Settings → Updates, or it installs when you quit.`,
-      );
+      toast('info', UPDATE_TOAST.ready(update.version));
     } else if (update.state === 'available' && update.mode === 'notify') {
       shown.current = key;
-      toast('info', `Epo v${update.version} is available — see Settings → Updates.`);
+      toast('info', UPDATE_TOAST.available(update.version));
     }
   }, [update, quiet, toast]);
 }

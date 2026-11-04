@@ -113,8 +113,10 @@ test.each(['failed', 'thrown', 'drift'] as const)('a %s result after dispatch re
     return err('post-click state not confirmed');
   };
   const dispatched = jest.fn();
+  // After a dispatched press the Actor's err means Instagram showed nothing: unverified (spec §11.1 F7);
+  // a throw is the tab's, not Instagram's.
   expect(await actions.follow('bob', 'pk', dispatched)).toMatchObject({
-    status: 'blocked', cause: 'tab-unhealthy', unverifiedClick: true,
+    status: 'blocked', cause: failure === 'failed' ? 'unverified' : 'tab-unhealthy', unverifiedClick: true,
   });
   expect(dispatched).toHaveBeenCalledTimes(1);
 });

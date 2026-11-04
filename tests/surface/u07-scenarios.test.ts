@@ -13,6 +13,7 @@ import { RECOVERY } from '@/timing/config';
 import { setLevel } from '@/utils/logger';
 import { FakeSentinel, mkProfileGraphqlResp, mkResp } from '../kit/fakes';
 import { openTestStore } from '../kit/store';
+import { PROFILE_QUERY, readAs } from '../kit/surface';
 
 beforeAll(() => setLevel('error'));
 
@@ -46,6 +47,11 @@ const RENAMED: Row[] = [
     body: { is_following: true, followed_by: false, outgoing_request: false, status: 'ok' } },
   { id: 'P1 profile friendship_status.outgoing_request renamed', url: GQL, friendlyName: GQL_NAME,
     body: profile({ following: false, followed_by: false, outgoing_request_v2: true }) },
+  // A moved container reads as drift (C2 only under a visit's anchor, and C2 never feeds the reconciler).
+  { id: 'P4 profile container renamed (data.user → data.user_v2)', url: GQL, friendlyName: GQL_NAME,
+    body: { data: { user_v2: profile({ following: false, outgoing_request: false }).data.user } } },
+  { id: 'S3 show_many container renamed', url: SHOW_MANY,
+    body: { friendship_statuses_v2: { [PK]: { following: false, outgoing_request: false } }, status: 'ok' } },
 ];
 
 /** The same bodies with every key present and false: the one shape that may drop a record. */
@@ -71,9 +77,9 @@ const respOf = (row: Row) =>
   row.friendlyName === undefined ? mkResp(row.url, row.body) : mkProfileGraphqlResp(row.body);
 
 describe('U07 relationship rows: an absent key is unknown, never "not following"', () => {
-  test.each(RENAMED.map((r) => [r.id, r] as const))('%s: no weFollow:false fact', (_id, row) => {
-    const facts = reader.relationshipFacts(row.url, row.body, T0, row.friendlyName);
-    expect(facts.filter((f) => !f.weFollow)).toEqual([]);
+  test.each(RENAMED.map((r) => [r.id, r] as const))('%s: no weFollow:false fact', async (_id, row) => {
+    const seen = await reader.observed.read(respOf(row), T0);
+    expect(seen === null ? [] : reader.relationshipFacts(seen.read).filter((f) => !f.weFollow)).toEqual([]);
   });
 
   test.each(RENAMED.map((r) => [r.id, r] as const))('%s: the held record stays held', async (_id, row) => {
@@ -90,13 +96,17 @@ describe('U07 relationship rows: an absent key is unknown, never "not following"
 describe('U07 count rows: the counts are one pair, and a count-less read ends the pass', () => {
   const user = (counts: Record<string, unknown>) => ({ data: { user: { pk: PK, username: 'subject', ...counts } } });
 
+  const factOf = (body: unknown) => {
+    const read = readAs(reader, 'profile-graphql', body, { at: T0 }, PROFILE_QUERY);
+    return read.ok ? read.projection.facts[0] : undefined;
+  };
+
   test('P2 a digit-string count is retyped and stored with its sibling', () => {
-    const obs = reader.parseProfileInfo(user({ follower_count: '1200', following_count: 4 }), T0, 'profile-graphql');
-    expect(obs?.fields).toMatchObject({ followers: 1200, following: 4 });
+    expect(factOf(user({ follower_count: '1200', following_count: 4 }))?.fields).toMatchObject({ followers: 1200, following: 4 });
   });
 
   test('P3 a moved count stores no stat at all, so a stale sibling never looks fresh', () => {
-    const obs = reader.parseProfileInfo(user({ edge_followed_by: { count: 1200 }, following_count: 4 }), T0, 'profile-graphql');
+    const obs = factOf(user({ edge_followed_by: { count: 1200 }, following_count: 4 }));
     expect(obs?.fields.followers).toBeUndefined();
     expect(obs?.fields.following).toBeUndefined();
   });

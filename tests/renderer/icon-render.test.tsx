@@ -63,6 +63,7 @@ describe('icons.ts covers what the app renders', () => {
     'chevron-up',
     'circle-exclamation',
     'circle-nodes',
+    'diagram-project',
     'filter',
     'gauge-high',
     'hourglass-half',

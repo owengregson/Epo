@@ -11,8 +11,7 @@
  * CI-ONLY: bundled by .github/workflows/readme-live.yml, never by the app.
  */
 
-import { referenceGapMs } from '@/engine/pacers';
-import { drawDayPlan, type PlanDemand, phaseOffsetHours, planDayWindow, quietMinute } from '@/kernel/plan';
+import { drawDayPlan, drawGapMs, type PlanDemand, phaseOffsetHours, planDayWindow, quietMinute, u } from '@/kernel/plan';
 import { computeProjection } from '@/renderer/charts/growth-model';
 import { effectiveFromV1 } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
@@ -150,18 +149,6 @@ export function growthCharts(dayOfYear: number, dateStamp: string): { light: str
 
 // --- Pace chart (§5b: one real plan-day drawn by the shipping day plan) ---
 
-/** Deterministic small PRNG so a given date always plans the same day. */
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 export interface DayPlan {
   /** Epoch ms of each planned action, in order. */
   actions: number[];
@@ -195,13 +182,13 @@ export function planOneDay(dayStartMs: number, seed: number): DayPlan {
     installEntropy: entropy, window, intent, demand: NO_DEMAND, phaseOffsetHours: phase,
     firstOpenAt: window.startsAt, boost: null, runIntent: 'running',
   });
-  const rng = mulberry32(seed);
   const actions: number[] = [];
   for (const session of plan.sessions) {
     let t = session.startAt;
     for (let k = 0; k < session.budget && t < window.endsAt; k += 1) {
       actions.push(t);
-      t += referenceGapMs(intent, actions.filter((a) => a > t - MS_PER_HOUR), t, rng);
+      // The gap the cadence draws at each dispatch: the session's spec over the trailing hour.
+      t += drawGapMs(session.tempo.gap, actions.filter((a) => a > t - MS_PER_HOUR), t, (attempt) => u(plan.seed, 'gap', session.idx, k, attempt));
     }
   }
   const kept = plan.sessions.filter((x) => x.budget > 0);

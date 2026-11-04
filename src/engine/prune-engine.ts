@@ -18,9 +18,10 @@
  */
 
 import type { SentinelStatus } from '../adapter/sentinel';
+import { blockedStreakThreshold, driftConfirmThreshold } from '../kernel/derive';
 import { tempoOrReference } from '../kernel/tempo';
 import type { PruneCensusRecord } from '../store/knowledge-store';
-import { PRUNE } from '../timing/config';
+import { POLL } from '../timing/config';
 import { DelayManager, type WaitResult } from '../timing/delay-manager';
 import { mulberry32, type WaitClass } from '../timing/noise';
 import {
@@ -28,7 +29,6 @@ import {
   type Rng,
   sleep as timingSleep,
 } from '../timing/primitives';
-import { MS_PER_DAY } from '../timing/units';
 import { WaitRunner } from '../timing/wait-runner';
 import { launchStream } from '../utils/entropy';
 import * as log from '../utils/logger';
@@ -42,23 +42,9 @@ import { type AnnotatedCandidate, decidePruneCandidate, pruneDeferral } from './
 import { nextFeedCandidate, type PruneFeedContext } from './prune-feed';
 import { PrunePacing } from './prune-pacing';
 import { assertFetchComplete, assertScanCoverage } from './prune-scan-guards';
-
-/**
- * Whether a scheduled prune run is due now. Pure and opt-in: `scheduleDays <= 0`
- * (the default) disables scheduling entirely and always returns `false`; a run is
- * due when it has never run (`lastRunAt === null`) or at least `scheduleDays` have
- * elapsed since the last run. The composition root polls this and only auto-starts
- * a run when it is ALSO safe (logged in, growth idle, inside active hours).
- */
-export function pruneDue(scheduleDays: number, lastRunAt: number | null, now: number): boolean {
-  if (!Number.isFinite(scheduleDays) || scheduleDays <= 0) return false;
-  if (lastRunAt === null) return true;
-  return now - lastRunAt >= scheduleDays * MS_PER_DAY;
-}
-
 import type { PruneCandidate, PruneConfig, PruneEngineDeps, PruneScanEstimates, PruneScanOpts, PruneState, PruneStatus } from './prune-types';
 
-export type { PruneCandidate, PruneChurnActions, PruneConfig, PruneEngineDeps, PruneOwnFollowers, PruneOwnFollowing, PruneScanEstimates, PruneScanFetch, PruneScanOpts, PruneSentinel, PruneState, PruneStatus } from './prune-types';
+export type { PruneCandidate, PruneChurnActions, PruneConfig, PruneEngineDeps, PruneOwnFollowers, PruneOwnFollowing, PrunePlan, PruneScanEstimates, PruneScanFetch, PruneScanOpts, PruneSentinel, PruneState, PruneStatus } from './prune-types';
 
 /** Every DelayManager key the PruneEngine waits under: the closed set the noise registry classifies. */
 export type PruneWaitKey = 'prune:park' | 'prune:action-delay';
@@ -75,17 +61,11 @@ export const PRUNE_WAIT_CLASS = {
 /** Consecutive FAILED unfollows that halt a run (`actions-failing`): one can fail alone, several in a row is the machinery. */
 export const PRUNE_CONSECUTIVE_FAIL_HALT = 4;
 
-/** Consecutive BLOCKED unfollows before the run halts and the woven feed suspends (one home, one count). */
-export const PRUNE_CONSECUTIVE_BLOCK_HALT = 3;
+/** Consecutive BLOCKED unfollows before the run halts and the woven feed suspends (one home, one count; D5). */
+export const PRUNE_CONSECUTIVE_BLOCK_HALT = blockedStreakThreshold();
 
-// The paced inter-unfollow scale lives with the pacing; re-exported for its old consumers.
-export { PRUNE_DELAY_FACTOR } from './prune-pacing';
-
-/** How long a completed scan stays runnable verbatim for a 2-step run; past it a Run re-scans. */
-export const PRUNE_SCAN_FRESH_MS = PRUNE.SCAN_FRESH_MS;
-
-/** Minimum spacing between mid-scan status emissions; phase-final emissions bypass it so settled numbers land. */
-export const PRUNE_PROGRESS_EMIT_MS = 250;
+/** Minimum spacing between mid-scan status emissions (the graph push throttle); phase-final emissions bypass it. */
+export const PRUNE_PROGRESS_EMIT_MS = POLL.GRAPH_PUSH_THROTTLE_MS;
 
 // ---------------------------------------------------------------------------------
 // PruneEngine
@@ -193,8 +173,6 @@ export class PruneEngine {
     this.lastRunAt = deps.lastRunAt ?? null;
     this.pacing = new PrunePacing({
       deps,
-      cfg: () => this.cfg,
-      rng: this.rng,
       stateNow: () => this.stateNow(),
       owe: (deadline) => {
         this.owedActionDeadline = deadline;
@@ -288,7 +266,8 @@ export class PruneEngine {
     return (
       this.pendingCandidates !== null &&
       this.pendingScanAt !== null &&
-      this.deps.clock.now() - this.pendingScanAt <= PRUNE_SCAN_FRESH_MS
+      // The plan's census freshness (spec §5.8.3); a unit rig without a plan keeps a scan runnable.
+      this.deps.clock.now() - this.pendingScanAt <= (this.deps.plan?.censusFreshMs() ?? Number.POSITIVE_INFINITY)
     );
   }
 
@@ -433,10 +412,6 @@ export class PruneEngine {
         this.pendingScanAt = scanAt;
       }
     };
-    // Attempts THIS run that wrote a ledger row (ok/fail/simulated). Bounds the
-    // run on its own, so a run crossing the cycle boundary — where dailyDone()
-    // re-zeroes — can never spend 2× the daily cap in one sitting.
-    let actedThisRun = 0;
     let consecutiveBlocked = 0;
     // Systemic-failure breaker: failures in a row mean the MACHINERY or the
     // ACCOUNT is blocked, not that every candidate is individually broken.
@@ -466,13 +441,12 @@ export class PruneEngine {
           continue;
         }
 
-        // Gates 0 and 1 — active hours, then the daily cap and the per-run bound
-        // (`prune-pacing.ts`): a stop here truncates the run, remainder runnable.
-        const stop = this.pacing.stopReason(actedThisRun);
-        if (stop !== null) {
-          truncated = stop;
-          break;
-        }
+        // The plan's admission before the visit (spec §9.7): serve its instant, pass the candidate, or end.
+        const gate = this.pacing.admit(cand.pk);
+        if (gate?.do === 'end') { truncated = gate.reason; break; }
+        if (gate?.do === 'pass') { passed.push(cand); index += 1; continue; }
+        const due = gate?.do === 'wait' ? gate.until - this.deps.clock.now() : 0;
+        if (due > 0) { await this.pruneWait('prune:action-delay', due); continue; }
 
         // Gate 2 — Sentinel: any non-ok is a verified block → halt loud.
         const sentinelStatus = await this.deps.sentinel.check();
@@ -521,7 +495,8 @@ export class PruneEngine {
             return;
           }
           // Blocked before any click: NOT visited — park briefly and retry the SAME candidate; halt rather than spin.
-          if (outcome.cause !== 'local-policy') consecutiveBlocked += 1;
+          // An unverified press counts once the plan's breaker has tripped (spec §11.1 F7).
+          if (outcome.cause !== 'local-policy' && (outcome.cause !== 'unverified' || this.unverifiedTrips(cand))) consecutiveBlocked += 1;
           if (consecutiveBlocked >= PRUNE_CONSECUTIVE_BLOCK_HALT) {
             handBackRemainder();
             this.halt({ kind: 'blocked-repeatedly' });
@@ -539,7 +514,6 @@ export class PruneEngine {
         consecutiveBlocked = 0;
         this.visitCandidate(cand);
         index += 1;
-        if (outcome.status !== 'reviewed') actedThisRun += 1;
         switch (outcome.status) {
           case 'ok':
             // Verified transition: heal our own-follow edge and record the prune.
@@ -562,10 +536,11 @@ export class PruneEngine {
             }
             break;
         }
+        if (outcome.status === 'ok' || outcome.status === 'failed') this.deps.plan?.noteOutcome(false, this.deps.clock.now());
         this.upNextCandidate = candidates[index] ?? null;
         this.emitStatus();
 
-        await this.pacing.paceNext();
+        await this.pacing.paceNext(outcome.status === 'simulated');
       }
     } catch (e) {
       // A newer generation owns the candidate set and the state: a stale loop
@@ -708,10 +683,9 @@ export class PruneEngine {
       candidates: this.candidateCount,
       unfollowed: this.unfollowedThisRun,
       remaining: this.remaining,
-      dailyDone: this.pacing.dailyDone(),
-      // The PLAN, not the configured limit — the meter's denominator must be
-      // the number today actually stops at, or it would stick just short.
-      dailyLimit: this.pacing.dailyPlan(),
+      // The plan's day: its cleanup done and its unfollow budget (the number today actually stops at).
+      dailyDone: this.pacing.today().done,
+      dailyLimit: this.pacing.today().limit,
       lastRunAt: this.lastRunAt,
       lastSentinel: this.lastSentinel,
       haltReason: this.haltReason,
@@ -740,9 +714,15 @@ export class PruneEngine {
   //     time, interleaved with its follows. All the census/verdict logic stays
   //     here; only the pacing moves to the growth engine's session stream. ---
 
-  /** Whether the prune daily cap is reached (all unfollows look alike to IG). */
+  /** Whether the plan's unfollow budget for the day is spent (all unfollows look alike to IG). */
   atDailyCap(_now: number): boolean {
-    return this.pacing.dailyDone() >= this.pacing.dailyPlan();
+    const t = this.pacing.today();
+    return t.done >= t.limit;
+  }
+
+  /** Feed the breaker an unverified press; whether its streak has reached the trip (spec §11.1 F7). */
+  private unverifiedTrips(_cand: PruneCandidate): boolean {
+    return (this.deps.plan?.noteOutcome(true, this.deps.clock.now()) ?? 0) >= driftConfirmThreshold();
   }
 
   /** The next actionable unfollow, or null (see `prune-feed.ts`). */
@@ -937,8 +917,9 @@ export class PruneEngine {
     // actor already followed is dropped here (which also removes it from the
     // active-record exclusion below). Absence is a verdict only on a side whose
     // list COVERS the header count — completion alone is the walk's opinion.
-    this.deps.store.ingestScanCensus(followingPks, [...followerSet], this.deps.clock.now(), {
-      authoritative: censusAuthority(followingPks.length, followerSet.size, ownStats),
+    const ingestAt = this.deps.clock.now();
+    this.deps.store.ingestScanCensus(followingPks, [...followerSet], ingestAt, {
+      authoritative: censusAuthority(followingPks.length, followerSet.size, ownStats), planDay: this.deps.plan?.dayWindow(ingestAt),
     });
 
     // Accounts the growth engine is actively managing (awaiting a follow-back,

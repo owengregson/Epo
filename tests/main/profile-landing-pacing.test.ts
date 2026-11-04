@@ -37,24 +37,23 @@ test('failed profile navigation waits a fresh page beat after its exact settle d
       return true;
     },
   }));
-  const random = jest.spyOn(Math, 'random').mockReturnValue(0.5);
   try {
     const landing = step.run(new AbortController().signal);
     await jest.advanceTimersByTimeAsync(0);
     expect(clicks).toHaveLength(1);
     const settleMs = ADAPTER.NAV_SETTLE_MS * ADAPTER.NAV_SETTLE_ROUNDS;
-    const retryMs = Math.round(
-      ADAPTER.PROFILE_LAND_RETRY_MS * (NOISE.BEAT_MIN_FACTOR + NOISE.BEAT_MAX_FACTOR) / 2,
-    );
-    await jest.advanceTimersByTimeAsync(settleMs + retryMs - 1);
+    // The retry pause is one `pause.retry` draw from a launch stream: inside [0.7, 1.45] × its base.
+    const lo = Math.round(ADAPTER.PROFILE_LAND_RETRY_MS * NOISE.BEAT_MIN_FACTOR);
+    const hi = Math.round(ADAPTER.PROFILE_LAND_RETRY_MS * NOISE.BEAT_MAX_FACTOR);
+    await jest.advanceTimersByTimeAsync(settleMs + lo - 1);
     expect(clicks).toHaveLength(1);
-    await jest.advanceTimersByTimeAsync(1);
+    await jest.advanceTimersByTimeAsync(hi - lo + 1);
     expect(clicks).toHaveLength(2);
-    expect(clicks[1] - clicks[0]).toBe(settleMs + retryMs);
+    expect(clicks[1] - clicks[0]).toBeGreaterThanOrEqual(settleMs + lo);
+    expect(clicks[1] - clicks[0]).toBeLessThanOrEqual(settleMs + hi);
     await jest.advanceTimersByTimeAsync(settleMs);
     await landing;
   } finally {
-    random.mockRestore();
     jest.useRealTimers();
   }
 });

@@ -53,16 +53,6 @@ export interface MigrationRecord {
   } | null;
 }
 
-/** @transitional — the legacy pacer's knobs, deleted with every reader when the cadence switch lands. */
-export interface LegacyCarry {
-  readonly pacingModel: 'legacy' | 'organic';
-  readonly minDelayMinutes: number;
-  readonly maxDelayMinutes: number;
-  readonly jitterPercent: number;
-  readonly activeHoursStart: number;
-  readonly activeHoursEnd: number;
-}
-
 export interface SettingsDocV2 {
   readonly v: 2;
   /** +1 on every persisted write. */
@@ -80,8 +70,6 @@ export interface SettingsDocV2 {
     readonly tourVersionSeen: string | null; readonly dismissedNotices: readonly string[];
   };
   readonly migration: MigrationRecord | null;
-  /** @transitional — deleted with every reader when the cadence switch lands. */
-  readonly legacyCarry: LegacyCarry | null;
 }
 
 /** The recommended choices: the balanced ordinals, derived quiet hours, cleanup of own follows off. */
@@ -116,5 +104,4 @@ export const DEFAULT_DOC: SettingsDocV2 = {
   },
   app: { mode: 'easy', tourCompletedAt: null, tourVersionSeen: null, dismissedNotices: [] },
   migration: null,
-  legacyCarry: null,
 };

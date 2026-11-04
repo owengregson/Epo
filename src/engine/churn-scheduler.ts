@@ -35,7 +35,6 @@ export class ChurnScheduler {
   private readonly validateFollow?: ChurnDeps['validateFollow'];
   /** Where a click-time park lands: the plan-day boundary's slots. */
   private readonly parkSlots: () => ParkSlots;
-  private consecutiveCleanup = 0;
   /**
    * Consecutive `'failed'` outcomes ACROSS records: the systemic-breakage signal (one dead account fails
    * at most `maxRetries + 1` times; a broken pipeline fails every record) that enters the recovery
@@ -95,7 +94,6 @@ export class ChurnScheduler {
       store: deps.store,
       ownPk,
       cfg: () => this.cfg,
-      consecutiveCleanup: () => this.consecutiveCleanup,
       pickQueued: deps.pickQueued,
       // Requesters are a live predicate (spec §9.9): an open `requests` edge into our account.
       hasActiveRequest: deps.hasActiveRequest
@@ -352,7 +350,7 @@ export class ChurnScheduler {
           });
           return 'ok';
         }
-        this.commit(rec, verb, spec, now, intent);
+        this.commit(rec, spec, now, intent);
         log.info(`churn: ${verb} performed`, { pk, username });
         return 'ok';
       }
@@ -395,7 +393,6 @@ export class ChurnScheduler {
   /** A verified action: ledger row, lifecycle transition, directed edge. */
   private commit(
     rec: FollowRecord,
-    verb: 'follow' | 'unfollow',
     spec: VerbSpec,
     now: number,
     intent: EffectIntent,
@@ -404,7 +401,6 @@ export class ChurnScheduler {
       at: now, result: 'ok', ledger: 'growth', record: this.transition(rec, spec, now),
       edge: this.ownPk === undefined ? undefined : { srcPk: this.ownPk, dstPk: rec.accountPk, active: spec.edge },
     });
-    this.consecutiveCleanup = verb === 'unfollow' ? this.consecutiveCleanup + 1 : 0;
   }
 
   /** The record as the verb's verified/simulated transition leaves it. */

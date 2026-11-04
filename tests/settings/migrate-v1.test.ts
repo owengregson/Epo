@@ -112,11 +112,18 @@ describe('golden fixtures', () => {
     expect(d.migration?.notes).toContainEqual({ kind: 'value-clamped', key: 'explore.refillBelow', from: 40, to: 10 });
   });
 
-  test('hand-edited active hours become custom quiet hours; legacy pacing is carried verbatim', () => {
+  test('hand-edited active hours become custom quiet hours; legacy pacing maps once to Even + trickle (spec §5.13)', () => {
     const d = doc(v1({ activeHoursStart: 9, activeHoursEnd: 21, pacingModel: 'legacy', minDelayMinutes: 4 }));
     expect(d.intent.quietHours).toEqual({ kind: 'custom', startMinute: 1260, endMinute: 540 });
-    expect(d.legacyCarry).toEqual({ pacingModel: 'legacy', minDelayMinutes: 4, maxDelayMinutes: 7, jitterPercent: 30,
-      activeHoursStart: 9, activeHoursEnd: 21 });
+    expect(d.intent).toMatchObject({ consistency: 'clockwork', rhythm: 'trickle' });
+    expect(d.migration?.notes.filter((n) => n.kind === 'legacy-pacing-retired')).toHaveLength(1);
+    expect(d).not.toHaveProperty('legacyCarry');
+  });
+
+  test('the organic model keeps its rhythm and consistency, with no pacing notice', () => {
+    const d = doc(v1({ pacingModel: 'organic' }));
+    expect(d.intent).toMatchObject({ consistency: 'natural', rhythm: 'sessions' });
+    expect(notes(v1({ pacingModel: 'organic' }))).not.toContain('legacy-pacing-retired');
   });
 
   test('timing rows only slow down: faster values are dropped with a notice', () => {

@@ -16,11 +16,9 @@
 @import "./shell.css";
 @import "./controls.css";
 @import "./graph.css";
-@import "./overview.css";
 @import "./chain.css";
 @import "./queues.css";
 @import "./prune.css";
-@import "./settings.css";
 @import "./tour.css";
 @import "./gallery.css";
 @import "./sidebar.css";
