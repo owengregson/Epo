@@ -101,3 +101,27 @@ view's own visibility; the tab is still concealed by re-stacking under the
 opaque dashboard and never by native visibility, so CDP input ACKs keep
 arriving while another stage covers it. The boot covers the tab the same way
 from the window's first frame.
+
+## Note — 2026-11-04: main-document readiness is independent of child loads
+
+Electron 44's `WebContents.executeJavaScript` defers execution until loading
+finishes. A local fixture reproduced navigation and evaluation timeouts while
+the main document was already usable and a child iframe response remained open.
+The tab now evaluates through `mainFrame.executeJavaScript(code, false)`, which
+preserves Electron's promise/value/error behavior without that full-load wait.
+Frame identity, detachment/destruction and the existing input epoch reject stale
+evaluation results. This adds no user-gesture privilege or alternative input path.
+
+Navigation and recovery wait within their existing deadline for a new main
+commit and top-level `dom-ready`; successful `loadURL` settlement also qualifies.
+A second cross-document navigation invalidates the previous commit. An aborted
+navigation alone never establishes readiness: it waits for the winning document.
+Error-document readiness and load-stop events cannot clear recovery health.
+Main load failures remain errors, late `loadURL` rejections are handled and
+logged, and readiness listeners are removed on success, failure and timeout.
+Recovery clears health only after main-document readiness and debugger setup.
+
+The bounded local actual-class fixture also exercised recovery with an unfinished
+child, structured promise results and script rejection. Private evidence lives in
+`results/tab-document-readiness/` in the durable handoff. This validates the local
+Electron mechanism; it does not claim a subsequent production catch-up passed.
