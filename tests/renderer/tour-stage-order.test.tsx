@@ -70,6 +70,10 @@ test('replaying the tour on cached Settings keeps its target visible after activ
     drain(effects); // A late activation reset must not undo the one-shot reveal.
     expect(host.scrollTop).toBe(1_100);
     expect(target.getBoundingClientRect().top).toBe(100);
+    const visibleFrames = [...frames.values()];
+    frames.clear();
+    for (const frame of visibleFrames) frame(0);
+    drain(renders);
     expect(document.activeElement).toBe(root.querySelector('.tour-next'));
   } finally {
     render(null, root);

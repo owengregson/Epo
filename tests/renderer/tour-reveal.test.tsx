@@ -10,10 +10,15 @@ const STEPS: readonly TourStep[] = [{ id: 'settings', title: 'Make it yours', bo
   target: 'seed', stage: 'settings', side: 'below' }];
 
 test('a delayed, offscreen tour target is revealed once before measuring without taking button focus', async () => {
-  let frame: FrameRequestCallback | undefined;
-  jest.spyOn(window, 'requestAnimationFrame').mockImplementation((next) => { frame = next; return 1; });
-  jest.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
-  const tick = async () => { await act(async () => { frame?.(0); }); };
+  let id = 0;
+  const frames = new Map<number, FrameRequestCallback>();
+  jest.spyOn(window, 'requestAnimationFrame').mockImplementation((next) => { frames.set(++id, next); return id; });
+  jest.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => { frames.delete(id); });
+  const tick = async () => {
+    const pending = [...frames.values()];
+    frames.clear();
+    await act(async () => { for (const frame of pending) frame(0); });
+  };
   const target = document.createElement('div');
   target.dataset.tour = 'seed';
   let measurable = false;
@@ -34,6 +39,7 @@ test('a delayed, offscreen tour target is revealed once before measuring without
     expect(scroll).toHaveBeenCalledTimes(1);
     expect(scroll).toHaveBeenCalledWith({ block: 'start', inline: 'nearest', behavior: 'instant' });
     expect((document.querySelector('.tour-ring') as HTMLElement).style.top).toBe('114px');
+    await tick();
     expect(document.activeElement).toBe(app.getByRole('button', { name: 'Finish' }));
     // Resize/layout tracking must update the ring without restarting the scroll.
     top = 170;

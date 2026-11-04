@@ -130,11 +130,26 @@ export function Tour({ open, onClose, setStage, steps = TOUR_STEPS }: TourProps)
     card.style.top = `${top}px`;
   }, [open, box, step]);
 
-  // Keyboard: Esc dismisses, arrows step. Enter is left to the focused button.
+  // Keyboard stays inside this modal card. Enter uses the focused button.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Tab') {
+        const card = cardRef.current;
+        const buttons = card?.querySelectorAll<HTMLButtonElement>('button');
+        const first = buttons?.[0];
+        const last = buttons?.[buttons.length - 1];
+        const active = document.activeElement;
+        const inside = active instanceof Node && card?.contains(active);
+        if (!ready || first === undefined || last === undefined) e.preventDefault();
+        else if (e.shiftKey && (!inside || active === first)) {
+          e.preventDefault();
+          last.focus({ preventScroll: true });
+        } else if (!e.shiftKey && (!inside || active === last)) {
+          e.preventDefault();
+          first.focus({ preventScroll: true });
+        }
+      } else if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
       } else if (e.key === 'ArrowRight') {
@@ -148,12 +163,25 @@ export function Tour({ open, onClose, setStage, steps = TOUR_STEPS }: TourProps)
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, last, onClose, steps.length]);
+  }, [open, ready, last, onClose, steps.length]);
 
-  // Chromium refuses focus while the card is hidden for measurement. Hand it
-  // over once the current step is visible, never on each tracked rect change.
+  // Chromium can retain inherited visibility:hidden beyond the commit that
+  // removes .measuring, especially when a lazy stage mounts. Wait for the real
+  // visible style, then hand off once; tracking must never retake user focus.
   useLayoutEffect(() => {
-    if (open && ready) nextRef.current?.focus({ preventScroll: true });
+    if (!open || !ready) return;
+    let frame = 0;
+    const focusWhenVisible = (): void => {
+      const button = nextRef.current;
+      if (button === null || cardRef.current?.contains(document.activeElement)) return;
+      if (getComputedStyle(button).visibility !== 'visible') {
+        frame = requestAnimationFrame(focusWhenVisible);
+        return;
+      }
+      button.focus({ preventScroll: true });
+    };
+    frame = requestAnimationFrame(focusWhenVisible);
+    return () => cancelAnimationFrame(frame);
   }, [open, idx, ready]);
 
   if (!open || step === undefined) return null;
