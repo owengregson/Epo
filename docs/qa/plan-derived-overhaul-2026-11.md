@@ -28,12 +28,16 @@ both show zero disagreements. L4 also requires at least one night away with Epo 
 | Follow proof and dispatch guards, `dbd9193` | Full gate | 414 suites / 4,311 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 58 warnings |
 | Parser safety review, `0ee2605` | Full gate | 420 suites / 4,352 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 58 warnings |
 | Closing cleanup, `e1a744e` | Full gate | 420 suites / 4,360 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 56 warnings |
+| Renderer state review, `54a3771` | Full gate | 421 suites / 4,380 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 56 warnings |
+| Numeric cleanup share, `f7d0f53` | Full gate | 422 suites / 4,382 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 56 warnings |
+| Durable bookkeeping ownership, `9d62156` | Full gate | 424 suites / 4,387 tests passed, 5 skipped, zero TODO; boundaries 0 errors / 56 warnings |
 | Final integrated checkout | Full gates, composition, cleanup audit, review, background and visual checks | Pending |
 
 The post-merge gate logs are stored outside the repository under the durable handoff folder's
 `results/codex-pr-s2r-merge-gates/`, `codex-cautious-floor-gates/`, `codex-cl-dials-gates/`,
 `codex-reads-merge-gates/`, `codex-ui-merge-gates/`, `codex-plan-merge-gates/`, `codex-composition-gates/` and
-`codex-click-review-gates/`, `codex-read-review-gates/` and `codex-cl-merge-gates/`.
+`codex-click-review-gates/`, `codex-read-review-gates/`, `codex-cl-merge-gates/`,
+`codex-ui-review-merge-gates/`, `codex-cleanup-share-merge-gates/` and `codex-bookkeeping-merge-gates/`.
 The plan/read/UI merges also passed the three lifecycle reachability tests, the 1,260-day plan QC with zero breaches,
 and the generated catalog check. Counts above describe the named
 checkouts only, not later unmerged work.
@@ -71,7 +75,11 @@ responses, fake clocks and disposable stores; no live response is requested to i
   integration verification is in progress.
 - A failed settings-bookkeeping consumption could seed a second account with the same unowned freshness stamp.
   Backup restoration could resurrect the unowned stamp even after a successful consume. Both paths are reproduced;
-  ownership must persist before consumption, and consumption must succeed before store seeding.
+  ownership now persists before consumption, and consumption must succeed before store seeding. The integrated gate
+  passes, including a failure of the second write, restart, and corrupt-primary backup restoration.
+- Correct refused-v1 schedule mapping exposed probation fitting past quiet hours. The repair uses the same quiet-aware
+  close and reserved tail as normal sessions, shrinks kind allocations, and leaves probation for the next viable slot
+  when no slower action fits. Focused all-persona realization and zero-room regressions pass; integration is pending.
 
 ## Upgrade behavior
 

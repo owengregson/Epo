@@ -1329,7 +1329,7 @@ becomes 70 (owner Q11). A normal install of any persona migrates with **zero ove
 | `minDelayMinutes`, `maxDelayMinutes`, `jitterPercent`, `pacingModel` | `legacyCarry` (before S2) / intent (after S2) | carried verbatim until §5.13 S2 deletes the pacer [lead]; from S2 on, `migrate-v1` applies `legacy-pacing-migration.ts` directly (legacy → consistency `clockwork` (Even) + rhythm `trickle`, notice) |
 | `activeHoursStart`, `activeHoursEnd` | `legacyCarry` + `intent.quietHours` | carried until S2; default (8, 22) → `{kind:'derived'}`; hand-edited → `{kind:'custom', startMinute: end·60, endMinute: start·60}` (notice) |
 | `followbackSweepHours` | `checks.everyHours` | override if ≠ 1 **and** ≥ 0.85 h (the envelope); a faster value is dropped with a notice |
-| `sweepLastRunAt`, `sweepIntervalFactor` | `migration.bookkeeping` → seeds `reopen_state.lastSweep` (§9) at the first store open whose pk matches; then `consume-bookkeeping` | the factor is dropped (the sweep factor retires) |
+| `sweepLastRunAt`, `sweepIntervalFactor` | `migration.bookkeeping` → persist the first account's ownership → durable `consume-bookkeeping` → seed `reopen_state.lastSweep` (§9) only after success | the factor is dropped; ownership remains explicit in the normal settings backup (ADR 0105) |
 | `autoAcceptFollowRequests` | `prefs.acceptRequests` | copy |
 | `lowWaterCandidates` | `explore.refillBelow` | override if ≠ 5; clamped ≤ 10 (it was inert above 10) with a notice |
 | `minFollowBackRate`, `minPoolSize` | `explore.moveOnRate`, `explore.moveOnPool` | override if ≠ 0.15 / 300 |
@@ -3546,7 +3546,8 @@ to RO-b. Reopen: T5 I1–I12 (overnight reopen; a week away; DST fall-back; draw
 head; a private account with 5 requesters; a manual unfollow after a week away; crash after N; a 4 500-follower header;
 conversion parity; Boost active; upgrade of the live store's shape: exactly one head page) + the following check
 (outside follow and unfollow identified; charge replaced by the exact count). Settings: service write failure →
-`not-saved` with no reload/push/re-plan; bookkeeping never writes settings; seed check never at launch; facts not-built
+`not-saved` with no reload/push/re-plan for user settings; run bookkeeping stays in the account store. The one-time
+migration claim/consume persists ownership before clearing, and failed consumption cannot seed freshness; seed check never at launch; facts not-built
 shape; migration refusal keeps practice mode and writes no v2 after a user op; v2 deleted with `.bak` present →
 `restored-from-backup` + `needs-review`. Boot: R2 → R3 → landing behind the splash → ready; the IG deadline falls back
 to the placeholder; steps in order under the lease; queued Start never `manual-running`; settle-deadline fallback; no

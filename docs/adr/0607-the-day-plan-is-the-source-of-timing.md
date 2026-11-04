@@ -153,3 +153,8 @@ accepts no longer indirectly deplete that share through a proportional estimate 
 Single-account manual actions retain their existing hard-day and hourly admission rules. The I11 test
 now asserts exact realization on every complete simulated day for every persona, alongside gap floors,
 hour caps and read-budget checks; the production Prune integration test pins the session share.
+
+Probation also uses the quiet-aware session close when fitting its slower gaps, preserving the same reserved tail.
+An unsupported slot receives zero actions and leaves probation for the next viable session. When a budget shrinks,
+its kind allocations shrink with it. The night-owl regression covers a final session that previously projected past
+quiet hours; no quiet window or safety ceiling is extended to make that allocation fit.
