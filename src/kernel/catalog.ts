@@ -24,6 +24,7 @@ import { MOTION_ADDED, MOTION_ROLE, MOTION_SHAPE_DIALS } from './motion-roles';
 import { OVERRIDES, type Override } from './overrides';
 import { PLAN_BOUNDS } from './plan/policy';
 import { BOUNDS, PACING_BASE_MS, POLICY, PREFERENCES, SCALES } from './policy';
+import { PROBE_BOUNDS } from './probe-policy';
 import { BOUNDS_REENTRY } from './reentry-policy';
 import { RENDERER_HEALTH } from './renderer-health-policy';
 import { RUNTIME_BOUNDS } from './runtime-bounds';
@@ -76,6 +77,7 @@ const TABLES = {
   PLAN_BOUNDS: [PLAN_BOUNDS, 'bound'],
   POLICY: [POLICY, 'policy'], SCALES: [SCALES, 'policy'], BOUNDS: [BOUNDS, 'bound'],
   PACING_BASE_MS: [PACING_BASE_MS, 'policy'], PREFERENCES: [PREFERENCES, 'policy'],
+  PROBE_BOUNDS: [PROBE_BOUNDS, 'bound'],
   BOUNDS_REENTRY: [BOUNDS_REENTRY, 'bound'],
   RENDERER_HEALTH: [RENDERER_HEALTH, 'bound'],
   RUNTIME_BOUNDS: [RUNTIME_BOUNDS, 'bound'], RUNTIME_POLICY: [RUNTIME_POLICY, 'bound'],

@@ -1,10 +1,10 @@
 /** Reconcile independent native transport with CDP bodies; missing events never imply success or cancellation. */
 import { SURFACE } from '@/adapter/ig-surface';
+import { PROBE_BOUNDS } from '@/kernel/probe-policy';
 import type { NativeExchange } from '@/probe/native-traffic';
 import type { NetworkTraceEntry } from '@/probe/network-trace';
 import type { Exchange } from '@/probe/recorder';
 import { gateObserved } from '@/surface/read/gate';
-import { HARNESS } from '@/timing/config';
 
 export interface QualifiedExchange {
   nativeId: number;
@@ -22,14 +22,14 @@ function normalizedUrl(raw: string): string {
 
 function matches(cdp: Exchange, native: NativeExchange): boolean {
   return cdp.method === native.method && normalizedUrl(cdp.url) === normalizedUrl(native.url)
-    && Math.abs(cdp.startedAt - native.startedAt) <= HARNESS.CAPTURE_EVENT_SKEW_MS
+    && Math.abs(cdp.startedAt - native.startedAt) <= PROBE_BOUNDS.CAPTURE_EVENT_SKEW_MS
     && (cdp.postSha256 === undefined || native.post.sha256 === undefined || cdp.postSha256 === native.post.sha256);
 }
 
 function duringNavigation(native: NativeExchange, trace: readonly NetworkTraceEntry[]): boolean {
   if (native.endedAt === undefined) return false;
   const endedAt = native.endedAt;
-  const slack = HARNESS.CAPTURE_EVENT_SKEW_MS;
+  const slack = PROBE_BOUNDS.CAPTURE_EVENT_SKEW_MS;
   return trace.some((start, index) => {
     if (start.event !== 'navigation-start' || start.isMainFrame !== true || start.isSameDocument === true) return false;
     const prior = trace.slice(0, index).some((entry) => entry.event === 'navigation-committed' && entry.isMainFrame === true);
