@@ -4,9 +4,12 @@ import { TIMED_OUT, withTimeout } from '../timing/primitives';
 import * as logger from '../utils/logger';
 import { ActionAbortedError, TabUnavailableError, TabUnresponsiveError } from './errors';
 
+/** Chromium's navigation-aborted protocol code, not a timing value. */
+const ERR_ABORTED = -3;
+
 const aborted = (error: unknown): boolean => {
   const e = error as { code?: string; errno?: number };
-  return e?.code === 'ERR_ABORTED' || e?.errno === -3;
+  return e?.code === 'ERR_ABORTED' || e?.errno === ERR_ABORTED;
 };
 
 /** A new top-level document can be used after DOM readiness; loadURL still reports navigation failures. */
@@ -30,7 +33,7 @@ async function mainDocumentReady(wc: WebContents, navigate: () => Promise<void> 
     resolveReady();
   };
   const onFailure = (_event: ElectronEvent, code: number, description: string, _url: string, isMainFrame: boolean): void => {
-    if (!isMainFrame || code === -3) return;
+    if (!isMainFrame || code === ERR_ABORTED) return;
     committed = false;
     rejectReady(Object.assign(new Error(`Main document failed: ${description} (${code})`), { errno: code }));
   };
