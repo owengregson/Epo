@@ -77,20 +77,24 @@ export function DiagnosticsPanel(): JSX.Element {
     <div class="diag" data-section="diagnostics">
       <p class="diag-lead">{C.lead}</p>
       <div class="diag-bar">
-        <div class="diag-levels" role="group" aria-label="Level">
-          {LEVELS.map((l) => (
-            <button key={l} type="button" class={l === level ? 'chip active' : 'chip'} aria-pressed={l === level} onClick={() => setLevel(l)}>
-              {C.levels[l]}
-            </button>
-          ))}
+        <div class="diag-filters">
+          <div class="diag-levels" role="group" aria-label="Level">
+            {LEVELS.map((l) => (
+              <button key={l} type="button" class={l === level ? 'chip active' : 'chip'} aria-pressed={l === level} onClick={() => setLevel(l)}>
+                {C.levels[l]}
+              </button>
+            ))}
+          </div>
+          <input class="diag-search" type="search" placeholder={C.search} aria-label={C.search} value={query}
+            onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)} />
         </div>
-        <input class="diag-search" type="search" placeholder={C.search} aria-label={C.search} value={query}
-          onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)} />
-        <button type="button" class="tbtn" aria-pressed={frozen !== null} onClick={() => setFrozen((f) => (f === null ? entries : null))}>
-          <Icon name={frozen === null ? 'pause' : 'play'} /> {frozen === null ? C.pause : C.resume}
-        </button>
-        <button type="button" class="tbtn" onClick={copy}>{C.copy}</button>
-        <button type="button" class="tbtn" onClick={() => void window.epo.openLogFolder()}>{C.openFolder}</button>
+        <div class="diag-actions" role="group" aria-label="Log actions">
+          <button type="button" class="tbtn" aria-pressed={frozen !== null} onClick={() => setFrozen((f) => (f === null ? entries : null))}>
+            <Icon name={frozen === null ? 'pause' : 'play'} /> {frozen === null ? C.pause : C.resume}
+          </button>
+          <button type="button" class="tbtn" onClick={copy}>{C.copy}</button>
+          <button type="button" class="tbtn" onClick={() => void window.epo.openLogFolder()}>{C.openFolder}</button>
+        </div>
       </div>
       <PageNow />
       {frozen !== null ? <p class="diag-muted">{C.paused}</p> : null}

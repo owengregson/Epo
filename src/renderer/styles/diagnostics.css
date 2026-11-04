@@ -14,11 +14,28 @@
   color: var(--muted);
 }
 
-.diag-bar {
+.diag-bar,
+.diag-filters,
+.diag-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
+}
+
+.diag-filters {
+  flex: 1 1 28rem;
+  min-width: 0;
+}
+
+/* Wrap the actions as one group, rather than orphaning the folder action. */
+.diag-actions {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.diag-actions .tbtn {
+  white-space: nowrap;
 }
 
 .diag-levels {
