@@ -240,10 +240,15 @@ describe('F2: each confirm layer is pressed until Instagram answers', () => {
       },
     }));
 
-    const result = await actorOn(page).unfollow('someone', 'pk');
-
-    expect(result.ok).toBe(true);
-    expect(page.h.clicks).toEqual([HEADER, MENU_ROW, DIALOG_BUTTON]);
+    jest.useFakeTimers();
+    try {
+      const result = actorOn(page).unfollow('someone', 'pk');
+      await jest.runAllTimersAsync();
+      expect((await result).ok).toBe(true);
+      expect(page.h.clicks).toEqual([HEADER, MENU_ROW, DIALOG_BUTTON]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('a public account: the menu press fires the mutation — two presses and at most one more poll', async () => {
