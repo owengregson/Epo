@@ -1,5 +1,19 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-04 22:03 UTC (owner authorization; cleanup-scope correction) —** The owner explicitly
+> authorized cautious account actions and the necessary tests to finish and rebuild. No further
+> cleanup-preference question is needed: Prune can remain Off. Cleanup Off disables additional
+> cleanup of manually followed accounts, **not managed lifecycle unfollows**: `allocateKinds`
+> reserves lifecycle demand first, and `ChurnPick` does not gate it on `weaveEnabled`.
+> The 22:08 UTC closed-profile audit found zero due managed unfollows: 32 records remain protected
+> in `kept`, and 23 mutuals are held until November 6. All 17 old Prune remainder rows are explicitly
+> account-protected. Existing queued follows and the probation session open at that audit provide natural
+> work without enabling Prune or Boost; fresh production checks still decide each dispatch.
+> This corrects the earlier cleanup assumption, not the saved protections or historical raw reports.
+> No new live-action success is claimed here. Evidence and limits are in the
+> [current eligibility record](qa/plan-derived-overhaul-2026-11.md#remaining-live-sequence-and-actual-eligibility)
+> and private `results/live-action-readiness-2026-11-04/readiness.md`.
+
 > **2026-11-04 (capture fixed, production catch-up audited, S8 integrated) —** The interruption was
 > investigated through native/CDP request lifetimes and explicit bodyless-GET evidence. L1 qualifies
 > on retained live evidence; its original stopped report remains immutable. The first real production
@@ -20,8 +34,8 @@
 > Cleanup correctly migrated as Off, and existing biography-word protections kept all seven queued
 > unfollows (32 records kept total). The uncertain journal entry remains unchanged. Do not undo
 > protection, fabricate due records, reset frontiers or alter the clock to satisfy the old L5 queue
-> assumptions. The owner has been asked whether cleanup should remain Off or be enabled for future
-> eligible, unprotected work; absence of a reply leaves the saved intent unchanged. Epo is stopped.
+> assumptions. The earlier question about enabling cleanup is superseded by the authorization and
+> scope correction above; managed work does not require it. Epo was stopped at this checkpoint.
 > See the [production evidence](qa/plan-derived-overhaul-2026-11.md#production-reopen-and-persisted-catch-up-2026-11-04),
 > [S8 gate](qa/plan-derived-overhaul-2026-11.md#s8-comparator-retirement-and-integration-review), and
 > [remaining eligibility](qa/plan-derived-overhaul-2026-11.md#remaining-live-sequence-and-actual-eligibility).

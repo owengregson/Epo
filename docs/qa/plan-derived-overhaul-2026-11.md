@@ -609,20 +609,48 @@ L1 qualifies on retained evidence; the production pre-Start portion of L4 is rec
 the visual and post-Start portions still unqualified. L5 observes only approved, naturally eligible
 planned unfollows. No live success is inferred from offline tests.
 
+At **2026-11-04 22:03 UTC**, the owner explicitly authorized cautious account actions and the
+necessary tests to finish and rebuild. No renewed cleanup-preference question is required; Prune
+can remain Off. This authorizes continued testing, not a claim that an action or L5 has passed.
+
 The actual migrated account state invalidates the old assumed L5 queue. Saved `weaveEnabled: false`
-correctly became `cleanup: 'off'`. Startup protection also moved 32 records to `kept`, all for an
-existing protected biography word: 25 previously followed back and **all seven queued unfollows**.
+correctly became `cleanup: 'off'`, which disables additional cleanup of manually followed accounts,
+**not managed lifecycle unfollows**. In [`allocateKinds`](../../src/kernel/plan/volume.ts), lifecycle
+demand receives unfollow room before `cleanupShare` applies to the remaining room;
+[`ChurnPick.nextDue`](../../src/engine/churn-pick.ts) has no `weaveEnabled` gate. Startup protection
+also moved 32 records to `kept`, all for an existing protected biography word: 25 previously followed
+back and **all seven queued unfollows**.
 This includes the record linked to the uncertain journal entry; the entry itself remains unchanged.
 The migration's wider biography-word matching was intentional and disclosed; no word was added.
 Thus the old expectation that this record stays `unfollow_queued`, then supplies the first Requested
 unfollow, no longer applies. Do not weaken protections, undo `kept`, enable cleanup, fabricate due
 records or alter the clock merely to manufacture a passing test.
 
-All of today's drawn sessions had elapsed at launch. The UI's next session was 1:48 PM Pacific,
-but saved cleanup-off intent means that session will not provide the proposed unfollow sequence.
-No test or automation has been scheduled for that time. L5 needs actual eligible, unprotected work
-and the owner's intended cleanup setting. Optional Boost is not a mandatory validation requirement.
-Future live work remains lead-only and sequential, with the existing first-wall stop rules.
+At the earlier production launch, the persisted plan's sessions had elapsed and the UI projected
+the next session at 1:48 PM Pacific. The later read-only audit at **22:08 UTC / 14:08 PST**, using
+the production settings resolver, demand, ledger and `PlanService.view`, found that session open
+until 15:08 PST, with six follow slots remaining under late-join probation. This was a provisional
+projection for natural launch, not a persisted running state or evidence of pressing Start.
+
+The same closed-profile audit found zero `pending_followback` or `unfollow_queued` records. All
+32 kept records still matched biography protection, while the 23 remaining `followed_back` records
+were held until **November 6, 01:54–02:09 PST**. All 17 old Prune remainder rows were explicitly
+account-protected. These protections and unexpired holds explain the absence of due managed
+unfollows; Cleanup Off does not. Enabling Prune would not make those rows eligible.
+
+Thirty existing queued follows passed stored scoring and selection gates, including public and
+private candidates, but stale stored facts still require fresh canonical profile and relationship
+checks. Normal Start can therefore supply genuine planned follow work without Prune or Boost.
+Accept requests remains enabled and can borrow follow slots; a follow-only sample must account
+for that preference. Live status after startup or any deliberate preference change is authoritative.
+L5 still needs actual eligible, unprotected unfollow work; no hold, protection, queue or clock may
+be altered merely to manufacture it. Optional Boost is not required. Live work remains lead-only
+and sequential, with the existing first-wall stop rules.
+
+The sanitized audit and unchanged database/settings/runtime hashes are retained privately in
+`results/live-action-readiness-2026-11-04/readiness.md` and `readiness.json`; candidate identities
+remain outside the repository. This correction supersedes the earlier cleanup-off assumption;
+historical raw run reports are unchanged.
 
 `EMPTY_BIO` records the empty-string form observed in the scrubbed 2026-11-04 body
 ([ADR 0806](../adr/0806-one-parser-tiers.md#amendment--2026-11-04-observed-empty-string-biography)).
