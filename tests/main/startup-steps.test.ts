@@ -16,10 +16,42 @@ import type { GraphSession } from '@/main/modules/session';
 import { readOwnUsernamePassively } from '@/main/modules/startup-steps';
 import { openDatabase } from '@/store/driver/index';
 import { MIGRATIONS } from '@/store/schema';
+import { ADAPTER } from '@/timing/config';
+import * as timing from '@/timing/primitives';
 import type { EpoStatus } from '@/types';
 import { cleanupMainHarness, foundationStore, makeFakeTab, newFoundation, tempUserData } from '../kit/main-harness';
 
 afterAll(cleanupMainHarness);
+
+jest.mock('@/timing/page-pacing', () => ({
+  ...jest.requireActual('@/timing/page-pacing'), pauseBeforePageRetry: jest.fn(async () => {}),
+}));
+jest.mock('@/timing/primitives', () => {
+  const actual = jest.requireActual<typeof import('@/timing/primitives')>('@/timing/primitives');
+  const { ADAPTER: bounds } = jest.requireActual<typeof import('@/timing/config')>('@/timing/config');
+  return { ...actual, sleep: jest.fn((ms: number, signal?: AbortSignal) =>
+    ms === bounds.NAV_SETTLE_MS ? Promise.resolve() : actual.sleep(ms, signal)) };
+});
+beforeEach(() => {
+  jest.spyOn(Actor.prototype, 'clickOwnProfileLink').mockResolvedValue(false);
+  jest.clearAllMocks();
+});
+afterEach(() => jest.restoreAllMocks());
+
+function statusEvents() {
+  let latest: EpoStatus | null = null;
+  const listeners = new Set<(s: EpoStatus) => void>();
+  return {
+    push: (s: EpoStatus) => { latest = s; for (const f of listeners) f(s); },
+    until: (predicate: (s: EpoStatus) => boolean): Promise<void> => {
+      if (latest !== null && predicate(latest)) return Promise.resolve();
+      return new Promise((resolve) => {
+        const f = (s: EpoStatus) => { if (predicate(s)) { listeners.delete(f); resolve(); } };
+        listeners.add(f);
+      });
+    },
+  };
+}
 
 const sessionOf = (f: Foundation): GraphSession => (f as unknown as { session: GraphSession }).session;
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -85,13 +117,14 @@ test('L-BOOT: before the reveal the tab sees the landing press and its URL wait,
     return true;
   });
   const { tab, calls } = profileTab('owen', { currentUrl: () => url });
-  const { foundation: f } = newFoundation({ tab });
+  const events = statusEvents();
+  const { foundation: f } = newFoundation({ tab, onStatus: events.push });
   const booting = f.startBoot();
-  // The landing sleeps a real-timer ADAPTER.NAV_SETTLE_MS round (300 ms) before it reads the URL; a tick is ≥ 1 ms.
-  for (let i = 0; i < 2000 && (await f.status()).boot?.ig === 'pending'; i++) await flush();
+  await events.until((s) => s.boot?.phase === 'ready' && s.boot.ig === 'ready');
   const view = (await f.status()).boot;
   expect(view).toMatchObject({ phase: 'ready', ig: 'ready', startup: { done: false } });
   expect(press).toHaveBeenCalledTimes(1);
+  expect(timing.sleep).toHaveBeenCalledWith(ADAPTER.NAV_SETTLE_MS, expect.any(AbortSignal));
   expect(calls.filter((c) => c.startsWith('goto') || c === 'show')).toEqual([]);
   expect((await f.status()).account).toEqual({ username: 'owen', confirmed: true });
   f.bootRevealed();
@@ -117,12 +150,13 @@ test('the passive identity read only evaluates: no navigation, no press', async 
 
 test('a Start during the sequence is queued, never manual-running, and starts after the release', async () => {
   const { tab } = profileTab('owen');
-  const { foundation: f } = newFoundation({ tab });
+  const events = statusEvents();
+  const { foundation: f } = newFoundation({ tab, onStatus: events.push });
   await f.updateSettings({ activeHoursStart: 8, activeHoursEnd: 8, pacingModel: 'legacy' });
   const booting = f.startBoot();
-  await flush();
+  await events.until((s) => s.boot?.phase === 'ready' && s.boot.ig === 'ready');
   const start = f.startEngine();
-  await flush();
+  await events.until((s) => s.boot?.startup.startQueued === true);
   expect((await f.status()).boot?.startup.startQueued).toBe(true);
   expect(await f.readFollowers('someone')).toMatchObject({ ok: false, reason: 'starting' });
   expect(await f.followOne('someone')).toMatchObject({ ok: false, reason: 'starting' });
@@ -138,11 +172,12 @@ test('a Start during the sequence is queued, never manual-running, and starts af
 });
 
 test('Stop during the sequence cancels a queued Start', async () => {
-  const { foundation: f } = newFoundation({ tab: profileTab('owen').tab });
+  const events = statusEvents();
+  const { foundation: f } = newFoundation({ tab: profileTab('owen').tab, onStatus: events.push });
   const booting = f.startBoot();
-  await flush();
+  await events.until((s) => s.boot?.phase === 'ready' && s.boot.ig === 'ready');
   const start = f.startEngine();
-  await flush();
+  await events.until((s) => s.boot?.startup.startQueued === true);
   await f.stopEngine();
   f.bootRevealed();
   await booting;

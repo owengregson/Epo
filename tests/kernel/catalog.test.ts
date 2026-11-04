@@ -151,7 +151,8 @@ test('the registry rows carry the provenance tier, and an override its reason', 
   expect(registry.every((r) => kernelRegistryKeys.some((k) => r.id === k || r.id.startsWith(`${k}.`)))).toBe(true);
   expect(byId.get('RIM.ACCEPT_PACE_MIN_MS')?.src).toBe(OVERRIDES['RIM.ACCEPT_PACE_MIN_MS'].reason);
   expect(byId.get('RECOVERY.HOLD_MEDIANS_MS')?.src).toBe(OVERRIDES['RECOVERY.HOLD_MEDIANS_MS.2'].reason);
-  expect(byId.get('CAUTION.cautious.floorSeconds')).toMatchObject({ group: 'derived', tier: 'override' });
+  expect(byId.get('CAUTION.bold.floorSeconds')).toMatchObject({ group: 'derived', tier: 'override' });
+  expect(byId.get('CAUTION.cautious.floorSeconds')).toMatchObject({ group: 'derived', tier: 'derived', src: null });
   expect(byId.get('CAUTION.standard.floorSeconds')).toMatchObject({ group: 'derived', tier: 'derived', src: null });
 });
 
