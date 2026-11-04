@@ -378,7 +378,8 @@
 }
 .stage-view.active {
   display: block;
-  animation: viewIn var(--dur-3) var(--ease, ease) both;
+  /* Release the finished transform: forward fill can retain its enlarged scroll bounds. */
+  animation: viewIn var(--dur-3) var(--ease, ease);
 }
 
 /* Stage tabs carry their own labels; the tooltip needs no extra badge. */
