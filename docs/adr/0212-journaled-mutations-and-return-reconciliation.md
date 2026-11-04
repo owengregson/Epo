@@ -151,3 +151,11 @@ frontier, the following check), every unfollow decision is verified once at the 
 derives from the ledger and the plan-day windows. Requests are a live predicate: an open request keeps a
 record out of every timer and pick, and only a complete requests panel ends one. Where "Knowledge on
 return" says "the bot cannot expire them", read "Epo does not expire them"; the section stays for history.
+
+## Amendment — 2026-11-02: the deadline is drawn at dispatch; the admission precedes the visit (ADR 0607)
+
+The journal's dispatch closure is where the plan's cadence arms the next deadline: `armAtDispatch`
+re-checks the admission, draws the session's gap once and persists the deadline before the press, so
+the journal and the deadline describe the same dispatch. Admission (`preflight`, with this account's
+journal) runs before any visit; a refusal is a typed deferral with `until`, so an action that cannot
+run never costs a profile read.

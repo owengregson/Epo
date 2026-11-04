@@ -46,3 +46,14 @@ it survives a lost planner snapshot.
 - A third model (say, a schedule imported from a calendar) is a third `Pacer`.
 - The rest of the loop — the gate table, the deadline arming, the durable
   pacing snapshot — is model-agnostic.
+
+## Amendment — 2026-11-02: one model, the day plan (ADR 0607)
+
+The two models and the `Pacer` port are gone. The loop's `pacing` dep is the plan port (`EnginePlan`):
+the pure `PlanView` decides whether this is a moment to act (session, kind budgets, the exact ceiling,
+session and velocity parks), and `MutationCadence` owns the gap. Its `preflight` answers BEFORE any
+visit with a typed `Admission` (`until` when known), so a refused action is parked exactly and costs no
+read; `armAtDispatch` re-checks at the dispatch closure, draws the session's `GapSpec` once and persists
+the deadline, and the loop serves that stored deadline — there is no second draw and no
+`max(store, actAt + noteAction)`. Accepts arm one deadline per pass. A legacy pacing setting maps once
+to Consistency = Even and Rhythm = trickle (ADR 0901, executed).

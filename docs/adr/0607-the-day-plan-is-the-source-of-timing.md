@@ -1,7 +1,7 @@
 # 0607 — The day plan is the source of every Instagram-facing timing
 
-**Status:** proposed (draft; the plan core landed unwired — the runtime streams wire it, retire the
-legacy pacer and finalize the ledgers below) · **Area:** kernel, governors, timing, settings
+**Status:** accepted (the plan core landed unwired; the runtime streams wired it, retired the legacy
+pacer and finalized the ledgers below) · **Area:** kernel, governors, timing, settings
 **Amends:** ADR 0605 (the golden), 0202 (pacing models), 0204, 0211, 0212, 0307 · **Executes:** ADR 0901
 
 ## Context
@@ -44,9 +44,10 @@ owner's first rule: everything timing- or limit-shaped is derived from the plan,
    reserve; pages = exploration + a header-relative census + the frontier term; notifications =
    sessions + checks), and the plan's own day and session buckets inside it. The census is a durable
    per-session predicate, never pinned at draw time.
-9. **The golden invariant** (finalized by the retirement stream): the snapshot is never edited;
-   `registry-changes.ts` holds the `RETIRED` and `CHANGED` ledgers; the tempo-identity and MOTION
-   goldens and the plan laws (L1–L15) replace "exactly one moved key".
+9. **The golden invariant**: the snapshot is never edited; `registry-changes.ts` holds the `RETIRED`
+   and `CHANGED` ledgers and every golden (registry, grid, personas, profiles) expects
+   `snapshot − RETIRED ⊕ CHANGED`; the moved leaves equal `CHANGED` exactly; the tempo-identity and
+   MOTION goldens and the plan laws (L1–L15) replace "exactly one moved key" (ledgers below).
 10. **One activity clock per graph** (`src/rim/ig-activity-clock.ts`): every Instagram operation —
     a profile visit, a list walk, the notifications drawer — enters no sooner than one `dwell.visit`
     draw at the session tempo after the previous operation ended, whichever caller issued either.
@@ -63,8 +64,63 @@ owner's first rule: everything timing- or limit-shaped is derived from the plan,
 - No caller can burst Instagram operations: an enrichment pass, a click review's verify visit, a
   journal settlement and a sweep's walk share one rhythm, each entry at least the `dwell.visit`
   floor after the last end at any pace (a law). The tempo registry holds 27 keys.
-- Ledgers to finalize at retirement: `RETIRED` (18 registry keys), `CHANGED` (the Cautious floor
-  60 → 70 s, owner Q11), and the provenance tally (40/34/16/11).
+- The registry holds 101 keys after the retirements; the reviewed provenance tally is derived 40 /
+  policy 34 / override 16 / harness 11 (was 49/41/18/11 = 119).
+
+## The ledgers (`src/kernel/registry-changes.ts`)
+
+**RETIRED — 18 registry keys**, each recorded with `{adr: '0607', replacedBy, reason}`; their last
+values stay readable in the frozen snapshot.
+
+| Keys | Tier | Replaced by |
+|---|---|---|
+| `ENGINE.VELOCITY_PARK_{MEDIAN_MS,SIGMA,MIN_MS,MAX_MS}` | derived | the exact trailing-hour window (`MutationCadence.velocityParkUntil`) |
+| `RIM.ENRICH_PACE_{MIN,MAX}_MS` | derived | the activity clock; a non-ok sentinel ends an enrichment pass |
+| `NOISE.PRUNE_LAUNCH_JITTER_MAX_MS` | derived | nothing launches: cleanup is woven into sessions (C14) |
+| `NOISE.CADENCE_SIGMA` | derived | the plan's check spacing (`check.spacing`, `PlanView.checkDue`) |
+| `NOISE.DAILY_BOUNDARY_JITTER_MAX_MS` | derived | exact plan-day parks; the `daily-boundary` wait class and `jitterBoundary` went with it |
+| `PRUNE.DELAY_FACTOR` | policy | the shared deadline armed at dispatch |
+| `RIM.ACQUIRE_MAX_ROUNDS` | policy | dead; the slice shape bounds the dialog fallback |
+| `SCHEDULER.AUTO_PRUNE_CHECK_MS` | policy | cleanup in sessions plus a manual Prune now (C14) |
+| `PRUNE.SCAN_FRESH_MS` | policy | the plan's census rule (`intent.patienceWaitMs`, `PlanView.censusDue`) |
+| `NOISE.CADENCE_{MIN,MAX}_FACTOR` | policy | the plan's check spacing; the `watcher-cadence` class retired |
+| `SCHEDULER.USERNAME_REBUILD_BACKOFF_MS` | policy | the boot sequence's `confirm-account` step |
+| `ENGINE.REFILL_PACING_{MIN,MAX}_MS` | override | the activity clock (their two `OVERRIDES` entries are gone) |
+
+`POLICY.BACKOFF_BAND` (unused, a duplicate of the backoff clamp) is deleted with them. The frozen v1
+settings rules keep the retired sweep factor's range as `BOUNDS.SETTINGS_V1.SWEEP_FACTOR_{MIN,MAX}`
+(0.5 / 2, kernel, guard lines), so a v1 file still coerces verbatim: literal copies in
+`src/settings/v1` would be static-timing findings the ratchet cannot list.
+
+**CHANGED** — `{path, from, to, adr}` for every deliberate value change the snapshot pins:
+
+| Path | From | To | ADR |
+|---|---|---|---|
+| `groups.RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS` | 2 h | 3 h | 0606 §1 |
+
+The Cautious gap floor 60 → 70 s (owner Q11, ADR 0606 §4) is decided and prepared as its own commit
+(`grid.caution=cautious.gapFloorSeconds` and `personas.casual.gapFloorSeconds`, 60 → 70). It lands once
+the frozen v1 pipeline resolves a named persona through `V1_DERIVED` instead of the live derivation:
+`sanitizeSettings` re-derives through `resolvePattern`, so the migration would otherwise read 70 from a
+v1 file that holds 60 and record a spurious `sessions.gapMinimum` override.
+
+**Overrides outside the registry** (covered by the override tests, not the tally): the advisory
+`ENGINE.ACTIONS_FAILING_HALT` entry and the advisory mechanism are gone — the loop reads
+`coldFailingThreshold()` = 7 (owner Q11); the applied `PRUNE.CONSECUTIVE_FAIL_HALT` 4 (derived 7)
+is new, read through `pruneFailingThreshold()`: a bulk run halts sooner than the loop so a broken
+unfollow path cannot burn the list.
+
+**Named factors** (spec §17.3, values unchanged): `POLICY.DRAW_DECILE_Z` (1.2816, shared with
+`SETTINGS_POLICY.TYPICAL_DAY_Z`); in `derive.ts`, beside their derivations, the D4 poll bounds
+`POLL_FRACTION_OF_P50`, `POLL_MIN_MS`, `POLL_MAX_MS` and the factors `WATCHDOG_CHECKS_PER_WINDOW` (8),
+`CANARY_FRAMES` (30), `EXHAUSTED_REVERIFY_P90_WALLS` (2), `PUSH_THROTTLE_INSTANTS` (3). The numeric grids
+stay GEOM.
+
+**Moved to their consumers**: `EXPLORATION_POLICY.ownFollowersPickMax`, `skipPoolFactor` (× min(F,
+`queuedPerSource`)), `maxCoverageFraction` and `maxEnrichPassesPerCycle`; an enrichment slice is
+`min(profilesPerSlice, the open session's explore reads)` and the duplicate batch cap of 25 is
+deleted. The engine's freshness windows run in plan-days (the weekly cycle through the one
+boundary). Spec §17.8's `RIM.LIST_WALK_FETCH_RETRIES` landed as `SURFACE_BOUNDS.listWalkFetchRetries`.
 
 ## Alternatives rejected
 
