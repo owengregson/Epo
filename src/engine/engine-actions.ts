@@ -152,10 +152,7 @@ export async function actWovenUnfollow(
     return { step: 'idle' };
   }
   if (status === 'simulated') ctx.deps.pacing.practiced(actAt);
-  if (status === 'ok' && !detail?.alreadyInState) {
-    ctx.deps.reentry?.noteAction(actAt);
-    ctx.noteProgress('mutation-verified');
-  }
+  if (status === 'ok' && !detail?.alreadyInState) ctx.noteProgress('mutation-verified');
   return { kind: 'unfollow' };
 }
 
@@ -212,10 +209,7 @@ export async function actChurn(
   if (outcome === 'simulated') ctx.deps.pacing.practiced(actAt);
   if ((outcome === 'ok' && !detail?.alreadyInState) || outcome === 'simulated') {
     ctx.noteProgress(outcome === 'ok' ? 'mutation-verified' : 'simulation-completed');
-    if (outcome === 'ok') {
-      ctx.deps.reentry?.noteAction(actAt);
-      if (rec.state === 'queued') ctx.deps.frontier?.noteFollow(rec.targetPk, actAt);
-    }
+    if (outcome === 'ok' && rec.state === 'queued') ctx.deps.frontier?.noteFollow(rec.targetPk, actAt);
     // Only a verified new mutation clears the recovery incident.
     const incident = ctx.recovery.noteRecovered();
     if (incident !== null) ctx.healIncidentWindow(incident);

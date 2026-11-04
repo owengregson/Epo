@@ -40,7 +40,7 @@ import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import { liveWiringParts } from './live-wiring';
 import { planWiringParts, wirePlan } from './plan-wiring';
-import { noteMutationFor, prepareReentry, reopenWiringParts, wireFollowback, wireReentry } from './reopen-wiring';
+import { noteMutationFor, reopenWiringParts, wireFollowback } from './reopen-wiring';
 import { surfaceGateOf, surfaceWiringParts, wireSurface } from './surface-wiring';
 import { journalSettler, pruneUnfollowDeps, unfollowWiringParts, wireChurn, wireMutationPolicy } from './unfollow-wiring';
 
@@ -60,7 +60,6 @@ export function buildGraph(
   const ownUsername = given ?? store.getAccount(ownPk)?.username;
   const clock = new SystemClock();
   const frontier = new SourceFrontier({ store, clock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
-  const reentry = wireReentry(store, clock);
   // The shared wait owner: growth and prune wait through ONE DelayManager
   // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
   // from a single registry.
@@ -192,7 +191,7 @@ export function buildGraph(
   });
 
   const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock: plan.dayClock, nextSessionAt: plan.nextSessionAt, reviewBound: plan.reviewBound });
-  prepareReentry(reentry, clock);
+  churn.advanceTimers(clock.now()); // timers that came due while Epo was closed move now, store-only (spec §9.2 T)
   const scanner = new Scanner({
     store,
     scorerCfg: toScorerConfig(settings),
@@ -235,7 +234,6 @@ export function buildGraph(
 
   const engine = createEngine({ tempo: plan.tempo,
     frontier,
-    reentry,
     validateIdentity: d.validateIdentity,
     onProgress: d.onProgress,
     settleJournal: journalSettler(d, { store, profiles, ownPk, clock, readBudget, dayClock: plan.dayClock, nextSessionAt: plan.nextSessionAt }),
@@ -299,7 +297,7 @@ export function buildGraph(
     : unresolvedUsernameSource('prune scan');
   const pruneOwnFollowers: PruneOwnFollowers =
     liveOwnFollowers ?? unresolvedUsernameSource('prune followers scan');
-  const noteMutation = noteMutationFor(reentry, clock, d);
+  const noteMutation = noteMutationFor(d);
   const pruneEngine = createPruneEngine({ tempo: plan.tempo,
     onMutation: noteMutation,
     store,

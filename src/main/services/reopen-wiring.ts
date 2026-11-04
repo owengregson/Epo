@@ -1,7 +1,6 @@
 /**
- * The reopen wiring: the re-entry supervisor, the follow-back appliers, and the frontier sweep over the
- * notifications drawer, the followers head and the following check (spec §9), with the sweep's cadence
- * anchored on its own persisted end.
+ * The reopen wiring: the follow-back appliers and the frontier sweep over the notifications drawer, the
+ * followers head and the following check (spec §9), with the sweep's cadence anchored on its own persisted end.
  */
 
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
@@ -10,7 +9,6 @@ import type { Sentinel } from '@/adapter/sentinel';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { FrontierSweep, type SweepPlanView } from '@/engine/frontier-sweep';
 import type { SweepCadence } from '@/engine/ports';
-import { ReentrySupervisor } from '@/engine/reentry';
 import type { SystemClock } from '@/governors/clock';
 import type { RateGovernor } from '@/governors/rate-governor';
 import type { ReadBudget } from '@/governors/read-budget';
@@ -29,16 +27,6 @@ import type { GraphBuildDeps, WiringParts } from './graph-types';
 import type { createMutationPolicy } from './mutation-policy';
 import type { PlanWiring } from './plan-wiring';
 import { sweepFacts } from './sweep-facts';
-
-/** The re-entry supervisor over the graph's store. */
-export function wireReentry(store: KnowledgeStore, clock: SystemClock): ReentrySupervisor {
-  return new ReentrySupervisor({ store, clock });
-}
-
-/** Expiry is eligibility for reconciliation, not evidence of a missing follow-back. */
-export function prepareReentry(reentry: ReentrySupervisor, clock: SystemClock): void {
-  reentry.prepare(clock.now());
-}
 
 /** What the sweep is built from (the graph's shared pieces). */
 export interface FollowbackWiring {
@@ -116,17 +104,9 @@ export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): Followba
   return { watcher, sweep, cadence };
 }
 
-/** A verified mutation: the re-entry supervisor notes it and the progress seam hears it. */
-export function noteMutationFor(
-  reentry: ReentrySupervisor,
-  clock: SystemClock,
-  d: Pick<GraphBuildDeps, 'onProgress'>,
-): () => void {
-  const noteMutation = (): void => {
-    reentry.noteAction(clock.now());
-    d.onProgress?.('mutation-verified');
-  };
-  return noteMutation;
+/** A verified mutation: the progress seam hears it (probation is the plan's, from the ledger). */
+export function noteMutationFor(d: Pick<GraphBuildDeps, 'onProgress'>): () => void {
+  return () => d.onProgress?.('mutation-verified');
 }
 
 /** The requester predicate churn's selection reads (spec §9.9): an open request into our account, live. */

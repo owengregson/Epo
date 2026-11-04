@@ -194,7 +194,6 @@ export class Engine {
         // delay publishes too, so the countdown shows the real deadline; the
         // remaining short keys stay quiet to avoid doubling every step's push.
         onRegistered: (key, deadline, park) => {
-          this.deps.reentry?.holdUntil(deadline); // a hold the engine chose is presence, never absence
           if (park !== null) {
             this.park = { reason: park, until: deadline };
             log.info('engine: holding', {
@@ -208,7 +207,6 @@ export class Engine {
         },
         onSettled: (_key, park) => {
           // Over however it ended (elapsed, pause, offline, stop); the step's status emit publishes the clear.
-          this.deps.reentry?.endHold(this.deps.clock.now());
           if (park !== null) this.park = null;
         },
       },
@@ -294,7 +292,6 @@ export class Engine {
   async start(): Promise<void> {
     if (this.engineState === 'running' || this.engineState === 'paused') return;
     this.runAbort = new AbortController();
-    this.deps.reentry?.prepare(this.deps.clock.now());
     const token = this.runAbort; // this run's generation token
     this.engineState = 'running';
     // User ack: a manual Start from a RECOVERY halt clears the persisted ladder
@@ -823,7 +820,6 @@ export class Engine {
   private noteProgress(phase: string): void {
     const now = this.deps.clock.now();
     this.health.progress(phase, now);
-    this.deps.reentry?.noteProgress(now);
     this.deps.onProgress?.(phase);
   }
 

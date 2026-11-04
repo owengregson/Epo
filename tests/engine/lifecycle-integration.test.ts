@@ -1,7 +1,6 @@
 import { ChurnScheduler } from '@/engine/churn-scheduler';
 import { Engine, type EngineFollowback } from '@/engine/engine';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
-import { ReentrySupervisor } from '@/engine/reentry';
 import { FakeClock } from '@/governors/clock';
 import { settleNextIntent } from '@/rim/journal-settlement';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
@@ -22,12 +21,7 @@ function fixture() {
   for (const pk of ['hub', 'old', 'new']) store.observe({ accountPk: pk, observedAt: START,
     source: 'profile', fields: { username: pk, followers: 200, following: 200, isPrivate: false } });
   store.addTarget({ accountPk: 'hub', source: 'seed', status: 'active', chainIndex: 0 });
-  const history = new ReentrySupervisor({ store, clock });
-  history.prepare();
-  history.noteProgress(clock.now());
-  clock.advance(7 * DAY);
-  const reentry = new ReentrySupervisor({ store, clock });
-  reentry.prepare(); // graph construction
+  clock.advance(7 * DAY); // a week away
   const actions = {
     follow: jest.fn(async (_username: string, _pk?: string, dispatched?: () => void) => {
       dispatched?.(); return { status: 'ok' as const };
@@ -44,16 +38,16 @@ function fixture() {
   const settings = { ...DEFAULT_SETTINGS, seed: 'hub', lowWaterCandidates: 0,
     activeHoursStart: 0, activeHoursEnd: 24, followbackSweepHours: 1 };
   const delays = new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); } });
-  return { store, clock, reentry, actions, churn, cadence, settings, delays, lastSweep: () => lastSweep,
+  return { store, clock, actions, churn, cadence, settings, delays, lastSweep: () => lastSweep,
     rearmSweep: () => { lastSweep = null; },
     make: (followback: EngineFollowback, extra: Partial<Parameters<typeof testDeps>[0]> = {}) =>
-      new Engine(testDeps({ ...base, churn, reentry, settings, delays, sweepCadence: cadence, followback, ...extra })),
+      new Engine(testDeps({ ...base, churn, settings, delays, sweepCadence: cadence, followback, ...extra })),
     settler: (profiles: ProfileVisitor) => () => settleNextIntent({ store, profiles, ownPk: 'me', clock,
       readBudget: { consume: () => ({ allowed: true, resumeAt: null }) }, maxRetries: () => 3, signal: () => undefined,
       slots: () => ({ nextSessionAt: null, planDayStartAfter: (k) => clock.now() + k * DAY }) }) };
 }
 
-test('graph prepare plus real start preserves week-away reconciliation; no mutation precedes it', async () => {
+test('a week away: the first start sweeps before any write, and the follow-back from the drawer lands', async () => {
   const f = fixture();
   f.store.upsertFollowRecord({ accountPk: 'old', targetPk: 'hub', state: 'pending_followback', followedAt: START, retryCount: 0 });
   // The sweep's drawer step hands its dated event to the appliers.
@@ -66,14 +60,13 @@ test('graph prepare plus real start preserves week-away reconciliation; no mutat
   } });
   await engine.start();
   expect(followback.checks).toBe(1);
-  expect(f.reentry.snapshot()).toMatchObject({ phase: 'probation', absentMs: 7 * DAY });
   expect(f.store.getFollowRecord('old')?.state).toBe('followed_back');
   expect(f.actions.follow).not.toHaveBeenCalled();
   expect(f.actions.unfollow).not.toHaveBeenCalled();
   expect(f.lastSweep()).not.toBeNull();
 });
 
-test('a failed notification read ends its sweep only: the return phase stays and the queued unfollow goes on', async () => {
+test('a failed notification read ends its sweep only: the queued unfollow goes on', async () => {
   const f = fixture();
   f.store.upsertFollowRecord({ accountPk: 'old', targetPk: 'hub', state: 'unfollow_queued', followedAt: START, retryCount: 0 });
   // A sweep whose drawer step failed still ends: the failure ends that step only (spec §9.12).
@@ -89,7 +82,6 @@ test('a failed notification read ends its sweep only: the return phase stays and
 
 test('an uncertain follow is observed by PK in the journal step: the follow mirror waits for its follow-back', async () => {
   const f = fixture();
-  f.reentry.noteReconciled({ outcome: 'complete' }, f.clock.now());
   f.store.upsertFollowRecord({ accountPk: 'old', targetPk: 'hub', state: 'queued', retryCount: 0 });
   const intent = f.store.beginEffectIntent({ accountPk: 'old', username: 'old', action: 'follow', channel: 'growth', at: f.clock.now() });
   f.store.markEffectUncertain(intent.id, f.clock.now());
@@ -129,7 +121,6 @@ test('cleanup obligations survive source rotation; the plan mix (not the churn) 
 
 test('the journal settles one open intent per step, never a batch or a halt; a prepared one is never read', async () => {
   const f = fixture();
-  f.reentry.noteReconciled({ outcome: 'complete' }, f.clock.now());
   for (const pk of ['old', 'new']) {
     const open = f.store.beginEffectIntent({ accountPk: pk, username: pk, action: 'follow', channel: 'growth', at: f.clock.now() });
     f.store.markEffectUncertain(open.id, f.clock.now());
@@ -168,7 +159,7 @@ test('a notification-budget pause ends its sweep without escalation or a halt, a
   expect(f.actions.unfollow).toHaveBeenCalled();
 });
 
-test('an already-following observation cannot spend a return probation action', async () => {
+test('an already-following observation is never counted as an action', async () => {
   const f = fixture();
   f.store.upsertFollowRecord({ accountPk: 'old', targetPk: 'hub', state: 'queued', retryCount: 0, score: 1 });
   f.actions.follow.mockImplementation(async () => ({ status: 'ok', alreadyInState: true }));
@@ -177,7 +168,6 @@ test('an already-following observation cannot spend a return probation action', 
   expect(await engine.stepOnce()).toBe('swept-followback');
   expect(await engine.stepOnce()).toBe('acted');
   expect(f.store.getFollowRecord('old')?.state).toBe('external');
-  expect(f.reentry.snapshot()).toMatchObject({ phase: 'probation', probationActions: 0 });
   expect(f.store.actionCountSince(0)).toBe(0);
 });
 

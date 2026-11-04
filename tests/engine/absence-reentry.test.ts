@@ -1,6 +1,5 @@
 import { ChurnScheduler } from '@/engine/churn-scheduler';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
-import { REENTRY_POLICY, ReentrySupervisor } from '@/engine/reentry';
 import { FakeClock } from '@/governors/clock';
 import type { RateGovernor } from '@/governors/rate-governor';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -80,66 +79,3 @@ test('an undated notification cannot invent current membership', () => {
   expect(store.getEdge('a', 'me', 'follows')).toMatchObject({ status: 'removed', lastConfirmedAt: clock.now() - 1 });
   expect(store.getFollowRecord('a')?.state).toBe('pending_followback');
 });
-
-test('a week away creates reconciliation then bounded probation, never catch-up quota', () => {
-  clock.set(START);
-  const first = new ReentrySupervisor({ store, clock });
-  first.prepare();
-  first.noteProgress(START);
-  clock.advance(7 * DAY);
-  const restored = new ReentrySupervisor({ store, clock });
-  expect(restored.prepare().phase).toBe('reconcile');
-  restored.noteReconciled({ outcome: 'partial' }, clock.now());
-  expect(restored.requiresReconciliation(clock.now())).toBe(true);
-  restored.noteReconciled({ outcome: 'complete' }, clock.now());
-  expect(restored.snapshot().phase).toBe('probation');
-  restored.noteAction(clock.now());
-  expect(restored.mutationWaitUntil(clock.now())).toBe(clock.now() + REENTRY_POLICY.probationGapMs);
-  for (let i = 1; i < REENTRY_POLICY.probationActions; i++) {
-    clock.advance(REENTRY_POLICY.probationGapMs);
-    restored.noteAction(clock.now());
-  }
-  expect(restored.snapshot().phase).toBe('ready');
-});
-
-test('new uncertain effect and backward clock independently require reconciliation', () => {
-  const supervisor = new ReentrySupervisor({ store, clock });
-  supervisor.prepare();
-  const intent = store.beginEffectIntent({ accountPk: 'a', username: 'alice', action: 'follow', channel: 'growth', at: clock.now() });
-  store.markEffectDispatched(intent.id, clock.now());
-  expect(supervisor.requiresReconciliation(clock.now())).toBe(true);
-  supervisor.noteReconciled({ outcome: 'complete' }, clock.now());
-  expect(supervisor.snapshot().phase).toBe('reconcile');
-  store.settleEffectIntent(intent.id, { at: clock.now(), result: 'external' });
-  supervisor.noteReconciled({ outcome: 'complete' }, clock.now());
-  clock.advance(-DAY);
-  expect(supervisor.requiresReconciliation(clock.now())).toBe(true);
-  expect(supervisor.snapshot().reason).toBe('clock-change');
-});
-
-test('routine sweeps preserve the owed probation gap and never restart a completed return', () => {
-  pending();
-  const supervisor = new ReentrySupervisor({ store, clock });
-  supervisor.prepare();
-  supervisor.noteReconciled({ outcome: 'complete' }, clock.now());
-  expect(supervisor.snapshot().phase).toBe('probation');
-  supervisor.noteAction(clock.now());
-  const owed = supervisor.mutationWaitUntil(clock.now());
-  supervisor.noteReconciled({ outcome: 'complete' }, clock.now());
-  expect(supervisor.mutationWaitUntil(clock.now())).toBe(owed);
-  for (let i = 1; i < REENTRY_POLICY.probationActions; i++) {
-    clock.advance(REENTRY_POLICY.probationGapMs);
-    supervisor.noteAction(clock.now());
-  }
-  const finalOwed = supervisor.mutationWaitUntil(clock.now());
-  supervisor.noteReconciled({ outcome: 'complete' }, clock.now());
-  expect(supervisor.snapshot().phase).toBe('ready');
-  expect(supervisor.mutationWaitUntil(clock.now())).toBe(finalOwed);
-});
-
-test.each(['invalid JSON', '{"v":1,"phase":"ready"}'])('corrupt return metadata requires observation (%s)', (raw) => {
-  store.setLifecycleState(raw);
-  const supervisor = new ReentrySupervisor({ store, clock });
-  expect(supervisor.prepare()).toMatchObject({ phase: 'reconcile', reason: 'legacy-state' });
-});
-

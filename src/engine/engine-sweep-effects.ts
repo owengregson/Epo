@@ -25,15 +25,13 @@ export function sweepModeAt(deps: Pick<EngineDeps, 'pacing'>, lastSweepEndedAt: 
 
 /** Run one sweep, then advance the timers it made due. */
 export async function runFollowbackSweep(ctx: EngineSweepContext, token: AbortController): Promise<StepResult> {
-  const { clock, followback, churn, reentry } = ctx.deps;
+  const { clock, followback, churn } = ctx.deps;
   const mode = sweepModeAt(ctx.deps, ctx.sweepCadence.lastSweepEndedAt?.() ?? null, clock.now());
   await followback.run(mode, token.signal);
   if (ctx.superseded(token)) return 'aborted';
   const at = clock.now();
   ctx.sweepCadence.markRun(at);
   churn.advanceTimers(at);
-  // The re-entry supervisor still reads a finished sweep as its reconcile pass, until probation is the plan's.
-  reentry?.noteReconciled({ outcome: 'complete' }, at);
   ctx.noteProgress('relationships-reconciled');
   await ctx.pacingSleep();
   return 'swept-followback';

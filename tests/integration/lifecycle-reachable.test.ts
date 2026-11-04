@@ -9,7 +9,6 @@ import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Engine } from '@/engine/engine';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { UNCONFIGURED_PROTECTION } from '@/engine/protection-port';
-import { ReentrySupervisor } from '@/engine/reentry';
 import type { SourceFrontier } from '@/engine/source-frontier';
 import { FakeClock, type SystemClock } from '@/governors/clock';
 import { ReadBudget } from '@/governors/read-budget';
@@ -45,10 +44,7 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
     store.observe({ accountPk: a.pk, observedAt: START, source: 'profile', fields: { username, followers: 200, following: 200 } });
     if (a.record) store.upsertFollowRecord({ accountPk: a.pk, targetPk: 'hub', state: 'pending_followback', followedAt: START + i, retryCount: 0 });
   });
-  new ReentrySupervisor({ store, clock }).prepare(START);
-  clock.advance(9 * DAY);
-  const reentry = new ReentrySupervisor({ store, clock });
-  reentry.prepare(clock.now());
+  clock.advance(9 * DAY); // nine days away: there is no return phase to wait out
 
   let url = '';
   const visit = jest.fn(async (username: string): Promise<ProfileVisit> => {
@@ -89,16 +85,16 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
   const churnActions = new AdapterBackedChurnActions({ adapter, store, ownPk: 'me', dryRun: false, clock });
   const churn = wireChurn(d, { frontier: { pickQueued: () => null } as unknown as SourceFrontier, store,
     clock: clock as unknown as SystemClock, rate, churnActions, ownPk: 'me', settings, dayClock });
-  const engine = new Engine(testDeps({ store, clock, rate, churn, reentry, followback: sweep, settings,
+  const engine = new Engine(testDeps({ store, clock, rate, churn, followback: sweep, settings,
     delays: new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); } }),
     settleJournal: journalSettler(d, { store, profiles, ownPk: 'me', clock, readBudget, dayClock }) }));
   const stepUntilPressed = async (n: number, maxSteps = 10): Promise<void> => {
     for (let step = 0; step < maxSteps && presses.length < n; step++) await engine.stepOnce();
   };
-  return { store, clock, reentry, visit, presses, engine, stepUntilPressed, policy, tab };
+  return { store, clock, visit, presses, engine, stepUntilPressed, policy, tab };
 }
 
-test('a due lifecycle unfollow executes end to end while the return phase, a failing sweep and a stuck write all persist', async () => {
+test('a due lifecycle unfollow executes end to end after nine days away while a failing sweep and a stuck write persist', async () => {
   // Two due unfollows: the stuck write's unknown outcome reserves one of the day's unfollows (spec §9.8).
   const r = rig({ alice: { pk: 'a', page: 'non-follower', record: true }, xavier: { pk: 'x', page: 'unreadable' },
     zara: { pk: 'z', page: 'non-follower', record: true } });
@@ -109,8 +105,7 @@ test('a due lifecycle unfollow executes end to end while the return phase, a fai
   expect(r.store.getFollowRecord('a')?.state).toBe('unfollowed');
   expect(r.store.getEdge('me', 'a', 'follows')?.status).toBe('removed');
   expect(r.engine.status().state).not.toBe('halted');
-  // The conditions that used to wedge admission are all still there.
-  expect(r.reentry.requiresReconciliation(r.clock.now())).toBe(true);
+  // The conditions that used to wedge admission are still there.
   expect(r.store.getEffectIntent(stuck.id)).toMatchObject({ state: 'uncertain', attempts: 1 });
   expect(r.visit.mock.calls.map(([name]) => name)).toEqual(['xavier', 'alice']);
 });

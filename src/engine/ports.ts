@@ -18,7 +18,6 @@ import type { DelayManager } from '../timing/delay-manager';
 import type { AdvanceResult } from './chain-controller';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import type { EnginePacing, EngineRate } from './plan-port';
-import type { ReentrySupervisor } from './reentry';
 import type { ScanPlan } from './scanner';
 import type { SourceFrontier, SourceVisitEndReason } from './source-frontier';
 import type { EngineStatus } from './status';
@@ -201,7 +200,6 @@ export type { EngineStatus } from './status';
 /** Everything the Engine composes, already constructed (composition root's job). */
 export interface EngineDeps {
   frontier?: SourceFrontier;
-  reentry?: ReentrySupervisor;
   validateIdentity?: () => Promise<boolean>;
   onProgress?: (phase: string) => void;
   /** The journal's step: settle the oldest due intent with one read (spec §9.8). */

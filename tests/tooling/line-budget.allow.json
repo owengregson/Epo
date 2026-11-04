@@ -15,7 +15,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 949
+      "lines": 945
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -58,12 +58,12 @@
       "lines": 359
     },
     {
-      "file": "src/main/services/graph-builder.ts",
-      "lines": 353
-    },
-    {
       "file": "src/types.ts",
       "lines": 352
+    },
+    {
+      "file": "src/main/services/graph-builder.ts",
+      "lines": 351
     },
     {
       "file": "src/rim/followers-page-reader.ts",
