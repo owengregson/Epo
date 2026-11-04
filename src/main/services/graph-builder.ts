@@ -40,7 +40,7 @@ import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 import { liveWiringParts } from './live-wiring';
 import { planWiringParts, wirePlan } from './plan-wiring';
-import { noteMutationFor, reopenWiringParts, wireFollowback } from './reopen-wiring';
+import { noteMutationFor, wireFollowback } from './reopen-wiring';
 import { surfaceGateOf, surfaceWiringParts, wireSurface } from './surface-wiring';
 import { journalSettler, pruneUnfollowDeps, unfollowWiringParts, wireChurn, wireMutationPolicy } from './unfollow-wiring';
 
@@ -197,7 +197,7 @@ export function buildGraph(
     scorerCfg: toScorerConfig(settings),
     cfg: toScannerConfig(settings),
   });
-  const { watcher: followback, sweep, cadence: sweepCadence } = wireFollowback(d, { store, clock, ownPk, settings,
+  const { watcher: followback, sweep, cadence: sweepCadence, parts: reopenParts } = wireFollowback(d, { store, clock, ownPk, settings,
     readBudget, policy, adapter, reader, sentinel, walker: listWalker, plan, rate });
 
   // Live discovery over the already-harvested graph: propose the biggest
@@ -317,7 +317,7 @@ export function buildGraph(
   // Back the woven-feed adapter now that the PruneEngine exists.
   pruneEngineRef = pruneEngine;
   // Once per build: a rebuild or account switch starts from a fresh list, never a duplicate.
-  const parts = [planWiringParts(plan, readBudget, store, d), reopenWiringParts(), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts({ frontier })];
+  const parts = [planWiringParts(plan, readBudget, store, d), reopenParts(engine), unfollowWiringParts(), surfaceWiringParts(), liveWiringParts({ frontier })];
 
   return {
     prepareMutation: policy.prepareMutation,

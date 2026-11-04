@@ -109,13 +109,13 @@ function recoveryEpisode(stateRaw: string | null, lastRaw: string | null): FeedC
   return last !== null && typeof last.enteredAt === 'number' ? { at: last.enteredAt, resumeAt: null } : null;
 }
 
-/** The last deliberate quit, or null when Epo never closed on purpose. */
 /** The last launch catch-up as the feed's caught-up row: from the previous sweep's end to the check (spec §9.6). */
 function awayRow(s: AwaySummary | null | undefined): AwaySummaryLite | null {
   return s == null ? null : { awayFrom: s.from, checkedAt: s.to, newFollowers: s.newFollowers, followBacks: s.followBacks,
     left: s.lostIdentified };
 }
 
+/** The last deliberate quit, or null when Epo never closed on purpose. */
 function lastShutdown(incidents: RuntimeIncidents['incidents']): number | null {
   let at: number | null = null;
   for (const i of incidents) if (i.reason === SHUTDOWN_INCIDENT && (at === null || i.at > at)) at = i.at;

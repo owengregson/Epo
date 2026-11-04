@@ -112,6 +112,24 @@ describe('PeoplePage', () => {
   });
 });
 
+describe('the People lanes mark outside changes until the following check ran (spec §9.1, Appendix E.2)', () => {
+  const own = (followingUnverified: number) => ({ followers: null, following: { count: 10, at: 1 }, followingUnverified });
+
+  it('marks a following count that moved outside Epo as not yet verified', async () => {
+    statusSignal.value = { ...idleStatus({ queued: 7 }), own: own(3) };
+    mount();
+    await act(async () => {});
+    expect(screen.getByText('Changed outside Epo · not yet verified')).toBeTruthy();
+  });
+
+  it('drops the mark once the check accounted for every change', async () => {
+    statusSignal.value = { ...idleStatus({ queued: 7 }), own: own(0) };
+    mount();
+    await act(async () => {});
+    expect(screen.queryByText('Changed outside Epo · not yet verified')).toBeNull();
+  });
+});
+
 describe('the People page’s plain readings', () => {
   it('details Epo’s current source, else the one it would resume', () => {
     expect(detailTargetPk(idleStatus({ currentTargetPk: '1' }))).toBe('1');

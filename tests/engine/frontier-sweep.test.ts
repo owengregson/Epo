@@ -136,3 +136,53 @@ test('a stop keeps the finished frontiers and records no sweep end', async () =>
   expect(store.reopen.get()?.lastSweep).toBeNull();
   expect(calls.head).toHaveLength(0);
 });
+
+const census = (at: number) => store.savePruneCensus({ at, following: 0, followers: 0, scrapedFollowing: 0, scrapedFollowers: 0,
+  notFollowingBack: 0, candidates: 0 });
+
+test('the upgrade launch walks one head page even when the legacy seed wrote a reopen state (spec §9.5)', async () => {
+  census(NOW - 20 * 24 * HOUR);
+  store.reopen.seedFromLegacy({ sweepLastRunAt: NOW - 5 * 24 * HOUR });
+  const { sweep, calls } = sweepWith();
+  const res = await sweep.run('launch', new AbortController().signal);
+  expect(calls.head).toHaveLength(1);
+  expect(calls.head[0]).toMatchObject({ frontierAt: null, use: 'catch-up' });
+  // The away window starts where the v1 sweep last ran.
+  expect(res.summary).toMatchObject({ from: NOW - 5 * 24 * HOUR, isReturn: true });
+});
+
+test('a later launch with a frontier the new model read falls back to the census when the head frontier is missing', async () => {
+  census(NOW - 20 * 24 * HOUR);
+  store.reopen.set({ v: 1, feed: { atMs: NOW - 2 * HOUR, keysAtMs: [], readAt: NOW - 2 * HOUR, filteredAt: null, gap: null },
+    head: null, requests: null, lastSweep: null, lastCatchUp: null, following: null });
+  const { sweep, calls } = sweepWith();
+  await sweep.run('launch', new AbortController().signal);
+  expect(calls.head[0]?.frontierAt).toBe(NOW - 20 * 24 * HOUR);
+});
+
+test('a launch lands when the splash produced no header, and visits only if the landing gave none', async () => {
+  const landed: number[] = [];
+  let visits = 0;
+  const watcher = new FollowbackWatcher({ store, clock, ownPk: 'ME', cfg: { holdAfterFollowbackMs: 0, autoAcceptRequests: false } });
+  const sweep = new FrontierSweep({ clock, ownPk: 'ME', launchAt: NOW - HOUR, plan: { view: () => view() },
+    header: { land: async () => { landed.push(clock.now()); header(clock.now(), 10, 20); return true; },
+      visit: async () => { visits += 1; return 'ok'; } },
+    feed: { fetchSince: async (w) => ok(w) }, head: initialized, following: async () => ({ ok: false, reason: 'stopped' }),
+    facts: sweepFacts(store, 'ME', watcher), autoAccept: () => false });
+  await sweep.run('launch', new AbortController().signal);
+  expect(landed).toEqual([NOW]);
+  expect(visits).toBe(0);
+});
+
+test('a refused catch-up shows as skipped with its reason, pushes once and reads nothing', () => {
+  const views: unknown[] = [];
+  const watcher = new FollowbackWatcher({ store, clock, ownPk: 'ME', cfg: { holdAfterFollowbackMs: 0, autoAcceptRequests: false } });
+  const sweep = new FrontierSweep({ clock, ownPk: 'ME', launchAt: NOW, plan: { view: () => view() },
+    header: { land: async () => false, visit: async () => 'ok' }, feed: { fetchSince: async (w) => ok(w) }, head: initialized,
+    following: async () => ({ ok: false, reason: 'stopped' }), facts: sweepFacts(store, 'ME', watcher), autoAccept: () => false,
+    report: (v) => views.push(v) });
+  sweep.skip('offline');
+  expect(sweep.view()).toMatchObject({ state: 'skipped', mode: 'launch', skipped: 'offline', isReturn: true, since: null });
+  expect(views).toHaveLength(1);
+  expect(store.reopen.get()).toBeNull();
+});

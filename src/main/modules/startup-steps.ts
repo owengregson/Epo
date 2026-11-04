@@ -177,8 +177,10 @@ async function openData(session: GraphSession): Promise<OpenResult> {
   }
 }
 
-/** The boot sequence over the Foundation's parts, and the graph-independent `boot` / `account` contributors. */
-export function createStartup(w: StartupWiring): { boot: BootSequencer; contributors: readonly StatusContributor[] } {
+/** The boot sequence, the `boot` / `account` contributors, and the landing for a catch-up whose splash did not land (spec §9.6). */
+export function createStartup(w: StartupWiring): {
+  boot: BootSequencer; contributors: readonly StatusContributor[]; land(signal: AbortSignal): Promise<void>;
+} {
   let confirmed: ConfirmedAccount | null = null;
   const deps: StartupDeps = {
     runtime: w.runtime, session: w.session, tab: w.tab,
@@ -197,6 +199,7 @@ export function createStartup(w: StartupWiring): { boot: BootSequencer; contribu
     tabBusy: () => w.driverBusy() || (w.lease.owner() !== null && w.lease.owner() !== 'startup'),
   };
   const resume = resumeRunStep(deps);
+  const landing = openOwnProfileStep(deps);
   const boot = new BootSequencer({
     clock: { now: () => Date.now() },
     after: (ms, fn) => {
@@ -217,9 +220,10 @@ export function createStartup(w: StartupWiring): { boot: BootSequencer; contribu
     tourHeld: () => w.lease.tourHeld(),
     onTourReleased: (cb) => w.lease.onTourReleased(cb),
     pushStatus: () => w.pushStatus(),
-    identitySteps: [openOwnProfileStep(deps), confirmAccountStep(deps)],
+    identitySteps: [landing, confirmAccountStep(deps)],
     laterSteps: () => [...(w.session.current()?.startupSteps ?? []), resume],
     afterStartup: () => w.afterStartup?.(),
   });
-  return { boot, contributors: bootContributors({ boot: () => boot.view(), confirmed: () => confirmed }) };
+  return { boot, contributors: bootContributors({ boot: () => boot.view(), confirmed: () => confirmed }),
+    land: (signal) => landing.run(signal) };
 }

@@ -8,7 +8,7 @@
 import type { FeedFailure, FeedSource } from '../rim/feed-source';
 import type { HeadWalkArgs, HeadWalkResult } from '../rim/followers-head';
 import type { FollowingCheckResult } from '../rim/following-check';
-import type { AwaySummary, CatchUpStepId, CatchUpView, StepState } from '../shared/reopen-view';
+import type { AwaySummary, CatchUpSkip, CatchUpStepId, CatchUpView, StepState } from '../shared/reopen-view';
 import type { FeedWatermark, ReopenState, SweepMode } from '../store/repos/reopen-state';
 import type { Observation } from '../store/types';
 import * as log from '../utils/logger';
@@ -127,6 +127,13 @@ export class FrontierSweep {
   /** The plan's check anchor (spec C11): the last sweep's end, never a read debit. */
   lastSweepEndedAt(): number | null { return this.p.facts.state()?.lastSweep?.endedAt ?? null; }
 
+  /** The launch catch-up was refused (spec §9.6): the status says why; nothing is read or written. */
+  skip(why: CatchUpSkip): void {
+    this.current = { ...IDLE, state: 'skipped', mode: 'launch', skipped: why, isReturn: true,
+      since: this.lastSweepEndedAt(), startedAt: this.p.clock.now() };
+    this.p.report?.(this.current);
+  }
+
   async run(mode: SweepMode, signal: AbortSignal): Promise<SweepResult> {
     const { clock, facts } = this.p;
     const startedAt = clock.now();
@@ -137,8 +144,9 @@ export class FrontierSweep {
     const plan = this.p.plan.view(startedAt);
     const budget = mode === 'launch' ? { ...plan.catchUp, followingPages: 0 }
       : { profiles: 1, notifications: 1, pages: plan.checkPages, followingPages: plan.followingPages };
-    // On the upgrade launch (no reopen state yet) the head has no frontier: one page initializes it.
-    const frontierAt = stored === null ? null : (pass.state.head?.walkedAt ?? facts.censusAt());
+    // The upgrade launch (nothing the frontiers read yet; at most the legacy seed): one page initializes the head.
+    const upgrade = stored === null || (stored.feed === null && stored.head === null);
+    const frontierAt = upgrade ? null : (pass.state.head?.walkedAt ?? facts.censusAt());
     const steps = new Map<CatchUpStepId, StepState>(SHOWN.map((id) => [id, { state: 'pending' }]));
     const publish = (state: CatchUpView['state'], summary: AwaySummary | null = null): void => {
       this.current = { state, mode, skipped: null, isReturn: mode === 'launch', since: from, startedAt,

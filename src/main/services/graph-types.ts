@@ -21,6 +21,7 @@ import type { PlanPreviewPort } from '@/governors/plan-types';
 import type { RateGovernor } from '@/governors/rate-governor';
 import type { CursorObserver } from '@/interaction/input-driver';
 import type { PlanDayClock } from '@/kernel/plan';
+import type { CatchUpLaunch } from '@/main/modules/catch-up';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { FollowerAcquisition } from '@/rim/types';
@@ -151,6 +152,10 @@ export interface GraphBuildDeps {
   plan: PlanHost;
   /** Persist a settings patch (cadence timestamps, `pruneLastRunAt`). */
   updateSettings(partial: Partial<Settings>): void;
+  /** The v1 sweep stamp the settings migration carried: taken once by the reopen state, then consumed (spec §9.11). */
+  bookkeeping?: { take(): { readonly forPk: string | null; readonly sweepLastRunAt: number | null } | null; consume(): void };
+  /** The launch's state the catch-up admits on, and BL's landing (spec §9.6); absent: no catch-up step. */
+  launch?: CatchUpLaunch;
   /** The ACTIVE driver's run token; adapter/rim waits link to it so stop() interrupts. */
   driverSignal(): AbortSignal | undefined;
   onStatus(status: EngineStatus): void;

@@ -49,6 +49,11 @@ export interface OwnCountsView {
     readonly seenSince: { readonly gained: number; readonly lost: number };
   } | null;
   readonly following: { readonly count: number; readonly at: number } | null;
+  /**
+   * The following count moved outside Epo since the last following check (step G) by this much (signed): the People
+   * lanes mark outside changes "not yet verified" until G runs. Zero once verified; absent before any header.
+   */
+  readonly followingUnverified?: number;
 }
 
 export interface TodayCounts {
