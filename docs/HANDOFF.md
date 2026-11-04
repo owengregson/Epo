@@ -1,5 +1,42 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-03 (plan-derived overhaul continuation; offline verification in progress) —** Owner:
+> "Read docs/superpowers/plans/2026-11-03-plan-derived-overhaul-handoff.md and continue the overhaul from it until completion."
+> The final retirement stream is merged, including the Cautious floor change to 70 s. The integration now uses the day
+> plan for action spacing and interaction timing, with durable Boost, bounded reopen checks, Settings Easy/Advanced,
+> Prune, the new sidebar and the store-first launch. Review reproduced these remaining causes:
+>
+> 1. Session boundaries lost planned actions, while repeated re-plans could count used work twice or reclaim discarded
+>    work. Prune also needed the ledger's per-session unfollow share.
+> 2. The first following list mixed existing stock with today's outside activity; later Epo follows and delayed private
+>    acceptances could be charged again as manual follows.
+> 3. Recovery, mutation arbitration and list completion had paths around transport or partial-evidence checks. Stored
+>    profile counts could substitute for missing fresh follow proof.
+> 4. Protection and Practice edits during a visit or between confirmation layers could arrive after the last policy
+>    check. An already-open accept pass could likewise keep a stale allowance.
+> 5. Delayed renderer reads could overwrite pushes; derived Settings views can change without a document revision;
+>    initial queued or parked work could show an incorrect posture.
+>
+> FIXES (ADR 0607, 0213, 0214, 0308, 0806, 0904, 1010, 1011):
+>
+> - Realize session budgets at their exact boundaries; preserve used and forfeited work through re-plans, respect the
+>   quiet-hours wall, and apply the ledger's kind budgets to Prune.
+> - Separate following stock from dated outside gains and exclude successful Epo/manual writes from duplicate charges.
+> - Require transport-qualified, complete evidence for destructive verdicts and current count proof before a follow.
+> - Recheck current protection and Practice at each press using the action's existing visit, with one admission and
+>   journal dispatch. Revalidate accept passes against the current plan.
+> - Retire the v1 runtime bridge, fixed scan timing and obsolete renderer state; preserve frozen migration inputs and
+>   raw protection. Keep current pushed state authoritative through bootstrap and Settings changes.
+>
+> The latest recorded shared gate (`dbd9193`) passed **4,311 tests**, zero TODO tests, and boundaries **0 errors /
+> 58 warnings** (97 at the original overhaul start); the 1,260-day plan QC had zero breaches and all three lifecycle
+> reachability tests passed. Parser integration, combined cleanup, final renderer verification and the full isolated
+> visual/background checks are still in progress. The exact revisions, evidence and upgrade notes are in the
+> [validation record](qa/plan-derived-overhaul-2026-11.md).
+> No live-account check has run in this continuation. The integration has not opened the real Epo profile. Phase L
+> remains sequential and supervised; mutations require explicit target consent, and L4 requires a night away.
+> Legacy parser comparators stay until L1 and L4 show zero disagreements.
+
 > **2026-11-02 (read allowance derived, not hardcoded) —** Owner: "it
 > shouldnt be hardcoded everything should be via our dynamic limit system."
 > `ReadBudget`'s 80/40/200/24/24 defaults are gone. Kernel D6

@@ -1,6 +1,6 @@
 # 0405 — A larger, calmer console: semantic type ladder, AA palette, bundled Inter, motion vocabulary
 
-Status: proposed (draft, plan-derived overhaul stream TK; the integration lead finalizes)
+Status: accepted
 
 ## Context
 

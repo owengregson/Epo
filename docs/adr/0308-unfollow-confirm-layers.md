@@ -1,6 +1,6 @@
 # 0308 — An unfollow is a bounded sequence of confirm layers; one admission per action
 
-**Status:** accepted (draft, stream CF; the integration lead finalizes cross-links) · **Area:** adapter
+**Status:** accepted · **Area:** adapter
 (`src/adapter/{action-admission,unfollow-flow,confirm-capture,actor,response-watch}.ts`,
 `src/adapter/page/confirm.ts`), surface (`src/surface/versions/2026-08-12/{controls,literals-dom}.ts`), engine
 (`src/engine/mutation-outcome.ts`) · **Date:** 2026-11-03

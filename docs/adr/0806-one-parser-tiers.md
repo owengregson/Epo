@@ -1,7 +1,7 @@
 # 0806 — One parser, tiers, presence-gated verdicts, witnessed recovery
 
-**Status:** draft (the parse stream's first half; the one-parser flips, recovery and drift persistence land with
-PP-b and the parse-health stream) · **Area:** surface (`src/surface/read/*`, `src/surface/transport/*`), adapter
+**Status:** accepted (legacy comparators remain until Phase L validates their removal) · **Area:** surface
+(`src/surface/read/*`, `src/surface/transport/*`), adapter
 (`reader*.ts`, `drawer-read.ts`, `fetch-json.ts`, `mutation-*.ts`), rim (`list-walk-end.ts`, `list-page-walker.ts`,
 `profile-observer.ts`, `profile-visit.ts`), engine (`census-authority.ts`, `prune-scan-guards.ts`)
 
@@ -61,8 +61,8 @@ never subtracts them.**
 
 - A small delivery change costs a paused verdict, never a wrong fact; real bodies keep reading at C0 (zero facts lost
   on the captured corpus).
-- The legacy extractors keep driving behaviour until the per-endpoint flips; they already read relationships,
-  continuation and counts through the permanent modules, so the flips swap what sits underneath.
+- All endpoints use the surface parser. Legacy extractors are reverse-shadow comparators only; their deletion
+  requires the L1 and L4 live evidence recorded in the [validation record](../qa/plan-derived-overhaul-2026-11.md).
 - The read pipeline's guardrails and protocol facts live in `src/kernel/surface-policy.ts` (`SURFACE_BOUNDS`,
   `HTTP_STATUS`).
 
@@ -95,8 +95,21 @@ never subtracts them.**
 - **Only the acquisition walk reads `source-rows`** (`WalkArgs.arm = 'acquisition'`); census, head and following walks
   read C0/C1 only and stop on a moved page. The walk's own verdicts (`cursor-veto`, `end-claim-false`,
   `no-continuation-evidence`) and every C2 read reach the sink, which is what pauses cleanup and exploration.
-- **Deadline candidates**: while a visit is armed, unrouted GraphQL responses of the profile family are kept as
-  references (≤ `fallbackCandidates`) and read only at the visit's deadline; the operation that answered is reported
-  `unrouted` with a hint, so a consistent one routes later reads (`via: 'learned'`, still C2, never promoted).
+- **Deadline candidates**: an armed profile visit, drawer or requests panel keeps matching unrouted GraphQL
+  responses as references (≤ `fallbackCandidates`) and reads them only at its deadline. The requests arm starts
+  only when that panel opens. The observed HTTP/MIME gate applies before body recovery; one cached decode serves
+  all consumers of a response. The operation that answered is reported `unrouted` with a hint, so a consistent one
+  routes later reads (`via: 'learned'`, still C2, never promoted).
 - **The empty bio** stays unresolved by the corpus (no scrubbed 2026-11-02 profile body carries an empty or null bio):
   a `null` bio reads as absent (fail safe) until a live read shows the form (`versions/2026-08-12/expected.ts`).
+
+## Amendment — pre-live review: transport and incomplete evidence
+
+- Mutation responses use the same HTTP/MIME gate as reads. A parseable HTTP 400 may explain a refusal but cannot
+  authorize success. GraphQL exchange errors cannot be overridden by an optimistic DOM state.
+- A non-final mutation response remains partial evidence while the watch waits for a later final body. A deadline
+  with only partial evidence leaves the action unverified for journal settlement; a button flip cannot commit it.
+- Dialog and direct list walks with partial data, unreadable rows or unsupported continuation cannot establish
+  completeness. A wall or drift discovered while pending body reads drain overrides a natural end.
+- A fresh click review rejects recovered/partial follow evidence. Queued follows require the visit's current count
+  pair before scoring; previously stored counts cannot supply missing proof. Additive observations remain stored.

@@ -1,6 +1,6 @@
 # 1010 — A live-only console, one stage space, and a store-first boot
 
-Status: proposed (2026-11-02; plan-derived overhaul, streams BL + SH)
+Status: accepted
 
 ## Context
 
@@ -144,10 +144,10 @@ the raw log only while its panel is mounted.
 
 ## Consequences
 
-- Launch adds zero Instagram traffic: the home load and the own-profile landing
-  already happened at every launch; they now run behind the splash.
+- Before the reveal, tab work is limited to the existing home load and own-profile landing.
+  The bounded, read-only catch-up runs after the reveal under the startup lease (ADR 0213).
 - A store a newer build migrated, a locked file or an unreadable one surface as
-  "Can't open your data" with per-problem copy, never as zeros.
+  "Can't open data" with per-problem copy, never as zeros.
 - A renamed account is confirmed before any username-dependent work: Start is
   queued behind the lease, and a degraded graph wires no own-list source.
 - `restartFromSeed` retires the old sources (`'retired'`), which the frontier
@@ -157,11 +157,8 @@ the raw log only while its panel is mounted.
 - A launch mounts no Settings page, so nothing checks the starting account at
   boot; every push channel has exactly one renderer listener; the raw log no
   longer streams to the window (it lives in Diagnostics).
-- Until the sidebar lands, the console column keeps the interim overview, so the
-  integration build has no Start/Pause/Stop buttons between the two merges; the
-  controls exist in `useShellControls()` for the sidebar to render. (SB: the live
-  column now renders them; the overview, its cards and their literal-duration
-  copy are deleted.)
+- The live column renders Start/Pause/Stop through `useShellControls()`; the interim overview,
+  its cards and their literal-duration copy are deleted.
 - A refused command explains itself where the person pressed it; an unknown
   attention reads neutrally and shows its code only on a muted line.
 - The app is on screen only once the first frame's numbers are true or plainly

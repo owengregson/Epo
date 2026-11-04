@@ -1,7 +1,7 @@
 # 0105 — Settings v2: one global document, one writer, persist-first saves
 
-**Status:** draft (SC stream; finalized in Phase I) · **Area:** `src/settings/{doc,doc-rules,ops,ops-protection,persist,
-migrate-v1,effective,view,v1-adapter}.ts`, `src/main/modules/{settings-service,settings-reload}.ts`
+**Status:** accepted · **Area:** `src/settings/{doc,doc-rules,ops,ops-protection,persist,
+migrate-v1,effective,view}.ts`, `src/main/modules/{settings-service,settings-reload}.ts`
 
 ## Context
 
@@ -12,7 +12,7 @@ wholesale (a lost update between two windows), and re-derived every number on sa
 ## Decision
 
 1. **One global document**, `userData/epo-settings-v2.json` (`SettingsDocV2`): intent, sparse overrides, seed,
-   protection, preferences, app state, the migration record and the transitional legacy carry. v1 is never written
+   protection, preferences, app state and the migration record. v1 is never written
    again; older builds keep reading it.
 2. **One writer**, `SettingsService.apply(ops, origin)`: ops apply atomically and in order, coerced to the nearest
    safe value (ADR 0103); every result is typed (`saved` with its undo, `not-saved` when nothing changed, `refused`).
@@ -30,8 +30,8 @@ wholesale (a lost update between two windows), and re-derived every number on sa
    at launch, and only its additions to the two lists are offered back (`import-older-version`, or a dismissed
    notice). Removals made there never apply.
 6. **Keyed list ops** (`protect-add`/`protect-remove`/`word-add`/…) replace whole-list writes.
-7. **Transitional**: until the old Settings UI is deleted, `getSettings/updateSettings/resetSettings` go through a v1
-   adapter (`toV1Settings`, `opsFromV1Partial`); a failed save rejects so the old UI shows "Not saved".
+7. **One live interface.** Renderer changes use typed v2 operations. The frozen v1 model remains only for migration
+   and compatibility evidence; it is not a second writable settings interface.
 
 ## Consequences
 

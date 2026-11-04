@@ -1,6 +1,6 @@
 # 0904 — Explore Boost is a plan modifier that never raises a ceiling
 
-**Status:** proposed (the backend landed with the plan core; the runtime and sidebar streams wire it)
+**Status:** accepted
 · **Area:** kernel plan, governors, main · **Builds on:** ADR 0607
 
 ## Context

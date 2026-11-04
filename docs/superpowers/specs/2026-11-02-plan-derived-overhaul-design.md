@@ -2530,7 +2530,7 @@ same function for the window title and Dock badge. Precedence (first match wins;
 | 7 | `offline` | `online === false` and work intended | Offline | hold | pause |
 | 8 | `cleaning-up` | prune scanning/running/paused | Cleaning up / Clean-up paused | live / hold | pause-cleanup / resume-cleanup |
 | 9 | `catching-up` | a startup step runs, or `catchUp.state === 'running'` | Catching up | live | starting (if a Start is queued) / pause / start (queues) |
-| 10 | `starting` | pending start, or running with no step yet | Starting | live | starting (disabled) |
+| 10 | `starting` | queued/pending Start, or running first step before any action, deadline, recovery or planned wait is known | Starting | live | starting (disabled) |
 | 11 | `paused` | paused, or desired paused and idle | Paused | hold | resume (calls `startEngine` when idle) |
 | 12 | `needs-seed` | idle and no seed | Let's get set up | idle | set-up |
 | 13 | `stopped` | idle | Stopped | idle | start |

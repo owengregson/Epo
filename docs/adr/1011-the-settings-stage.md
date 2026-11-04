@@ -1,6 +1,6 @@
 # 1011 — The Settings stage: Easy and Advanced
 
-Status: proposed (2026-11-03; plan-derived overhaul, stream SU)
+Status: accepted
 
 ## Context
 
@@ -49,10 +49,8 @@ reason for:
 
 - The old settings UI, its hooks, the renderer-side derivations, `settings.css`, the orphaned control atoms
   and the transitional `settings-transitional.ts` are deleted; `seed:check` answers `SeedCheckResult`.
-- Two v1 rows (`getSettings`, `updateSettings`) and the shell's v1 `settingsSignal` stay until the last
-  readers outside this stream (the tour gate, the People page's queue windows, the Start-without-seed
-  fallback, the old overview) read the v2 view; the service's v1 window stays while the engine-side
-  stamp writers and the legacy pacer read it.
+- The tour gate, People queue windows and Start-without-seed check read the v2 view. The v1 IPC rows and
+  shell signal are retired with the compatibility adapter; run stamps belong to the account store.
 - The Diagnostics section exports `diagnosticsPanelSlot` for the sidebar stream's log panel.
 - Practice & app shows the updater's honest states; "Up to date" needs a finished check.
 
