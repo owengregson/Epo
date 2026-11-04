@@ -160,7 +160,7 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
     tab,
     foundation: found,
     updater: upd,
-    setStage: (mode, covered) => stage.set(mode, covered),
+    setStage: (mode, covered, reducedMotion) => stage.set(mode, covered, reducedMotion),
   });
 
   // --- Connectivity monitor (offline-hold for the engine loop) -------------

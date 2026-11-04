@@ -1,7 +1,9 @@
 import { useEffect, useMemo } from 'preact/hooks';
 import { liveRevealedSignal, pendingControlSignal } from '@/renderer/app/live-signals';
+import { reducedMotionSignal } from '@/renderer/app/motion-signal';
 import {
   modalSignal,
+  peopleTargetSignal,
   type SettingsTarget,
   type ShellControls,
   settingsFactsSignal,
@@ -12,6 +14,7 @@ import {
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import type { ControlRunner } from '@/renderer/hooks/useControl';
 import { useTransportControls } from '@/renderer/hooks/useTransportControls';
+import type { Person } from '@/shared/feed';
 import type { StageMode } from '@/shared/stage-mode';
 
 /** Where Start sends someone who has not chosen a starting account yet (spec §13). */
@@ -19,6 +22,12 @@ export const SEED_TARGET: SettingsTarget = { section: 'audience', focus: 'seed' 
 
 export function showStage(mode: StageMode): void {
   stageSignal.value = mode;
+}
+
+/** Open one person's stored details; repeated clicks refresh the selected record. */
+export function openPerson(person: Person): void {
+  peopleTargetSignal.value = { ...person };
+  showStage('people');
 }
 
 /** Each request is a fresh object, so asking for the same field twice still reaches the stage. */
@@ -72,6 +81,7 @@ export function useProvideShellControls({ confirm, control, replayTour }: ShellC
   return useMemo<ShellControls>(
     () => ({
       showStage,
+      openPerson,
       openSettings,
       replayTour,
       start() {
@@ -87,7 +97,7 @@ export function useProvideShellControls({ confirm, control, replayTour }: ShellC
       signIn() {
         // Main no longer shows the tab on login: the Live stage is asked for first.
         showStage('tab');
-        void window.epo.setStage('tab', coveredNow());
+        void window.epo.setStage('tab', coveredNow(), reducedMotionSignal.peek());
         onLogin();
       },
     }),

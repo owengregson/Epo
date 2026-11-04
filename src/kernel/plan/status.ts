@@ -6,7 +6,9 @@
  */
 
 import { EMPIRICAL } from '../fundamentals';
-import type { DayPlan, PlannedSession } from './types';
+import { inQuietHours, localMinuteOf, type QuietHours } from './circadian';
+import { lateJoinBudget } from './layout';
+import type { DayPlan } from './types';
 
 export type PlanSessionState = 'done' | 'partial' | 'skipped' | 'before-open' | 'now' | 'next' | 'later';
 
@@ -29,17 +31,18 @@ export function windowEndOf(plan: Pick<DayPlan, 'sessions' | 'window'>, i: numbe
   return plan.sessions[i + 1]?.startAt ?? plan.window.endsAt;
 }
 
-const lengthOf = (s: PlannedSession): number => s.expectedEndAt - s.startAt;
-
-/** A joined session closes one boundary before the next window, or one expected length past its end. */
-export function closesAtOf(plan: Pick<DayPlan, 'sessions' | 'window'>, i: number): number {
+/** Drawn gaps may outlast the expected length; only the next session, quiet hours and day end close it. */
+export function closesAtOf(plan: Pick<DayPlan, 'window'> & { readonly sessions: readonly { readonly startAt: number }[] },
+  i: number, quiet: QuietHours | null = null): number {
   const s = plan.sessions[i];
-  return Math.min(windowEndOf(plan, i) - BOUNDARY, s.expectedEndAt + lengthOf(s));
-}
-
-/** What still fits from `at` to the expected end at the session's mean gap. */
-function fitFrom(s: PlannedSession, at: number): number {
-  return Math.max(0, Math.floor((s.expectedEndAt - at) / Math.max(1, s.tempo.gap.targetMeanMs)));
+  let end = plan.sessions[i + 1]?.startAt;
+  end = end === undefined ? plan.window.endsAt : end - BOUNDARY;
+  if (quiet === null || quiet.startMinute === quiet.endMinute) return end;
+  if (inQuietHours(localMinuteOf(s.startAt), quiet)) return s.startAt;
+  const start = new Date(s.startAt);
+  start.setHours(0, quiet.startMinute, 0, 0);
+  if (start.getTime() <= s.startAt) start.setDate(start.getDate() + 1);
+  return Math.min(end, start.getTime());
 }
 
 export interface SessionStatus {
@@ -54,36 +57,39 @@ export interface SessionStatus {
 }
 
 /** Session `i`'s status at `now` (the caller names the first later session `next`). */
-export function sessionStatus(plan: Pick<DayPlan, 'sessions' | 'window'>, i: number, now: number, usage: PlanUsage): SessionStatus {
+export function sessionStatus(plan: Pick<DayPlan, 'sessions' | 'window'>, i: number, now: number, usage: PlanUsage,
+  quiet: QuietHours | null = null): SessionStatus {
   const s = plan.sessions[i];
   const used = usage.perSession[i] ?? 0;
   if (s.before === 'first-open') return { state: 'before-open', budget: 0, used, open: false, ended: true, closesAt: null };
   if (now < s.startAt && used === 0) return { state: 'later', budget: s.budget, used, open: false, ended: false, closesAt: null };
   if (used === 0) {
-    const fit = Math.min(s.budget, fitFrom(s, now));
+    const fit = lateJoinBudget(s, now);
     const open = now < s.expectedEndAt && fit > 0;
     return { state: open ? 'now' : 'skipped', budget: open ? fit : 0, used, open, ended: !open, closesAt: open ? s.expectedEndAt : null };
   }
   const joinedAt = usage.joinedAt?.[i] ?? s.startAt;
-  const budget = Math.max(used, joinedAt <= s.startAt ? s.budget : Math.min(s.budget, fitFrom(s, joinedAt)));
-  const closesAt = closesAtOf(plan, i);
+  const budget = Math.max(used, lateJoinBudget(s, joinedAt));
+  const closesAt = closesAtOf(plan, i, quiet);
   const open = used < budget && now < closesAt;
   const state: PlanSessionState = open ? 'now' : used >= budget ? 'done' : 'partial';
   return { state, budget, used, open, ended: !open, closesAt };
 }
 
 /** R: the kept remainder — what the kept sessions not yet ended may still spend (prorated, skipped: 0). */
-export function keptRemainder(plan: Pick<DayPlan, 'sessions' | 'window'>, now: number, usage: PlanUsage): number {
+export function keptRemainder(plan: Pick<DayPlan, 'sessions' | 'window'>, now: number, usage: PlanUsage,
+  quiet: QuietHours | null = null): number {
   let r = 0;
   for (let i = 0; i < plan.sessions.length; i += 1) {
-    const st = sessionStatus(plan, i, now, usage);
+    const st = sessionStatus(plan, i, now, usage, quiet);
     if (!st.ended) r += Math.max(0, st.budget - st.used);
   }
   return r;
 }
 
 /** The open session's position, or -1. */
-export function openSessionAt(plan: Pick<DayPlan, 'sessions' | 'window'>, now: number, usage: PlanUsage): number {
-  for (let i = 0; i < plan.sessions.length; i += 1) if (sessionStatus(plan, i, now, usage).open) return i;
+export function openSessionAt(plan: Pick<DayPlan, 'sessions' | 'window'>, now: number, usage: PlanUsage,
+  quiet: QuietHours | null = null): number {
+  for (let i = 0; i < plan.sessions.length; i += 1) if (sessionStatus(plan, i, now, usage, quiet).open) return i;
   return -1;
 }

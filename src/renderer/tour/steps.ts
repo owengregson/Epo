@@ -101,6 +101,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
 ];
 
 /** The short "new look" tour shown once after an update (spec C.15.7, owner Q30): what moved. */
+export const NEW_LOOK_VERSION = 'plan-derived';
+
 export const NEW_LOOK_STEPS: readonly TourStep[] = TOUR_STEPS.filter((s) =>
   ['now', 'today', 'feed', 'stages'].includes(s.id),
 );

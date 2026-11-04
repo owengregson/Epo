@@ -32,7 +32,7 @@ export const GALLERY_DOC_PARTS = {
   rev: 7,
   seed: 'studio.lumen',
   protection: PROTECTION,
-  app: { tourCompletedAt: AT },
+  app: { tourCompletedAt: AT, tourVersionSeen: 'plan-derived' },
 } as const;
 
 /** The view main builds for {@link GALLERY_DOC_PARTS}; the JSON is checked against `buildView` by a test. */

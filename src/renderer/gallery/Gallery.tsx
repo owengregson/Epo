@@ -55,6 +55,7 @@ const NOOP_SERVICES: ShellServices = { confirm: () => Promise.resolve(true), toa
 
 const NOOP_CONTROLS: ShellControls = {
   showStage: noop,
+  openPerson: noop,
   openSettings: noop,
   start: noop,
   pauseResume: noop,
@@ -94,6 +95,7 @@ function Surface({ surface }: { surface: SurfaceKey }): JSX.Element {
 export function Gallery(): JSX.Element {
   const [scenarioKey, setScenarioKey] = useState(SCENARIOS[1]?.key ?? 'idle');
   const [surface, setSurface] = useState<SurfaceKey>('people');
+  const [controlsHidden, setControlsHidden] = useState(false);
 
   return (
     <ShellContext.Provider value={NOOP_SERVICES}>
@@ -107,7 +109,9 @@ export function Gallery(): JSX.Element {
             </section>
           </div>
         </div>
-        <aside class="gallery-rail">
+        {controlsHidden ? <button type="button" class="tbtn gallery-show" onClick={() => setControlsHidden(false)}>Show gallery controls</button> : null}
+        <aside class="gallery-rail" hidden={controlsHidden}>
+          <button type="button" class="tbtn" onClick={() => setControlsHidden(true)}>Hide gallery controls</button>
           <div class="gallery-rail__h">Scenario</div>
           {SCENARIOS.map((s) => (
             <button

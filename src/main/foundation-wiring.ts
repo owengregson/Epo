@@ -65,7 +65,7 @@ import type {
   ChainTargetView,
   EpoStatus,
   FollowState,
-  GraphSnapshot,
+  GraphSnapshotRead,
   GrowthSeriesRead,
   PruneControlResult,
   PruneScanResult,
@@ -1272,10 +1272,10 @@ export class Foundation {
    * and sweeps). Null before login/build — there is nothing to draw. Never
    * throws across IPC.
    */
-  async graphSnapshot(): Promise<GraphSnapshot | null> {
-    const graph = await this.builtGraph();
-    if (graph === null) return null;
+  async graphSnapshot(): Promise<GraphSnapshotRead> {
     try {
+      const graph = await this.builtGraph();
+      if (graph === null) return null;
       const settings = this.resolveSettings();
       return shapeGraphSnapshot(graph.store.graphSnapshotRows(), {
         now: graph.clock.now(),
@@ -1283,7 +1283,7 @@ export class Foundation {
       });
     } catch (e) {
       logger.error('foundation.graphSnapshot: failed', { error: String(e) });
-      return null;
+      return { unavailable: true };
     }
   }
 

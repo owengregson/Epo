@@ -12,7 +12,7 @@ import { inQuietHours, localMinuteOf, massCurve } from './circadian';
 import { apportion, availableBlocks, type LaidSession, placeSessions, sessionKinds } from './layout';
 import { PLAN_BOUNDS } from './policy';
 import { planReads } from './reads';
-import { openSessionAt, type PlanUsage, sessionStatus } from './status';
+import { closesAtOf, openSessionAt, type PlanUsage, sessionStatus } from './status';
 import { sessionTempo } from './tempo';
 import type { BoostWindow, DayPlan, DrawInput, PlanDayWindow } from './types';
 import { isDayOff } from './volume';
@@ -52,13 +52,16 @@ function insertNow(plan: DayPlan, sessions: LaidSession[], input: DrawInput, now
   const share = future.length > 0 ? Math.round(r / (future.length + 1)) : 0;
   const tempo = sessionTempo(plan.seed, plan.sessions.length, input.intent, { mix: 'boost', probation: false }, input.intent.hourlyCap,
     Math.max(1, share));
+  const closesAt = closesAtOf({ window: plan.window, sessions: [{ startAt: now }] }, 0, input.intent.quietHours);
+  const capacity = Math.max(0, Math.floor((closesAt - BOUNDARY - now) / tempo.gap.targetMeanMs));
+  if (capacity <= 0) return sessions;
   for (;;) {
-    const budgets = apportion(r, [share, ...future.map((s) => s.budget)]);
-    const head = budgets[0];
-    const startOfRest = Math.round(now + head * tempo.gap.targetMeanMs + BOUNDARY);
+    const head = Math.min(capacity, apportion(r, [share, ...future.map((s) => s.budget)])[0]);
+    const budgets = [head, ...apportion(r - head, future.map((s) => s.budget))];
+    const startOfRest = Math.round(now + head * tempo.gap.targetMeanMs + 2 * BOUNDARY);
     const sub = { ...input, window: { ...plan.window, startsAt: Math.min(startOfRest, plan.window.endsAt) } };
     const rest = future.map((s, i) => ({ ...s, budget: budgets[i + 1] }));
-    const starts = placeSessions(plan.seed, sub, rest.map((s) => s.budget * s.tempo.gap.targetMeanMs), availableBlocks(sub.window, input.intent));
+    const starts = placeSessions(plan.seed, sub, rest.map((s) => s.budget * s.tempo.gap.targetMeanMs + BOUNDARY), availableBlocks(sub.window, input.intent));
     if (starts !== null || future.length === 0) {
       // The re-laid sessions share the waiting kinds by their new budgets (the inserted one included).
       const totals = { ...NO_MIX, ...sumMix(future), lifecycleUnfollow: 0, slack: 0 };
@@ -72,8 +75,8 @@ function insertNow(plan: DayPlan, sessions: LaidSession[], input: DrawInput, now
     // Two smallest adjacent future sessions merge until the rest fits after the inserted one.
     let pair = 0;
     for (let i = 1; i < future.length - 1; i += 1) if (future[i].budget + future[i + 1].budget < future[pair].budget + future[pair + 1].budget) pair = i;
-    future = future.length === 1 ? [] : [...future.slice(0, pair), { ...future[pair], budget: future[pair].budget + future[pair + 1].budget },
-      ...future.slice(pair + 2)];
+    if (future.length === 1) return sessions; // No feasible insertion: keep its budget in its original slot.
+    future = [...future.slice(0, pair), { ...future[pair], budget: future[pair].budget + future[pair + 1].budget }, ...future.slice(pair + 2)];
   }
 }
 
@@ -85,29 +88,30 @@ function insertNow(plan: DayPlan, sessions: LaidSession[], input: DrawInput, now
 export function applyBoost(prev: DayPlan, input: DrawInput, now: number, usage: PlanUsage): DayPlan {
   const span = boostSpan(input.boost, prev.window);
   if (span === null || isDayOff(prev.window, input.intent.daysOff)) return prev;
-  const open = openSessionAt(prev, now, usage);
+  const open = openSessionAt(prev, now, usage, input.intent.quietHours);
   let sessions: LaidSession[] = prev.sessions.map(({ reads: _reads, ...s }) => s);
   const nowInWindow = now >= span.t0 && now < span.t1;
-  const lifted = Math.max(0, prev.ceilings.automaticMax - prev.volume.drawn);
+  const lifted = Math.max(0, prev.ceilings.automaticMax
+    - Math.max(prev.volume.drawn, prev.volume.planned + (prev.volume.forfeited ?? 0), usage.auto));
   const waiting = prev.sessions.reduce((a, s, i) => a + (s.startAt > now && (usage.perSession[i] ?? 0) === 0 ? s.budget : 0), 0);
   if (input.runIntent === 'running' && nowInWindow && open < 0 && waiting + lifted > 0 && insertableAt(input, prev.window, now)) {
     sessions = insertNow(prev, sessions, input, now, usage);
   }
   const openAt = (s: LaidSession): boolean => s.startAt <= now && (s.expectedEndAt > now || (open >= 0 && prev.sessions[open]?.startAt === s.startAt));
-  const boosted = sessions.map((s) => s.before === 'none' && (s.budget > 0 || s.startAt === now)
-    && ((s.startAt >= span.t0 && s.startAt < span.t1) || (nowInWindow && openAt(s))));
-  const done = (s: LaidSession, i: number): boolean => {
+  const done = (s: LaidSession): boolean => {
     const j = prev.sessions.findIndex((p) => p.startAt === s.startAt);
-    return j >= 0 && s.startAt <= now && sessionStatus(prev, j, now, usage).ended && !boosted[i];
+    return j >= 0 && s.startAt <= now && sessionStatus(prev, j, now, usage, input.intent.quietHours).ended;
   };
+  const boosted = sessions.map((s) => !done(s) && s.before === 'none' && (s.budget > 0 || s.startAt === now)
+    && ((s.startAt >= span.t0 && s.startAt < span.t1) || (nowInWindow && openAt(s))));
   const p0 = input.intent.operatingRate;
-  let followsLeft = Math.max(0, p0 - usage.follow - sessions.reduce((a, s, i) => a + (boosted[i] || done(s, i) ? 0 : s.mix.follow), 0));
+  let followsLeft = Math.max(0, p0 - usage.follow - sessions.reduce((a, s, i) => a + (boosted[i] || done(s) ? 0 : s.mix.follow), 0));
   // The lift: up to the day's largest automatic volume, placed only where H and the gap allow.
   let lift = lifted;
   const next = sessions.map((s, i) => {
     if (!boosted[i]) return s;
-    const windowEnd = sessions[i + 1]?.startAt ?? prev.window.endsAt;
-    const fits = Math.max(0, Math.floor((windowEnd - BOUNDARY - s.startAt) / Math.max(1, s.tempo.gap.targetMeanMs)) - s.budget);
+    const closesAt = closesAtOf({ window: prev.window, sessions }, i, input.intent.quietHours);
+    const fits = Math.max(0, Math.floor((closesAt - BOUNDARY - s.startAt) / Math.max(1, s.tempo.gap.targetMeanMs)) - s.budget);
     const accept = Math.min(s.mix.accept, s.budget);
     const base = Math.min(s.budget - accept, followsLeft);
     followsLeft -= base;

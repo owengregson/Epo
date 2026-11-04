@@ -138,20 +138,10 @@
   height: var(--fs-body);
   border-radius: var(--r-sm);
   background: var(--track-bg);
-  animation: skeletonFade var(--breath) var(--ease-in-out) infinite alternate;
 }
 
 .skeleton-line:nth-child(2n) {
   width: 72%;
-}
-
-@keyframes skeletonFade {
-  from {
-    opacity: 0.55;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 /* ---------- the shell's one popover ---------- */
@@ -172,10 +162,4 @@
 .popover:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .skeleton-line {
-    animation: none;
-  }
 }
