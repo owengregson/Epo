@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { app, type WebContents } from 'electron';
 import { Actor } from '@/adapter/actor';
+import { ActionAbortedError, AdapterStaleError, TabUnavailableError, TabUnresponsiveError } from '@/adapter/errors';
 import { Reader } from '@/adapter/reader';
 import { Sentinel } from '@/adapter/sentinel';
 import type { InstagramTab } from '@/adapter/tab';
@@ -58,6 +59,19 @@ function harness(opts: { initial?: () => void; ready?: Promise<void>; recorder?:
     evaluate: jest.fn(async () => ({ found: false })), captureScreenshot: jest.fn(async () => Buffer.from('png')),
     onResponse: (f: ResponseHandler) => { handlers.add(f); return () => handlers.delete(f); },
   } as unknown as InstagramTab;
+  const observed = (file: string, op: string, route: string) => {
+    const body = readFileSync(path.join(__dirname, '../fixtures/surface/2026-11-02/bodies', file), 'utf8');
+    for (const f of handlers) f({ requestId: file, url: `https://www.instagram.com${route}`, method: 'POST', status: 200,
+      mimeType: 'text/javascript', requestHeaders: { 'x-fb-friendly-name': op }, getBody: async () => body });
+  };
+  jest.mocked(Actor.prototype.clickNotifications).mockImplementation(async () => {
+    observed('activity-feed-01.json', 'PolarisActivityFeedStoriesViewQuery', '/api/graphql');
+    return true;
+  });
+  jest.mocked(Actor.prototype.clickFollowRequestsEntry).mockImplementation(async () => {
+    observed('friend-requests-01.json', 'PolarisActivityFeedFollowRequestsViewQuery', '/graphql/query');
+    return true;
+  });
   const traffic = (status: number, mimeType = 'application/json') => {
     dbg.emit('message', {}, 'Network.requestWillBeSent', { requestId: 'unsafe',
       request: { url: 'https://www.instagram.com/api/graphql', method: 'POST' } });
@@ -188,4 +202,72 @@ test('a reverse-shadow disagreement stops an active visit through the shared sin
   expect(read).toHaveBeenCalledTimes(1);
   expect(h.result().stop.reason).toBe('shadow-disagreed');
   expect(TabProfileVisitor.prototype.visit).toHaveBeenCalledTimes(1);
+});
+
+test.each(['input:document-changed-after-press', 'input:document-changed-during-press'])(
+  '%s records uncertainty and verifies the own URL after exactly one gesture', async (component) => {
+    const h = harness();
+    jest.spyOn(h.tab, 'currentUrl').mockReturnValue('https://www.instagram.com/OWNER/');
+    jest.mocked(Actor.prototype.clickOwnProfileLink).mockRejectedValueOnce(new TabUnresponsiveError(component, 15_000, 'post-click'));
+    await launchVerify(h.out, 'target');
+    expect(h.result()).toMatchObject({ outcome: 'passed', 'own-profile-link': { clicked: true },
+      'own-profile-link-uncertainty': { component, phase: 'post-click', timeoutMs: 15_000 } });
+    expect(Actor.prototype.clickOwnProfileLink).toHaveBeenCalledTimes(1);
+    expect(h.tab.goto).toHaveBeenCalledTimes(1); // the earlier home step, no fallback navigation
+    expect(sleep).toHaveBeenCalledWith(3000, expect.any(AbortSignal));
+    expect(Actor.prototype.follow).not.toHaveBeenCalled();
+    expect(Actor.prototype.unfollow).not.toHaveBeenCalled();
+  },
+);
+
+test.each(['https://www.instagram.com/', 'https://www.instagram.com/other/'])(
+  'navigation uncertainty cannot certify the wrong destination %s', async (url) => {
+    const h = harness();
+    jest.spyOn(h.tab, 'currentUrl').mockReturnValue(url);
+    jest.mocked(Actor.prototype.clickOwnProfileLink).mockRejectedValueOnce(
+      new TabUnresponsiveError('input:document-changed-after-press', 15_000, 'post-click'));
+    await expect(launchVerify(h.out, 'target')).rejects.toThrow('verify stopped');
+    expect(h.result()).toMatchObject({ outcome: 'stopped', stop: { step: 'own-profile-link', reason: 'step-result' },
+      'own-profile-link': { clicked: true, url }, 'own-profile-link-uncertainty': { phase: 'post-click' } });
+    expect(Actor.prototype.clickOwnProfileLink).toHaveBeenCalledTimes(1);
+  },
+);
+
+test('an already-own URL cannot certify a profile link that was not pressed', async () => {
+  const h = harness();
+  jest.mocked(Actor.prototype.clickOwnProfileLink).mockResolvedValueOnce(false);
+  await expect(launchVerify(h.out, 'target')).rejects.toThrow('verify stopped');
+  expect(h.result()).toMatchObject({ outcome: 'stopped', stop: { step: 'own-profile-link', reason: 'step-result' } });
+  expect(Actor.prototype.clickOwnProfileLink).toHaveBeenCalledTimes(1);
+});
+
+test.each([
+  new TabUnresponsiveError('input', 15_000, 'post-click'),
+  new TabUnresponsiveError('input:ack-failed', 15_000, 'post-click'),
+  new TabUnresponsiveError('input:document-changed-after-press', 15_000),
+  new TabUnavailableError('input'), new AdapterStaleError('input.click', 'covered'), new ActionAbortedError('input.gesture'),
+])('an own URL does not mask a genuine input failure: %s', async (error) => {
+  const h = harness();
+  jest.mocked(Actor.prototype.clickOwnProfileLink).mockRejectedValueOnce(error);
+  await expect(launchVerify(h.out, 'target')).rejects.toThrow('verify stopped');
+  expect(h.result()).toMatchObject({ outcome: 'stopped', stop: { step: 'own-profile-link', reason: 'exception' } });
+  expect(h.result()['own-profile-link-uncertainty']).toBeUndefined();
+  expect(Actor.prototype.clickOwnProfileLink).toHaveBeenCalledTimes(1);
+  expect(jest.mocked(sleep).mock.calls.some(([ms]) => ms === 3000)).toBe(false);
+});
+
+test.each(['press', 'settle'] as const)('a wall during navigation %s wins over the expected own URL', async (when) => {
+  const h = harness();
+  jest.mocked(Actor.prototype.clickOwnProfileLink).mockImplementationOnce(async () => {
+    if (when === 'press') h.traffic(429);
+    else jest.mocked(sleep).mockImplementationOnce(async (_ms, signal) => {
+      h.traffic(429);
+      expect(signal?.aborted).toBe(true);
+    });
+    throw new TabUnresponsiveError('input:document-changed-after-press', 15_000, 'post-click');
+  });
+  await expect(launchVerify(h.out, 'target')).rejects.toThrow('verify stopped');
+  expect(h.result()).toMatchObject({ outcome: 'stopped', stop: { step: 'own-profile-link', reason: 'traffic' } });
+  expect(Actor.prototype.clickOwnProfileLink).toHaveBeenCalledTimes(1);
+  expect(h.tab.captureScreenshot).toHaveBeenCalledTimes(8);
 });

@@ -2,6 +2,7 @@
 import { writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { Actor } from '@/adapter/actor';
+import { TabUnresponsiveError } from '@/adapter/errors';
 import { resolveOwnUsername } from '@/adapter/identity';
 import { SURFACE } from '@/adapter/ig-surface';
 import { Sentinel } from '@/adapter/sentinel';
@@ -65,7 +66,19 @@ export async function verifyProbe(tab: InstagramTab, evidence: VerifyEvidence, t
   result['drawer-closed'] = !(await evidence.wait(tab.evaluate<{ found: boolean }>(SURFACE.locateNotificationsCloseScript()))).found;
   if (!result['drawer-closed']) { evidence.stop('drawer-still-open'); evidence.assert(); }
   await step('own-profile-link', async () => {
-    const clicked = await actor.clickOwnProfileLink();
+    let clicked: boolean;
+    try { clicked = await actor.clickOwnProfileLink(); }
+    catch (error) {
+      // A route change can race the press/release ACK (ADR 0307). Only this
+      // read-only navigation re-observes the destination; nothing is retried.
+      if (!(error instanceof TabUnresponsiveError && error.phase === 'post-click'
+        && (error.component === 'input:document-changed-after-press'
+          || error.component === 'input:document-changed-during-press'))) throw error;
+      result['own-profile-link-uncertainty'] = {
+        component: error.component, phase: error.phase, timeoutMs: error.timeoutMs,
+      };
+      clicked = true;
+    }
     evidence.assert();
     await evidence.wait(sleep(3000, abort.signal));
     evidence.assert();
