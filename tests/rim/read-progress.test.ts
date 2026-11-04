@@ -44,12 +44,13 @@ test('passive parsed pages cannot keep a wedged dialog scroll driver healthy', a
   const reader = new FollowersPageReader({ tab, actor, reader: new Reader(), clock: new FakeClock(1000),
     onProgress, sleep: async () => {} });
   const seen: string[] = [];
+  let observed!: () => void;
+  const streamed = new Promise<void>((resolve) => { observed = resolve; });
   const collecting = reader.collect({ targetUsername: '11', sentinel: sentinel(), maxRounds: 1, noNewStop: 1,
-    onObservation: (obs) => seen.push(obs.accountPk) });
+    onObservation: (obs) => { seen.push(obs.accountPk); observed(); } });
   await inScroll;
   tab.emit(mkResp(followersUrl('999'), followersBody(['1'], 'C1', true)));
-  await Promise.resolve();
-  await Promise.resolve();
+  await streamed;
   expect(seen).toEqual(['1']);
   expect(onProgress).not.toHaveBeenCalled();
   release();

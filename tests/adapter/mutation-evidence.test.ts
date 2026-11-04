@@ -31,7 +31,7 @@ describe('the error verdict', () => {
 
   test('an errors[] body with no known signature lets the DOM and the block probe decide', () => {
     const v = SURFACE.extractMutationVerdict(errorBody({ message: 'Something went wrong' }));
-    expect(classifyMutationResponse(200, v as MutationVerdict)).toEqual({ kind: 'drift-suspect', detail: 'Something went wrong' });
+    expect(classifyMutationResponse(200, v as MutationVerdict)).toEqual({ kind: 'drift-suspect', detail: 'Something went wrong', exchangeError: true });
   });
 
   test('…and when the screen confirms nothing, it is a refusal toward the ladder: never unverified, never burned', async () => {

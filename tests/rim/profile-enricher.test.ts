@@ -211,3 +211,17 @@ test('a known enrichment username carries its pk into profile recovery', async (
   await enricher.enrich(['known_name']);
   expect(visit).toHaveBeenCalledWith('known_name', { pk: 'known' });
 });
+
+
+test.each([
+  { tier: 'recovered' as const }, { partial: true },
+  { obs: { accountPk: '42', observedAt: 1, source: 'profile' as const, fields: { username: 'partial', followers: 10 } } },
+])('a current incomplete or recovered profile is not successful enrichment: %j', async (changed) => {
+  const { enricher, visitor } = build();
+  const base = ok('42', 'partial');
+  if (!base.ok) throw new Error('fixture');
+  visitor.outcomes = { partial: { ...base, ...changed } };
+  expect(await enricher.enrich(['partial'])).toBe(0);
+  expect(visitor.visited).toEqual(['partial']);
+  expect(store.getAccount('42')?.enrichFailedAt).toBeUndefined();
+});

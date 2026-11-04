@@ -9,6 +9,7 @@ import { HTTP_STATUS } from '@/kernel/surface-policy';
 import { type TempoPolicy, type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import { createIgActivityClock, type IgActivityClock, underClock } from '@/rim/ig-activity-clock';
 import type { RimTab } from '@/rim/types';
+import { admits } from '@/surface/read/admission';
 import { noisify } from '@/timing/noise';
 import { sample, sleep, uniform } from '@/timing/primitives';
 import { launchStream } from '@/utils/entropy';
@@ -94,9 +95,15 @@ export class FollowersPageReader {
 
   private async collectSpaced(args: CollectArgs, scrollWait?: TempoPolicy): Promise<CollectResult> {
     const { targetUsername, onObservation, sentinel, maxRounds, noNewStop } = args;
+    if (args.shouldStop?.() || this.abortSignal?.()?.aborted) {
+      return { observedPks: [], targetPk: null, cursor: null, endReason: 'stop-requested' };
+    }
     const purpose = args.readPurpose ?? 'reconciliation';
-    this.readBudget?.consume('profile', purpose, 1, args.readUse);
-    this.readBudget?.consume('list-page', purpose, 1, args.readUse);
+    for (const kind of ['profile', 'list-page'] as const) {
+      const permit = this.readBudget?.consume(kind, purpose, 1, args.readUse);
+      if (permit !== undefined && !permit.allowed) return { observedPks: [], targetPk: null, cursor: null,
+        endReason: 'read-budget', ...(permit.resumeAt === null ? {} : { retryAt: permit.resumeAt }) };
+    }
     const dialog = args.dialog ?? 'followers';
     const externalStop = args.shouldStop ?? ((): boolean => false);
     const shouldStop = (): boolean => externalStop() || this.abortSignal?.()?.aborted === true;
@@ -128,13 +135,8 @@ export class FollowersPageReader {
       this.onProgress?.('dialog-page-ingested');
     };
 
-    // A blocked/rate-limited page (429, or an HTML wall on an API URL) means the
-    // scrape should stop rather than parse blind; the scroll loop checks this.
     const halted = { hit: false };
-    // A list page that fetched but no longer PARSES (SHAPE_MISMATCH from the
-    // versioned extractor). Poisons completeness: a drifted page must never
-    // read as the typed empty end-of-list page, so the scrape ends
-    // `endReason: 'shape-mismatch'` — a failure — never 'no-more-pages'.
+    // Any incomplete page poisons absence claims, while its readable rows still stream.
     const drifted = { hit: false };
 
     // Register BEFORE navigation so the first profile-info + followers page that
@@ -144,9 +146,6 @@ export class FollowersPageReader {
       const profileKind = this.reader.profileKindOf(resp);
       if (kind !== listKind && profileKind === null) return;
 
-      // Do not parse blind: a non-2xx status or an unparseable body on an API
-      // URL is a rate-limit / block / login wall, not data. Warn and stop the
-      // scrape.
       if (resp.status >= HTTP_STATUS.badRequest || !this.reader.parseableBody(resp.mimeType)) {
         logger.warn('rim.followers-page-reader: non-JSON/error response, halting scrape',
           { url: resp.url, status: resp.status, mimeType: resp.mimeType });
@@ -154,8 +153,7 @@ export class FollowersPageReader {
         return;
       }
 
-      // R1: the follower→target edge derives from the list URL, the first time
-      // a page matches — never from the optional profile-info request.
+      // The target edge derives from the list URL, never optional profile-info.
       if (kind === listKind && targetPk === null) {
         targetPk =
           listKind === 'following-list'
@@ -165,6 +163,7 @@ export class FollowersPageReader {
       }
 
       const failed = (e: unknown): void => {
+        if (kind === listKind) drifted.hit = true;
         logger.warn('rim.followers-page-reader: body/parse failed', { url: resp.url, error: String(e) });
       };
       // Each body is read once for every consumer (the observer stores a profile too); our own counts stay gated.
@@ -177,14 +176,17 @@ export class FollowersPageReader {
           return;
         }
         if (!body.ok) {
-          // IG shape drift: stop the scrape (checked at the top of each
-          // round) instead of fabricating an empty, "finished" page.
-          drifted.hit = true;
+          if (body.kind === 'wall') halted.hit = true;
+          else drifted.hit = true;
           return;
         }
         const parsed = body.projection;
         cursor = parsed.cursor;
-        page.hasMore = parsed.hasMore;
+        const end = parsed.continuation;
+        const trusted = admits('destructive', body) && parsed.rowIssues.length === 0
+          && (end?.kind === 'next' || (end?.kind === 'end' && end.evidence === 'flags-false' && end.vetoKey === undefined));
+        if (!trusted) drifted.hit = true;
+        page.hasMore = !trusted || end?.kind !== 'end';
         const sizeBefore = observed.size;
         for (const obs of parsed.facts) {
           observed.add(obs.accountPk);
@@ -192,8 +194,6 @@ export class FollowersPageReader {
         }
         validatedPages += 1;
         pageSizes.push(parsed.facts.length);
-        // Live progress: report the cumulative count once per page that
-        // actually grew the set (a stagnant/duplicate page stays silent).
         if (observed.size > sizeBefore) {
           args.onProgress?.(observed.size);
           reportActivity(observed.size);
@@ -201,13 +201,10 @@ export class FollowersPageReader {
       }).catch(failed));
     });
 
-    // Why the scroll loop ended — logged at the end so a truncated scrape is
-    // diagnosable from a normal (info-level) log instead of silent.
     let endReason = 'max-rounds';
     let roundsRun = 0;
     let retryAt: number | undefined;
-    // An open-dialog failure captured for the (opt-in) rethrow AFTER teardown:
-    // the interceptor must unsubscribe and the pending parses drain first.
+    // An open failure rethrows only after the interceptor drains and unsubscribes.
     let openFailure: unknown = null;
 
     try {
@@ -223,10 +220,7 @@ export class FollowersPageReader {
         endReason = 'open-failed';
         throw e;
       }
-      // Let the FIRST followers page load + parse before the scroll loop begins —
-      // the initial page arrives shortly after the modal opens, and small lists may
-      // never need a scroll at all. Skipped when a stop is already requested (the
-      // loop's own top-of-round check then breaks immediately).
+      // Let the initial response parse before scrolling.
       if (!shouldStop()) await this.sleepFn(nextWaitMs(), this.abortSignal?.());
       noteReadProgress();
 
@@ -304,12 +298,11 @@ export class FollowersPageReader {
       this.reporter.clear();
     }
 
-    // Drift discovered in teardown overrides a natural end, never a specific failure.
-    if (
-      drifted.hit &&
-      (endReason === 'no-more-pages' || endReason === 'stagnant' || endReason === 'max-rounds')
-    ) {
-      endReason = 'shape-mismatch';
+    // Late parses and walls override a natural end. A final first page also completes a zero-scroll census.
+    if (endReason === 'no-more-pages' || endReason === 'stagnant' || endReason === 'max-rounds') {
+      if (halted.hit) endReason = 'blocked-response';
+      else if (drifted.hit) endReason = 'shape-mismatch';
+      else if (!page.hasMore) endReason = 'no-more-pages';
     }
 
     logger.info('rim.followers-page-reader: scrape ended', {
