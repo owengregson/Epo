@@ -224,8 +224,11 @@ export function PruneScanCard({
         <div class="hint" hidden={busy || growthRunning}>
           Read-only — compares who you follow against who follows you. Nothing is unfollowed.
         </div>
-        <div class="hint" hidden={!busy}>
+        <div class="hint" hidden={!isScanning}>
           Walking your following and followers lists — this can take a while on large accounts.
+        </div>
+        <div class="hint" hidden={!pruneRunning || isScanning}>
+          Finish or stop the current prune run before scanning again.
         </div>
         <div class="hint" hidden={!growthRunning || busy}>
           The growth engine is running — scanning pauses it, then resumes it when the scan finishes.

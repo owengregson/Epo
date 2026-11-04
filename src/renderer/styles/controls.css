@@ -43,6 +43,9 @@
   flex: 1;
 }
 .card-h .aux {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--fs-small);
   text-transform: none;
   color: var(--faint);

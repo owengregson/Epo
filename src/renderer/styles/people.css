@@ -54,6 +54,10 @@
   justify-content: space-between;
   gap: var(--sp-3);
 }
+.people-panel__head h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
 /* Two useful columns when each can hold complete labels; one below. */
 .people-cols {
