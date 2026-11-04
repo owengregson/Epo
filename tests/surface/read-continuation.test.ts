@@ -90,14 +90,15 @@ describe('the committed corpus', () => {
   });
 });
 
-/** Every list-shaped body of both corpora, read the way production reads it (a connection through its container). */
+/** Every list-shaped corpus body, read the way production reads it (a connection through its container). */
 const everyListBody = [...CORPORA].filter(hasCorpusAt).flatMap((id) => manifestOf(id).bodies
   .filter((b) => /^(followers|following)-list$|^friend-requests$/.test(b.endpoint))
   .map((entry) => ({ id, entry, body: bodyOf(id, entry.file) })));
 
-describe('both corpora, through the read pipeline', () => {
+describe('the list corpora, through the read pipeline', () => {
   test('carry list-shaped bodies of both kinds (REST pages and the requests connection)', () => {
-    expect(new Set(everyListBody.map((x) => x.id)).size).toBe(CORPORA.length);
+    // The 2026-11-04 capture adds only an empty-bio profile, not a new list shape.
+    expect(new Set(everyListBody.map((x) => x.id))).toEqual(new Set(['2026-08-12', '2026-11-02']));
   });
 
   test.each(everyListBody.map((x) => [`${x.id}/${x.entry.file}`, x] as const))('%s: an end page is flags-false, unvetoed',

@@ -16,7 +16,7 @@ export const LOCAL_CAPTURE_DIR = process.env.EPO_CAPTURE_DIR ?? join(__dirname, 
 export const PROBE_RUNS_DIR = process.env.EPO_SCRUB_SOURCE ?? join(LOCAL_CAPTURE_DIR, 'raw', 'probe-verify-2026-11-02');
 
 /** Every committed corpus, oldest first. */
-export const CORPORA = ['2026-08-12', '2026-11-02'] as const;
+export const CORPORA = ['2026-08-12', '2026-11-02', '2026-11-04'] as const;
 export type CorpusId = (typeof CORPORA)[number];
 
 /** A committed, scrubbed corpus directory. */

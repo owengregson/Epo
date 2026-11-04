@@ -1,5 +1,5 @@
 /**
- * Decision-bearing paths and the novelty baseline — capture 2026-08-12, pinned to both corpora's
+ * Decision-bearing paths and the novelty baseline — capture 2026-08-12, pinned to the corpora's
  * manifests (spec §10.3, §10.7). A missing expected path is `expected-absent`; a baseline key is known.
  */
 
@@ -9,7 +9,7 @@ type PathsByKind = Readonly<Partial<Record<EndpointKind, readonly string[]>>>;
 
 const RELATIONSHIP = ['following', 'outgoing_request', 'followed_by', 'incoming_request'];
 
-/** Present in every real body of both corpora, record-relative (`x[]` is every row, `*` every value). */
+/** Present in every real corpus body, record-relative (`x[]` is every row, `*` every value). */
 export const EXPECTED_KEYS: PathsByKind = {
   'profile-graphql': ['username', 'follower_count', 'following_count', 'is_private', 'is_verified', 'biography',
     'friendship_status', ...RELATIONSHIP.map((k) => `friendship_status.${k}`)],
@@ -23,15 +23,15 @@ export const EXPECTED_KEYS: PathsByKind = {
 };
 
 /**
- * How an empty bio arrives (spec §7.3), read from the scrubbed 2026-11-02 profile bodies (the scrubber
- * keeps '' and null): unresolved there, so an explicit null still reads as absent (fail safe).
+ * Observed empty-bio form (spec §7.3): the scrubber preserves the empty string from a canonical
+ * private profile. This establishes no null/absent form; those remain unread, never a known empty bio.
  */
 export const EMPTY_BIO = {
-  form: 'unresolved',
-  evidence: '2026-11-02 corpus: 3/3 profile bodies carry a non-empty biography string; none is empty or null',
+  form: 'empty-string',
+  evidence: '2026-11-04 corpus: one canonical private profile carries biography "" with bio read and partial false; null/absent remain unverified',
 } as const;
 
-/** The union of both manifests' `novelKeys`, per endpoint (a freshness test re-derives it). */
+/** The union of the manifests' `novelKeys`, per endpoint (a freshness test re-derives it). */
 export const CORPUS_NOVEL_KEYS: PathsByKind = {
   'followers-list': [
     'follow_ranking_token', 'groups', 'more_groups_available', 'should_limit_list_of_followers',

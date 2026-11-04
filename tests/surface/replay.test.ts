@@ -116,11 +116,12 @@ describe('the URLs the surface BUILDS are the URLs it ROUTES', () => {
  * Documented blind spots, not silent gaps. The 2026-08-12 capture never opened the notifications drawer,
  * the following list shares the followers shape, and both profile endpoints post-date it (they replaced
  * the retired `web_profile_info` on 2026-09-18). The 2026-11-02 probe runs read profiles, the feed and the
- * requests panel only.
+ * requests panel only. The 2026-11-04 evidence adds one empty-bio profile; it does not certify L1.
  */
 const BLIND_SPOTS: Record<CorpusId, readonly string[]> = {
   '2026-08-12': ['activity-feed', 'following-list', 'profile-graphql', 'profile-info'],
   '2026-11-02': ['followers-list', 'following-list', 'friendship-show', 'profile-info', 'show-many'],
+  '2026-11-04': ['activity-feed', 'followers-list', 'following-list', 'friend-requests', 'friendship-show', 'profile-info', 'show-many'],
 };
 
 describe.each([...CORPORA].filter(hasCorpusAt))('every committed %s body replays', (id) => {

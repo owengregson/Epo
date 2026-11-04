@@ -1,11 +1,12 @@
 /**
  * The expected paths and the novelty baseline are evidence, not opinion: every expected path is
- * present in every real body of both corpora, and the baseline is exactly the manifests' unknown
- * keys plus the expected paths. The empty-bio form is read from the scrubbed 2026-11-02 bodies.
+ * present in every real corpus body, and the baseline is exactly the manifests' unknown keys plus
+ * the expected paths. The empty-bio form is observed in the scrubbed 2026-11-04 profile body.
  */
 
 import { valueAt } from '@/surface/read/fields';
 import { missingPaths } from '@/surface/read/normalize';
+import { readBody } from '@/surface/read/read';
 import type { EndpointKind } from '@/surface/schema/endpoints';
 import { CONTAINERS } from '@/surface/versions/2026-08-12/containers';
 import { CORPUS_NOVEL_KEYS, EMPTY_BIO, EXPECTED_KEYS, NOVELTY_BASELINE } from '@/surface/versions/2026-08-12/expected';
@@ -40,7 +41,7 @@ describe('NOVELTY_BASELINE is pinned to the manifests', () => {
   const union = new Map<EndpointKind, Set<string>>();
   for (const { b } of bodies) union.set(b.endpoint, new Set([...(union.get(b.endpoint) ?? []), ...b.expect.novelKeys]));
 
-  test('CORPUS_NOVEL_KEYS is exactly the union of both manifests\' novel keys', () => {
+  test('CORPUS_NOVEL_KEYS is exactly the union of the manifests\' novel keys', () => {
     const pinned = Object.fromEntries(Object.entries(CORPUS_NOVEL_KEYS).map(([k, v]) => [k, [...(v ?? [])].sort()]));
     expect(pinned).toEqual(Object.fromEntries([...union].map(([k, v]) => [k, [...v].sort()])));
   });
@@ -52,10 +53,36 @@ describe('NOVELTY_BASELINE is pinned to the manifests', () => {
 });
 
 describe('the empty-bio form (spec §7.3)', () => {
-  test('the evidence string matches the corpus: no profile body shows an empty or null bio', () => {
+  const observed = (): { data: { user: Record<string, unknown> } } =>
+    bodyOf('2026-11-04', 'profile-graphql-empty-bio.json') as { data: { user: Record<string, unknown> } };
+  const read = (body: unknown) => readBody('profile-graphql', {
+    decoded: { ok: true, json: body, format: 'json', payloads: 1, final: null },
+  }, { at: manifestOf('2026-11-04').replayAt, source: 'profile' });
+
+  test('the canonical private profile establishes an empty string with every decision field read', () => {
     const bios = bodies.filter((x) => x.b.endpoint === 'profile-graphql').map((x) => valueAt(x.body, 'data.user.biography'));
-    expect(bios.length).toBe(3);
-    expect(bios.every((bio) => typeof bio === 'string' && bio !== '')).toBe(true);
-    expect(EMPTY_BIO).toEqual({ form: 'unresolved', evidence: expect.stringContaining('3/3 profile bodies') });
+    expect(bios).toHaveLength(4);
+    expect(bios.filter((bio) => bio === '')).toHaveLength(1);
+    expect(bios.every((bio) => typeof bio === 'string')).toBe(true);
+    const body = observed();
+    expect(body.data.user.biography).toBe('');
+    expect(body.data.user.is_private).toBe(true);
+    expect(read(body)).toMatchObject({ ok: true, tier: 'canonical', partial: false,
+      projection: { fieldIssues: [], presence: { counts: 'read', bio: 'read', isPrivate: 'read', isVerified: 'read', relationship: 'read' },
+        facts: [{ fields: { bio: '' } }] } });
+    expect(EMPTY_BIO).toEqual({ form: 'empty-string', evidence: expect.stringContaining('2026-11-04 corpus') });
+  });
+
+  test.each(['null', 'absent'] as const)('%s remains unread rather than becoming the observed empty string', (presence) => {
+    const body = observed();
+    if (presence === 'null') body.data.user.biography = null;
+    else delete body.data.user.biography;
+    const result = read(body);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.projection.presence?.bio).toBe(presence);
+    expect(result.projection.facts[0]?.fields.bio).toBeUndefined();
+    expect(result.projection.fieldIssues.map((issue) => `${issue.kind}:${issue.path}`))
+      .toEqual(presence === 'absent' ? ['expected-absent:biography'] : []);
   });
 });
