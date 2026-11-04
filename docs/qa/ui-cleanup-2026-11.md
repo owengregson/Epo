@@ -143,6 +143,8 @@ Browser checks observed the initial splash, its removal, replay availability, a 
 replay, normal motion enabled, accessible Settings navigation, and no console errors. The full gate
 after the preview changes passed **435 suites / 4,445 tests**, with one suite and five tests skipped;
 all other gates passed and boundaries remained **0 errors / 56 warnings**. The log is
-`browser-preview-gate.log` in the evidence folder above. Phase L preparation is separate: no account
-traffic or account action has occurred. The verify-harness correction and its final gate are recorded
-in the overhaul validation record; the first read-only account check still awaits the owner's target.
+`browser-preview-gate.log` in the evidence folder above. This preview verification generated no account
+traffic or account actions. The subsequent verify-harness correction and first authorized read-only
+attempt on November 4 are recorded in the
+[overhaul validation record](plan-derived-overhaul-2026-11.md#first-live-attempt-2026-11-04).
+That attempt stopped because the supplied target was private; it did not qualify L1.

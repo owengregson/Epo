@@ -1,5 +1,18 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-04 (first authorized L1 attempt; stopped at target eligibility) —** The owner supplied a
+> target and authorized live testing. One verify run at `4760f43` stopped because that account is
+> private; it was followed and mutual. Own and target profiles parsed canonically and completely,
+> with no drift or shadow disagreement. Of 45 recorded API exchanges, 38 returned 200 with saved
+> decoded bodies; seven were still pending at the deliberate stop. No mutation operation was observed.
+> The nonexistent-profile and drawer steps did not run, so **L1 did not pass**. The real store/settings
+> hashes remain identical to the verified backup, saved run intent remains stopped, and Epo is closed.
+> Private evidence: `results/live-l1-2026-11-04T090943Z/` in the durable handoff folder.
+> The owner has supplied a replacement target, saved in that folder's `next-target.json`.
+> The owner subsequently explicitly authorized one same-day attempt against that replacement,
+> overriding the handoff's default restriction. L4/L5 and comparator deletion remain unqualified.
+> See the [validation record](qa/plan-derived-overhaul-2026-11.md#first-live-attempt-2026-11-04).
+
 > **2026-11-03 (owner accepts the interactive preview) —** The owner reviewed the browser preview and
 > said, "looks good. continue." This closes the requested owner visual review for the UI cleanup.
 > The localhost gallery now replays the real startup animation and includes the real tooltip and
@@ -13,8 +26,8 @@
 > A real Electron launch in a fresh profile with all requests blocked stopped at initial navigation,
 > wrote its evidence and exited cleanly. A fresh full-profile backup is verified; its private path
 > and hashes are in `results/codex-design-cleanup/pre-live-backup.json`.
-> **Next:** obtain the followed public target requested from the owner, then run L1 once under the
-> existing rules. No live account test has run. Epo is closed with saved run intent stopped.
+> The target was subsequently provided; the first attempt and its stop are recorded in the newer
+> entry above. The checkpoint and backup remain preserved.
 
 > **2026-11-03 (UI cleanup after owner review; offline verification complete) —** The owner rejected
 > the previous overhaul's spacing and composition; the seven screenshots were examples, not the

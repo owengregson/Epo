@@ -1434,10 +1434,10 @@ export function normalizeHandle(raw: string): { handle: string; valid: boolean }
 ```
 
 `whole-word` uses `(?<![\p{L}\p{N}])…(?![\p{L}\p{N}])` with the `u` flag. Blank words never protect. A bio arriving as
-`null` is treated as **absent** (fail safe) until corpus or live evidence establishes how Instagram sends an empty bio
-(`null` or `''`; `endpoints.ts:188,199` declares both `biography` and `is_verified` nullish). The scrubbed 2026-11-02
-corpus contains no empty/null biography example, so `EMPTY_BIO` remains unresolved (ADR 0806). L1 uses an empty-bio
-target if the owner can name one; no such target means no new evidence, not an inferred resolution.
+`null` is treated as **absent** (fail safe). The scrubbed 2026-11-02 corpus contained no empty/null biography
+example. A canonical body captured on 2026-11-04 supplies the observed `biography: ''` case in the new dated corpus,
+so `EMPTY_BIO` records that form (ADR 0806). This establishes the empty-string case only; null and omitted biographies
+remain unread. The run stopped because its target was private, so this field evidence does not qualify L1.
 `biography` and `is_verified` join `EXPECTED_KEYS['profile-graphql']` (§10.3), so if Instagram omits either
 the profiles area shows `paused` with a reason in the compatibility panel and the sidebar, instead of every unfollow
 silently becoming `kept('unreadable-*')`.
@@ -5525,7 +5525,7 @@ export interface RelationshipFact {                                             
 export type Presence = 'read' | 'absent' | 'null' | 'invalid' | 'partial' | 'withheld';
 export interface ProfilePresence {
   readonly counts: Presence;        // 'read' only for a valid pair
-  readonly bio: Presence;           // 'read' covers '' and text; 'null' = explicit null (empty-bio form unresolved, §7.3)
+  readonly bio: Presence;           // 'read' covers '' and text; explicit null remains unread (§7.3)
   readonly isPrivate: Presence; readonly isVerified: Presence;
   readonly relationship: Presence | 'self';
 }

@@ -100,8 +100,8 @@ never subtracts them.**
   only when that panel opens. The observed HTTP/MIME gate applies before body recovery; one cached decode serves
   all consumers of a response. The operation that answered is reported `unrouted` with a hint, so a consistent one
   routes later reads (`via: 'learned'`, still C2, never promoted).
-- **The empty bio** stays unresolved by the corpus (no scrubbed 2026-11-02 profile body carries an empty or null bio):
-  a `null` bio reads as absent (fail safe) until a live read shows the form (`versions/2026-08-12/expected.ts`).
+- **The empty bio** was unresolved by the 2026-11-02 corpus (none of its profile bodies carries an empty or null bio).
+  The 2026-11-04 amendment below adds evidence for the empty-string case; null remains unread.
 
 ## Amendment — pre-live review: transport and incomplete evidence
 
@@ -113,3 +113,15 @@ never subtracts them.**
   completeness. A wall or drift discovered while pending body reads drain overrides a natural end.
 - A fresh click review rejects recovered/partial follow evidence. Queued follows require the visit's current count
   pair before scoring; previously stored counts cannot supply missing proof. Additive observations remain stored.
+
+## Amendment — 2026-11-04: observed empty-string biography
+
+The first authorized L1 attempt captured a canonical profile body with `biography: ""`, boolean `is_verified`,
+and every decision-bearing profile field readable. The target was private, so the probe stopped at target eligibility before the
+drawer checks: **this is field evidence, not a passing L1 result**. The scrubbed 2026-11-04 corpus preserves that
+single body and its private flag. Production scrubbing and structural/differential leak checks scrub identifying
+account data before commit; the regression checks canonical, non-partial parsing with an observed empty biography.
+
+`EMPTY_BIO` now records the observed empty-string form. This does not establish that `null` or an omitted biography
+means empty: both remain unread, and protection decisions still fail safe when they require that missing fact.
+The legacy comparators remain until the separate L1 and L4 requirements pass.

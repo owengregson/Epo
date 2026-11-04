@@ -8,7 +8,8 @@ cleanup, including the native-QA repairs, passed the final source gate at `4a2bb
 `aa31274`, normal and reduced-motion native checks at `d80c5dd`, and the final keyboard-only reduced-motion run at
 `4a2bbcc` passed with the limits recorded below. Gallery results remain tied to their measured revisions; all six
 renderer artifacts at `4a2bbcc` are byte-identical to `d80c5dd`. **Implementation and technical offline verification
-are complete.** No live-account validation has been performed by this continuation.
+are complete.** The first live parsing attempt on November 4 stopped at target eligibility;
+its partial evidence is recorded below and does not qualify L1 or the remaining live sequence.
 
 Owner visual confirmation under workplan I.4.6 is now recorded after the subsequent
 [UI cleanup and interactive browser review](ui-cleanup-2026-11.md#interactive-browser-preview-and-owner-acceptance):
@@ -313,8 +314,57 @@ the explicit wrapper saved as `probe-blocked-launch.cjs`.
 
 With Epo closed and its saved run intent stopped, the full real profile was copied to a new private
 backup outside the repository: 33,311 files, all sizes verified, and 15 top-level store/settings/runtime
-files verified by SHA-256. The exact private path and hashes are in `pre-live-backup.json`. The account
-has not been opened or contacted. L1 awaits the followed public target requested from the owner.
+files verified by SHA-256. The exact private path and hashes are in `pre-live-backup.json`. At that
+preflight checkpoint, the account had not yet been opened or contacted and L1 awaited the owner's target.
+
+### First live attempt, 2026-11-04
+
+The owner provided a target and authorized live testing. At `4760f43`, source matched the full passing
+gate at `abc0724`; Epo was closed, run intent was stopped, and all 33,311 profile files were unchanged
+since the verified backup. The lead ran `EPO_PROBE=verify` once, with evidence outside the repository
+in `results/live-l1-2026-11-04T090943Z/`. The run began at 09:09:43 UTC and exited at 09:10:00 UTC.
+
+The own profile and supplied target both returned canonical, complete profile bodies. The target was
+followed, mutual and **private**, so the public-target precondition stopped the probe at `visit-target`.
+This was an eligibility failure, not an observed rate-limit or transport wall. The target's raw body
+contains `biography: ""` and boolean `is_verified`; its bio presence was `read`. The own profile has
+a text biography and the supported `self` relationship classification. No captured body establishes
+that null biographies are readable empty biographies.
+
+The lead and an independent agent reviewed saved artifacts only after the run:
+
+- `verify.json` records `outcome: stopped`, `step-result` at `visit-target`, and six `ok` sentinel checks.
+- Two canonical, non-partial profile reads, no drift and zero shadow disagreements were observed.
+- Of 45 tracked API exchanges, 38 have status 200 and existing, successfully decoded JSON body files.
+  Seven target-step requests were still pending at stop and are explicitly incomplete; they have no
+  response status/body and cannot be counted as successful responses.
+- No HTML, malformed saved JSON, nonempty top-level GraphQL errors or non-2xx response was observed.
+- Recorded operations comprise named queries and auxiliary AJAX/REST traffic. No mutation-named
+  operation or follow/unfollow/accept endpoint was observed. The probe's zero composed requests and
+  zero scripted mutations are also established by its source path, rather than inferred from its
+  report's declaration alone.
+- The nonexistent-profile visit, all drawer steps and final own-profile-link step did not run.
+  Activity-feed, friend-requests and list parsing remain unqualified; only the own-visit PNG exists
+  because target validation stopped before its screenshot. The process exit code was zero, which
+  does not override the explicitly stopped outcome.
+- The shutdown debugger-detach message followed the recorded stop. Epo exited; all 15 critical
+  store/settings/runtime hashes still match the backup and saved run intent remains stopped.
+
+**L1 did not pass.** The owner supplied a replacement target after this result; its exact handle is
+kept in the private evidence folder's `next-target.json`, and its public status remains unverified.
+The default one-run-per-day handoff rule initially paused further live work. The owner then explicitly
+overrode it: "we can re run now because its fine, you didnt do anything. you can do the live test."
+This authorizes one same-day read-only attempt against the replacement target. L4/L5 have not run, and
+the legacy comparators stay in place. The empty-string bio observation is retained in the scrubbed
+2026-11-04 corpus independently of the incomplete L1 result. It preserves the private flag and pins
+canonical, non-partial parsing with every decision-bearing profile field readable. Null and omitted biographies remain
+unread. Production scrubbing plus structural and differential leak checks ran against the private capture;
+no raw account identifiers or free-text values are committed.
+
+The integrated corpus change at `8ae9706` passed the complete offline gate: **437 suites / 4,479 tests**,
+one suite and six tests skipped, boundaries **0 errors / 56 warnings**. The explicit differential leak
+and expected-field run passed 47 tests with no skips against the new private capture. Full integration
+log: `results/codex-design-cleanup/post-l1-corpus-gate.log`. No parser behavior changed.
 
 ### Remaining live sequence
 
@@ -323,14 +373,14 @@ The exact request budgets, stop conditions and do-not-run list are in
 L1 is a single parsing verification; L4 is the supervised reopen after a night away; L5 observes only approved
 planned unfollows. Optional Boost follows also require approval. No live success is inferred from offline tests.
 
-Before L1, verify the checkpoint against `results/codex-final-qa/final-ref-state.json`, then back up the entire real Epo
-profile, including the store and both settings files. The integration build has not opened that profile. Use one designated
-runner with Epo quit before a probe, keep run intent stopped until the supervised Start, and follow section 22's
+Before the next L1 attempt, verify the current checkpoint and back up the entire real Epo profile, including
+the store and both settings files. The first L1 attempt opened that profile; the verified pre-live backup remains
+preserved. Use one designated runner with Epo quit before a probe, keep run intent stopped until the supervised Start, and follow section 22's
 spacing and first-wall stop rules. L4 requires Epo to remain quit for at least one night; its first upgraded launch
 must read exactly one head page and no census, following list or third-party profile before Start.
 
-`EMPTY_BIO` remains unresolved: the scrubbed corpus contains no empty/null biography example
-([ADR 0806](../adr/0806-one-parser-tiers.md)). A followed public target with an empty bio, if available for L1, can
-supply that evidence. Until then a null biography stays absent and fail safe; no offline resolution is claimed.
+`EMPTY_BIO` records the empty-string form observed in the scrubbed 2026-11-04 body
+([ADR 0806](../adr/0806-one-parser-tiers.md#amendment--2026-11-04-observed-empty-string-biography)).
+Null and omitted biographies remain unread and fail safe; this single field observation does not qualify L1.
 S8 deletion of the legacy extractors and reverse-shadow comparators
 requires zero `shadow-disagreed` results from both L1 and L4, then a separate gated deletion commit.
