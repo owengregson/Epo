@@ -233,7 +233,7 @@ describe('reopen I1–I12 (spec §20.3)', () => {
     r.store.ensureFollowersBaseline(T0 - 90 * DAY);
     r.store.savePruneCensus({ at: T0 - 30 * DAY, following: 0, followers: 0, scrapedFollowing: 0, scrapedFollowers: 0, notFollowingBack: 0, candidates: 0 });
     r.store.setLifecycleState(JSON.stringify({ v: 1, phase: 'ready', lastActiveAt: T0 - 2 * DAY }));
-    const consume = jest.fn();
+    const consume = jest.fn(() => true);
     seedReopenState(r.store, 'ME', { take: () => ({ forPk: 'ME', sweepLastRunAt: T0 - 3 * DAY }), consume });
     r.script.head = Array.from({ length: 30 }, (_, i) => [`f${i}`]);
     const res = await r.sweep().run('launch', new AbortController().signal);

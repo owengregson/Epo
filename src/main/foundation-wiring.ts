@@ -1141,7 +1141,7 @@ export class Foundation {
       settings: this.resolveSettings(), resolveSettings: () => this.resolveSettings(),
       protection: { index: () => this.settings.protection(), setCapabilities: (p) => this.settings.setCapabilities(p) },
       plan: { runIntent: () => this.runtime.snapshot().desired, settings: this.settings, pushStatus: () => this.pushStatus() },
-      bookkeeping: { take: () => this.settings.takeBookkeeping(), consume: () => { this.settings.apply([{ op: 'consume-bookkeeping' }], 'system'); } },
+      bookkeeping: { take: (pk) => this.settings.takeBookkeeping(pk), consume: () => this.settings.apply([{ op: 'consume-bookkeeping' }], 'system').kind === 'saved' },
       launch: { signedInPk: () => this.igSession.readCookie('ds_user_id'), online: () => this.lastOnline, block: () => this.runtime.snapshot().blockedReason,
         tabFree: () => !this.lease.tourHeld() && !this.manualDriving && !this.isEngineDriving() && [null, 'startup'].includes(this.lease.owner()),
         land: (signal) => this.landOwnProfile(signal), hold: (run) => this.activity.with('catch-up', run) },

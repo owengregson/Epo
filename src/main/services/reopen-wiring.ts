@@ -78,13 +78,14 @@ function sweepPlan(d: Pick<GraphBuildDeps, 'plan'>, w: FollowbackWiring): { view
 
 /**
  * Once, at the first build without a reopen state (spec §9.11): the v1 sweep stamp the settings migration carried
- * for this account and the legacy lifecycle_state seed the last sweep's end; the settings then drop the stamp.
+ * for this account and the legacy lifecycle_state seed the last sweep's end. Drop the settings stamp durably
+ * before using it, so a failed write cannot give a different account the same freshness on a later launch.
  */
 export function seedReopenState(store: Pick<KnowledgeStore, 'reopen'>, ownPk: string, bk: GraphBuildDeps['bookkeeping']): void {
-  const carried = bk?.take() ?? null;
+  const carried = bk?.take(ownPk) ?? null;
   const mine = carried !== null && (carried.forPk === null || carried.forPk === ownPk) ? carried : null;
-  store.reopen.seedFromLegacy({ sweepLastRunAt: mine?.sweepLastRunAt ?? null });
-  if (mine !== null) bk?.consume();
+  const consumed = mine !== null && bk?.consume() === true;
+  store.reopen.seedFromLegacy({ sweepLastRunAt: consumed ? mine.sweepLastRunAt : null });
 }
 
 /** The follow-back appliers and the frontier sweep over the drawer, the head walk and the following check. */
