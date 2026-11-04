@@ -108,7 +108,9 @@
   z-index: 2;
   width: 248px;
   max-height: calc(100% - 2 * var(--sp-4));
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: rgba(20, 20, 23, 0.88);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -127,6 +129,7 @@
   }
 }
 .graph-legend__head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -162,16 +165,11 @@
   transform: rotate(-90deg);
 }
 .graph-legend__body {
-  max-height: 480px;
-  opacity: 1;
-  overflow: hidden;
-  transition:
-    max-height var(--dur-3) var(--ease, ease),
-    opacity var(--dur-2);
+  min-height: 0;
+  overflow-y: auto;
 }
-.graph-legend.collapsed .graph-legend__body {
-  max-height: 0;
-  opacity: 0;
+.graph-legend__body[hidden] {
+  display: none;
 }
 .graph-legend__foot {
   display: flex;

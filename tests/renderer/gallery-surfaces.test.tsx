@@ -47,9 +47,10 @@ test('Graph uses real pull/filter/retry UI with isolated synthetic states', asyn
   await choose('Graph empty');
   expect(document.querySelector('.stageseg-aux')?.textContent).toBe('0');
   expect(document.querySelector('.graph-empty')?.textContent).toMatch(/graph is empty/);
-  expect(document.querySelector('.graph-legend__total')?.textContent).toBe('0');
+  expect(document.querySelector('.graph-legend')).toBeNull();
   await choose('Graph populated');
   expect(document.querySelector('.graph-empty')).toBeNull();
+  await act(async () => { fireEvent.click(document.querySelector('.graph-legend__head') as HTMLButtonElement); });
   const filter = document.querySelector('.gleg-row') as HTMLButtonElement;
   await act(async () => { fireEvent.click(filter); });
   expect(filter.classList.contains('off')).toBe(true);

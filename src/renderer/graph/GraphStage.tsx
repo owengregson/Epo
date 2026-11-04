@@ -37,7 +37,8 @@ export interface GraphStageProps {
 export function GraphStage({ board, active }: GraphStageProps): JSX.Element {
   const { hostRef, canvasRef, world, tip, dragCursor, redraw, fit, repick, fitOnce } = useGraphCanvas(board.hidden);
   const tipRef = useRef<HTMLDivElement>(null);
-  const [legendOpen, setLegendOpen] = useState(true);
+  // Keep the first canvas view clear; expanding the filters is an explicit choice.
+  const [legendOpen, setLegendOpen] = useState(false);
 
   // Data → the world's layout, buckets and animation bookkeeping. `reduced`
   // comes off the world because the hook keeps it live against the OS query.
@@ -98,7 +99,7 @@ export function GraphStage({ board, active }: GraphStageProps): JSX.Element {
         <div class="graph-empty">The graph is empty so far. Start the engine to grow it.</div>
       ) : null}
 
-      <div class={legendOpen ? 'graph-legend' : 'graph-legend collapsed'}>
+      {snap !== null && !empty ? <div class={legendOpen ? 'graph-legend' : 'graph-legend collapsed'}>
         <button
           type="button"
           class="graph-legend__head"
@@ -110,7 +111,7 @@ export function GraphStage({ board, active }: GraphStageProps): JSX.Element {
           <span class="graph-legend__total num">{snap ? commas(snap.pks.length) : '—'}</span>
           <Icon name="chevron-down" class="graph-legend__chev" />
         </button>
-        <div class="graph-legend__body">
+        <div class="graph-legend__body" hidden={!legendOpen}>
           <div class="gleg">
             {GRAPH_NODE_STATUSES.map((status) => {
               const off = board.hidden.has(status);
@@ -139,7 +140,7 @@ export function GraphStage({ board, active }: GraphStageProps): JSX.Element {
             </p>
           </div>
         </div>
-      </div>
+      </div> : null}
 
       {tip ? (
         <div class="graph-tip" ref={tipRef} style={`left:${tip.left}px;top:${tip.top}px`}>
