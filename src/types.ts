@@ -231,15 +231,7 @@ export interface GraphHub {
   memberCount: number;
 }
 
-/**
- * The whole knowledge graph shaped for the Graph view's canvas. Columnar and
- * typed-array-backed on purpose: tens of thousands of nodes cross the IPC
- * boundary as a handful of flat buffers (structured-clone-friendly) instead
- * of an object per account. Index `i` across every parallel array describes
- * one node; `hubIndex[i]` names its primary cluster ("who knows them" — the
- * chain target whose follower list surfaced it, or the self hub for your own
- * followers/follows).
- */
+/** The graph is columnar: index i identifies one node across all arrays; hubIndex names its source cluster. */
 export interface GraphSnapshot {
   /** Epoch ms the snapshot (and its timer `progress` values) was computed. */
   at: number;
@@ -258,6 +250,9 @@ export interface GraphSnapshot {
   /** Per-status node totals (the legend), consistent with `statuses`. */
   counts: Record<GraphNodeStatus, number>;
 }
+
+/** Unavailable is a failed store read; null means no built account graph. */
+export type GraphSnapshotRead = GraphSnapshot | { readonly unavailable: true } | null;
 
 /** What fills the window region right of the console (one home: `src/shared/stage-mode.ts`). */
 export type { StageMode };

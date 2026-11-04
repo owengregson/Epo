@@ -83,6 +83,13 @@ export function GraphStage({ board, active }: GraphStageProps): JSX.Element {
       <canvas ref={canvasRef} />
       {board.loading ? (
         <div class="graph-empty">Reading the graph…</div>
+      ) : board.unavailable ? (
+        <div class="graph-empty" role="status">
+          <div>
+            <p>{snap === null ? 'Epo can’t read the graph right now.' : 'Epo can’t refresh the graph. Showing the last available view.'}</p>
+            <Button onClick={board.retry}>Try again</Button>
+          </div>
+        </div>
       ) : snap === null ? (
         <div class="graph-empty">
           Nothing to draw yet — log in and let the engine read a target's followers.
@@ -117,7 +124,7 @@ export function GraphStage({ board, active }: GraphStageProps): JSX.Element {
                 >
                   <span class="gleg-dot" style={swatchStyle(status)} />
                   <span class="gleg-label">{LEGEND_LABELS[status]}</span>
-                  <span class="gleg-count num">{commas(snap ? snap.counts[status] : 0)}</span>
+                  <span class="gleg-count num">{snap ? commas(snap.counts[status]) : '—'}</span>
                 </button>
               );
             })}

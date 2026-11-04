@@ -10,7 +10,7 @@ import { computed, signal } from '@preact/signals';
 import type { ComponentChildren, JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
-  chainListSignal, feedSignal, growthSeriesSignal, liveRevealedSignal, liveSlotSignal, queueLanesSignal,
+  chainListSignal, feedSignal, graphPreloadedSignal, growthSeriesSignal, liveRevealedSignal, liveSlotSignal, queueLanesSignal,
 } from '@/renderer/app/live-signals';
 import { reducedMotionSignal } from '@/renderer/app/motion-signal';
 import { pruneSignal, settingsFactsSignal, settingsViewSignal, statusSignal } from '@/renderer/app/shell-context';
@@ -27,7 +27,7 @@ const preloadedSignal = computed(
   () =>
     pruneSignal.value !== null && settingsViewSignal.value !== null && settingsFactsSignal.value !== null
     && feedSignal.value !== null && chainListSignal.value !== null && growthSeriesSignal.value !== null
-    && queueLanesSignal.value !== null,
+    && queueLanesSignal.value !== null && graphPreloadedSignal.value,
 );
 
 /** Where main's boot stands: not heard yet, still starting, ready to reveal, or already live (a reload). */

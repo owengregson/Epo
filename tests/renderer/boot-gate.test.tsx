@@ -84,7 +84,7 @@ describe('the launch gate', () => {
     expect(document.querySelector('.live-placeholder')?.textContent).toContain('Opening Instagram');
 
     await push(idleStatus({ boot: ready({ phase: 'live', ig: 'placeholder', tab: 'settled' }) }));
-    await waitFor(() => expect(stages().at(-1)).toEqual(['setStage', 'tab', false]));
+    await waitFor(() => expect(stages().at(-1)).toEqual(['setStage', 'tab', false, false]));
     expect(document.querySelector('.live-placeholder')).toBeNull();
     await push(idleStatus({ boot: ready({ phase: 'live', ig: 'ready', tab: 'settled' }) }));
     expect(revealed()).toBe(1);
@@ -93,7 +93,7 @@ describe('the launch gate', () => {
   it('a reload while main is already live skips the intro and tells main nothing', async () => {
     await mount(idleStatus({ boot: ready({ phase: 'live', tab: 'settled', ig: 'ready' }) }));
     await waitFor(() => expect(splash()).toBeNull());
-    await waitFor(() => expect(stages().at(-1)).toEqual(['setStage', 'tab', false]));
+    await waitFor(() => expect(stages().at(-1)).toEqual(['setStage', 'tab', false, false]));
     expect(revealed()).toBe(0);
   });
 
@@ -134,4 +134,17 @@ describe('the splash caption', () => {
     expect(splashCaption(ready({ ig: 'ready' }), 1_300, delays)).toBe(SPLASH.almost);
     expect(splashCaption(ready(), 2_600, delays)).toBe(SPLASH.slow);
   });
+});
+
+
+test('the splash waits for the store-only graph preload before revealing Live', async () => {
+  let finish!: () => void;
+  bridge.stub('graphSnapshot', () => new Promise<null>((resolve) => { finish = () => resolve(null); }));
+  await mount(idleStatus({ boot: ready({ ig: 'ready', tab: 'settled' }) }));
+  await act(() => sleep(700));
+  expect(splash()).not.toBeNull();
+  expect(revealed()).toBe(0);
+  await act(async () => finish());
+  await waitFor(() => expect(splash()).toBeNull());
+  await waitFor(() => expect(revealed()).toBe(1));
 });

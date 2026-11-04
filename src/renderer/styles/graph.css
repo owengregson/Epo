@@ -6,15 +6,13 @@
  */
 
 /* ---------- the graph canvas host ---------- */
-/* Kept MOUNTED in every stage mode (camera + layout slots survive) but only
-   DISPLAYED while its tab is selected — off-tab the legend overlay must not
-   bleed under the Prune page, and the display flip restarts the reveal (and
-   the legend/empty-state entrances) on every visit. */
+/* The hidden StageHost keeps this measured for pre-reveal canvas sizing and fitting.
+   Visibility follows the host; .on replays the entrance each time Graph opens. */
 .graph-stage {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  display: none;
+  display: block;
   background:
     radial-gradient(
       120% 90% at 50% 40%,
@@ -61,6 +59,9 @@
   font-size: var(--fs-body);
   pointer-events: none;
   animation: gsFade var(--dur-3) ease;
+}
+.graph-empty button {
+  pointer-events: auto;
 }
 @keyframes gsFade {
   from {

@@ -120,3 +120,15 @@ test('the title follows the posture headline; the Dock badge shows only for aler
   expect(r.win.setTitle.mock.calls.map((c) => c[0])).toEqual(['Epo — Working', 'Epo — Needs attention', 'Epo — Stopped']);
   expect(r.badges).toEqual(['', '!', '']);
 });
+
+
+test('reduced motion cuts directly into Live without a curtain and still re-stacks the tab', async () => {
+  const r = rig();
+  r.stage.cover();
+  await r.stage.set('tab', false, true);
+  expect(r.log).toEqual(['stage:tab:true', 'stage:tab:false']);
+  expect(r.tabView.setVisible).not.toHaveBeenCalledWith(false);
+  await r.stage.set('people', false, true);
+  await r.stage.set('tab', false, false);
+  expect(r.log.slice(-4)).toEqual(['curtain:opaque', 'stage:tab:false', 'curtain:clear', 'curtain:off']);
+});

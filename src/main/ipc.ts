@@ -42,7 +42,7 @@ export interface IpcContext {
    * §12.4), which serializes requests and curtains the entry into Live;
    * `covered` conceals the native views (a renderer modal must not sit under them).
    */
-  setStage(mode: StageMode, covered: boolean): void | Promise<void>;
+  setStage(mode: StageMode, covered: boolean, reducedMotion: boolean): void | Promise<void>;
 }
 
 /** Register every contract channel; returns the disposer for window teardown. */
@@ -121,8 +121,8 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     // --- Stage ----------------------------------------------------------------
     graphSnapshot: () => foundation.graphSnapshot(),
     // Renderer input is unvalidated at the boundary: only a known stage moves (logged otherwise).
-    setStage: async (mode: unknown, covered: unknown) => {
-      if (isStageMode(mode)) await setStage(mode, covered === true);
+    setStage: async (mode: unknown, covered: unknown, reducedMotion: unknown) => {
+      if (isStageMode(mode)) await setStage(mode, covered === true, reducedMotion === true);
       else logger.warn('stage: unknown mode refused', { mode: String(mode) });
     },
     // Park/unpark the app while the renderer's tour is on screen (see
@@ -172,7 +172,7 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     growthSeries: () => ({ points: [], baselineAt: null }),
     queueList: () => ({ rows: [], truncated: false }),
     clearData: status,
-    graphSnapshot: () => null,
+    graphSnapshot: () => ({ unavailable: true }),
     setStage: () => undefined,
     setTourHold: () => undefined,
     checkForUpdate: () => updater.current(),

@@ -21,7 +21,7 @@
 import { app, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import {
-  type CheckedUpdateStatus, initialStatus, isBenignFeedError, nextUpdateStatus, resolveUpdateMode, type UpdateEvent,
+  initialStatus, isBenignFeedError, nextUpdateStatus, resolveUpdateMode, type UpdateEvent,
 } from '@/main/update-core';
 import type { UpdateStatus } from '@/shared/update-status';
 import { UPDATER } from '@/timing/config';
@@ -36,7 +36,7 @@ export interface EpoUpdaterDeps {
 
 export class EpoUpdater {
   private readonly deps: EpoUpdaterDeps;
-  private status: CheckedUpdateStatus;
+  private status: UpdateStatus;
   private timer: NodeJS.Timeout | null = null;
 
   constructor(deps: EpoUpdaterDeps) {

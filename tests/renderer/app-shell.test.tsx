@@ -8,9 +8,11 @@
  * subscription per push channel, Graph laid out at boot, and Settings mounted
  * only when opened — so nothing on it checks the starting account at launch.
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import type { Signal } from '@preact/signals';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
 import { liveRevealedSignal, liveSlotSignal, pendingControlSignal } from '@/renderer/app/live-signals';
+import { reducedMotionSignal } from '@/renderer/app/motion-signal';
 import {
   type ShellControls,
   type ShellServices,
@@ -21,6 +23,7 @@ import {
 } from '@/renderer/app/shell-context';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { Settings } from '@/types';
+import { graphSnapshot } from '../kit/graph-snapshot';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
 const SEEDED: Settings = { ...DEFAULT_SETTINGS, seed: 'someone', tourCompletedAt: 1 };
@@ -70,17 +73,17 @@ describe('App — five stages behind one bar', () => {
   it('opens on Live and tells main, uncovered once revealed', async () => {
     await mountApp();
     expect(page('tab').hidden).toBe(false);
-    expect(stageCalls()).toContainEqual(['setStage', 'tab', false]);
+    expect(stageCalls()).toContainEqual(['setStage', 'tab', false, false]);
   });
 
   it('keeps Live covered until the boot reveal', async () => {
     liveRevealedSignal.value = false;
     await mountApp();
-    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', true]);
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', true, false]);
     await act(async () => {
       liveRevealedSignal.value = true;
     });
-    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', false]);
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', false, false]);
   });
 
   it('a tab press switches the stage and asks main for it', async () => {
@@ -90,7 +93,7 @@ describe('App — five stages behind one bar', () => {
     });
     expect(page('people').hidden).toBe(false);
     expect(page('tab').hidden).toBe(true);
-    expect(stageCalls().at(-1)).toEqual(['setStage', 'people', false]);
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'people', false, false]);
   });
 
   it('the menu’s stage requests switch stages, ⌘, included', async () => {
@@ -99,7 +102,7 @@ describe('App — five stages behind one bar', () => {
     expect(stageSignal.value).toBe('graph');
     await act(async () => bridge.emit('stageRequest', 'settings'));
     expect(page('settings').hidden).toBe(false);
-    expect(stageCalls().at(-1)).toEqual(['setStage', 'settings', false]);
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'settings', false, false]);
   });
 
   it('lays out Graph at boot but mounts Settings only when it is opened — no seed check at launch', async () => {
@@ -202,11 +205,47 @@ describe('App — the shell services and controls', () => {
       answer = services?.confirm({ title: 'Sure?', body: 'Really.', confirm: 'Yes' });
     });
     expect(document.querySelector('.scrim')?.className).toContain('open');
-    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', true]);
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', true, false]);
     await act(async () => {
       fireEvent.click(screen.getByText('Cancel'));
     });
     await expect(answer).resolves.toBe(false);
-    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', false]);
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', false, false]);
   });
+});
+
+test('stage requests follow the shared reduced-motion preference', async () => {
+  const motion = reducedMotionSignal as Signal<boolean>;
+  motion.value = true;
+  try {
+    await mountApp();
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', false, true]);
+    await act(async () => { motion.value = false; });
+    expect(stageCalls().at(-1)).toEqual(['setStage', 'tab', false, false]);
+  } finally {
+    motion.value = false;
+  }
+});
+
+test('initial Live preloads the stored graph while Graph remains mounted behind it', async () => {
+  bridge.stub('graphSnapshot', graphSnapshot());
+  await mountApp();
+  expect(stageSignal.value).toBe('tab');
+  expect(bridge.calls.filter((c) => c[0] === 'graphSnapshot')).toHaveLength(1);
+  expect(page('graph').hidden).toBe(true);
+  expect(page('graph').querySelector('canvas')).not.toBeNull();
+});
+
+test('an unavailable graph has a visible retry and never renders as an empty graph', async () => {
+  const read = jest.spyOn(window.epo, 'graphSnapshot').mockResolvedValue({ unavailable: true });
+  await mountApp();
+  expect(page('graph').textContent).toContain('Epo can’t read the graph right now.');
+  expect(page('graph').textContent).not.toContain('The graph is empty');
+  expect([...page('graph').querySelectorAll('.gleg-count')].every((count) => count.textContent === '—')).toBe(true);
+  await act(async () => bridge.emit('stageRequest', 'graph'));
+  expect(page('graph').hidden).toBe(false);
+  const retry = await waitFor(() => within(page('graph')).getByText('Try again'));
+  read.mockResolvedValue(null);
+  await act(async () => { fireEvent.click(retry); });
+  await waitFor(() => expect(page('graph').textContent).not.toContain('can’t read the graph'));
 });

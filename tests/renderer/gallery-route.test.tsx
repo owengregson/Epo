@@ -63,3 +63,15 @@ describe('the ?gallery=1 route', () => {
     for (const s of SCENARIOS) expect(rail().getByText(s.label)).toBeTruthy();
   });
 });
+
+test('the gallery rail can leave the layout without changing the chosen page or scenario', async () => {
+  await mountGallery();
+  await act(async () => { fireEvent.click(rail().getByText('Prune')); });
+  const picker = document.querySelector('.gallery-rail') as HTMLElement;
+  await act(async () => { fireEvent.click(rail().getByText('Hide gallery controls')); });
+  expect(picker.hidden).toBe(true);
+  expect(document.querySelector('[data-stage="prune"]')).not.toBeNull();
+  await act(async () => { fireEvent.click(within(document.body).getByText('Show gallery controls')); });
+  expect(picker.hidden).toBe(false);
+  expect(document.querySelector('[data-stage="prune"]')).not.toBeNull();
+});
