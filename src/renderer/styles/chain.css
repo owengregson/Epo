@@ -10,9 +10,9 @@
   gap: var(--sp-2);
   margin-top: var(--sp-3);
 }
-@container console (max-width: 430px) {
+@container console (max-width: 320px) {
   .t-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 }
 
@@ -95,24 +95,18 @@
    vocabulary — monogram avatar, badge — at pill scale). Day 0 it costs one
    row; the full .chain-node trail renders beneath only when expanded. */
 .crumbs {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-1) var(--sp-2);
+  display: grid;
+  gap: var(--sp-2);
   margin-bottom: var(--sp-3);
 }
 .crumb {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-1) var(--sp-2);
-  background: var(--grad-control);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  box-shadow: var(--elev-1);
   font-size: var(--fs-label);
   color: var(--muted);
   min-width: 0;
+  max-width: 100%;
 }
 .crumb .handle {
   font-weight: 600;
@@ -123,31 +117,35 @@
   text-overflow: ellipsis;
 }
 .crumb .avatar.small {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
   box-shadow: none;
-} /* pill-nested: the chip carries the elevation */
+}
+.crumb .badge {
+  margin-left: auto;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+}
 .crumb.current {
-  background-color: var(--active-fill);
-  background-image: var(--sheen);
-  border-color: var(--border-active);
   color: var(--silver);
 }
 .crumb.next {
   background: transparent;
-  border-style: dashed;
-  box-shadow: none;
   color: var(--faint);
   font-size: var(--fs-small);
 }
 .crumb-sep {
-  color: var(--faint);
-  flex: 0 0 auto;
+  display: none;
 }
 .crumb-sep .icon {
   font-size: var(--fs-caption);
 }
-.crumbs .chip {
-  margin-left: auto;
-} /* the expand/collapse toggle hugs the right edge */
+.crumbs__toggle {
+  justify-self: start;
+}
 
 /* ============ TARGETS · funnel ============ */
 /* Tier 2: one row per lifecycle segment — palette dot, graph-legend label,
@@ -214,9 +212,7 @@
   min-width: 0;
   font-size: var(--fs-small);
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
 }
 .frow.hazard .fl {
   color: var(--danger-text);

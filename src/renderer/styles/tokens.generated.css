@@ -24,38 +24,20 @@
   --fs-hero: 48px; /* the one hero number */
 
   /* ============ SPACING (derived — 4px × [0.5, 1, 2, 3, 4, 5, 6, 8, 10]) ============
-     Fluid: tracks the viewport, compresses on small panes, breathes a touch
-     on large ones. Each size container re-declares it against its own width. */
-  --sp-0: clamp(1.5px, 0.161vw, 2.5px);
-  --sp-1: clamp(3px, 0.322vw, 5px);
-  --sp-2: clamp(6px, 0.645vw, 9px);
-  --sp-3: clamp(9px, 0.967vw, 13px);
-  --sp-4: clamp(12px, 1.29vw, 18px);
-  --sp-5: clamp(15px, 1.612vw, 22px);
-  --sp-6: clamp(18px, 1.935vw, 27px);
-  --sp-7: clamp(24px, 2.58vw, 36px);
-  --sp-8: clamp(30px, 3.225vw, 45px);
+     Stable across panes and nested cards; responsiveness belongs to layout. */
+  --sp-0: 2px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
 
   /* ============ CONTROL SIZES (derived — 32 + 4n) ============ */
   --h-xs: 32px; /* chips, small buttons — the smallest hit target */
   --h-sm: 36px; /* segments, stage tabs */
   --h-md: 40px; /* inputs, steppers, rows */
   --h-lg: 44px; /* the primary action */
-}
-
-/* The console, every stage page and each of its columns are size containers
-   (see shell.css), so the SAME ramp resolves against their inline size: identical
-   px at the 470.5px container design width, following the pane, not the page. */
-.console,
-.stage-page,
-.stage-col {
-  --sp-0: clamp(1.5px, 0.43cqi, 2.5px);
-  --sp-1: clamp(3px, 0.85cqi, 5px);
-  --sp-2: clamp(6px, 1.7cqi, 9px);
-  --sp-3: clamp(9px, 2.55cqi, 13px);
-  --sp-4: clamp(12px, 3.4cqi, 18px);
-  --sp-5: clamp(15px, 4.26cqi, 22px);
-  --sp-6: clamp(18px, 5.1cqi, 27px);
-  --sp-7: clamp(24px, 6.8cqi, 36px);
-  --sp-8: clamp(30px, 8.5cqi, 45px);
 }

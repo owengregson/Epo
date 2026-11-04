@@ -10,37 +10,60 @@
    carrying the shared --sp rhythm, so cards keep their container-query layout at
    any pane width. */
 .prune-page {
-  max-width: 1120px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 18px 22px 34px;
+  padding: var(--sp-6);
 }
 .prune-hero {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: var(--sp-4);
-  padding: var(--sp-1) var(--sp-1) var(--sp-4);
 }
-.prune-hero h2 {
-  font-size: 21px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
+.prune-hero h1 {
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  letter-spacing: -0.015em;
   color: var(--chrome);
   line-height: 1.2;
 }
 .prune-hero p {
-  margin-top: 2px;
+  margin-top: var(--sp-1);
   color: var(--muted);
   font-size: var(--fs-body);
 }
 .prune-cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--sp-3);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-4);
   align-items: start;
 }
 .prune-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
   min-width: 0;
+}
+.prune-page .card,
+.prune-page .tour-wrap {
+  margin-bottom: 0;
+}
+.prune-page .card-b > .tbtn.wide {
+  margin-top: var(--sp-4);
+}
+.prune-page .qrows > .link-btn {
+  margin: var(--sp-2) var(--sp-4);
+}
+.prune-page .qr-sub,
+.prune-page .qr-top {
+  flex-wrap: wrap;
+}
+.prune-page .qr-sub .ctx {
+  flex: 1 1 auto;
+  white-space: normal;
 }
 /* Resolves against .stage-page (the columns' nearest container ancestor):
    below this width side-by-side columns would starve, so they stack. */
@@ -98,8 +121,26 @@
    auto-fit lets the tile row reflow at any pane width. */
 .prune-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--sp-2);
+}
+.prune-stats .stat .k,
+.prune-stats .stat .ss {
+  white-space: normal;
+}
+.prune-stats .stat .v {
+  margin-top: var(--sp-2);
+}
+@container console (max-width: 800px) {
+  .prune-stats {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .prune-stats > .stat {
+    grid-column: span 2;
+  }
+  .prune-stats > .stat:nth-last-child(-n + 2) {
+    grid-column: span 3;
+  }
 }
 .pcomp {
   margin-top: var(--sp-3);

@@ -21,17 +21,13 @@
 }
 
 /* ---------- console root ---------- */
-/* The console, every stage page (.stage-page) and each of its columns
-   (.stage-col) are size containers: their cards respond to THEIR width (cqi),
-   and the card rhythm tracks that width — same px as the root scale at the
-   design width, compressing/expanding with the pane, not the page. */
+/* Size containers drive responsive columns and control layouts. Spacing remains
+   the same 4px rhythm at every nesting level (design/scale.ts). */
 .console,
 .stage-page,
 .stage-col {
   container-type: inline-size;
   container-name: console;
-  /* The container-scoped --sp-* ramp is generated onto this same selector list
-     in tokens.generated.css (from design/scale.ts), imported ahead of this file. */
 }
 .console {
   width: 100%;

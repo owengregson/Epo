@@ -1,5 +1,5 @@
 import { Fragment, type JSX } from 'preact';
-import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { smoothPath } from '@/renderer/charts/catmull-rom';
 import { shortDate } from '@/renderer/lib/format';
 import {
@@ -14,8 +14,7 @@ import {
 import type { NetGrowthPoint } from '@/types';
 
 const X0 = 8;
-const X1 = 362;
-const Y0 = 104;
+const Y0 = 164;
 const Y1 = 12;
 
 export interface GrowthChartProps {
@@ -60,6 +59,21 @@ export function GrowthChart({
   revealKey,
   baselineAt,
 }: GrowthChartProps): JSX.Element {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(400);
+  // Measure the plot in CSS pixels so widening a page never enlarges its labels.
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const measure = (): void => {
+      if (host.clientWidth > 0) setWidth(host.clientWidth);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+  const X1 = width - 48;
   const lineRef = useRef<SVGPathElement>(null);
   const areaRef = useRef<SVGPathElement>(null);
   const dotRef = useRef<SVGCircleElement>(null);
@@ -90,7 +104,7 @@ export function GrowthChart({
   // The area fills between the line and the ZERO baseline (not the frame
   // floor), closing at the measured endpoint.
   const areaD = hasData ? `${lineD}L${endPt[0].toFixed(1)},${yZero} L${X0},${yZero} Z` : '';
-  const signed = (v: number): string => (v > 0 ? `+${Math.round(v)}` : String(Math.round(v)));
+  const signed = (v: number): string => (v > 0 ? `+${Number(v.toFixed(1))}` : String(Number(v.toFixed(1))));
   // Announce the trend's CURRENT value, signed — a churn-heavy net-negative
   // series must not read as growth.
   const latestNet = points.length ? points[points.length - 1].cumulativeNet : 0;
@@ -212,11 +226,13 @@ export function GrowthChart({
     return () => cancelAnimationFrame(raf);
   }, [identity, hasData]);
 
-  return (
-    <div>
+  return !hasData && !measuredFlat ? (
+    <div ref={hostRef} class="growth-empty">No follower history yet. Your daily changes will appear here once Epo has measured them.</div>
+  ) : (
+    <div ref={hostRef}>
       <svg
         class="growth-svg"
-        viewBox="0 0 400 118"
+        viewBox={`0 0 ${width} 180`}
         aria-label={`Cumulative net follower growth, ${signed(latestNet)}`}
       >
         <defs>
@@ -225,22 +241,22 @@ export function GrowthChart({
             <stop offset="100%" stop-color="rgba(201,204,209,0)" />
           </linearGradient>
           <clipPath id="growthClip">
-            <rect ref={clipRef} x="0" y="0" width="0" height="118" />
+            <rect ref={clipRef} x="0" y="0" width="0" height="180" />
           </clipPath>
         </defs>
-        <line class="growth-grid dash" x1="8" y1="12" x2="362" y2="12" />
-        <line class="growth-grid dash" x1="8" y1="58" x2="362" y2="58" />
-        <line class="growth-grid" x1="8" y1="104" x2="362" y2="104" />
+        <line class="growth-grid dash" x1="8" y1={Y1} x2={X1} y2={Y1} />
+        <line class="growth-grid dash" x1="8" y1={(Y0 + Y1) / 2} x2={X1} y2={(Y0 + Y1) / 2} />
+        <line class="growth-grid" x1="8" y1={Y0} x2={X1} y2={Y0} />
         {vmin < 0 ? (
-          <line class="growth-grid" x1="8" y1={yZero} x2="362" y2={yZero} />
+          <line class="growth-grid" x1="8" y1={yZero} x2={X1} y2={yZero} />
         ) : null}
-        <text class="growth-ylab" x="398" y="15" text-anchor="end">
+        <text class="growth-ylab" x={width - 2} y={Y1 + 3} text-anchor="end">
           {signed(vmax)}
         </text>
-        <text class="growth-ylab" x="398" y="61" text-anchor="end">
+        <text class="growth-ylab" x={width - 2} y={(Y0 + Y1) / 2 + 3} text-anchor="end">
           {signed((vmax + vmin) / 2)}
         </text>
-        <text class="growth-ylab" x="398" y="107" text-anchor="end">
+        <text class="growth-ylab" x={width - 2} y={Y0 + 3} text-anchor="end">
           {signed(vmin)}
         </text>
         {hasData ? (
@@ -250,8 +266,8 @@ export function GrowthChart({
             <circle class="growth-dot" ref={dotRef} r="3" />
           </Fragment>
         ) : (
-          <text class="growth-ylab" x="185" y="60" text-anchor="middle">
-            {measuredFlat ? 'No change in this range' : 'No follower history yet'}
+          <text class="growth-ylab" x={(X0 + X1) / 2} y={(Y0 + Y1) / 2} text-anchor="middle">
+            No change in this range
           </text>
         )}
       </svg>

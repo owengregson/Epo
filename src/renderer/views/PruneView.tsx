@@ -147,7 +147,7 @@ export function PruneView(): JSX.Element {
     <div class="prune-page stage-page">
       <header class="prune-hero">
         <div>
-          <h2>{PRUNE_COPY.title}</h2>
+          <h1>{PRUNE_COPY.title}</h1>
           <p>{PRUNE_COPY.lead}</p>
         </div>
         <Badge tone={chip.tone}>{chip.label}</Badge>

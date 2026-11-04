@@ -11,7 +11,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-6);
-  padding: var(--sp-6) var(--sp-7) var(--sp-8);
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: var(--sp-6);
 }
 
 .stage-page__head h1 {
@@ -31,7 +33,7 @@
   flex-direction: column;
   gap: var(--sp-4);
   min-width: 0;
-  padding: var(--sp-5) var(--sp-6);
+  padding: var(--sp-4);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
@@ -53,7 +55,7 @@
   gap: var(--sp-3);
 }
 
-/* Two columns from 1100 px of stage (the board's rule); one below. */
+/* Two useful columns when each can hold complete labels; one below. */
 .people-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -61,7 +63,7 @@
   align-items: start;
 }
 
-@container (min-width: 1100px) {
+@container (min-width: 900px) {
   .people-cols {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
   }
@@ -71,6 +73,10 @@
 .people-growth .seg button {
   /* Keep each complete date-range label within the compact header control. */
   flex: 1 0 auto;
+}
+
+.people-growth .seg {
+  margin-top: 0;
 }
 
 .people-growth__num {
@@ -105,7 +111,50 @@
 .growth-svg {
   display: block;
   width: 100%;
-  height: auto;
+  height: 180px;
+}
+
+.growth-empty {
+  padding: var(--sp-4) 0;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+
+/* Source details share their parent surface; extra nested cards add no hierarchy. */
+.people-panel > .card {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.people-panel > .card > .card-h {
+  padding: var(--sp-4) 0 0;
+}
+
+.people-panel > .card > .card-b {
+  padding: var(--sp-3) 0 0;
+}
+
+.people-panel .t-stats:first-child,
+.people-panel .crumbs,
+.people-panel .qpipe {
+  margin: 0;
+}
+
+.people-panel > .qrows .qr {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.people-panel .qstage {
+  flex-basis: 88px;
+}
+
+.people-panel .qflow {
+  display: none;
 }
 .growth-grid {
   stroke: rgba(255, 255, 255, 0.05);

@@ -38,17 +38,11 @@ describe('the committed stylesheet is fresh', () => {
 });
 
 describe('the generated tokens are the approved scale (ADR 0405)', () => {
-  /** The root spacing ramp — `4px × [0.5, 1, 2, 3, 4, 5, 6, 8, 10]`, fluid against the viewport. */
+  /** One fixed rhythm in every pane: `4px × [0.5, 1, 2, 3, 4, 5, 6, 8, 10]`. */
   const spacing = [
-    '--sp-0: clamp(1.5px, 0.161vw, 2.5px);',
-    '--sp-1: clamp(3px, 0.322vw, 5px);',
-    '--sp-2: clamp(6px, 0.645vw, 9px);',
-    '--sp-3: clamp(9px, 0.967vw, 13px);',
-    '--sp-4: clamp(12px, 1.29vw, 18px);',
-    '--sp-5: clamp(15px, 1.612vw, 22px);',
-    '--sp-6: clamp(18px, 1.935vw, 27px);',
-    '--sp-7: clamp(24px, 2.58vw, 36px);',
-    '--sp-8: clamp(30px, 3.225vw, 45px);',
+    '--sp-0: 2px;', '--sp-1: 4px;', '--sp-2: 8px;',
+    '--sp-3: 12px;', '--sp-4: 16px;', '--sp-5: 20px;',
+    '--sp-6: 24px;', '--sp-7: 32px;', '--sp-8: 40px;',
   ];
 
   /** The semantic ladder: text rungs `15 + [−4, −3, −2, −1, 0, +2]`, display `2·round(16·1.25ⁿ/2)`. */
@@ -65,19 +59,6 @@ describe('the generated tokens are the approved scale (ADR 0405)', () => {
     '--fs-hero: 48px;',
   ];
 
-  /** The same ramp re-declared against each size container's inline size. */
-  const consoleSpacing = [
-    '--sp-0: clamp(1.5px, 0.43cqi, 2.5px);',
-    '--sp-1: clamp(3px, 0.85cqi, 5px);',
-    '--sp-2: clamp(6px, 1.7cqi, 9px);',
-    '--sp-3: clamp(9px, 2.55cqi, 13px);',
-    '--sp-4: clamp(12px, 3.4cqi, 18px);',
-    '--sp-5: clamp(15px, 4.26cqi, 22px);',
-    '--sp-6: clamp(18px, 5.1cqi, 27px);',
-    '--sp-7: clamp(24px, 6.8cqi, 36px);',
-    '--sp-8: clamp(30px, 8.5cqi, 45px);',
-  ];
-
   /** The control-height ramp — `32 + 4n`; the ticker's off-ramp height is gone. */
   const controls = ['--h-xs: 32px;', '--h-sm: 36px;', '--h-md: 40px;', '--h-lg: 44px;'];
 
@@ -89,27 +70,20 @@ describe('the generated tokens are the approved scale (ADR 0405)', () => {
     expect(css).toContain(declaration);
   });
 
-  test.each(consoleSpacing)('container spacing: %s', (declaration) => {
-    expect(css).toContain(declaration);
-  });
-
   test.each(controls)('control size: %s', (declaration) => {
     expect(css).toContain(declaration);
   });
 
-  test('the container ramp lands on the console and the stage pages, not :root', () => {
-    const [root, container] = css.split('.console,\n.stage-page,\n.stage-col {');
-    expect(container).toBeDefined();
-    for (const declaration of consoleSpacing) expect(container).toContain(declaration);
-    for (const declaration of spacing) expect(root).toContain(declaration);
-    for (const declaration of spacing) expect(container).not.toContain(declaration);
+  test('spacing never changes with viewport width or a nested size container', () => {
+    expect(css).not.toMatch(/\b(?:cqi|vw)\b|clamp\(/);
+    for (const declaration of spacing) expect(css.split(declaration)).toHaveLength(2);
   });
 
   test('no fluid type is left, and nothing else declares a spacing, type or control token', () => {
     expect(css).not.toMatch(/--fs-fluid|cqi, \d+(\.\d+)?px\);\s*\/\* .*(title|hero|stat)/);
     const declared = [...css.matchAll(/^ {2}(--[\w-]+):/gm)].map((m) => m[1]);
     const names = (list: string[]): string[] => list.map((d) => d.slice(0, d.indexOf(':')));
-    expect(declared.sort()).toEqual([...names(spacing), ...names(spacing), ...names(type), ...names(controls)].sort());
+    expect(declared.sort()).toEqual([...names(spacing), ...names(type), ...names(controls)].sort());
   });
 
   test('the rules hold: text rungs around the 15 px body, display rungs on the major third', () => {

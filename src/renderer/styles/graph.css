@@ -1,8 +1,7 @@
 /*
  * Graph — the network canvas host, its floating legend, tooltip, and empty states.
  * The canvas draws its own content; everything here is chrome around it.
- * The console --sp-* rhythm is container-scoped to `.console`, so overlay
- * surfaces here re-declare static equivalents locally.
+ * Shares the same stable spacing rhythm as the stage pages and sidebar.
  */
 
 /* ---------- the graph canvas host ---------- */
@@ -74,7 +73,7 @@
   position: absolute;
   z-index: 3;
   max-width: 200px;
-  padding: 7px 9px;
+  padding: var(--sp-2) var(--sp-3);
   background: var(--elevated);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
@@ -97,23 +96,18 @@
 
 /* ---------- floating legend (top-right of the stage) ---------- */
 .graph-legend {
-  /* Static stand-ins for the console-scoped rhythm vars (see header note). */
-  --sp-0: 2px;
-  --sp-1: 4px;
-  --sp-2: 8px;
-  --sp-3: 11px;
-  --sp-4: 15px;
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: var(--sp-4);
+  right: var(--sp-4);
   z-index: 2;
-  width: 232px;
+  width: 248px;
+  max-height: calc(100% - 2 * var(--sp-4));
+  overflow-y: auto;
   background: rgba(20, 20, 23, 0.88);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: var(--elev-2);
   backdrop-filter: blur(6px);
-  overflow: hidden;
   animation: glIn var(--dur-3) var(--ease, ease);
 }
 @keyframes glIn {
@@ -131,7 +125,7 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 9px 11px;
+  padding: var(--sp-3);
   background: transparent;
   border: 0;
   color: var(--muted);
@@ -172,7 +166,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 9px 10px 11px;
+  padding: var(--sp-3);
   border-top: 1px solid var(--border);
 }
 .graph-legend__hint {
@@ -187,14 +181,15 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 2px 8px 8px;
+  padding: 0 var(--sp-2) var(--sp-2);
 }
 .gleg-row {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-2);
   width: 100%;
-  padding: 4px 6px;
+  min-height: var(--h-xs);
+  padding: var(--sp-1);
   border: 0;
   border-radius: 5px;
   background: transparent;

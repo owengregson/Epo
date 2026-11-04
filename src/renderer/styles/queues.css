@@ -174,10 +174,11 @@
   font-size: var(--fs-small);
   color: var(--faint);
   min-width: 0;
+  flex-wrap: wrap;
 }
 .qr-sub .ctx {
-  white-space: nowrap;
-  flex: 0 0 auto;
+  white-space: normal;
+  flex: 1 1 auto;
 }
 .qbar {
   flex: 1;

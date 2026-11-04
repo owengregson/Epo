@@ -30,42 +30,6 @@ export const BASE_SPACE_PX = 4;
  */
 export const SPACE_STEPS = [0.5, 1, 2, 3, 4, 5, 6, 8, 10] as const;
 
-/** The lower clamp shoulder: `0.75 × mid` (how far a step compresses on a narrow pane). */
-export const SPACE_MIN_RATIO = 0.75;
-
-/** The upper clamp shoulder: `floor(1.125 × mid)` (how far a step breathes on a wide pane). */
-export const SPACE_MAX_RATIO = 1.125;
-
-/**
- * Upper-shoulder overrides, by step index. At the two smallest steps
- * `floor(1.125 × mid)` collapses onto the mid itself (`floor(2.25) = 2`,
- * `floor(4.5) = 4`), leaving no room to grow; those two breathe to `1.25 × mid`.
- */
-export const SPACE_MAX_RATIO_OVERRIDES: Readonly<Record<number, number>> = {
-  0: 1.25, // --sp-0: floor(1.125 × 2) = 2 would equal the mid → 2.5px
-  1: 1.25, // --sp-1: floor(1.125 × 4) = 4 would equal the mid → 5px
-};
-
-/**
- * The viewport width the root ramp's preferred `vw` value is expressed against
- * (`mid × 100 / DESIGN_WIDTH_PX`, at most three decimals). FITTED: the only width
- * at which the first seven preferred values round to their shipped figures.
- */
-export const DESIGN_WIDTH_PX = 1240.5;
-
-/**
- * The container width the console ramp's preferred `cqi` value is expressed
- * against (`mid × 100 / CONSOLE_WIDTH_PX`, at most two decimals). The console
- * and every stage page and column are size containers, so their rhythm tracks
- * the pane's width rather than the page's. Also FITTED.
- */
-export const CONSOLE_WIDTH_PX = 470.5;
-
-/** `--sp-5` ships as `4.26cqi` where the rule gives `4.25` (≈ 0.05 px); kept so no pixel moves. */
-export const CONSOLE_CQI_OVERRIDES: Readonly<Record<number, string>> = {
-  5: '4.26',
-};
-
 /* ========================================================================== *
  * TYPE — one semantic ladder (spec §12.6)
  * ========================================================================== */
@@ -123,13 +87,6 @@ const CONTROL_NOTES = [
 /** The spacing mid-values, in px, at the design width: `[2 … 40]`. */
 export const SPACE_PX: readonly number[] = SPACE_STEPS.map((step) => step * BASE_SPACE_PX);
 
-export const SPACE_MIN_PX: readonly number[] = SPACE_PX.map((mid) => mid * SPACE_MIN_RATIO);
-
-export const SPACE_MAX_PX: readonly number[] = SPACE_PX.map((mid, i) => {
-  const override = SPACE_MAX_RATIO_OVERRIDES[i];
-  return override === undefined ? Math.floor(mid * SPACE_MAX_RATIO) : mid * override;
-});
-
 /** The ten rungs in ascending order, `{ name, px }`: `11 · 12 · 13 · 14 · 15 · 17 · 20 · 26 · 32 · 48`. */
 export const TYPE_LADDER: ReadonlyArray<{ name: string; px: number }> = [
   ...TEXT_NAMES.map((name, i) => ({ name, px: BODY_FONT_PX + TEXT_OFFSETS[i] })),
@@ -148,29 +105,12 @@ export const CONTROL_PX: readonly number[] = CONTROL_NAMES.map(
  * EMITTER
  * ========================================================================== */
 
-/** Print a number with AT MOST `decimals` places, trailing zeros stripped. */
-const num = (value: number, decimals: number): string => {
-  const fixed = value.toFixed(decimals);
-  return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
-};
-
 /** One custom-property declaration, with an optional trailing role comment. */
 const decl = (name: string, value: string, note?: string): string =>
   `  --${name}: ${value};${note === undefined ? '' : ` /* ${note} */`}`;
 
-/** The spacing ramp expressed against the viewport width (`vw`, root scope). */
-const rootSpaceRamp = (): string[] =>
-  SPACE_PX.map((mid, i) => {
-    const preferred = num((mid * 100) / DESIGN_WIDTH_PX, 3);
-    return decl(`sp-${i}`, `clamp(${num(SPACE_MIN_PX[i], 3)}px, ${preferred}vw, ${num(SPACE_MAX_PX[i], 3)}px)`);
-  });
-
-/** The same ramp expressed against the container's inline size (`cqi`). */
-const consoleSpaceRamp = (): string[] =>
-  SPACE_PX.map((mid, i) => {
-    const preferred = CONSOLE_CQI_OVERRIDES[i] ?? num((mid * 100) / CONSOLE_WIDTH_PX, 2);
-    return decl(`sp-${i}`, `clamp(${num(SPACE_MIN_PX[i], 3)}px, ${preferred}cqi, ${num(SPACE_MAX_PX[i], 3)}px)`);
-  });
+/** Stable spacing: nested panes share the same rhythm; responsive layouts change their columns. */
+const spaceRamp = (): string[] => SPACE_PX.map((px, i) => decl(`sp-${i}`, `${px}px`));
 
 /**
  * The complete generated stylesheet, as text. Pure: same output every call,
@@ -198,9 +138,8 @@ export function renderTokensCss(): string {
   lines.push(
     '',
     `  /* ============ SPACING (derived — ${BASE_SPACE_PX}px × [${SPACE_STEPS.join(', ')}]) ============`,
-    '     Fluid: tracks the viewport, compresses on small panes, breathes a touch',
-    '     on large ones. Each size container re-declares it against its own width. */',
-    ...rootSpaceRamp(),
+    '     Stable across panes and nested cards; responsiveness belongs to layout. */',
+    ...spaceRamp(),
     '',
     `  /* ============ CONTROL SIZES (derived — ${BASE_CONTROL_PX} + ${CONTROL_STEP_PX}n) ============ */`,
   );
@@ -208,19 +147,7 @@ export function renderTokensCss(): string {
     lines.push(decl(`h-${name}`, `${CONTROL_PX[i]}px`, CONTROL_NOTES[i]));
   });
 
-  lines.push(
-    '}',
-    '',
-    '/* The console, every stage page and each of its columns are size containers',
-    '   (see shell.css), so the SAME ramp resolves against their inline size: identical',
-    `   px at the ${CONSOLE_WIDTH_PX}px container design width, following the pane, not the page. */`,
-    '.console,',
-    '.stage-page,',
-    '.stage-col {',
-    ...consoleSpaceRamp(),
-    '}',
-    '',
-  );
+  lines.push('}', '');
 
   return lines.join('\n');
 }

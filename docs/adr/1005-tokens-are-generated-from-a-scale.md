@@ -83,3 +83,17 @@ The overhaul deliberately replaces the fitted 12 px ladder with semantic text ro
 15 px body, larger controls and extended spacing. The fluid type-role table is retired. Tokens still
 derive from `design/scale.ts` and are regenerated, with goldens for the chosen values and contrast
 checks for the revised palette. Bundled Inter and tabular numerals keep layout stable during updates.
+
+## Amendment — visual cleanup after owner review
+
+The owner found inconsistent padding, unused card space and poorly grouped controls in the rendered
+overhaul. Spacing now uses the scale's fixed values: 2, 4, 8, 12, 16, 20, 24, 32 and 40 CSS pixels.
+The fitted viewport and nested-container clamps are retired. A 16 px card inset is therefore the same
+in the sidebar, a wide stage and a nested column. Container queries still change columns and wrapping;
+they no longer change the meaning of a spacing token. The generator, freshness gate and explicit
+golden values remain authoritative. Typography and control heights are unchanged.
+
+Stage pages use 24 px outer gutters, with a 1280 px reading-width limit for People and Prune.
+Content surfaces use 16 px insets and 12–16 px internal separation. Empty states collapse to an honest
+explanation instead of reserving chart or metric space. Growth plots measure their width in CSS pixels
+and keep a fixed plot height, so widening the window cannot enlarge axis labels.

@@ -12,11 +12,9 @@
 .card {
   position: relative;
   background: var(--surface);
-  background-image: var(--sheen);
   border: 1px solid var(--border);
   border-radius: var(--r);
-  box-shadow: var(--elev-3);
-  margin-bottom: var(--sp-3);
+  margin-bottom: var(--sp-4);
   overflow: hidden;
 }
 .card:last-child {
@@ -32,10 +30,10 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-3) var(--sp-4) 0;
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  color: var(--faint);
+  padding: var(--sp-4) var(--sp-4) 0;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text);
 }
 .card-h .icon {
   flex: 0 0 auto;
@@ -70,6 +68,9 @@
 }
 .card-b {
   padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+.card-b > .hint:first-child {
+  margin-top: 0;
 }
 
 /* ----- readout primitives (badge · chip · stat · avatar · bar · kv) ----- */
@@ -184,6 +185,8 @@
   border-top: 1px solid var(--divider);
 }
 .kv .k {
+  min-width: 0;
+  flex: 0 0 36%;
   color: var(--muted);
   font-size: var(--fs-body);
   display: flex;
@@ -191,12 +194,17 @@
   gap: var(--sp-2);
 }
 .kv .v {
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  text-align: right;
   font-weight: 600;
   color: var(--text);
   font-size: var(--fs-body);
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
 }
 .kv .v .dim {
   color: var(--faint);
@@ -872,9 +880,11 @@ input[type="range"]:focus-visible {
   transition: opacity var(--dur-2) ease;
 }
 .modal {
-  width: 340px;
+  width: 420px;
   max-width: calc(100% - var(--sp-6) - var(--sp-6));
-  padding: var(--sp-5);
+  max-height: calc(100% - 2 * var(--sp-6));
+  overflow-y: auto;
+  padding: var(--sp-6);
   background: var(--elevated);
   background-image: var(--sheen);
   border: 1px solid var(--border-strong);
@@ -902,7 +912,8 @@ input[type="range"]:focus-visible {
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-2);
-  margin-top: var(--sp-5);
+  flex-wrap: wrap;
+  margin-top: var(--sp-6);
 }
 .modal .tbtn {
   height: var(--h-lg);
@@ -1035,6 +1046,17 @@ input[type="range"]:focus-visible {
   .pair {
     grid-template-columns: 1fr;
   } /* settings pairs stack   */
+}
+@container console (max-width: 430px) {
+  .kv {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--sp-1);
+  }
+  .kv .v {
+    justify-content: flex-start;
+    text-align: left;
+  }
 }
 @container console (max-width: 300px) {
   .ticklabels,

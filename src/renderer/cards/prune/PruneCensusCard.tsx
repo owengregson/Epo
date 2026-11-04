@@ -94,7 +94,7 @@ export function PruneCensusCard({
         Prune · Census
       </CardHeader>
       <CardBody>
-        <div class="prune-stats">
+        {showTiles ? <div class="prune-stats">
           <Stat label="Following">
             {showTiles ? <NumberTicker value={followingD} /> : '—'}
           </Stat>
@@ -114,7 +114,7 @@ export function PruneCensusCard({
             </Stat>
           )}
           <Stat label="Protected">{protectedCount === null ? '—' : commas(protectedCount)}</Stat>
-        </div>
+        </div> : null}
         {seg !== null ? (
           <div class="pcomp">
             {isScanning ? (
@@ -180,8 +180,7 @@ export function PruneCensusCard({
           </div>
         ) : !isScanning ? (
           <div class="hint">
-            Run a scan to take the census — the bar shows how your following splits between
-            accounts that follow back, prunable accounts, and protected or unresolvable ones.
+            No census yet. Run a scan to see who follows you back, who is protected, and who can be pruned.
           </div>
         ) : null}
       </CardBody>

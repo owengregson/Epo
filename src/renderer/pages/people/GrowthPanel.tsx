@@ -33,14 +33,14 @@ export function GrowthPanel({ active }: { active: boolean }): JSX.Element {
         <h2 id="people-growth-h">Your followers over time</h2>
         <Segmented options={GROWTH_WINDOWS} value={win} onChange={(v) => setWin(v)} ariaLabel="Range" />
       </div>
-      <div class="people-growth__num num">
+      {followers !== null || last !== undefined ? <div class="people-growth__num num">
         {followers !== null ? <span class="people-growth__count">{commas(followers.count)}</span> : null}
         {last !== undefined ? (
           <span class={last.cumulativeNet > 0 ? 'people-growth__delta is-up' : 'people-growth__delta'}>
             {signedCount(last.cumulativeNet)} {span}
           </span>
         ) : null}
-      </div>
+      </div> : null}
       <GrowthChart points={points} revealKey={forWindow} baselineAt={baselineAt} />
       <p class="people-growth__note">Calendar days · measured from your profile</p>
     </section>

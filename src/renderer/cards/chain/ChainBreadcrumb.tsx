@@ -57,7 +57,7 @@ export function ChainBreadcrumb({ chain, currentPk, viewingPk }: ChainBreadcrumb
         {canExpand ? (
           <button
             type="button"
-            class={showTrail ? 'chip active' : 'chip'}
+            class="link-btn crumbs__toggle"
             aria-expanded={showTrail ? 'true' : 'false'}
             onClick={() => setExpanded((v) => !v)}
           >

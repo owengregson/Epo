@@ -2,7 +2,7 @@
  * The intro tour — a guided coach-marks overlay across the whole window.
  * A single spotlight ring cuts a hole in the dim (the oversized box-shadow
  * trick) and one raised tip card narrates. Lives OUTSIDE .console, so every
- * --sp/--fs var resolves against :root's viewport clamps (tokens.css).
+ * --sp/--fs variables use the same stable rhythm as the rest of the interface.
  *
  * z-index 90: above the confirm scrim (80) — nothing else may hold the shell
  * while the tour does — and below the tooltip bubble (100).
@@ -45,7 +45,7 @@
   position: absolute;
   width: 320px;
   max-width: calc(100vw - 24px);
-  padding: var(--sp-5);
+  padding: var(--sp-6);
   background: var(--elevated);
   background-image: var(--sheen);
   border: 1px solid var(--border-strong);
@@ -87,7 +87,7 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  margin-top: var(--sp-5);
+  margin-top: var(--sp-6);
 }
 .tour-a .tbtn {
   height: var(--h-lg);

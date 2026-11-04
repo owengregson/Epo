@@ -14,3 +14,12 @@ if (typeof SVGElement !== 'undefined') {
     getPointAtLength: { configurable: true, value: (at: number) => ({ x: at, y: 0 }) },
   });
 }
+
+// Browser QA checks layout. jsdom exposes no element size or ResizeObserver.
+if (typeof window !== 'undefined' && typeof ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+}
