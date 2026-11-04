@@ -40,6 +40,8 @@ export const STAGE_COPY = {
   title: 'Settings',
   easy: 'Easy',
   advanced: 'Advanced',
+  sections: 'On this page',
+  jumpToSection: 'Jump to section',
   modeHelp: 'Advanced shows every number Epo uses and lets you set any of them yourself.',
   advancedRail: 'Advanced',
   search: 'Search settings',

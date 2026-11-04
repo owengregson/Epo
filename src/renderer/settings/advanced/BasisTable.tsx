@@ -56,11 +56,11 @@ function Group({ group, rows }: { group: BasisRow['group']; rows: readonly Basis
         <tbody>
           {rows.map((r) => (
             <tr key={r.id}>
-              <td><code>{r.id}</code></td>
-              <td class="num">{valueText(r)}</td>
-              <td>{r.tier ?? '—'}</td>
-              <td>{[r.src, r.rev].filter((x) => x !== null).join(' · ') || r.module}</td>
-              <td>{r.guard ?? '—'}</td>
+              <td data-label={BASIS_COPY.name}><code>{r.id}</code></td>
+              <td data-label={BASIS_COPY.value} class="num">{valueText(r)}</td>
+              <td data-label={BASIS_COPY.tier}>{r.tier ?? '—'}</td>
+              <td data-label={BASIS_COPY.source}>{[r.src, r.rev].filter((x) => x !== null).join(' · ') || r.module}</td>
+              <td data-label={BASIS_COPY.why}>{r.guard ?? '—'}</td>
             </tr>
           ))}
         </tbody>

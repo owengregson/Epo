@@ -52,11 +52,11 @@ export function KeptTable({ refresh }: { refresh: number }): JSX.Element {
         <tbody>
           {load.rows.map((r) => (
             <tr key={r.pk}>
-              <td>{r.username === null ? KEPT_COPY.never : `@${r.username}`}</td>
-              <td>{KEPT_COPY.reasons[r.reason] ?? r.reason}</td>
-              <td>{r.match ?? KEPT_COPY.never}</td>
-              <td>{r.keptAt > 0 ? agoLabel(r.keptAt, now) : KEPT_COPY.never}</td>
-              <td>{r.recheckAt === null ? KEPT_COPY.never : when(r.recheckAt)}</td>
+              <td data-label={KEPT_COPY.account}>{r.username === null ? KEPT_COPY.never : `@${r.username}`}</td>
+              <td data-label={KEPT_COPY.why}>{KEPT_COPY.reasons[r.reason] ?? r.reason}</td>
+              <td data-label={KEPT_COPY.match}>{r.match ?? KEPT_COPY.never}</td>
+              <td data-label={KEPT_COPY.since}>{r.keptAt > 0 ? agoLabel(r.keptAt, now) : KEPT_COPY.never}</td>
+              <td data-label={KEPT_COPY.next}>{r.recheckAt === null ? KEPT_COPY.never : when(r.recheckAt)}</td>
             </tr>
           ))}
         </tbody>

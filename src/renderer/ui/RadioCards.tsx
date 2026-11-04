@@ -25,7 +25,7 @@ export interface CardChoice<T> {
   readonly metric?: ComponentChildren;
   readonly line?: string;
   readonly recommended?: boolean;
-  /** Extra content above the title (the day-shape bars). */
+  /** A preview between the title and detail (the day-shape bars). */
   readonly art?: ComponentChildren;
   readonly disabled?: boolean;
 }
@@ -44,9 +44,14 @@ export interface RadioCardsProps<T> {
   dataRow?: string;
 }
 
-/** Intent cards: a radio group whose selected card says so in words, not colour alone. */
+/** Intent cards share row tracks; selection stays in the heading, never adding a content row. */
 export function RadioCards<T>({ label, choices, selected, onSelect, onPreview, pending, class: cls, dataRow }: RadioCardsProps<T>): JSX.Element {
   const values = choices.filter((c) => !c.disabled).map((c) => c.value);
+  const art = choices.some((c) => c.art);
+  const metric = choices.some((c) => c.metric);
+  const detail = choices.some((c) => c.line);
+  const recommendation = choices.some((c) => c.recommended);
+  const rows = 1 + Number(art) + Number(metric) + Number(detail) + Number(recommendation);
   return (
     <div
       class={cls ? `radio-cards ${cls}` : 'radio-cards'}
@@ -54,7 +59,7 @@ export function RadioCards<T>({ label, choices, selected, onSelect, onPreview, p
       aria-label={label}
       aria-busy={pending ? 'true' : undefined}
       data-row={dataRow}
-      style={`--cols:${Math.min(3, choices.length)}`}
+      style={`--cols:${Math.min(3, choices.length)};--card-rows:${rows}`}
       onKeyDown={(e) => onRovingKey(e, values, selected, onSelect)}
     >
       {choices.map((c) => {
@@ -74,18 +79,14 @@ export function RadioCards<T>({ label, choices, selected, onSelect, onPreview, p
             onFocus={() => onPreview?.(c.value)}
             onBlur={() => onPreview?.(null)}
           >
-            {c.art ?? null}
             <span class="radio-card__top">
               <span class="radio-card__title">{c.title}</span>
-              {c.recommended ? <span class="set-tag">Recommended</span> : null}
+              <span class="radio-card__sel" aria-hidden="true">{on ? <Icon name="check" /> : null}</span>
             </span>
-            {c.metric ? <span class="radio-card__metric num">{c.metric}</span> : null}
-            {c.line ? <span class="radio-card__line">{c.line}</span> : null}
-            {on ? (
-              <span class="radio-card__sel">
-                <Icon name="check" /> Selected
-              </span>
-            ) : null}
+            {art ? <span class="radio-card__art">{c.art ?? null}</span> : null}
+            {metric ? <span class="radio-card__metric num">{c.metric ?? null}</span> : null}
+            {detail ? <span class="radio-card__line">{c.line ?? null}</span> : null}
+            {recommendation ? <span class="radio-card__rec">{c.recommended ? 'Recommended' : null}</span> : null}
           </button>
         );
       })}

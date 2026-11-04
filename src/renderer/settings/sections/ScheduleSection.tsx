@@ -43,6 +43,7 @@ export function DayBars({ option }: { option: ScheduleOption }): JSX.Element {
       <span class="set-daybars__axis">
         <small>{hourLabel(0)}</small>
         <small>{hourLabel(HOURS / 2)}</small>
+        <small>{hourLabel(HOURS)}</small>
       </span>
     </span>
   );

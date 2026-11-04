@@ -1,10 +1,10 @@
 import type { JSX } from 'preact';
-import { Icon } from '@/renderer/ui/Icon';
+import { useId } from 'preact/hooks';
 import type { SectionId } from '@/shared/settings-params';
 import type { SettingsView } from '@/shared/settings-view';
 import { SECTION_COPY, STAGE_COPY } from './copy/sections';
 import { fill } from './format';
-import { isAdvancedOnly } from './sections';
+import { isAdvancedOnly, sectionDomId } from './sections';
 
 export interface SectionRailProps {
   view: SettingsView;
@@ -21,16 +21,16 @@ function Dot({ view, id }: { view: SettingsView; id: SectionId }): JSX.Element |
   return <i class="set-rail__dot" title={label} aria-label={label} />;
 }
 
-function Item({ id, p, chip }: { id: SectionId; p: SectionRailProps; chip: boolean }): JSX.Element {
+function Item({ id, p }: { id: SectionId; p: SectionRailProps }): JSX.Element {
   const on = id === p.active;
   return (
     <button
       type="button"
-      class={chip ? (on ? 'set-chip is-on' : 'set-chip') : on ? 'is-on' : undefined}
+      class={on ? 'is-on' : undefined}
       aria-current={on ? 'true' : undefined}
+      aria-controls={sectionDomId(id)}
       onClick={() => p.onPick(id)}
     >
-      {chip ? null : <Icon name={SECTION_COPY[id].icon} />}
       <span>{SECTION_COPY[id].title}</span>
       <Dot view={p.view} id={id} />
     </button>
@@ -38,28 +38,29 @@ function Item({ id, p, chip }: { id: SectionId; p: SectionRailProps; chip: boole
 }
 
 /**
- * The section list: a rail beside the content on a wide stage, wrapping chips above it on a narrow one
- * (CSS picks by the stage's width, so every section stays in view and nothing scrolls sideways). The
- * current section is marked as you scroll.
+ * Wide content gets plain navigation rows; narrow content gets one native section selector.
+ * Both follow the current section as you scroll, without a tall block of wrapping category chips.
  */
 export function SectionRail(p: SectionRailProps): JSX.Element {
+  const selectId = useId();
   const easy = p.sections.filter((s) => !isAdvancedOnly(s));
   const advanced = p.sections.filter(isAdvancedOnly);
-  const list = (chip: boolean): JSX.Element => (
-    <>
-      {easy.map((id) => <Item key={id} id={id} p={p} chip={chip} />)}
-      {advanced.length > 0 ? <span class={chip ? 'set-chips__sep' : 'set-rail__sep'}>{STAGE_COPY.advancedRail}</span> : null}
-      {advanced.map((id) => <Item key={id} id={id} p={p} chip={chip} />)}
-    </>
-  );
+  const options = (ids: readonly SectionId[]) => ids.map((id) => <option key={id} value={id}>{SECTION_COPY[id].title}</option>);
   return (
-    <>
-      <nav class="set-rail" aria-label="Settings sections">
-        {list(false)}
-      </nav>
-      <nav class="set-chips" aria-label="Settings sections">
-        {list(true)}
-      </nav>
-    </>
+    <nav class="set-rail" aria-label="Settings sections">
+      <div class="set-rail__compact">
+        <label for={selectId}>{STAGE_COPY.jumpToSection}</label>
+        <select id={selectId} value={p.active ?? p.sections[0]} onChange={(e) => p.onPick(e.currentTarget.value as SectionId)}>
+          {options(easy)}
+          {advanced.length > 0 ? <optgroup label={STAGE_COPY.advancedRail}>{options(advanced)}</optgroup> : null}
+        </select>
+      </div>
+      <div class="set-rail__list">
+        <p class="set-rail__heading">{STAGE_COPY.sections}</p>
+        {easy.map((id) => <Item key={id} id={id} p={p} />)}
+        {advanced.length > 0 ? <p class="set-rail__sep">{STAGE_COPY.advancedRail}</p> : null}
+        {advanced.map((id) => <Item key={id} id={id} p={p} />)}
+      </div>
+    </nav>
   );
 }
