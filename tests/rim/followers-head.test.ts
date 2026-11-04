@@ -99,6 +99,18 @@ describe('L10: the followers head', () => {
     store.close();
   });
 
+  test('a walk that read no page sets no frontier, not even on the upgrade launch (never fabricate)', async () => {
+    const store = setup();
+    // The walker's page bound counts a failed fetch: one attempt, no page, 'max-pages'.
+    const empty = { calls: [] as WalkArgs[], walkAll: async (): Promise<WalkResult> =>
+      ({ pks: [], pages: 0, complete: false, endConfirmed: false, quarantined: 0, reason: 'max-pages', cursor: null }) };
+    for (const frontierAt of [null, FRONTIER]) {
+      const res = await walkFollowersHead({ ...deps(store, scriptedWalker([])), walker: empty }, args({ frontierAt }));
+      expect(res).toMatchObject({ outcome: 'fetch-failed', pages: 0, next: null });
+    }
+    store.close();
+  });
+
   test('a failed walk keeps every fact it wrote and returns no frontier', async () => {
     const store = setup();
     const res = await walkFollowersHead(deps(store, scriptedWalker([['n1', 'n2'], ['n3']], { atPage: 1, reason: 'read-budget' })), args());

@@ -138,9 +138,10 @@ export async function walkFollowersHead(d: HeadWalkDeps, a: HeadWalkArgs): Promi
     },
   });
   const newRows = rows.filter((r) => r.change !== null).length;
-  const failed = FAILURES.has(walk.reason) || walk.reason.startsWith('sentinel:') || walk.reason === 'stop-requested';
-  if (failed) {
-    const outcome = walk.reason === 'stop-requested' ? 'stopped' : walk.reason as HeadWalkOutcome;
+  const typed = FAILURES.has(walk.reason) || walk.reason.startsWith('sentinel:');
+  // A walk that read no page proves nothing about the head: never a frontier (never fabricate).
+  if (typed || walk.reason === 'stop-requested' || walk.pages === 0) {
+    const outcome = walk.reason === 'stop-requested' ? 'stopped' : typed ? walk.reason as HeadWalkOutcome : 'fetch-failed';
     logger.info('rim.followers-head: walk ended early, facts kept', { outcome, pages: walk.pages, newRows });
     return { outcome, pages: walk.pages, newRows, next: null, ...(walk.retryAt === undefined ? {} : { retryAt: walk.retryAt }) };
   }
