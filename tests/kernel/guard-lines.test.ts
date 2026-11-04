@@ -10,7 +10,8 @@ const KERNEL = path.resolve(__dirname, '..', '..', 'src', 'kernel');
 
 /** The tier-1 modules the plan-derived overhaul created or extended. */
 const MODULES = ['tempo-policy.ts', 'settings-policy.ts', 'reentry-policy.ts', 'census-policy.ts', 'input-probe.ts',
-  'exploration-policy.ts'];
+  'exploration-policy.ts', 'plan/policy.ts', 'surface-policy.ts', 'shell-geometry.ts', 'adapter-bounds.ts',
+  'boot-policy.ts', 'live-policy.ts', 'runtime-bounds.ts', 'scrub-policy.ts', 'store-policy.ts'];
 
 const isComment = (line: string): boolean => line.startsWith('/**') || line.startsWith('*') || line.startsWith('//');
 const bracketDelta = (line: string): number =>

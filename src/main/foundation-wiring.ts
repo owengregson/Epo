@@ -1229,17 +1229,15 @@ export class Foundation {
     }
   }
 
-  /**
-   * Cumulative net own-follower growth per day for the last `days` days
-   * (default 14 when omitted or invalid — the IPC boundary is untyped), plus
-   * the followers-measurement baseline the renderer's window/momentum honesty
-   * gates read. Builds the graph if needed; empty read when not logged in.
-   * Never throws.
-   */
+  /** Cumulative net follower growth for the renderer's explicit span; missing or invalid spans refuse the read. */
   async growthSeries(days?: number): Promise<GrowthSeriesRead> {
+    if (typeof days !== 'number' || !Number.isFinite(days) || days < 1) {
+      logger.warn('foundation.growthSeries: an explicit positive day span is required');
+      return { points: [], baselineAt: null };
+    }
     const graph = await this.builtGraph();
     if (graph === null) return { points: [], baselineAt: null };
-    const d = typeof days === 'number' && Number.isFinite(days) && days >= 1 ? Math.floor(days) : 14;
+    const d = Math.floor(days);
     try {
       return {
         points: graph.store.netGrowthSeries(d, graph.ownPk),
