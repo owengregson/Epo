@@ -3,6 +3,7 @@ import type { WebContents } from 'electron';
 import { SURFACE } from '@/adapter/ig-surface';
 import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
 import { isProbeApiUrl, NativeTraffic } from '@/probe/native-traffic';
+import { qualifyTraffic } from '@/probe/traffic-qualification';
 import { TAB } from '@/timing/config';
 
 const hooks = ['onBeforeRequest', 'onBeforeSendHeaders', 'onHeadersReceived', 'onBeforeRedirect', 'onCompleted', 'onErrorOccurred'] as const;
@@ -55,12 +56,35 @@ test('ownership survives detached-frame events and only safe headers and payload
 
 test('unrelated owners, lookalike origins, static assets and logging never enter the inventory', async () => {
   const h = harness();
-  for (const extra of [{ webContentsId: 8 }, { webContentsId: undefined },
+  for (const extra of [{ webContentsId: 8 },
     { url: 'https://notinstagram.com/api/graphql' }, { url: `${SURFACE.origin}/static/app.js` },
     { url: `${SURFACE.origin}/ajax/bz` }, { url: `${SURFACE.origin}/ajax/bulk-route` }]) {
     expect(h.request(extra)).toHaveBeenCalledWith({});
   }
   h.response(); h.complete(); h.native.stop(); await h.native.drain();
+  expect(h.native.exchanges).toEqual([]);
+  expect(h.failure).not.toHaveBeenCalled();
+});
+
+test.each([undefined, 0, -1])('an API start without a valid owner fails even when later events identify this tab (%s)', async (webContentsId) => {
+  const h = harness();
+  const callback = h.request({ webContentsId, uploadData: [{ blobUUID: 'unowned-blob' }] });
+  expect(callback).toHaveBeenCalledWith({});
+  expect(h.failure).toHaveBeenCalledWith({ id: 1, detail: 'native request owner unavailable' });
+  expect(callback.mock.invocationCallOrder[0]).toBeLessThan(h.failure.mock.invocationCallOrder[0]);
+  h.response({ webContentsId: 7 }); h.complete({ webContentsId: 7 });
+  h.native.stop(); await h.native.drain();
+  expect(h.native.exchanges).toEqual([expect.objectContaining({ webContentsId: null, terminal: 'completed',
+    status: 200, failed: 'native request owner unavailable' })]);
+  expect(h.getBlobData).not.toHaveBeenCalled();
+  expect(h.native.getPostData(1)).toBeUndefined();
+  expect(qualifyTraffic([], h.native.exchanges, [], (id) => h.native.getPostData(id)).ok).toBe(false);
+});
+
+test('an unknown owner outside the API inventory does not fail the probe', async () => {
+  const h = harness();
+  h.request({ webContentsId: undefined, url: `${SURFACE.origin}/static/app.js` });
+  h.native.stop(); await h.native.drain();
   expect(h.native.exchanges).toEqual([]);
   expect(h.failure).not.toHaveBeenCalled();
 });

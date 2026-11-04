@@ -21,7 +21,8 @@ export interface NativeExchange {
   url: string;
   method: string;
   resourceType: string;
-  webContentsId: number;
+  /** Null means initial ownership was unavailable; such an entry can never qualify. */
+  webContentsId: number | null;
   startedAt: number;
   responseAt?: number;
   endedAt?: number;
@@ -115,9 +116,11 @@ export class NativeTraffic {
   private readonly before = (d: OnBeforeRequestListenerDetails, callback: (response: CallbackResponse) => void): void => {
     let ex: NativeExchange | undefined;
     let prior: NativeExchange | undefined;
-    if (d.webContentsId === this.wc.id && isProbeApiUrl(d.url)) {
+    const owner = typeof d.webContentsId === 'number' && Number.isSafeInteger(d.webContentsId) && d.webContentsId > 0
+      ? d.webContentsId : null;
+    if ((owner === this.wc.id || owner === null) && isProbeApiUrl(d.url)) {
       ex = { id: d.id, url: d.url, method: d.method, resourceType: d.resourceType,
-        webContentsId: d.webContentsId, startedAt: d.timestamp, headers: {}, post: { state: 'pending' } };
+        webContentsId: owner, startedAt: d.timestamp, headers: {}, post: { state: 'pending' } };
       prior = this.byId.get(d.id);
       this.exchanges.push(ex);
       this.byId.set(d.id, ex);
@@ -128,6 +131,12 @@ export class NativeTraffic {
       this.reused.add(d.id);
       this.fail(prior, 'native request id reused');
       this.fail(ex, 'native request id reused');
+    }
+    if (owner === null) {
+      ex.post = { state: 'missing', detail: 'initial request ownership unavailable' };
+      this.fail(ex, 'native request owner unavailable');
+      this.notify();
+      return;
     }
     const task = this.readPost(ex, d.uploadData).finally(() => this.pending.delete(task));
     this.pending.add(task);
