@@ -8,6 +8,7 @@ import { MS_PER_DAY } from './units';
 export const STORE_POLICY = {
   /** Guards: observations, username history and settled intent detail stay bounded; every reader looks back less. */
   retentionMs: 90 * MS_PER_DAY,
+  /** Guards: persisted diagnostic spans have independent row, event, trim and read bounds. */
   spans: {
     /** Guards: the span ring holds weeks of runs and never needs a sweep job. */
     ringRows: 50_000,
