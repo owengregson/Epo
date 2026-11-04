@@ -50,8 +50,6 @@
     {"key":"src/capture/capture-main.ts :: resolveSamples :: readSampleUsernamesFromFixtures :: 3","class":"HARNESS","reason":"harness: the capture tool (npm run capture) is dev-only; its values never reach production"},
     {"key":"src/engine/engine.ts :: ACTIONS_FAILING_HALT :: ACTIONS_FAILING_HALT :: 8","class":"PENDING","stream":"PR","reason":"PR: the halt reads the D5 coldFailingThreshold() (7) instead of 8 (spec §17.8)"},
     {"key":"src/engine/engine.ts :: Engine.constructor :: mulberry32 :: 0xffffffff","class":"GEOM","reason":"a 32-bit mask or hash-mixing constant, numeric"},
-    {"key":"src/engine/engine.ts :: REFILL_PACING_MAX_MS :: REFILL_PACING_MAX_MS :: ENGINE.REFILL_PACING_MAX_MS","class":"PENDING","stream":"PR","reason":"PR: S2b retires the refill beat (pause.after-task) with the activity clock (spec §5.11)"},
-    {"key":"src/engine/engine.ts :: REFILL_PACING_MIN_MS :: REFILL_PACING_MIN_MS :: ENGINE.REFILL_PACING_MIN_MS","class":"PENDING","stream":"PR","reason":"PR: S2b retires the refill beat (pause.after-task) with the activity clock (spec §5.11)"},
     {"key":"src/engine/followback-types.ts :: FOLLOWBACK_DEFAULTS :: holdAfterFollowbackMs :: 2","class":"PENDING","stream":"RO","reason":"RO: deletes FOLLOWBACK_DEFAULTS (spec §17.8)"},
     {"key":"src/engine/followback-watcher.ts :: FollowbackWatcher.check :: covered :: 0.98","class":"PENDING","stream":"RO","reason":"RO: deletes the watcher; its retries become plan parks (spec §17.8)"},
     {"key":"src/engine/followback-watcher.ts :: FollowbackWatcher.check :: maxWait :: 4","class":"PENDING","stream":"RO","reason":"RO: deletes the watcher; its retries become plan parks (spec §17.8)"},

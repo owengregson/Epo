@@ -135,7 +135,6 @@ describe('noise — the class registries cover exactly the wait keys (ii)', () =
       'engine:idle',
       'engine:transient-backoff',
       'engine:action-delay',
-      'engine:refill-pacing',
       'engine:recovery-hold',
     ];
     expect(Object.keys(ENGINE_WAIT_CLASS).sort()).toEqual([...expected].sort());
@@ -152,7 +151,6 @@ describe('noise — the class registries cover exactly the wait keys (ii)', () =
     expect(ENGINE_WAIT_CLASS['engine:transient-backoff']).toBe('local-beat');
     // Already self-jittered at the call site — noising again would double-jitter.
     expect(ENGINE_WAIT_CLASS['engine:action-delay']).toBe('exact');
-    expect(ENGINE_WAIT_CLASS['engine:refill-pacing']).toBe('exact');
     expect(ENGINE_WAIT_CLASS['engine:session-park']).toBe('exact');
     expect(ENGINE_WAIT_CLASS['engine:velocity-park']).toBe('exact');
     expect(ENGINE_WAIT_CLASS['engine:recovery-hold']).toBe('exact');
@@ -191,7 +189,7 @@ describe('noise — every engine wait routes through the ONE gate (iii)', () => 
     });
     // Representative paths: an idle beat, a paced action, a blocked park, a
     // refill that fails its acquire (enrich backoff), and a transient throw.
-    await h.engine.stepOnce(); // refill → acquire → refill-pacing
+    await h.engine.stepOnce(); // refill → acquire (no wait of its own: the activity clock spaces entries)
     h.churn.due = [{ accountPk: 'a', targetPk: null, state: 'queued', retryCount: 0 }];
     await h.engine.stepOnce(); // acted → action-delay
     h.churn.due = [{ accountPk: 'a', targetPk: null, state: 'queued', retryCount: 0 }];
@@ -203,7 +201,7 @@ describe('noise — every engine wait routes through the ONE gate (iii)', () => 
     await h.engine.stepOnce(); // transient-backoff
     await h.engine.stepOnce(); // idle
 
-    expect(spy.keys.length).toBeGreaterThan(3);
+    expect(spy.keys).toEqual(expect.arrayContaining(['engine:action-delay', 'engine:blocked-park', 'engine:transient-backoff']));
     for (const key of spy.keys) expect(ENGINE_WAIT_CLASS).toHaveProperty(key);
   });
 

@@ -561,7 +561,7 @@ const PROFILE_LAND_RETRY_MS = retryWait(GOTO_TIMEOUT_MS, BOUNDS.ADAPTER.PROFILE_
 export const ENGINE = {
   /** How long an iteration idles when nothing is due yet (the loop's final gate). */
   IDLE_MS: BOUNDS.ENGINE.IDLE_MS,
-  /** Bounds of the short jittered pause ending every branch that issued IG traffic. */
+  /** Unread since the activity clock spaces each entry (spec §5.16); the RETIRED ledger deletes it (ADR 0607). */
   REFILL_PACING_MIN_MS: overridden('ENGINE.REFILL_PACING_MIN_MS', REFILL.min),
   REFILL_PACING_MAX_MS: overridden('ENGINE.REFILL_PACING_MAX_MS', REFILL.max),
   /**
@@ -722,11 +722,7 @@ export const RECOVERY = {
 export const RIM = {
   /** Fixed pause after each scroll so the paginated response can land (growth path). */
   SCROLL_WAIT_MS: BOUNDS.RIM.SCROLL_WAIT_MS,
-  /**
-   * Jittered pause between profile-info fetches. An enrichment pass is the
-   * app's largest read burst; this band keeps a full pass around a minute
-   * instead of a 20-requests-in-20-seconds spike.
-   */
+  /** Unread since the activity clock spaces each visit (spec §5.16); the RETIRED ledger deletes it (ADR 0607). */
   ENRICH_PACE_MIN_MS: ENRICH.min,
   ENRICH_PACE_MAX_MS: ENRICH.max,
   /** Whole-list scrape bounds (prune census): generous but always finite. */

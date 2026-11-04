@@ -57,8 +57,6 @@ export interface TargetPipelineDeps extends EngineTempo {
   settings(): Settings;
   /** The Engine's noise-gated wait. */
   wait: EngineWait;
-  /** The short jittered pause that ends every branch which issued IG traffic. */
-  pacingSleep(): Promise<void>;
   /** Route a repeatedly-walled read into the recovery ladder. */
   recover(token: AbortController, kind: FailureKind): Promise<StepResult>;
   /** Terminal stop with a typed reason. */
@@ -189,7 +187,6 @@ export class TargetPipeline {
       const revived = this.reviveRecentExhausted();
       if (revived === null) return this.deps.halt({ kind: 'chain-exhausted' });
       this.adoptTarget(revived);
-      await this.deps.pacingSleep(); // the seed resolve was IG traffic — pace it.
       return 'advanced-chain';
     }
 
@@ -223,7 +220,6 @@ export class TargetPipeline {
       queued: plan.queued.length,
       endReason: acquired.endReason,
     });
-    await this.deps.pacingSleep(); // the bootstrap IS an acquisition — pace it.
     return 'acquired';
   }
 
@@ -252,7 +248,6 @@ export class TargetPipeline {
    * Read-budget refusal records a deadline without blocking existing actions.
    */
   async refillPool(current: CurrentTarget, token: AbortController): Promise<StepResult> {
-    let issuedTraffic = false;
     this.deps.scanner.reconsiderTarget?.(current.pk, this.deps.clock.now());
 
     // (1) At most one acquisition per cycle — and NONE when the store already
@@ -277,7 +272,6 @@ export class TargetPipeline {
         const acquired = await this.deps.acquisition.acquire(current.username);
         this.deps.frontier?.noteAcquisition(current.pk, acquired.observed,
           'globallyNew' in acquired && typeof acquired.globallyNew === 'number' ? acquired.globallyNew : 0);
-        issuedTraffic = true;
         if (acquired.endReason === 'read-budget') return this.deferReads(
           'retryAt' in acquired && typeof acquired.retryAt === 'number' ? acquired.retryAt : undefined);
         if (isAcquireFailure(acquired.endReason)) {
@@ -307,14 +301,12 @@ export class TargetPipeline {
         this.enrichPassesThisCycle = 0;
         return this.deferReads(resumeAt);
       }
-      issuedTraffic = true;
       log.info('engine: enriched candidates', {
         target: current.pk,
         requested: usernames.length,
         enriched,
         pass: this.enrichPassesThisCycle,
       });
-      await this.deps.pacingSleep();
       return 'acquired';
     }
 
@@ -405,7 +397,6 @@ export class TargetPipeline {
       exhausted: this.exhausted,
       lastAcquireEnd: this.lastAcquireEnd,
     });
-    if (issuedTraffic) await this.deps.pacingSleep();
     return 'acquired';
   }
 

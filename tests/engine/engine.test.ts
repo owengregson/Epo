@@ -14,8 +14,6 @@ import {
   Engine,
   type EngineUnfollowFeed,
   MAX_ENRICH_PASSES_PER_CYCLE,
-  REFILL_PACING_MAX_MS,
-  REFILL_PACING_MIN_MS,
 } from '@/engine/engine';
 import { FakeClock } from '@/governors/clock';
 import { referenceTempoSource } from '@/kernel/tempo';
@@ -1053,15 +1051,14 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     expect(h.enricher.calls[0]!.length).toBe(ENRICH_BATCH_SIZE);
   });
 
-  test('f10: refill traffic ends with a short jittered pacing sleep', async () => {
+  test('refill traffic ends without a beat of its own: the next entry is the activity clock\'s (spec §5.16)', async () => {
     const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
     follower(h, 'f1', { username: 'fone' });
     h.enricher.profiles.set('fone', { pk: 'f1', fields: { followers: 1000, following: 1100 } });
 
-    await h.engine.stepOnce(); // acquire + enrich: IG traffic → must be paced
-    expect(h.sleep.calls.length).toBe(1);
-    expect(h.sleep.calls[0]).toBeGreaterThanOrEqual(REFILL_PACING_MIN_MS);
-    expect(h.sleep.calls[0]).toBeLessThanOrEqual(REFILL_PACING_MAX_MS);
+    expect(await h.engine.stepOnce()).toBe('acquired'); // acquire + enrich: Instagram traffic
+    expect(h.enricher.calls).toHaveLength(1);
+    expect(h.sleep.calls).toEqual([]);
   });
 });
 
@@ -1192,21 +1189,11 @@ describe('Engine — DelayManager integration', () => {
     expect(h.engine.status().nextActionAt).toBeNull();
   });
 
-  test('refill pacing draws through the injected rng (no raw Math.random)', async () => {
-    let draws = 0;
-    const h = makeHarness({
-      settings: { followbackSweepHours: 4 }, // the sweep branch ends in pacingSleep
-      rng: () => {
-        draws += 1;
-        return 0.5;
-      },
-    });
+  test('a sweep ends without a beat of its own: the step waits nothing after its reads', async () => {
+    const h = makeHarness({ settings: { followbackSweepHours: 4 } });
 
     expect(await h.engine.stepOnce()).toBe('swept-followback');
-
-    expect(draws).toBeGreaterThan(0);
-    // rng 0.5 → the exact uniform midpoint of the pacing band.
-    expect(h.sleep.calls).toEqual([(REFILL_PACING_MIN_MS + REFILL_PACING_MAX_MS) / 2]);
+    expect(h.sleep.calls).toEqual([]);
   });
 });
 

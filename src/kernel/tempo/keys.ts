@@ -1,12 +1,12 @@
 /**
  * The closed set of tempo keys (ADR 0607, spec §5.11): every Instagram-facing
- * wait, dwell, scroll depth and gesture duration the plan's tempo scales.
- * `pause.after-task` leaves the registry with the activity clock (PR S2b).
+ * wait, dwell, scroll depth and gesture duration the plan's tempo scales. No key
+ * paces a task's end: the activity clock spaces each entry with `dwell.visit`.
  */
 export const TEMPO_KEYS = [
   'gap.action', 'gap.accept', 'dwell.visit', 'dwell.before-press', 'ui.step-pause', 'drawer.close-settle',
   'scroll.wait.drawer', 'scroll.wait.dialog', 'scroll.wait.acquire', 'scroll.depth.drawer', 'scroll.depth.dialog',
-  'walk.page', 'walk.rest', 'walk.rest-every', 'pause.retry', 'pause.wake-settle', 'pause.after-task',
+  'walk.page', 'walk.rest', 'walk.rest-every', 'pause.retry', 'pause.wake-settle',
   'park.blocked', 'backoff.walled', 'beat.transient', 'check.spacing',
   'motion.travel', 'motion.press', 'motion.pre-press', 'motion.hover-settle',
   'wheel.tick-pause', 'wheel.micro-pause', 'wheel.correction-pause',
