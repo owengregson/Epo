@@ -62,6 +62,49 @@ test('drain waits for a captured body before returning final evidence', async ()
   expect(rec.exchanges[0].body).toBe(files[0]);
 });
 
+test('a reused request ID cannot hide an earlier incomplete exchange', async () => {
+  const h = harness();
+  const failure = jest.fn();
+  const rec = new TrafficRecorder(h.wc, h.out, failure);
+  rec.start();
+  h.request();
+  h.request();
+  h.response();
+  h.emit('Network.loadingFinished', { requestId: 'one' });
+  rec.stop();
+  await rec.drain();
+  expect(rec.exchanges).toHaveLength(2);
+  expect(rec.exchanges[0]).toMatchObject({ requestId: 'one', failed: 'incomplete exchange at recorder stop' });
+  expect(rec.exchanges[0].status).toBeUndefined();
+  expect(rec.exchanges[0].body).toBeUndefined();
+  expect(rec.exchanges[1]).toMatchObject({ requestId: 'one', status: 200, body: expect.any(String) });
+  expect(rec.exchanges[1].failed).toBeUndefined();
+  expect(failure).toHaveBeenCalledTimes(1);
+  expect(failure).toHaveBeenCalledWith(expect.objectContaining({ exchange: 1 }));
+});
+
+test('a decoded body without response status remains incomplete', async () => {
+  const h = harness();
+  const failure = jest.fn();
+  const rec = new TrafficRecorder(h.wc, h.out, failure);
+  rec.start(); h.request(); h.emit('Network.loadingFinished', { requestId: 'one' });
+  rec.stop();
+  await rec.drain();
+  expect(rec.exchanges[0]).toMatchObject({ body: expect.any(String), failed: 'incomplete exchange at recorder stop' });
+  expect(failure).toHaveBeenCalledTimes(1);
+});
+
+test('drain retains the earlier response failure when its body is still missing', async () => {
+  const h = harness();
+  const failure = jest.fn();
+  const rec = new TrafficRecorder(h.wc, h.out, failure);
+  rec.start(); h.request(); h.response(429);
+  rec.stop();
+  await rec.drain();
+  expect(rec.exchanges[0].failed).toBe('unsafe API response: 429 application/json');
+  expect(failure).toHaveBeenCalledTimes(1);
+});
+
 test.each([[429, 'application/json'], [200, 'text/html']])('reports an unsafe API response immediately (%s/%s)', (status, mime) => {
   const h = harness();
   const failure = jest.fn();

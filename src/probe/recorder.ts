@@ -20,6 +20,8 @@ import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 
 export interface Exchange {
   n: number;
+  /** CDP identity, retained even when a redirect reuses it for another exchange. */
+  requestId: string;
   /** Ms since the recorder started. */
   at: number;
   /** The browse step that was running when the request left. */
@@ -107,7 +109,11 @@ export class TrafficRecorder {
   /** Stop first, then retain every body already requested; CDP reads have the tab's bounded deadline. */
   async drain(): Promise<void> {
     await Promise.all([...this.pending]);
-    for (const ex of this.byId.values()) this.fail(ex, 'incomplete exchange at recorder stop');
+    for (const ex of this.exchanges) {
+      if (ex.failed === undefined && (ex.status === undefined || ex.body === undefined)) {
+        this.fail(ex, 'incomplete exchange at recorder stop');
+      }
+    }
     this.byId.clear();
   }
 
@@ -145,6 +151,7 @@ export class TrafficRecorder {
       }
       const ex: Exchange = {
         n: this.exchanges.length + 1,
+        requestId: id,
         at: Date.now() - this.t0,
         step: this.step,
         method: req.method,
