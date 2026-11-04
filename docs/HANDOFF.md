@@ -1,5 +1,31 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-04 (one planned follow verified; rebuilt app installed) —** Current source `ad6726b`
+> passes the full gate: **443 suites / 4,558 tests**, one suite/five tests skipped, boundaries
+> **0 errors / 55 warnings**. Slow child resources no longer block use of a ready main document
+> during startup, evaluation or recovery; failed and stale documents remain guarded. Load-failure
+> copy now reflects connectivity, and structured action diagnostics preserve the original timing.
+>
+> The authorized production sample completed **one normal planned public-profile follow**:
+> fresh review, a 4,263 ms requested / 4,287.496 ms observed dwell, one admission and armed deadline,
+> verified mutation response, and one settled `ok` intent/ledger row. Ordinary quit ended idle,
+> exited 0 and left durable run intent stopped. No UI Stop-button proof or repeated cadence interval
+> is claimed. The historical uncertain unfollow separately settled cancelled with no ledger action;
+> no new unsettled intent or Prune change remains. Unfollow/private/request-cancel variants and
+> remaining L4/L5 coverage are still unproved; eligibility and protections are not changed to supply them.
+>
+> The verified arm64 Epo **3.1.1** / Electron **44.1.1** bundle is installed at `/Applications/Epo.app`,
+> matching `release/local-overhaul/mac-arm64/Epo.app`. All 13 packaged production files match the
+> clean and root builds; strict signature verification passed. The Apple Development-signed bundle
+> is not notarized. The previous installed app is preserved outside Applications. The temporary
+> accept-requests change was restored after normal quit; every value from the owner's latest settings
+> snapshot and all protections are preserved. The final normal installed launch completed account
+> confirmation and catch-up with no new Start/admission or warning/error, and was left **open, stopped**.
+> Post-startup native inspection was limited, so no complete installed UI smoke or boot movie is claimed.
+> See the [current validation record](qa/plan-derived-overhaul-2026-11.md#startup-readiness-repair-and-local-package-2026-11-04)
+> and [planned follow evidence](qa/plan-derived-overhaul-2026-11.md#normal-planned-follow-sample-2026-11-04)
+> for exact hashes, private receipt paths and coverage limits. Historical stopped reports below are unchanged.
+
 > **2026-11-04 22:03 UTC (owner authorization; cleanup-scope correction) —** The owner explicitly
 > authorized cautious account actions and the necessary tests to finish and rebuild. No further
 > cleanup-preference question is needed: Prune can remain Off. Cleanup Off disables additional

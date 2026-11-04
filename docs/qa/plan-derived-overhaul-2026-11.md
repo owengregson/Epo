@@ -3,23 +3,143 @@
 ## Scope and state
 
 This record accompanies the continuation from
-[the November 3 handoff](../superpowers/plans/2026-11-03-plan-derived-overhaul-handoff.md). Implementation and closing
-cleanup, including the native-QA repairs, passed the final source gate at `4a2bbcc`. Runtime native verification at
-`aa31274`, normal and reduced-motion native checks at `d80c5dd`, and the final keyboard-only reduced-motion run at
-`4a2bbcc` passed with the limits recorded below. Gallery results remain tied to their measured revisions; all six
-renderer artifacts at `4a2bbcc` are byte-identical to `d80c5dd`. **Implementation and technical offline verification
-are complete at those recorded revisions.** On November 4, the first live parsing attempt stopped at target
-eligibility; the authorized second attempt reached the final navigation step and exposed a probe settlement gap.
-After that gap was repaired offline, a follow-up stopped on unavailable CDP capture data before the drawer.
-Their partial evidence is recorded below and does not qualify L1 or the remaining live sequence.
+[the November 3 handoff](../superpowers/plans/2026-11-03-plan-derived-overhaul-handoff.md). Current source
+`ad6726b` includes the completed overhaul, UI cleanup, parser comparator retirement, action diagnostics and
+main-document readiness repair. Its complete gate passes **443 suites / 4,558 tests**, one suite/five tests
+skipped, with **0 boundary errors / 55 warnings**. The verified arm64 package is installed, and one
+normal planned public-profile follow has independent outcome and closed-store proof. Exact delivery,
+settings restoration and live coverage limits are below. Historical gates, gallery runs and live attempts
+retain their original revisions and outcomes.
 
-Owner visual confirmation under workplan I.4.6 is now recorded after the subsequent
+Owner visual confirmation under workplan I.4.6 is recorded after the
 [UI cleanup and interactive browser review](ui-cleanup-2026-11.md#interactive-browser-preview-and-owner-acceptance):
 "looks good. continue." Owner-session memory updates were not requested and have not been performed.
 
-The live-account gate is separate from offline completion. Follow/unfollow tests require the owner's explicit
-approval for the targets; tests run one at a time. The parser's reverse-shadow comparators remain until L1 and L4
-both show zero disagreements. L4 also requires at least one night away with Epo quit.
+**L1 qualifies on retained evidence**, and the narrow parser prerequisites supported S8 retirement at
+`be01c6c`. The initial production reopen established persisted catch-up, with its visual and post-Start
+limits recorded separately. The owner subsequently authorized cautious account actions and necessary
+completion tests. Live tests remain lead-only and sequential; offline checks and package construction
+never substitute for a recorded live outcome. No protection, hold, queue or clock is changed to manufacture
+eligible work. See [the actual eligibility record](#remaining-live-sequence-and-actual-eligibility).
+
+## Startup readiness repair and local package, 2026-11-04
+
+The live startup attempt in private `results/live-actions-2026-11-04T221450Z/` stopped before any account
+action: the top-level request returned 200 and the feed rendered, but `loadURL` exceeded its deadline and
+WebContents evaluation subsequently timed out. The isolated, loopback-only held-child fixture reproduced
+the mechanism: the main DOM was ready and main-frame evaluation worked while the old full-load APIs
+remained pending. This demonstrates the repaired API behavior; it does not identify every resource that
+was slow in the live run. Before/after traces, source hashes and review are in
+`results/tab-document-readiness/{before.json,after.json,source-evidence.json,review.md}`.
+
+The integrated fix at `0aa28f2`, documented at `aa1b659`, waits for a new main-document commit and DOM
+readiness, then debugger setup. A superseded navigation must observe a ready replacement within the same
+deadline; a load failure or error document cannot supply readiness. Evaluation uses the main-frame API
+with the existing deadline and `userGesture: false`, refusing detached frames and stale frame/epoch results.
+Recovery uses the same readiness boundary and remains unhealthy on failure. Input dispatch, current-profile
+checks, admission and mutation behavior are unchanged. Independent review found no blocker. The actual
+Electron recheck completed navigation, evaluation and recovery before releasing the held child; the old
+WebContents evaluation control still timed out. Focused adapter checks passed 44 tests across five suites.
+
+The renderer fix at `c062885` reports a failed Instagram load separately from explicit offline status,
+without changing the cover or retry guard. The diagnostics at `2480aab` log each original action pause's
+requested duration, monotonic elapsed duration and completed/aborted/error outcome, plus the existing
+armed cadence deadline. The cached admission path logs once after its dispatch callback returns;
+`dispatchNotified` describes that callback, not durable journal settlement or a successful account action.
+No delay draw, pause count, signal, admission rule or click sequence was changed by the instrumentation.
+
+The final complete gate at **`ad6726b29359e7b50560b8effe47be63cc193d5e`** passed **443 suites / 4,558 tests**,
+with one suite/five tests skipped and **0 boundary errors / 55 warnings**. Generated targets/tokens, typecheck,
+lint, page freshness and the development build passed. The earlier integration attempt is retained: two
+tooling failures exposed the fixed navigation-error allowance's placement, corrected at `ad6726b` before
+the final gate. Exact receipt and log:
+`results/tab-document-readiness/integration-gate-final-process.json` and `integration-gate-final.log`.
+
+A separate clean worktree at that exact commit ran `npm run build`, then
+`electron-builder --mac dir --arm64 --publish never` with output `release/local-overhaul/`. The first
+runtime download stopped during the connectivity interruption; the normal retry succeeded. No old release
+artifact or root build was overwritten. The resulting **`release/local-overhaul/mac-arm64/Epo.app`** is
+Epo **3.1.1**, Electron **44.1.1**, with an arm64 executable and the correct `dist/main/main.js` entry point.
+All **13** packaged production files are byte-identical to both the clean worktree build and the root's
+production build. The archive contains no development sourcemaps/manifests or unexpected dist files.
+
+`codesign --verify --deep --strict` passed. The existing builder configuration selected an Apple Development
+certificate after the ad-hoc hook; notarization was skipped. This is a verified local package, not a
+notarized-distribution claim. Its `app.asar` SHA-256 is
+`588d8d70f183f99c7157d9e623849e297aa14c58579df89f774f27feb1c65ab3`.
+Private `results/local-arm64-package-ad6726b/package-evidence.json` records the full source commit/tree,
+source-input identities, main/preload/renderer and archive hashes, architecture, signature result and
+verified full-gate log hash. The same directory preserves both packaging attempts and the build/signature
+logs. Package construction itself did not launch or install the app or access the account profile.
+
+The lead subsequently installed the verified bundle at **`/Applications/Epo.app`** using a staged copy.
+The installed archive matches the SHA-256 above and strict signature verification passed; both a verified
+backup and the previous installed bundle remain preserved outside Applications. Private receipt:
+`results/installed-app-ad6726b/installation.json`. That receipt records the installation itself, before
+runtime validation. Two preliminary installed-app launches completed account confirmation and catch-up
+without Start or mutation, each followed by normal Command-Q before settings restoration. Runtime evidence is retained in
+`results/installed-app-ad6726b/installed-runtime-log.jsonl`.
+
+After clean quit, the lead restored only the temporary `acceptRequests` change through the atomic
+settings-write protocol. The resulting document equals the exact latest owner snapshot except its
+monotone revision, now **56**; protections and the owner's intervening edits are preserved. The restoration
+made zero database writes. Exact receipt: `results/installed-app-ad6726b/settings-restoration.json`.
+
+The third, final normal installed launch passed at **22:56 UTC**: online, account confirmed, catch-up complete,
+no warning/error and no engine Start or action admission. `acceptRequests` is restored to `true`, the
+owner's settings are preserved at revision 56, and the app was left **open with desired state stopped**.
+The initial native accessibility observation showed the installed renderer, Start and the persisted
+one-follow result. Native child-tree/screenshot access then became unavailable, so this is a bounded
+startup check, not a complete installed-app UI smoke or a boot movie. Final receipt and runtime evidence:
+`results/installed-app-ad6726b/smoke.json` and `final-installed-runtime-log.jsonl`.
+
+## Normal planned follow sample, 2026-11-04
+
+After the readiness repair and full gate, the lead ran production source `ad6726b` with the real clock,
+normal plan and an additive observer. The owner had explicitly authorized cautious account actions.
+The production catch-up completed before normal Start; no Boost, Prune or manual direct-follow path was
+used to manufacture work. The private run is `results/live-actions-fixed-2026-11-04T223500Z/`.
+
+One naturally selected public-profile follow completed. Independent review of the saved event stream and
+closed store established:
+
+- Exactly one new growth follow intent settled `ok`, with one matching `action_ledger` follow/`ok` row.
+  The existing queued record became `pending_followback`; no new unsettled intent remains.
+- A separate historical uncertain unfollow intent settled `cancelled` with `ledger: none` and zero
+  retry attempts. This is not an unfollow success or a new account action. Prune ledger and remainder
+  rows did not change.
+- Look-before-act dwell requested **4,263 ms** and completed after **4,287.496 ms**. One admission
+  notification was recorded at `1793832695559`; its one cadence deadline was `1793833096027`,
+  **400,468 ms** later. This proves that deadline was armed, not a repeated dispatch-to-dispatch gap.
+- The sole observed relationship mutation was a follow POST, sent at `1793832696946`, returning
+  HTTP 200 at `1793832697860` and completing. The intent and ledger settled at `1793832698127`.
+  The subsequent profile/state evidence supported the successful outcome.
+- All **460** requests with a recorded start had a 200 response and `loadingFinished`; no
+  `loadingFailed` was recorded. There were 461 response events, including one earlier non-API script
+  response whose request start was not recorded. This passive page-CDP observation is not a complete native
+  request inventory or response-body capture.
+- An ordinary quit ended the engine loop idle; the process exited **0** after **904.975 s**, and the
+  closed runtime desired state was `stopped`. The native accessibility tree was unavailable at the end,
+  so this is **not** proof of a UI Stop-button interaction.
+
+The observer installed once and saved 5,707 renderer events and 982 dashboard frames, with separate
+native-view frames and lead whole-window observations. Sampling can miss brief UI layers; no full
+unfollow-dialog or frame-perfect timing claim follows from this capture. No private/request-cancel
+variant, unfollow, accept action or repeated cadence interval was exercised by this one-follow sample.
+It does not qualify all of L4/L5. Existing protection and natural eligibility rules remain in force.
+
+Surface diagnostics recorded 23 canonical profile reads, two notification reads and two list reads,
+without normalization, recovery, failure, wall, row or field issues in those areas. No warning/error log
+record followed Start. The separate follow-actions surface bucket remains unseen: this mutation uses
+its existing adapter parser, with the journal and ledger supplying the durable outcome proof.
+
+The independent qualification is `independent-qualification.md` and `.json` in the run directory;
+underlying evidence includes `closed-store-audit.json`, `process-result.json`, `observer-final.json`,
+`network.jsonl`, `renderer-history.jsonl` and the private run log. The account identity
+and response details remain outside the repository. Settings reconciliation uses the exact
+`owner-settings-before-sample.json` snapshot, which preserves the owner's edits made during the pause;
+the temporary sample change was `acceptRequests: true` to `false`. Comparing only to an older launch
+backup would incorrectly treat the owner's later changes as test changes.
 
 ## Recorded checks
 
@@ -606,8 +726,11 @@ corpus checks. Evidence: `results/codex-design-cleanup/s8-final-gate.log` and
 The exact request budgets, stop conditions and do-not-run list are in
 [spec section 22](../superpowers/specs/2026-11-02-plan-derived-overhaul-design.md#22-the-minimal-live-test-plan-phase-l-strictly-sequential-run-by-the-lead-only-owner-present).
 L1 qualifies on retained evidence; the production pre-Start portion of L4 is recorded above, with
-the visual and post-Start portions still unqualified. L5 observes only approved, naturally eligible
-planned unfollows. No live success is inferred from offline tests.
+its original visual and post-Start limitations preserved. The later
+[normal planned follow sample](#normal-planned-follow-sample-2026-11-04) verifies one public follow,
+its dwell, admission and durable outcome, while repeated cadence and the remaining L4/L5 criteria
+remain unqualified. L5 observes only approved, naturally eligible planned unfollows. No live success
+is inferred from offline tests.
 
 At **2026-11-04 22:03 UTC**, the owner explicitly authorized cautious account actions and the
 necessary tests to finish and rebuild. No renewed cleanup-preference question is required; Prune

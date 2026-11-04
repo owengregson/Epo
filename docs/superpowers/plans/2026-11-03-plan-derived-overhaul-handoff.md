@@ -1,13 +1,17 @@
 # Plan-derived overhaul — full handoff to the next agent swarm
 
 > **Current continuation, 2026-11-04:** the retirement merge, fix wave, UI cleanup and owner preview
-> review are complete. Capture was repaired; L1 qualifies on retained live evidence. The real
-> pre-Start production catch-up ran and the parser comparator retirement is integrated at `be01c6c`.
-> Full L4 remains partial and L5 unperformed: the startup movie was not captured, cleanup is saved
-> off, and all seven queued unfollows became protected. Read the newest entries in
-> [HANDOFF](../../HANDOFF.md) and the [current QA record](../../qa/plan-derived-overhaul-2026-11.md)
-> before using the historical sequence below. Do not repeat completed merges or manufacture live
-> work by changing protections, saved intent or the clock.
+> review are complete. L1 qualifies on retained evidence; production catch-up and S8 comparator
+> retirement are recorded. Current source `ad6726b` also fixes main-document startup readiness and
+> truthful load-failure copy, and adds action timing diagnostics. Its full gate passes **443 suites /
+> 4,558 tests**, boundaries **0 errors / 55 warnings**. One normal planned public follow is verified;
+> broader cadence and unfollow coverage remain limited. The matching arm64 Epo 3.1.1 package is
+> installed at `/Applications/Epo.app`, with the previous app preserved. Exact hashes, restored owner
+> settings and delivery/live limits belong to the
+> [current QA record](../../qa/plan-derived-overhaul-2026-11.md#startup-readiness-repair-and-local-package-2026-11-04)
+> and newest [HANDOFF](../../HANDOFF.md) entry. The owner authorized cautious account actions;
+> testing remains lead-only and sequential. Read those updates before using the historical sequence
+> below. Do not repeat completed merges or manufacture work by changing protections, holds or the clock.
 
 Written 2026-11-03 by the lead of the first swarm, at the point the owner asked the work to be handed over (after
 stream agent #10 of wave 2, PR-S2r, finished). This document is self-contained: a new lead with no memory of the
