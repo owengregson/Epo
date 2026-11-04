@@ -5,7 +5,7 @@
  * Layering: `src/kernel/**` imports nothing from the rest of `src/`.
  */
 
-import { type Caution, type Cleanup, SESSION } from '../derive';
+import { type Caution, SESSION } from '../derive';
 import { EMPIRICAL } from '../fundamentals';
 import { POLICY, PREFERENCES, SCALES } from '../policy';
 import { MS_PER_SECOND } from '../units';
@@ -35,11 +35,10 @@ export function probationHourlyCap(hourlyCap: number, caution: Caution): number 
   return Math.max(1, Math.round(hourlyCap * rungDownRatio(caution)));
 }
 
-/** Cleanup as a share of the unfollow room: the level's fraction over the largest (0 · .36 · .71); 'deep' reads as 'steady'. */
-export function cleanupShare(level: Cleanup, weave: boolean): number {
+/** The resolved cleanup fraction on the plan's room scale; defaults remain 0 · .36 · .71 and retired deep caps at steady. */
+export function cleanupShare(fraction: number, weave: boolean): number {
   if (!weave) return 0;
-  const kept = level === 'deep' ? 'steady' : level;
-  return PREFERENCES.cleanup[kept].fraction / PREFERENCES.cleanup.deep.fraction;
+  return Math.min(PREFERENCES.cleanup.steady.fraction, Math.max(0, fraction)) / PREFERENCES.cleanup.deep.fraction;
 }
 
 /** The reference gap shape at time-scale 1 for a rhythm median and a caution floor (seconds). */

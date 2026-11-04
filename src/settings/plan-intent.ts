@@ -32,7 +32,7 @@ export function toPlanIntent(e: EffectiveSettings): PlanIntent {
     volumeSigma: fromPercent(e.dailyVolumeVariancePct),
     restDayProbability: fromPercent(e.restDayChancePct),
     consistencyScale: SCALES.consistency[p.consistency],
-    cleanupShare: cleanupShare(p.cleanup, e.weaveEnabled),
+    cleanupShare: cleanupShare(e.maxUnfollowFractionPerSession, e.weaveEnabled),
     cleanupPerDayCap: e.cleanupPerDayOverride,
     patienceWaitMs: (e.censusEveryDaysOverride ?? e.maxWaitForFollowbackDays) * MS_PER_DAY,
     checkSpacingOverrideMs: orNull(e.checkSpacingHoursOverride, MS_PER_HOUR),
