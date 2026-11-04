@@ -37,6 +37,10 @@ export interface MutationClassification {
   detail: string;
   /** The sentinel status of the refusal signature that matched, when one did. */
   wall?: SentinelStatus;
+  /** An exchange-level error can never be overridden by an optimistic button state. */
+  exchangeError?: true;
+  /** A non-final answer is evidence of dispatch, but cannot settle it. */
+  partial?: true;
 }
 
 /**
@@ -80,6 +84,6 @@ export function classifyMutationWith(
   if (httpStatus === 401 || httpStatus === 403) return { kind: 'auth', detail };
   // A GraphQL errors[] answer is Instagram's evidence, never a success and never "unverified":
   // the screen and the block probe pick its class (ADR 0803 amendment, spec §10.5).
-  if (verdict.verdict === 'error') return { kind: 'drift-suspect', detail };
+  if (verdict.verdict === 'error') return { kind: 'drift-suspect', detail, exchangeError: true };
   return { kind: 'refused', detail };
 }

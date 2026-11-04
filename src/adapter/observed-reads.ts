@@ -57,6 +57,7 @@ interface Armed { readonly arm: Arm; readonly kind: EndpointKind; readonly role:
 
 export class ObservedReads {
   private readonly memo = new WeakMap<TabResponse, Promise<ObservedRead>>();
+  private readonly bodies = new WeakMap<TabResponse, Promise<Decoded>>();
   private readonly armed = new Set<Armed>();
 
   constructor(
@@ -80,11 +81,12 @@ export class ObservedReads {
 
   /** Keep an unrouted response of an armed family as a deadline candidate (a reference; its body is never read here). */
   offer(resp: TabResponse): void {
-    if (this.armed.size === 0 || this.reader.route(resp) !== null) return;
+    if (this.armed.size === 0 || this.reader.route(resp) !== null
+      || gateObserved(resp.status, resp.mimeType, this.reader.env.doc.read.transport.parseableMime).kind !== 'data') return;
     const op = opNameOf(resp, this.reader.env.doc.read.transport);
     const kind = op === null ? null : opFamilyOf(op, this.reader.env.doc.read.recovery);
     for (const a of this.armed) {
-      if (a.kind === kind && a.refs.length < SURFACE_BOUNDS.fallbackCandidates) a.refs.push(resp);
+      if (a.kind === kind && !a.refs.includes(resp) && a.refs.length < SURFACE_BOUNDS.fallbackCandidates) a.refs.push(resp);
     }
   }
 
@@ -101,7 +103,7 @@ export class ObservedReads {
           const defIndex = this.reader.env.doc.endpoints.findIndex((d) => d.kind === entry.kind && d.match.friendlyName !== undefined);
           let decoded: Decoded;
           try {
-            decoded = decodeBody(await resp.getBody(), transport);
+            decoded = await this.decoded(resp);
           } catch (e) {
             logger.info('adapter.observed-reads: a deadline candidate body is gone', { op, error: String(e) });
             continue;
@@ -127,6 +129,16 @@ export class ObservedReads {
     };
   }
 
+  /** A candidate may later become routed, or answer multiple anchors: its transport is still read once. */
+  private decoded(resp: TabResponse): Promise<Decoded> {
+    let decoded = this.bodies.get(resp);
+    if (decoded === undefined) {
+      decoded = Promise.resolve().then(() => resp.getBody()).then((body) => decodeBody(body, this.reader.env.doc.read.transport));
+      this.bodies.set(resp, decoded);
+    }
+    return decoded;
+  }
+
   private now(): number {
     return (this.opts.now ?? Date.now)();
   }
@@ -141,7 +153,7 @@ export class ObservedReads {
     if (gateObserved(status, mime, env.doc.read.transport.parseableMime).kind !== 'data') {
       return { route, decoded: null, read: this.reader.read(route.kind, { text: '', status, mime }, ctx) };
     }
-    const decoded = decodeBody(await resp.getBody(), env.doc.read.transport);
+    const decoded = await this.decoded(resp);
     return { route, decoded, read: this.reader.read(route.kind, { decoded, status, mime }, ctx) };
   }
 }

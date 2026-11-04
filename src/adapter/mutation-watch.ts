@@ -1,12 +1,8 @@
 /**
  * MutationWatch — the network-side arbiter of one follow/unfollow click.
  *
- * Now a thin specialisation of the generic {@link ResponseWatch}: arm before
- * the click, recognise the mutation request through the active surface, read
- * the body once it lands, classify the server's verdict. The mechanics
- * (subscribe / first-match-wins / timeout / abort) live in `ResponseWatch` so
- * the drawer and requests panel can arm their own expected responses instead of
- * clicking and hoping.
+ * Arm before the click, classify the active surface's mutation response, and retain an incomplete
+ * answer only as deadline evidence while the watch waits for a final response.
  *
  * Version-agnostic by construction: request matching, verdict extraction and
  * the refusal signatures all come from `SURFACE`; only the numbers (HTTP status
@@ -25,7 +21,7 @@ import {
 import { ResponseWatch } from '@/adapter/response-watch';
 import type { MaybeObservable } from '@/adapter/tab-ports';
 import { driftConfirmThreshold } from '@/kernel/derive';
-import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
+import { HTTP_STATUS, SURFACE_BOUNDS } from '@/kernel/surface-policy';
 import { gateObserved } from '@/surface/read/gate';
 import { decodeBody } from '@/surface/transport/decode';
 import { graphqlEnvelope } from '@/surface/transport/graphql';
@@ -93,6 +89,7 @@ export class MutationWatch {
   readonly available: boolean;
   private readonly watch: ResponseWatch<MutationObservation>;
   private readonly unmatched: UnmatchedPost[] = [];
+  private incomplete: MutationObservation | null = null;
   /** Unrecognised relationship-family mutation responses (references, read only at the deadline). */
   private readonly candidates: TabResponse[] = [];
   private readonly kind: MutationKind;
@@ -105,7 +102,12 @@ export class MutationWatch {
       {
         op,
         matches: (response) => MutationWatch.matchOf(response)?.kind === kind,
-        read: async (response) => MutationWatch.classify(kind, op, response),
+        read: async (response) => {
+          const read = await MutationWatch.classify(kind, op, response);
+          if (!read.classification.partial) return read;
+          this.incomplete = read;
+          return null;
+        },
         // A body that cannot be read is not a reason to drop the observation:
         // the STATUS alone still classifies, and never as a fabricated verdict.
         onError: (response, error) => {
@@ -130,7 +132,7 @@ export class MutationWatch {
 
   /** The classified observation if one has arrived, without waiting (the confirm-layer loop, ADR 0308). */
   peek(): MutationObservation | null {
-    return this.watch.peek();
+    return this.watch.peek() ?? this.incomplete;
   }
 
   /** Re-base the arrival latency on the press that may fire the mutation (a later confirm layer). */
@@ -144,7 +146,7 @@ export class MutationWatch {
    * success. Throws `ActionAbortedError` when the driver's abort signal fires mid-wait.
    */
   async next(timeoutMs: number, signal?: AbortSignal): Promise<MutationObservation | null> {
-    return (await this.watch.next(timeoutMs, signal)) ?? (await this.candidateWall());
+    return (await this.watch.next(timeoutMs, signal)) ?? (await this.candidateWall()) ?? this.incomplete;
   }
 
   /** The newest candidate whose status or GraphQL body names a wall, as a `via: 'candidate'` observation. */
@@ -163,6 +165,7 @@ export class MutationWatch {
   private async wallOf(response: TabResponse): Promise<MutationClassification | null> {
     const gate = gateObserved(response.status, response.mimeType, SURFACE.transport.parseableMime);
     if (gate.kind === 'wall') return { kind: gate.family, detail: `HTTP ${response.status}` };
+    if (gate.kind !== 'data') return null;
     let text: string;
     try {
       text = await response.getBody();
@@ -171,6 +174,8 @@ export class MutationWatch {
       return null;
     }
     const decoded = decodeBody(text, SURFACE.transport);
+    const bodyGate = gateObserved(response.status, response.mimeType, SURFACE.transport.parseableMime, decoded.ok ? undefined : decoded.head);
+    if (bodyGate.kind === 'wall') return { kind: bodyGate.family, detail: `HTTP ${response.status} (${bodyGate.via})` };
     const envelope = decoded.ok ? graphqlEnvelope(decoded.json, () => false, SURFACE.graphql, SURFACE.mutationRefusalSignatures) : null;
     if (envelope?.kind !== 'wall') return null;
     return { kind: envelope.status === 'action-blocked' ? 'rate-limited' : 'auth', wall: envelope.status, detail: envelope.text };
@@ -235,15 +240,32 @@ export class MutationWatch {
     op: string,
     response: TabResponse,
   ): Promise<MutationObservation> {
+    const gate = gateObserved(response.status, response.mimeType, SURFACE.transport.parseableMime);
+    if (gate.kind === 'wall' || gate.kind === 'http-absent') {
+      const wall = gate.kind === 'wall' ? { kind: gate.family, detail: `HTTP ${response.status} (${gate.via})` } : undefined;
+      return MutationWatch.observation(kind, response, SHAPE_MISMATCH, op, wall);
+    }
+    // A parseable 400 may explain a refusal; other non-data bodies carry no mutation verdict.
+    if (gate.kind === 'not-data' && (response.status !== HTTP_STATUS.badRequest || !SURFACE.transport.parseableMime.test(response.mimeType))) {
+      return MutationWatch.observation(kind, response, SHAPE_MISMATCH, op);
+    }
     // One decoder for every body: a guarded or streamed mutation body classifies too.
     const decoded = decodeBody(await response.getBody(), SURFACE.transport);
     if (!decoded.ok) {
-      // An HTML wall page on a 429 is the expected shape here; the status classifies it.
+      const bodyGate = gateObserved(response.status, response.mimeType, SURFACE.transport.parseableMime, decoded.head);
+      if (bodyGate.kind === 'wall') return MutationWatch.observation(kind, response, SHAPE_MISMATCH, op,
+        { kind: bodyGate.family, detail: `HTTP ${response.status} (${bodyGate.via})` });
       logger.debug('mutation-watch: undecodable mutation body', { op, status: response.status, reason: decoded.reason,
         head: decoded.head });
     }
     const verdict = SURFACE.extractMutationVerdict(decoded.ok ? decoded.json : undefined, kind);
-    return MutationWatch.observation(kind, response, verdict, op);
+    const refusal = gate.kind === 'not-data' && verdict !== SHAPE_MISMATCH && verdict.verdict === 'ok'
+      ? { kind: 'refused' as const, detail: `HTTP ${response.status} refused the mutation` } : undefined;
+    const classification = classifyMutationResponse(response.status, verdict);
+    const incomplete: MutationClassification | undefined = decoded.ok && decoded.final === false && !classification.exchangeError
+      && (classification.kind === 'ok' || classification.kind === 'drift-suspect')
+      ? { kind: 'drift-suspect', detail: 'mutation response stream is incomplete', partial: true } : undefined;
+    return MutationWatch.observation(kind, response, verdict, op, refusal ?? incomplete);
   }
 
   private static observation(
@@ -251,8 +273,9 @@ export class MutationWatch {
     response: TabResponse,
     verdict: MutationVerdict | ShapeMismatch,
     op: string,
+    classificationOverride?: MutationClassification,
   ): MutationObservation {
-    const classification = classifyMutationResponse(response.status, verdict);
+    const classification = classificationOverride ?? classifyMutationResponse(response.status, verdict);
     MUTATION_BLINDNESS.observed();
     const pk = MutationWatch.matchOf(response)?.pk ?? null;
     logger.info('mutation-watch: mutation response observed', {

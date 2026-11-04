@@ -29,11 +29,10 @@ export interface WatchSpec<T> {
   /** Does this response belong to what we armed for? */
   matches(response: TabResponse): boolean;
   /**
-   * Turn a matched response into the observation. May read the body; a throw is
-   * NOT swallowed into a fabricated result — it is passed to {@link onError}
-   * so the caller decides, exactly as ADR 0303 requires.
+   * Turn a matched response into an observation, or null to keep waiting for a complete response.
+   * Body failures reach {@link onError}; they never fabricate an observation (ADR 0303).
    */
-  read(response: TabResponse): Promise<T>;
+  read(response: TabResponse): Promise<T | null>;
   /** Called when `read` throws; return the observation to use, or `null` to skip. */
   onError(response: TabResponse, error: unknown): T | null;
   /**

@@ -13,7 +13,7 @@ import type { FollowEvent, Observation } from '@/adapter/surface-types';
 import type { ReadBudget } from '@/governors/read-budget';
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import { CLOCK_TOLERANCE_MS } from '@/kernel/tempo-policy';
-import { awaitCaptured, type CaptureState, captureFeed } from '@/rim/feed-capture';
+import { awaitCaptured, type CaptureState, captureFeed, type FeedCapture } from '@/rim/feed-capture';
 import type {FeedFailure, FeedPassOptions, FeedReadResult, FeedSource, NotificationsActor,
 } from '@/rim/feed-source';
 import { advanceWatermark, classifyBody, eventKey, type FeedWatermark, gapOf, reached } from '@/rim/feed-watermark';
@@ -166,6 +166,7 @@ export class AdapterBackedFollowNotifications implements FeedSource {
         { signal, deadline: until, now: this.now, pollMs: RIM.NOTIFICATIONS_POLL_MS, sleep: this.sleep });
       await wait(() => cap.state.feedBodies > 0 || cap.state.feedDrift || cap.state.feedWalled);
       if (signal.aborted) return fail('aborted');
+      if (cap.state.feedBodies === 0) await cap.recoverFeed();
       if (cap.state.feedBodies === 0) {
         logger.warn('rim.follow-notifications: no readable feed body after the open', { ...cap.state });
         return fail(noBody(cap.state));
@@ -181,7 +182,7 @@ export class AdapterBackedFollowNotifications implements FeedSource {
         if (t.merged.size === before) break;
       }
       if (signal.aborted) return fail('aborted');
-      const accepted = await this.openPanel(o, cap.state, t.panel, wait, signal);
+      const accepted = await this.openPanel(o, cap, t.panel, wait, signal);
       const gap = gapOf(w, t.oldest);
       const requesters = t.panelRead
         ? { count: t.panel.size, source: 'panel' as const, complete: t.panelComplete }
@@ -218,16 +219,20 @@ export class AdapterBackedFollowNotifications implements FeedSource {
   }
 
   /** The requests panel, for an accept pass or a verification read; returns the accepts. */
-  private async openPanel(o: FeedPassOptions, s: CaptureState, rows: Map<string, string>,
+  private async openPanel(o: FeedPassOptions, cap: FeedCapture, rows: Map<string, string>,
     wait: (done: () => boolean, until?: number) => Promise<void>, signal: AbortSignal): Promise<number> {
     const p = o.panel;
+    const s = cap.state;
     if (p === null || signal.aborted || (p.mode === 'accept' && p.allowed <= 0)) return 0;
     await this.stepPause(signal);
+    cap.armRequests();
     if (!await this.actor.clickFollowRequestsEntry()) {
       logger.debug('rim.follow-notifications: no Follow requests entry (nothing pending)');
       return 0;
     }
     await wait(() => s.requestBodies > 0 || s.requestsFailure === 'requests-walled', this.now() + this.responseWaitMs);
+    if (signal.aborted) return 0;
+    if (s.requestBodies === 0) await cap.recoverRequests();
     if (p.mode === 'verify' || s.requestBodies === 0) return 0;
     let accepted = 0;
     try {
