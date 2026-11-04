@@ -128,7 +128,7 @@ export function GrowthChart({
         : line.getPointAtLength(st.len * e);
     dot.setAttribute('cx', tip.x.toFixed(1));
     dot.setAttribute('cy', tip.y.toFixed(1));
-    clip.setAttribute('width', (e >= 1 ? X1 + 2 : tip.x + 1).toFixed(1));
+    clip.setAttribute('width', (e >= 1 ? endPtRef.current[0] + 2 : tip.x + 1).toFixed(1));
   };
 
   // Arm the ~200ms opacity fade for the hold's end. Listing ONLY opacity keeps

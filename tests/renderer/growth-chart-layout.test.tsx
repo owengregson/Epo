@@ -47,3 +47,42 @@ test('resizing changes plot coordinates while retaining CSS-pixel axes and disco
     globalThis.ResizeObserver = original;
   }
 });
+
+test('an in-flight reveal finishes across the resized plot instead of restoring its old clip', () => {
+  const original = globalThis.ResizeObserver;
+  let resize = (): void => {};
+  globalThis.ResizeObserver = class {
+    constructor(callback: ResizeObserverCallback) { resize = () => callback([], this); }
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+  const frames = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  const request = jest.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    frames.set(++id, callback);
+    return id;
+  });
+  const cancel = jest.spyOn(window, 'cancelAnimationFrame').mockImplementation((key) => { frames.delete(key); });
+  try {
+    const points = flat.map((p, i) => ({ ...p, cumulativeNet: i * 10 }));
+    const { container, unmount } = render(<GrowthChart points={points} baselineAt={points[0].dayStartMs} />);
+    const tick = (now: number): void => act(() => {
+      const pending = [...frames.values()];
+      frames.clear();
+      pending.forEach((callback) => callback(now));
+    });
+    tick(0);
+    tick(34);
+    Object.defineProperty(container.firstElementChild, 'clientWidth', { value: 850, configurable: true });
+    act(resize);
+    for (let now = 68; now < 2200; now += 34) tick(now);
+    expect(container.querySelector('clipPath rect')?.getAttribute('width')).toBe('804.0');
+    expect(container.querySelector('.growth-dot')?.getAttribute('cx')).toBe('802.0');
+    unmount();
+  } finally {
+    request.mockRestore();
+    cancel.mockRestore();
+    globalThis.ResizeObserver = original;
+  }
+});
