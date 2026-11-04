@@ -189,7 +189,7 @@ describe('probation', () => {
       sessions: { min: 5, max: 5 }, quietHours: { startMinute: 35, endMinute: 480 },
       shape: { ...base.shape, bumps: dayShapeBumps('nightowl'), overnightFloor: overnightFloor('nightowl') } });
     const input = drawInput(startsAt, { intent, installEntropy: 12,
-      window: { key: '2026-11-09', startsAt, endsAt: startsAt + MS_PER_DAY }, firstOpenAt: startsAt });
+      window: { key: '2026-11-09', startsAt, endsAt: startsAt + MS_PER_DAY, quietMinute: 0 }, firstOpenAt: startsAt });
     expect(drawBase(input).sessions[0].budget).toBe(1);
     const plan = drawBase(input, { upgradeProbation: true });
     const first = plan.sessions[0];
