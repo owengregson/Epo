@@ -8,6 +8,7 @@ import type { Foundation } from '@/main/foundation-wiring';
 import { PROJECTIONS } from '@/main/modules/projections';
 import * as clickReview from '@/main/services/click-review';
 import type { BuiltGraph } from '@/main/services/graph-types';
+import * as liveWiring from '@/main/services/live-wiring';
 import type { PlanWiring } from '@/main/services/plan-wiring';
 import * as reopen from '@/main/services/reopen-wiring';
 import * as health from '@/main/services/surface-health-sink';
@@ -24,6 +25,10 @@ jest.mock('@/engine/protection-port', () => {
 jest.mock('@/main/services/click-review', () => {
   const actual = jest.requireActual('@/main/services/click-review');
   return { ...actual, createClickReview: jest.fn(actual.createClickReview) };
+});
+jest.mock('@/main/services/live-wiring', () => {
+  const actual = jest.requireActual('@/main/services/live-wiring');
+  return { ...actual, liveSources: jest.fn(actual.liveSources) };
 });
 jest.mock('@/main/services/reopen-wiring', () => {
   const actual = jest.requireActual('@/main/services/reopen-wiring');
@@ -42,6 +47,7 @@ jest.mock('@/main/services/surface-wiring', () => {
   return { ...actual, wireSurface: jest.fn(actual.wireSurface) };
 });
 const reviewSpy = jest.mocked(clickReview.createClickReview);
+const liveSourcesSpy = jest.mocked(liveWiring.liveSources);
 const protectionSpy = jest.mocked(protection.createProtectionPort);
 const reopenSpy = jest.mocked(reopen.wireFollowback);
 const sinkSpy = jest.mocked(health.createSurfaceHealthSink);
@@ -101,7 +107,23 @@ test('rate, protection, surface accounting and reopen use the same plan-day cloc
   expect(sinkSpy.mock.calls[0][0].day).toBe(day);
   expect(reportSpy.mock.calls[0][0].day).toBe(day);
   expect(reopenSpy.mock.calls[0][1].plan.dayClock).toBe(day);
+  expect(liveSourcesSpy.mock.calls[0][2].planDay).toBe(day);
+  const churn = graph.churn as unknown as { reconciler: { d: { dayClock: unknown } } };
+  expect(churn.reconciler.d.dayClock).toBe(day);
   expect(day.window(graph.clock.now())).toEqual(graph.plan.service.view(graph.clock.now()).window);
+});
+
+test('every discovery freshness consumer shares the graph day and the seed service delegates to it', () => {
+  const chain = graph.chain as unknown as { frontier: unknown; ownFollowers: unknown };
+  for (const consumer of [graph.scanner, graph.acquisition, graph.chain, chain.frontier, chain.ownFollowers]) {
+    expect((consumer as { planDay: unknown }).planDay).toBe(graph.plan.dayClock);
+  }
+  const seed = foundation.seed as unknown as { planDay: Pick<PlanWiring['dayClock'], 'window'> };
+  const window = jest.spyOn(graph.plan.dayClock, 'window');
+  const now = graph.clock.now();
+  expect(seed.planDay.window(now)).toEqual(graph.plan.service.view(now).window);
+  expect(window).toHaveBeenCalledWith(now);
+  window.mockRestore();
 });
 
 test('the profile visitor, composed list walker and notifications drawer share the plan activity clock', () => {
@@ -111,6 +133,8 @@ test('the profile visitor, composed list walker and notifications drawer share t
   expect((wiring.walker as unknown as { activity: unknown }).activity).toBe(plan.activity);
   const sweep = reopenSpy.mock.results[0].value.sweep as unknown as { p: { feed: { activity: unknown } } };
   expect(sweep.p.feed.activity).toBe(plan.activity);
+  const acquisition = graph.acquisition as unknown as { pageReader: { activity: unknown } };
+  expect(acquisition.pageReader.activity).toBe(plan.activity);
 });
 
 test('click review calls real plan admission and refuses before a profile read', async () => {
