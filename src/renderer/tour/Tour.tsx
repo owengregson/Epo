@@ -51,11 +51,14 @@ const sameBox = (a: Box | null, b: Box | null): boolean => {
 
 export function Tour({ open, onClose, setStage, steps = TOUR_STEPS }: TourProps): JSX.Element | null {
   const [idx, setIdx] = useState(0);
-  const [box, setBox] = useState<Box | null>(null);
+  const [measured, setMeasured] = useState<{ step: TourStep | undefined; box: Box | null } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
 
   const step = steps[idx];
+  // A previous step's rect cannot make a newly mounted, still hidden card ready.
+  const box = measured?.step === step ? measured?.box ?? null : null;
+  const ready = step !== undefined && (step.target === undefined || box !== null);
   const last = idx === steps.length - 1;
   const advance = (): void => {
     if (last) onClose();
@@ -80,7 +83,7 @@ export function Tour({ open, onClose, setStage, steps = TOUR_STEPS }: TourProps)
     if (!open) return;
     const target = step?.target;
     if (target === undefined) {
-      setBox(null);
+      setMeasured(null);
       return;
     }
     let raf = 0;
@@ -99,7 +102,7 @@ export function Tour({ open, onClose, setStage, steps = TOUR_STEPS }: TourProps)
         r !== undefined && r.width > 0 && r.height > 0
           ? { x: r.x, y: r.y, w: r.width, h: r.height }
           : null;
-      setBox((prev) => (sameBox(prev, next) ? prev : next));
+      setMeasured((prev) => (prev?.step === step && sameBox(prev.box, next) ? prev : { step, box: next }));
       raf = requestAnimationFrame(track);
     };
     raf = requestAnimationFrame(track);
@@ -147,10 +150,11 @@ export function Tour({ open, onClose, setStage, steps = TOUR_STEPS }: TourProps)
     return () => document.removeEventListener('keydown', onKey);
   }, [open, last, onClose, steps.length]);
 
-  // Focus the primary button per step so Enter always means "keep going".
-  useEffect(() => {
-    if (open) nextRef.current?.focus();
-  }, [open, idx]);
+  // Chromium refuses focus while the card is hidden for measurement. Hand it
+  // over once the current step is visible, never on each tracked rect change.
+  useLayoutEffect(() => {
+    if (open && ready) nextRef.current?.focus({ preventScroll: true });
+  }, [open, idx, ready]);
 
   if (!open || step === undefined) return null;
 
