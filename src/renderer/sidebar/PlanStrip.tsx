@@ -121,6 +121,7 @@ export function PlanStrip({ plan, band }: PlanStripProps): JSX.Element {
         <span class="is-done">Done</span>
         <span class="is-now">Current</span>
         <span class="is-later">Planned</span>
+        {band === null ? null : <span class="is-boost">Boost</span>}
         <span class="is-marker">Now</span>
       </div>
     </div>
