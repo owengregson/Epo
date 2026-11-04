@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { chainListSignal } from '@/renderer/app/live-signals';
-import { chainListKey } from '@/renderer/hooks/useChainList';
+import { chainListKey } from '@/renderer/hooks/chain-list-key';
 import type { ChainTargetDetail, EpoStatus } from '@/types';
 
 /**

@@ -56,7 +56,7 @@ export interface SettingsView {
   /** What other views may read. */
   readonly effective: EffectiveSummary;
   readonly notices: readonly SettingsNotice[];
-  readonly app: { readonly tourCompletedAt: number | null };
+  readonly app: { readonly tourCompletedAt: number | null; readonly tourVersionSeen: string | null };
 }
 
 export interface EasyMatch {

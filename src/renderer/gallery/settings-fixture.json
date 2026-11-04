@@ -1779,6 +1779,7 @@
  },
  "notices": [],
  "app": {
-  "tourCompletedAt": 1793610000000
+  "tourCompletedAt": 1793610000000,
+  "tourVersionSeen": "plan-derived"
  }
 }

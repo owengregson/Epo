@@ -22,6 +22,8 @@ export interface ParsedPlanState {
   readonly plan: DayPlan | null;
   readonly boost: BoostWindow | null;
   readonly upgradeProbation: boolean;
+  /** Independent valid charge retained when another plan field requires repair. */
+  readonly forfeiture?: { readonly key: string; readonly startsAt: number; readonly amount: number };
   /** Why the raw value failed validation; null when absent or valid. */
   readonly problem: string | null;
 }
@@ -51,6 +53,8 @@ export function isDayPlan(p: unknown): p is DayPlan {
   if (!nums(p.window, ['startsAt', 'endsAt', 'quietMinute']) || (p.window.startsAt as number) >= (p.window.endsAt as number)) return false;
   if (!nums(p, ['revision', 'drawnAt', 'firstOpenAt', 'seed']) || typeof p.intentDigest !== 'string' || typeof p.cause !== 'string') return false;
   if (!nums(p.volume, ['lognormal', 'band', 'drawn', 'planned'])) return false;
+  const forfeited = (p.volume as Obj).forfeited;
+  if (forfeited !== undefined && (!num(forfeited) || forfeited < 0)) return false;
   if (!nums(p.ceilings, ['automaticMax', 'day', 'hour', 'unfollowHour', 'probationHour', 'followDay', 'acceptsPerPass'])) return false;
   if (!nums(p.kinds, [...KINDS, 'lifecycleUnfollow', 'slack']) || !nums(p.reads, [...READS, 'census', 'following'])) return false;
   if (!nums((p.reads as Obj).catchUp, ['profiles', 'notifications', 'pages']) || !nums(p.dayTempo, ['z']) || !isObj(p.demand)) return false;
@@ -78,6 +82,11 @@ export function parsePlanState(raw: string | null): ParsedPlanState {
   const phase = num(o.phaseOffsetHours) ? o.phaseOffsetHours : null;
   const plan = o.plan === null ? null : isDayPlan(o.plan) ? o.plan : null;
   const boost = o.boost === null || o.boost === undefined ? null : isBoostWindow(o.boost) ? o.boost : null;
+  const p = isObj(o.plan) ? o.plan : null;
+  const w = isObj(p?.window) ? p.window : null;
+  const amount = isObj(p?.volume) ? p.volume.forfeited : undefined;
+  const forfeiture = w !== null && typeof w.key === 'string' && num(w.startsAt) && num(amount) && amount >= 0
+    ? { key: w.key, startsAt: w.startsAt, amount } : undefined;
   const upgradeProbation = o.upgradeProbation === true;
   const problems = [
     o.v !== 1 ? 'version' : null,
@@ -89,7 +98,7 @@ export function parsePlanState(raw: string | null): ParsedPlanState {
   const valid = problems.length === 0 && phase !== null;
   return {
     state: valid ? { v: 1, phaseOffsetHours: phase, plan, boost, upgradeProbation } : null,
-    phaseOffsetHours: phase, plan, boost, upgradeProbation,
+    phaseOffsetHours: phase, plan, boost, upgradeProbation, forfeiture,
     problem: problems.length > 0 ? `invalid ${problems.join(', ')}` : null,
   };
 }

@@ -1,13 +1,9 @@
-# The README's live panels. Every night this renders the two chart pairs the
-# README embeds from the `readme-live` branch:
-#
-#   charts/growth.svg + growth-dark.svg — 30 days simulated by the app's own
-#     growth model (src/renderer/charts/growth-model.ts) on the default settings
-#   charts/pace.svg + pace-dark.svg — one real day planned by the shipping
-#     SessionPlanner (src/timing) on the default settings
+# The README's pace chart. Every night this renders the light/dark pair
+# (charts/pace.svg + pace-dark.svg) from one real day drawn by the kernel's
+# day planner on the default settings.
 #
 # The renderer (src/tools/readme/render-live-charts.ts) imports the real app code —
-# the honesty of the panels is the point; the data is never faked. The branch
+# the honesty of the chart is the point; the data is never faked. The branch
 # stays a single orphan commit (force-pushed) so nightly art never bloats
 # history. raw.githubusercontent.com caches ~5 min, plenty for a nightly
 # cadence. Electron's binary and native builds are skipped: the renderer is

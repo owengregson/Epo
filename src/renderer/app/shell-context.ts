@@ -4,6 +4,7 @@ import { useContext } from 'preact/hooks';
 import { liveRevealedSignal, resetLiveSignals } from '@/renderer/app/live-signals';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import type { ToastKind } from '@/renderer/hooks/useToasts';
+import type { Person } from '@/shared/feed';
 import type { SettingsFacts } from '@/shared/settings-facts';
 import type { SettingsView } from '@/shared/settings-view';
 import type { StageMode } from '@/shared/stage-mode';
@@ -47,6 +48,8 @@ export interface SettingsTarget {
 }
 /** The latest Settings destination (a fresh object per request), for the Settings stage to act on. */
 export const settingsTargetSignal = signal<SettingsTarget | null>(null);
+/** The person opened from a feed row, identified by pk even after a rename. */
+export const peopleTargetSignal = signal<Person | null>(null);
 
 /** Adopt a saved Settings object as the new canonical one. */
 export function adoptSettings(next: Settings): void {
@@ -67,6 +70,7 @@ export function resetShellSignals(): void {
   stageSignal.value = 'tab';
   modalSignal.value = false;
   settingsTargetSignal.value = null;
+  peopleTargetSignal.value = null;
   resetLiveSignals();
 }
 
@@ -87,6 +91,7 @@ export interface ShellServices {
 export interface ShellControls {
   /** Show a stage. */
   showStage(mode: StageMode): void;
+  openPerson(person: Person): void;
   /** Open the Settings stage, at a section and field when given. */
   openSettings(target?: SettingsTarget): void;
   /** Start Epo, or open Settings at the starting account when none is chosen yet. */
@@ -118,6 +123,7 @@ export const ShellContext = createContext<ShellServices>({ confirm: MISSING, toa
 
 export const ShellControlsContext = createContext<ShellControls>({
   showStage: MISSING,
+  openPerson: MISSING,
   openSettings: MISSING,
   start: MISSING,
   pauseResume: MISSING,

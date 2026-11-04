@@ -132,7 +132,7 @@ export function buildView(i: ViewInput): SettingsView {
       quietHours: e.quietHours, daysOff: e.daysOff, cleanup: doc.intent.cleanup, boostDefaultHours: doc.prefs.boost.hours,
     },
     notices: notices(i, stale),
-    app: { tourCompletedAt: doc.app.tourCompletedAt },
+    app: { tourCompletedAt: doc.app.tourCompletedAt, tourVersionSeen: doc.app.tourVersionSeen },
   };
 }
 

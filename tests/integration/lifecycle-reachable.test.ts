@@ -58,7 +58,10 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
     protection: { index: () => UNCONFIGURED_PROTECTION, setCapabilities: () => undefined } } as unknown as GraphBuildDeps;
   // The production plan over the store: its cadence admits every write, the loop acts inside its session.
   const plan = kitPlan(store, clock, settings);
-  intoSession(plan, clock, (v) => v.plan.kinds.unfollow >= Object.values(accounts).filter((a) => a.record).length);
+  const ready = intoSession(plan, clock, (v) => v.plan.kinds.unfollow >= Object.values(accounts).filter((a) => a.record).length);
+  const eligible = ready.plan.sessions.find((s) => s.mix.unfollow > 0);
+  if (eligible === undefined) throw new Error('the lifecycle fixture has no allocated unfollow session');
+  clock.set(eligible.startAt);
   const rate = plan.rateGovernor(toRateGovernorConfig(settings));
   const readBudget = new ReadBudget({ store, clock, limits: readLimits() });
   const profiles = { visit } as unknown as TabProfileVisitor;
@@ -98,8 +101,9 @@ test('a due lifecycle unfollow executes end to end after nine days away while a 
   // Two due unfollows: the stuck write's unknown outcome reserves one of the day's unfollows (spec §9.8).
   const r = rig({ alice: { pk: 'a', page: 'non-follower', record: true }, xavier: { pk: 'x', page: 'unreadable' },
     zara: { pk: 'z', page: 'non-follower', record: true } });
-  const stuck = r.store.beginEffectIntent({ accountPk: 'x', username: 'xavier', action: 'unfollow', channel: 'manual', at: r.clock.now() });
-  r.store.markEffectUncertain(stuck.id, r.clock.now());
+  // The existing uncertain write reserves the day, before the session allocated to the due lifecycle action.
+  const stuck = r.store.beginEffectIntent({ accountPk: 'x', username: 'xavier', action: 'unfollow', channel: 'manual', at: r.clock.now() - 1 });
+  r.store.markEffectUncertain(stuck.id, r.clock.now() - 1);
   await r.stepUntilPressed(1);
   expect(r.presses).toEqual(['alice']);
   expect(r.store.getFollowRecord('a')?.state).toBe('unfollowed');

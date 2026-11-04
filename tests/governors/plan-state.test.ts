@@ -4,6 +4,7 @@
  * install with a ledger owes upgrade probation.
  */
 
+import { PlanService } from '@/governors/plan-service';
 import {
   initialPlanState,
   isDayPlan,
@@ -16,7 +17,7 @@ import {
 import { drawDayPlan } from '@/kernel/plan/draw';
 import { phaseOffsetHours } from '@/kernel/plan/seed';
 import type { BoostWindow } from '@/kernel/plan/types';
-import { drawInput } from '../kit/plan';
+import { drawInput, memoryPlanStore, planDeps } from '../kit/plan';
 
 const plan = drawDayPlan(drawInput(new Date(2026, 10, 3, 12).getTime()));
 const boost: BoostWindow = { v: 1, startedAt: 1_000, endsAt: 1_000 + 3_600_000, durationMs: 3_600_000, endedAt: null, endReason: null };
@@ -29,6 +30,18 @@ test('a round trip is exact', () => {
   expect(isDayPlan(plan)).toBe(true);
 });
 
+test('a valid forfeiture survives serialization and a repair of another plan field', () => {
+  const forfeited = 20;
+  const charged = { ...state, phaseOffsetHours: 0, plan: { ...plan, volume: { ...plan.volume, forfeited } } };
+  expect(parsePlanState(serializePlanState(charged)).state).toEqual(charged);
+  const store = memoryPlanStore();
+  const clock = { t: plan.window.startsAt };
+  store.raw = JSON.stringify({ ...charged, plan: { ...charged.plan, kinds: null } });
+  const repaired = new PlanService(planDeps(store, clock)).ensure();
+  expect(repaired.plan.volume.forfeited).toBe(forfeited);
+  expect(repaired.plan.volume.planned + forfeited).toBeLessThanOrEqual(repaired.plan.ceilings.automaticMax);
+});
+
 test('absent is not a problem', () => {
   expect(parsePlanState(null)).toMatchObject({ state: null, problem: null });
 });
@@ -39,6 +52,7 @@ test.each([
   ['a wrong version', JSON.stringify({ ...state, v: 2 })],
   ['a plan with a non-finite budget', JSON.stringify({ ...state, plan: { ...plan, sessions: [{ ...plan.sessions[0], budget: 'x' }] } })],
   ['a plan missing its window', JSON.stringify({ ...state, plan: { ...plan, window: null } })],
+  ['a negative forfeiture', JSON.stringify({ ...state, plan: { ...plan, volume: { ...plan.volume, forfeited: -1 } } })],
 ])('%s is reported, never read as an empty plan', (_name, raw) => {
   const parsed = parsePlanState(raw);
   expect(parsed.state).toBeNull();

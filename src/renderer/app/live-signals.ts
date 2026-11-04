@@ -34,6 +34,8 @@ export const feedSignal = signal<FeedView | null>(null);
 /** What Epo does on the Instagram page right now (pushed, null-held in main). */
 export const activitySignal = signal<LiveTab | null>(null);
 export const chainListSignal = signal<ChainList | null>(null);
+/** The first stored graph read settled, either with data or a visible unavailable state. */
+export const graphPreloadedSignal = signal(false);
 export const growthSeriesSignal = signal<GrowthSeries | null>(null);
 export const queueLanesSignal = signal<QueueLanes | null>(null);
 /** The control the user just pressed, until its call settles (a posture input). */
@@ -55,6 +57,7 @@ export function resetLiveSignals(): void {
   activitySignal.value = null;
   chainListSignal.value = null;
   growthSeriesSignal.value = null;
+  graphPreloadedSignal.value = false;
   queueLanesSignal.value = null;
   pendingControlSignal.value = null;
   liveRevealedSignal.value = true;
