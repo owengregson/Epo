@@ -1,5 +1,14 @@
 # Plan-derived overhaul — full handoff to the next agent swarm
 
+> **Current continuation, 2026-11-04:** the retirement merge, fix wave, UI cleanup and owner preview
+> review are complete. Capture was repaired; L1 qualifies on retained live evidence. The real
+> pre-Start production catch-up ran and the parser comparator retirement is integrated at `be01c6c`.
+> Full L4 remains partial and L5 unperformed: the startup movie was not captured, cleanup is saved
+> off, and all seven queued unfollows became protected. Read the newest entries in
+> [HANDOFF](../../HANDOFF.md) and the [current QA record](../../qa/plan-derived-overhaul-2026-11.md)
+> before using the historical sequence below. Do not repeat completed merges or manufacture live
+> work by changing protections, saved intent or the clock.
+
 Written 2026-11-03 by the lead of the first swarm, at the point the owner asked the work to be handed over (after
 stream agent #10 of wave 2, PR-S2r, finished). This document is self-contained: a new lead with no memory of the
 earlier sessions can resume from it and run the overhaul to completion. Read it whole before acting.

@@ -1,5 +1,32 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-04 (capture fixed, production catch-up audited, S8 integrated) —** The interruption was
+> investigated through native/CDP request lifetimes and explicit bodyless-GET evidence. L1 qualifies
+> on retained live evidence; its original stopped report remains immutable. The first real production
+> reopen after roughly 32 hours completed profile, filtered notifications and exactly one followers
+> head page, with canonical clean reads and zero shadow disagreements. Its persisted frontier,
+> count conservation, settings migration and unchanged action ledgers were independently audited.
+> No Start, follow, unfollow or accept was performed. The production startup recorder missed the
+> dashboard; its repair was verified locally with network blocked, not credited as live visual proof.
+>
+> S8 is integrated separately at `be01c6c`, after the parser-specific live evidence and independent
+> review. The old extractors/comparators and endpoint mode switch are gone; parsing safeguards,
+> mutation handling and historical drift remain. The full integration gate passed **441 suites /
+> 4,537 tests**, one suite/five tests skipped, boundaries **0 errors / 55 warnings**. It also includes
+> the elapsed-session label fix from `63a3847`. The interactive browser gallery is rebuilt and served
+> at `http://127.0.0.1:4173/?gallery=1` while its local server is running.
+>
+> **Live validation remains partial:** no boot movie or post-Start production cadence was proved.
+> Cleanup correctly migrated as Off, and existing biography-word protections kept all seven queued
+> unfollows (32 records kept total). The uncertain journal entry remains unchanged. Do not undo
+> protection, fabricate due records, reset frontiers or alter the clock to satisfy the old L5 queue
+> assumptions. The owner has been asked whether cleanup should remain Off or be enabled for future
+> eligible, unprotected work; absence of a reply leaves the saved intent unchanged. Epo is stopped.
+> See the [production evidence](qa/plan-derived-overhaul-2026-11.md#production-reopen-and-persisted-catch-up-2026-11-04),
+> [S8 gate](qa/plan-derived-overhaul-2026-11.md#s8-comparator-retirement-and-integration-review), and
+> [remaining eligibility](qa/plan-derived-overhaul-2026-11.md#remaining-live-sequence-and-actual-eligibility).
+> Private final ref/profile receipt: `results/codex-design-cleanup/final-s8-ref-state.json`.
+
 > **2026-11-04 (capture repaired; L1 qualified on retained live evidence) —** The native/CDP repair
 > records complete ownership and transport evidence. The run at `61ff085` finished all L1 steps;
 > its only stop was a new GET-upload classification bug, fixed at `0fed42b`. Thirteen local controls

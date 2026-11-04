@@ -578,6 +578,29 @@ The live screen also exposed an elapsed-session label with meaningless `0 of 0` 
 `63a3847` omits progress when neither planned nor completed work exists, retaining meaningful counts.
 All 51 existing sidebar copy/zone checks, typecheck and lint passed for that correction.
 
+### S8 comparator retirement and integration review
+
+The separate retirement commit `be01c6c` integrates reviewed work `e317763`. It removes four legacy
+runtime modules, eight obsolete response methods and the endpoint mode switch, including its runtime
+schema. The authoritative parser, routing, recovery, admission and mutation handling are unchanged.
+Historical shadow-disagreement signatures, counters and fail-closed diagnostics remain readable.
+No store migration or data deletion was introduced. [ADR 0806](../adr/0806-one-parser-tiers.md#amendment--2026-11-04-s8-comparator-retirement)
+records the evidence and decision.
+
+An independent static review found no blockers. It verified all six former synthetic differential
+cases now assert authoritative Reader results directly, all 14 real corpus bodies across three
+corpora retain replay coverage, and missing/null flags remain distinct from explicit false flags.
+Focused validation passed 38 suites / 617 tests, plus 40 tooling tests in three suites. The six
+focused skips include opt-in corpus writers and private-original comparison; ordinary replay and
+structural leak checks ran. Review and focused logs: `results/s8-comparator-retirement/`.
+
+The complete integration gate on `be01c6c` passed **441 suites / 4,537 tests**, with one suite and five
+tests skipped, boundaries **0 errors / 55 warnings**. Every `package.json` check step ran in order,
+with Jest limited to two workers; generated files, typecheck, lint, page freshness and the development
+build passed. The lower test count reflects retired comparator-only coverage, not missing safety or
+corpus checks. Evidence: `results/codex-design-cleanup/s8-final-gate.log` and
+`s8-final-gate-summary.json`. The browser gallery was rebuilt by that same gate.
+
 ### Remaining live sequence and actual eligibility
 
 The exact request budgets, stop conditions and do-not-run list are in
