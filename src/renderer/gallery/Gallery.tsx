@@ -2,6 +2,7 @@ import { type JSX } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { ConfirmHost } from '@/renderer/app/ConfirmHost';
 import { chainListSignal, growthSeriesSignal, queueLanesSignal } from '@/renderer/app/live-signals';
+import { PopoverHost } from '@/renderer/app/PopoverHost';
 import { StageBar } from '@/renderer/app/StageBar';
 import {
   modalSignal,
@@ -15,6 +16,7 @@ import {
   stageSignal,
   statusSignal,
 } from '@/renderer/app/shell-context';
+import { TooltipHost } from '@/renderer/app/TooltipHost';
 import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
 import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, type GalleryGraphState, galleryGraph, type Scenario } from '@/renderer/gallery/fixtures';
@@ -24,6 +26,7 @@ import { SETTINGS_SCENARIOS } from '@/renderer/gallery/fixtures-settings';
 import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
 import { GALLERY_SURFACES, GalleryStage, type GallerySurface } from '@/renderer/gallery/GalleryStage';
 import { answerInGallery, clearGalleryAnswer, GALLERY_LANES, installGalleryBridge } from '@/renderer/gallery/gallery-bridge';
+import { useGalleryIntro } from '@/renderer/gallery/use-gallery-intro';
 import { useConfirm } from '@/renderer/hooks/useConfirm';
 import type { ToastControls } from '@/renderer/hooks/useToasts';
 import { diagnosticsPanelSlot } from '@/renderer/settings/diagnostics-slot';
@@ -35,6 +38,7 @@ import type { StageMode } from '@/shared/stage-mode';
 const SCENARIOS: Scenario[] = [
   ...BASE_SCENARIOS, ...LIVE_SCENARIOS, ...PRUNE_SCENARIOS, ...SURFACE_SCENARIOS, ...SETTINGS_SCENARIOS, ...DIRECTION_SCENARIOS,
 ];
+const INITIAL_SCENARIO = LIVE_SCENARIOS.find((s) => s.key === 'live-working') as Scenario;
 
 /** Publish one scenario onto the shell's signals — this IS mounting a story. */
 function applyScenario(s: Scenario): void {
@@ -65,7 +69,8 @@ const NO_TOASTS: ToastControls = { toasts: [], push: noop, dismiss: noop };
  * by the app itself.
  */
 export function Gallery(): JSX.Element {
-  const [scenarioKey, setScenarioKey] = useState(SCENARIOS[1]?.key ?? 'idle');
+  const [scenarioKey, setScenarioKey] = useState(INITIAL_SCENARIO.key);
+  const intro = useGalleryIntro();
   const [surface, setSurface] = useState<GallerySurface>('people');
   const [graphState, setGraphState] = useState<GalleryGraphState>('populated');
   const [tourOpen, setTourOpen] = useState(false);
@@ -124,6 +129,7 @@ export function Gallery(): JSX.Element {
         {controlsHidden ? <button type="button" class="tbtn gallery-show" onClick={() => setControlsHidden(false)}>Show gallery controls</button> : null}
         <aside class="gallery-rail" hidden={controlsHidden}>
           <button type="button" class="tbtn" onClick={() => setControlsHidden(true)}>Hide gallery controls</button>
+          <button type="button" class="tbtn" onClick={intro.replay} disabled={intro.playing}>Replay startup animation</button>
           <div class="gallery-rail__h">Scenario</div>
           {SCENARIOS.map((s) => (
             <button
@@ -168,6 +174,8 @@ export function Gallery(): JSX.Element {
           </p>
         </aside>
       </div>
+      <TooltipHost />
+      <PopoverHost />
       <ConfirmHost {...confirmation.state} onClose={confirmation.close} />
       <Tour open={tourOpen} onClose={closeTour} setStage={showStage} />
       </ShellControlsContext.Provider>
@@ -192,5 +200,5 @@ export function primeGallery(): void {
   growthSeriesSignal.value = { points: [], baselineAt: null };
   queueLanesSignal.value = GALLERY_LANES;
   stageSignal.value = 'people';
-  applyScenario(SCENARIOS[1] ?? (SCENARIOS[0] as Scenario));
+  applyScenario(INITIAL_SCENARIO);
 }

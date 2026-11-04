@@ -64,6 +64,6 @@
 .gallery-show {
   position: fixed;
   z-index: 100;
-  top: var(--sp-2);
-  right: var(--sp-2);
+  bottom: var(--sp-4);
+  right: var(--sp-4);
 }

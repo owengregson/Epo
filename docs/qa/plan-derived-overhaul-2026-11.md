@@ -10,9 +10,9 @@ cleanup, including the native-QA repairs, passed the final source gate at `4a2bb
 renderer artifacts at `4a2bbcc` are byte-identical to `d80c5dd`. **Implementation and technical offline verification
 are complete.** No live-account validation has been performed by this continuation.
 
-Owner visual confirmation under workplan I.4.6 remains pending: the recorded gallery/native review is by the lead
-and agents. Owner-session memory updates were not requested and have not been performed. Neither is claimed by the
-technical verification results below.
+Owner visual confirmation under workplan I.4.6 is now recorded after the subsequent
+[UI cleanup and interactive browser review](ui-cleanup-2026-11.md#interactive-browser-preview-and-owner-acceptance):
+"looks good. continue." Owner-session memory updates were not requested and have not been performed.
 
 The live-account gate is separate from offline completion. Follow/unfollow tests require the owner's explicit
 approval for the targets; tests run one at a time. The parser's reverse-shadow comparators remain until L1 and L4

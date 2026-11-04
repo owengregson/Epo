@@ -1,5 +1,16 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-03 (owner accepts the interactive preview) —** The owner reviewed the browser preview and
+> said, "looks good. continue." This closes the requested owner visual review for the UI cleanup.
+> The localhost gallery now replays the real startup animation and includes the real tooltip and
+> popover hosts. Its default shows a populated working day; the gallery toggle no longer covers
+> stage navigation. The full gate after these preview changes passed **435 suites / 4,445 tests**,
+> with **0 boundary errors / 56 warnings**. Evidence: `results/codex-design-cleanup/browser-preview-gate.log`.
+> The preview is synthetic: settings saves and engine actions do not operate the account.
+> Phase L preparation found that the old verify probe could continue after a failed step; repair
+> and another gate are required before L1. The owner has been asked for a followed public target.
+> No live test has run. Epo is closed with saved run intent stopped.
+
 > **2026-11-03 (UI cleanup after owner review; offline verification complete) —** The owner rejected
 > the previous overhaul's spacing and composition; the seven screenshots were examples, not the
 > full scope. The interface now uses a stable spacing scale, content-sized cards, a compact
@@ -19,8 +30,8 @@
 > evidence and limits; screenshots and logs are in the durable handoff folder under
 > `results/codex-design-cleanup/`.
 >
-> Owner visual acceptance is not assumed. The real profile remains untouched and live account
-> tests remain paused; the original sequential test and mutation-consent rules still apply.
+> Owner visual acceptance is recorded in the newer entry above. Live account tests remain paused;
+> the original sequential test and mutation-consent rules still apply.
 
 > **2026-11-03 (plan-derived overhaul; technical offline verification complete, owner/live review pending) —** Owner:
 > "Read docs/superpowers/plans/2026-11-03-plan-derived-overhaul-handoff.md and continue the overhaul from it until completion."

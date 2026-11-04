@@ -15,8 +15,7 @@ if (root) {
   // (the bundle is not split), which costs ~13 KB and buys the same CSP, the
   // same tokens and the same cascade as the app for zero new dependencies.
   if (new URLSearchParams(window.location.search).get('gallery') === '1') {
-    // The gallery has no launch to wait for: the splash goes at once.
-    document.getElementById('boot')?.remove();
+    // The gallery replays the real launch intro over its synthetic first frame.
     void import('@/renderer/gallery/Gallery').then(({ Gallery, primeGallery }) => {
       primeGallery();
       render(<Gallery />, root);

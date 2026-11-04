@@ -124,8 +124,25 @@ The independent `review-pass-two.md` enumerates 54 newly inspected images, along
 audit: 28 normal surface images, eight reduced-motion samples, 16 combined Settings/empty-source
 images and two final Boost images. The lead separately inspected integrated Settings at both widths,
 empty source, census, Graph, Diagnostics, confirmations, native tour/search and final Boost placement.
-No unresolved visual defect remains in that inspected scope. This is technical and agent review;
-the owner's visual judgment is separate and has not been assumed.
+No unresolved visual defect remains in that inspected scope. The owner's subsequent visual acceptance
+is recorded below, separately from the technical and agent review.
 
 All QA used synthetic gallery data or fresh signed-out profiles. The real Epo profile and account
 were not opened, copied or exercised. Live account checks remain paused under the existing handoff.
+
+## Interactive browser preview and owner acceptance
+
+The owner reviewed the interactive localhost preview and said, "looks good. continue." This closes
+the owner visual review for this cleanup. The preview at `http://127.0.0.1:4173/?gallery=1` uses the
+real renderer with synthetic fixtures. It now starts with a populated working day, plays and can
+replay the real startup animation, and mounts the real tooltip and popover hosts. The gallery toggle
+is below the content so it leaves all stage navigation accessible. Settings saves and engine actions
+remain disconnected from the account; the Instagram page remains a placeholder.
+
+Browser checks observed the initial splash, its removal, replay availability, a second splash on
+replay, normal motion enabled, accessible Settings navigation, and no console errors. The full gate
+after the preview changes passed **435 suites / 4,445 tests**, with one suite and five tests skipped;
+all other gates passed and boundaries remained **0 errors / 56 warnings**. The log is
+`browser-preview-gate.log` in the evidence folder above. Phase L preparation is separate: no account
+traffic or account action has occurred, and the first read-only check awaits a target and correction
+of the verify harness's stop behavior.
