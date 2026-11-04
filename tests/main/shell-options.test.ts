@@ -16,10 +16,16 @@ jest.mock('electron', () => ({
     const win = {
       opts,
       on: jest.fn(),
-      maximize: jest.fn(() => calls.push('maximize')),
-      show: jest.fn(() => calls.push('show')),
-      focus: jest.fn(() => calls.push('focus')),
+      maximize: jest.fn(() => { calls.push('maximize'); win.isVisible.mockReturnValue(true); }),
+      show: jest.fn(() => { calls.push('show'); win.isVisible.mockReturnValue(true); }),
+      focus: jest.fn(() => {
+        calls.push('focus');
+        win.isFocused.mockReturnValue(true);
+        for (const [event, listener] of win.on.mock.calls) if (event === 'focus') listener();
+      }),
       isDestroyed: jest.fn(() => false),
+      isVisible: jest.fn(() => opts.show !== false),
+      isFocused: jest.fn(() => opts.show !== false),
       isMaximized: jest.fn(() => false),
       getNormalBounds: jest.fn(() => ({ x: 0, y: 0, width: 1200, height: 800 })),
       getContentBounds: jest.fn(() => ({ x: 0, y: 0, width: 1200, height: 800 })),
@@ -37,6 +43,11 @@ jest.mock('electron', () => ({
         on: jest.fn(),
         send: jest.fn(),
         isDestroyed: jest.fn(() => false),
+        isFocused: jest.fn(() => false),
+        focus: jest.fn(() => {
+          calls.push('focus:dashboard');
+          view.webContents.isFocused.mockReturnValue(true);
+        }),
         setVisualZoomLevelLimits: jest.fn(async () => {}),
       },
     };
@@ -128,4 +139,114 @@ test('igFirstLoad settles ready after the home load and failed when it throws', 
   expect(await createAppShell({ windowStateFile: '/tmp/none.json' }).igFirstLoad).toBe('ready');
   tabGoto = async () => { throw new Error('offline'); };
   expect(await createAppShell({ windowStateFile: '/tmp/none.json' }).igFirstLoad).toBe('failed');
+});
+
+test('applied stages transfer page focus only when the visible dashboard does not already have it', async () => {
+  const shell = createAppShell({ windowStateFile: '/tmp/none.json' });
+  await shell.igFirstLoad;
+  const page = views[0].webContents;
+  expect(page.focus).not.toHaveBeenCalled();
+  shell.setStage('settings', false);
+  expect(page.focus).toHaveBeenCalledTimes(1);
+  shell.setStage('graph', false);
+  shell.setStage('tab', true);
+  expect(page.focus).toHaveBeenCalledTimes(1);
+  page.isFocused.mockReturnValue(false);
+  shell.setStage('settings', false);
+  expect(page.focus).toHaveBeenCalledTimes(2);
+  shell.setStage('tab', false);
+  page.isFocused.mockReturnValue(false);
+  expect(page.focus).toHaveBeenCalledTimes(2);
+  shell.setStage('tab', true);
+  expect(page.focus).toHaveBeenCalledTimes(3);
+  expect(windows[0].focus).not.toHaveBeenCalled();
+});
+
+test('hidden boot never takes page focus; reveal hands it over once after showing the window', async () => {
+  const shell = createAppShell({ windowStateFile: '/tmp/none.json', startHidden: true });
+  shell.setStage('tab', true);
+  await shell.igFirstLoad;
+  expect(views[0].webContents.focus).not.toHaveBeenCalled();
+  shell.reveal();
+  shell.reveal();
+  expect(calls.filter((c) => ['show', 'focus', 'focus:dashboard'].includes(c)))
+    .toEqual(['show', 'focus', 'focus:dashboard']);
+});
+
+test.each(['ready', 'failed'] as const)('late initial load %s restores current dashboard ownership once', async (outcome) => {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  tabGoto = () => new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+  const shell = createAppShell({ windowStateFile: '/tmp/none.json' });
+  shell.setStage('graph', false);
+  const page = views[0].webContents;
+  expect(page.focus).toHaveBeenCalledTimes(1);
+  // A late native load took focus after the renderer's tour button was focused.
+  page.isFocused.mockReturnValue(false);
+  if (outcome === 'ready') resolve();
+  else reject(new Error('offline'));
+  expect(await shell.igFirstLoad).toBe(outcome);
+  expect(page.focus).toHaveBeenCalledTimes(2);
+  expect(windows[0].focus).not.toHaveBeenCalled();
+});
+
+test('returning to Live before the initial load settles leaves native page focus alone', async () => {
+  let resolve!: () => void;
+  tabGoto = () => new Promise<void>((yes) => { resolve = yes; });
+  const shell = createAppShell({ windowStateFile: '/tmp/none.json' });
+  shell.setStage('settings', false);
+  shell.setStage('tab', false);
+  const page = views[0].webContents;
+  page.isFocused.mockReturnValue(false);
+  page.focus.mockClear();
+  resolve();
+  await shell.igFirstLoad;
+  expect(page.focus).not.toHaveBeenCalled();
+});
+
+test.each(['background', 'hidden', 'window destroyed', 'dashboard destroyed'] as const)(
+  '%s suppresses passive stage and load focus', async (state) => {
+    let resolve!: () => void;
+    tabGoto = () => new Promise<void>((yes) => { resolve = yes; });
+    const shell = createAppShell({ windowStateFile: '/tmp/none.json' });
+    const win = windows[0];
+    const page = views[0].webContents;
+    if (state === 'background') win.isFocused.mockReturnValue(false);
+    if (state === 'hidden') win.isVisible.mockReturnValue(false);
+    if (state === 'window destroyed') win.isDestroyed.mockReturnValue(true);
+    if (state === 'dashboard destroyed') page.isDestroyed.mockReturnValue(true);
+    shell.setStage('graph', false);
+    resolve();
+    await shell.igFirstLoad;
+    expect(page.focus).not.toHaveBeenCalled();
+    expect(win.focus).not.toHaveBeenCalled();
+    expect(win.show).not.toHaveBeenCalled();
+    expect(win.maximize).not.toHaveBeenCalled();
+  },
+);
+
+test('window reactivation hands over a background stage change, but never takes focus from Live', async () => {
+  const shell = createAppShell({ windowStateFile: '/tmp/none.json' });
+  await shell.igFirstLoad;
+  const win = windows[0];
+  const page = views[0].webContents;
+  win.isFocused.mockReturnValue(false);
+  shell.setStage('settings', false);
+  expect(page.focus).not.toHaveBeenCalled();
+  win.isFocused.mockReturnValue(true);
+  const onFocus = win.on.mock.calls.find(([event]) => event === 'focus')?.[1];
+  expect(onFocus).toEqual(expect.any(Function));
+  // Native page focus asks its owner window to focus before the page receives it.
+  page.focus.mockImplementationOnce(() => {
+    onFocus();
+    page.isFocused.mockReturnValue(true);
+  });
+  onFocus();
+  onFocus();
+  expect(page.focus).toHaveBeenCalledTimes(1);
+  shell.setStage('tab', false);
+  page.isFocused.mockReturnValue(false);
+  onFocus();
+  expect(page.focus).toHaveBeenCalledTimes(1);
+  expect(win.focus).not.toHaveBeenCalled();
 });
