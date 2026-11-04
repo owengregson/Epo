@@ -17,12 +17,11 @@ import { PlanService } from '@/governors/plan-service';
 import { RateGovernor, type RateGovernorConfig, type RatePlan } from '@/governors/rate-governor';
 import { ReadBudget, type ReadBudgetConfig } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
-import { BOUNDS_REENTRY } from '@/kernel/reentry-policy';
 import type { TempoSource } from '@/kernel/tempo';
 import { PlanControl } from '@/main/modules/plan-control';
 import type { EffectiveSettings } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
-import { toReadAllowance } from '@/settings/read-allowance';
+import { PLAN_READ_FACTS, toReadAllowance } from '@/settings/read-allowance';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { DelayManager } from '@/timing/delay-manager';
 import * as logger from '@/utils/logger';
@@ -94,7 +93,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     // The real gate of this store's graph, read at each ask (the plan mix and the admission).
     surfaceGate: gate,
     onChanged: () => control?.changed(),
-  }, { log: logger, readFacts: { followingWalkPages: BOUNDS_REENTRY.FOLLOWING_WALK_PAGES } });
+  }, { log: logger, readFacts: PLAN_READ_FACTS });
   const wake = (): void => {
     for (const key of PLAN_PARKS) delays.cancel(key);
   };
