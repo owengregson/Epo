@@ -7,15 +7,15 @@
     },
     {
       "file": "src/engine/prune-engine.ts",
-      "lines": 1108
+      "lines": 1107
     },
     {
       "file": "src/kernel/derive.ts",
-      "lines": 990
+      "lines": 923
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 919
+      "lines": 918
     },
     {
       "file": "src/renderer/graph/world.ts",
@@ -74,16 +74,16 @@
       "lines": 339
     },
     {
-      "file": "src/kernel/policy.ts",
-      "lines": 331
-    },
-    {
       "file": "src/rim/list-page-walker.ts",
       "lines": 326
     },
     {
       "file": "src/renderer/charts/GrowthChart.tsx",
       "lines": 325
+    },
+    {
+      "file": "src/kernel/policy.ts",
+      "lines": 320
     }
   ]
 }

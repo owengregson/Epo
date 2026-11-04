@@ -159,7 +159,6 @@ export class PruneEngine {
       clock: deps.clock,
       classes: PRUNE_WAIT_CLASS,
       noiseRng: this.noiseRng,
-      installEntropy: deps.installEntropy,
       signal: () => this.runAbort.signal,
       hooks: {
         // The paced inter-unfollow delay publishes at REGISTRATION so the

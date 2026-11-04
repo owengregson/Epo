@@ -25,6 +25,7 @@ import {
 import { clamp, logNormal } from '@/timing/distributions';
 import { nextRestStride, noisify } from '@/timing/noise';
 import { sample, uniform } from '@/timing/primitives';
+import { LEGACY_SNAPSHOT } from './legacy-config.snapshot';
 
 const REGISTRY: Record<string, Record<string, unknown>> = { ENGINE, NOISE, PRUNE, RECOVERY, RIM, SESSION };
 const valueAt = (p: string): unknown => {
@@ -39,7 +40,8 @@ const TODAY: Record<Exclude<TempoKey, 'gap.action' | 'motion.travel'>, Prior> = 
   'gap.accept': band(RIM.ACCEPT_PACE_MIN_MS, RIM.ACCEPT_PACE_MAX_MS),
   'dwell.visit': { shape: 'logn', median: MOTION.profileDwellMedianMs, sigma: MOTION.profileDwellSigma,
     min: MOTION.profileDwellMs[0], max: MOTION.profileDwellMs[1] },
-  'dwell.before-press': band(RIM.ENRICH_PACE_MIN_MS, RIM.ENRICH_PACE_MAX_MS),
+  // The retired enrich pace's band, as the snapshot pins it (the key left the registry, ADR 0607).
+  'dwell.before-press': band(LEGACY_SNAPSHOT.groups.RIM.ENRICH_PACE_MIN_MS, LEGACY_SNAPSHOT.groups.RIM.ENRICH_PACE_MAX_MS),
   'ui.step-pause': band(RIM.NOTIFICATIONS_CLOSE_DELAY_MIN_MS, RIM.NOTIFICATIONS_CLOSE_DELAY_MAX_MS),
   'drawer.close-settle': band(RIM.NOTIFICATIONS_CLOSE_DELAY_MIN_MS, RIM.NOTIFICATIONS_CLOSE_DELAY_MAX_MS),
   'scroll.wait.drawer': band(RIM.NOTIFICATIONS_SCROLL_WAIT_MIN_MS, RIM.NOTIFICATIONS_SCROLL_WAIT_MAX_MS),

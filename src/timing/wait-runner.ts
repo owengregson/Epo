@@ -10,7 +10,7 @@
 
 import type { Clock } from '../governors/clock';
 import type { DelayManager, WaitResult } from './delay-manager';
-import { boundarySeedKey, jitterBoundary, noisify, type WaitClass } from './noise';
+import { noisify, type WaitClass } from './noise';
 import type { DelayPolicy, Rng } from './primitives';
 
 /** Hooks the owner uses to publish a wait's life to its status projection. */
@@ -34,8 +34,6 @@ export interface WaitRunnerDeps<K extends string, P extends string> {
    * not shift the draw order any seeded test depends on.
    */
   noiseRng: Rng;
-  /** Per-install entropy seeding restart-stable daily-boundary jitter. */
-  installEntropy?: number;
   /** Which keys are LONG parks the status surfaces; null for step-scale waits. */
   parkReason?(key: K): P | null;
   /** The abort signal each wait links to, read fresh (the run generation token). */
@@ -70,26 +68,12 @@ export class WaitRunner<K extends string, P extends string = never> {
   }
 
   /**
-   * The noise gate, by class:
-   *
-   *  - 'daily-boundary': a POSITIVE-ONLY offset seeded by the RESUME day's key
-   *    ⊕ the wait key ⊕ the install entropy — stable within a day and across a
-   *    mid-park restart, different per day, per key, per install. Applied
-   *    BEFORE registration, so the published deadline is the real one.
-   *  - every other non-exact class: a noisified policy drawing from the
-   *    dedicated noise rng.
-   *  - 'exact': untouched — the call site already drew its own jitter.
+   * The noise gate, by class: a non-exact class becomes a noisified policy drawing from the dedicated
+   * noise rng; 'exact' passes untouched (the plan named the instant, or the call site drew its spread).
    */
   noised(key: K, policyOrMs: DelayPolicy | number): DelayPolicy | number {
     const cls = this.deps.classes[key];
-    if (cls === 'exact') return policyOrMs;
-    if (cls === 'daily-boundary') {
-      const base =
-        typeof policyOrMs === 'number' ? policyOrMs : policyOrMs.sample(this.deps.noiseRng);
-      const resumeAt = this.deps.clock.now() + base;
-      return jitterBoundary(base, boundarySeedKey(resumeAt, key), this.deps.installEntropy ?? 0);
-    }
-    return noisify(cls, policyOrMs, this.deps.noiseRng);
+    return cls === 'exact' ? policyOrMs : noisify(cls, policyOrMs, this.deps.noiseRng);
   }
 
   /** The deadline of the in-flight wait under `key`, or null when none is pending. */

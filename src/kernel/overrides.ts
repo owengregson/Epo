@@ -44,7 +44,7 @@ const HOUR = 3_600_000;
  *
  * Three families:
  *   1. UNIFORM PACING BANDS — the band SHAPE derives (`base × (1 ± 0.286)`), but
- *      eight of the nine shipped bands were hand-widened. 16 of the 20 entries.
+ *      the seven bands pinned here were hand-widened. 14 of the 20 entries.
  *   2. NUMBERS THE DERIVATION GENUINELY DISAGREES WITH — the two outer gap
  *      floors, ladder rung 3, the identity retry spacing, and (advisory) the
  *      cold breaker threshold.
@@ -52,17 +52,6 @@ const HOUR = 3_600_000;
  */
 export const OVERRIDES: Readonly<Record<string, Override>> = {
   // --- 1. Uniform pacing bands the shipped code widened by hand ---------------
-  'ENGINE.REFILL_PACING_MIN_MS': {
-    value: 2 * SEC,
-    derived: 2_500,
-    reason:
-      'Refill pacing band. The 3.5 s midpoint is the read budget; the shipped edges are ±43%, not the standard ±28.6%. A hand-set de-synchronisation choice with no measurement behind it.',
-  },
-  'ENGINE.REFILL_PACING_MAX_MS': {
-    value: 5 * SEC,
-    derived: 4_500,
-    reason: 'Upper edge of the same hand-widened band.',
-  },
   'RIM.ACQUIRE_SCROLL_MIN_MS': {
     value: 1_400,
     derived: 1_800,

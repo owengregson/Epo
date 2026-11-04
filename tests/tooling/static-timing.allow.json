@@ -317,7 +317,6 @@
     {"key":"src/timing/config.ts :: HARNESS :: OP_DELAY_MIN_MS :: 4_000","class":"HARNESS","reason":"ADR 0605: the HARNESS registry keys pace the dev harnesses only and never derive"},
     {"key":"src/timing/distributions.ts :: normal01 :: Math.cos :: 2","class":"GEOM","reason":"Box-Muller transform constants, numeric"},
     {"key":"src/timing/distributions.ts :: normal01 :: Math.sqrt :: -2","class":"GEOM","reason":"Box-Muller transform constants, numeric"},
-    {"key":"src/timing/noise.ts :: jitterBoundary :: Math.imul :: 0x9e3779b1","class":"PENDING","stream":"PR","reason":"PR: S2r deletes the daily-boundary jitter; its parks become exact (spec §17.6)"},
     {"key":"src/timing/units.ts :: MS_PER_DAY :: MS_PER_DAY :: 24","class":"GEOM","reason":"unit definitions: milliseconds per minute, hour and day"},
     {"key":"src/timing/units.ts :: MS_PER_HOUR :: MS_PER_HOUR :: 60","class":"GEOM","reason":"unit definitions: milliseconds per minute, hour and day"},
     {"key":"src/timing/units.ts :: MS_PER_MINUTE :: MS_PER_MINUTE :: 60_000","class":"GEOM","reason":"unit definitions: milliseconds per minute, hour and day"},

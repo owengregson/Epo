@@ -296,9 +296,8 @@ describe('Engine — follow-back sweep cadence (precedence 6)', () => {
     expect(await h.engine.stepOnce()).toBe('idle');
     expect(h.followback.checks).toBe(1);
 
-    // Drive the FakeClock past the cadence — including the widest interval
-    // factor the noise layer can draw (≤ CADENCE_MAX_FACTOR): due again.
-    h.clock.advance(4 * HOUR * NOISE.CADENCE_MAX_FACTOR);
+    // Drive the FakeClock well past the cadence: due again.
+    h.clock.advance(2 * 4 * HOUR);
     expect(await h.engine.stepOnce()).toBe('swept-followback');
     expect(h.followback.checks).toBe(2);
   });

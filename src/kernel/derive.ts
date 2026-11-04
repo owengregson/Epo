@@ -301,9 +301,8 @@ export function holdSigma(): number {
 }
 
 /**
- * Log-space spread of a CLAMPED backoff draw (cadence, retry park, velocity
- * park). The clamp band is the binding constraint, not de-synchronisation:
- * size σ so the band edge sits at the 99th percentile — `ln(maxFactor) / z99`.
+ * Log-space spread of a CLAMPED backoff draw (the retry-backoff park). The clamp band is the binding
+ * constraint, not de-synchronisation: σ puts the band edge at the 99th percentile — `ln(maxFactor) / z99`.
  */
 export function clampedSigma(maxFactor: number): number {
   return roundTo(Math.log(maxFactor) / POLICY.DRAW_TAIL_Z, 0.05);
@@ -314,18 +313,6 @@ export function drawClamp(sigma: number, step: number): { min: number; max: numb
   return {
     min: roundTo(Math.exp(-POLICY.DRAW_CENTRAL_Z * sigma), step),
     max: roundTo(Math.exp(POLICY.DRAW_CENTRAL_Z * sigma), step),
-  };
-}
-
-/** The same clamp, expressed as absolute bounds around a median duration. */
-export function drawClampMs(
-  medianMs: number,
-  sigma: number,
-  step: number,
-): { min: number; max: number } {
-  return {
-    min: roundTo(medianMs * Math.exp(-POLICY.DRAW_CENTRAL_Z * sigma), step),
-    max: roundTo(medianMs * Math.exp(POLICY.DRAW_CENTRAL_Z * sigma), step),
   };
 }
 
@@ -538,8 +525,6 @@ export function deriveOperatingPlan(
 // The registry: the same group shapes `src/timing/config.ts` has always exported
 // =============================================================================
 
-const REFILL = band(PACING_BASE_MS.read);
-const ENRICH = band(PACING_BASE_MS.read);
 const ACQUIRE_SCROLL = band(PACING_BASE_MS.acquireScroll);
 const LIST_WALK_PAGE = band(PACING_BASE_MS.listWalkPage);
 const LIST_WALK_REST = band(PACING_BASE_MS.listWalkRest);
@@ -552,8 +537,6 @@ const GAP_CAP_MS = gapCapMs();
 const HOLD_MEDIANS = holdMediansMs();
 const HOLD_SIGMA = holdSigma();
 const HOLD_CLAMP = drawClamp(HOLD_SIGMA, 0.1);
-const PARK_SIGMA = clampedSigma(BOUNDS.NOISE.BACKOFF_MAX_FACTOR);
-const PARK_CLAMP = drawClampMs(gapCapMs(), PARK_SIGMA, 5 * MS_PER_MINUTE);
 const GOTO_TIMEOUT_MS = timeoutFor('nav');
 const EVALUATE_TIMEOUT_MS = timeoutFor('evaluate');
 const PROFILE_LAND_RETRY_MS = retryWait(GOTO_TIMEOUT_MS, BOUNDS.ADAPTER.PROFILE_LAND_ATTEMPTS);
@@ -561,9 +544,6 @@ const PROFILE_LAND_RETRY_MS = retryWait(GOTO_TIMEOUT_MS, BOUNDS.ADAPTER.PROFILE_
 export const ENGINE = {
   /** How long an iteration idles when nothing is due yet (the loop's final gate). */
   IDLE_MS: BOUNDS.ENGINE.IDLE_MS,
-  /** Unread since the activity clock spaces each entry (spec §5.16); the RETIRED ledger deletes it (ADR 0607). */
-  REFILL_PACING_MIN_MS: overridden('ENGINE.REFILL_PACING_MIN_MS', REFILL.min),
-  REFILL_PACING_MAX_MS: overridden('ENGINE.REFILL_PACING_MAX_MS', REFILL.max),
   /**
    * Park after an enrichment-starved refill cycle (a plan that queued nothing
    * while un-enriched candidates remain — a rate wall / sentinel window, not a
@@ -571,30 +551,11 @@ export const ENGINE = {
    * endpoint; the target is retried, never burned.
    */
   ENRICH_BACKOFF_MS: BOUNDS.ENGINE.ENRICH_BACKOFF_MS,
-  /**
-   * Velocity-backstop park (organic mode): log-normal pause when the
-   * ledger-backed rolling-hour cap trips. DERIVED as the gap cap — the longest
-   * single pause the pacer may impose without ending the session — with the
-   * standard clamped-draw sigma so repeated parks never tick at a fixed period.
-   */
-  VELOCITY_PARK_MEDIAN_MS: GAP_CAP_MS,
-  VELOCITY_PARK_SIGMA: PARK_SIGMA,
-  VELOCITY_PARK_MIN_MS: PARK_CLAMP.min,
-  VELOCITY_PARK_MAX_MS: PARK_CLAMP.max,
 } as const;
 
 export const PRUNE = {
-  /** Prune unfollows run at a THIRD of growth's inter-action pace (deliberate bulk cleanup). */
-  DELAY_FACTOR: BOUNDS.PRUNE.DELAY_FACTOR,
   /** Brief park after a blocked action before continuing. */
   PARK_MS: BOUNDS.PRUNE.PARK_MS,
-  /**
-   * How long a completed scan's candidate set stays runnable for a 2-step run.
-   * Generous — the run's LIVE-GRAPH guard skips any candidate whose follows-us
-   * edge appeared after the scan, so staleness in the dangerous direction is
-   * caught per candidate, not by expiry.
-   */
-  SCAN_FRESH_MS: BOUNDS.PRUNE.SCAN_FRESH_MS,
   /** How long the prune hand-off waits for the growth loop to park before aborting. */
   PARK_TIMEOUT_MS: BOUNDS.PRUNE.PARK_TIMEOUT_MS,
 } as const;
@@ -607,18 +568,10 @@ export const CONNECTIVITY = {
 } as const;
 
 export const SCHEDULER = {
-  /** How often the opt-in scheduled-prune watcher re-checks `pruneDue`. */
-  AUTO_PRUNE_CHECK_MS: BOUNDS.SCHEDULER.AUTO_PRUNE_CHECK_MS,
   /** Wait between own-username resolution attempts (same ladder as `landOnOwnProfile`). */
   USERNAME_RESOLVE_RETRY_MS: PROFILE_LAND_RETRY_MS,
   /** How many username resolution attempts before degrading. */
   USERNAME_RESOLVE_ATTEMPTS: BOUNDS.SCHEDULER.USERNAME_RESOLVE_ATTEMPTS,
-  /**
-   * Backoff between username-recovery attempts once a graph is built DEGRADED:
-   * each attempt costs real tab navigations and page reads, so it
-   * must never run on every routine IPC read.
-   */
-  USERNAME_REBUILD_BACKOFF_MS: BOUNDS.SCHEDULER.USERNAME_REBUILD_BACKOFF_MS,
   /**
    * teardownGraph: bounded wait for in-flight manual ops to drain before the
    * store closes under them. The longest such op is one `evaluate`.
@@ -722,14 +675,10 @@ export const RECOVERY = {
 export const RIM = {
   /** Fixed pause after each scroll so the paginated response can land (growth path). */
   SCROLL_WAIT_MS: BOUNDS.RIM.SCROLL_WAIT_MS,
-  /** Unread since the activity clock spaces each visit (spec §5.16); the RETIRED ledger deletes it (ADR 0607). */
-  ENRICH_PACE_MIN_MS: ENRICH.min,
-  ENRICH_PACE_MAX_MS: ENRICH.max,
   /** Whole-list scrape bounds (prune census): generous but always finite. */
   FETCH_ALL_MAX_ROUNDS: BOUNDS.RIM.FETCH_ALL_MAX_ROUNDS,
   FETCH_ALL_NO_NEW_STOP: BOUNDS.RIM.FETCH_ALL_NO_NEW_STOP,
-  /** Follower-acquisition scrape bounds (one refill slice). */
-  ACQUIRE_MAX_ROUNDS: BOUNDS.RIM.ACQUIRE_MAX_ROUNDS,
+  /** Consecutive no-new-item rounds before an acquisition slice stops (one refill slice). */
   ACQUIRE_NO_NEW_STOP: BOUNDS.RIM.ACQUIRE_NO_NEW_STOP,
   /** Growth-acquisition DIALOG-FALLBACK scroll pacing band (uniform draw). */
   ACQUIRE_SCROLL_MIN_MS: overridden('RIM.ACQUIRE_SCROLL_MIN_MS', ACQUIRE_SCROLL.min),
@@ -785,26 +734,10 @@ export const RIM = {
 } as const;
 
 /**
- * Timing-noise layer (timing/noise.ts) — the fix for deterministic default-
- * config scheduling. Every sigma here is the SAME policy number
- * (`DESYNC_WIDTH_MS` for a spread requirement, the clamp band for a bounded
- * draw): one dial replaces six hand-tuned constants.
+ * Timing-noise layer (timing/noise.ts): the retry-backoff spread sized against its clamp band, the
+ * local-beat band and the list-walk rest stride (the beat band and the stride are tempo priors).
  */
 export const NOISE = {
-  /** Ceiling of the positive-only wake offset PAST a daily boundary. */
-  DAILY_BOUNDARY_JITTER_MAX_MS: POLICY.DESYNC_WIDTH_MS,
-  /** Log-space spread of the per-run watcher-cadence factor (follow-back sweep). */
-  CADENCE_SIGMA: clampedSigma(BOUNDS.NOISE.CADENCE_MAX_FACTOR),
-  /** Cadence-factor floor — a drawn interval never shrinks below half the configured one. */
-  CADENCE_MIN_FACTOR: BOUNDS.NOISE.CADENCE_MIN_FACTOR,
-  /** Cadence-factor ceiling — a drawn interval never exceeds double the configured one. */
-  CADENCE_MAX_FACTOR: BOUNDS.NOISE.CADENCE_MAX_FACTOR,
-  /**
-   * Ceiling of the uniform hold between "scheduled prune due" and its launch.
-   * Half the desync width: the poll tick itself is local (no IG traffic), so
-   * only the LAUNCH grid needs breaking.
-   */
-  PRUNE_LAUNCH_JITTER_MAX_MS: POLICY.DESYNC_WIDTH_MS / 2,
   /** Log-space spread of a retry-backoff park draw (enrich backoff, blocked/prune parks). */
   BACKOFF_SIGMA: clampedSigma(BOUNDS.NOISE.BACKOFF_MAX_FACTOR),
   /** Backoff draw floor as a factor of its base — a park always stays a real park. */

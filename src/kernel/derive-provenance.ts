@@ -8,7 +8,8 @@
  * Layering: `src/kernel/**` imports NOTHING from the rest of `src/`.
  *
  * See docs/adr/0605-constants-derive-from-fundamentals.md for the tier
- * definitions and docs/adr/0606-derivation-findings.md for the override list.
+ * definitions and docs/adr/0606-derivation-findings.md for the override list;
+ * the keys the day plan retired are in `registry-changes.ts` (ADR 0607).
  */
 
 
@@ -22,23 +23,13 @@ export type Tier = 'derived' | 'policy' | 'override' | 'harness';
  */
 export const PROVENANCE: Readonly<Record<string, Tier>> = {
   'ENGINE.IDLE_MS': 'policy',
-  'ENGINE.REFILL_PACING_MIN_MS': 'override',
-  'ENGINE.REFILL_PACING_MAX_MS': 'override',
   'ENGINE.ENRICH_BACKOFF_MS': 'policy',
-  'ENGINE.VELOCITY_PARK_MEDIAN_MS': 'derived',
-  'ENGINE.VELOCITY_PARK_SIGMA': 'derived',
-  'ENGINE.VELOCITY_PARK_MIN_MS': 'derived',
-  'ENGINE.VELOCITY_PARK_MAX_MS': 'derived',
-  'PRUNE.DELAY_FACTOR': 'policy',
   'PRUNE.PARK_MS': 'policy',
-  'PRUNE.SCAN_FRESH_MS': 'policy',
   'PRUNE.PARK_TIMEOUT_MS': 'policy',
   'CONNECTIVITY.PROBE_INTERVAL_MS': 'policy',
   'CONNECTIVITY.REQUEST_TIMEOUT_MS': 'derived',
-  'SCHEDULER.AUTO_PRUNE_CHECK_MS': 'policy',
   'SCHEDULER.USERNAME_RESOLVE_RETRY_MS': 'derived',
   'SCHEDULER.USERNAME_RESOLVE_ATTEMPTS': 'policy',
-  'SCHEDULER.USERNAME_REBUILD_BACKOFF_MS': 'policy',
   'SCHEDULER.MANUAL_OP_DRAIN_TIMEOUT_MS': 'derived',
   'ADAPTER.POLL_INTERVAL_MS': 'derived',
   'ADAPTER.POLL_TIMEOUT_MS': 'derived',
@@ -73,11 +64,8 @@ export const PROVENANCE: Readonly<Record<string, Tier>> = {
   'RECOVERY.HEAL_MAX_RECORDS': 'policy',
   'RECOVERY.HEAL_GRACE_MS': 'policy',
   'RIM.SCROLL_WAIT_MS': 'policy',
-  'RIM.ENRICH_PACE_MIN_MS': 'derived',
-  'RIM.ENRICH_PACE_MAX_MS': 'derived',
   'RIM.FETCH_ALL_MAX_ROUNDS': 'policy',
   'RIM.FETCH_ALL_NO_NEW_STOP': 'policy',
-  'RIM.ACQUIRE_MAX_ROUNDS': 'policy',
   'RIM.ACQUIRE_NO_NEW_STOP': 'policy',
   'RIM.ACQUIRE_SCROLL_MIN_MS': 'override',
   'RIM.ACQUIRE_SCROLL_MAX_MS': 'override',
@@ -99,11 +87,6 @@ export const PROVENANCE: Readonly<Record<string, Tier>> = {
   'RIM.ACCEPT_VERIFY_POLL_MS': 'derived',
   'RIM.ACCEPT_PACE_MIN_MS': 'override',
   'RIM.ACCEPT_PACE_MAX_MS': 'override',
-  'NOISE.DAILY_BOUNDARY_JITTER_MAX_MS': 'derived',
-  'NOISE.CADENCE_SIGMA': 'derived',
-  'NOISE.CADENCE_MIN_FACTOR': 'policy',
-  'NOISE.CADENCE_MAX_FACTOR': 'policy',
-  'NOISE.PRUNE_LAUNCH_JITTER_MAX_MS': 'derived',
   'NOISE.BACKOFF_SIGMA': 'derived',
   'NOISE.BACKOFF_MIN_FACTOR': 'policy',
   'NOISE.BACKOFF_MAX_FACTOR': 'policy',

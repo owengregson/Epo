@@ -6,17 +6,16 @@
  */
 
 import { FakeClock } from '@/governors/clock';
-import { NOISE } from '@/timing/config';
 import { DelayManager } from '@/timing/delay-manager';
-import { boundarySeedKey, jitterBoundary, mulberry32, type WaitClass } from '@/timing/noise';
+import { mulberry32, type WaitClass } from '@/timing/noise';
 import { type DelayPolicy, uniform } from '@/timing/primitives';
 import { WaitRunner } from '@/timing/wait-runner';
 
-type Key = 'x:boundary' | 'x:backoff' | 'x:beat' | 'x:exact';
+type Key = 'x:park' | 'x:backoff' | 'x:beat' | 'x:exact';
 type Park = 'holding';
 
 const CLASSES = {
-  'x:boundary': 'daily-boundary',
+  'x:park': 'exact',
   'x:backoff': 'retry-backoff',
   'x:beat': 'local-beat',
   'x:exact': 'exact',
@@ -33,7 +32,7 @@ interface Rig {
   abort: AbortController;
 }
 
-const rig = (over: { installEntropy?: number; advance?: boolean } = {}): Rig => {
+const rig = (over: { advance?: boolean } = {}): Rig => {
   const clock = new FakeClock(T0);
   const slept: number[] = [];
   const registered: Rig['registered'] = [];
@@ -51,8 +50,7 @@ const rig = (over: { installEntropy?: number; advance?: boolean } = {}): Rig => 
     clock,
     classes: CLASSES,
     noiseRng: mulberry32(0xc0ffee),
-    installEntropy: over.installEntropy ?? 0,
-    parkReason: (key) => (key === 'x:boundary' ? 'holding' : null),
+    parkReason: (key) => (key === 'x:park' ? 'holding' : null),
     signal: () => abort.signal,
     hooks: {
       onRegistered: (key, deadline, park) => registered.push({ key, deadline, park }),
@@ -79,17 +77,10 @@ describe('WaitRunner — the noise gate', () => {
     }
   });
 
-  test('a daily boundary is jittered POSITIVE-ONLY, seeded by the RESUME day', () => {
-    const r = rig({ installEntropy: 0x5eed });
+  test("a plan park ends exactly where the plan names it: an 'exact' park is never jittered", () => {
+    const r = rig();
     const base = 6 * 3_600_000;
-    const out = r.runner.noised('x:boundary', base) as number;
-    expect(typeof out).toBe('number');
-    expect(out).toBeGreaterThan(base);
-    expect(out).toBeLessThanOrEqual(base + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
-    // …and it is exactly the shared seeded draw, so a mid-park restart re-derives it.
-    expect(out).toBe(
-      jitterBoundary(base, boundarySeedKey(T0 + base, 'x:boundary'), 0x5eed),
-    );
+    expect(r.runner.noised('x:park', base)).toBe(base);
   });
 
   test('the noise draws never consume the sampler rng (the seeded-stream guarantee)', async () => {
@@ -116,22 +107,19 @@ describe('WaitRunner — the noise gate', () => {
 });
 
 describe('WaitRunner — registration and settlement', () => {
-  test('publishes the REAL jittered deadline synchronously, before the wait resolves', async () => {
+  test('publishes the REAL deadline synchronously, before the wait resolves', async () => {
     const r = rig();
     const base = 6 * 3_600_000;
-    const pending = r.runner.wait('x:boundary', base);
+    const pending = r.runner.wait('x:park', base);
 
     // The hook already fired — a multi-hour hold is visible the moment it starts.
     expect(r.registered).toHaveLength(1);
     expect(r.registered[0].park).toBe('holding');
-    expect(r.registered[0].deadline).toBeGreaterThan(T0 + base);
-    expect(r.registered[0].deadline).toBeLessThanOrEqual(
-      T0 + base + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS,
-    );
+    expect(r.registered[0].deadline).toBe(T0 + base);
     expect(r.settled).toHaveLength(0);
 
     await pending;
-    expect(r.settled).toEqual([{ key: 'x:boundary', park: 'holding' }]);
+    expect(r.settled).toEqual([{ key: 'x:park', park: 'holding' }]);
   });
 
   test('a step-scale wait reports a null park on both hooks', async () => {
