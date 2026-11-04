@@ -11,6 +11,7 @@ import { useNow } from '@/renderer/app/clock';
 import { settingsViewSignal, statusSignal, useShell, useShellControls } from '@/renderer/app/shell-context';
 import { BOOST_COPY } from '@/renderer/copy/boost';
 import { DUR } from '@/renderer/design/motion-scale';
+import { type Box, place } from '@/renderer/lib/anchor';
 import { armDeadline } from '@/renderer/lib/deadline-anim';
 import { BOOST_NEEDS_PLAN, bandLine, buttonLabel, previewLine } from '@/renderer/sidebar/boost-copy';
 import { postureSignal } from '@/renderer/sidebar/posture-signal';
@@ -19,8 +20,8 @@ import { Icon } from '@/renderer/ui/Icon';
 
 type Preview = Res<'previewBoost'>;
 
-/** The hover card: open with its top edge in column coordinates, and the line it shows. */
-const boostCardSignal = signal<{ readonly top: number; readonly line: string } | null>(null);
+/** The hover card's trigger bounds in column coordinates, and the line it shows. */
+const boostCardSignal = signal<{ readonly anchor: Box; readonly line: string } | null>(null);
 
 /** Why the button waits, or null when one tap would do something. */
 function waitReason(preview: Preview): string | null {
@@ -103,7 +104,12 @@ export function BoostControl(): JSX.Element {
     const el = button.current;
     const column = el?.closest('.sidebar');
     if (el === null || column == null || line === null || reason !== null) return;
-    boostCardSignal.value = { top: el.getBoundingClientRect().bottom - column.getBoundingClientRect().top, line };
+    const trigger = el.getBoundingClientRect();
+    const bounds = column.getBoundingClientRect();
+    boostCardSignal.value = {
+      anchor: { x: trigger.left - bounds.left, y: trigger.top - bounds.top, w: trigger.width, h: trigger.height },
+      line,
+    };
   };
   const start = async (): Promise<void> => {
     if (hours === null) return;
@@ -157,7 +163,7 @@ function closeSoon(): void {
   }, DUR[2]);
 }
 
-/** The card under the Boost button: what one tap would do, and where its length is chosen. */
+/** The card beside the Boost button: what one tap would do, and where its length is chosen. */
 export function BoostCard(): JSX.Element | null {
   const card = boostCardSignal.value;
   const controls = useShellControls();
@@ -166,8 +172,10 @@ export function BoostCard(): JSX.Element | null {
     const node = el.current;
     const column = node?.closest<HTMLElement>('.sidebar');
     if (node == null || column == null || card === null) return;
-    // A footer near the bottom of a short window opens upward rather than clipping its explanation.
-    node.style.top = `${Math.max(8, Math.min(card.top + 8, column.clientHeight - node.offsetHeight - 8))}px`;
+    // Flip fully above a bottom-edge trigger; a clamp alone would cover its click target.
+    const at = place(card.anchor, { w: node.offsetWidth, h: node.offsetHeight },
+      { w: column.clientWidth, h: column.clientHeight }, { side: 'below' });
+    node.style.top = `${at.top}px`;
     const close = (): void => { boostCardSignal.value = null; };
     const middle = column.querySelector('.sb-middle');
     middle?.addEventListener('scroll', close);
@@ -183,7 +191,7 @@ export function BoostCard(): JSX.Element | null {
       ref={el}
       class="sb-boostcard"
       role="tooltip"
-      style={{ top: `${card.top + 8}px` }}
+      style={{ top: `${card.anchor.y + card.anchor.h + 8}px` }}
       onMouseEnter={cancelClose}
       onMouseLeave={closeSoon}
     >
