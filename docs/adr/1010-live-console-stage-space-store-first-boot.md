@@ -191,10 +191,24 @@ Native QA found that the locally branded Electron executable reports `app.isPack
 `run-desktop.mjs` passes it the development script. Installed-build decisions therefore also require
 `process.defaultApp !== true`, using one pure `isInstalledApp` predicate. Script launches display Epo's manifest
 version, keep updating off, and retain the development menu and source Dock icon. Installed releases keep their
-runtime version and platform update mode. The version, mode and menu regressions passed at `aa31274`; native
-re-verification remains recorded separately in the overhaul QA record.
+runtime version and platform update mode. The full gate and native re-verification passed at `aa31274`, including
+the displayed Epo version and development menu; the overhaul QA record holds the observations.
 
 The same native pass found the Settings tour step pointing to a seed field outside the viewport. The follow-up at
 `bd41d98` anchors that step to the field itself, scrolls each step's first measurable target into view once without
-animation, then remeasures it while retaining Next/Finish focus. Delayed/offscreen-anchor regressions pass; native
-confirmation remains pending.
+animation, then remeasures it while retaining Next/Finish focus. A cached-page regression then showed that
+StageHost's after-paint scroll reset could undo this reveal. `87c36ef` moves the stage reset to `useLayoutEffect`,
+before the tour measures and reveals its target, while leaving the entrance stagger unchanged. Both repairs are
+integrated at `d80c5dd`; delayed/offscreen and cached-page ordering regressions, the full gate and the normal-motion
+native replay passed. The fresh reduced-motion native run also revealed the seed field and completed the tour.
+
+That run exposed a separate native-focus gap: restacking the dashboard and focusing its BaseWindow did not focus
+the dashboard's web content. The repair integrated at `4a2bbcc` hands native focus to the dashboard only while it
+owns the stage or cover and its window is revealed, visible and focused. Reveal, stage changes, window activation
+and settlement of the initial Instagram navigation share this guarded handoff. It handles a late initial error page,
+guards reentrancy and destruction, preserves uncovered Live input, and does not change later engine navigation.
+The final full gate and fresh reduced-motion native check passed: zero mouse clicks, the first Right key and all
+eight tour steps, Return on Finish, stage shortcuts and immediate Settings search. The background probe separately
+passed all eleven local scenarios, then reran the new dashboard-focused scenario with native focus true before and
+after while trusted page input continued. Those runs use distinct recorded bundles. The QA record preserves their
+scope, the uncaptured splash frames and the absence of live Instagram evidence.

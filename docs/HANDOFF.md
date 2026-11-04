@@ -1,6 +1,6 @@
 # Peanut v3 — Overnight Build Handoff
 
-> **2026-11-03 (plan-derived overhaul continuation; offline verification in progress) —** Owner:
+> **2026-11-03 (plan-derived overhaul; technical offline verification complete, owner/live review pending) —** Owner:
 > "Read docs/superpowers/plans/2026-11-03-plan-derived-overhaul-handoff.md and continue the overhaul from it until completion."
 > The final retirement stream is merged, including the Cautious floor change to 70 s. The integration now uses the day
 > plan for action spacing and interaction timing, with durable Boost, bounded reopen checks, Settings Easy/Advanced,
@@ -36,22 +36,37 @@
 > - Fit probation inside the same quiet-aware close as normal sessions, reduce its kind allocations to fit, and carry
 >   probation to the next viable session when the current slot cannot hold one slower action.
 >
-> The full gates at `42ee233` and `86a716d` each passed **425 suites / 4,402 tests**, five skipped, zero TODO, and
-> boundaries **0 errors / 56 warnings** (97 at the original overhaul start). Plan QC passed **1,260 days / zero breaches**,
+> The final source gate at `4a2bbcc` passed **427 suites / 4,417 tests**, one suite and five tests skipped, zero TODO,
+> and boundaries **0 errors / 56 warnings** (97 at the original overhaul start). Plan QC passed **1,260 days / zero breaches**,
 > all three lifecycle reachability tests passed, and the generated catalog is current. The cleanup audit found no new
 > blocker: pending wiring is empty, static timing contains only reasoned GEOM/HARNESS entries, and the saved Knip
 > comparison has no added findings (remaining advisory findings are recorded, not claimed to be zero).
 > The isolated normal-motion gallery at `44ea8d4` passed **756 checks**. At `04f5688`, the full reduced-motion matrix
-> passed **756 checks** and the three populated normal-motion scenarios passed **36 settled checks**. The background
-> probe passed **10/10 scenarios**, including stage-hidden and never-shown boot, at about **120 callbacks/s**; its exact
-> bundle hash is recorded. Native QA at `86a716d` exercised the intro, offline placeholder, stage shortcuts, Settings
-> save/Undo, Practice persistence, Protection navigation and clean quit. It found the Electron version in the footer,
+> passed **756 checks** and the three populated normal-motion scenarios passed **36 settled checks**. The final background
+> probe passed **11/11 scenarios**. A targeted rerun with added native-focus assertions passed the new dashboard-focused
+> scenario: focus was true before and after while eight trusted clicks and their acknowledgments arrived. The runs used
+> different recorded bundles; the full run's soak was ten seconds. Native QA at `86a716d` exercised the intro, offline
+> placeholder, stage shortcuts, Settings save/Undo, Practice persistence, Protection navigation and clean quit.
+> It found the Electron version in the footer,
 > a tour step that did not scroll to the seed field, and search results underneath the plan summary.
-> The branded-runtime classification fix is merged at `aa31274` with focused tests passing; native re-verification is
-> pending. Tour scrolling and search stacking repairs are ready at `bd41d98`, with focused tests passing and integration
-> and native verification pending. Offline completion, the final post-fix
-> gate/native observations and the pre-live checkpoint are still pending. Exact revisions, artifacts and upgrade notes
-> are in the
+> The branded-runtime fix at `aa31274` passed its full gate and native check: Epo 3.1.1 is displayed, updates stay off
+> for the development runtime, and its developer menu remains available. Maximized restoration, Practice persistence,
+> tour-completion persistence and native stage shortcuts also passed. At `d80c5dd`, normal-motion native checks
+> confirmed visible search results and the seed field remaining visible during a cached-Settings tour replay.
+> The stage scroll reset now runs during layout, before the tour reveals its target, avoiding the later reset race.
+> At `d80c5dd`, the final changed-scenario normal gallery passed **144 checks** and the full reduced-motion matrix
+> passed **756 checks**, with no failures, errors or blocked requests. All six renderer artifacts are byte-identical
+> at `4a2bbcc`, so that gallery evidence still applies. The first reduced-motion native run exposed a native focus gap:
+> restacking the dashboard and focusing its window did not focus its web content. The final shell repair hands focus
+> to the dashboard when it owns the visible, active stage, including after the initial blocked page load settles.
+> A fresh reduced-motion run at `4a2bbcc` used **zero mouse clicks**: the first Right advanced the tour, all eight steps
+> completed, the seed field stayed visible with Next focused, Return finished, and stage shortcuts plus immediate
+> Settings search worked. Epo 3.1.1 and clean quit were verified. Initial splash frames were not captured; no real
+> Instagram page loaded. Technical offline verification is complete. Pre-live checkpoint:
+> `refs/backups/pre-live-plan-overhaul-2026-11`; exact checkpoint and branch state:
+> `results/codex-final-qa/final-ref-state.json` in the durable handoff folder.
+> Owner visual confirmation (I.4.6) is separate from the lead/agent
+> review and remains pending. Exact revisions, artifacts and upgrade notes are in the
 > [validation record](qa/plan-derived-overhaul-2026-11.md).
 > No live-account check has run in this continuation. The integration has not opened the real Epo profile. Phase L
 > remains sequential and supervised; back up the full profile again before L1, mutations require explicit target

@@ -67,5 +67,7 @@ reason for:
 
 Native QA reproduced search results painting beneath the plan summary: raising the dropdown alone did not lift it
 above the sibling sections' entrance-animation stacking contexts. The Settings header now has its own positioned
-stacking level above those sections, so its search results remain visible over the page. The repair is in `bd41d98`;
-focused renderer and build checks pass, with integrated and native verification pending in the overhaul QA record.
+stacking level above those sections, so its search results remain visible over the page. The repair from `bd41d98`
+is integrated at `d80c5dd`, whose full gate and normal-motion native search check passed. Search selection cleared
+the query and scrolled to the requested setting. The full reduced-motion gallery also passed; the overhaul QA record
+distinguishes that matrix from the native observations.
