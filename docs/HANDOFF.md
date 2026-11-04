@@ -1,5 +1,27 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-03 (UI cleanup after owner review; offline verification complete) —** The owner rejected
+> the previous overhaul's spacing and composition; the seven screenshots were examples, not the
+> full scope. The interface now uses a stable spacing scale, content-sized cards, a compact
+> Easy/Advanced switch, plain Settings navigation, bounded schedules and an attached Boost row.
+> People, Prune, Graph, Diagnostics, dialogs and tour received rendered review at narrow, short,
+> standard and wide sizes. Follow-up fixes cover chart resize/reveal, Graph legend clipping,
+> Diagnostics section tracking, retained entrance-animation overflow and native tour focus.
+> Boost previews flip fully above their trigger when needed, preserving its click target.
+>
+> Final source `17d2d01`: **435 suites / 4,445 tests passed**, one suite and five tests skipped,
+> boundaries **0 errors / 56 warnings**, all other gates green. Final normal/reduced surface checks
+> passed **62 each**, with no errors or unexpected requests. The combined main-screen follow-up
+> passed **30 checks across five sizes**; broader earlier matrices and their exact revisions are
+> retained. Native keyboard QA completed all eight tour steps, both Tab boundaries, Settings search
+> and clean quit in a disposable profile. The independent image review closed with no unresolved
+> defect in its inspected scope. See [the cleanup QA record](qa/ui-cleanup-2026-11.md) for exact
+> evidence and limits; screenshots and logs are in the durable handoff folder under
+> `results/codex-design-cleanup/`.
+>
+> Owner visual acceptance is not assumed. The real profile remains untouched and live account
+> tests remain paused; the original sequential test and mutation-consent rules still apply.
+
 > **2026-11-03 (plan-derived overhaul; technical offline verification complete, owner/live review pending) —** Owner:
 > "Read docs/superpowers/plans/2026-11-03-plan-derived-overhaul-handoff.md and continue the overhaul from it until completion."
 > The final retirement stream is merged, including the Cautious floor change to 70 s. The integration now uses the day
