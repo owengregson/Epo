@@ -252,6 +252,7 @@
   gap: 6px;
   margin-left: auto;
   min-height: var(--h-sm);
+  flex-wrap: wrap;
   font-size: var(--fs-small);
   color: var(--muted);
 }
@@ -540,6 +541,13 @@
   width: 100%;
 }
 
+.radio-card__heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
 .radio-card__title {
   font-size: var(--fs-label);
   font-weight: 600;
@@ -579,7 +587,6 @@
 }
 
 .radio-card__rec {
-  min-height: 1lh;
   font-size: var(--fs-caption);
   line-height: 1.4;
   color: var(--st-live);
@@ -653,7 +660,7 @@
   flex-wrap: wrap;
   gap: var(--sp-3) var(--sp-4);
   min-height: var(--h-md);
-  padding: var(--sp-4) 0;
+  padding: var(--sp-3) 0;
   border-top: 1px solid var(--border);
 }
 
@@ -1336,6 +1343,7 @@
 }
 
 .set-row--stack {
+  flex-wrap: nowrap;
   flex-direction: column;
   align-items: stretch;
   gap: var(--sp-2);
@@ -1374,7 +1382,7 @@
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  padding: var(--sp-4) 0;
+  padding: var(--sp-3) 0;
   border-top: 1px solid var(--border);
 }
 
@@ -2035,6 +2043,14 @@ textarea.set-input {
   table-layout: fixed;
 }
 
+@container setcontent (min-width: 700px) {
+  .set-basis__table th:nth-child(1) { width: 28%; }
+  .set-basis__table th:nth-child(2) { width: 16%; }
+  .set-basis__table th:nth-child(3) { width: 10%; }
+  .set-basis__table th:nth-child(4) { width: 20%; }
+  .set-basis__table th:nth-child(5) { width: 26%; }
+}
+
 /* A narrow column reads each catalog or kept row as a short stack instead of scrolling sideways. */
 @container setcontent (max-width: 699px) {
   .set-basis__table thead,
@@ -2074,20 +2090,64 @@ textarea.set-input {
   }
 }
 
-/* Content width determines comparison/control layout, independently of the surrounding rail. */
-@container setcontent (max-width: 519px) {
-  .radio-cards {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+/* Five day shapes fill both rows instead of leaving an empty sixth card position. */
+@container setcontent (min-width: 520px) {
+  .radio-cards--days {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
-  .radio-card:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
+  .radio-cards--days > .radio-card {
+    grid-column: span 2;
+  }
+
+  .radio-cards--days > .radio-card:nth-last-child(-n + 2) {
+    grid-column: span 3;
   }
 }
 
-@container setcontent (max-width: 359px) {
+/* Narrow comparisons become uniform option rows; the last choice never becomes an oversized card. */
+@container setcontent (max-width: 519px) {
   .radio-cards {
     grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-2);
+  }
+
+  .radio-cards > .radio-card {
+    grid-column: auto;
+    grid-row: auto;
+    grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.4fr);
+    grid-template-rows: auto;
+    gap: var(--sp-1) var(--sp-3);
+    padding: var(--sp-3) 44px var(--sp-3) var(--sp-4);
+  }
+
+  .radio-card__top {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .radio-card__sel {
+    position: absolute;
+    top: var(--sp-3);
+    right: var(--sp-3);
+  }
+
+  .radio-card__art,
+  .radio-card__metric,
+  .radio-card__line {
+    grid-column: 2;
+  }
+
+  .radio-card__metric {
+    font-size: var(--fs-lead);
+  }
+
+  .radio-cards[data-card-layout="label"] > .radio-card {
+    display: flex;
+  }
+
+  .set-daybars__bars {
+    height: 28px;
   }
 }
 
@@ -2098,7 +2158,45 @@ textarea.set-input {
   }
 }
 
+/* Shared timing guidance leaves each multiplier as one compact comparison row. */
+.set-param--compact {
+  grid-template-columns: minmax(0, 1fr) minmax(176px, 0.65fr);
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+}
+
+.set-param--compact .set-param__copy,
+.set-param--compact .set-param__control {
+  gap: var(--sp-1);
+}
+
 /* ---------- layout by stage width ---------- */
+@container settings (max-width: 839px) {
+  .set-head {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    column-gap: var(--sp-3);
+  }
+
+  .set-head .set-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    max-width: none;
+  }
+
+  .set-head .save-status {
+    justify-content: flex-end;
+    min-height: 0;
+    font-size: var(--fs-caption);
+  }
+
+  .set-head .save-status__line {
+    justify-content: flex-end;
+    text-align: right;
+  }
+}
+
 @container settings (min-width: 840px) {
   .set-grid {
     flex-direction: row;

@@ -163,3 +163,9 @@ export const DIAGNOSTICS_COPY = {
   log: 'Activity log',
   logPending: 'The activity log appears here.',
 } as const;
+
+/** Shared guidance for the compact timing multipliers. Each field refers to this description. */
+export const TIMING_COPY = {
+  title: 'Timing multipliers',
+  guidance: 'The plan’s own pace is ×1. You can only make these longer. Changes update today’s remaining plan.',
+} as const;

@@ -50,8 +50,7 @@ export function RadioCards<T>({ label, choices, selected, onSelect, onPreview, p
   const art = choices.some((c) => c.art);
   const metric = choices.some((c) => c.metric);
   const detail = choices.some((c) => c.line);
-  const recommendation = choices.some((c) => c.recommended);
-  const rows = 1 + Number(art) + Number(metric) + Number(detail) + Number(recommendation);
+  const rows = 1 + Number(art) + Number(metric) + Number(detail);
   return (
     <div
       class={cls ? `radio-cards ${cls}` : 'radio-cards'}
@@ -59,6 +58,7 @@ export function RadioCards<T>({ label, choices, selected, onSelect, onPreview, p
       aria-label={label}
       aria-busy={pending ? 'true' : undefined}
       data-row={dataRow}
+      data-card-layout={art ? 'preview' : metric ? 'metric' : detail ? 'detail' : 'label'}
       style={`--cols:${Math.min(3, choices.length)};--card-rows:${rows}`}
       onKeyDown={(e) => onRovingKey(e, values, selected, onSelect)}
     >
@@ -80,13 +80,15 @@ export function RadioCards<T>({ label, choices, selected, onSelect, onPreview, p
             onBlur={() => onPreview?.(null)}
           >
             <span class="radio-card__top">
-              <span class="radio-card__title">{c.title}</span>
+              <span class="radio-card__heading">
+                <span class="radio-card__title">{c.title}</span>
+                {c.recommended ? <span class="radio-card__rec">Recommended</span> : null}
+              </span>
               <span class="radio-card__sel" aria-hidden="true">{on ? <Icon name="check" /> : null}</span>
             </span>
             {art ? <span class="radio-card__art">{c.art ?? null}</span> : null}
             {metric ? <span class="radio-card__metric num">{c.metric ?? null}</span> : null}
             {detail ? <span class="radio-card__line">{c.line ?? null}</span> : null}
-            {recommendation ? <span class="radio-card__rec">{c.recommended ? 'Recommended' : null}</span> : null}
           </button>
         );
       })}

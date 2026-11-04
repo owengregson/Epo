@@ -40,7 +40,7 @@ export function commitOps(p: ParamView, v: ParamValue): SettingsOp[] {
   return [{ op: 'override', key: p.key, value: v }];
 }
 
-function Control({ p, s, value, label }: { p: ParamView; s: StageApi; value: ParamValue; label: string }): JSX.Element {
+function Control({ p, s, value, label, describedBy }: { p: ParamView; s: StageApi; value: ParamValue; label: string; describedBy?: string }): JSX.Element {
   const k = `param:${p.key}`;
   const send = (v: ParamValue): void => {
     const ops = commitOps(p, v);
@@ -51,7 +51,7 @@ function Control({ p, s, value, label }: { p: ParamView; s: StageApi; value: Par
   }
   if (typeof value === 'number') {
     const b = p.bounds.kind === 'bool' ? { min: value, max: value } : p.bounds;
-    return <NumberControl p={p} value={value} label={label} min={b.min} max={b.max} onCommit={send} />;
+    return <NumberControl p={p} value={value} label={label} describedBy={describedBy} min={b.min} max={b.max} onCommit={send} />;
   }
   if ('min' in value) return <RangeControl p={p} value={value} label={label} onCommit={send} />;
   const edge = s.view.params.find((x) => x.key === 'audience.bandEdgeScore')?.value;
@@ -89,18 +89,19 @@ function Notes({ p, s, label }: { p: ParamView; s: StageApi; label: string }): J
   return lines.length === 0 ? null : <span class="set-param__notes">{lines}</span>;
 }
 
-export function ParamRow({ p, s }: { p: ParamView; s: StageApi }): JSX.Element {
+export function ParamRow({ p, s, sharedDescription }: { p: ParamView; s: StageApi; sharedDescription?: string }): JSX.Element {
   const [why, setWhy] = useState(false);
   const copy = PARAM_COPY[p.key];
   const help = fill(copy.help, { p: Math.round((s.view.typical.automaticMax / Math.max(1, s.view.effective.dailyVolume)) * 100) });
   const value = s.c.value<ParamValue>(`param:${p.key}`, p.value);
   const today = todayOf(p.key, s.status);
   const range = p.bounds.kind === 'bool' ? null : fill(ROW_COPY.range, { span: spanOf(p.bounds.min, p.bounds.max, p.unit) });
+  const metaId = `param-description-${p.key}`;
   return (
-    <div class={p.override !== null ? 'set-param is-set' : 'set-param'} data-row={p.key}>
+    <div class={`set-param${p.override !== null ? ' is-set' : ''}${sharedDescription ? ' set-param--compact' : ''}`} data-row={p.key}>
       <div class="set-param__copy">
         <span class="set-param__label">{copy.label}</span>
-        <span class="set-param__help">{help}</span>
+        {sharedDescription ? null : <span class="set-param__help">{help}</span>}
         <span class="set-param__rec num">
           {fill(ROW_COPY.recommended, { v: valueLabel(p.recommended, p.unit) })}
           {p.provenance.length > 0 ? (
@@ -113,7 +114,7 @@ export function ParamRow({ p, s }: { p: ParamView; s: StageApi }): JSX.Element {
       </div>
       <div class="set-param__control">
         <div class="set-param__line">
-          <Control p={p} s={s} value={value} label={copy.label} />
+          <Control p={p} s={s} value={value} label={copy.label} describedBy={sharedDescription ? `${sharedDescription} ${metaId}` : undefined} />
           {today === null ? null : <span class="set-param__today num">{fill(ROW_COPY.today, { v: today })}</span>}
           {p.override !== null ? (
             <>
@@ -124,7 +125,7 @@ export function ParamRow({ p, s }: { p: ParamView; s: StageApi }): JSX.Element {
             </>
           ) : null}
         </div>
-        <span class="set-param__meta num">{range === null ? APPLIES_COPY[p.applies] : `${range} · ${APPLIES_COPY[p.applies]}`}</span>
+        <span id={metaId} class="set-param__meta num">{sharedDescription ? range : range === null ? APPLIES_COPY[p.applies] : `${range} · ${APPLIES_COPY[p.applies]}`}</span>
         <Notes p={p} s={s} label={copy.label} />
         <ControlError s={s} k={`param:${p.key}`} />
       </div>

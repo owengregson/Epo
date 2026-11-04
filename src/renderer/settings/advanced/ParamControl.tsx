@@ -41,13 +41,14 @@ export interface NumberControlProps {
   p: ParamView;
   value: number;
   label: string;
+  describedBy?: string;
   min: number;
   max: number;
   onCommit(v: number): void;
 }
 
 /** −, the value as a typed input with its unit, +. */
-export function NumberControl({ p, value, label, min, max, onCommit }: NumberControlProps): JSX.Element {
+export function NumberControl({ p, value, label, describedBy, min, max, onCommit }: NumberControlProps): JSX.Element {
   const { scale, suffix } = displayScale(p.unit);
   const [text, setText] = useState<string | null>(null);
   const revert = useRef(false);
@@ -70,6 +71,7 @@ export function NumberControl({ p, value, label, min, max, onCommit }: NumberCon
           type="text"
           inputMode="decimal"
           aria-label={label}
+          aria-describedby={describedBy}
           value={text ?? shown(value, p)}
           onInput={(e) => setText((e.currentTarget as HTMLInputElement).value)}
           onBlur={(e) => {

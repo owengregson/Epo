@@ -10,7 +10,7 @@ import { BasisTable } from '../advanced/BasisTable';
 import { paramsOf } from '../advanced/FineTune';
 import { ParamRow } from '../advanced/ParamRow';
 import { PlanDetail } from '../advanced/PlanDetail';
-import { DIAGNOSTICS_COPY, EXPLORE_COPY, LIMITS_COPY } from '../copy/advanced';
+import { DIAGNOSTICS_COPY, EXPLORE_COPY, LIMITS_COPY, TIMING_COPY } from '../copy/advanced';
 import { diagnosticsPanelSlot } from '../diagnostics-slot';
 import { Sub } from '../fields/controls';
 import { fill } from '../format';
@@ -26,7 +26,12 @@ export function TimingSection({ s }: SectionProps): JSX.Element {
   return (
     <>
       <PlanDetail status={s.status} />
-      {paramsOf(s, 'timing').map((p) => <ParamRow key={p.key} p={p} s={s} />)}
+      {paramsOf(s, 'timing').filter((p) => !p.key.startsWith('tempo.')).map((p) => <ParamRow key={p.key} p={p} s={s} />)}
+      <Sub>{TIMING_COPY.title}</Sub>
+      <p id="settings-timing-guidance" class="set-sec__hint">{TIMING_COPY.guidance}</p>
+      {paramsOf(s, 'timing').filter((p) => p.key.startsWith('tempo.')).map((p) => (
+        <ParamRow key={p.key} p={p} s={s} sharedDescription="settings-timing-guidance" />
+      ))}
     </>
   );
 }
