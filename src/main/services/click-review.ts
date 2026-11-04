@@ -12,7 +12,7 @@ import type { Clock } from '@/governors/clock';
 import type { Admission } from '@/governors/plan-types';
 import type { ReadBudget } from '@/governors/read-budget';
 import type { MutationKind, Writer } from '@/kernel/plan';
-import type { ProfileSeen, ProfileVisitor } from '@/rim/profile-visit-port';
+import { countsUnread, type ProfileSeen, type ProfileVisitor } from '@/rim/profile-visit-port';
 import { type Settings, toScorerConfig } from '@/settings/settings';
 import { type ClickVerdict, protectionClickVerdict } from '@/shared/click-verdict';
 import { NEVER_PAUSED, type SurfaceGate } from '@/shared/surface-gate';
@@ -108,12 +108,19 @@ export function createClickReview(d: ClickReviewDeps) {
       if (!await active()) throw new ActionAbortedError('profile-admission');
       admit(action, expectedPk);
       const seen = await visit(username, expectedPk, token);
+      // Recovered/partial facts may enrich the pool, but cannot prove a follow is still eligible (§10.6).
+      if (action === 'follow' && (seen.tier === 'recovered' || seen.partial || countsUnread(seen))) {
+        throw reviewed({ kind: 'unavailable', evidence: 'unreadable' });
+      }
       const now = seen.obs.observedAt;
       d.onProgress?.('mutation-profile-verified');
       if (seen.viewer.followsUs !== null) store.observeEdge(expectedPk, ownPk, 'follows', seen.viewer.followsUs, now, { source: 'visit' });
       if (action === 'unfollow') return unfollowReview(username, expectedPk, seen, now);
       const account = store.getAccount(expectedPk);
       const rec = store.getFollowRecord(expectedPk);
+      const freshCounts = [seen.obs.fields.followers, seen.obs.fields.following]
+        .every((n) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0);
+      if (rec?.state === 'queued' && !freshCounts) throw reviewed({ kind: 'unavailable', evidence: 'unreadable' });
       if (rec?.state === 'queued' && (!account || !scoreCandidate(account, toScorerConfig(d.settings())).eligible)) {
         store.upsertFollowRecord({ ...rec, score: 0 });
         throw new ActionDeferredError('profile no longer eligible');
