@@ -30,6 +30,7 @@ import type { Sentinel } from '@/adapter/sentinel';
 import type { ReadBudget } from '@/governors/read-budget';
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';
 import { awaitCaptured, captureFeed } from '@/rim/feed-capture';
+import { createIgActivityClock, type IgActivityClock } from '@/rim/ig-activity-clock';
 import type { RimTab } from '@/rim/types';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import { RIM } from '@/timing/config';
@@ -101,6 +102,10 @@ export interface FollowNotificationsDeps {
   reporter?: ActivityReporter;
   /** The tempo the drawer's waits and step pauses resolve from (default: the reference tempo). */
   tempo?: TempoSource;
+  /** The graph's activity clock: the drawer opens a drawn dwell after the last operation ended (default: its own). */
+  activity?: IgActivityClock;
+  /** Local time (default `Date.now`). */
+  now?: () => number;
 }
 
 export class AdapterBackedFollowNotifications implements FollowNotificationsSource {
@@ -119,6 +124,8 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
   private readonly abortSignal?: () => AbortSignal | undefined;
   private readonly reporter: ActivityReporter;
   private readonly tempo: TempoSource;
+  private readonly activity: IgActivityClock;
+  private readonly now: () => number;
 
   constructor(deps: FollowNotificationsDeps) {
     this.readBudget = deps.readBudget;
@@ -136,6 +143,8 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
     this.tempo = tempoOrReference(deps.tempo);
+    this.now = deps.now ?? Date.now;
+    this.activity = deps.activity ?? createIgActivityClock({ tempo: this.tempo, now: this.now, sleep: this.sleep });
   }
 
   async fetchRecent(opts?: { acceptRequests?: boolean }): Promise<FollowNotificationsResult> {
@@ -143,6 +152,9 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     if (permit && !permit.allowed) {
       return { ok: false, events: [], accepted: [], reason: 'read-budget', retryAt: permit.resumeAt ?? undefined };
     }
+    // The drawer opens on the activity clock (spec §5.16), then looks at the page it opens on.
+    await this.activity.spaceEntry(this.abortSignal?.());
+    if (this.abortSignal?.()?.aborted) return { ok: false, events: [], accepted: [], reason: 'aborted' };
     const status = await this.sentinel.check();
     if (status !== 'ok') {
       logger.warn('rim.follow-notifications: sentinel non-ok, skipping check', { status });
@@ -153,6 +165,7 @@ export class AdapterBackedFollowNotifications implements FollowNotificationsSour
     try {
       return await this.fetchRecentHeld(opts?.acceptRequests === true);
     } finally {
+      this.activity.noteEnd(this.now());
       this.reporter.clear();
     }
   }

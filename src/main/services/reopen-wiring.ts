@@ -13,6 +13,7 @@ import type { ReadBudget } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
 import type { TempoSource } from '@/kernel/tempo';
 import { AdapterBackedFollowNotifications } from '@/rim/follow-notifications';
+import type { IgActivityClock } from '@/rim/ig-activity-clock';
 import { managedRelationships } from '@/rim/managed-relationships';
 import type { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
@@ -50,6 +51,8 @@ export interface FollowbackWiring {
   dayClock: PlanDayClock;
   /** The plan-backed tempo: the drawer's waits and step pauses follow the session (spec §5.11). */
   tempo?: TempoSource;
+  /** The graph's activity clock: the drawer opens on it like every Instagram operation (spec §5.16). */
+  activity?: IgActivityClock;
 }
 
 /** The follow-back watcher over the notifications feed and the managed-relationship reads. */
@@ -73,6 +76,7 @@ export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): Followba
     abortSignal: driverSignal,
     reporter: d.reporter,
     tempo: w.tempo,
+    activity: w.activity,
   });
   const followback = new FollowbackWatcher({
     signal: driverSignal,

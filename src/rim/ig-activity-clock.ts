@@ -1,9 +1,7 @@
 /**
- * The Instagram activity clock (spec §5.13 S2b, §5.16): every Instagram operation — a profile visit,
- * a list walk, the notifications drawer — enters no sooner than one `dwell.visit` draw after the
- * previous operation ended, whichever caller issued either. The graph holds ONE clock, so the
- * operations of every caller share one rhythm, and the per-caller pacers stacked on top of each
- * other (the enrich pace, the engine's beat after a task) retire with it.
+ * The Instagram activity clock (spec §5.13 S2b, §5.16): a visit, a list walk or the drawer enters no
+ * sooner than one `dwell.visit` draw after the previous operation ended, whoever issued either; one
+ * clock per graph, so every caller shares one rhythm and no caller stacks a pacer of its own.
  */
 
 import { type TempoSource, tempoOrReference } from '@/kernel/tempo';

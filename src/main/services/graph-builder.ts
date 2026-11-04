@@ -201,7 +201,7 @@ export function buildGraph(
     cfg: toScannerConfig(settings),
   });
   const followback = wireFollowback(d, { store, clock, ownPk, ownUsername, settings, readBudget, policy, tempo: plan.tempo,
-    adapter, reader, sentinel, profiles, liveOwnFollowers, dayClock: plan.dayClock });
+    adapter, reader, sentinel, profiles, liveOwnFollowers, dayClock: plan.dayClock, activity: plan.activity });
 
   // Live discovery over the already-harvested graph: propose the biggest
   // enriched PUBLIC hubs inside the exhausted target's audience, projected at
