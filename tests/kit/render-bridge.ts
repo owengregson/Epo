@@ -222,7 +222,7 @@ export function installFakeBridge(settings: Settings): FakeBridge {
     restartFromSeed: (...a: unknown[]) => call('restartFromSeed', a, () => data.status),
     scanPrune: (...a: unknown[]) =>
       call('scanPrune', a, () => ({ ok: true, following: 0, followers: 0, candidates: [] })),
-    pruneCandidates: (...a: unknown[]) => call('pruneCandidates', a, () => []),
+    pruneCandidates: (...a: unknown[]) => call('pruneCandidates', a, () => ({ ok: true, candidates: [] })),
     startPrune: (...a: unknown[]) =>
       call('startPrune', a, () => ({ ok: true, status: data.pruneStatus })),
     stopPrune: (...a: unknown[]) => call('stopPrune', a, () => data.pruneStatus),

@@ -31,7 +31,7 @@ export interface RequestsFrontier {
 }
 
 /** The following check (step G): when the whole list was read, its count, and whether it was complete. */
-export interface FollowingFrontier { readonly checkedAt: number; readonly count: number; readonly complete: boolean }
+export interface FollowingFrontier { readonly checkedAt: number; readonly count: number; readonly complete: boolean; readonly added?: number }
 
 export interface SweepStamp { readonly id: number; readonly mode: SweepMode; readonly startedAt: number; readonly endedAt: number }
 
@@ -74,7 +74,7 @@ const STATE = shape({
   requests: orNull(shape({ observedAt: num, count: num, complete: bool, verifiedDayKey: orNull(str) })),
   lastSweep: orNull(shape({ id: num, mode: oneOf('launch', 'session', 'check'), startedAt: num, endedAt: num })),
   lastCatchUp: orNull(AWAY),
-  following: orNull(shape({ checkedAt: num, count: num, complete: bool })),
+  following: orNull(shape({ checkedAt: num, count: num, complete: bool, added: (v) => v === undefined || num(v) })),
 });
 const LEGACY_V1 = shape({ v: oneOf(1), lastActiveAt: orNull(num) });
 

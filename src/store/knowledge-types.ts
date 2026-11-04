@@ -18,6 +18,8 @@ export interface PruneCensusRecord {
    *  header still counts but the list never resolves ("unresolvable"). */
   scrapedFollowing: number;
   scrapedFollowers: number;
+  /** Followers per fetched page; absent in earlier censuses. */
+  rowsPerPage?: number | null;
   /** Scraped follows of ours with no reciprocal follower row (self excluded). */
   notFollowingBack: number;
   /** Of those, the raw prune census: growth-managed accounts and chain targets

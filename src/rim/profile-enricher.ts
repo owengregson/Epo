@@ -45,7 +45,7 @@ export interface ProfileEnricherDeps {
   /** Reads a profile by opening it; the observer behind it writes the store. */
   visitor: ProfileVisitor;
   /** For the permanent `gone` marker only — the counts are the observer's write. */
-  store: Pick<KnowledgeStore, 'markEnrichmentFailed'>;
+  store: Pick<KnowledgeStore, 'markEnrichmentFailed'> & Partial<Pick<KnowledgeStore, 'pkByUsername'>>;
   sentinel: Sentinel;
   clock?: Clock;
   /** Max usernames enriched per pass; absent, the caller's slice is the bound (`min(profilesPerSlice, explore left)`). */
@@ -61,7 +61,7 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
   private readonly readBudget?: ReadBudget;
   private readResumeAt: number | null = null;
   private readonly visitor: ProfileVisitor;
-  private readonly store: Pick<KnowledgeStore, 'markEnrichmentFailed'>;
+  private readonly store: Pick<KnowledgeStore, 'markEnrichmentFailed'> & Partial<Pick<KnowledgeStore, 'pkByUsername'>>;
   private readonly sentinel: Sentinel;
   private readonly clock: Clock;
   private readonly batchCap: number | undefined;
@@ -121,7 +121,8 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         this.readResumeAt = permit.resumeAt;
         break;
       }
-      const visit = await this.visitor.visit(username);
+      const pk = this.store.pkByUsername?.(username) ?? undefined;
+      const visit = await this.visitor.visit(username, pk === undefined ? undefined : { pk });
       if (!visit.ok) {
         // `gone` is the page itself saying the profile is not available
         // (deleted / renamed / hidden from us) with no profile fetched: mark it

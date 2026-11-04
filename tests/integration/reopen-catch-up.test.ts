@@ -70,7 +70,7 @@ function rig(o: { at: number; plan?: Partial<SweepPlanView> }) {
     head: async (a) => { const r = await walkFollowersHead({ walker: head, facts: storeHeadFacts(store, 'ME'), clock, sentinel }, a);
       reads.headPages += r.pages; return r; },
     following: async (a) => { reads.followingReads += 1;
-      return checkFollowing({ walker: following, facts: storeFollowingFacts(store, 'ME'), clock, sentinel }, a); },
+      return checkFollowing({ walker: following, facts: storeFollowingFacts(store, 'ME', calendarPlanDayClock()), clock, sentinel }, a); },
     facts, autoAccept: () => true });
   const header = (followers: number, followingCount: number, at = clock.now()) =>
     store.observe({ accountPk: 'ME', observedAt: at, source: 'profile', fields: { username: 'me', followers, following: followingCount } });
@@ -169,6 +169,7 @@ describe('reopen I1–I12 (spec §20.3)', () => {
       r.store.observeEdge('ME', pk, 'follows', true, T0 - 9 * DAY);
       r.store.upsertFollowRecord({ accountPk: pk, targetPk: null, state: 'pending_followback', followedAt: T0 - 9 * DAY, retryCount: 0 });
     }
+    r.store.growth.completeOutsideFollowing(new Set(['m1', 'm2']), calendarPlanDayClock().window(T0).startsAt, T0);
     r.clock.advance(7 * DAY);
     r.header(100, 81); // outside Epo: m2 unfollowed, x1 and x2 followed
     const unverified = () => ownCounts({ store: r.store, sweep: { view: () => ({}) as never },

@@ -119,11 +119,11 @@ describe('golden table — what the app derives is the snapshot minus RETIRED, p
     expect(Object.keys(LEGACY_SNAPSHOT.groups)).toHaveLength(15);
   });
 
-  test('the live registry is exactly the snapshot keys less the 18 retired ones', () => {
+  test('the live registry is exactly the snapshot keys less the retired keys', () => {
     const liveKeys = Object.entries(DERIVED_GROUPS).flatMap(([g, keys]) => Object.keys(keys).map((k) => `${g}.${k}`));
-    expect(Object.keys(RETIRED)).toHaveLength(18);
+    expect(Object.keys(RETIRED)).toHaveLength(20);
     expect(liveKeys.sort()).toEqual(LEGACY_CONFIG_KEYS.filter((k) => !(k in RETIRED)).sort());
-    expect(liveKeys).toHaveLength(101);
+    expect(liveKeys).toHaveLength(99);
   });
 
   test('every persona resolves to its ledgered numbers', () => {
@@ -232,8 +232,8 @@ describe('override discipline', () => {
       return acc;
     }, {});
     // The reviewed accounting (ADR 0607): 40 derive, 34 are policy bounds, 16 are pinned overrides,
-    // 11 are dev-harness values that never derive.
-    expect(tally).toEqual({ derived: 40, policy: 34, override: 16, harness: 11 });
-    expect(Object.values(tally).reduce((a, b) => a + b, 0)).toBe(101);
+    // 9 are dev-harness values that never derive.
+    expect(tally).toEqual({ derived: 40, policy: 34, override: 16, harness: 9 });
+    expect(Object.values(tally).reduce((a, b) => a + b, 0)).toBe(99);
   });
 });

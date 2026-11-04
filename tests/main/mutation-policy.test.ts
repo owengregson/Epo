@@ -216,3 +216,10 @@ test('a replaced profile-read generation cannot alter mutation policy evidence',
   await expect(policy().prepareProfile('alice', 'a', 'unfollow')).rejects.toBeInstanceOf(ActionAbortedError);
   expect(store.getEdge('a', 'me', 'follows')).toBeNull();
 });
+
+
+test.each(['catch-up', 'check'] as const)('the sweep own-header visit debits its %s bucket and anchors the own pk', async (use) => {
+  expect(await policy().refreshOwnStats(use)).toMatchObject({ ok: true });
+  expect(budget.snapshot().debits.at(-1)).toMatchObject({ use });
+  expect(visit).toHaveBeenCalledWith('me', { pk: 'me' });
+});

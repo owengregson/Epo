@@ -301,8 +301,9 @@ test('shouldStop true from the start skips the initial post-open wait and all sc
 
   expect(sleeps).toEqual([]); // not even the post-open wait ran
   expect(actor.scrollCalls).toBe(0);
-  // The page captured on open is still drained and returned (nothing lost).
-  expect([...result.observedPks].sort()).toEqual(['11', '12']);
+  // A stop before entry never opens the dialog.
+  expect(actor.openCalls).toBe(0);
+  expect(result.observedPks).toEqual([]);
 });
 
 test('default scroll path draws a fresh bounded pause for every round', async () => {
@@ -389,7 +390,6 @@ test('an aborted driver signal ends the scroll loop like shouldStop', async () =
   });
 
   expect(actor.scrollCalls).toBe(0); // no scroll round ran
-  // The page captured on open is still drained and returned (a stop never
-  // loses parsed data).
-  expect(result.observedPks).toEqual(['11']);
+  expect(result.endReason).toBe('stop-requested');
+  expect(result.observedPks).toEqual([]);
 });

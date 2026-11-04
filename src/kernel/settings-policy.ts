@@ -5,6 +5,7 @@
  */
 
 import { EXPLORATION_POLICY } from './exploration-policy';
+import { POLICY } from './policy';
 
 export const SETTINGS_POLICY = {
   /** λ below a fifth of the day's peak marks the hours a typical person rarely opens the app: the derived quiet window. */
@@ -14,7 +15,7 @@ export const SETTINGS_POLICY = {
   /** Longer quiet hours leave too little active time for any pace. */
   QUIET_MAX_HOURS: 16,
   /** "Most days" spans the 10th to the 90th percentile of the day draw (z of the 90th percentile). */
-  TYPICAL_DAY_Z: 1.2816,
+  TYPICAL_DAY_Z: POLICY.DRAW_DECILE_Z,
   /** "Reach more people" widens the follow-back curve this much in log space; the peak plateau stays put. */
   AUDIENCE_WIDEN_FACTOR: 1.5,
   /** Follower ranges per account size: very large accounts rarely follow back, very small ones are often inactive. */

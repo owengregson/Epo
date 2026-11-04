@@ -254,7 +254,6 @@ export class Engine {
       noteProgress: (phase) => this.noteProgress(phase),
       healIncidentWindow: (incident) => this.healIncidentWindow(incident),
       // The activity clock spaces the next Instagram entry (spec §5.16), so a step's end waits nothing.
-      pacingSleep: () => Promise.resolve(),
     };
   }
 

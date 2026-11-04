@@ -50,9 +50,11 @@ export function captureFeed(deps: { tab: RimTab; reader: Reader; now: () => numb
     const kind = deps.reader.kindOf(resp); // URL + operation name: the drawer reads via GraphQL
     if (kind !== 'activity-feed' && kind !== 'friend-requests') return;
     if (kind === 'activity-feed') state.sawFeed = true;
-    pendingReads.push(resp.getBody().then((body) => {
-      const read = readDrawerBody({ kind, body, status: resp.status, mime: resp.mimeType },
-        { reader: deps.reader, now: deps.now() });
+    const observed = deps.reader.observed.read(resp, deps.now());
+    if (observed === null) return;
+    pendingReads.push(observed.then((result) => {
+      const read = readDrawerBody({ kind, body: null, status: resp.status, mime: resp.mimeType },
+        { reader: deps.reader, now: deps.now(), observed: result });
       if (kind === 'activity-feed') {
         if (read.failure === 'feed-walled') state.feedWalled = true;
         else if (read.events === null) state.feedDrift = true;

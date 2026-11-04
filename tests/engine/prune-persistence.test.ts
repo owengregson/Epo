@@ -225,7 +225,7 @@ describe('PruneEngine persistence across restarts', () => {
       following: 3,
       followers: 1,
       scrapedFollowing: 3,
-      scrapedFollowers: 1,
+      scrapedFollowers: 1, rowsPerPage: null,
       notFollowingBack: 1,
       candidates: 1,
     });

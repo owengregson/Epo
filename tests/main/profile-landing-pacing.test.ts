@@ -2,6 +2,7 @@ import { TabUnresponsiveError } from '@/adapter/errors';
 import { openOwnProfileStep, type StartupDeps } from '@/main/modules/startup-steps';
 import type { BuiltGraph } from '@/main/services/graph-types';
 import type { RuntimeSnapshot } from '@/main/services/runtime-coordinator';
+import { createIgActivityClock } from '@/rim/ig-activity-clock';
 import { ADAPTER, NOISE } from '@/timing/config';
 import * as logger from '@/utils/logger';
 
@@ -12,7 +13,7 @@ function landingDeps(over: { url(): string; click(): Promise<boolean> }): Startu
       ready: () => true, wantsRun: () => false, token: () => 0, record: () => {},
       snapshot: () => ({ accountPk: null }) as RuntimeSnapshot,
     },
-    session: { current: () => ({ ownUsername: 'myself' }) as BuiltGraph, rebuildWith: async () => true },
+    session: { current: () => ({ ownUsername: 'myself', clock: { now: Date.now }, plan: { activity: createIgActivityClock() } }) as BuiltGraph, rebuildWith: async () => true },
     tab: { currentUrl: over.url },
     readOwnUsernamePassively: async () => undefined,
     clickOwnProfileLink: over.click,

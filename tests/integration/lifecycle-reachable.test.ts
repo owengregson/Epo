@@ -116,7 +116,7 @@ test('on proceed the dispatch closure admits once; a refusal there marks no disp
   const prepare = () => prepareAction({ tab: r.tab as never, prepareProfile: r.policy.prepareProfile,
     beforeMutation: r.policy.beforeMutation, abortSignal: () => undefined }, 'unfollow', 'alice', 'a', onDispatch);
   const refused = await prepare();
-  expect(r.visit).toHaveBeenCalledWith('alice');
+  expect(r.visit).toHaveBeenCalledWith('alice', { pk: 'a' });
   // A deadline armed between the review and the dispatch: the closure's re-check refuses it.
   r.store.setActionDelayDeadline(r.clock.now() + 60_000);
   await expect(refused()).rejects.toBeInstanceOf(ActionDeferredError);

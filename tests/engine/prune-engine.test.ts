@@ -868,7 +868,7 @@ describe('PruneEngine — last complete census', () => {
       following: 6, // display = header figure (scraped + ghost buffer)
       followers: 2,
       scrapedFollowing: 5, // what the list walk actually returned
-      scrapedFollowers: 1,
+      scrapedFollowers: 1, rowsPerPage: null,
       notFollowingBack: 3, // '1', '3', '4' (self and the follower excluded)
       candidates: 2, // growth-managed '1' exempt; protection NOT applied
     });

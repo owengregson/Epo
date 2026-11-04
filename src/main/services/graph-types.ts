@@ -23,6 +23,7 @@ import type { CursorObserver } from '@/interaction/input-driver';
 import type { PlanDayClock } from '@/kernel/plan';
 import type { CatchUpLaunch } from '@/main/modules/catch-up';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import type { IgActivityClock } from '@/rim/ig-activity-clock';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { FollowerAcquisition } from '@/rim/types';
 import type { EffectiveSettings } from '@/settings/effective';
@@ -53,6 +54,7 @@ export interface WiringParts {
 export interface GraphPlan {
   readonly service: PlanService;
   readonly dayClock: PlanDayClock;
+  readonly activity: IgActivityClock;
   /** The machine woke: the plan and its next edge are re-read from the wall clock. */
   resumed(): void;
   /** A census completed: the remainder re-plans its demand. */

@@ -99,7 +99,7 @@ describe('L8: the plan reads fit D6', () => {
     for (const r of per) {
       expect(r.reconcile).toBeGreaterThanOrEqual(1);
       expect(r.checks).toBeGreaterThanOrEqual(1);
-      expect(r.checkPages).toBe(5);
+      expect(r.checkPages).toBe(2);
     }
   });
 });
@@ -115,4 +115,20 @@ describe('census sizing for the host session', () => {
     const slow = censusWalkMax({ remainingMs: 30 * MS_PER_MINUTE, tempo: { ...REFERENCE_TEMPO, pace: 1.45 } });
     expect(slow).toBeLessThan(long);
   });
+});
+
+
+test('head allowance uses gains and measured page size; missing history reserves only the frontier run', () => {
+  const read = (headGainsHint?: number, rowsPerPage: number | null = null) => {
+    const input = drawInput(DAY0, { demand: emptyDemand({ headGainsHint, census: { lastCompleteAt: null, rowsPerPage } }) });
+    const seed = planSeed(input.installEntropy, input.window.key);
+    const kinds = allocateKinds(40, input.intent, input.demand, false);
+    const sessions = layoutSessions(seed, input, 40, kinds);
+    return planReads(input, kinds, sessions);
+  };
+  expect(read().plan.catchUp.pages).toBe(2);
+  expect(read(40, 20).plan.catchUp.pages).toBe(4);
+  const large = read(1000, 20);
+  expect(large.plan.catchUp.pages).toBe(5);
+  expect(large.sessions.filter((s) => s.checks > 0).every((s) => s.checkPages === 5)).toBe(true);
 });

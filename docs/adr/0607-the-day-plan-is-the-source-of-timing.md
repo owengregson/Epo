@@ -128,3 +128,12 @@ boundary). Spec §17.8's `RIM.LIST_WALK_FETCH_RETRIES` landed as `SURFACE_BOUNDS
 - A rolling 24 h as the reset boundary: it lets catch-up reads spend twice D6 around the boundary.
 - Plan-seeded micro-noise: the interactor is rebuilt every graph build, so it would replay paths.
 - A day-seeded phase: circular with the day key, and a repair would move the current window.
+
+
+## Remaining read consumers
+
+Source profile freshness, failed-enrichment retries and ended-source revisits count seven plan-day
+boundaries using the graph's `PlanDayClock`. Low-yield revisits start at the next plan boundary.
+The four fixed exploration windows are retired. The unused live-test enrichment pace knobs and
+their two HARNESS registry keys are retired too; the harness visitor uses the shared visit cadence.
+The live registry consequently has 99 keys: 40 derived, 34 policy, 16 override and 9 harness keys.

@@ -7,6 +7,7 @@
 
 import type { Sentinel } from '@/adapter/sentinel';
 import type { Observation } from '@/adapter/surface-types';
+import type { PlanDayClock } from '@/kernel/plan';
 import { BOUNDS_REENTRY } from '@/kernel/reentry-policy';
 import type { ListPageWalker } from '@/rim/list-page-walker';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -28,6 +29,8 @@ export interface FollowingFacts {
   removeFollowing(pk: string, at: number): void;
   /** Whether Epo manages a follow of `pk` (its follow is Epo's, not an outside one). */
   managed(pk: string): boolean;
+  noteOutside?(pk: string): void;
+  completeOutside?(seen: ReadonlySet<string>, at: number): number;
   /** A managed record the owner unfollowed outside Epo becomes `external`. */
   endManaged(pk: string, at: number): void;
 }
@@ -38,19 +41,25 @@ const FOLLOWING_STATES: ReadonlySet<FollowState> = new Set<FollowState>(['pendin
 
 /** The store as the check's port. */
 export function storeFollowingFacts(store: Pick<KnowledgeStore, 'accountsWeFollow' | 'observe' | 'observeEdge'
-  | 'getFollowRecord' | 'upsertFollowRecord'>, ownPk: string): FollowingFacts {
+  | 'getFollowRecord' | 'upsertFollowRecord' | 'growth' | 'getEdge'>, ownPk: string, planDay: Pick<PlanDayClock, 'window'>): FollowingFacts {
   const managedRecord = (pk: string) => {
     const rec = store.getFollowRecord(pk);
     return rec !== null && FOLLOWING_STATES.has(rec.state) ? rec : null;
   };
   return {
     activeFollowing: () => store.accountsWeFollow(),
+    noteOutside: (pk) => store.growth.outsideFollowing.observe(pk),
+    completeOutside: (seen, at) => store.growth.completeOutsideFollowing(seen, planDay.window(at).startsAt, at),
     observeRow: (obs) => {
       store.observe(obs);
       store.observeEdge(ownPk, obs.accountPk, 'follows', true, obs.observedAt);
     },
     removeFollowing: (pk, at) => store.observeEdge(ownPk, pk, 'follows', false, at),
-    managed: (pk) => managedRecord(pk) !== null,
+    managed: (pk) => {
+      if (managedRecord(pk) !== null) return true;
+      const edge = store.getEdge(ownPk, pk, 'follows');
+      return store.growth.outsideFollowing.epoFollowing(pk, edge?.status === 'removed' ? edge.lastConfirmedAt : null);
+    },
     endManaged: (pk, at) => {
       const rec = managedRecord(pk);
       if (rec !== null) store.upsertFollowRecord({ ...rec, state: 'external', reconciledAt: at });
@@ -79,7 +88,10 @@ export async function checkFollowing(d: FollowingCheckDeps, a: { readonly ownPk:
     onObservation: (obs) => {
       if (!seen.has(obs.accountPk)) {
         seen.add(obs.accountPk);
-        if (!before.has(obs.accountPk) && !d.facts.managed(obs.accountPk)) added += 1;
+        if (!before.has(obs.accountPk) && !d.facts.managed(obs.accountPk)) {
+          added += 1;
+          d.facts.noteOutside?.(obs.accountPk);
+        }
       }
       d.facts.observeRow(obs);
     },
@@ -102,6 +114,7 @@ export async function checkFollowing(d: FollowingCheckDeps, a: { readonly ownPk:
     d.facts.endManaged(pk, at);
     removed += 1;
   }
+  added = d.facts.completeOutside?.(seen, at) ?? added;
   logger.info('rim.following-check: the following list read whole', { count: seen.size, added, removed });
   return { ok: true, complete: true, count: seen.size, removed, added };
 }

@@ -105,13 +105,13 @@ export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): Followba
         await d.launch.land(signal);
         return true;
       },
-      visit: async () => {
-        const r = await policy.refreshOwnStats();
+      visit: async (use) => {
+        const r = await policy.refreshOwnStats(use);
         return r.ok ? 'ok' : r.reason === 'read-budget' ? 'read-budget' : 'failed';
       },
     },
     head: (a) => walkFollowersHead({ walker, facts: storeHeadFacts(store, ownPk), clock, sentinel }, a),
-    following: (a) => checkFollowing({ walker, facts: storeFollowingFacts(store, ownPk), clock, sentinel }, a),
+    following: (a) => checkFollowing({ walker, facts: storeFollowingFacts(store, ownPk, w.plan.dayClock), clock, sentinel }, a),
     autoAccept: () => d.resolveSettings().autoAcceptFollowRequests,
     // Every step's transition reaches the status at once (spec §9.6 output).
     report: () => d.plan.pushStatus(),

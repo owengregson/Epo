@@ -161,7 +161,7 @@ export function registerEpoIpc(ctx: IpcContext): () => void {
     restartFromSeed: status,
     engineStatus: status,
     scanPrune: () => ({ ok: false, reason: 'error', following: 0, followers: 0, candidates: [] }),
-    pruneCandidates: () => [],
+    pruneCandidates: () => ({ ok: false, reason: 'unavailable' }),
     startPrune: async () => ({ ok: false, reason: 'error', status: await pruneStatus() }),
     stopPrune: pruneStatus,
     pausePrune: pruneStatus,
