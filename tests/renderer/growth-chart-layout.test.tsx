@@ -67,11 +67,13 @@ test('an in-flight reveal finishes across the resized plot instead of restoring 
   try {
     const points = flat.map((p, i) => ({ ...p, cumulativeNet: i * 10 }));
     const { container, unmount } = render(<GrowthChart points={points} baselineAt={points[0].dayStartMs} />);
-    const tick = (now: number): void => act(() => {
-      const pending = [...frames.values()];
-      frames.clear();
-      pending.forEach((callback) => callback(now));
-    });
+    const tick = (now: number): void => {
+      act(() => {
+        const pending = [...frames.values()];
+        frames.clear();
+        pending.forEach((callback) => callback(now));
+      });
+    };
     tick(0);
     tick(34);
     Object.defineProperty(container.firstElementChild, 'clientWidth', { value: 850, configurable: true });
