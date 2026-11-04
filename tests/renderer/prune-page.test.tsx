@@ -7,7 +7,7 @@
  * the one opt-in (asked first), a failed list read never poses as "everyone follows back", and a list
  * too large to check in full says why instead of showing part of it.
  */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import type { ComponentChildren } from 'preact';
 import type { PruneCandidateView } from '@/ipc/contract';
 import {
@@ -115,4 +115,25 @@ describe('the Prune page', () => {
     expect(screen.queryByText('@open.one')).toBeNull();
     expect(within(document.body).queryByRole('button', { name: /Unfollow these gradually/ })).toBeNull();
   });
+});
+
+
+it('run progress tracks handled actionable rows while verified unfollows and raw protected rows stay distinct', async () => {
+  bridge.stub('pruneCandidates', { ok: true, candidates: rows });
+  pruneSignal.value = idlePruneStatus({ candidates: 2, remaining: 2, rawRemaining: 3, unfollowed: 0, scanReady: true });
+  render(shell(<PruneView />));
+  await screen.findByText('@open.one');
+  const run = screen.getByText('Prune · Run').closest('.card') as HTMLElement;
+  const fill = () => run.querySelector<HTMLElement>('.bar i')?.style.width;
+  expect(fill()).toBe('0%');
+  expect(run.querySelector('.ht-top .v')?.textContent).toBe('0 / 2');
+  expect(run.querySelector('.ht-foot')?.textContent).toBe('2 remaining');
+  // The first actionable row was visited but did not unfollow (e.g. Practice or a protection added mid-run).
+  act(() => { pruneSignal.value = { ...pruneSignal.value!, state: 'running', remaining: 1, rawRemaining: 2 }; });
+  expect(fill()).toBe('50%');
+  expect(run.querySelector('.ht-top .v')?.textContent).toBe('0 / 2');
+  act(() => { pruneSignal.value = { ...pruneSignal.value!, state: 'done', remaining: 0, rawRemaining: 1, unfollowed: 1 }; });
+  expect(fill()).toBe('100%');
+  expect(run.querySelector('.ht-top .v')?.textContent).toBe('1 / 2');
+  expect(run.querySelector('.ht-foot')?.textContent).toBe('0 remaining');
 });

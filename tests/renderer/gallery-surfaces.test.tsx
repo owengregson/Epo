@@ -161,7 +161,10 @@ test('completed census, candidate list, protection toggle and composition share 
   const census = pruneSignal.value?.census;
   expect(census?.candidates).toBe(read.candidates.length);
   expect(pruneSignal.value?.rawRemaining).toBe(read.candidates.length);
-  expect(pruneSignal.value?.remaining).toBe(read.candidates.filter(row => row.protectedBy === null).length);
+  const actionable = read.candidates.filter(row => row.protectedBy === null).length;
+  expect(pruneSignal.value?.candidates).toBe(actionable);
+  expect(pruneSignal.value?.remaining).toBe(actionable);
+  expect(document.querySelector<HTMLElement>('.hero-today .bar i')?.style.width).toBe('0%');
   expect(settingsFactsSignal.value?.cleanup?.census?.candidates).toBe(read.candidates.length);
   const composition = document.querySelector('.pcomp-bar');
   expect(composition?.getAttribute('aria-label')).toContain('810 follow back, 37 are prunable, 3 are protected');
