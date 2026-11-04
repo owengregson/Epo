@@ -68,6 +68,11 @@
 }
 
 /* ---------- your followers over time ---------- */
+.people-growth .seg button {
+  /* Keep each complete date-range label within the compact header control. */
+  flex: 1 0 auto;
+}
+
 .people-growth__num {
   display: flex;
   flex-wrap: wrap;
