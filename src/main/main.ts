@@ -13,6 +13,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app, nativeImage, powerMonitor, powerSaveBlocker } from 'electron';
+import { isInstalledApp } from '@/main/app-environment';
 import { bootstrapApp, ensureSingleInstance } from '@/main/bootstrap';
 import { type LaunchHandles, launchWindow } from '@/main/launch';
 import { RuntimePower } from '@/main/runtime-power';
@@ -48,7 +49,7 @@ let shuttingDown = false;
  * `icon.icns` (electron-builder, from `build/`) is authoritative there.
  */
 function setDevDockIcon(): void {
-  if (process.platform !== 'darwin' || app.isPackaged) return;
+  if (process.platform !== 'darwin' || isInstalledApp(app.isPackaged, process.defaultApp)) return;
   // Bundled main lives at dist/main/main.js; the icon stays in build/.
   const iconPath = path.resolve(__dirname, '../../build/icon.png');
   if (!fs.existsSync(iconPath)) return;

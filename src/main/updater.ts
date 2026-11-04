@@ -44,9 +44,10 @@ export class EpoUpdater {
     const mode = resolveUpdateMode({
       platform: process.platform,
       isPackaged: app.isPackaged,
+      defaultApp: process.defaultApp,
       portableDir: process.env.PORTABLE_EXECUTABLE_DIR,
     });
-    this.status = initialStatus(mode, resolveAppVersion(app.isPackaged, app.getVersion()));
+    this.status = initialStatus(mode, resolveAppVersion(app.isPackaged, app.getVersion(), process.defaultApp));
     if (mode === 'off') return;
 
     autoUpdater.autoDownload = false;

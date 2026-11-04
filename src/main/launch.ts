@@ -10,6 +10,7 @@ import { PUSH, type PushContract, type PushMethod } from '@/ipc/contract';
 import { BOOT } from '@/kernel/boot-policy';
 import { DIAGNOSTICS } from '@/kernel/live-policy';
 import { type App, composeApp } from '@/main/app';
+import { isInstalledApp } from '@/main/app-environment';
 import { ConnectivityMonitor } from '@/main/connectivity';
 import { Foundation } from '@/main/foundation-wiring';
 import { registerEpoIpc } from '@/main/ipc';
@@ -79,7 +80,9 @@ export async function launchWindow(env: LaunchEnv): Promise<LaunchHandles> {
   };
   // ⌘1–⌘5 and ⌘, work while Instagram has focus; Windows and Linux hide the menu bar until Alt.
   const isMac = process.platform === 'darwin';
-  Menu.setApplicationMenu(buildAppMenu({ onStage: (mode) => push('stageRequest', mode), isPackaged: app.isPackaged, isMac }));
+  Menu.setApplicationMenu(buildAppMenu({
+    onStage: (mode) => push('stageRequest', mode), isPackaged: isInstalledApp(app.isPackaged, process.defaultApp), isMac,
+  }));
   if (!isMac) win.setAutoHideMenuBar(true);
 
   // The raw log: a ring for Diagnostics' first pull; the push streams only while a panel asks (spec §12.9).

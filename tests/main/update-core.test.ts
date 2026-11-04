@@ -17,6 +17,12 @@ describe('update-core', () => {
     expect(resolveUpdateMode({ ...base, platform: 'linux' })).toBe('off');
   });
 
+  test('a branded direct-script runtime never checks for or downloads app updates', () => {
+    for (const platform of ['darwin', 'win32'] as const) {
+      expect(resolveUpdateMode({ platform, isPackaged: true, defaultApp: true, portableDir: undefined })).toBe('off');
+    }
+  });
+
   test('benign feed outcomes stay quiet; real failures do not', () => {
     for (const msg of [
       'HttpError: 404 Not Found',
