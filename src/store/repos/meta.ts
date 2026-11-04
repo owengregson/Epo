@@ -9,7 +9,7 @@ import type { SqliteDriver } from '../driver/driver';
 export const META_KEYS = {
   /** Inter-action paced-delay deadline, epoch ms. */
   actionDelayDeadlineAt: 'action_delay_deadline_at',
-  /** SessionPlanner snapshot; opaque JSON owned by the planner. */
+  /** The retired planner's snapshot: read once to migrate the day plan's phase, then cleared. */
   pacingState: 'pacing_state',
   /** Per-install 32-bit noise seed, drawn once on first access. */
   installEntropy: 'install_entropy',

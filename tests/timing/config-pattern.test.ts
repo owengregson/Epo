@@ -1,7 +1,7 @@
 import { type PatternSettings, resolvePattern } from '@/settings/pattern-map';
 import { CIRCADIAN, PATTERN, SESSION } from '@/timing/config';
 
-// Guard the invariants the SessionPlanner and circadian field rely on, so an
+// Guard the invariants the day plan and circadian field rely on, so an
 // accidental constant edit fails loudly instead of silently distorting the pattern.
 // Level-DEPENDENT values live in pattern-map's tables (their single home), so the
 // gap/velocity invariants are asserted across every knob level via resolvePattern.

@@ -1,9 +1,4 @@
-import { type CircadianProfile, intensityAt, samplePhaseOffset } from '@/timing/circadian';
-
-const seq = (...values: number[]): (() => number) => {
-  let i = 0;
-  return () => values[i++ % values.length];
-};
+import { type CircadianProfile, intensityAt } from '@/timing/circadian';
 
 /** The default triple-peak profile (mirrors CIRCADIAN in timing/config). */
 const DEFAULT: CircadianProfile = {
@@ -63,13 +58,5 @@ describe('circadian/intensityAt', () => {
     };
     expect(intensityAt(sat(20), p)).toBeGreaterThan(0.95); // peak felt at 20:00 on Saturday
     expect(intensityAt(mon(20), p)).toBeLessThan(0.7); // still on the decay on a weekday
-  });
-});
-
-describe('circadian/samplePhaseOffset', () => {
-  test('maps the rng across [-max, +max]', () => {
-    expect(samplePhaseOffset(1.5, seq(0))).toBeCloseTo(-1.5, 10);
-    expect(samplePhaseOffset(1.5, seq(1))).toBeCloseTo(1.5, 10);
-    expect(samplePhaseOffset(1.5, seq(0.5))).toBeCloseTo(0, 10);
   });
 });

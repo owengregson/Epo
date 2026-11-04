@@ -4,9 +4,8 @@
  */
 
 import { driftConfirmThreshold } from './derive';
-import { EMPIRICAL } from './fundamentals';
+import { retryLimit } from './derive-lifecycle';
 import { SETTINGS_POLICY } from './settings-policy';
-import { PLAN_POLICY } from './tempo-policy';
 
 /** Plan-days an unreadable kept record waits before its next read: 1, 2, 4, 8, then 8 (spec §7.5). */
 export function keptRecheckPlanDays(consecutiveUnreadable: number): number {
@@ -30,17 +29,6 @@ export function goneConfirmations(): number {
 }
 
 /**
- * Unreadable re-reads before the terminal: `min k: ORDINARY_FAIL_RATE^(k+1) ≤ 1 − RETRY_CONFIDENCE` (= 3),
- * the same derivation as the plan core's `retryLimit()` (spec §5.14).
- */
-function unreadableRetries(): number {
-  const miss = 1 - PLAN_POLICY.RETRY_CONFIDENCE;
-  let k = 0;
-  while (EMPIRICAL.ORDINARY_FAIL_RATE.value ** (k + 1) > miss) k += 1;
-  return k;
-}
-
-/**
  * The k-th re-evaluation (spec §9.9): `unreachable` at the start of plan-day today + k; `unreadable`
  * at the next session (never the same one), then plan-day today + (k − 1). Non-decreasing in k.
  */
@@ -51,7 +39,7 @@ export function parkUntil(kind: ParkKind, k: number, slots: ParkSlots): number {
   return n === 1 ? first : Math.max(first, slots.planDayStartAfter(n - 1));
 }
 
-/** Whether the k-th reading ends the parks: unreachable at `goneConfirmations()`, unreadable past the retries. */
+/** Whether the k-th reading ends the parks: unreachable at `goneConfirmations()`, unreadable past `retryLimit()` (= 3). */
 export function parkTerminal(kind: ParkKind, k: number): boolean {
-  return kind === 'unreachable' ? k >= goneConfirmations() : k > unreadableRetries();
+  return kind === 'unreachable' ? k >= goneConfirmations() : k > retryLimit();
 }

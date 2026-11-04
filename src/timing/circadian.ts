@@ -1,12 +1,10 @@
 /**
- * The circadian intensity field λ(t), in the profile shape today's planner and Settings preview read.
+ * The circadian intensity field λ(t), in the profile shape the Settings preview and the pattern map read.
  * The field itself lives in the day plan (`kernel/plan/circadian.ts`, ADR 0607); this module only
  * adapts the profile shape to it. Pure and renderer-safe.
  */
 
 import { intensityAt as planIntensityAt } from '../kernel/plan/circadian';
-import { phaseFromUniform } from '../kernel/plan/seed';
-import type { Rng } from './primitives';
 
 /** One Gaussian bump on the 24-hour circle. */
 export interface CircadianBump {
@@ -38,12 +36,4 @@ export function intensityAt(nowMs: number, profile: CircadianProfile): number {
     weekendShiftHours: profile.weekendShiftHours,
   };
   return planIntensityAt(nowMs, shape, profile.phaseOffsetHours);
-}
-
-/**
- * A phase offset drawn from `rng` in [-maxHours, +maxHours].
- * @transitional — the legacy planner wiring draws here until the install-seeded plan phase replaces it.
- */
-export function samplePhaseOffset(maxHours: number, rng: Rng): number {
-  return phaseFromUniform(rng(), maxHours);
 }
