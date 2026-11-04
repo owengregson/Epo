@@ -47,6 +47,12 @@ owner's first rule: everything timing- or limit-shaped is derived from the plan,
 9. **The golden invariant** (finalized by the retirement stream): the snapshot is never edited;
    `registry-changes.ts` holds the `RETIRED` and `CHANGED` ledgers; the tempo-identity and MOTION
    goldens and the plan laws (L1–L15) replace "exactly one moved key".
+10. **One activity clock per graph** (`src/rim/ig-activity-clock.ts`): every Instagram operation —
+    a profile visit, a list walk, the notifications drawer — enters no sooner than one `dwell.visit`
+    draw at the session tempo after the previous operation ended, whichever caller issued either.
+    The spacing lives at the entry, so the pacers that callers stacked on top of it retire: the
+    engine's beat after a task (`pause.after-task`, `ENGINE.REFILL_PACING_*`) and the enrich pace
+    (`RIM.ENRICH_PACE_*`; a non-ok sentinel ends an enrichment pass instead).
 
 ## Consequences
 
@@ -54,6 +60,9 @@ owner's first rule: everything timing- or limit-shaped is derived from the plan,
   cause), `plan-qc` (1 260 plan-days, zero breaches) and identity tests against today's code paths.
 - Status projections become pure; bookkeeping never re-plans; a corrupt `plan_state` is repaired
   deterministically with a warning.
+- No caller can burst Instagram operations: an enrichment pass, a click review's verify visit, a
+  journal settlement and a sweep's walk share one rhythm, each entry at least the `dwell.visit`
+  floor after the last end at any pace (a law). The tempo registry holds 27 keys.
 - Ledgers to finalize at retirement: `RETIRED` (18 registry keys), `CHANGED` (the Cautious floor
   60 → 70 s, owner Q11), and the provenance tally (40/34/16/11).
 
