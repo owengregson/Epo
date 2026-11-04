@@ -74,7 +74,7 @@ export function DiagnosticsPanel(): JSX.Element {
     );
   };
   return (
-    <div class="diag" data-section="diagnostics">
+    <div class="diag">
       <p class="diag-lead">{C.lead}</p>
       <div class="diag-bar">
         <div class="diag-filters">

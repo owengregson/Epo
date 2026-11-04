@@ -16,16 +16,27 @@ export function useScrollSpy(content: RefObject<HTMLElement>, sections: readonly
     if (host === null || typeof IntersectionObserver === 'undefined') return;
     const root = host.closest('.stage-view');
     const seen = new Map<string, boolean>();
+    const update = (): void => {
+      // A short final section cannot reach the top band. At the end of a scrollable page it owns the rail.
+      const atBottom = root !== null && root.clientHeight > 0 && root.scrollHeight > root.clientHeight
+        && root.scrollHeight - root.scrollTop - root.clientHeight <= 1;
+      const current = atBottom ? sections.at(-1) : sections.find((s) => seen.get(s) === true);
+      if (current !== undefined) setActive(current);
+    };
     const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) seen.set((e.target as HTMLElement).dataset.section ?? '', e.isIntersecting);
-        const first = sections.find((s) => seen.get(s) === true);
-        if (first !== undefined) setActive(first);
+        update();
       },
       { root, rootMargin: '0px 0px -65% 0px' },
     );
-    for (const el of host.querySelectorAll<HTMLElement>('[data-section]')) io.observe(el);
-    return () => io.disconnect();
+    // Only section owners count; nested panels must not overwrite their parent's intersection state.
+    for (const el of host.querySelectorAll<HTMLElement>(':scope > [data-section]')) io.observe(el);
+    root?.addEventListener('scroll', update, { passive: true });
+    return () => {
+      io.disconnect();
+      root?.removeEventListener('scroll', update);
+    };
   }, [content, key]);
 
   return sections.includes(active as SectionId) ? active : (sections[0] ?? null);
