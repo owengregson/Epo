@@ -5,8 +5,8 @@ import {
   PERSONAS,
   type PersonaId,
   type ResolvedPattern,
-  resolvePattern,
 } from '../pattern-map';
+import { v1Derived } from './derive-v1';
 import {
   AT_LEAST,
   AT_MOST,
@@ -71,12 +71,12 @@ export function sanitizeSettings(s: Settings): Settings {
   if (named !== null) {
     out.persona = named;
     out.pattern = { ...PERSONAS[named] };
-    applyResolvedPattern(out, resolvePattern(out.pattern));
+    applyResolvedPattern(out, v1Derived(out.pattern));
   } else {
     out.persona = 'custom';
     out.pattern = sanitizePattern(s.pattern);
     if (s.pattern !== undefined && s.pattern !== null) {
-      applyResolvedPattern(out, resolvePattern(out.pattern));
+      applyResolvedPattern(out, v1Derived(out.pattern));
     }
   }
 
