@@ -220,7 +220,7 @@ test.each(['input:document-changed-after-press', 'input:document-changed-during-
   },
 );
 
-test.each(['https://www.instagram.com/', 'https://www.instagram.com/other/'])(
+test.each(['https://www.instagram.com/', 'https://www.instagram.com/other/', 'https://example.invalid/owner/'])(
   'navigation uncertainty cannot certify the wrong destination %s', async (url) => {
     const h = harness();
     jest.spyOn(h.tab, 'currentUrl').mockReturnValue(url);

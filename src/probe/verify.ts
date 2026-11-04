@@ -83,5 +83,6 @@ export async function verifyProbe(tab: InstagramTab, evidence: VerifyEvidence, t
     await evidence.wait(sleep(3000, abort.signal));
     evidence.assert();
     return { clicked, url: tab.currentUrl() };
-  }, (value) => value.clicked && SURFACE.usernameFromProfileUrl(value.url)?.toLowerCase() === own.toLowerCase());
+  }, (value) => value.clicked && new URL(value.url).origin === new URL(IG_HOME_URL).origin
+    && SURFACE.usernameFromProfileUrl(value.url)?.toLowerCase() === own.toLowerCase());
 }

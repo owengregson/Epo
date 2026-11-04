@@ -116,6 +116,9 @@ export class VerifyEvidence {
     this.result.sentinels = this.sentinels;
     this.result.profileBodies = this.bodies.filter((body) => String(body.kind).startsWith('profile-'));
     this.result.drawerBodies = this.bodies.filter((body) => !String(body.kind).startsWith('profile-'));
+    // A successful drawer click is not proof that its response was observed and parsed.
+    const missing = ['activity-feed', 'friend-requests'].filter((kind) => !this.bodies.some((body) => body.kind === kind));
+    if (this.failure === null && missing.length > 0) this.stop('missing-body-coverage', missing);
     this.result.surface = { tallies: health.tallies,
       drift: health.drift.map(({ signal }) => ({ endpoint: signal.endpoint, cls: signal.cls, path: signal.path })) };
     this.result.exchanges = this.recorder?.exchanges.length ?? 0;
