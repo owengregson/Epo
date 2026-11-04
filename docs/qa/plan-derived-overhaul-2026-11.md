@@ -281,6 +281,43 @@ parsing validation. Automated boot tests establish ordering/frame invariants; li
 
 ## Live checks remaining
 
+### Preflight repair after owner UI acceptance
+
+The owner accepted the interactive UI preview. Before running L1, inspection found that the old
+verify helper caught failures and continued to later steps, did not enforce transport/sentinel/shadow
+stop conditions, started recording after the initial load, and could lose a response while awaiting
+POST metadata. No live run was attempted with that helper.
+
+`abc0724` confines the repair to the probe. Initial traffic recording begins before tool construction;
+the recorder must match the tool and have its debugger attached. A shared abort signal reaches the
+visitor, interactor and Actor, and interrupts readiness and settling. Expected nonexistent-profile
+`gone` remains valid; own-profile relationship `self` remains valid. Incomplete, noncanonical or
+unsafe evidence stops the run. Pending body reads finish within their existing deadlines before
+the report is written. `verify.json` now contains `outcome`, `stop`, initial-load coverage, per-step
+sentinels, actual exchange count and profile/drawer summaries. Production runtime behavior is unchanged.
+
+Nineteen probe regressions cover the lost-429 race, startup/active-step cancellation, missing recorder,
+profile presence, expected absence, false drawer results, shadow disagreement and failed evidence capture.
+The integration gate at `abc0724` passed **437 suites / 4,464 tests**, with one suite and five tests skipped;
+all other gates passed, boundaries **0 errors / 56 warnings**. Static timing has 331 entries (226 GEOM,
+105 HARNESS), after removing one obsolete stringify-indent allowance. Evidence is under
+`results/codex-design-cleanup/`: `pre-live-probe-gate.log`, `probe-blocked-launch.log` and
+`probe-blocked-output/verify.json`.
+
+The real Electron probe entrypoint was exercised once with a fresh isolated profile and an explicit
+`webRequest` block on every request, installed before the ready handler. It stopped at the initial
+navigation with `ERR_BLOCKED_BY_CLIENT`, recorded zero API exchanges and no subsequent steps, wrote
+the stopped outcome and exited cleanly. This establishes the launch failure path, not live parsing.
+`EPO_BLOCK_NETWORK` alone is handled by the main app, not this probe; the offline smoke test uses
+the explicit wrapper saved as `probe-blocked-launch.cjs`.
+
+With Epo closed and its saved run intent stopped, the full real profile was copied to a new private
+backup outside the repository: 33,311 files, all sizes verified, and 15 top-level store/settings/runtime
+files verified by SHA-256. The exact private path and hashes are in `pre-live-backup.json`. The account
+has not been opened or contacted. L1 awaits the followed public target requested from the owner.
+
+### Remaining live sequence
+
 The exact request budgets, stop conditions and do-not-run list are in
 [spec section 22](../superpowers/specs/2026-11-02-plan-derived-overhaul-design.md#22-the-minimal-live-test-plan-phase-l-strictly-sequential-run-by-the-lead-only-owner-present).
 L1 is a single parsing verification; L4 is the supervised reopen after a night away; L5 observes only approved

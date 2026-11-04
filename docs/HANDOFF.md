@@ -7,9 +7,14 @@
 > stage navigation. The full gate after these preview changes passed **435 suites / 4,445 tests**,
 > with **0 boundary errors / 56 warnings**. Evidence: `results/codex-design-cleanup/browser-preview-gate.log`.
 > The preview is synthetic: settings saves and engine actions do not operate the account.
-> Phase L preparation found that the old verify probe could continue after a failed step; repair
-> and another gate are required before L1. The owner has been asked for a followed public target.
-> No live test has run. Epo is closed with saved run intent stopped.
+> Phase L preparation found that the old verify probe could continue after a failed step. The repair
+> at `abc0724` captures the initial load, stops on the first unsafe observation and preserves partial
+> evidence. Its integration gate passed **437 suites / 4,464 tests**, boundaries **0 errors / 56 warnings**.
+> A real Electron launch in a fresh profile with all requests blocked stopped at initial navigation,
+> wrote its evidence and exited cleanly. A fresh full-profile backup is verified; its private path
+> and hashes are in `results/codex-design-cleanup/pre-live-backup.json`.
+> **Next:** obtain the followed public target requested from the owner, then run L1 once under the
+> existing rules. No live account test has run. Epo is closed with saved run intent stopped.
 
 > **2026-11-03 (UI cleanup after owner review; offline verification complete) —** The owner rejected
 > the previous overhaul's spacing and composition; the seven screenshots were examples, not the
