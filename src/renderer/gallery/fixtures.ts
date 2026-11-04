@@ -12,14 +12,18 @@
  * a negative net, a long handle) instead of the 0/— empty state.
  */
 import { livePlan } from '@/renderer/gallery/fixtures-live-data';
-import type {
-  ChainTargetDetail,
-  ChainTargetView,
-  EpoStatus,
-  GrowthSeriesRead,
-  LogEntry,
-  PruneStatus,
-  QueueRow,
+import {
+  type ChainTargetDetail,
+  type ChainTargetView,
+  type EpoStatus,
+  GRAPH_NODE_STATUSES,
+  type GraphNodeStatus,
+  type GraphSnapshot,
+  type GraphSnapshotRead,
+  type GrowthSeriesRead,
+  type LogEntry,
+  type PruneStatus,
+  type QueueRow,
 } from '@/types';
 
 const MIN = 60_000;
@@ -246,3 +250,34 @@ export const SCENARIOS: Scenario[] = [
     }),
   },
 ];
+
+/** Invented graph accounts only; all columns, status totals and hub membership agree. */
+export type GalleryGraphState = 'populated' | 'empty' | 'unavailable';
+
+const TOTALS: Record<GraphNodeStatus, number> = {
+  known: 64, queued: 128, waiting: 38, held: 24, unfollow_queued: 17, unfollowed: 50,
+  abandoned: 3, external: 5, follows_you: 36, you_follow: 29, mutual: 42, kept: 9,
+};
+
+/** Fresh arrays prevent a review session from changing the next fixture's data. */
+export function galleryGraph(state: GalleryGraphState): GraphSnapshotRead {
+  if (state === 'unavailable') return { unavailable: true };
+  const counts = Object.fromEntries(GRAPH_NODE_STATUSES.map((status) => [status, state === 'empty' ? 0 : TOTALS[status]])) as Record<GraphNodeStatus, number>;
+  const statuses = GRAPH_NODE_STATUSES.flatMap((status, index) => Array.from({ length: counts[status] }, () => index));
+  const hubs: GraphSnapshot['hubs'] = state === 'empty' ? [] : [
+    { pk: 'gallery-self', username: 'yourname', kind: 'self', targetStatus: null, chainIndex: null, memberCount: 0 },
+    { pk: '1000', username: 'seed.account', kind: 'target', targetStatus: 'exhausted', chainIndex: 0, memberCount: 0 },
+    { pk: '1001', username: 'longish.handle.example', kind: 'target', targetStatus: 'active', chainIndex: 2, memberCount: 0 },
+  ];
+  const hubIndex = statuses.map((status, i) => status >= GRAPH_NODE_STATUSES.indexOf('follows_you') ? 0 : 1 + i % 2);
+  for (const index of hubIndex) hubs[index].memberCount += 1;
+  return {
+    at: Date.now(), hubs, counts,
+    pks: statuses.map((_, i) => `gallery-person-${i}`),
+    usernames: statuses.map((_, i) => i % 11 === 0 ? `longish.synthetic.person.${i}` : `person.${i}`),
+    statuses: new Uint8Array(statuses),
+    progress: new Float32Array(statuses.map((status, i) => status === 2 || status === 3 ? (i % 9) / 8 : -1)),
+    hubIndex: new Int32Array(hubIndex),
+    followers: new Float64Array(statuses.map((_, i) => i % 13 === 0 ? -1 : 120 + i * 17)),
+  };
+}
