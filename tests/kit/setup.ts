@@ -5,3 +5,12 @@
 import { setLevel } from '@/utils/logger';
 
 setLevel('error');
+
+// jsdom has no SVG geometry. Gallery smoke tests mount the real populated chart;
+// browser QA checks its geometry, while these stubs let its reveal initialize.
+if (typeof SVGElement !== 'undefined') {
+  Object.defineProperties(SVGElement.prototype, {
+    getTotalLength: { configurable: true, value: () => 100 },
+    getPointAtLength: { configurable: true, value: (at: number) => ({ x: at, y: 0 }) },
+  });
+}

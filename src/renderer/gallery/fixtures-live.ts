@@ -6,8 +6,8 @@
  */
 
 import type { Res } from '@/ipc/contract';
-import { activitySignal, feedSignal } from '@/renderer/app/live-signals';
-import { basePrune, baseStatus, type Scenario } from '@/renderer/gallery/fixtures';
+import { activitySignal, feedSignal, growthSeriesSignal } from '@/renderer/app/live-signals';
+import { basePrune, baseStatus, GALLERY_GROWTH_SERIES, GALLERY_TARGET_DETAIL, type Scenario } from '@/renderer/gallery/fixtures';
 import {
   boostPreview, boostView, catchingUp, dayOffPlan, HOUR, lateStartPlan, lightPlan, liveFeed, livePlan, MIN, NOW,
   restingPlan, setGalleryView,
@@ -44,6 +44,7 @@ const park = (reason: NonNullable<EpoStatus['parkReason']>, minutes: number, ove
 
 interface Live {
   readonly op?: LiveOp;
+  readonly populatedPeople?: boolean;
   readonly away?: boolean;
   readonly emptyFeed?: boolean;
   readonly boost?: boolean;
@@ -61,6 +62,11 @@ function scenario(key: string, label: string, status: EpoStatus, live: Live = {}
       activitySignal.value = live.op === undefined ? null : { activity: { info: { kind: 'page', op: live.op }, since: NOW }, busy: true, holds: [] };
       setGalleryView({ boost: live.boost ?? false, practice: live.practice, seed: live.seed });
       answerInGallery('previewBoost', live.preview === null ? null : boostPreview(live.preview ?? {}));
+      if (live.populatedPeople) {
+        answerInGallery('chainDetail', GALLERY_TARGET_DETAIL);
+        answerInGallery('growthSeries', GALLERY_GROWTH_SERIES);
+        growthSeriesSignal.value = GALLERY_GROWTH_SERIES;
+      }
     },
   };
 }
@@ -70,6 +76,9 @@ export function resetLiveGallery(): void {
   feedSignal.value = liveFeed(false);
   activitySignal.value = null;
   answerInGallery('previewBoost', null);
+  answerInGallery('chainDetail', null);
+  growthSeriesSignal.value = { points: [], baselineAt: null };
+  answerInGallery('growthSeries', growthSeriesSignal.peek());
 }
 
 const follow: LiveOp = { op: 'follow', username: 'studio.lumen' };
@@ -77,9 +86,9 @@ const reading: LiveOp = { op: 'read-list', list: 'followers', of: 'longish.handl
 const boot = (over: Partial<BootView>): BootView => ({ ...BOOT, ...over });
 
 export const LIVE_SCENARIOS: Scenario[] = [
-  scenario('working', 'Working · following', running({ nextActionAt: NOW + 72_000 }), { op: follow }),
-  scenario('working-next', 'Working · next step', running({ nextActionAt: NOW + 72_000, lastActionAt: NOW - 30_000 })),
-  scenario('reading', 'Working · reading a list', running(), { op: reading }),
+  scenario('working', 'Working · following', running({ nextActionAt: NOW + 72_000 }), { op: follow, populatedPeople: true }),
+  scenario('working-next', 'Working · next step', running({ nextActionAt: NOW + 72_000, lastActionAt: NOW - 30_000 }), { populatedPeople: true }),
+  scenario('reading', 'Working · reading a list', running(), { op: reading, populatedPeople: true }),
   scenario('resting', 'Resting', park('session', 132, { plan: restingPlan() })),
   scenario('pacing', 'Pacing', park('velocity', 12)),
   scenario('retrying', 'Retrying soon', park('enrich-backoff', 3)),
