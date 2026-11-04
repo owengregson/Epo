@@ -6,22 +6,16 @@
  * relationship count must equal what the manifest recorded. A version bump that
  * reshapes an endpoint fails here, in milliseconds, in CI — which is the whole
  * point of scrubbing the corpus in the first place.
- *
- * It also runs the SHADOW comparison in reverse: the legacy extractor and the
- * schema must agree on every real body. That is the evidence that earns an
- * endpoint's flip from `observe` to `enforce`, and it is checked against real
- * captured shapes rather than hand-written ones.
  */
 
 import { SURFACE } from '@/adapter/ig-surface';
-import { isShapeMismatch } from '@/adapter/parse-helpers';
 import { endpointOf, matchEndpoint, routeOf, surface } from '@/surface/index';
 import { readResponse } from '@/surface/parse';
 import { readBody } from '@/surface/read/read';
 import type { SurfaceRead } from '@/surface/read/types';
 import { PATHS } from '@/surface/versions/2026-08-12/literals';
 import { type CorpusBody, writeManifest } from '@/surface-lab/scrub-fixtures';
-import { body, bodyOf, CORPORA, type CorpusId, corpusDir, hasCorpus, hasCorpusAt, manifest, manifestOf } from './corpus';
+import { bodyOf, CORPORA, type CorpusId, corpusDir, hasCorpus, hasCorpusAt, manifest, manifestOf } from './corpus';
 
 /** What the read pipeline adds to a body's pins: tier, completeness, steps, continuation, field issues, presence. */
 const readPins = (read: SurfaceRead): Record<string, unknown> => {
@@ -56,15 +50,6 @@ describe('the surface document loads and validates', () => {
     }
   });
 
-  test('endpoints flip to `enforce` whole and in the spec order (§10.3), never out of it', () => {
-    const order = [['profile-graphql', 'profile-info'], ['activity-feed'], ['friend-requests'], ['show-many', 'friendship-show'],
-      ['followers-list', 'following-list']];
-    const modes = order.map((kinds) => new Set(doc.endpoints.filter((e) => kinds.includes(e.kind)).map((e) => e.mode)));
-    for (const set of modes) expect(set.size).toBe(1);
-    const flipped = modes.map((set) => set.has('enforce'));
-    expect(flipped).toEqual([...flipped].sort((a, b) => Number(b) - Number(a)));
-  });
-
   test('an `escape` control names the ADR that authorised it', () => {
     for (const [id, control] of Object.entries(doc.controls)) {
       if (control.strategy !== 'escape') continue;
@@ -91,8 +76,7 @@ describe('the URLs the surface BUILDS are the URLs it ROUTES', () => {
 
   test.each(cases)('%s routes its own URL', (kind, url) => {
     expect(matchEndpoint(url)?.kind).toBe(kind);
-    // …and the legacy façade must agree, or the shadow parse would be comparing
-    // two different endpoints' answers.
+    // The live adapter façade and document must route to the same endpoint.
     expect(SURFACE.matchEndpoint(url)).toBe(kind);
   });
 
@@ -186,53 +170,6 @@ describe.each([...CORPORA].filter(hasCorpusAt))('every committed %s body replays
       expect(matchEndpoint(route.path, route.op ?? undefined)?.kind).toBe(entry.endpoint);
     });
   }
-});
-
-(corpus === null ? describe.skip : describe)('schema and legacy extractor agree on real bodies', () => {
-  const lists = (corpus?.bodies ?? []).filter(
-    (b) => b.endpoint === 'followers-list' || b.endpoint === 'friend-requests',
-  );
-
-  test.each(lists.map((b) => [b.file, b] as const))(
-    '%s: the extractor reads the same rows and cursor',
-    (_file, entry) => {
-      const raw = body(entry.file);
-      const legacy = SURFACE.extractFollowersList(raw, 0, entry.source as 'followers-list');
-      expect(isShapeMismatch(legacy)).toBe(false);
-      if (isShapeMismatch(legacy)) return;
-      expect(legacy.observations.length).toBe(entry.expect.facts);
-      expect(legacy.cursor).toBe(entry.expect.cursor);
-      expect(legacy.hasMore).toBe(entry.expect.hasMore);
-    },
-  );
-
-  // Empty until a capture lands real profile bodies for the post-retirement
-  // endpoints (see the `missing` list above), and `test.each` rejects an empty
-  // table — so the comparison registers only once there is something to compare.
-  const profiles = (corpus?.bodies ?? []).filter((b) => b.endpoint === 'profile-info');
-  if (profiles.length === 0) {
-    test.skip('no profile body in the corpus yet (endpoint replaced 2026-09-18)', () => {});
-  } else {
-    test.each(profiles.map((b) => [b.file, b] as const))(
-      '%s: the extractor reads the same profile',
-      (_file, entry) => {
-        const legacy = SURFACE.extractProfileInfo(body(entry.file), 0);
-        expect(isShapeMismatch(legacy)).toBe(false);
-        expect(legacy === null).toBe(entry.expect.absent === true);
-      },
-    );
-  }
-
-  const many = (corpus?.bodies ?? []).filter((b) => b.endpoint === 'show-many');
-  test.each(many.map((b) => [b.file, b] as const))(
-    '%s: the extractor reads the same relationships',
-    (_file, entry) => {
-      const legacy = SURFACE.extractShowMany(body(entry.file));
-      expect(isShapeMismatch(legacy)).toBe(false);
-      if (isShapeMismatch(legacy)) return;
-      expect(legacy.length).toBe(entry.expect.relationships);
-    },
-  );
 });
 
 describe('drift never collapses to a fact (ADR 0303, now structural)', () => {

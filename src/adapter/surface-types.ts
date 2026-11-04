@@ -4,9 +4,8 @@
  */
 
 import type { Observation } from '@/store/types';
-import type { Continuation } from '@/surface/schema/projection';
 
-/** The store fact the extractors yield, named here for the surface interface. */
+/** The store fact the read pipeline yields, named here for adapter consumers. */
 export type { Observation };
 
 /** Sentinel classification of the tab / a response URL. */
@@ -40,36 +39,6 @@ export interface FollowEvent {
   atMs: number | null;
 }
 
-/** Result of parsing one paginated followers page. */
-export interface FollowersListResult {
-  observations: Observation[];
-  /** Resume cursor for the next page; `null` when there is no next page (from `continuation`). */
-  cursor: string | null;
-  /** Whether more pages may exist: anything but an end (from `continuation`). */
-  hasMore: boolean;
-  /** What the page says about the rest of the list (spec §10.4). */
-  continuation: Continuation;
-  /** Rows on the page that did not read: counted, never silently dropped. */
-  quarantined: number;
-}
-
-/**
- * One relationship row from the batched shape (carries no followed-by). Each flag is read by
- * presence: `null` means its key was absent (unknown), never `false` (spec §10.4).
- */
-export interface ShowManyEntry {
-  pk: string;
-  following: boolean | null;
-  /**
-   * TRUE when we have a PENDING follow request to this (private) account.
-   * `following` is FALSE while a request awaits acceptance, so "do we own this
-   * relationship" is `following || outgoingRequest` — never `following` alone.
-   */
-  outgoingRequest: boolean | null;
-  incomingRequest: boolean | null;
-  isPrivate?: boolean;
-}
-
 /** A profile body's viewer-side flags (`friendship_status`), each `null` where the body is silent. */
 export interface ProfileViewer {
   following: boolean | null;
@@ -77,18 +46,6 @@ export interface ProfileViewer {
   followsUs: boolean | null;
   /** TRUE while THEIR follow request to us is open; absent or `null` = unknown. */
   incomingRequest?: boolean | null;
-}
-
-/** The single-relationship shape — both directions, each flag `null` where its key is absent. */
-export interface FriendshipShowResult {
-  pk: string;
-  following: boolean | null;
-  /** `followedBy` => THEY follow us (the follow-back signal). */
-  followedBy: boolean | null;
-  /** TRUE while our follow request to a private account awaits acceptance. */
-  outgoingRequest: boolean | null;
-  incomingRequest: boolean | null;
-  isPrivate?: boolean;
 }
 
 // ---------------------------------------------------------------------------

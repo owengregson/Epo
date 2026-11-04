@@ -16,8 +16,8 @@ the pipeline left to right:
   SpanSink spans.
 - `src/surface/` + `src/adapter/` — the Instagram surface. ALL IG literals
   (URLs, selectors, JSON paths) live ONLY in `src/surface/versions/*` and
-  `src/adapter/versions/*`; the surface is a validated zod document (ADR
-  0801) currently in shadow mode beside the versioned adapter; in-page logic
+  `src/adapter/versions/*`; the validated zod document is the authoritative read parser (ADRs
+  0801, 0806), with mutation parsing in the separate versioned adapter; in-page logic
   is real TypeScript in `src/adapter/page/*` bundled into the committed
   `bundle.generated.ts` (regenerate with `npm run build:page`, freshness is a
   test). Scrubbed fixtures only under `tests/fixtures/surface/`; real

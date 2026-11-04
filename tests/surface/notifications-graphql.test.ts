@@ -6,12 +6,10 @@
  * (`/api/graphql`, `data.xdt_activity_inbox`) and
  * `PolarisActivityFeedFollowRequestsViewQuery` (`/graphql/query`,
  * `data.xdt_friendships_pending_users.users.edges[].node`). Pinned here: both are
- * routed by operation name to the existing kinds, the shadow schema and the
- * legacy extractor read them identically, and the scrub shape knows the new
- * containers. Bodies are synthetic, shaped like the live ones.
+ * routed by operation name to the existing kinds, the document projects the
+ * expected facts, and the scrub shape knows the new containers. Bodies are synthetic, shaped like the live ones.
  */
 import { SURFACE } from '@/adapter/ig-surface';
-import { isShapeMismatch } from '@/adapter/parse-helpers';
 import { endpointKinds, matchEndpoint } from '@/surface/index';
 import { novelKeys, SCRUB_SHAPES, shapeOf } from '@/surface/lab/shape';
 import { readResponse } from '@/surface/parse';
@@ -68,7 +66,7 @@ describe('routing: the drawer queries reach the existing kinds by operation name
   });
 });
 
-describe('the shadow schema and the legacy extractor read the GraphQL bodies identically', () => {
+describe('the document projects the GraphQL feed and requests bodies', () => {
   const endpoint = (kind: string, op: string) => {
     const url = `https://www.instagram.com/${kind === 'activity-feed' ? 'api/graphql' : 'graphql/query'}`;
     const def = matchEndpoint(url, op);
@@ -77,27 +75,20 @@ describe('the shadow schema and the legacy extractor read the GraphQL bodies ide
   };
 
   test('feed: one follow event, the like story ignored', () => {
-    const legacy = SURFACE.extractActivityFeed(feed);
-    expect(legacy).toEqual([{ pk: '11', username: 'user_011', atMs: 1_700_000_000_500 }]);
     const read = readResponse(endpoint('activity-feed', FEED_OP), feed, { at: 1_700_000_100_000, source: 'activity-feed' });
-    expect(read.ok && read.projection.events).toEqual(legacy);
+    expect(read.ok && read.projection.events).toEqual([{ pk: '11', username: 'user_011', atMs: 1_700_000_000_500 }]);
   });
 
   test('requests: the connection nodes become the list rows, end of list known', () => {
-    const legacy = SURFACE.extractFollowersList(requests, 1, 'friend-requests');
-    if (isShapeMismatch(legacy)) throw new Error('extractor rejected the GraphQL requests body');
-    expect(legacy.observations.map((o) => [o.accountPk, o.fields.username])).toEqual([
-      ['21', 'user_021'],
-      ['22', 'user_022'],
-    ]);
-    expect(legacy).toMatchObject({ cursor: null, hasMore: false });
     const read = readResponse(endpoint('friend-requests', REQUESTS_OP), requests, { at: 1, source: 'friend-requests' });
-    expect(read.ok && read.projection.facts.map((f) => f.accountPk)).toEqual(['21', '22']);
+    expect(read.ok && read.projection.facts.map((f) => [f.accountPk, f.fields.username])).toEqual([
+      ['21', 'user_021'], ['22', 'user_022'],
+    ]);
+    expect(read.ok && read.projection.cursor).toBeNull();
     expect(read.ok && read.projection.hasMore).toBe(false);
   });
 
   test('a GraphQL body with neither container is drift, never an empty feed', () => {
-    expect(isShapeMismatch(SURFACE.extractActivityFeed({ data: { something_else: {} } }))).toBe(true);
     const read = readResponse(endpoint('activity-feed', FEED_OP), { data: { something_else: {} } }, { at: 1, source: 'activity-feed' });
     expect(read.ok).toBe(false);
   });

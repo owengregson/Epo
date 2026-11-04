@@ -22,17 +22,10 @@ import type { ShapeMismatch } from '@/adapter/parse-helpers';
 import type {
   BlockSignature,
   EndpointIds,
-  FollowEvent,
-  FollowersListResult,
-  FriendshipShowResult,
-  Observation,
-  ProfileViewer,
-  ShowManyEntry,
   StaleComponent,
 } from '@/adapter/surface-types';
 import type { ObservedRequest, RouteMatch } from '@/surface/read/route';
 import type { EndpointKind } from '@/surface/schema/endpoints';
-import type { ProfilePresence } from '@/surface/schema/projection';
 import type { TransportDecl } from '@/surface/transport/decode';
 import type { GraphqlDecl } from '@/surface/transport/graphql';
 
@@ -55,8 +48,6 @@ export type {
   BlockSignature,
   EndpointIds,
   FollowEvent,
-  FollowersListResult,
-  FriendshipShowResult,
   LocateActionResult,
   LocateConfirmRequestResult,
   LocatedRect,
@@ -64,7 +55,6 @@ export type {
   LocateScrollResult,
   ProfileViewer,
   SentinelStatus,
-  ShowManyEntry,
   StaleComponent,
 } from '@/adapter/surface-types';
 
@@ -128,45 +118,6 @@ export interface IgSurface {
   /** Pull the pk/targetPk a `kind`'s URL carries (empty object on no match). */
   extractIds(kind: EndpointKind, url: string): EndpointIds;
 
-  // --- Response extractors (already-parsed JSON bodies) -------------------
-  /**
-   * Parse a followers/following page. `SHAPE_MISMATCH` on an unexpected record
-   * shape. `source` labels the observations' provenance (default
-   * `'followers-list'`); the following-list endpoint shares the shape but its
-   * observations must not claim the wrong endpoint.
-   */
-  extractFollowersList(
-    body: unknown,
-    at: number,
-    source?: 'followers-list' | 'following-list' | 'friend-requests',
-    final?: boolean | null,
-  ): FollowersListResult | ShapeMismatch;
-  /**
-   * Parse a profile-info body into a profile observation. `null` when the user
-   * is genuinely absent; `SHAPE_MISMATCH` when a user is present but unreadable.
-   */
-  extractProfileInfo(body: unknown, at: number): Observation | null | ShapeMismatch;
-  /** The viewer-side flags of a profile body, each read by presence (`null` when absent). */
-  extractProfileViewer(body: unknown): ProfileViewer;
-  /** Which decision-bearing profile fields were read; `viewerPk` tells a null relationship's owner. */
-  extractProfilePresence(body: unknown, viewerPk: string | null): ProfilePresence | null;
-  /** Parse the batched relationship map. `SHAPE_MISMATCH` on unexpected shape. */
-  extractShowMany(body: unknown): ShowManyEntry[] | ShapeMismatch;
-  /**
-   * Parse the single `friendships/show/<pk>` shape. `SHAPE_MISMATCH` on an
-   * unexpected shape — so "no relationship" and "unparsed" stay distinguishable.
-   */
-  extractFriendshipShow(body: unknown, pk: string): FriendshipShowResult | ShapeMismatch;
-  /**
-   * Parse the activity-feed (news inbox) body into the "started following you"
-   * events it carries. `SHAPE_MISMATCH` when the body is present but carries
-   * none of the expected story containers; an empty list is a VALID result (no
-   * recent follows).
-   */
-  extractActivityFeed(body: unknown): FollowEvent[] | ShapeMismatch;
-  /** The feed body's side list of pending requesters, row by row, at its declared place only. */
-  extractFeedPendingPreview(body: unknown, at: number): Observation[];
-
   // --- Mutations (the action button's own requests) ------------------------
   /**
    * Recognise the follow/unfollow mutation request the web client fires when
@@ -193,7 +144,7 @@ export interface IgSurface {
    * from the paginated API — the same endpoint the list dialog paginates, but
    * at the API's full page size instead of the dialog's small scroll batches.
    * `maxId` is the previous page's resume cursor (`null` for the first page);
-   * the body parses with {@link extractFollowersList}.
+   * the body is read by the document pipeline through Reader.readListPage.
    */
   listPageScript(pk: string, which: 'followers' | 'following', maxId: string | null, endProbe?: boolean, abortMs?: number): string;
   /**

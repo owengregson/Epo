@@ -154,13 +154,6 @@ export const ContainerSchema = z.object({
  */
 export const EndpointSchema = z.object({
   kind: z.string(),
-  /**
-   * `observe` runs the schema alongside the legacy extractor and only LOGS a
-   * disagreement; `enforce` makes the schema the parse. Every endpoint is
-   * `observe` in wave A — flipping one is a per-endpoint decision backed by
-   * the shadow-parse record, and is reversible without a release.
-   */
-  mode: z.enum(['observe', 'enforce']),
   match: MatchSchema,
   response: z.custom<z.ZodType>((v) => v instanceof z.ZodType, {
     error: 'endpoint.response must be a zod schema',
@@ -226,7 +219,6 @@ export type SurfaceDoc = z.infer<typeof SurfaceDocSchema>;
  */
 export interface EndpointDef {
   kind: EndpointKind;
-  mode: 'observe' | 'enforce';
   match: Match;
   /** Validates the record or page inside the chosen container. */
   response: z.ZodType;
@@ -244,7 +236,6 @@ export interface EndpointDef {
 /** Define one endpoint, narrowing `project`'s body to what `response` parses to. */
 export function defineEndpoint<B>(def: {
   kind: EndpointKind;
-  mode: 'observe' | 'enforce';
   match: Match;
   response: z.ZodType<B>;
   project: (body: B, ctx: ProjectCtx) => Projection;
@@ -255,7 +246,6 @@ export function defineEndpoint<B>(def: {
 }): EndpointDef {
   return {
     kind: def.kind,
-    mode: def.mode,
     match: def.match,
     response: def.response as z.ZodType,
     project: (body: unknown, ctx: ProjectCtx): Projection => def.project(body as B, ctx),

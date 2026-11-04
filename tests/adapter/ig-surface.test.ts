@@ -7,10 +7,11 @@ import {
   classifyEnvelope,
   envelopeLooksLikeHtml,
   type FetchEnvelope,
-  SHAPE_MISMATCH,
   SURFACE,
 } from '@/adapter/ig-surface';
+import { Reader } from '@/adapter/reader';
 import { TAB } from '@/timing/config';
+import { readAs } from '../kit/surface';
 
 describe('asFetchEnvelope', () => {
   test('accepts a well-formed envelope', () => {
@@ -186,16 +187,14 @@ describe('classifyEnvelope — the recovery ladder’s read-side failure familie
 });
 
 describe('an unreadable body is never an empty fact', () => {
-  // `Reader.coerce` hands the extractors `undefined` for a body that is not
-  // JSON. Parsed as the typed EMPTY result, that is the genuine end-of-list
-  // shape (`hasMore: false`) — a fabricated "walk complete" the prune census
-  // then draws lost-follower verdicts from.
-  test('extractFollowersList: a non-record body is SHAPE_MISMATCH, not end-of-list', () => {
-    expect(SURFACE.extractFollowersList(undefined, 1)).toBe(SHAPE_MISMATCH);
-    expect(SURFACE.extractFollowersList('<!DOCTYPE html>', 1)).toBe(SHAPE_MISMATCH);
-  });
-
-  test('extractShowMany: a non-record body is SHAPE_MISMATCH, not "no relationships"', () => {
-    expect(SURFACE.extractShowMany(undefined)).toBe(SHAPE_MISMATCH);
+  const reader = new Reader();
+  // A failed body must not invent an end-of-list or absence of relationships.
+  test.each(['followers-list', 'show-many'] as const)('%s refuses non-record bodies', (kind) => {
+    for (const body of [undefined, '<!DOCTYPE html>']) {
+      const read = readAs(reader, kind, body, { at: 1 });
+      expect(read).toMatchObject({ ok: false, kind: 'mismatch' });
+      expect('projection' in read).toBe(false);
+      expect(reader.relationshipFacts(read)).toEqual([]);
+    }
   });
 });

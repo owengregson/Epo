@@ -106,7 +106,6 @@ const listEndpoint = (
 ) =>
   defineEndpoint({
     kind,
-    mode: 'enforce',
     match: { method: 'GET', url, ids: { targetPk } },
     response: ListPageBody,
     project: projectListPage,
@@ -125,10 +124,10 @@ const drawerEndpoint = (kind: 'activity-feed' | 'friend-requests', rest: { url: 
     { match: rest, containers: containers.rest },
     { match: { method: 'POST' as const, url: URLS.graphql, friendlyName: op }, containers: containers.graphql, graphql: true },
   ].map((d) => kind === 'activity-feed'
-    ? defineEndpoint({ kind, mode: 'enforce', match: d.match, response: ActivityFeedStories, project: projectActivityFeed,
+    ? defineEndpoint({ kind, match: d.match, response: ActivityFeedStories, project: projectActivityFeed,
       source: 'activity-feed', containers: d.containers,
       ...(d.graphql === true ? { sideLists: { pendingPreview: JSON_PATHS.activityFeedPendingPreview } } : {}) })
-    : defineEndpoint({ kind, mode: 'enforce', match: d.match, response: ListPageBody, project: projectListPage,
+    : defineEndpoint({ kind, match: d.match, response: ListPageBody, project: projectListPage,
       source: 'friend-requests', containers: d.containers,
       ...(d.graphql === true ? { rootFields: FOLLOW_REQUESTS_ROOT_FIELDS } : {}) }));
 
@@ -144,7 +143,6 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
   endpoints: [
     defineEndpoint({
       kind: 'friendship-show',
-      mode: 'enforce',
       match: { method: 'GET', url: URLS.friendshipShow, ids: { pk: URLS.friendshipShowPk } },
       response: FriendshipShowBody,
       project: projectFriendshipShow,
@@ -152,7 +150,6 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
     }),
     defineEndpoint({
       kind: 'show-many',
-      mode: 'enforce',
       match: { method: 'POST', url: URLS.showMany },
       response: ShowManyBody,
       project: projectShowMany,
@@ -164,7 +161,6 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
     // The document drives both profile containers (flipped in order, spec §10.3); `/users/<pk>/info/` is retired.
     defineEndpoint({
       kind: 'profile-info',
-      mode: 'enforce',
       match: { method: 'GET', url: URLS.profileInfo, ids: { pk: URLS.profileInfoPk } },
       response: ProfileRecord,
       project: projectProfileUser,
@@ -177,7 +173,6 @@ export const SURFACE_DOC_2026_08_12: SurfaceDocument = {
     // page would route here and log drift.
     defineEndpoint({
       kind: 'profile-graphql',
-      mode: 'enforce',
       match: {
         method: 'POST',
         url: URLS.graphql,

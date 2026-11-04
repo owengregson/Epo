@@ -1,6 +1,6 @@
 # 0806 — One parser, tiers, presence-gated verdicts, witnessed recovery
 
-**Status:** accepted (legacy comparators remain until Phase L validates their removal) · **Area:** surface
+**Status:** accepted (S8 comparators retired after the required live parser evidence) · **Area:** surface
 (`src/surface/read/*`, `src/surface/transport/*`), adapter
 (`reader*.ts`, `drawer-read.ts`, `fetch-json.ts`, `mutation-*.ts`), rim (`list-walk-end.ts`, `list-page-walker.ts`,
 `profile-observer.ts`, `profile-visit.ts`), engine (`census-authority.ts`, `prune-scan-guards.ts`)
@@ -61,8 +61,9 @@ never subtracts them.**
 
 - A small delivery change costs a paused verdict, never a wrong fact; real bodies keep reading at C0 (zero facts lost
   on the captured corpus).
-- All endpoints use the surface parser. Legacy extractors are reverse-shadow comparators only; their deletion
-  requires the L1 and L4 live evidence recorded in the [validation record](../qa/plan-derived-overhaul-2026-11.md).
+- All endpoints use the surface parser. The legacy comparators were retired after the L1 and L4 parser evidence
+  recorded in the [validation record](../qa/plan-derived-overhaul-2026-11.md); the final amendment below separates
+  that evidence from the remaining production launch and action checks.
 - The read pipeline's guardrails and protocol facts live in `src/kernel/surface-policy.ts` (`SURFACE_BOUNDS`,
   `HTTP_STATUS`).
 
@@ -124,4 +125,26 @@ account data before commit; the regression checks canonical, non-partial parsing
 
 `EMPTY_BIO` now records the observed empty-string form. This does not establish that `null` or an omitted biography
 means empty: both remain unread, and protection decisions still fail safe when they require that missing fact.
-The legacy comparators remain until the separate L1 and L4 requirements pass.
+That single field observation did not satisfy the separate comparator-deletion gate.
+
+## Amendment — 2026-11-04: S8 comparator retirement
+
+The parser-specific deletion gate in spec §22 is now met. L1 qualifies on retained live native/CDP evidence,
+including canonical, non-partial profile/feed/requests bodies and zero shadow disagreements. The supervised
+production reopen then initialized the followers head from exactly one page: 24 rows, zero quarantined rows,
+a canonical read with zero field issues and zero shadow disagreements. The walker rejects partial reads before
+accepting a page. Its persisted health and frontier, production log, and independent closed-store audit provide
+non-vacuous list-parser evidence. The informational novel key did not change the read tier or projection.
+Private artifacts remain under `results/production-l4-2026-11-04T1053Z/` in the durable handoff folder.
+
+This evidence does **not** qualify all of L4: the dashboard observer did not install, so no boot movie/status-push
+record was captured; Start, journal settlement and production action cadence were not exercised. L5 remains
+unperformed. No extra list read or mutation was used to earn comparator removal.
+
+S8 removes the two legacy response-extractor modules, the eight response methods on `IgSurface`, both comparator
+modules and `EndpointDef.mode` (including its runtime schema). Reader still decodes once and uses the same
+`readBody` pipeline; routing, recovery, admission and mutation verification are unchanged. Corpus replay retains
+canonical/completeness/field-presence pins. The six former synthetic differential cases now assert authoritative
+Reader results directly: conflicting/unsafe IDs, invalid relationship-map keys, normalized story types, actor
+aliases and implausible times. Historical shadow-drift vocabulary, persisted counters and fail-closed diagnostics
+remain readable; retirement does not erase old disagreements or require a store migration.

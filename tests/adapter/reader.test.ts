@@ -1,4 +1,4 @@
-import { isShapeMismatch, SHAPE_MISMATCH, SURFACE } from '@/adapter/ig-surface';
+import { SURFACE } from '@/adapter/ig-surface';
 import { Reader } from '@/adapter/reader';
 import type { SurfaceRead } from '@/surface/read/types';
 import followersLast from '../fixtures/adapter/followers-list-last.json';
@@ -408,25 +408,27 @@ describe('Reader.relationshipFacts(read)', () => {
   });
 });
 
-describe('SURFACE.extractFriendshipShow shape-mismatch sentinel', () => {
-  test('an unexpected (non-record) body returns SHAPE_MISMATCH, not a default', () => {
-    expect(SURFACE.extractFriendshipShow(null, '42')).toBe(SHAPE_MISMATCH);
-    expect(SURFACE.extractFriendshipShow('<!DOCTYPE html>', '42')).toBe(SHAPE_MISMATCH);
-    expect(SURFACE.extractFriendshipShow(undefined, '42')).toBe(SHAPE_MISMATCH);
-    expect(isShapeMismatch(SURFACE.extractFriendshipShow([], '42'))).toBe(true);
+describe('Reader friendship-show distinguishes unknown from no relationship', () => {
+  test.each([null, '<!DOCTYPE html>', undefined, []])('a non-record body is a typed failure: %p', (body) => {
+    const read = readAs(r, 'friendship-show', body, { at: AT, pk: '42' });
+    expect(read).toMatchObject({ ok: false, kind: 'mismatch' });
+    expect('projection' in read).toBe(false);
+    expect(r.relationshipFacts(read)).toEqual([]);
   });
 
-  test('a genuine no-relationship record parses (distinguishable from unparsed)', () => {
-    const out = SURFACE.extractFriendshipShow({ following: false, followed_by: false }, '42');
-    expect(isShapeMismatch(out)).toBe(false);
-    expect(out).toEqual({
-      pk: '42',
-      following: false,
-      followedBy: false,
-      outgoingRequest: null,
-      incomingRequest: null,
-      isPrivate: undefined,
-    });
+  test('missing request flags remain unknown, so false following alone cannot certify absence', () => {
+    const read = readAs(r, 'friendship-show', { following: false, followed_by: false }, { at: AT, pk: '42' });
+    expect(read.ok && read.projection.relationships).toEqual([{
+      pk: '42', following: false, followedBy: false, outgoingRequest: null, incomingRequest: null,
+    }]);
+    expect(r.relationshipFacts(read)).toEqual([]);
+  });
+
+  test('explicit false following and requested flags certify a genuine negative relationship', () => {
+    const read = readAs(r, 'friendship-show', { following: false, outgoing_request: false, followed_by: false },
+      { at: AT, pk: '42' });
+    expect(read.ok && read.projection.relationships).toEqual([expect.objectContaining({ followedBy: false })]);
+    expect(r.relationshipFacts(read)).toEqual([{ pk: '42', weFollow: false }]);
   });
 });
 

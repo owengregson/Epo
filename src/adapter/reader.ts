@@ -2,13 +2,11 @@
  * Instagram Adapter — Reader: the read pipeline over the bodies the tab already captured. It NEVER
  * touches the DOM and NEVER issues requests. `read()` is `readBody` (spec §10.2–10.3) with the
  * Reader's env (the document, the sink, the hint book); `observed` reads each observed response once.
- * The document drives every endpoint; the legacy extractors read its clean canonical bodies only as
- * comparators (the reverse shadow). Zero Instagram literals here: they live in `versions/*`.
+ * The document drives every endpoint. Zero Instagram literals here: they live in `versions/*`.
  */
 
 import { SURFACE } from '@/adapter/ig-surface';
 import { ObservedReads, type ObservedReadsOpts } from '@/adapter/observed-reads';
-import { shadowLegacy } from '@/adapter/reader-shadow';
 import type { ProfileSeen } from '@/rim/profile-visit-port';
 import type { ObservedRelation } from '@/shared/observed-relation';
 import { admits } from '@/surface/read/admission';
@@ -20,7 +18,7 @@ import type { BodyInput, ReadCtx, ReadEnv, RouteMatch, SurfaceRead } from '@/sur
 import type { DriftSignal } from '@/surface/sink';
 import { type Decoded, decodeBody } from '@/surface/transport/decode';
 
-export type { EndpointKind, FollowEvent, FollowersListResult, FriendshipShowResult, ShowManyEntry } from '@/adapter/ig-surface';
+export type { EndpointKind, FollowEvent } from '@/adapter/ig-surface';
 
 import type { EndpointKind, ProfileViewer } from '@/adapter/ig-surface';
 
@@ -90,13 +88,10 @@ export class Reader {
     return SURFACE.extractIds('following-list', url).targetPk ?? null;
   }
 
-  /** Read one body (never throws). An enforced endpoint's clean reads are compared with the legacy extractors. */
+  /** Read one body through the authoritative document pipeline (never throws). */
   read(kind: EndpointKind, input: BodyInput, ctx: ReadCtx): SurfaceRead {
     const decoded: Decoded = 'text' in input ? decodeBody(input.text, this.env.doc.read.transport) : input.decoded;
-    const read = readBody(kind, { decoded, status: input.status, mime: input.mime }, ctx, this.env);
-    const def = ctx.route === undefined ? this.env.doc.endpoints.find((e) => e.kind === kind) : this.env.doc.endpoints[ctx.route.defIndex];
-    if (def?.mode === 'enforce' && decoded.ok) shadowLegacy(this.env, read, decoded.json, ctx);
-    return read;
+    return readBody(kind, { decoded, status: input.status, mime: input.mime }, ctx, this.env);
   }
 
   /** One composed list page (lists are never recovered: an own-list walk reads C0/C1 only). */

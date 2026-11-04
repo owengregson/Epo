@@ -1,15 +1,9 @@
 /**
  * Instagram surface — capture 2026-08-12 (ADAPTER FAÇADE).
  *
- * This module used to be the single source of truth for everything
- * Instagram-specific. It is now a MIGRATION SHIM: every literal it once
- * declared lives in `src/surface/versions/2026-08-12/literals.ts`, and the
- * routing tables (endpoints, mutations, signals) are read off the validated
- * surface DOCUMENT (`src/surface/versions/2026-08-12/surface.ts`). What is left
- * here is the `IgSurface` shape the adapter core still programs against — eight
- * hand-written extractors (`2026-08-12.extractors.ts`) and the in-page script
- * builders — which the schemas subsume endpoint by endpoint as each one flips
- * from `observe` to `enforce`.
+ * The validated surface document owns routing, controls and response schemas. This façade
+ * supplies the adapter's page-script builders, mutation parser and version-independent interface.
+ * Read responses go through the document pipeline in Reader.
  *
  * The constraint is unchanged and now stronger: this file carries NO Instagram
  * literal of its own. Everything below reads from the document or the literals
@@ -24,16 +18,6 @@ import type {
   StaleComponent,
 } from '@/adapter/ig-surface';
 import { pageCall as callPage } from '@/adapter/page-call';
-import {
-  extractActivityFeed,
-  extractFeedPendingPreview,
-  extractFollowersList,
-  extractFriendshipShow,
-  extractProfileInfo,
-  extractProfilePresence,
-  extractProfileViewer,
-  extractShowMany,
-} from '@/adapter/versions/2026-08-12.extractors';
 import { extractMutationVerdict, matchMutation, mutationCandidate } from '@/adapter/versions/2026-08-12.mutations';
 import { SURFACE_BOUNDS } from '@/kernel/surface-policy';
 import { routeObserved } from '@/surface/read/route';
@@ -181,15 +165,6 @@ export const SURFACE_2026_08_12: IgSurface = {
     }
     return out;
   },
-
-  extractFollowersList,
-  extractProfileInfo,
-  extractProfilePresence,
-  extractProfileViewer,
-  extractShowMany,
-  extractFriendshipShow,
-  extractActivityFeed,
-  extractFeedPendingPreview,
 
   matchMutation,
   mutationCandidate,
