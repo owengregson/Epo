@@ -13,7 +13,6 @@ import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/galler
 import { resetBasisCache } from '@/renderer/settings/advanced/BasisTable';
 import { resetAtLimitAcknowledgement } from '@/renderer/settings/at-limit';
 import { SettingsStage } from '@/renderer/settings/SettingsStage';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { SettingsOp, SettingsSaveResult } from '@/shared/settings-ops';
 import type { SettingsView } from '@/shared/settings-view';
 import { type FakeBridge, installFakeBridge } from '../kit/render-bridge';
@@ -37,7 +36,7 @@ async function mount(v: SettingsView = view()): Promise<void> {
 }
 
 beforeEach(() => {
-  bridge = installFakeBridge(DEFAULT_SETTINGS);
+  bridge = installFakeBridge();
   confirm.mockClear();
   confirmAnswer = true;
   resetAtLimitAcknowledgement();

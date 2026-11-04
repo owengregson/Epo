@@ -6,15 +6,14 @@ import { act, fireEvent, render, waitFor } from '@testing-library/preact';
 import { peopleTargetSignal } from '@/renderer/app/shell-context';
 import { openPerson } from '@/renderer/app/shell-services';
 import { SelectedPerson } from '@/renderer/pages/people/SelectedPerson';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { GraphSnapshot } from '@/types';
 import { graphSnapshot as snapshot } from '../kit/graph-snapshot';
 import { installFakeBridge } from '../kit/render-bridge';
 
-beforeEach(() => installFakeBridge(DEFAULT_SETTINGS));
+beforeEach(() => installFakeBridge());
 
 test('the selected pk fetches and displays its current name and lifecycle outside the queue page', async () => {
-  const bridge = installFakeBridge(DEFAULT_SETTINGS);
+  const bridge = installFakeBridge();
   bridge.stub('graphSnapshot', snapshot('42', 'renamed'));
   openPerson({ pk: '42', username: 'oldname' });
   const view = render(<SelectedPerson active />);
@@ -28,7 +27,7 @@ test('the selected pk fetches and displays its current name and lifecycle outsid
 });
 
 test('a stale read for the previous selection cannot replace the newly selected person', async () => {
-  const bridge = installFakeBridge(DEFAULT_SETTINGS);
+  const bridge = installFakeBridge();
   let resolve!: (value: GraphSnapshot) => void;
   bridge.stub('graphSnapshot', () => new Promise<GraphSnapshot>((done) => { resolve = done; }));
   openPerson({ pk: '1', username: 'first' });
@@ -43,7 +42,7 @@ test('a stale read for the previous selection cannot replace the newly selected 
 });
 
 test.each(['rejected', 'unavailable'])('a %s read stays unavailable, offers retry, and never reads while hidden', async (failure) => {
-  const bridge = installFakeBridge(DEFAULT_SETTINGS);
+  const bridge = installFakeBridge();
   openPerson({ pk: '1', username: 'selected' });
   const view = render(<SelectedPerson active={false} />);
   await act(async () => {});

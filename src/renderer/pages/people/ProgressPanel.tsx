@@ -1,7 +1,7 @@
 import { Fragment, type JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { type LaneRows, queueLanesSignal } from '@/renderer/app/live-signals';
-import { settingsFactsSignal, settingsSignal, statusSignal } from '@/renderer/app/shell-context';
+import { settingsFactsSignal, settingsViewSignal, statusSignal } from '@/renderer/app/shell-context';
 import { LANE_STATE, LANES, type LaneKey, type RowLaneKey } from '@/renderer/cards/queues/lanes';
 import { laneCounts, QUEUE_STAGE_PANEL_ID, QueuePipeline } from '@/renderer/cards/queues/QueuePipeline';
 import { KeptRowItem, QueueRowItem, queueWindowsOf } from '@/renderer/cards/queues/QueueRowItem';
@@ -44,7 +44,7 @@ function useKeptPage(active: boolean, preloaded: KeptPageResult | null): KeptPag
 
 function RowLane({ lane, active, preloaded }: { lane: RowLaneKey; active: boolean; preloaded: LaneRows | null }): JSX.Element {
   const { rows, truncated, loading } = useQueue(LANE_STATE[lane], statusSignal.value, active, preloaded);
-  const windows = queueWindowsOf(settingsSignal.value);
+  const windows = queueWindowsOf(settingsViewSignal.value?.effective ?? null);
   if (rows.length === 0) return <Note text={loading ? 'Loading…' : 'No one here right now.'} />;
   return (
     <Fragment>

@@ -5,11 +5,11 @@
  */
 
 import fc from 'fast-check';
-import { bioMatchesFilter } from '@/engine/prune-bio-filter';
 import type { ProtectedAccount, ProtectionSettings } from '@/shared/settings-model';
 import {
   compileProtection, foldText, normalizeHandle, type ProtectionSubject, type ProtectionVerdict, protectionVerdict,
 } from '@/shared/unfollow-protection';
+import { bioMatchesFilter } from '../kit/v1-protection-oracle';
 
 const account = (over: Partial<ProtectedAccount>): ProtectedAccount => ({
   pk: null, username: '', linkedAt: null, formerUsernames: [], addedAt: 0, source: 'you', valid: true, ...over,

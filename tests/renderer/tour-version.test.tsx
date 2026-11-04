@@ -6,11 +6,10 @@ import { act, fireEvent, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
 import { settingsViewSignal } from '@/renderer/app/shell-context';
 import { NEW_LOOK_STEPS, NEW_LOOK_VERSION } from '@/renderer/tour/steps';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { installFakeBridge } from '../kit/render-bridge';
 
 const previousInstall = () => {
-  const bridge = installFakeBridge({ ...DEFAULT_SETTINGS, seed: 'source', tourCompletedAt: 1 });
+  const bridge = installFakeBridge({ seed: 'source', app: { tourCompletedAt: 1 } });
   bridge.data.settingsView = { ...bridge.data.settingsView, app: { tourCompletedAt: 1, tourVersionSeen: null } };
   return bridge;
 };
@@ -43,7 +42,7 @@ test('a refused new-look acknowledgment surfaces the failure and leaves the save
 });
 
 test('a rejected completion write is visible and releases the tour hold', async () => {
-  const bridge = installFakeBridge({ ...DEFAULT_SETTINGS, tourCompletedAt: null });
+  const bridge = installFakeBridge({ app: { tourCompletedAt: null } });
   const app = render(<App />);
   await waitFor(() => expect(app.getByLabelText('Skip the tour')).toBeTruthy());
   bridge.failNext('applySettings', 'disk closed');

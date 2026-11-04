@@ -23,7 +23,7 @@ const touched = (...t: Touched[]): ReadonlySet<Touched> => new Set(t);
 
 test('a protection-only change re-applies the unfollow rules at once', () => {
   const { g, churn } = graph();
-  const reloaded = reloadChanged(g, DEFAULT_SETTINGS, DEFAULT_SETTINGS, { prev: EFFECTIVE, next: EFFECTIVE, touched: touched('protection') });
+  const reloaded = reloadChanged(g, EFFECTIVE, EFFECTIVE, { prev: EFFECTIVE, next: EFFECTIVE, touched: touched('protection') });
   expect(reloaded).toEqual(['churn']);
   expect(churn.applyConfig).toHaveBeenCalledWith(expect.objectContaining({ rotateMutuals: true }));
 });
@@ -31,12 +31,22 @@ test('a protection-only change re-applies the unfollow rules at once', () => {
 test("the churn config carries the intent's mutuals choice", () => {
   const { g, churn } = graph();
   const next = { ...EFFECTIVE, rotateMutuals: false };
-  expect(reloadChanged(g, DEFAULT_SETTINGS, DEFAULT_SETTINGS, { prev: EFFECTIVE, next, touched: touched('intent') })).toEqual(['churn']);
+  expect(reloadChanged(g, EFFECTIVE, EFFECTIVE, { prev: EFFECTIVE, next, touched: touched('intent') })).toEqual(['churn']);
   expect(churn.applyConfig).toHaveBeenCalledWith(expect.objectContaining({ rotateMutuals: false }));
 });
 
 test('an edit that moves no projected config reloads nothing', () => {
   const { g, churn } = graph();
-  expect(reloadChanged(g, DEFAULT_SETTINGS, DEFAULT_SETTINGS, { prev: EFFECTIVE, next: EFFECTIVE, touched: touched('seed') })).toEqual([]);
+  expect(reloadChanged(g, EFFECTIVE, EFFECTIVE, { prev: EFFECTIVE, next: EFFECTIVE, touched: touched('seed') })).toEqual([]);
   expect(churn.applyConfig).not.toHaveBeenCalled();
+});
+
+
+test('Advanced audience overrides reach the running scorer on reload', () => {
+  const { g } = graph();
+  const next = { ...EFFECTIVE, bandEdgeScore: 0.2, mutualCap: 7, mutualWeight: 0.6 };
+  expect(reloadChanged(g, EFFECTIVE, next, { prev: EFFECTIVE, next, touched: touched('overrides') })).toEqual(['scanner']);
+  expect(g.scanner.applyConfig).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+    bandEdgeScore: 0.2, mutualCap: 7, mutualWeight: 0.6,
+  }));
 });

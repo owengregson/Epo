@@ -2,7 +2,6 @@ import { type JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import { chainListSignal, growthSeriesSignal, queueLanesSignal } from '@/renderer/app/live-signals';
 import {
-  adoptSettings,
   pruneSignal,
   ShellContext,
   type ShellControls,
@@ -14,7 +13,7 @@ import {
 import { LivePlaceholder } from '@/renderer/boot/LivePlaceholder';
 import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
-import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, GALLERY_SETTINGS, type Scenario } from '@/renderer/gallery/fixtures';
+import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, type Scenario } from '@/renderer/gallery/fixtures';
 import { LIVE_SCENARIOS, resetLiveGallery } from '@/renderer/gallery/fixtures-live';
 import { SETTINGS_SCENARIOS } from '@/renderer/gallery/fixtures-settings';
 import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
@@ -44,7 +43,9 @@ const SCENARIOS: Scenario[] = [
 /** Publish one scenario onto the shell's signals — this IS mounting a story. */
 function applyScenario(s: Scenario): void {
   statusSignal.value = s.status;
-  pruneSignal.value = s.prune;
+  const allocation = s.status.plan?.kinds.unfollow;
+  pruneSignal.value = allocation === undefined ? s.prune
+    : { ...s.prune, dailyLimit: allocation.planned, dailyDone: allocation.done };
   resetLiveGallery();
   s.apply?.();
 }
@@ -156,7 +157,6 @@ export function Gallery(): JSX.Element {
  */
 export function primeGallery(): void {
   installGalleryBridge();
-  adoptSettings(GALLERY_SETTINGS);
   chainListSignal.value = GALLERY_CHAIN;
   growthSeriesSignal.value = { points: [], baselineAt: null };
   queueLanesSignal.value = GALLERY_LANES;

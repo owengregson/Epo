@@ -50,7 +50,6 @@ describe('Foundation status (not built)', () => {
       online: true,
       haltReason: null,
       recovery: null,
-      pacing: null,
       loggedIn: false,
       // The composed status fields: never a count from a not-built graph. Readiness rides the status even
       // before the build (spec §12.8 R4), so `boot` is the live boot view.

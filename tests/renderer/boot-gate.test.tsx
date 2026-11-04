@@ -11,12 +11,11 @@ import { act, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
 import { BootGate } from '@/renderer/boot/BootGate';
 import { SPLASH, splashCaption } from '@/renderer/boot/boot-copy';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { BootView } from '@/shared/boot';
-import type { EpoStatus, Settings } from '@/types';
+import type { EpoStatus } from '@/types';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
-const SEEDED: Settings = { ...DEFAULT_SETTINGS, seed: 'someone', tourCompletedAt: 1 };
+const SEEDED = { seed: 'someone', app: { tourCompletedAt: 1 } };
 const T = Date.now();
 
 function boot(over: Partial<BootView> = {}): BootView {
@@ -47,7 +46,7 @@ const splash = (): HTMLElement | null => document.getElementById('boot');
 const stages = (): unknown[][] => bridge.calls.filter((c) => c[0] === 'setStage');
 const revealed = (): number => bridge.calls.filter((c) => c[0] === 'bootRevealed').length;
 
-async function mount(status: EpoStatus, settings?: Settings): Promise<void> {
+async function mount(status: EpoStatus, settings?: Parameters<typeof installFakeBridge>[0]): Promise<void> {
   if (settings !== undefined) bridge = installFakeBridge(settings);
   bridge.data.status = status;
   render(
@@ -116,7 +115,7 @@ describe('the launch gate', () => {
   });
 
   it('the first-launch tour opens only after the reveal', async () => {
-    await mount(idleStatus({ boot: ready() }), { ...SEEDED, tourCompletedAt: null });
+    await mount(idleStatus({ boot: ready() }), { ...SEEDED, app: { tourCompletedAt: null } });
     await act(() => sleep(700));
     expect(document.querySelector('.tour-card, [data-tour-step]')).toBeNull();
     await push(idleStatus({ boot: ready({ ig: 'ready', tab: 'settled' }) }));

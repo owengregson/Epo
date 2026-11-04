@@ -1,6 +1,5 @@
 /**
- * The v1 list semantics (the whitelist and the bio keep-list), kept only for the old Prune page
- * and as the settings migration's oracle; every unfollow path reads the protection predicate
+ * The v1 list semantics (the whitelist and the bio keep-list), kept only as the settings migration's test oracle; every unfollow path reads the protection predicate
  * (`unfollow-protection.ts`). Deleted with the v1 lists.
  */
 
@@ -20,16 +19,6 @@ export function isPruneWhitelisted(cand: WhitelistSubject, set: Set<string>): bo
   if (set.size === 0) return false;
   if (set.has(cand.pk.toLowerCase())) return true;
   return cand.username !== null && set.has(cand.username.toLowerCase());
-}
-
-/** The actionable subset of a raw candidate census under `whitelist`. */
-export function filterPruneCandidates<T extends WhitelistSubject>(
-  candidates: T[],
-  whitelist: string[],
-): T[] {
-  const set = pruneWhitelistSet(whitelist);
-  if (set.size === 0) return candidates;
-  return candidates.filter((c) => !isPruneWhitelisted(c, set));
 }
 
 /** The v1 bio keep-list match: a case-insensitive substring of the bio; blank words and an unseen bio never match. */

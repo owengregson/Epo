@@ -48,7 +48,6 @@ import type {
   PruneStatus,
   QueueListResult,
   ReadFollowersResult,
-  Settings,
   StageMode,
   UpdateStatus,
 } from '@/types';
@@ -98,8 +97,6 @@ export const CHANNELS = {
   growthSeries: 'growth:series',
   checkSeed: 'seed:check',
   queueList: 'queue:list',
-  getSettings: 'settings:get',
-  updateSettings: 'settings:update',
   clearData: 'data:clear',
   graphSnapshot: 'graph:snapshot',
   setStage: 'stage:set',
@@ -168,10 +165,6 @@ export interface IpcContract extends SettingsIpcContract, PlanIpcContract, LiveI
   checkSeed: { req: [username: string]; res: SeedCheckResult };
   /** A capped page of follow_records in one lifecycle state, joined to accounts. */
   queueList: { req: [state: FollowState]; res: QueueListResult };
-  /** The persisted settings object. */
-  getSettings: { req: []; res: Settings };
-  /** Merge a partial into settings, persist, and reload the live engine configs. */
-  updateSettings: { req: [partial: Partial<Settings>]; res: Settings };
   /** Wipe the knowledge DB + IG session (logout); settings kept. */
   clearData: { req: []; res: EpoStatus };
   /** The full knowledge graph shaped for the Graph view (null before login). */

@@ -15,7 +15,7 @@
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
-import type { Settings } from '../settings/settings';
+import type { EffectiveSettings } from '../settings/effective';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { queuedCountFor } from './decisions';
 import { EXPLORATION_POLICY } from './exploration-policy';
@@ -56,7 +56,7 @@ export interface EngineFactDeps {
   churn: EngineChurn;
   sentinel: EngineSentinel;
   /** Live settings (swapped between steps). */
-  settings(): Settings;
+  settings(): Pick<EffectiveSettings, 'lowWaterCandidates' | 'weaveEnabled'>;
   /** This generation was stopped or replaced. */
   aborted(): boolean;
   halted(): boolean;

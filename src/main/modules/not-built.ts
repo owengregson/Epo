@@ -1,18 +1,4 @@
-/**
- * The projections served while the graph session is CLOSED.
- *
- * `Foundation` answered ~40 entry points with `if (graph === null) return
- * notBuiltStatus(...)`, and both shapes were literals inside the 2,200-line
- * file — so the one thing the renderer sees before login lived next to the
- * engine wiring. They are pure functions of Settings plus the last known
- * connectivity, so they belong beside the projections registry rather than in
- * the composition root. See ADR 1007.
- *
- * Values are all-zero on purpose, never fabricated: PRINCIPLES §1 — a number
- * we have not observed is not a fact. The two knobs that ARE known before a
- * build (the prune daily limit and its persisted last-run stamp) come from
- * Settings, which is why the prune shape takes it.
- */
+/** Empty projections while the graph session is closed: no plan or account facts have been read. */
 
 import type { FeedView } from '@/shared/feed';
 import type { SettingsFacts } from '@/shared/settings-facts';
@@ -20,7 +6,7 @@ import { NOT_BUILT_FIELDS } from '@/shared/status-fields';
 import {
   type AreaReport, type MeterReading, SURFACE_AREAS, SURFACE_METERS, type SurfaceMeter, type SurfaceReport,
 } from '@/shared/surface-health';
-import type { EpoStatus, PruneStatus, Settings } from '@/types';
+import type { EpoStatus, PruneStatus } from '@/types';
 
 /** The Settings facts before the store opens (`why` is the caller's reason): every field honest-unknown. */
 export function notBuiltFacts(_why: 'signed-out' | 'loading' | 'error'): SettingsFacts {
@@ -56,8 +42,8 @@ export function notBuiltSurfaceReport(now: number): SurfaceReport {
   };
 }
 
-/** The prune projection before a graph exists: idle, zeroed, settings-seeded. */
-export function notBuiltPruneStatus(s: Settings): PruneStatus {
+/** The prune projection before a graph exists: idle and zeroed until the plan and store open. */
+export function notBuiltPruneStatus(): PruneStatus {
   return {
     state: 'idle',
     following: 0,
@@ -66,8 +52,8 @@ export function notBuiltPruneStatus(s: Settings): PruneStatus {
     unfollowed: 0,
     remaining: 0,
     dailyDone: 0,
-    dailyLimit: s.pruneDailyLimit,
-    lastRunAt: s.pruneLastRunAt,
+    dailyLimit: 0,
+    lastRunAt: null,
     lastSentinel: null,
     nextActionAt: null,
     scanReady: false,
@@ -106,7 +92,6 @@ export function notBuiltStatus(loggedIn: boolean, online: boolean): EpoStatus {
     online,
     haltReason: null,
     recovery: null,
-    pacing: null,
     loggedIn,
     ...NOT_BUILT_FIELDS,
   };

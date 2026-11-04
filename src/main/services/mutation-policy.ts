@@ -5,7 +5,7 @@ import type { ReadBudget } from '@/governors/read-budget';
 import type { ParkSlots } from '@/kernel/derive-parks';
 import type { Writer } from '@/kernel/plan';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
-import type { Settings } from '@/settings/settings';
+import type { EffectiveSettings } from '@/settings/effective';
 import type { SurfaceGate } from '@/shared/surface-gate';
 import type { ProtectionIndex } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -27,7 +27,7 @@ interface MutationPolicyDeps {
   readBudget: ReadBudget;
   profiles(): ProfileVisitor;
   followback(): FollowbackWatcher;
-  settings(): Settings;
+  settings(): EffectiveSettings;
   protection(): ProtectionIndex;
   signal(): AbortSignal | undefined;
   validateIdentity?(): Promise<boolean>;

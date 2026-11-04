@@ -5,7 +5,6 @@ import {
   GALLERY_CHAIN,
   GALLERY_LOG,
   GALLERY_QUEUE,
-  GALLERY_SETTINGS,
 } from '@/renderer/gallery/fixtures';
 import { GALLERY_BASIS } from '@/renderer/gallery/fixtures-settings';
 import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
@@ -70,8 +69,6 @@ const RESPONSES: Record<string, unknown> = {
   status: baseStatus(),
   engineStatus: baseStatus(),
   pruneStatus: basePrune(),
-  getSettings: GALLERY_SETTINGS,
-  updateSettings: GALLERY_SETTINGS,
   chainList: GALLERY_CHAIN,
   chainDetail: null,
   queueList: LANE,

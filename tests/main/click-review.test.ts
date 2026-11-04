@@ -10,6 +10,7 @@ import type { Admission } from '@/governors/plan-types';
 import { ReadBudget } from '@/governors/read-budget';
 import { type ClickReviewDeps, createClickReview } from '@/main/services/click-review';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { PausedActivity } from '@/shared/surface-gate';
 import { compileProtection } from '@/shared/unfollow-protection';
@@ -36,7 +37,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 const review = (over: Partial<ClickReviewDeps> = {}) => createClickReview({
-  store, ownPk: 'me', clock, readBudget: budget, profiles: () => ({ visit }), settings: () => DEFAULT_SETTINGS,
+  store, ownPk: 'me', clock, readBudget: budget, profiles: () => ({ visit }), settings: () => effectiveFromV1(DEFAULT_SETTINGS),
   protection: () => UNCONFIGURED_PROTECTION, signal: () => undefined, active: async () => true, ...over,
 });
 const profileReads = (): number => budget.snapshot().debits.filter((d) => d.kind === 'profile').length;

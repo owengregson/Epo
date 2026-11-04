@@ -79,19 +79,9 @@ test('protection compiles from the v2 document, per revision', () => {
   const { svc } = service();
   svc.apply([{ op: 'protect-add', entries: [{ username: 'anna' }], source: 'you' }], 'user');
   expect(svc.protection()).toBe(svc.protection());
-  expect(svc.resolveSettings().pruneWhitelist).toEqual(['anna']);
+  expect(svc.view().protection.accounts.map((a) => a.username)).toEqual(['anna']);
 });
 
-test('the transitional window: a v1 partial becomes keyed ops; a failed save rethrows; stamps persist', async () => {
-  const { svc, m } = service();
-  await svc.updateSettings({ pruneWhitelist: ['anna', 'bob'], dailyOperatingRate: 60 });
-  expect(svc.view().protection.accounts.map((a) => a.username)).toEqual(['anna', 'bob']);
-  expect(svc.view().overrides.count).toBe(1);
-  await svc.updateSettings({ sweepLastRunAt: 777 });
-  expect(svc.resolveSettings().sweepLastRunAt).toBe(777);
-  m.failOn('rename');
-  await expect(svc.updateSettings({ seed: 'x' })).rejects.toThrow('not saved');
-});
 
 test('a system-only op from the user is refused with a view', () => {
   const { svc } = service();
@@ -129,27 +119,15 @@ test('with the port, the save note says re-planned exactly when the plan intent 
   expect(seed.kind === 'saved' && seed.applies).toEqual([]);
 });
 
-test("an old renderer's write of the retired pacer's knobs is dropped; active hours still move the quiet hours", async () => {
-  const { svc, m, pushed } = service();
-  await svc.updateSettings({ pacingModel: 'legacy', minDelayMinutes: 9, activeHoursStart: 8, activeHoursEnd: 8 });
-  expect(svc.resolveSettings()).toMatchObject({ pacingModel: 'organic', minDelayMinutes: 3, activeHoursStart: 0, activeHoursEnd: 0 });
-  expect(svc.view().intent.quietHours).toEqual({ kind: 'none' });
-  expect(JSON.parse(m.data.get(F.v2) ?? '{}')).not.toHaveProperty('legacyCarry');
-  expect(pushed.length).toBe(1);
-});
 
-test('run stamps belong to the bound account: another account starts without them, unowned ones go to the first', async () => {
-  const { svc } = service();
-  const bind = (ownPk: string) => svc.bindStore({ ownPk, pkByUsername: () => null, username: () => null, onMutation: () => () => {} });
-  await svc.updateSettings({ sweepLastRunAt: 5 });
-  bind('A');
-  expect(svc.resolveSettings().sweepLastRunAt).toBe(5);
-  await svc.updateSettings({ pruneLastRunAt: 9 });
-  expect(svc.takeBookkeeping()).toMatchObject({ forPk: 'A', sweepLastRunAt: 5, pruneLastRunAt: 9 });
-  bind('B');
-  expect([svc.resolveSettings().sweepLastRunAt, svc.resolveSettings().pruneLastRunAt]).toEqual([null, null]);
-  bind('A');
-  expect(svc.resolveSettings().pruneLastRunAt).toBe(9);
+test('migration bookkeeping remains readable until the reopen state consumes it once', () => {
+  const raw = JSON.stringify({ ...DEFAULT_SETTINGS, sweepLastRunAt: 5, pruneLastRunAt: 9 });
+  const { svc, m } = service({ [F.v1]: raw });
+  expect(svc.takeBookkeeping()).toMatchObject({ forPk: null, sweepLastRunAt: 5, pruneLastRunAt: 9 });
+  expect(svc.apply([{ op: 'consume-bookkeeping' }], 'system').kind).toBe('saved');
+  expect(svc.takeBookkeeping()).toBeNull();
+  expect(JSON.parse(m.data.get(F.v2) ?? '{}').migration.bookkeeping).toBeNull();
+  expect(m.data.get(F.v1)).toBe(raw);
 });
 
 test('lists an older build added after the migration are offered back union-only: add them, or ignore them', () => {
@@ -189,14 +167,15 @@ describe('the effective settings are upstream of the plan; the week preview is d
       return [];
     } });
     svc.setCapabilities({ plan: true });
+    draws = 0;
     return { svc, draws: () => draws };
   }
 
   test('a port that reads the settings back: view() returns and the week is drawn once per revision', () => {
     const { svc, draws } = planBacked();
-    expect([svc.view().typical.week, svc.view().typical.week, draws()]).toEqual([[], [], 1]);
+    expect([svc.view().typical.week, svc.view().typical.week, draws()]).toEqual([[], [], 0]);
     svc.apply([{ op: 'intent', key: 'activity', value: 'active' }], 'user');
-    expect([svc.view().rev, svc.view().typical.week, draws()]).toEqual([1, [], 2]);
+    expect([svc.view().rev, svc.view().typical.week, draws()]).toEqual([1, [], 1]);
   });
 
   test('effective(), protection() and the change events never draw the week', () => {
@@ -206,9 +185,33 @@ describe('the effective settings are upstream of the plan; the week preview is d
     expect([svc.effective().dailyOperatingRate, svc.protection().rev, draws()]).toEqual([50, 0, 0]);
     svc.setCapabilities({ plan: false });
     svc.setCapabilities({ plan: true });
-    expect([svc.effective().dailyOperatingRate, draws()]).toEqual([50, 0]);
+    expect([svc.effective().dailyOperatingRate, draws()]).toEqual([50, 1]);
     // The port stays registered: the listener hears the new settings undrawn; only the pushed view draws, once.
     svc.apply([{ op: 'intent', key: 'activity', value: 'active' }], 'user');
-    expect([heard, svc.effective().dailyOperatingRate, svc.protection().rev, draws()]).toEqual([[[75, 0]], 75, 1, 1]);
+    expect([heard, svc.effective().dailyOperatingRate, svc.protection().rev, draws()]).toEqual([[[75, 1]], 75, 1, 2]);
   });
+});
+
+
+test('capability changes push the current derived view at the same document revision', () => {
+  const { svc, pushed } = service();
+  svc.setPlanPort({ previewDays: () => [] });
+  svc.setCapabilities({ plan: true, tempo: true, boost: true });
+  expect(pushed).toHaveLength(1);
+  expect(pushed[0]).toMatchObject({ rev: 0, capabilities: { plan: true, tempo: true, boost: true } });
+  svc.setCapabilities({ plan: true });
+  expect(pushed).toHaveLength(1);
+  svc.setPlanPort(null);
+  svc.setCapabilities({ plan: false, tempo: false, boost: false });
+  expect(pushed).toHaveLength(2);
+  expect(pushed[1]).toMatchObject({ rev: 0, capabilities: { plan: false, tempo: false, boost: false } });
+});
+
+
+test('migration retains a custom lower cleanup cap when the new plan ceiling is higher', () => {
+  const { svc } = service({ [F.v1]: JSON.stringify({ ...DEFAULT_SETTINGS, pruneDailyLimit: 40 }) });
+  expect(svc.effective().dailyHardCeiling).toBe(65);
+  expect(svc.effective().cleanupPerDayOverride).toBe(40);
+  svc.setCapabilities({ plan: true });
+  expect(svc.effective().cleanupPerDayOverride).toBe(40);
 });

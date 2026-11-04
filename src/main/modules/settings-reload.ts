@@ -4,19 +4,19 @@
  */
 import type { BuiltGraph } from '@/main/services/graph-types';
 import type { EffectiveSettings } from '@/settings/effective';
-import type { Touched } from '@/settings/ops';
 import {
-  type Settings, toChainConfig, toChurnConfig, toFollowbackConfig, toPruneConfig, toRateGovernorConfig,
+  toChainConfig, toChurnConfig, toFollowbackConfig, toPruneConfig, toRateGovernorConfig,
   toScannerConfig, toScorerConfig,
-} from '@/settings/settings';
+} from '@/settings/mappers';
+import type { Touched } from '@/settings/ops';
 import * as logger from '@/utils/logger';
 
 /** A saved revision as the reload reads it: the effective records and what the change touched. */
 export interface ReloadEvent { readonly prev: EffectiveSettings; readonly next: EffectiveSettings; readonly touched: ReadonlySet<Touched> }
 
-/** Reload what changed between two v1 views of the settings; returns the components reloaded. */
-export function reloadChanged(g: BuiltGraph, prev: Settings, next: Settings, e: ReloadEvent): string[] {
-  const moved = <T>(f: (s: Settings) => T): boolean => JSON.stringify(f(prev)) !== JSON.stringify(f(next));
+/** Reload what changed between the resolved settings records; returns the components reloaded. */
+export function reloadChanged(g: BuiltGraph, prev: EffectiveSettings, next: EffectiveSettings, e: ReloadEvent): string[] {
+  const moved = <T>(f: (s: EffectiveSettings) => T): boolean => JSON.stringify(f(prev)) !== JSON.stringify(f(next));
   const reloaded: string[] = [];
   const reload = (name: string, run: () => void): void => {
     run();

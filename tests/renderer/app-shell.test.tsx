@@ -21,12 +21,10 @@ import {
   useShell,
   useShellControls,
 } from '@/renderer/app/shell-context';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
-import type { Settings } from '@/types';
 import { graphSnapshot } from '../kit/graph-snapshot';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
-const SEEDED: Settings = { ...DEFAULT_SETTINGS, seed: 'someone', tourCompletedAt: 1 };
+const SEEDED = { seed: 'someone', app: { tourCompletedAt: 1 } };
 
 let bridge: FakeBridge;
 let services: ShellServices | null;
@@ -54,7 +52,7 @@ beforeEach(() => {
 
 async function mountApp(): Promise<void> {
   render(<App />);
-  await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'getSettings')).toBe(true));
+  await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'settingsView')).toBe(true));
   await act(async () => {});
 }
 
@@ -151,7 +149,7 @@ describe('App — the shell subscribes once', () => {
 
 describe('App — the shell services and controls', () => {
   it('Start without a starting account opens Settings at that field and never calls the engine', async () => {
-    bridge.data.settings = { ...SEEDED, seed: '' };
+    bridge.data.settingsView = { ...bridge.data.settingsView, seed: '' };
     await mountApp();
     await act(async () => controls?.start());
     expect(bridge.calls.some((c) => c[0] === 'startEngine')).toBe(false);
@@ -248,4 +246,14 @@ test('an unavailable graph has a visible retry and never renders as an empty gra
   read.mockResolvedValue(null);
   await act(async () => { fireEvent.click(retry); });
   await waitFor(() => expect(page('graph').textContent).not.toContain('can’t read the graph'));
+});
+
+
+test('Start follows the pushed v2 seed before store facts are built', async () => {
+  bridge.data.settingsView = { ...bridge.data.settingsView, seed: '' };
+  await mountApp();
+  await act(async () => bridge.emit('settings', { ...bridge.data.settingsView, seed: 'new.source', rev: 2 }));
+  await act(async () => controls?.start());
+  expect(bridge.calls.some((c) => c[0] === 'startEngine')).toBe(true);
+  expect(bridge.calls.some((c) => c[0] === 'getSettings' || c[0] === 'updateSettings')).toBe(false);
 });

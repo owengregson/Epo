@@ -1,4 +1,4 @@
-import { bioMatchesFilter } from '@/engine/prune-bio-filter';
+import { bioMatchesFilter } from '../kit/v1-protection-oracle';
 
 describe('bioMatchesFilter — protected-word match on a profile bio', () => {
   test('case-insensitive substring match, words or phrases', () => {

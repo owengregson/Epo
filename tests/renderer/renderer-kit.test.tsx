@@ -15,7 +15,6 @@ import { CHANNELS } from '@/ipc/contract';
 import { LIVE_SCENARIOS } from '@/renderer/gallery/fixtures-live';
 import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
 import { useKeepAlivePoll } from '@/renderer/hooks/useKeepAlivePoll';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { installFakeBridge } from '../kit/render-bridge';
 
 test('a failed pull reaches onError, and a later push still lands', async () => {
@@ -52,7 +51,7 @@ test('the stylesheet cascade is final: fonts first, today\'s order, then the six
 });
 
 test('the fake bridge implements every contract method', () => {
-  const fake = installFakeBridge(DEFAULT_SETTINGS);
+  const fake = installFakeBridge();
   const bridge = fake.bridge as unknown as Record<string, unknown>;
   for (const method of Object.keys(CHANNELS)) expect({ method, fn: typeof bridge[method] }).toEqual({ method, fn: 'function' });
   expect(fake.data.settingsFacts).toMatchObject({ built: false });

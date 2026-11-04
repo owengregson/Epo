@@ -85,8 +85,6 @@ export async function walkOwnList(args: WalkOwnListArgs): Promise<OwnListFetch> 
       onObservation: args.onRow,
       stopAfterPage: (page) => { pageSizes.push(page.length); return false; },
       sentinel,
-      pageMinMs: opts?.scrollMinMs,
-      pageMaxMs: opts?.scrollMaxMs,
       shouldStop: opts?.shouldStop,
       onProgress: opts?.onProgress,
       readUse: 'census',
@@ -121,8 +119,6 @@ export async function walkOwnList(args: WalkOwnListArgs): Promise<OwnListFetch> 
     maxRounds: Math.min(args.bounds.maxRounds, args.census === undefined ? args.bounds.maxRounds : Math.max(0, args.census.pages - 1)),
     noNewStop: args.bounds.noNewStop,
     shouldStop: opts?.shouldStop,
-    scrollMinMs: opts?.scrollMinMs,
-    scrollMaxMs: opts?.scrollMaxMs,
     onProgress: opts?.onProgress,
     // An unopened dialog must FAIL the scan, never read as an empty list.
     throwOnOpenFailure: true,

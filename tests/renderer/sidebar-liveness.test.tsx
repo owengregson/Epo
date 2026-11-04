@@ -7,13 +7,12 @@
  */
 import { act, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { FeedView } from '@/shared/feed';
 import type { LiveTab } from '@/shared/live-op';
-import type { EpoStatus, Settings } from '@/types';
+import type { EpoStatus } from '@/types';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
-const SEEDED: Settings = { ...DEFAULT_SETTINGS, seed: 'someone', tourCompletedAt: 1 };
+const SEEDED = { seed: 'someone', app: { tourCompletedAt: 1 } };
 const T = Date.now();
 const RUNTIME = {
   desired: 'running' as const, phase: 'ready' as const, blockedReason: null, lastProgressAt: null,
@@ -30,7 +29,7 @@ beforeEach(() => {
 
 async function mount(): Promise<void> {
   render(<App />);
-  await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'getSettings')).toBe(true));
+  await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'settingsView')).toBe(true));
   await act(async () => {});
 }
 

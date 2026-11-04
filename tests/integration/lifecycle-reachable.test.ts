@@ -17,6 +17,7 @@ import { journalSettler, wireChurn, wireMutationPolicy } from '@/main/services/u
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS, toRateGovernorConfig } from '@/settings/settings';
 import { DelayManager } from '@/timing/delay-manager';
 import { setLevel } from '@/utils/logger';
@@ -54,7 +55,7 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
     return { ok: true, obs: { accountPk: a.pk, observedAt: clock.now(), source: 'profile', fields: { username } },
       viewer: { following: true, requested: false, followsUs: false } };
   });
-  const d = { resolveSettings: () => settings, driverSignal: () => undefined, plan: fakePlanHost(settings),
+  const d = { resolveSettings: () => effectiveFromV1(settings), driverSignal: () => undefined, plan: fakePlanHost(settings),
     protection: { index: () => UNCONFIGURED_PROTECTION, setCapabilities: () => undefined } } as unknown as GraphBuildDeps;
   // The production plan over the store: its cadence admits every write, the loop acts inside its session.
   const plan = kitPlan(store, clock, settings);
@@ -87,7 +88,7 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
   const adapter = { sentinel: new FakeSentinel(), actor } as unknown as InstagramAdapter;
   const churnActions = new AdapterBackedChurnActions({ adapter, store, ownPk: 'me', dryRun: false, clock });
   const churn = wireChurn(d, { frontier: { pickQueued: () => null } as unknown as SourceFrontier, store,
-    clock: clock as unknown as SystemClock, rate, churnActions, ownPk: 'me', settings, dayClock });
+    clock: clock as unknown as SystemClock, rate, churnActions, ownPk: 'me', settings: effectiveFromV1(settings), dayClock });
   const engine = new Engine(testDeps({ store, clock, rate, churn, followback: sweep, settings,
     delays: new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); } }),
     settleJournal: journalSettler(d, { store, profiles, ownPk: 'me', clock, readBudget, dayClock }) }));

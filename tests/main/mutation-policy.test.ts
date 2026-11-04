@@ -4,6 +4,7 @@ import { UNCONFIGURED_PROTECTION } from '@/engine/protection-port';
 import { ReadBudget } from '@/governors/read-budget';
 import { createMutationPolicy } from '@/main/services/mutation-policy';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
 import { compileProtection, type ProtectionIndex } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -48,7 +49,7 @@ afterEach(() => rig.dispose());
 
 function policy() {
   return createMutationPolicy({ store, clock, ownPk: 'me', ownUsername: 'me', cadence: rig.plan.cadence, readBudget: budget,
-    profiles: () => ({ visit }), settings: () => settings, protection: () => protection, signal: () => controller.signal,
+    profiles: () => ({ visit }), settings: () => effectiveFromV1(settings), protection: () => protection, signal: () => controller.signal,
     validateIdentity: async () => identity,
     followback: () => new FollowbackWatcher({ store, clock, ownPk: 'me',
       cfg: { holdAfterFollowbackMs: 0, autoAcceptRequests: false } }),

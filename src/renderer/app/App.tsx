@@ -23,7 +23,6 @@ import { useEngineStatus } from '@/renderer/hooks/useEngineStatus';
 import { useGraphBoard } from '@/renderer/hooks/useGraphBoard';
 import { useLiveFeeds } from '@/renderer/hooks/useLiveFeeds';
 import { usePruneStatus } from '@/renderer/hooks/usePruneStatus';
-import { useSettings } from '@/renderer/hooks/useSettings';
 import { useStageRequest } from '@/renderer/hooks/useStageRequest';
 import { useToasts } from '@/renderer/hooks/useToasts';
 import { useTourGate } from '@/renderer/hooks/useTourGate';
@@ -51,7 +50,6 @@ export function App(): JSX.Element {
   // nothing, so a push re-renders only the components that read it.
   useEngineStatus();
   usePruneStatus();
-  useSettings();
   useLiveFeeds();
 
   const toasts = useToasts();

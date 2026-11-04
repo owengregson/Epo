@@ -1,27 +1,14 @@
 /**
  * The engine's status projection: PURE reads of the store, the governors and the plan's view —
- * nothing here writes. "Today" is the plan-day (spec §4.4); `pacing` is the deprecated session
- * readout the old renderer still shows (`status.plan` replaces it).
+ * nothing here writes. "Today" is the plan-day (spec §4.4).
  */
 
 import type { PlanView } from '../governors/plan-types';
 import type { CurrentTarget, EngineDeps, EnginePacing } from './ports';
 import type { RuntimeHealth } from './runtime-health';
 
-/** The day's automatic volume: what the day law drew, or more once a Boost lifted it. */
-const dayVolume = (view: PlanView): number => Math.max(view.plan.volume.drawn, view.plan.volume.planned);
-
-/** The deprecated session readout the old renderer shows, read from the plan's pure view. */
-function sessionReadout(view: PlanView) {
-  const open = view.open;
-  return {
-    sessionOpen: open !== null,
-    sessionEndsAt: open === null ? null : (view.sessions[open.idx]?.closesAt ?? null),
-    nextSessionAt: open === null ? view.nextSessionAt : null,
-    sessionsToday: view.plan.sessions.filter((s) => s.budget > 0).length,
-    dailyTarget: dayVolume(view),
-  };
-}
+/** The day's automatic volume: the current plan, including a Boost lift or a lowered target. */
+const dayVolume = (view: PlanView): number => view.plan.volume.planned;
 
 export function projectEngineStatus(deps: EngineDeps, target: CurrentTarget | null, plan: EnginePacing, health: RuntimeHealth) {
     const { store, rate, clock } = deps;
@@ -45,7 +32,6 @@ export function projectEngineStatus(deps: EngineDeps, target: CurrentTarget | nu
       followedBackHeld: store.followRecordsByState('followed_back').length,
       unfollowDue: store.followRecordsByState('unfollow_queued').length,
       netToday: store.netFollowersSince(view.window.startsAt),
-      pacing: sessionReadout(view),
     };
 }
 

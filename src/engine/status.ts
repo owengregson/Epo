@@ -8,9 +8,6 @@ import type { SourceFrontierSnapshot } from './source-frontier';
 export interface EngineStatus {
   health?: RuntimeHealthSnapshot;
   frontier?: SourceFrontierSnapshot;
-  /** @deprecated Never populated; the old renderer still reads it; `status.catchUp`/`journal` replace it (removal sweep). */
-  reentry?: Readonly<Record<string, unknown>> & {
-    readonly phase: 'reconcile' | 'probation' | 'ready'; readonly absentMs: number; readonly probationActions: number };
   state: EngineState;
   currentTargetPk: string | null;
   currentTargetUsername: string | null;
@@ -57,13 +54,4 @@ export interface EngineStatus {
     maxAttempts: number;
     resumeAt: number | null;
   } | null;
-  /** @deprecated Organic-pacing session status (null in legacy mode); `status.plan` replaces it (removal sweep). */
-  pacing?: {
-    sessionOpen: boolean;
-    sessionEndsAt: number | null;
-    nextSessionAt: number | null;
-    sessionsToday: number;
-    dailyTarget: number;
-  } | null;
 }
-

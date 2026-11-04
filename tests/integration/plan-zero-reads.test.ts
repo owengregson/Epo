@@ -9,6 +9,7 @@ import { ReadBudget } from '@/governors/read-budget';
 import { createMutationPolicy } from '@/main/services/mutation-policy';
 import type { PlanWiring } from '@/main/services/plan-wiring';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
 import type { SurfaceGate } from '@/shared/surface-gate';
 import { compileProtection, type ProtectionIndex } from '@/shared/unfollow-protection';
@@ -54,7 +55,7 @@ function rig(o: { settings?: Partial<Settings>; before?: (store: KnowledgeStore,
     obs: { accountPk: 'a', observedAt: clock.now(), source: 'profile', fields: { username, followers: 500, following: 500 } },
     viewer: { following: true, requested: false, followsUs: false } }));
   const policy = createMutationPolicy({ store, clock, ownPk: 'me', ownUsername: 'me', cadence: plan.cadence, readBudget: reads,
-    profiles: () => ({ visit }), settings: () => settings, protection: () => o.protection ?? UNCONFIGURED_PROTECTION,
+    profiles: () => ({ visit }), settings: () => effectiveFromV1(settings), protection: () => o.protection ?? UNCONFIGURED_PROTECTION,
     signal: () => undefined, surfaceGate: o.gate,
     followback: () => new FollowbackWatcher({ store, clock, ownPk: 'me', cfg: { holdAfterFollowbackMs: 0, autoAcceptRequests: false } }) });
   return { store, clock, plan, reads, visit, policy };

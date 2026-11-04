@@ -74,12 +74,11 @@ test('a valid op saves through the service; a failed write is not-saved and chan
   dispose();
 });
 
-test('the remaining v1 rows: a failed save rejects so an older reader says Not saved; reset is gone', async () => {
-  const { m, call, dispose } = rig();
-  expect(await call('settings:update', { dryRun: true })).toMatchObject({ dryRun: true });
-  m.failOn('rename');
-  await expect(call('settings:update', { dryRun: false })).rejects.toThrow('not saved');
-  expect(() => call('settings:reset')).toThrow('settings:reset is not registered');
+test('retired v1 settings channels are no longer registered', () => {
+  const { call, dispose } = rig();
+  for (const channel of ['settings:get', 'settings:update', 'settings:reset']) {
+    expect(() => call(channel)).toThrow(`${channel} is not registered`);
+  }
   dispose();
 });
 

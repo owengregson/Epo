@@ -16,6 +16,7 @@ import {
   mkResp,
 } from '../kit/fakes';
 import { openTestStore } from '../kit/store';
+import { fixedTempo } from '../kit/tempo';
 
 beforeAll(() => setLevel('error'));
 
@@ -102,16 +103,17 @@ test('fetchAllPks threads shouldStop into the scrape (immediate stop: no dialog 
   expect(pks).toEqual([]);
 });
 
-test('fetchAllPks threads the jittered scan pacing into the scrape', async () => {
+test('fetchAllPks uses the plan tempo for scan waits', async () => {
   const tab = new FakeTab();
   const actor = new FakeActor();
   const sleeps: number[] = [];
+  const tempo = fixedTempo(2);
   const pageReader = new FollowersPageReader({
     tab,
     reader,
     actor,
     clock,
-    scrollWaitMs: 1,
+    tempo,
     sleep: async (ms) => {
       sleeps.push(ms);
     },
@@ -126,12 +128,12 @@ test('fetchAllPks threads the jittered scan pacing into the scrape', async () =>
     store,
   });
 
-  const { pks } = await source.fetchAllPks({ scrollMinMs: 1_000, scrollMaxMs: 3_000 });
+  const { pks } = await source.fetchAllPks();
 
   expect(pks).toEqual(['11']);
   // Every wait the scrape took was the deterministic midpoint draw, not 2000ms fixed.
   expect(sleeps.length).toBeGreaterThan(0);
-  for (const ms of sleeps) expect(ms).toBe(2_000);
+  for (const ms of sleeps) expect(ms).toBe(tempo.policy('scroll.wait.dialog').sample(() => 0.5));
 });
 
 test('fetchAllPks with a blocked sentinel yields an empty scrape (warned, never a throw)', async () => {

@@ -345,7 +345,7 @@ export interface EngineHarnessOpts {
   /** The plan (absent: an open session with room, arming each dispatch DELAY_MS). */
   pacing?: EnginePacing;
   unfollowFeed?: EngineUnfollowFeed;
-  sweepCadence?: { isDue(now: number, everyMs: number): boolean; markRun(now: number): void };
+  sweepCadence?: { lastSweepEndedAt(): number | null; markRun(now: number): void };
   /** the recovery ladder's tab-diagnostics port (absent → presumed healthy) */
   tabDiag?: EngineTabDiagnostics;
   /** build the shared DelayManager (a spy, to observe registered wait keys) */
@@ -410,6 +410,9 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
   }
   opts.preseedStore?.(store);
 
+  const pacing = opts.pacing ?? new FakePlan(startAt + HOUR, store);
+  if (pacing instanceof FakePlan) pacing.checkEveryMs = opts.sweepCadence ? HOUR : settings.followbackSweepHours * HOUR;
+
   const engine = new Engine(
     testDeps({
       store,
@@ -426,7 +429,7 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
       delays: opts.delays?.({ clock, rng: opts.rng, sleep: sleep.fn }) ??
         new DelayManager({ clock, rng: opts.rng, sleep: sleep.fn }),
       rng: opts.rng,
-      pacing: opts.pacing ?? new FakePlan(startAt + HOUR, store),
+      pacing,
       unfollowFeed: opts.unfollowFeed ?? NO_UNFOLLOW_FEED,
       sweepCadence: opts.sweepCadence ?? memorySweepCadence(),
       tabDiag: opts.tabDiag ?? HEALTHY_TAB,
@@ -457,8 +460,6 @@ export const makeEngineHarness = (opts: EngineHarnessOpts = {}): EngineHarness =
 
 export const PRUNE_CFG: PruneConfig = {
   dailyLimit: 50,
-  scanMinMs: 1_000,
-  scanMaxMs: 3_000,
 };
 
 export interface PruneHarnessOpts {

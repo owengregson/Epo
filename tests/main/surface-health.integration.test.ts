@@ -5,6 +5,7 @@
  * the gate stops an unfollow before any read; `status.surface` moves with the store.
  */
 
+
 import { ActionDeferredError } from '@/adapter/errors';
 import { UNCONFIGURED_PROTECTION } from '@/engine/protection-port';
 import { FakeClock } from '@/governors/clock';
@@ -15,6 +16,7 @@ import { createClickReview } from '@/main/services/click-review';
 import { createSurfaceHealthSink, type SurfaceHealthSinkDeps } from '@/main/services/surface-health-sink';
 import { createSurfaceReport } from '@/main/services/surface-report';
 import { liveSurfaceReporter, surfaceGateOf } from '@/main/services/surface-wiring';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
@@ -170,7 +172,7 @@ describe('the gate at the click and status.surface over a built graph', () => {
     const budget = new ReadBudget({ store, clock, limits: readLimits() });
     const visit = jest.fn();
     const err = await createClickReview({ store, ownPk: 'me', clock, readBudget: budget, profiles: () => ({ visit }),
-      settings: () => DEFAULT_SETTINGS, protection: () => UNCONFIGURED_PROTECTION, signal: () => undefined,
+      settings: () => effectiveFromV1(DEFAULT_SETTINGS), protection: () => UNCONFIGURED_PROTECTION, signal: () => undefined,
       active: async () => true, surfaceGate: report.gate })
       .prepareProfile('alice', 'a', 'unfollow').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ActionDeferredError);

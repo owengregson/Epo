@@ -789,8 +789,6 @@ export class PruneEngine {
     const token = this.runAbort;
     const scanOpts: PruneScanOpts = {
       shouldStop: (): boolean => this.superseded(token),
-      scrollMinMs: this.cfg.scanMinMs,
-      scrollMaxMs: this.cfg.scanMaxMs,
     };
 
     // Live counts: a fresh census counts up from zero as pages land (throttled

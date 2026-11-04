@@ -40,7 +40,7 @@ test('a refusal keeps practice mode and v1’s numbers, keeps unfollows paused, 
   expect(svc.apply([{ op: 'ui', mode: 'advanced' }], 'user').kind).toBe('saved');
   expect(svc.view().mode).toBe('advanced');
   expect([m.data.has(F.v2), m.data.has(F.created)]).toEqual([false, false]);
-  expect(svc.resolveSettings().dryRun).toBe(true);
+  expect(svc.effective().dryRun).toBe(true);
 });
 
 test('retry runs the migration again now; it succeeds once the cause is gone', () => {

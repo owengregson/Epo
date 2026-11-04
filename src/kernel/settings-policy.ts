@@ -39,8 +39,8 @@ export const SETTINGS_POLICY = {
   TEMPO_OVERRIDE_MAX_FACTOR: 3,
   /** Seven days off is "Stop", not a plan: every week keeps at least one working day. */
   MAX_DAYS_OFF: 6,
-  /** The interim recommendations until the plan port registers (spec C16): today's prune limit, schedule and sweep spacing. */
-  INTERIM: { pruneDailyLimit: 50, pruneScheduleDays: 7, followbackSweepHours: 1 },
+  /** Frozen historical baselines for v1 migration only; live lifecycle values derive from the plan. */
+  V1_MIGRATION: { pruneDailyLimit: 50, pruneScheduleDays: 7, followbackSweepHours: 1 },
   /** Risk rungs per vocabulary step: only the largest daily volume reaches the top rung, the hourly caps never do. */
   RISK_RUNG: {
     activity: { minimal: 0, light: 0, moderate: 1, active: 2, aggressive: 3 },

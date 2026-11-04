@@ -4,7 +4,7 @@
  */
 
 import type { PlanView } from '../governors/plan-types';
-import type { Settings } from '../settings/settings';
+import type { EffectiveSettings } from '../settings/effective';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { FactSource, FeedCandidate } from './facts';
 import { planMix } from './plan-mix';
@@ -14,7 +14,7 @@ import type { EngineChurn, SweepCadence } from './ports';
 /** What the plan sources read (the Engine's fact deps satisfy it). */
 export interface PlanFactDeps {
   /** Live settings (swapped between steps). */
-  settings(): Settings;
+  settings(): Pick<EffectiveSettings, 'weaveEnabled'>;
   /** The plan: the one pacing model (spec §5.13 S2). */
   pacing: EnginePacing;
   /** The planned check's anchor (the last sweep's end) and the census host's input (the last complete census). */
@@ -87,7 +87,7 @@ export function pacingSource(d: PlanFactDeps): FactSource<'pacing'> {
       const { atHardCeiling } = await read('ledger');
       const view = d.pacing.ensureIfProvisional(now);
       return planFacts(view, atHardCeiling, { velocityUntil: d.pacing.velocityParkUntil(now),
-        explorationPaused: d.pacing.paused('exploration'), lastSweepEndedAt: d.sweepCadence.lastSweepEndedAt?.(),
+        explorationPaused: d.pacing.paused('exploration'), lastSweepEndedAt: d.sweepCadence.lastSweepEndedAt(),
         censusLastCompleteAt: d.store.censusLastCompleteAt() });
     },
   };

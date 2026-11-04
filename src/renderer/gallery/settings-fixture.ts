@@ -4,7 +4,6 @@
  * the store-derived facts beside it, and the document parts the snapshot is built from. Names are invented.
  */
 
-import type { Res } from '@/ipc/contract';
 import type { SettingsFacts } from '@/shared/settings-facts';
 import type { ProtectionSettings } from '@/shared/settings-model';
 import type { SettingsCapabilities, SettingsView } from '@/shared/settings-view';
@@ -60,63 +59,4 @@ export const GALLERY_SETTINGS_FACTS: SettingsFacts = {
     kept: { total: 12, unreadable: 3 },
   },
   cleanup: { census: { at: AT, candidates: 318, protectedAmong: 41, verifiedComplete: true, tooLarge: false } },
-};
-
-/** The settings shape the bridge's `getSettings` answers (the older renderer's readers, until they go). */
-type Settings = Res<'getSettings'>;
-
-/**
- * A complete older-shape Settings object for the gallery, written out rather than imported from
- * `@/settings/settings` (that module reads `node:fs` at import time).
- */
-export const GALLERY_SETTINGS: Settings = {
-  seed: 'longish.handle.example',
-  bandLow: 0.9,
-  bandHigh: 1.5,
-  peakLow: 1,
-  peakHigh: 1.2,
-  hardLow: 0.5,
-  hardHigh: 3,
-  minFollowers: 50,
-  maxFollowers: 20000,
-  privateBoost: 0.15,
-  maxWaitForFollowbackDays: 4,
-  holdAfterFollowbackDays: 2,
-  maxRetries: 3,
-  dailyHardCeiling: 65,
-  dailyOperatingRate: 50,
-  minDelayMinutes: 3,
-  maxDelayMinutes: 7,
-  jitterPercent: 30,
-  activeHoursStart: 8,
-  activeHoursEnd: 22,
-  followbackSweepHours: 1,
-  sweepLastRunAt: null,
-  sweepIntervalFactor: 1,
-  autoAcceptFollowRequests: true,
-  dailyPlanSize: 60,
-  lowWaterCandidates: 5,
-  minFollowBackRate: 0.15,
-  minPoolSize: 300,
-  dryRun: false,
-  pruneWhitelist: [],
-  pruneBioFilterWords: [],
-  pruneDailyLimit: 50,
-  pruneScheduleDays: 0,
-  pruneLastRunAt: null,
-  pruneScanMinSeconds: 1,
-  pruneScanMaxSeconds: 3,
-  pacingModel: 'organic',
-  dailyVolumeVariancePct: 28,
-  restDayChancePct: 8,
-  sessionsPerDayMin: 3,
-  sessionsPerDayMax: 6,
-  gapMedianSeconds: 95,
-  gapFloorSeconds: 45,
-  hourlyVelocityCap: 22,
-  weaveEnabled: true,
-  maxUnfollowFractionPerSession: 0.5,
-  persona: 'balanced',
-  pattern: { activityLevel: 'moderate', consistency: 'natural', rhythm: 'sessions', dayShape: 'balanced', weeklyShape: 'realistic', caution: 'standard', cleanup: 'steady', patience: 'normal' },
-  tourCompletedAt: 1,
 };
