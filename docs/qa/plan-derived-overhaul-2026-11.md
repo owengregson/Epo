@@ -490,16 +490,58 @@ The final branch/ref, backup and store-state checkpoint is
 `36c492a` run above; subsequent edits only document the evidence. L1, the overnight reopen and the
 planned action checks remain unqualified.
 
+### Native capture repair and qualified L1 evidence, 2026-11-04
+
+The capture repair at `c4747b8`, `34b9cfd` and `61ff085` adds an owned native request inventory,
+CDP lifecycle evidence and reciprocal request correlation. Unknown ownership, ambiguous matches,
+unsafe responses and missing required Reader bodies remain failures. Positive ancillary navigation
+cancellations are accounted separately under [ADR 0807](../adr/0807-probe-transport-evidence.md).
+The network-blocked harness now uses the independent session proxy; installing capture listeners
+cannot replace its network block. An explicit abort after navigation cannot qualify as a navigation
+cancellation. Local experiments and their limitations are preserved under
+`results/capture-lifecycle-repair/` and `results/capture-class-integration/` in the private handoff.
+The actual-class matrix did not wholly pass: one expected completed keepalive instead aborted.
+Its negative controls did correctly reject an explicit abort and a missing required Reader body.
+
+The authorized live run at `61ff085` completed every L1 step in 92.842 seconds. Its immutable
+`verify.json` says stopped solely because the new native observer mislabeled absent GET uploads
+as missing metadata. `0fed42b` corrects that distinction for GET/HEAD only, preserving supplied
+uploads, missing POST metadata and contradictory CDP payload evidence. Thirteen isolated Electron
+controls confirmed the semantics, with eleven loopback requests, zero external requests, clean exit
+and temporary-profile removal. Private evidence: `results/capture-class-integration/get-head-upload/`.
+
+**L1 qualifies on retained live evidence**, with zero additional account requests. An independent
+review checked the separate `qualification-v2.json` and its replay script against all original input
+and body hashes; the original stopped report was not modified. Evidence:
+`results/live-l1-native-2026-11-04T104118Z/`.
+
+- All 100 CDP/native requests have unique reciprocal matches; all 78 POST payload hashes agree.
+- 99 completed responses returned HTTP 200 with parseable MIME and have saved decoded bodies.
+  One auxiliary request has a positive native abort overlapping observed navigation and is separately
+  classified as canceled. There are no unresolved transports or unsafe responses.
+- Own/public-followed-target profiles, nonexistent-profile detection, drawer open/filter/requests/close
+  and final own-profile navigation succeeded. All 29 sentinel checks were `ok`.
+- Six required responses each join their own canonical, non-partial production Reader result:
+  three profile bodies, two feed bodies and one requests body. No shadow disagreement was recorded.
+  Offline qualification reuses these original live Reader outcomes; it is not another live run.
+- Zero composed requests or scripted mutations; no mutation route/operation found in the saved traffic.
+  Epo exited, all 15 critical profile hashes remained unchanged, and desired state remained stopped.
+
+The final complete gate at `0fed42b` passed **442 suites / 4,557 tests**, one suite and six tests
+skipped, boundaries **0 errors / 56 warnings**. Evidence: `results/codex-design-cleanup/bodyless-get-final-gate.log`.
+The first failed integration gate is retained; its four failures exposed the diagnostic constant's
+placement in the frozen legacy timing table, corrected without editing the frozen baseline.
+
 ### Remaining live sequence
 
 The exact request budgets, stop conditions and do-not-run list are in
 [spec section 22](../superpowers/specs/2026-11-02-plan-derived-overhaul-design.md#22-the-minimal-live-test-plan-phase-l-strictly-sequential-run-by-the-lead-only-owner-present).
-L1 is a single parsing verification; L4 is the supervised reopen after a night away; L5 observes only approved
+L1 now qualifies as recorded above; L4 is the supervised reopen after a night away; L5 observes only approved
 planned unfollows. Optional Boost follows also require approval. No live success is inferred from offline tests.
 
-Before the next L1 attempt, verify the current checkpoint and back up the entire real Epo profile, including
-the store and both settings files. The first L1 attempt opened that profile; the verified pre-live backup remains
-preserved. Use one designated runner with Epo quit before a probe, keep run intent stopped until the supervised Start, and follow section 22's
+Before production L4, the full profile was backed up again (33,805 files, sizes verified; all 15 critical
+hashes unchanged). Record: `results/codex-design-cleanup/pre-production-l4-backup.json`.
+Use one designated runner with Epo quit before a probe, keep run intent stopped until the supervised Start, and follow section 22's
 spacing and first-wall stop rules. L4 requires Epo to remain quit for at least one night; its first upgraded launch
 must read exactly one head page and no census, following list or third-party profile before Start.
 

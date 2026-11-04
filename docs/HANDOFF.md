@@ -1,5 +1,16 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-04 (capture repaired; L1 qualified on retained live evidence) —** The native/CDP repair
+> records complete ownership and transport evidence. The run at `61ff085` finished all L1 steps;
+> its only stop was a new GET-upload classification bug, fixed at `0fed42b`. Thirteen local controls
+> verified the fix. A separate offline qualification preserves the original stopped report and proves
+> 100 matched requests: 99 safe 200 completions plus one evidenced navigation cancellation, six
+> canonical/non-partial required bodies, 29 clear sentinel checks, zero shadow disagreements or
+> scripted mutations. No extra account requests were made for requalification. The full gate passes
+> **442 suites / 4,557 tests**, boundaries **0 errors / 56 warnings**. Epo is stopped; critical profile
+> hashes are unchanged. L4/L5 and comparator deletion remain pending. See the
+> [current evidence](qa/plan-derived-overhaul-2026-11.md#native-capture-repair-and-qualified-l1-evidence-2026-11-04).
+
 > **2026-11-04 (repaired L1 follow-up; capture retrieval stopped the run) —** The authorized follow-up
 > at `5d83f35` stopped during the nonexistent-profile visit when CDP could no longer retrieve request
 > metadata for an auxiliary AJAX exchange; response-body retrieval also failed. Of 56 exchanges,
