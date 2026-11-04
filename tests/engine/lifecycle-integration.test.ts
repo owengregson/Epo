@@ -93,7 +93,7 @@ test('an uncertain follow is observed by PK in the journal step: the follow mirr
   const followback = new FakeFollowback();
   const engine = f.make(followback, { settleJournal: f.settler(profiles) });
   expect(await engine.stepOnce()).toBe('swept-followback');
-  expect(profiles.visit).toHaveBeenCalledWith('old');
+  expect(profiles.visit).toHaveBeenCalledWith('old', { pk: 'old' });
   expect(f.store.pendingEffectIntents()).toEqual([]);
   // Spec §9.8: a landed follow is ours from its dispatch, never leaked as external.
   expect(f.store.getFollowRecord('old')).toMatchObject({ state: 'pending_followback', followedAt: dispatchedAt });

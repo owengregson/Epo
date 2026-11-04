@@ -4,6 +4,7 @@
  * strictly — its set is complete only when it read whole and the server said there is no next page.
  */
 
+import type { ObservedRead } from '@/adapter/observed-reads';
 import type { Reader } from '@/adapter/reader';
 import type { FollowEvent, Observation } from '@/adapter/surface-types';
 import { admits } from '@/surface/read/admission';
@@ -24,6 +25,7 @@ export interface DrawerReadCtx {
   readonly reader: Pick<Reader, 'read' | 'recover' | 'env'>;
   /** The read's observation time (requester rows are stamped with it). */
   readonly now: number;
+  readonly observed?: ObservedRead;
 }
 
 /** Why a drawer body could not be read as data. */
@@ -51,9 +53,9 @@ export function readDrawerBody(resp: DrawerBody, ctx: DrawerReadCtx): DrawerRead
   const feed = resp.kind === 'activity-feed';
   const failed = (failure: DrawerFailure): DrawerRead =>
     ({ events: null, pendingPreview: [], requests: none, tier: 'canonical', partial: false, failure });
-  const decoded = decodedOf(resp, ctx);
+  const decoded = ctx.observed?.decoded ?? decodedOf(resp, ctx);
   const gate = resp.status === undefined || resp.mime === undefined ? {} : { status: resp.status, mime: resp.mime };
-  let read = ctx.reader.read(resp.kind, { decoded, ...gate }, { at: ctx.now });
+  let read = ctx.observed?.read ?? ctx.reader.read(resp.kind, { decoded, ...gate }, { at: ctx.now });
   if (!read.ok && read.kind === 'mismatch') {
     // The container moved: the drawer pass is armed by construction, so its stories or rows may be read from
     // their new place (C2, spec §10.6) — follow events and requester rows only, never a complete set.

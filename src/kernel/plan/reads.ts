@@ -14,9 +14,9 @@ import {
   type PlanReadAllowance,
   type PlanReadDemand,
 } from '../derive-reads';
+import { headPageAllowance } from '../derive-reentry';
 import { EXPLORATION_POLICY } from '../exploration-policy';
 import { EMPIRICAL } from '../fundamentals';
-import { BOUNDS_REENTRY } from '../reentry-policy';
 import { locationOf, resolve } from '../tempo/resolve';
 import { REFERENCE_TEMPO } from '../tempo/source';
 import { targetMeanMs } from './gap';
@@ -122,13 +122,14 @@ export function planReads(input: DrawInput, kinds: DayPlan['kinds'], sessions: r
   const room = Math.max(0, intent.sessions.max - kept.length + checksPerDayMax(intent) - 1);
   const midS = wanted.reduce((a, b) => a + b, 0) <= room ? wanted
     : apportion(room, kept.map((s) => s.expectedEndAt - s.startAt)).map((m, i) => Math.min(m, wanted[i]));
+  const headPages = headPageAllowance({ gainsHint: demand.headGainsHint ?? 0, rowsPerPage: demand.census.rowsPerPage });
   let k = 0;
   const per = sessions.map((s): SessionReads => {
     if (s.budget <= 0) return { reconcile: 0, explore: 0, explorePages: 0, checks: 0, checkPages: 0 };
     const i = k;
     k += 1;
     return { reconcile: reconcileS[i], explore: exploreS[i], explorePages: explorePagesS[i], checks: 1 + midS[i],
-      checkPages: BOUNDS_REENTRY.FRONTIER_PAGES_MAX };
+      checkPages: headPages };
   });
   const sum = (key: keyof SessionReads): number => per.reduce((a, r) => a + r[key], 0);
   const census = intent.cleanupShare > 0 ? censusPagesMax(demand.ownHeader, demand.census.rowsPerPage, FALLBACK_ROWS) : 0;
@@ -136,7 +137,7 @@ export function planReads(input: DrawInput, kinds: DayPlan['kinds'], sessions: r
     plan: {
       reconcile: sum('reconcile'), explore: sum('explore'), explorePages: sum('explorePages'), checks: sum('checks'),
       checkPages: sum('checkPages'), census, following: facts.followingWalkPages,
-      catchUp: { profiles: 1, notifications: 1, pages: BOUNDS_REENTRY.FRONTIER_PAGES_MAX },
+      catchUp: { profiles: 1, notifications: 1, pages: headPages },
     },
     sessions: per,
   };

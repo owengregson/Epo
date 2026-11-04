@@ -125,6 +125,7 @@ test('L-BOOT: before the reveal the tab sees the landing press and its URL wait,
   expect(view).toMatchObject({ phase: 'ready', ig: 'ready', startup: { done: false } });
   expect(press).toHaveBeenCalledTimes(1);
   expect(timing.sleep).toHaveBeenCalledWith(ADAPTER.NAV_SETTLE_MS, expect.any(AbortSignal));
+  expect(sessionOf(f).current()?.plan.activity.lastEndAt()).not.toBeNull();
   expect(calls.filter((c) => c.startsWith('goto') || c === 'show')).toEqual([]);
   expect((await f.status()).account).toEqual({ username: 'owen', confirmed: true });
   f.bootRevealed();

@@ -104,7 +104,7 @@ export class AdapterBackedOwnFollowingSource implements PruneOwnFollowing {
       ownPk: this.ownPk,
       bounds: this.cfg,
       onRow: (obs) => this.ingestRow(obs),
-      opts,
+      opts, census: opts?.census,
     });
   }
 

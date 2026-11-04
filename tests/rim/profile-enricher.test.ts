@@ -201,3 +201,13 @@ test('a later successful stats observation heals the enrich-failed marker', asyn
   store.observe({ accountPk: '77', observedAt: 3, source: 'profile', fields: { followers: 10, following: 5 } });
   expect(store.getAccount('77')?.enrichFailedAt).toBeUndefined();
 });
+
+
+test('a known enrichment username carries its pk into profile recovery', async () => {
+  store.observe({ accountPk: 'known', source: 'profile', observedAt: 1, fields: { username: 'known_name' } });
+  const visit = jest.fn(async () => ok('known', 'known_name'));
+  const enricher = new AdapterBackedProfileEnricher({ store, clock, visitor: { visit },
+    sentinel: new FakeSentinel() as unknown as Sentinel });
+  await enricher.enrich(['known_name']);
+  expect(visit).toHaveBeenCalledWith('known_name', { pk: 'known' });
+});

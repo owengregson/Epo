@@ -1,8 +1,9 @@
 import type { Clock } from '../governors/clock';
+import type { PlanDayClock } from '../kernel/plan';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { compareByScoreDesc, type FollowRecord, type Target } from '../store/types';
 import * as log from '../utils/logger';
-import { EXPLORATION_POLICY as POLICY } from './exploration-policy';
+import { explorationDayClock, EXPLORATION_POLICY as POLICY, planDayStartAfter } from './exploration-policy';
 import { matureYields, observedOverlap, priorYield } from './source-quality';
 
 export type SourceVisitEndReason = 'visit-budget' | 'low-yield' | 'verified-ended' | 'coverage-policy';
@@ -40,7 +41,9 @@ type FrontierStore = Pick<KnowledgeStore,
 
 /** Durable source visits. Rotation is a scheduling decision, never a claim of absence. */
 export class SourceFrontier {
-  constructor(private readonly deps: { store: FrontierStore; clock: Clock; outcomeWindowMs?: () => number }) {}
+  private readonly planDay: Pick<PlanDayClock, 'window'>;
+  constructor(private readonly deps: { store: FrontierStore; clock: Clock; outcomeWindowMs?: () => number;
+    planDay?: Pick<PlanDayClock, 'window'> }) { this.planDay = deps.planDay ?? explorationDayClock(); }
 
   snapshot(): SourceFrontierSnapshot {
     const raw = this.deps.store.getSourceFrontierState();
@@ -61,7 +64,7 @@ export class SourceFrontier {
           pk: target.accountPk,
           source: target.source,
           status: target.status === 'exhausted' ? 'verified-ended' : 'ready',
-          resumeAt: target.exhaustedAt === undefined ? now : target.exhaustedAt + POLICY.endedRevisitMs,
+          resumeAt: target.exhaustedAt === undefined ? now : planDayStartAfter((t) => this.planDay.window(t), target.exhaustedAt),
           lastVisitedAt: target.exhaustedAt ?? 0,
           totalFollows: 0,
           visit: null,
@@ -168,8 +171,9 @@ export class SourceFrontier {
     if (state.currentTargetPk !== pk && source.status !== 'working') return;
     source.lastReason = reason;
     source.status = reason === 'verified-ended' ? 'verified-ended' : 'deferred';
-    source.resumeAt = this.deps.clock.now() + (reason === 'verified-ended' || reason === 'coverage-policy'
-      ? POLICY.endedRevisitMs : reason === 'low-yield' ? POLICY.lowYieldRevisitMs : 0);
+    const now = this.deps.clock.now();
+    source.resumeAt = reason === 'verified-ended' || reason === 'coverage-policy'
+      ? planDayStartAfter((t) => this.planDay.window(t), now) : reason === 'low-yield' ? this.planDay.window(now).endsAt : now;
     if (state.currentTargetPk === pk) state.currentTargetPk = null;
     this.save(state);
     log.info('frontier: source visit finished', { pk, reason, resumeAt: source.resumeAt, visit: source.visit });

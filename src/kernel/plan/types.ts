@@ -100,6 +100,8 @@ export interface PlanIntent {
 
 /** A store snapshot the plan wiring builds; audit only inside the plan. */
 export interface PlanDemand {
+  /** Known gains plus positive header residual since the head frontier; absent in older snapshots. */
+  readonly headGainsHint?: number;
   readonly lifecycleDueByDayEnd: number;
   readonly lifecycleBacklog: number;
   readonly pruneStock: number;

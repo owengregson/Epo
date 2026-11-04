@@ -47,7 +47,7 @@ beforeEach(() => {
 
 describe('the Prune page', () => {
   it('hides protected candidates behind "Show protected", with the rule that keeps them', async () => {
-    bridge.stub('pruneCandidates', rows);
+    bridge.stub('pruneCandidates', { ok: true, candidates: rows });
     render(shell(<PruneView />));
     await screen.findByText('@open.one');
     expect(screen.queryByText('@kept.friend')).toBeNull();
@@ -58,7 +58,7 @@ describe('the Prune page', () => {
   });
 
   it('shows today’s allowance read only, with no limit stepper and no schedule', async () => {
-    bridge.stub('pruneCandidates', rows);
+    bridge.stub('pruneCandidates', { ok: true, candidates: rows });
     render(shell(<PruneView />));
     await screen.findByText('@open.one');
     expect(screen.getByText('2 of 50 used')).toBeTruthy();
@@ -68,17 +68,17 @@ describe('the Prune page', () => {
   });
 
   it('a failed list read says so and offers Try again — never "everyone follows you back"', async () => {
-    bridge.failNext('pruneCandidates', 'store closed');
+    bridge.stub('pruneCandidates', { ok: false, reason: 'unavailable' });
     render(shell(<PruneView />));
     await screen.findByText('Couldn’t load the list Epo saved.');
     expect(screen.queryByText(/Everyone you follow follows you back/)).toBeNull();
-    bridge.stub('pruneCandidates', rows);
+    bridge.stub('pruneCandidates', { ok: true, candidates: rows });
     fireEvent.click(screen.getByText('Try again'));
     await screen.findByText('@open.one');
   });
 
   it('Prune now counts only unprotected candidates', async () => {
-    bridge.stub('pruneCandidates', rows);
+    bridge.stub('pruneCandidates', { ok: true, candidates: rows });
     render(shell(<PruneView />));
     await screen.findByText('@open.one');
     confirmAnswer = false;
@@ -89,7 +89,7 @@ describe('the Prune page', () => {
   });
 
   it('Unfollow these gradually asks with the census numbers, then sends the one intent op', async () => {
-    bridge.stub('pruneCandidates', rows);
+    bridge.stub('pruneCandidates', { ok: true, candidates: rows });
     bridge.stub('applySettings', { kind: 'saved', view: GALLERY_SETTINGS_VIEW, adjustments: [], conflicts: [], applies: [], inverse: [] });
     render(shell(<PruneView />));
     await screen.findByText('@open.one');
@@ -99,7 +99,7 @@ describe('the Prune page', () => {
   });
 
   it('protection is read here and edited in Settings', async () => {
-    bridge.stub('pruneCandidates', rows);
+    bridge.stub('pruneCandidates', { ok: true, candidates: rows });
     render(shell(<PruneView />));
     await screen.findByText('@open.one');
     expect(screen.getByText('3 accounts and 2 bio keywords are protected.')).toBeTruthy();
@@ -108,7 +108,7 @@ describe('the Prune page', () => {
   });
 
   it('a list too large to check in full says why and shows no partial list', async () => {
-    bridge.stub('pruneCandidates', rows);
+    bridge.stub('pruneCandidates', { ok: true, candidates: rows });
     const census = { ...GALLERY_SETTINGS_FACTS.cleanup?.census, at: 1, candidates: 3, protectedAmong: 1, verifiedComplete: false, tooLarge: true };
     settingsFactsSignal.value = { ...GALLERY_SETTINGS_FACTS, cleanup: { census } };
     render(shell(<PruneView />));

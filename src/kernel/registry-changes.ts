@@ -40,8 +40,10 @@ const SCHEDULED_PRUNE: RetiredKey = {
   reason: 'the scheduled bulk prune, its 30-minute watcher and its launch retired: nothing is scheduled or launched',
 };
 
-/** The 18 retired keys (spec §5.12): 9 derived, 7 policy, 2 override. */
+/** The retired keys (spec §5.12): 9 derived, 7 policy, 2 override and 2 unused harness values. */
 export const RETIRED: Readonly<Record<string, RetiredKey>> = {
+  'HARNESS.ENRICH_PACE_MIN_MS': ENTRY_SPACING,
+  'HARNESS.ENRICH_PACE_MAX_MS': ENTRY_SPACING,
   'ENGINE.VELOCITY_PARK_MEDIAN_MS': VELOCITY,
   'ENGINE.VELOCITY_PARK_SIGMA': VELOCITY,
   'ENGINE.VELOCITY_PARK_MIN_MS': VELOCITY,

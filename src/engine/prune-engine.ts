@@ -1,21 +1,4 @@
-/**
- * PruneEngine — the auto-prune routine, separate from growth.
- *
- * Walks the account's ENTIRE following + followers lists and unfollows every
- * account we follow that does NOT follow us back, except protected accounts.
- * One-shot per run (schedule fields live in Settings); it shares the ONE
- * Instagram tab + Sentinel with the growth engine and the
- * composition root keeps the two MUTUALLY EXCLUSIVE (never two drivers on the
- * tab). It has its OWN daily cap, tracked in its own durable `prune_ledger`,
- * independent of growth's daily ceiling.
- *
- * Like the growth Engine (`engine.ts`), everything is injected (ports, clock,
- * sleep), so the whole routine is unit-testable with fakes: no browser, no
- * wall-clock, no real timers. Every wait goes through one interruptible sleep,
- * so `stop()` takes effect between actions instantly — and the SCAN threads a
- * cooperative stop + jittered pacing (`PruneScanOpts`) into both list scrapes,
- * so `stop()` also lands between scroll rounds mid-scan.
- */
+/** Prune scans require a complete census; every unfollow follows the current plan and protection rules. */
 
 import type { SentinelStatus } from '../adapter/sentinel';
 import { blockedStreakThreshold, driftConfirmThreshold, pruneFailingThreshold } from '../kernel/derive';
@@ -50,8 +33,6 @@ export type { PruneCandidate, PruneChurnActions, PruneConfig, PruneEngineDeps, P
 export type PruneWaitKey = 'prune:park' | 'prune:action-delay';
 
 /**
- * The noise class per key: the blocked-action park is a bounded retry backoff around its base; the
- * paced inter-unfollow delay draws its own spread and stays exact. An unclassified key fails tsc.
  */
 export const PRUNE_WAIT_CLASS = {
   'prune:park': 'retry-backoff',
@@ -67,9 +48,6 @@ export const PRUNE_CONSECUTIVE_BLOCK_HALT = blockedStreakThreshold();
 /** Minimum spacing between mid-scan status emissions (the graph push throttle); phase-final emissions bypass it. */
 export const PRUNE_PROGRESS_EMIT_MS = POLL.GRAPH_PUSH_THROTTLE_MS;
 
-// ---------------------------------------------------------------------------------
-// PruneEngine
-// ---------------------------------------------------------------------------------
 
 export class PruneEngine {
   private readonly deps: PruneEngineDeps;
@@ -77,10 +55,6 @@ export class PruneEngine {
   private readonly waits: WaitRunner<PruneWaitKey>;
   private readonly rng: () => number;
   /**
-   * The DEDICATED timing-noise rng — never {@link rng}, whose seeded stream
-   * feeds the paced delay draw (deterministic tests stay byte-identical).
-   * Seeded from the install entropy ⊕ construction time ⊕ a prune-side salt,
-   * so growth and prune noise streams differ even on one install.
    */
   private readonly noiseRng: Rng;
   private cfg: PruneConfig;
@@ -92,10 +66,6 @@ export class PruneEngine {
   /** Resolvers parked by the run loop while paused; released by resume()/stop(). */
   private resumeWaiters: Array<() => void> = [];
   /**
-   * Deadline (epoch ms) of the inter-action delay a pause interrupted: resume
-   * serves its remainder before the next unfollow (the growth engine's
-   * "resume acts instantly" fix, mirrored), and the status projection keeps
-   * pointing at it while paused. Null outside a paused delay.
    */
   private owedActionDeadline: number | null = null;
 
@@ -107,7 +77,6 @@ export class PruneEngine {
   private lastRunAt: number | null;
   private lastSentinel: SentinelStatus | null = null;
   /**
-   * The RAW census of the last COMPLETE scan (following − followers − self − growth-managed, protection
    * NOT applied), runnable for a 2-step run; the actionable set derives from it against the LIVE protection
    * at consumption time (no re-scan). Null means "no runnable scan — Run is locked".
    */
@@ -866,8 +835,10 @@ export class PruneEngine {
     };
     this.emitStatus();
 
+    const bounds = this.deps.plan?.censusBounds?.(this.deps.clock.now(), { followers: header?.followers ?? preScanStats?.followers ?? null });
+    if (bounds !== undefined && bounds.followers + bounds.following > bounds.walkMax) throw new Error('too-large');
     const followingFetch = await this.deps.ownFollowing.fetchAllPks({
-      ...scanOpts,
+      ...scanOpts, ...(bounds === undefined ? {} : { census: { pages: bounds.following, walkMax: bounds.walkMax } }),
       onProgress: (n): void => {
         this.followingCount = n;
         this.emitStatusThrottled();
@@ -885,7 +856,7 @@ export class PruneEngine {
     this.emitStatus();
 
     const followersFetch = await this.deps.ownFollowers.fetchAllPks({
-      ...scanOpts,
+      ...scanOpts, ...(bounds === undefined ? {} : { census: { pages: bounds.followers, walkMax: bounds.walkMax - bounds.following } }),
       onProgress: (n): void => {
         this.followersCount = n;
         this.emitStatusThrottled();
@@ -980,6 +951,7 @@ export class PruneEngine {
       followers: displayFollowers,
       scrapedFollowing: followingPks.length,
       scrapedFollowers: followerSet.size,
+      rowsPerPage: followersFetch.rowsPerPage ?? this.lastCensus?.rowsPerPage ?? null,
       notFollowingBack, candidates: candidates.length,
     };
     this.deps.store.savePruneCensus(census);

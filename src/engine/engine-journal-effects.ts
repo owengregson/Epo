@@ -17,7 +17,6 @@ export interface EngineJournalContext {
   noteProgress(phase: string): void;
   engineWait(key: EngineWaitKey, policyOrMs: DelayPolicy | number): Promise<WaitResult>;
   enterRecovery(token: AbortController, kind: FailureKind): Promise<StepResult>;
-  pacingSleep(): Promise<void>;
 }
 
 /** Settle one due intent with one read of its account; a wall goes to the recovery ladder. */
@@ -29,6 +28,5 @@ export async function settleJournalStep(ctx: EngineJournalContext, token: AbortC
   if (outcome === 'walled') return ctx.enterRecovery(token, 'rate-limited');
   if (outcome === 'none') return 'idle';
   ctx.noteProgress('journal-settled');
-  await ctx.pacingSleep();
   return 'swept-followback';
 }

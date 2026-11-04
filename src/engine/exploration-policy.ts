@@ -1,7 +1,17 @@
 /** Shim: the exploration policy lives in the kernel (tier 1) so the read allowance can derive from it. */
 
+import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import { WEEKLY_CYCLE } from '@/kernel/derive-reentry';
 import type { PlanDayWindow } from '@/kernel/plan';
+
+export const explorationDayClock = calendarPlanDayClock;
+
+/** Revisit at a plan boundary, including variable-length days. */
+export function planDayStartAfter(window: (t: number) => PlanDayWindow, t: number, ahead = WEEKLY_CYCLE): number {
+  let w = window(t);
+  for (let k = 0; k < ahead; k += 1) w = window(w.endsAt);
+  return w.startsAt;
+}
 
 export { EXPLORATION_POLICY } from '@/kernel/exploration-policy';
 

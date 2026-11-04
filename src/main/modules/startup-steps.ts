@@ -79,6 +79,9 @@ export function openOwnProfileStep(d: StartupDeps): StartupStep {
           if (attempt === 0) await pauseBeforePageRetry(ADAPTER.PROFILE_LAND_RETRY_MS, signal);
         }
         logger.warn('foundation: could not land on own profile');
+      }).finally(() => {
+        const graph = d.session.current();
+        graph?.plan.activity.noteEnd(graph.clock.now());
       });
     },
   };
@@ -101,6 +104,8 @@ export function confirmAccountStep(d: StartupDeps): StartupStep {
         return;
       }
       if (seen !== graph.ownUsername && !(await d.session.rebuildWith(seen))) return;
+      const confirmed = d.session.current();
+      confirmed?.plan.activity.noteEnd(confirmed.clock.now());
       d.setAccountConfirmed(seen);
       logger.info('boot: account confirmed', { username: seen });
     },
