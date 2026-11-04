@@ -184,3 +184,17 @@ the raw log only while its panel is mounted.
 - **Widen `ShellServices` with the controls.** Pages and suites that provide
   only the two services would all have to change; a second context costs one
   provider.
+
+## Amendment — branded development runtime (2026-11-03)
+
+Native QA found that the locally branded Electron executable reports `app.isPackaged = true` even when
+`run-desktop.mjs` passes it the development script. Installed-build decisions therefore also require
+`process.defaultApp !== true`, using one pure `isInstalledApp` predicate. Script launches display Epo's manifest
+version, keep updating off, and retain the development menu and source Dock icon. Installed releases keep their
+runtime version and platform update mode. The version, mode and menu regressions passed at `aa31274`; native
+re-verification remains recorded separately in the overhaul QA record.
+
+The same native pass found the Settings tour step pointing to a seed field outside the viewport. The follow-up at
+`bd41d98` anchors that step to the field itself, scrolls each step's first measurable target into view once without
+animation, then remeasures it while retaining Next/Finish focus. Delayed/offscreen-anchor regressions pass; native
+confirmation remains pending.

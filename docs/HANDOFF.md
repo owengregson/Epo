@@ -36,14 +36,22 @@
 > - Fit probation inside the same quiet-aware close as normal sessions, reduce its kind allocations to fit, and carry
 >   probation to the next viable session when the current slot cannot hold one slower action.
 >
-> Implementation and closing cleanup are merged through `42ee233`; its full gate is running. The latest completed
-> shared gate (`44ea8d4`, chart and card style restoration) passed **424 suites / 4,387 tests**, five skipped, zero TODO,
-> and boundaries **0 errors / 56 warnings** (97 at the original overhaul start). The recorded plan QC had zero breaches
-> across 1,260 days, and all three lifecycle reachability tests passed; final-head results remain pending.
-> The isolated normal-motion gallery at `44ea8d4` passed **756 checks** (63 scenarios at 12 sizes). The recorded
-> background probe passed **10/10 scenarios**, including stage-hidden and never-shown boot, at about **120 callbacks/s**;
-> its exact bundle hash is in the validation record. Final reduced-motion, native-shell and checkpoint evidence is
-> still pending. The exact revisions, artifacts and upgrade notes are in the
+> The full gates at `42ee233` and `86a716d` each passed **425 suites / 4,402 tests**, five skipped, zero TODO, and
+> boundaries **0 errors / 56 warnings** (97 at the original overhaul start). Plan QC passed **1,260 days / zero breaches**,
+> all three lifecycle reachability tests passed, and the generated catalog is current. The cleanup audit found no new
+> blocker: pending wiring is empty, static timing contains only reasoned GEOM/HARNESS entries, and the saved Knip
+> comparison has no added findings (remaining advisory findings are recorded, not claimed to be zero).
+> The isolated normal-motion gallery at `44ea8d4` passed **756 checks**. At `04f5688`, the full reduced-motion matrix
+> passed **756 checks** and the three populated normal-motion scenarios passed **36 settled checks**. The background
+> probe passed **10/10 scenarios**, including stage-hidden and never-shown boot, at about **120 callbacks/s**; its exact
+> bundle hash is recorded. Native QA at `86a716d` exercised the intro, offline placeholder, stage shortcuts, Settings
+> save/Undo, Practice persistence, Protection navigation and clean quit. It found the Electron version in the footer,
+> a tour step that did not scroll to the seed field, and search results underneath the plan summary.
+> The branded-runtime classification fix is merged at `aa31274` with focused tests passing; native re-verification is
+> pending. Tour scrolling and search stacking repairs are ready at `bd41d98`, with focused tests passing and integration
+> and native verification pending. Offline completion, the final post-fix
+> gate/native observations and the pre-live checkpoint are still pending. Exact revisions, artifacts and upgrade notes
+> are in the
 > [validation record](qa/plan-derived-overhaul-2026-11.md).
 > No live-account check has run in this continuation. The integration has not opened the real Epo profile. Phase L
 > remains sequential and supervised; back up the full profile again before L1, mutations require explicit target
