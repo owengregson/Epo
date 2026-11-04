@@ -1,5 +1,5 @@
 import type { ComponentChildren, JSX } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { staggerSections } from '@/renderer/lib/stagger';
 import type { StageMode } from '@/shared/stage-mode';
 
@@ -29,10 +29,14 @@ export function StageHost({ mode, active, mount, children }: StageHostProps): JS
   if (active) opened.current = true;
   const host = useRef<HTMLElement>(null);
 
+  // Reset before paint, so a tour/deep-link reveal cannot be undone afterward.
+  useLayoutEffect(() => {
+    if (active && host.current !== null) host.current.scrollTop = 0;
+  }, [active]);
+
   useEffect(() => {
     const el = host.current;
     if (!active || el === null) return;
-    el.scrollTop = 0;
     const page = Array.from(el.children).find((c) => c.classList.contains('stage-page'));
     staggerSections((page as HTMLElement | undefined) ?? null);
   }, [active]);

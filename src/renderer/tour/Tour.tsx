@@ -84,9 +84,17 @@ export function Tour({ open, onClose, setStage, steps = TOUR_STEPS }: TourProps)
       return;
     }
     let raf = 0;
+    let revealed = false;
     const track = (): void => {
       const el = document.querySelector(`[data-tour~="${target}"]`);
-      const r = el?.getBoundingClientRect();
+      let r = el?.getBoundingClientRect();
+      if (!revealed && el !== null && r !== undefined && r.width > 0 && r.height > 0) {
+        // Wait for lazy stages to mount, then reveal once. Instant scrolling also
+        // respects reduced motion and leaves keyboard focus on the tour button.
+        el.scrollIntoView?.({ block: 'start', inline: 'nearest', behavior: 'instant' });
+        revealed = true;
+        r = el.getBoundingClientRect();
+      }
       const next =
         r !== undefined && r.width > 0 && r.height > 0
           ? { x: r.x, y: r.y, w: r.width, h: r.height }
