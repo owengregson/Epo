@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-
 import { SCORER_DEFAULTS } from '@/engine/scorer';
+import { effectiveFromV1 } from '@/settings/effective';
 import {
   DEFAULT_SETTINGS,
   loadSettings,
@@ -138,7 +138,7 @@ describe('persistence', () => {
 
 describe('projections from DEFAULT_SETTINGS', () => {
   test('toScorerConfig carries ratio + size bounds and the non-tunable bandEdgeScore', () => {
-    expect(toScorerConfig(DEFAULT_SETTINGS)).toEqual({
+    expect(toScorerConfig(effectiveFromV1(DEFAULT_SETTINGS))).toEqual({
       bandLow: 0.9,
       bandHigh: 1.5,
       peakLow: 1.0,
@@ -189,38 +189,9 @@ describe('projections from DEFAULT_SETTINGS', () => {
     expect(toChainConfig(DEFAULT_SETTINGS)).toEqual({ minFollowBackRate: 0.15, minPoolSize: 300 });
   });
 
-  test('toPruneConfig carries the cap and the scan pacing only: the plan paces, protection is the predicate (spec §5.13)', () => {
-    expect(toPruneConfig(DEFAULT_SETTINGS)).toEqual({ dailyLimit: 50, scanMinMs: 1_000, scanMaxMs: 3_000 });
-    expect(toPruneConfig({ ...DEFAULT_SETTINGS, pruneWhitelist: ['Keep_Me'], pruneDailyLimit: 5, minDelayMinutes: 9 }))
-      .toEqual({ dailyLimit: 5, scanMinMs: 1_000, scanMaxMs: 3_000 });
-  });
-
-  test('toPruneConfig maps the scan pacing knobs (seconds → ms) and clamps max ≥ min ≥ 0', () => {
-    const custom = toPruneConfig({
-      ...DEFAULT_SETTINGS,
-      pruneScanMinSeconds: 3,
-      pruneScanMaxSeconds: 8,
-    });
-    expect(custom.scanMinMs).toBe(3_000);
-    expect(custom.scanMaxMs).toBe(8_000);
-
-    // An inverted pair clamps max up to min (never a max below the min).
-    const inverted = toPruneConfig({
-      ...DEFAULT_SETTINGS,
-      pruneScanMinSeconds: 10,
-      pruneScanMaxSeconds: 3,
-    });
-    expect(inverted.scanMinMs).toBe(10_000);
-    expect(inverted.scanMaxMs).toBe(10_000);
-
-    // A negative min clamps to 0 (a wait can never be negative).
-    const negative = toPruneConfig({
-      ...DEFAULT_SETTINGS,
-      pruneScanMinSeconds: -4,
-      pruneScanMaxSeconds: 2,
-    });
-    expect(negative.scanMinMs).toBe(0);
-    expect(negative.scanMaxMs).toBe(2_000);
+  test('toPruneConfig reads the shared ceiling; scan pacing belongs to the plan tempo', () => {
+    expect(toPruneConfig(DEFAULT_SETTINGS)).toEqual({ dailyLimit: DEFAULT_SETTINGS.dailyHardCeiling });
+    expect(toPruneConfig({ dailyHardCeiling: 5 })).toEqual({ dailyLimit: 5 });
   });
 
   test('prune knobs round-trip through save → load and merge over defaults', () => {

@@ -34,7 +34,7 @@ function fixture() {
   const churn = new ChurnScheduler({ store, clock, ownPk: 'me', rate: base.rate as never, actions,
     cfg: { ...DEFAULT_CONFIGS.churn, maxWaitForFollowbackMs: 3 * DAY } });
   let lastSweep: number | null = null;
-  const cadence = { isDue: () => lastSweep === null, markRun: (at: number) => { lastSweep = at; } };
+  const cadence = { lastSweepEndedAt: () => lastSweep, markRun: (at: number) => { lastSweep = at; } };
   const settings = { ...DEFAULT_SETTINGS, seed: 'hub', lowWaterCandidates: 0,
     activeHoursStart: 0, activeHoursEnd: 24, followbackSweepHours: 1 };
   const delays = new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); } });

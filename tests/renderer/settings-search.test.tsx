@@ -13,7 +13,6 @@ import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/galler
 import { SettingsStage } from '@/renderer/settings/SettingsStage';
 import { searchSettings } from '@/renderer/settings/search';
 import { ROWS, SYNONYMS, V1_HOMES, V1_RETIRED } from '@/renderer/settings/search-index';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { SETTINGS_KEYS } from '@/settings/v1/settings-v1';
 import type { SettingsSaveResult } from '@/shared/settings-ops';
 import type { SettingsView } from '@/shared/settings-view';
@@ -34,7 +33,7 @@ async function mount(v: SettingsView): Promise<void> {
 }
 
 beforeEach(() => {
-  bridge = installFakeBridge(DEFAULT_SETTINGS);
+  bridge = installFakeBridge();
   Element.prototype.scrollIntoView = jest.fn();
 });
 

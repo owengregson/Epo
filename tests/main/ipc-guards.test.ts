@@ -10,7 +10,6 @@
 
 import { CHANNELS } from '@/ipc/contract';
 import { checkArgs, GUARDS } from '@/ipc/guards';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 
 test('only channels with scalar arguments carry a guard', () => {
   expect(Object.keys(GUARDS).sort()).toEqual([
@@ -25,7 +24,6 @@ test('only channels with scalar arguments carry a guard', () => {
     'setLogStream',
     'startBoost',
     'suggestAccounts',
-    'updateSettings',
   ]);
   // Every guarded name is a real channel.
   for (const method of Object.keys(GUARDS)) {
@@ -79,31 +77,6 @@ describe('chainDetail', () => {
   });
 });
 
-describe('updateSettings', () => {
-  test('accepts the full settings object the renderer round-trips', () => {
-    expect(checkArgs('updateSettings', [DEFAULT_SETTINGS])).toBeNull();
-  });
-
-  test('accepts a one-knob patch', () => {
-    expect(checkArgs('updateSettings', [{ dryRun: true }])).toBeNull();
-  });
-
-  test('accepts an OUT-OF-RANGE value: clamping is sanitizeSettings, not the guard', () => {
-    // ADR 0103: the semantics here are coercion, not validation — `jitterPercent`
-    // 100 must become 90, never a rejection that reverts the user's save.
-    expect(checkArgs('updateSettings', [{ jitterPercent: 100 }])).toBeNull();
-    expect(checkArgs('updateSettings', [{ minDelayMinutes: -5 }])).toBeNull();
-    expect(checkArgs('updateSettings', [{ pruneWhitelist: 'not-an-array' }])).toBeNull();
-  });
-
-  test('refuses a payload that is not a plain object of declared knobs', () => {
-    expect(checkArgs('updateSettings', [null])).not.toBeNull();
-    expect(checkArgs('updateSettings', ['seed=x'])).not.toBeNull();
-    expect(checkArgs('updateSettings', [[{ dryRun: true }]])).not.toBeNull();
-    expect(checkArgs('updateSettings', [{ __proto__: { polluted: true }, notAKnob: 1 }]))
-      .not.toBeNull();
-  });
-});
 
 describe('the Settings v2, Boost and live rows (shape only)', () => {
   test('applySettings and previewSettings take 1–64 known ops of the right shape', () => {

@@ -8,7 +8,6 @@
  */
 
 import fc from 'fast-check';
-import { bioMatchesFilter } from '@/engine/prune-bio-filter';
 import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import { referenceTempoSource } from '@/kernel/tempo';
 import { MS_PER_SECOND } from '@/kernel/units';
@@ -17,8 +16,8 @@ import { type MigrationBasis, type MigrationOutcome, migrateV1 } from '@/setting
 import { PERSONAS, type PersonaId } from '@/settings/pattern-map';
 import { DEFAULT_SETTINGS } from '@/settings/v1/settings-v1';
 import type { Settings } from '@/settings/v1/settings-v1-types';
-import { isPruneWhitelisted, pruneWhitelistSet } from '@/shared/prune-whitelist';
 import { compileProtection, foldText, normalizeHandle, protectionVerdict } from '@/shared/unfollow-protection';
+import { bioMatchesFilter, isPruneWhitelisted, pruneWhitelistSet } from '../kit/v1-protection-oracle';
 
 const NOW = 1_700_000_000_000;
 const GAP: Record<string, readonly [number, number]> = { cautious: [477, 170], standard: [304, 130], bold: [223, 100] };
@@ -30,7 +29,7 @@ const BASIS: MigrationBasis = {
   likelyCurve: { hardLow: 0.5, bandLow: 0.9, peakLow: 1.0, peakHigh: 1.2, bandHigh: 1.5, hardHigh: 3.0 },
   privateEdge: 0.15,
   refillMax: 10,
-  interim: { cleanupPerDay: 50, censusEveryDays: 7, checksEveryHours: 1 },
+  historical: { cleanupPerDay: 50, censusEveryDays: 7, checksEveryHours: 1 },
 };
 const migrate = (file: unknown, opts: Partial<{ mtimeMs: number | null; pk: string | null }> = {}): MigrationOutcome =>
   migrateV1(typeof file === 'string' ? file : JSON.stringify(file),

@@ -153,7 +153,7 @@ test('a Start during the sequence is queued, never manual-running, and starts af
   const { tab } = profileTab('owen');
   const events = statusEvents();
   const { foundation: f } = newFoundation({ tab, onStatus: events.push });
-  await f.updateSettings({ activeHoursStart: 8, activeHoursEnd: 8, pacingModel: 'legacy' });
+  f.settings.apply([{ op: 'intent', key: 'quietHours', value: { kind: 'none' } }], 'user');
   const booting = f.startBoot();
   await events.until((s) => s.boot?.phase === 'ready' && s.boot.ig === 'ready');
   const start = f.startEngine();

@@ -3,7 +3,8 @@ import type { RowLaneKey } from '@/renderer/cards/queues/lanes';
 import { clamp, monogram, pctInt, withAt } from '@/renderer/lib/format';
 import { Icon } from '@/renderer/ui/Icon';
 import type { KeptRow } from '@/shared/settings-facts';
-import type { QueueRow, Settings } from '@/types';
+import type { EffectiveSummary } from '@/shared/settings-view';
+import type { QueueRow } from '@/types';
 
 /** A day, as a unit of the row's own timestamps (a grid, not a timing). */
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -11,14 +12,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** The follow-back wait and the hold after a follow-back, from the live settings (null while loading). */
 export interface QueueWindows {
   followbackMs: number;
-  holdMs: number;
+  holdMs: number | null;
 }
 
 /** The windows from the settings the shell loaded; null before they land (rows then show no bar). */
 export function queueWindowsOf(
-  s: Pick<Settings, 'maxWaitForFollowbackDays' | 'holdAfterFollowbackDays'> | null,
+  s: Pick<EffectiveSummary, 'waitDays' | 'holdDays'> | null,
 ): QueueWindows | null {
-  return s === null ? null : { followbackMs: s.maxWaitForFollowbackDays * DAY_MS, holdMs: s.holdAfterFollowbackDays * DAY_MS };
+  return s === null ? null : { followbackMs: s.waitDays * DAY_MS, holdMs: s.holdDays === null ? null : s.holdDays * DAY_MS };
 }
 
 /** A row's line and its progress bar, from the record's own timestamps. */
@@ -47,6 +48,7 @@ export function rowContext(lane: RowLaneKey, row: QueueRow, now: number, windows
       return { ctx, barFrac: windows === null ? null : clamp(elapsed / windows.followbackMs, 0, 1), brass: false };
     }
     case 'back': {
+      if (windows?.holdMs === null) return { ctx: 'Followed you back · kept', barFrac: null, brass: false };
       if (row.holdUntil === undefined) return { ctx: 'Followed you back', barFrac: null, brass: false };
       const remaining = row.holdUntil - now;
       if (remaining <= 0) return { ctx: 'Followed you back · ready to unfollow', barFrac: 1, brass: false };

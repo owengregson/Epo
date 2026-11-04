@@ -21,13 +21,12 @@ import { useLiveFeeds } from '@/renderer/hooks/useLiveFeeds';
 import { armDeadline, remainingFraction } from '@/renderer/lib/deadline-anim';
 import { flipInsert } from '@/renderer/lib/flip';
 import { play } from '@/renderer/lib/play';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { chainTarget, type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
 let bridge: FakeBridge;
 
 beforeEach(() => {
-  bridge = installFakeBridge(DEFAULT_SETTINGS);
+  bridge = installFakeBridge();
 });
 
 function Feeds(): null {

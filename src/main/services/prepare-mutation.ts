@@ -4,6 +4,7 @@
  * refuses only its own next write (typed `journal`); every other write proceeds.
  */
 
+
 import { planDaySlots } from '@/engine/journal';
 import type { Clock } from '@/governors/clock';
 import { calendarPlanDayClock } from '@/governors/plan-day-clock';
@@ -11,7 +12,7 @@ import type { ReadBudget } from '@/governors/read-budget';
 import type { ParkSlots } from '@/kernel/derive-parks';
 import { settleDueIntents } from '@/rim/journal-settlement';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
-import type { Settings } from '@/settings/settings';
+import type { EffectiveSettings } from '@/settings/effective';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 
 export interface PrepareMutationDeps {
@@ -20,7 +21,7 @@ export interface PrepareMutationDeps {
   clock: Clock;
   readBudget: ReadBudget;
   profiles(): ProfileVisitor;
-  settings(): Settings;
+  settings(): Pick<EffectiveSettings, 'maxRetries'>;
   signal(): AbortSignal | undefined;
   /** The identity and run-token check every write repeats. */
   active(): Promise<boolean>;

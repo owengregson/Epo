@@ -10,7 +10,7 @@
 import type { EngineParkReason, EngineStatus } from '@/engine/engine';
 import type { PruneCandidate, PruneState, PruneStatus } from '@/engine/prune-engine';
 import type { BridgeInvokers, PushContract, PushMethod } from '@/ipc/contract';
-import type { Settings } from '@/settings/v1/settings-v1-types';
+import { LIVE } from '@/kernel/live-policy';
 import type { LogEntry, LogLevel } from '@/shared/log-entry';
 import type { StageMode } from '@/shared/stage-mode';
 import type { StatusFields } from '@/shared/status-fields';
@@ -29,7 +29,6 @@ export type {
   PruneState,
   PruneStatus,
   ResponseHandler,
-  Settings,
   TabResponse,
   Target,
   Unsubscribe,
@@ -117,7 +116,8 @@ export interface ChainTargetView extends Target {
  * Runway display clamp: past this many days the projection is noise, so the UI
  * reports "> N days" instead of false precision.
  */
-export { CONVERSION_VERDICT_MIN, RUNWAY_CAP_DAYS } from './shared/projections';
+export const CONVERSION_VERDICT_MIN = LIVE.CONVERSION_VERDICT_MIN;
+export const RUNWAY_CAP_DAYS = LIVE.RUNWAY_CAP_DAYS;
 
 /** Per-lifecycle-state follow_record counts for one chain target (the funnel). */
 export type TargetFunnelCounts = Record<FollowState, number>;
@@ -285,14 +285,6 @@ export interface PruneControlResult {
   status: PruneStatus;
 }
 
-/** Result of a read-only seed-username precheck (existence + followers visibility). */
-export interface SeedCheck {
-  ok: boolean;
-  exists: boolean;
-  followersVisible: boolean;
-  isPrivate: boolean;
-  reason?: string;
-}
 
 // ---------------------------------------------------------------------------
 // Self-updater (docs/RELEASE.md §5; one home: `src/shared/update-status.ts`)

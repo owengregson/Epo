@@ -3,15 +3,15 @@
   "allow": [
     {
       "file": "src/main/foundation-wiring.ts",
-      "lines": 1390
+      "lines": 1386
     },
     {
       "file": "src/engine/prune-engine.ts",
-      "lines": 1079
+      "lines": 1077
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 917
+      "lines": 915
     },
     {
       "file": "src/kernel/derive.ts",
@@ -54,12 +54,12 @@
       "lines": 390
     },
     {
-      "file": "src/types.ts",
-      "lines": 345
-    },
-    {
       "file": "src/engine/recovery.ts",
       "lines": 339
+    },
+    {
+      "file": "src/types.ts",
+      "lines": 337
     },
     {
       "file": "src/rim/follower-acquisition.ts",
@@ -74,11 +74,11 @@
       "lines": 325
     },
     {
-      "file": "src/main/services/graph-builder.ts",
-      "lines": 321
+      "file": "src/kernel/policy.ts",
+      "lines": 320
     },
     {
-      "file": "src/kernel/policy.ts",
+      "file": "src/main/services/graph-builder.ts",
       "lines": 320
     }
   ]

@@ -11,6 +11,7 @@
  * re-introduced.
  */
 import { act, fireEvent, render, within } from '@testing-library/preact';
+import { pruneSignal, statusSignal } from '@/renderer/app/shell-context';
 import { SCENARIOS } from '@/renderer/gallery/fixtures';
 import { Gallery, primeGallery } from '@/renderer/gallery/Gallery';
 
@@ -74,4 +75,16 @@ test('the gallery rail can leave the layout without changing the chosen page or 
   await act(async () => { fireEvent.click(within(document.body).getByText('Show gallery controls')); });
   expect(picker.hidden).toBe(false);
   expect(document.querySelector('[data-stage="prune"]')).not.toBeNull();
+});
+
+
+test('the gallery Prune budget follows the selected plan, including a day off', async () => {
+  await mountGallery();
+  for (const label of ['Settings · Easy', 'Day off', 'Working · next step']) {
+    await act(async () => { fireEvent.click(rail().getByText(label)); });
+    const allocation = statusSignal.value?.plan?.kinds.unfollow;
+    expect(allocation).toBeDefined();
+    expect(pruneSignal.value?.dailyLimit).toBe(allocation?.planned);
+    expect(pruneSignal.value?.dailyDone).toBe(allocation?.done);
+  }
 });

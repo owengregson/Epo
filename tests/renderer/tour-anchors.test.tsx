@@ -10,12 +10,10 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
 import { TOUR_STEPS } from '@/renderer/tour/steps';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
-import type { Settings } from '@/types';
 import { installFakeBridge } from '../kit/render-bridge';
 
 /** A first launch: the tour has never run, so it opens by itself. */
-const FIRST_RUN: Settings = { ...DEFAULT_SETTINGS, seed: 'someone', tourCompletedAt: null };
+const FIRST_RUN = { seed: 'someone', app: { tourCompletedAt: null } };
 
 beforeEach(() => {
   installFakeBridge(FIRST_RUN);

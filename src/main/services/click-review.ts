@@ -4,6 +4,7 @@
  * fields, requesters and the current relationship decide it. A refusal before the visit spends no read.
  */
 
+
 import { ActionAbortedError, ActionDeferredError, ActionReviewedError } from '@/adapter/errors';
 import { journalBlocks } from '@/engine/journal';
 import { freshSubject } from '@/engine/protection-gate';
@@ -13,7 +14,8 @@ import type { Admission } from '@/governors/plan-types';
 import type { ReadBudget } from '@/governors/read-budget';
 import type { MutationKind, Writer } from '@/kernel/plan';
 import { countsUnread, type ProfileSeen, type ProfileVisitor } from '@/rim/profile-visit-port';
-import { type Settings, toScorerConfig } from '@/settings/settings';
+import type { EffectiveSettings } from '@/settings/effective';
+import { toScorerConfig } from '@/settings/mappers';
 import { type ClickVerdict, protectionClickVerdict } from '@/shared/click-verdict';
 import { NEVER_PAUSED, type SurfaceGate } from '@/shared/surface-gate';
 import { type ProtectionIndex, protectionVerdict } from '@/shared/unfollow-protection';
@@ -25,7 +27,7 @@ export interface ClickReviewDeps {
   clock: Clock;
   readBudget: ReadBudget;
   profiles(): ProfileVisitor;
-  settings(): Settings;
+  settings(): EffectiveSettings;
   /** The live protection index (the settings service's): every unfollow is judged on it (spec §7). */
   protection(): ProtectionIndex;
   signal(): AbortSignal | undefined;

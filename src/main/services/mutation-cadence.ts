@@ -48,6 +48,9 @@ const GAP_KEY: TempoKey = 'gap.action';
 
 /** The pass under way: how many accepts it admits, how many landed, its one gap and the deadline it armed. */
 interface AcceptPass {
+  day: string;
+  dayStart: number;
+  sessionStart: number | null;
   allowed: number;
   done: number;
   gapMs: number | null;
@@ -84,6 +87,12 @@ export function createMutationCadence(d: MutationCadenceDeps): MutationCadence {
     return pass !== null && pass.armed !== null && pass.armed === owed && owed > now;
   };
 
+  const passAt = (view: PlanView, allowed: number): AcceptPass => ({
+    day: view.window.key, dayStart: view.window.startsAt,
+    sessionStart: view.open === null ? null : view.plan.sessions[view.open.idx].startAt,
+    allowed, done: 0, gapMs: null, armed: null,
+  });
+
   return {
     preflight: (kind, writer, now, subject) => d.plan.view(now).admits(kind, writer, subject),
     armAtDispatch: (kind, writer, now, subject) => {
@@ -96,19 +105,25 @@ export function createMutationCadence(d: MutationCadenceDeps): MutationCadence {
       return persist(now + gapAt(view, now));
     },
     acceptAllowed: (now) => {
-      if (passOpen(now) && pass !== null) return pass.done < pass.allowed;
       const view = d.plan.view(now);
+      const lastHour = recent(now).filter((t) => t > now - MS_PER_HOUR && t <= now).length;
+      if (passOpen(now) && pass !== null) {
+        const sameSession = view.open !== null && view.plan.sessions[view.open.idx].startAt === pass.sessionStart;
+        const current = pass.day === view.window.key && pass.dayStart === view.window.startsAt && sameSession
+          && view.admitsAcceptDuringPass(pass.armed as number).ok && view.acceptsAllowed(Number.POSITIVE_INFINITY, lastHour) > 0;
+        if (!current) { pass = null; return false; }
+        return pass.done < Math.min(pass.allowed, view.plan.ceilings.acceptsPerPass);
+      }
       if (!view.admits('accept', 'accept-pass').ok) {
         pass = null;
         return false;
       }
-      const lastHour = recent(now).filter((t) => t > now - MS_PER_HOUR && t <= now).length;
-      pass = { allowed: view.acceptsAllowed(Number.POSITIVE_INFINITY, lastHour), done: 0, gapMs: null, armed: null };
+      pass = passAt(view, view.acceptsAllowed(Number.POSITIVE_INFINITY, lastHour));
       return pass.allowed > 0;
     },
     acceptPassEnded: (now) => {
       const view = d.plan.view(now);
-      const p: AcceptPass = pass ?? { allowed: 0, done: 0, gapMs: null, armed: null };
+      const p: AcceptPass = pass ?? passAt(view, 0);
       pass = p;
       p.done += 1;
       p.gapMs ??= gapAt(view, now);

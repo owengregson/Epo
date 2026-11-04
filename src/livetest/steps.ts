@@ -1,6 +1,5 @@
 /**
  * LiveTestHarness — the engine of the live action smoke-test.
- *
  * Reuses the production rim/adapter/store and prints a PASS/FAIL report.
  * Reads are paced; acquireMaxRounds bounds both direct pages and fallback
  * scroll rounds, and enrichCap bounds profile reads. Follow/unfollow require
@@ -31,6 +30,7 @@ import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { FollowerAcquisition } from '@/rim/types';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS, toRateGovernorConfig, toScannerConfig, toScorerConfig } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { HARNESS, SCHEDULER } from '@/timing/config';
@@ -497,7 +497,7 @@ export class LiveTestHarness {
       dryRun: this.cfg.dryRun,
     });
 
-    const scorerCfg = toScorerConfig(DEFAULT_SETTINGS);
+    const scorerCfg = toScorerConfig(effectiveFromV1(DEFAULT_SETTINGS));
     const scanner = new Scanner({ store, scorerCfg, cfg: toScannerConfig(DEFAULT_SETTINGS) });
 
     logger.info('livetest: graph built', {

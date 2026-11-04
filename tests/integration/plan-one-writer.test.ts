@@ -95,9 +95,8 @@ describe('I4 — status reads never write plan_state', () => {
     const writes = jest.spyOn(store, 'setPlanState');
     for (let t = T0; t < day.window.endsAt; t += 11 * MS_PER_MINUTE) {
       clock.t = t;
-      const { drawn, planned } = plan.service.view(t).plan.volume;
-      expect(engine.status().plannedToday).toBe(Math.max(drawn, planned));
-      expect(engine.status().pacing?.dailyTarget).toBe(Math.max(drawn, planned));
+      const { planned } = plan.service.view(t).plan.volume;
+      expect(engine.status().plannedToday).toBe(planned);
     }
     expect(writes).not.toHaveBeenCalled();
     expect(store.getPlanState()).toBe(raw);
@@ -177,7 +176,7 @@ describe('I8 — a six-hour close and a late first open', () => {
     const engine = new Engine({ ...testDeps({ store, clock, rate, delays }), pacing: plan.pacing });
     expect(await engine.stepOnce()).toBe('waited-session');
     expect(sleeps).toEqual([second.startAt - clock.t]);
-    expect(engine.status().pacing?.nextSessionAt).toBe(second.startAt);
+    expect(plan.service.view(clock.t).nextSessionAt).toBe(second.startAt);
   });
 
   test('a first open after a session ended prorates it to nothing; planned volume keeps only the rest', () => {

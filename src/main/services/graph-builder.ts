@@ -24,7 +24,7 @@ import { SpacedListPageWalker } from '@/rim/spaced-list-walker';
 import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
 import {
   toChainConfig, toRateGovernorConfig, toScannerConfig, toScorerConfig,
-} from '@/settings/settings';
+} from '@/settings/mappers';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { DelayManager } from '@/timing/delay-manager';
 import { cryptoUniform } from '@/utils/entropy';
@@ -279,7 +279,6 @@ export function buildGraph(
     sentinel,
     delays,
     installEntropy,
-    lastRunAt: settings.pruneLastRunAt,
     plan: plan.prunePlan,
     onStatus: (s) => d.onPruneStatus(s),
     ...pruneUnfollowDeps(d, { settings, policy, ownUsername, dayClock: plan.dayClock }),

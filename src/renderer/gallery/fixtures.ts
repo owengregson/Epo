@@ -11,6 +11,7 @@
  * a designer sees typography under realistic digit widths (five-figure counts,
  * a negative net, a long handle) instead of the 0/— empty state.
  */
+import { livePlan } from '@/renderer/gallery/fixtures-live-data';
 import type {
   ChainTargetView,
   EpoStatus,
@@ -18,8 +19,6 @@ import type {
   PruneStatus,
   QueueRow,
 } from '@/types';
-
-export { GALLERY_SETTINGS } from '@/renderer/gallery/settings-fixture';
 
 const MIN = 60_000;
 
@@ -51,7 +50,6 @@ export function baseStatus(over: Partial<EpoStatus> = {}): EpoStatus {
     online: true,
     haltReason: null,
     recovery: null,
-    pacing: null,
     ...over,
   };
 }
@@ -68,7 +66,7 @@ export function basePrune(over: Partial<PruneStatus> = {}): PruneStatus {
     unfollowed: 0,
     remaining: 1_902,
     dailyDone: 0,
-    dailyLimit: 120,
+    dailyLimit: livePlan().kinds.unfollow.planned,
     lastRunAt: Date.now() - 26 * 60 * MIN,
     lastSentinel: null,
     haltReason: null,
@@ -161,10 +159,10 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     key: 'parked',
-    label: 'Parked (outside hours)',
+    label: 'Resting between sessions',
     status: baseStatus({
       state: 'running',
-      parkReason: 'active-hours',
+      parkReason: 'session',
       parkedUntil: Date.now() + 7 * 60 * MIN,
       nextActionAt: null,
     }),

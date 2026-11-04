@@ -334,7 +334,7 @@ export const KERNEL_GUARDS: Readonly<Partial<Record<string, string>>> = {
   "SETTINGS_POLICY.KEEP_RECHECK_DOUBLINGS": "Re-checks of an unreadable protected record double this many times: at most one visit per eight plan-days.",
   "SETTINGS_POLICY.TEMPO_OVERRIDE_MAX_FACTOR": "A tempo or gap override stretches a wait at most this much (never shorter): the longest in-step silence stays under the step watchdog.",
   "SETTINGS_POLICY.MAX_DAYS_OFF": "Seven days off is \"Stop\", not a plan: every week keeps at least one working day.",
-  "SETTINGS_POLICY.INTERIM": "The interim recommendations until the plan port registers (spec C16): today's prune limit, schedule and sweep spacing.",
+  "SETTINGS_POLICY.V1_MIGRATION": "Frozen historical baselines for v1 migration only; live lifecycle values derive from the plan.",
   "SETTINGS_POLICY.RISK_RUNG": "Risk rungs per vocabulary step: only the largest daily volume reaches the top rung, the hourly caps never do.",
   "SETTINGS_POLICY.DOC_VERSION": "The settings document format this build reads and writes; the v1 file stays as it was for older builds.",
   "SETTINGS_POLICY.PARAM_STEP": "Typed Advanced values snap to these steps: a finer grid than anyone can tell apart is noise.",

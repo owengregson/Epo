@@ -144,19 +144,19 @@ export function migrateV1(raw: string, opts: MigrateOptions): MigrationOutcome {
     set('explore.moveOnRate', v1.minFollowBackRate, DEFAULT_SETTINGS.minFollowBackRate);
   }
   if (v1.minPoolSize !== DEFAULT_SETTINGS.minPoolSize) set('explore.moveOnPool', v1.minPoolSize, DEFAULT_SETTINGS.minPoolSize);
-  if (v1.followbackSweepHours !== basis.interim.checksEveryHours) {
+  if (v1.followbackSweepHours !== basis.historical.checksEveryHours) {
     if (v1.followbackSweepHours >= basis.checksEveryHoursMin) {
-      set('checks.everyHours', v1.followbackSweepHours, basis.interim.checksEveryHours);
+      set('checks.everyHours', v1.followbackSweepHours, basis.historical.checksEveryHours);
     } else notes.push({ kind: 'faster-value-dropped', key: 'checksEveryHours', from: v1.followbackSweepHours });
   }
-  if (v1.pruneDailyLimit !== basis.interim.cleanupPerDay) {
+  if (v1.pruneDailyLimit !== basis.historical.cleanupPerDay) {
     set('unfollow.cleanupPerDay', clamped('unfollow.cleanupPerDay', v1.pruneDailyLimit, 0, v1.dailyHardCeiling),
-      basis.interim.cleanupPerDay);
+      basis.historical.cleanupPerDay);
   }
-  if (v1.pruneScheduleDays > 0 && v1.pruneScheduleDays !== basis.interim.censusEveryDays) {
+  if (v1.pruneScheduleDays > 0 && v1.pruneScheduleDays !== basis.historical.censusEveryDays) {
     const { min, max } = SETTINGS_GUARDS.censusEveryDays;
     set('unfollow.censusEveryDays', clamped('unfollow.censusEveryDays', v1.pruneScheduleDays, min, max),
-      basis.interim.censusEveryDays);
+      basis.historical.censusEveryDays);
   }
   // The scan band becomes a walk.page factor over the v1 default band (the walk.page reference), slower
   // only: a faster band would speed up every list walk, so it is dropped with a notice.
@@ -201,8 +201,8 @@ export function migrateV1(raw: string, opts: MigrateOptions): MigrationOutcome {
   };
   // The kept numbers are checked against v1 first; the retired pacer then maps once, as for a carried document.
   if (opts.resolve === undefined) return { kind: 'migrated', doc: retireLegacyPacing(doc, v1.pacingModel, now) };
-  const pinned = pinChained(v1, doc, opts.resolve, now);
-  const broken = effectiveMismatches(v1, pinned, opts.resolve(pinned), notes);
+  const pinned = pinChained(v1, doc, opts.resolve, now, basis);
+  const broken = effectiveMismatches(v1, pinned, opts.resolve(pinned), notes, basis);
   return broken.length > 0 ? { kind: 'refused', reasons: broken } : { kind: 'migrated', doc: retireLegacyPacing(pinned, v1.pacingModel, now) };
 }
 
@@ -210,12 +210,13 @@ export function migrateV1(raw: string, opts: MigrateOptions): MigrationOutcome {
  * v2 derives some numbers from the EFFECTIVE upstreams (a hand-set daily volume moves the recommended
  * ceiling); a v1 value that matched its old derivation keeps itself as an override, so behaviour is kept.
  */
-function pinChained(v1: Settings, doc: SettingsDocV2, resolve: (d: SettingsDocV2) => ResolvedParams, now: number): SettingsDocV2 {
+function pinChained(v1: Settings, doc: SettingsDocV2, resolve: (d: SettingsDocV2) => ResolvedParams, now: number, basis: MigrationBasis): SettingsDocV2 {
   let d = doc;
   for (let pass = 0; pass < RETAINED.length; pass += 1) {
     const r = resolve(d);
     const e = effectiveFrom(d, r);
-    const drift = RETAINED.find(([knob, key]) => typeof v1[knob] === 'number' && e[knob] !== v1[knob]
+    const drift = RETAINED.find(([knob, key]) => !(knob === 'pruneDailyLimit' && v1[knob] === basis.historical.cleanupPerDay)
+      && typeof v1[knob] === 'number' && (knob === 'followbackSweepHours' || knob === 'pruneDailyLimit' ? r[key].value : e[knob]) !== v1[knob]
       && d.overrides[key] === undefined && PARAM_SPECS[key].kind === 'int' && within(v1[knob] as number, r[key].bounds));
     if (drift === undefined) return d;
     const [knob, key] = drift;
@@ -227,7 +228,7 @@ function pinChained(v1: Settings, doc: SettingsDocV2, resolve: (d: SettingsDocV2
 const within = (v: number, b: { readonly min: number; readonly max: number }): boolean => v >= b.min && v <= b.max;
 
 /** v1 knobs whose meaning v2 keeps, and the parameter that now holds each. */
-const RETAINED: ReadonlyArray<readonly [keyof Settings & keyof EffectiveSettings, ParamKey]> = [
+const RETAINED: ReadonlyArray<readonly [(keyof Settings & keyof EffectiveSettings) | 'followbackSweepHours' | 'pruneDailyLimit', ParamKey]> = [
   ['dailyOperatingRate', 'pace.dailyVolume'], ['dailyHardCeiling', 'pace.dailyCeiling'], ['dailyPlanSize', 'pace.candidateBuffer'],
   ['dailyVolumeVariancePct', 'pace.dayVariation'], ['restDayChancePct', 'pace.restDayChance'],
   ['sessionsPerDayMin', 'sessions.perDayMin'], ['sessionsPerDayMax', 'sessions.perDayMax'], ['hourlyVelocityCap', 'pace.hourlyCap'],
@@ -243,15 +244,18 @@ const RETAINED: ReadonlyArray<readonly [keyof Settings & keyof EffectiveSettings
  * v1-sanitized object on every retained knob, except the documented exceptions — a value the new bounds
  * clamp (a `value-clamped` note is added) and a faster value that was dropped with its notice.
  */
-function effectiveMismatches(v1: Settings, doc: SettingsDocV2, r: ResolvedParams, notes: MigrationNote[]): string[] {
+function effectiveMismatches(v1: Settings, doc: SettingsDocV2, r: ResolvedParams, notes: MigrationNote[], basis: MigrationBasis): string[] {
   const e = effectiveFrom(doc, r);
   const noted = (key: ParamKey): boolean => notes.some((n) => 'key' in n && n.key === key);
   const out: string[] = [];
   for (const [knob, key] of RETAINED) {
-    if (e[knob] === v1[knob] || (knob === 'followbackSweepHours' && notes.some((n) => n.kind === 'faster-value-dropped' && n.key === 'checksEveryHours'))) continue;
+    // Spec §6.10: the historical default follows the new plan; only a custom cleanup cap is retained.
+    if (knob === 'pruneDailyLimit' && v1[knob] === basis.historical.cleanupPerDay) continue;
+    const value = knob === 'followbackSweepHours' || knob === 'pruneDailyLimit' ? r[key].value : e[knob];
+    if (value === v1[knob] || (knob === 'followbackSweepHours' && notes.some((n) => n.kind === 'faster-value-dropped' && n.key === 'checksEveryHours'))) continue;
     const outside = typeof v1[knob] === 'number' && !within(v1[knob] as number, r[key].bounds);
-    if ((outside || r[key].override?.clamped === true) && typeof v1[knob] === 'number' && typeof e[knob] === 'number') {
-      if (!noted(key)) notes.push({ kind: 'value-clamped', key, from: v1[knob] as number, to: e[knob] as number });
+    if ((outside || r[key].override?.clamped === true) && typeof v1[knob] === 'number' && typeof value === 'number') {
+      if (!noted(key)) notes.push({ kind: 'value-clamped', key, from: v1[knob] as number, to: value as number });
       continue;
     }
     if (!noted(key)) out.push(`effective:${knob}`);

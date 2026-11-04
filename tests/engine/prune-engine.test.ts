@@ -141,18 +141,17 @@ describe('PruneEngine.scan', () => {
     expect(h.engine.status().state).toBe('idle');
   });
 
-  test('scan threads the configured pacing + a live shouldStop into BOTH sources', async () => {
+  test('scan threads a live shouldStop into BOTH sources without overriding plan tempo', async () => {
     const h = build({
       following: [OWN_PK, '1'],
       followers: [],
-      cfg: { scanMinMs: 4_000, scanMaxMs: 9_000 },
     });
 
     await h.engine.scan();
 
     for (const opts of [h.ownFollowing.lastOpts, h.ownFollowers.lastOpts]) {
-      expect(opts?.scrollMinMs).toBe(4_000);
-      expect(opts?.scrollMaxMs).toBe(9_000);
+      expect(opts).not.toHaveProperty('scrollMinMs');
+      expect(opts).not.toHaveProperty('scrollMaxMs');
       expect(opts?.shouldStop?.()).toBe(false); // live, and not aborted
     }
     h.store.close();

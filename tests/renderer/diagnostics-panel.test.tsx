@@ -11,7 +11,6 @@ import { DIAGNOSTICS } from '@/kernel/live-policy';
 import { ShellContext, type ShellServices, statusSignal } from '@/renderer/app/shell-context';
 import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
 import { LOG_SHOWN_MAX } from '@/renderer/diagnostics/useLogTail';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { LogEntry } from '@/shared/log-entry';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
@@ -24,7 +23,7 @@ const toasts: Array<[string, string]> = [];
 const services: ShellServices = { confirm: () => Promise.resolve(true), toast: (kind, message) => toasts.push([kind, message]) };
 
 beforeEach(() => {
-  bridge = installFakeBridge({ ...DEFAULT_SETTINGS, tourCompletedAt: 1 });
+  bridge = installFakeBridge({ app: { tourCompletedAt: 1 } });
   bridge.stub('logTail', TAIL);
   toasts.length = 0;
 });

@@ -7,8 +7,8 @@ import {
   type SettingsTarget,
   type ShellControls,
   settingsFactsSignal,
-  settingsSignal,
   settingsTargetSignal,
+  settingsViewSignal,
   stageSignal,
 } from '@/renderer/app/shell-context';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
@@ -45,7 +45,7 @@ export function coveredNow(): boolean {
 export function hasSeed(): boolean {
   const facts = settingsFactsSignal.peek();
   if (facts?.built) return facts.seed.kind !== 'none';
-  return Boolean(settingsSignal.peek()?.seed?.trim());
+  return Boolean(settingsViewSignal.peek()?.seed?.trim());
 }
 
 /** The control runner's names, as the posture's pending input. */

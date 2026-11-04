@@ -6,7 +6,6 @@ import { act, render } from '@testing-library/preact';
 import { graphPreloadedSignal } from '@/renderer/app/live-signals';
 import { statusSignal } from '@/renderer/app/shell-context';
 import { type GraphBoard, useGraphBoard } from '@/renderer/hooks/useGraphBoard';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { GraphSnapshot } from '@/types';
 import { graphSnapshot } from '../kit/graph-snapshot';
 import { installFakeBridge } from '../kit/render-bridge';
@@ -18,7 +17,7 @@ beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
 
 test('activation during preload preserves the answer and queues a fresh read without overlapping requests', async () => {
-  const bridge = installFakeBridge(DEFAULT_SETTINGS);
+  const bridge = installFakeBridge();
   let finish!: (snapshot: GraphSnapshot) => void;
   bridge.stub('graphSnapshot', () => new Promise<GraphSnapshot>((resolve) => { finish = resolve; }));
   const view = render(<Probe active={false} />);
@@ -37,7 +36,7 @@ test('activation during preload preserves the answer and queues a fresh read wit
 });
 
 test('hidden stages do not refresh after preload, but opening Graph fetches current data', async () => {
-  const bridge = installFakeBridge(DEFAULT_SETTINGS);
+  const bridge = installFakeBridge();
   bridge.stub('graphSnapshot', graphSnapshot());
   const view = render(<Probe active={false} />);
   await act(async () => {});
@@ -53,7 +52,7 @@ test('hidden stages do not refresh after preload, but opening Graph fetches curr
 });
 
 test.each(['rejected', 'unavailable'])('a %s refresh preserves the graph and reports unavailable until retry', async (failure) => {
-  const bridge = installFakeBridge(DEFAULT_SETTINGS);
+  const bridge = installFakeBridge();
   bridge.stub('graphSnapshot', graphSnapshot());
   render(<Probe active />);
   await act(async () => {});
@@ -69,7 +68,7 @@ test.each(['rejected', 'unavailable'])('a %s refresh preserves the graph and rep
 });
 
 test('the shell status signal refreshes the active graph as store mutations stream', async () => {
-  const bridge = installFakeBridge(DEFAULT_SETTINGS);
+  const bridge = installFakeBridge();
   bridge.stub('graphSnapshot', graphSnapshot());
   render(<Probe active />);
   await act(async () => {});
@@ -82,7 +81,7 @@ test('the shell status signal refreshes the active graph as store mutations stre
 
 
 test('a null read before startup builds the store waits for the first built snapshot even while hidden', async () => {
-  const bridge = installFakeBridge(DEFAULT_SETTINGS);
+  const bridge = installFakeBridge();
   bridge.stub('graphSnapshot', null);
   render(<Probe active={false} />);
   await act(async () => {});
@@ -95,7 +94,7 @@ test('a null read before startup builds the store waits for the first built snap
 });
 
 test('signed-out startup settles a null preload without inventing an unavailable graph', async () => {
-  const bridge = installFakeBridge(DEFAULT_SETTINGS);
+  const bridge = installFakeBridge();
   bridge.stub('graphSnapshot', null);
   render(<Probe active={false} />);
   await act(async () => {});

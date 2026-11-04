@@ -25,7 +25,7 @@ export function sweepModeAt(deps: Pick<EngineDeps, 'pacing'>, lastSweepEndedAt: 
 /** Run one sweep, then advance the timers it made due. */
 export async function runFollowbackSweep(ctx: EngineSweepContext, token: AbortController): Promise<StepResult> {
   const { clock, followback, churn } = ctx.deps;
-  const mode = sweepModeAt(ctx.deps, ctx.sweepCadence.lastSweepEndedAt?.() ?? null, clock.now());
+  const mode = sweepModeAt(ctx.deps, ctx.sweepCadence.lastSweepEndedAt() ?? null, clock.now());
   await followback.run(mode, token.signal);
   if (ctx.superseded(token)) return 'aborted';
   const at = clock.now();

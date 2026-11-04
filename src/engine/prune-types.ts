@@ -25,8 +25,6 @@ import type { ProtectionPort } from './protection-port';
 export interface PruneScanOpts {
   shouldStop?: () => boolean;
   census?: { readonly pages: number; readonly walkMax: number };
-  scrollMinMs?: number;
-  scrollMaxMs?: number;
   /**
    * Live-progress callback (additive): the source relays the scrape's CUMULATIVE
    * observed count as pages land, so the scan's counts can update mid-scrape
@@ -187,9 +185,6 @@ export interface PruneScanEstimates {
 export interface PruneConfig {
   /** The cap a rig without the plan reads (the plan's cleanup budget binds in main). */
   dailyLimit: number;
-  /** SCAN pacing: each inter-scroll wait is a fresh jittered draw in [min,max] ms. */
-  scanMinMs: number;
-  scanMaxMs: number;
 }
 
 /** Everything the PruneEngine composes, already constructed. */

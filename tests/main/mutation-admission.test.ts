@@ -4,7 +4,7 @@ import type { MutationCadence } from '@/main/services/mutation-cadence';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 
 /** An admission over a recording cadence: what each dispatch arms, and the accept pass it asks. */
-function admission(o: { reviewed?: ReviewedAction | null; refuse?: boolean; active?: boolean; dryRun?: boolean } = {}) {
+function admission(o: { reviewed?: ReviewedAction | null; refuse?: boolean; active?: boolean; dryRun?: boolean; duringActive?: () => void } = {}) {
   const armed: Parameters<MutationCadence['armAtDispatch']>[] = [];
   let ended = 0;
   const cadence: MutationCadence = {
@@ -22,7 +22,7 @@ function admission(o: { reviewed?: ReviewedAction | null; refuse?: boolean; acti
   };
   let reviewed = o.reviewed ?? null;
   const gate = createMutationAdmission({ clock: { now: () => 1_000 }, cadence, settings: () => ({ ...DEFAULT_SETTINGS, dryRun: o.dryRun ?? false }),
-    active: async () => o.active ?? true, takeReviewed: () => { const r = reviewed; reviewed = null; return r; } });
+    active: async () => { o.duringActive?.(); return o.active ?? true; }, takeReviewed: () => { const r = reviewed; reviewed = null; return r; } });
   return { gate, armed, ended: () => ended };
 }
 
@@ -51,4 +51,21 @@ test('accepts ask the pass and end it once per accept; practice mode never accep
   a.gate.onAccepted();
   expect(a.ended()).toBe(1);
   expect(await admission({ dryRun: true }).gate.canAccept()).toBe(false);
+});
+
+test('Practice enabled after a review refuses dispatch before arming a real write', async () => {
+  const options = { dryRun: false, reviewed: { kind: 'unfollow' as const, writer: 'cleanup-run' as const, subject: { pk: 'p' } } };
+  const a = admission(options);
+  options.dryRun = true;
+  await expect(a.gate.beforeMutation()).rejects.toBeInstanceOf(ActionAbortedError);
+  expect(a.armed).toEqual([]);
+});
+
+test('Practice enabled during the async identity check refuses dispatch and request acceptance', async () => {
+  const options = { dryRun: false, duringActive: () => { options.dryRun = true; } };
+  const a = admission(options);
+  await expect(a.gate.beforeMutation()).rejects.toBeInstanceOf(ActionAbortedError);
+  expect(a.armed).toEqual([]);
+  options.dryRun = false;
+  expect(await a.gate.canAccept()).toBe(false);
 });

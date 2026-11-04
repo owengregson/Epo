@@ -1191,7 +1191,7 @@ describe('Engine — injectable sweep cadence (persisted by the composition root
     const h = makeHarness({
       settings: { followbackSweepHours: 4 },
       sweepCadence: {
-        isDue: () => true,
+        lastSweepEndedAt: () => null,
         markRun: (now) => marked.push(now),
       },
     });
@@ -1204,7 +1204,7 @@ describe('Engine — injectable sweep cadence (persisted by the composition root
   test('a not-due cadence skips the sweep', async () => {
     const h = makeHarness({
       settings: { followbackSweepHours: 4 },
-      sweepCadence: { isDue: () => false, markRun: () => {} },
+      sweepCadence: { lastSweepEndedAt: () => T0, markRun: () => {} },
     });
 
     expect(await h.engine.stepOnce()).not.toBe('swept-followback');
@@ -1252,7 +1252,7 @@ describe('Engine — status projection', () => {
     expect(s.actionsToday).toBe(1);
     // The day's volume and what is left of it are the plan's (spec §5.7).
     const view = (h.engine as unknown as { pacing: FakePacing }).pacing.view(h.clock.now());
-    expect(s.plannedToday).toBe(Math.max(view.plan.volume.drawn, view.plan.volume.planned));
+    expect(s.plannedToday).toBe(view.plan.volume.planned);
     expect(s.remainingToday).toBe(view.remaining);
     expect(s.atHardCeiling).toBe(false);
     expect(s.state).toBe('idle');
@@ -1345,7 +1345,7 @@ describe('Engine — organic pacing model', () => {
     expect(h.churn.executed).toEqual([]);
   });
 
-  test('status carries the pacing projection in organic mode', () => {
+  test("status carries the plan's current daily target", () => {
     const pacing = new FakePacing(T0 + 1000);
     pacing.open = false;
     pacing.target = 30;
@@ -1353,9 +1353,7 @@ describe('Engine — organic pacing model', () => {
 
     const s = h.engine.status();
 
-    expect(s.pacing).not.toBeNull();
-    expect(s.pacing?.dailyTarget).toBe(30);
-    expect(s.pacing?.nextSessionAt).toBe(T0 + 1000);
+    expect(s.plannedToday).toBe(30);
   });
 
 });

@@ -8,7 +8,7 @@ import type { Person } from '@/shared/feed';
 import type { SettingsFacts } from '@/shared/settings-facts';
 import type { SettingsView } from '@/shared/settings-view';
 import type { StageMode } from '@/shared/stage-mode';
-import type { EpoStatus, PruneStatus, Settings } from '@/types';
+import type { EpoStatus, PruneStatus } from '@/types';
 
 /**
  * The shell's published projections — the things it owns exactly once and
@@ -25,8 +25,6 @@ import type { EpoStatus, PruneStatus, Settings } from '@/types';
 export const statusSignal = signal<EpoStatus | null>(null);
 /** The prune projection; while a prune holds the tab it drives the console. */
 export const pruneSignal = signal<PruneStatus | null>(null);
-/** Canonical settings, loaded once by the shell. */
-export const settingsSignal = signal<Settings | null>(null);
 /** The Settings view (pushed after every persisted settings write). */
 export const settingsViewSignal = signal<SettingsView | null>(null);
 /** The store-derived Settings facts (a projection row; pushed on store mutation). */
@@ -51,11 +49,6 @@ export const settingsTargetSignal = signal<SettingsTarget | null>(null);
 /** The person opened from a feed row, identified by pk even after a rename. */
 export const peopleTargetSignal = signal<Person | null>(null);
 
-/** Adopt a saved Settings object as the new canonical one. */
-export function adoptSettings(next: Settings): void {
-  settingsSignal.value = next;
-}
-
 /**
  * Drop every published projection back to its pre-boot state. Test-only: the
  * signals are module scope, so a second `render(<App/>)` in the same file would
@@ -64,7 +57,6 @@ export function adoptSettings(next: Settings): void {
 export function resetShellSignals(): void {
   statusSignal.value = null;
   pruneSignal.value = null;
-  settingsSignal.value = null;
   settingsViewSignal.value = null;
   settingsFactsSignal.value = null;
   stageSignal.value = 'tab';
@@ -110,9 +102,6 @@ export interface ShellControls {
 export interface Shell extends ShellServices {
   status: EpoStatus | null;
   prune: PruneStatus | null;
-  settings: Settings | null;
-  /** Adopt a saved Settings object as the new canonical one. */
-  onSaved(next: Settings): void;
 }
 
 const MISSING = (): never => {
@@ -140,7 +129,7 @@ export function useShellControls(): ShellControls {
 /**
  * Read the shell's shared projections and services.
  *
- * The projections are GETTERS on purpose: destructuring `const { settings } =
+ * The projections are GETTERS on purpose: destructuring `const { status } =
  * useShell()` reads exactly one signal, so that component subscribes to exactly
  * one signal.
  */
@@ -153,10 +142,6 @@ export function useShell(): Shell {
     get prune() {
       return pruneSignal.value;
     },
-    get settings() {
-      return settingsSignal.value;
-    },
-    onSaved: adoptSettings,
     confirm: services.confirm,
     toast: services.toast,
   };

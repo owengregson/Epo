@@ -10,6 +10,7 @@ import { migrationBasis, type PlanMath } from '@/settings/basis';
 import { DEFAULT_DOC, type SettingsDocV2 } from '@/settings/doc';
 import { type EffectiveSettings, effectiveFrom } from '@/settings/effective';
 import { migrateV1 } from '@/settings/migrate-v1';
+import { refusedState } from '@/settings/migration-refusal';
 import { type ChangedV1, olderVersionOffer, readChangedV1 } from '@/settings/older-version';
 import { applyOps, type OpsCtx, type Touched } from '@/settings/ops';
 import { NODE_SETTINGS_FS, readSettings, SETTINGS_FILES, type SettingsFs, type WriteResult, writeSettings } from '@/settings/persist';
@@ -17,9 +18,6 @@ import { KERNEL_PLAN_MATH } from '@/settings/plan-math';
 import { type SettingsPlanPreview, settingsPlanPreview } from '@/settings/plan-preview-port';
 import type { ResolvedParams } from '@/settings/resolve';
 import type { Settings } from '@/settings/v1/settings-v1-types';
-import {
-  opsFromV1Partial, refusedState, stampsFor, toV1Settings, type V1Bookkeeping, withStamps,
-} from '@/settings/v1-adapter';
 import { applyNotes, buildView, overrideConflicts, previewChanges } from '@/settings/view';
 import type { SettingsOp, SettingsPreviewResult, SettingsSaveResult } from '@/shared/settings-ops';
 import type { BasisResult, SettingsCapabilities, SettingsHealth, SettingsView } from '@/shared/settings-view';
@@ -64,9 +62,6 @@ export class SettingsService {
   private capabilities: SettingsCapabilities = OFF;
   private port: PlanPreviewPort | null = null;
   private planPreview: SettingsPlanPreview | null = null;
-  private store: SettingsStoreBinding | null = null;
-  /** The first account bound in this process: the owner of run stamps a migration carried without one. */
-  private firstPk: string | null = null;
   private readonly listeners = new Set<(e: SettingsChangeEvent) => void>();
   private readonly fs: SettingsFs;
   private readonly math: PlanMath;
@@ -121,7 +116,12 @@ export class SettingsService {
   protection(): ProtectionIndex { return this.core().index; }
   app(): { readonly tourCompletedAt: number | null } { return { tourCompletedAt: this.doc.app.tourCompletedAt }; }
   basis(): BasisResult { return { kind: 'ok', rows: kernelCatalog() }; }
-  setCapabilities(patch: Partial<SettingsCapabilities>): void { this.capabilities = { ...this.capabilities, ...patch }; }
+  setCapabilities(patch: Partial<SettingsCapabilities>): void {
+    const next = { ...this.capabilities, ...patch };
+    if (Object.keys(next).every((key) => next[key as keyof SettingsCapabilities] === this.capabilities[key as keyof SettingsCapabilities])) return;
+    this.capabilities = next;
+    this.d.push(this.view());
+  }
   planPort(): PlanPreviewPort | null { return this.port; }
 
   /** The plan wiring registers its preview port (null withdraws it; it keys the view only); `plan` stays its own to set. */
@@ -132,8 +132,6 @@ export class SettingsService {
 
   /** Graph OPEN binds the store (its account owns the run stamps); CLOSE passes null. */
   bindStore(binding: SettingsStoreBinding | null): void {
-    this.store = binding;
-    this.firstPk ??= binding?.ownPk ?? null;
     this.linker.bind(binding);
   }
 
@@ -143,7 +141,7 @@ export class SettingsService {
   }
 
   /** The v1 sweep and prune stamps the migration carried, until the reopen state takes them (then consumed). */
-  takeBookkeeping(): V1Bookkeeping & { readonly forPk: string | null } | null {
+  takeBookkeeping(): NonNullable<SettingsDocV2['migration']>['bookkeeping'] {
     return this.doc.migration?.bookkeeping ?? null;
   }
 
@@ -230,7 +228,7 @@ export class SettingsService {
 
   private announce(event: SettingsChangeEvent): void {
     const g = this.d.graph?.() ?? null;
-    if (g !== null) reloadChanged(g, toV1Settings(event.prev, this.doc, null), toV1Settings(event.next, this.doc, null), event);
+    if (g !== null) reloadChanged(g, event.prev, event.next, event);
     for (const fn of this.listeners) {
       try {
         fn(event);
@@ -241,35 +239,6 @@ export class SettingsService {
     this.d.push(this.view());
   }
 
-  // --- @transitional: the v1 window for today's renderer and engine readers (deleted with the old UI) ---
-
-  resolveSettings(): Settings {
-    const stamps = stampsFor(this.takeBookkeeping(), this.store?.ownPk ?? null, this.firstPk);
-    return this.refused?.v1 ?? toV1Settings(this.effective(), this.doc, stamps);
-  }
-
-  async getSettings(): Promise<Settings> { return this.resolveSettings(); }
-
-  /** An old renderer's partial as keyed ops; a failure throws so the old UI shows "Not saved". */
-  async updateSettings(partial: Partial<Settings>): Promise<Settings> {
-    const t = opsFromV1Partial(partial, this.resolveSettings(), this.core().resolved);
-    if (t.dropped.length > 0) logger.warn('settings: dropped writes of knobs v2 derives or no longer has', { dropped: t.dropped });
-    if (Object.keys(t.bookkeeping).length > 0) this.recordBookkeeping(t.bookkeeping);
-    if (t.ops.length > 0) {
-      const r = this.apply(t.ops, 'user');
-      if (r.kind !== 'saved') throw new Error(`settings not saved: ${r.kind === 'refused' ? r.reason : 'write failed'}: ${r.detail}`);
-    }
-    return this.resolveSettings();
-  }
-
-  /** The v1 run stamps today's sweep and scheduled prune keep, persisted with the migration record. */
-  private recordBookkeeping(patch: Partial<V1Bookkeeping>): void {
-    if (this.refused !== null) return;
-    const next = withStamps(this.doc, patch, this.store?.ownPk ?? null, this.firstPk, this.d.now());
-    const written = writeSettings(this.fs, this.d.userDataDir, next, { now: this.d.now(), fromV1Sha256: null });
-    if (written.ok) this.doc = next;
-    else logger.error('settings: the run stamps could not be saved', { detail: written.detail });
-  }
 }
 
 const reviewed = (doc: SettingsDocV2, review: boolean): SettingsDocV2 => (review ? { ...doc, protectionState: 'needs-review' } : doc);

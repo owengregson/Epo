@@ -13,6 +13,7 @@ import { unfollowWiringParts, wireChurn, wireMutationPolicy, wireProtection } fr
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
 import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { ProtectionSettings } from '@/shared/settings-model';
 import { compileProtection } from '@/shared/unfollow-protection';
@@ -35,7 +36,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 const deps = (): GraphBuildDeps => ({
-  resolveSettings: () => DEFAULT_SETTINGS, plan: fakePlanHost(DEFAULT_SETTINGS),
+  resolveSettings: () => effectiveFromV1(DEFAULT_SETTINGS), plan: fakePlanHost(DEFAULT_SETTINGS),
   protection: { index: () => compileProtection(rules, 'ready', rev), setCapabilities: () => undefined },
 }) as unknown as GraphBuildDeps;
 
@@ -44,7 +45,7 @@ const dayOf = (clock: FakeClock) => calendarPlanDayClock({ now: () => clock.now(
 
 const churnFor = (clock: FakeClock) => wireChurn(deps(), {
   frontier: { pickQueued: () => null } as unknown as SourceFrontier, store, clock, rate: {} as RateGovernor,
-  churnActions: new FakeActions() as unknown as AdapterBackedChurnActions, ownPk: 'me', settings: DEFAULT_SETTINGS,
+  churnActions: new FakeActions() as unknown as AdapterBackedChurnActions, ownPk: 'me', settings: effectiveFromV1(DEFAULT_SETTINGS),
   dayClock: dayOf(clock),
 });
 
@@ -71,7 +72,7 @@ test('building the churn marks protection as wired on every path', () => {
   const setCapabilities = jest.fn();
   wireChurn({ ...deps(), protection: { index: () => compileProtection(rules, 'ready', rev), setCapabilities } } as GraphBuildDeps, {
     frontier: { pickQueued: () => null } as unknown as SourceFrontier, store, clock: new FakeClock(T0), rate: {} as RateGovernor,
-    churnActions: new FakeActions() as unknown as AdapterBackedChurnActions, ownPk: 'me', settings: DEFAULT_SETTINGS,
+    churnActions: new FakeActions() as unknown as AdapterBackedChurnActions, ownPk: 'me', settings: effectiveFromV1(DEFAULT_SETTINGS),
     dayClock: dayOf(new FakeClock(T0)),
   });
   expect(setCapabilities).toHaveBeenCalledWith({ protectionEverywhere: true });

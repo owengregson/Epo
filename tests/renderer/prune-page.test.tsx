@@ -15,7 +15,6 @@ import {
 } from '@/renderer/app/shell-context';
 import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
 import { PruneView } from '@/renderer/views/PruneView';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { type FakeBridge, idlePruneStatus, installFakeBridge } from '../kit/render-bridge';
 
 let bridge: FakeBridge;
@@ -36,7 +35,7 @@ const rows: PruneCandidateView[] = [
 const applied = () => bridge.calls.filter((c) => c[0] === 'applySettings').map((c) => c[1]);
 
 beforeEach(() => {
-  bridge = installFakeBridge(DEFAULT_SETTINGS);
+  bridge = installFakeBridge();
   confirm.mockClear();
   openSettings.mockClear();
   confirmAnswer = true;

@@ -7,7 +7,7 @@
 import type { Clock } from '../governors/clock';
 import { tempoOrReference } from '../kernel/tempo';
 import { type AcquireEndReason, isAcquireFailure } from '../rim/follower-acquisition';
-import type { Settings } from '../settings/settings';
+import type { EffectiveSettings } from '../settings/effective';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { RECOVERY as RECOVERY_TIMING } from '../timing/config';
 import type { WaitResult } from '../timing/delay-manager';
@@ -42,7 +42,7 @@ export interface TargetPipelineDeps extends EngineTempo {
   frontier?: SourceFrontier;
   enricher: EngineEnricher;
   /** Live settings — read through, so a runtime save takes effect immediately. */
-  settings(): Settings;
+  settings(): Pick<EffectiveSettings, 'seed'>;
   /** The Engine's noise-gated wait. */
   wait: EngineWait;
   /** The plan the slice, the read deferral and the freshness windows read (spec §5.16, §17.8). */
