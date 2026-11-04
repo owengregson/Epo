@@ -12,10 +12,10 @@
  * store as the body parses. Every REST profile read Epo used to compose is
  * walled (`/users/<pk>/info/` answers 429), and a visit composes no request.
  *
- * This class owns the PASS: sentinel gating, pacing, the wall streak, the
- * permanent `gone` marker and the veil's progress. No silent catch: every
- * non-ok visit is a typed outcome, WARN-logged and skipped. Returns the number
- * of usernames whose profile was actually read.
+ * This class owns the PASS: sentinel gating, the wall streak, the permanent `gone` marker and the
+ * veil's progress; it waits nothing of its own (the visitor enters each visit on the activity
+ * clock, spec §5.16). No silent catch: every non-ok visit is a typed outcome, WARN-logged and
+ * skipped. Returns the number of usernames whose profile was actually read.
  */
 
 import {
@@ -27,8 +27,7 @@ import { type Clock, SystemClock } from '@/governors/clock';
 import type { ReadBudget } from '@/governors/read-budget';
 import { countsUnread, type ProfileVisitor } from '@/rim/profile-visit-port';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import { RECOVERY, RIM } from '@/timing/config';
-import { sample, sleep, uniform } from '@/timing/primitives';
+import { RECOVERY } from '@/timing/config';
 import * as logger from '@/utils/logger';
 
 /** Default number of usernames enriched per pass. */
@@ -54,14 +53,7 @@ export interface ProfileEnricherDeps {
   clock?: Clock;
   /** Max usernames enriched per pass (default 25). */
   batchCap?: number;
-  /** Fixed pause between visits, ms; default is a fresh jittered draw per visit. */
-  paceMs?: number;
-  /** Injected for tests; defaults to a real `setTimeout` sleep. */
-  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
-  /**
-   * Provider of the ACTIVE driver's abort signal — a `stop()` ends the pass
-   * between usernames and interrupts the in-flight pacing sleep.
-   */
+  /** Provider of the ACTIVE driver's abort signal — a `stop()` ends the pass between usernames. */
   abortSignal?: () => AbortSignal | undefined;
   /** Live activity readout for the veil; defaults to a no-op. */
   reporter?: ActivityReporter;
@@ -76,8 +68,6 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
   private readonly sentinel: Sentinel;
   private readonly clock: Clock;
   private readonly batchCap: number;
-  private readonly paceMs?: number;
-  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly abortSignal?: () => AbortSignal | undefined;
   private readonly reporter: ActivityReporter;
 
@@ -89,8 +79,6 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
     this.sentinel = deps.sentinel;
     this.clock = deps.clock ?? new SystemClock();
     this.batchCap = deps.batchCap ?? DEFAULT_BATCH_CAP;
-    this.paceMs = deps.paceMs;
-    this.sleep = deps.sleep ?? sleep;
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
   }
@@ -123,16 +111,12 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         break;
       }
 
-      // The sentinel gates like any IG work — but blocking here just skips
-      // this username (a future pass retries it); it is not a failure.
+      // The sentinel gates like any IG work: a non-ok page ends the pass (a future pass retries
+      // the rest), so a persistent block can never spin the pass through the batch.
       const status = await this.sentinel.check();
       if (status !== 'ok') {
-        logger.warn('rim.profile-enricher: sentinel non-ok, skipping', { username, status });
-        // Pace even on a block: without this, a PERSISTENT sentinel wall turns the
-        // pass into a tight zero-delay `sentinel.check()` spin loop (parity with
-        // every other exit path below, which all pace before continuing).
-        await this.pace(i, batch.length);
-        continue;
+        logger.warn('rim.profile-enricher: sentinel non-ok, ending pass', { username, status });
+        break;
       }
 
       const permit = this.readBudget?.consume('profile');
@@ -161,8 +145,6 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
           });
           break;
         }
-        // Pace even on failure so a run of failures cannot hammer the site.
-        await this.pace(i, batch.length);
         continue;
       }
       if (countsUnread(visit)) {
@@ -171,15 +153,12 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         logger.warn('rim.profile-enricher: profile read without its counts, skipping', { username });
         walledInARow += 1;
         if (walledInARow >= RECOVERY.BLOCKED_STREAK_ENTRY) break;
-        await this.pace(i, batch.length);
         continue;
       }
       walledInARow = 0;
       enriched += 1;
       this.onProgress?.('profile-enriched');
       logger.debug('rim.profile-enricher: enriched', { username, pk: visit.obs.accountPk });
-
-      await this.pace(i, batch.length);
     }
 
     this.reporter.clear();
@@ -192,16 +171,4 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
   }
 
   budgetResumeAt(): number | null { return this.readResumeAt; }
-
-  /**
-   * Pacing between visits; no wait after the final username. Each wait is a
-   * fresh jittered draw (an enrichment pass is the app's largest read burst —
-   * a fixed 1 s cadence used to fire 20 profile reads in ~20 s).
-   */
-  private async pace(index: number, length: number): Promise<void> {
-    if (index >= length - 1) return;
-    const ms =
-      this.paceMs ?? sample(uniform(RIM.ENRICH_PACE_MIN_MS, RIM.ENRICH_PACE_MAX_MS));
-    await this.sleep(ms, this.abortSignal?.());
-  }
 }

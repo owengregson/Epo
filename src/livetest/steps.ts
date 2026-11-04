@@ -492,9 +492,6 @@ export class LiveTestHarness {
       store,
       sentinel: adapter.sentinel,
       batchCap: this.cfg.enrichCap,
-      paceMs: this.cfg.enrichPaceMinMs,
-      // Jittered inter-visit pace (~3–5s), overriding the enricher's fixed pace.
-      sleep: () => sleep(jittered(this.cfg.enrichPaceMinMs, this.cfg.enrichPaceMaxMs)),
     });
 
     const churnActions = new AdapterBackedChurnActions({
