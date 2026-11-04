@@ -86,4 +86,8 @@ export const RETIRED: Readonly<Record<string, RetiredKey>> = {
 export const CHANGED: readonly ChangedValue[] = [
   // The prune cool-down rises from 2 h to the p50 soft wall it exists to sit out (ADR 0606).
   { path: 'groups.RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS', from: 7_200_000, to: 10_800_000, adr: '0606' },
+  // The Cautious gap floor takes its derived 70 s (owner Q11): at cap 14 the burst tolerance sanctions no
+  // faster pace, so the pinned 60 s allowed a 4.3× burst (ADR 0606 §4). The grid point and the persona carry it.
+  { path: 'grid.caution=cautious.gapFloorSeconds', from: 60, to: 70, adr: '0606' },
+  { path: 'personas.casual.gapFloorSeconds', from: 60, to: 70, adr: '0606' },
 ];
