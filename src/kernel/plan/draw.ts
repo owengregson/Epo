@@ -9,7 +9,7 @@ import { assemble, type DrawOptions, dayCeilings } from './assemble';
 import { applyBoost } from './boost';
 import { apportion, fitVolume, type LaidSession, layoutSessions, SESSION_BOUNDARY_MS, sessionKinds } from './layout';
 import { planSeed } from './seed';
-import { NO_USAGE, type PlanUsage, sessionStatus } from './status';
+import { closesAtOf, NO_USAGE, type PlanUsage, sessionStatus } from './status';
 import { sessionTempo } from './tempo';
 import type { DayPlan, DrawInput, ReplanCause } from './types';
 import { allocateKinds, drawVolume, isDayOff } from './volume';
@@ -22,12 +22,13 @@ function withProbation(seed: number, input: DrawInput, sessions: readonly LaidSe
   return sessions.map((s, i) => {
     if (marked || s.budget <= 0) return s;
     if (!(opts.upgradeProbation === true || opts.probationAt?.(s.startAt) === true)) return s;
-    marked = true;
     const tempo = sessionTempo(seed, s.idx, input.intent, { mix: s.tempo.mix, probation: true }, input.intent.hourlyCap, s.budget);
-    const room = (sessions[i + 1]?.startAt ?? input.window.endsAt) - SESSION_BOUNDARY_MS - s.startAt;
-    const budget = Math.max(1, Math.min(s.budget, Math.floor(room / tempo.gap.targetMeanMs)));
-    const mix = sessionKinds([budget], [1], { ...s.mix, lifecycleUnfollow: 0, slack: 0 }, false)[0];
-    return { ...s, tempo, budget, mix, expectedEndAt: Math.round(s.startAt + budget * tempo.gap.targetMeanMs) };
+    const room = closesAtOf({ window: input.window, sessions }, i, input.intent.quietHours) - SESSION_BOUNDARY_MS - s.startAt;
+    const budget = Math.max(0, Math.min(s.budget, Math.floor(room / tempo.gap.targetMeanMs)));
+    const resized = withBudget(s, budget);
+    if (budget === 0) return { ...resized, expectedEndAt: s.startAt };
+    marked = true;
+    return { ...resized, tempo, expectedEndAt: Math.round(s.startAt + budget * tempo.gap.targetMeanMs) };
   });
 }
 
