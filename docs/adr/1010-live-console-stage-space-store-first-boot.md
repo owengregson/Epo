@@ -212,3 +212,15 @@ eight tour steps, Return on Finish, stage shortcuts and immediate Settings searc
 passed all eleven local scenarios, then reran the new dashboard-focused scenario with native focus true before and
 after while trusted page input continued. Those runs use distinct recorded bundles. The QA record preserves their
 scope, the uncaptured splash frames and the absence of live Instagram evidence.
+
+## Amendment — content determines sidebar height (2026-11-03)
+
+The owner's visual review rejected reserved empty rows and inconsistent card insets. The fixed-zone
+decision above is superseded: Now grows with the current status, with a 16 px inset and 16 px between
+content groups. Missing reasons, progress and commands occupy no space. Today, Results and activity
+share one scroll region beneath Now; the footer stays reachable. The schedule has explicit bounds,
+time divisions and a state legend, with Boost in an attached action row. Its preview stays inside the
+sidebar and dismisses when that region scrolls. Results omits the unused, unpopulated sparkline slot.
+The native 460 px sidebar and 44 px stage bar remain unchanged. Stage tabs divide the available width
+equally, and secondary Live context yields at narrow widths so all five destinations remain readable.
+See the [interface cleanup record](../qa/ui-cleanup-2026-11.md) for the rendered evidence.

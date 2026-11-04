@@ -71,3 +71,13 @@ stacking level above those sections, so its search results remain visible over t
 is integrated at `d80c5dd`, whose full gate and normal-motion native search check passed. Search selection cleared
 the query and scrolled to the requested setting. The full reduced-motion gallery also passed; the overhaul QA record
 distinguishes that matrix from the native observations.
+
+## Amendment — consistent Settings composition (2026-11-03)
+
+The owner's visual review rejected the category chips, oversized mode area and inconsistent choice
+card padding. Section navigation now uses plain rows with one active marker, changing to a labeled
+section selector when the content cannot support a rail. Easy/Advanced occupies a compact segmented
+control. Choice cards share heading, value and detail tracks; selection and recommendation no longer
+reserve otherwise empty rows. Narrow layouts use complete rows, while wider layouts balance the final
+row. All cards use the same stable spacing scale; responsive rules change layout rather than changing
+the meaning of a padding token. The typed save queue and main-computed values are unchanged.
