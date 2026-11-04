@@ -21,7 +21,7 @@ import { type SleepFn, sample, sleep } from '@/timing/primitives';
 
 /** Adapter construction options. */
 export interface InstagramAdapterOptions {
-  prepareProfile?: (username: string, expectedPk: string, action: 'follow' | 'unfollow') => Promise<void>;
+  prepareProfile?: ActorOptions['prepareProfile'];
   beforeMutation?: () => Promise<void>;
   /**
    * Input engine: every Actor click/scroll is dispatched as native input
@@ -67,7 +67,8 @@ export function lookBeforeActing(review: ActorOptions['prepareProfile'], tempo: 
   abortSignal?: () => AbortSignal | undefined, pause: SleepFn = sleep): ActorOptions['prepareProfile'] {
   if (review === undefined) return undefined;
   return async (username, expectedPk, action) => {
-    await review(username, expectedPk, action);
+    const guard = await review(username, expectedPk, action);
     if (tempo.enabled('dwell.before-press')) await pause(sample(tempo.policy('dwell.before-press')), abortSignal?.());
+    return guard;
   };
 }

@@ -33,7 +33,8 @@ export interface ActorInteractor {
 
 /** Tuning for the (real-browser) wait loops. Tests override with tiny values. */
 export interface ActorOptions {
-  prepareProfile?: (username: string, expectedPk: string, action: 'follow' | 'unfollow') => Promise<void>;
+  /** One fresh visit may return a local policy guard, repeated before each confirm-layer press without another read. */
+  prepareProfile?: (username: string, expectedPk: string, action: 'follow' | 'unfollow') => Promise<void | (() => void)>;
   beforeMutation?: () => Promise<void>;
   /** Poll interval while waiting for the dialog / confirm control. */
   pollIntervalMs?: number;
@@ -54,4 +55,3 @@ export interface ActorOptions {
   /** The tempo the Actor's reading pauses resolve from (default: the reference tempo). */
   tempo?: TempoSource;
 }
-
