@@ -8,6 +8,7 @@
  */
 
 import type { SentinelStatus } from '../adapter/sentinel';
+import { coldFailingThreshold } from '../kernel/derive';
 import { tempoOrReference } from '../kernel/tempo';
 import type { Settings } from '../settings/settings';
 import type { WaitResult } from '../timing/delay-manager';
@@ -63,12 +64,11 @@ export {
 } from './target-pipeline';
 
 /**
- * Consecutive failed actions (ACROSS records) that enter the recovery ladder from
- * a standing start — two full records' worth, since one dead account produces at
- * most `maxRetries + 1` fails before abandoning. While the ladder is PROBING the
- * re-entry threshold drops to `RECOVERY.REENTRY_FAILS`.
+ * Consecutive failed actions (ACROSS records) that enter the recovery ladder from a standing start:
+ * the D5 cold breaker threshold (7, spec §5.14). While the ladder is PROBING the re-entry threshold
+ * drops to `RECOVERY.REENTRY_FAILS`.
  */
-export const ACTIONS_FAILING_HALT = 8;
+export const ACTIONS_FAILING_HALT = coldFailingThreshold();
 
 export type { EngineParkReason, EngineWaitKey } from './engine-waits';
 export { ENGINE_WAIT_CLASS } from './engine-waits';

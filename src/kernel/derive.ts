@@ -371,6 +371,11 @@ export function coldFailingThreshold(): number {
   return breakerThreshold(POLICY.PRIOR_SYSTEMIC.cold, EMPIRICAL.ORDINARY_FAIL_RATE.value);
 }
 
+/** A cleanup run's consecutive failed unfollows before it halts: the cold threshold, pinned lower in `OVERRIDES`. */
+export function pruneFailingThreshold(): number {
+  return overridden('PRUNE.CONSECUTIVE_FAIL_HALT', coldFailingThreshold());
+}
+
 /** Failures tolerated while PROBING after a served hold (we already suspect a wall). */
 export function reentryFailThreshold(): number {
   return breakerThreshold(POLICY.PRIOR_SYSTEMIC.afterHold, EMPIRICAL.ORDINARY_FAIL_RATE.value);
@@ -615,11 +620,7 @@ export const TAB = {
 } as const;
 
 export const RECOVERY = {
-  /**
-   * engine:step-watchdog — a 'running' engine that has emitted no status AND
-   * holds no pending `engine:` wait for this long is wedged, not parked. Sized
-   * to the gap cap: the longest silence the pacer may legitimately produce.
-   */
+  /** A running engine silent this long with no `engine:` wait pending is wedged: the gap cap, the longest planned silence. */
   STEP_WATCHDOG_MS: GAP_CAP_MS,
   /** How often the step watchdog evaluates its fire predicate (cheap in-memory checks). */
   STEP_WATCHDOG_CHECK_MS: roundTo(GAP_CAP_MS / WATCHDOG_CHECKS_PER_WINDOW, MS_PER_MINUTE),
@@ -655,12 +656,7 @@ export const RECOVERY = {
   /** Post-wake settle band (uniform draw) after a system resume. */
   RESUME_SETTLE_MIN_MS: overridden('RECOVERY.RESUME_SETTLE_MIN_MS', RESUME_SETTLE.min),
   RESUME_SETTLE_MAX_MS: overridden('RECOVERY.RESUME_SETTLE_MAX_MS', RESUME_SETTLE.max),
-  /**
-   * Chain self-heal window: a `chain-exhausted` stamp younger than this is
-   * re-verified once, because an exhaustion latched during a rate wall is
-   * absence of evidence. Two p90 soft walls — comfortably outlasting the worst
-   * observed window AND a full run of the ladder's holds.
-   */
+  /** A `chain-exhausted` stamp younger than this is re-verified once: an exhaustion latched in a rate wall is absence of evidence. */
   EXHAUSTED_REVERIFY_WINDOW_MS: EMPIRICAL.SOFT_WALL_DURATION_H.p90 * EXHAUSTED_REVERIFY_P90_WALLS * MS_PER_HOUR,
   /** Requeue-healer batch cap: far above any honest incident window, far below "the whole table". */
   HEAL_MAX_RECORDS: BOUNDS.RECOVERY.HEAL_MAX_RECORDS,
@@ -752,12 +748,7 @@ export const NOISE = {
 export const POLL = {
   /** Renderer keep-alive: pull only when the push stream has gone this quiet. */
   KEEPALIVE_MS: BOUNDS.POLL.KEEPALIVE_MS,
-  /**
-   * Trailing throttle for graph-mutation-driven status pushes (docs/
-   * PRINCIPLES.md §2): three perceptual "instants" — live enough that counts
-   * visibly tick, cheap enough that a thousand-row walk doesn't emit a
-   * thousand statuses.
-   */
+  /** Trailing throttle for graph-mutation-driven status pushes (PRINCIPLES §2): counts tick live, a walk never floods. */
   GRAPH_PUSH_THROTTLE_MS: EMPIRICAL.DISPLAY.perceptionMs * PUSH_THROTTLE_INSTANTS,
 } as const;
 

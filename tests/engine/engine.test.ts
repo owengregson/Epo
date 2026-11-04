@@ -10,6 +10,7 @@
 
 import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import {
+  ACTIONS_FAILING_HALT,
   ENRICH_BATCH_SIZE,
   Engine,
   type EngineUnfollowFeed,
@@ -72,15 +73,15 @@ describe('Engine.stepOnce — one major thing per iteration', () => {
     ]);
   });
 
-  test('a failing streak of 8 routes to a recovery HOLD, not a terminal halt', async () => {
+  test('a failing streak at the cold breaker routes to a recovery HOLD, not a terminal halt', async () => {
     const h = makeHarness();
     h.churn.due = [rec({ accountPk: 'a' })];
     h.churn.outcome = 'failed';
-    h.churn.failStreak = 7; // one below the breaker → keeps going
+    h.churn.failStreak = ACTIONS_FAILING_HALT - 1; // one below the breaker → keeps going
     expect(await h.engine.stepOnce()).toBe('acted');
 
     h.churn.due = [rec({ accountPk: 'b' })];
-    h.churn.failStreak = 8; // ACTIONS_FAILING_HALT → enter the recovery ladder
+    h.churn.failStreak = ACTIONS_FAILING_HALT; // the D5 cold threshold (7) → enter the recovery ladder
     expect(await h.engine.stepOnce()).toBe('recovering');
     expect(h.halts).toEqual([]); // no terminal halt
     expect(h.engine.status().state).not.toBe('halted');

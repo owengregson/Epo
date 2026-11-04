@@ -6,7 +6,9 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROVENANCE, pollEveryFrom } from '@/kernel/derive';
+import { ACTIONS_FAILING_HALT } from '@/engine/engine';
+import { PRUNE_CONSECUTIVE_FAIL_HALT } from '@/engine/prune-engine';
+import { coldFailingThreshold, PROVENANCE, pollEveryFrom, pruneFailingThreshold } from '@/kernel/derive';
 import { appliedOverrides, OVERRIDES } from '@/kernel/overrides';
 import { POLICY } from '@/kernel/policy';
 import { CHANGED, RETIRED } from '@/kernel/registry-changes';
@@ -212,10 +214,15 @@ describe('override discipline', () => {
     ]);
   });
 
-  test('advisory overrides are recorded but never applied to the registry', () => {
-    // ACTIONS_FAILING_HALT lives in the engine; the derivation says 7, we ship 8.
-    expect(OVERRIDES['ENGINE.ACTIONS_FAILING_HALT'].advisory).toBe(true);
-    expect(appliedOverrides().map((o) => o.path)).not.toContain('ENGINE.ACTIONS_FAILING_HALT');
+  test('the cold breaker applies its derivation (7): no advisory entry remains', () => {
+    expect('ENGINE.ACTIONS_FAILING_HALT' in OVERRIDES).toBe(false);
+    expect(appliedOverrides()).toHaveLength(Object.keys(OVERRIDES).length);
+    expect([coldFailingThreshold(), ACTIONS_FAILING_HALT]).toEqual([7, 7]);
+  });
+
+  test("a cleanup run's fail halt is an applied override of the cold derivation (4, derived 7)", () => {
+    expect(OVERRIDES['PRUNE.CONSECUTIVE_FAIL_HALT']).toMatchObject({ value: 4, derived: coldFailingThreshold() });
+    expect([pruneFailingThreshold(), PRUNE_CONSECUTIVE_FAIL_HALT]).toEqual([4, 4]);
   });
 
   test('PROVENANCE names a tier for every live registry key, and nothing else', () => {

@@ -10,12 +10,12 @@
       "lines": 1107
     },
     {
-      "file": "src/kernel/derive.ts",
-      "lines": 919
-    },
-    {
       "file": "src/engine/engine.ts",
       "lines": 918
+    },
+    {
+      "file": "src/kernel/derive.ts",
+      "lines": 910
     },
     {
       "file": "src/renderer/graph/world.ts",

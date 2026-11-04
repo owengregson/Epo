@@ -29,8 +29,6 @@ export interface Override {
   readonly reason: string;
   /** Set only where we took the DERIVED value over the shipped one. */
   readonly change?: true;
-  /** Set where the key does not live in `timing/config.ts` (advisory only). */
-  readonly advisory?: true;
 }
 
 const SEC = 1_000;
@@ -46,8 +44,8 @@ const HOUR = 3_600_000;
  *   1. UNIFORM PACING BANDS — the band SHAPE derives (`base × (1 ± 0.286)`), but
  *      the seven bands pinned here were hand-widened. 14 of the 20 entries.
  *   2. NUMBERS THE DERIVATION GENUINELY DISAGREES WITH — the two outer gap
- *      floors, ladder rung 3, the identity retry spacing, and (advisory) the
- *      cold breaker threshold.
+ *      floors, ladder rung 3, the identity retry spacing, and a cleanup run's
+ *      failure halt (read by `derive.ts` `pruneFailingThreshold`).
  *   3. ONE DELIBERATE CHANGE — the prune cool-down, raised to the derived value.
  */
 export const OVERRIDES: Readonly<Record<string, Override>> = {
@@ -155,12 +153,11 @@ export const OVERRIDES: Readonly<Record<string, Override>> = {
     reason:
       'Ladder rung 3. The geometric law (W_p50 × 0.33 × 1.5^(n-1)) gives 2.25 h; the shipped ladder flattens the last rung to 2 h. Rungs 1 and 2 derive exactly, and the coverage requirement (Σ ≥ p50 = 3 h) is met either way. Pinned for wave A.',
   },
-  'ENGINE.ACTIONS_FAILING_HALT': {
-    value: 8,
+  'PRUNE.CONSECUTIVE_FAIL_HALT': {
+    value: 4,
     derived: 7,
     reason:
-      'Cold breaker threshold (lives in `src/engine/engine.ts`, not the timing registry). The posterior at π=0.005, q=0.30, CONFIDENCE=0.9 needs k ≥ 6.22 ⇒ 7; the shipped 8 is one rung more conservative. ADVISORY: recorded so the ±1 is visible and arguable, not applied by this wave.',
-    advisory: true,
+      "A cleanup run's consecutive failed unfollows before it halts. The cold breaker posterior says 7; a bulk run halts sooner than the growth loop so a broken unfollow path cannot burn the candidate list.",
   },
 
   // --- 3. The one deliberate behaviour change ---------------------------------
@@ -175,13 +172,10 @@ export const OVERRIDES: Readonly<Record<string, Override>> = {
 
 /** The shipped value for `path`, or `fallback` when nothing overrides it. */
 export function overridden(path: string, fallback: number): number {
-  const o = OVERRIDES[path];
-  return o === undefined || o.advisory === true ? fallback : o.value;
+  return OVERRIDES[path]?.value ?? fallback;
 }
 
-/** Every override that applies to a shipped constant (advisory entries excluded). */
+/** Every override, with its path: each one applies to the value it names. */
 export function appliedOverrides(): ReadonlyArray<{ path: string } & Override> {
-  return Object.entries(OVERRIDES)
-    .filter(([, o]) => o.advisory !== true)
-    .map(([path, o]) => ({ path, ...o }));
+  return Object.entries(OVERRIDES).map(([path, o]) => ({ path, ...o }));
 }
