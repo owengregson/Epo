@@ -532,21 +532,79 @@ skipped, boundaries **0 errors / 56 warnings**. Evidence: `results/codex-design-
 The first failed integration gate is retained; its four failures exposed the diagnostic constant's
 placement in the frozen legacy timing table, corrected without editing the frozen baseline.
 
-### Remaining live sequence
+### Production reopen and persisted catch-up, 2026-11-04
+
+The first production upgrade launch at `1179a02` followed roughly 32 hours away, with the real
+clock and saved state intact. The complete profile was backed up first: 33,805 files, sizes verified,
+all 15 critical hashes unchanged (`results/codex-design-cleanup/pre-production-l4-backup.json`).
+Epo ran for 156.383 seconds and quit normally with exit 0. **Start was not pressed**; desired state
+remained stopped and unblocked. Private evidence and an independent, read-only closed-store audit:
+`results/production-l4-2026-11-04T1053Z/`.
+
+- The observed production catch-up completed the profile, notifications and followers-head steps.
+  The drawer produced two bodies, `filtered: true`, 100 fresh events, two partial-preview requesters
+  and zero accepts. Exactly one followers page requested 50 rows with no cursor, admitted 24 rows
+  with zero duplicate/quarantined rows, and stopped at the one-page bound with a next cursor.
+  It initialized and persisted the contiguous frontier; ordering remains unverified because the
+  evidence is insufficient to promote it. No following frontier or census was created.
+- The durable surface tally records one canonical profile, two canonical feed reads and one
+  canonical followers-list read, with zero normalized, recovered, failed, wall, row, field or shadow
+  counters. The initialized head plus the walker's refusal of partial pages establishes the admitted
+  list page was non-partial. The observer did not save its raw body. One novel list key was
+  informational only.
+- All 31 recorded CDP API exchanges completed with HTTP 200 and parseable MIME. There was one home
+  load and own-profile navigation, with no third-party visit or observed mutation. This passive CDP
+  record is not a native request inventory or a full body capture.
+- The visible header and stored counts agree at 4,119 followers / 3,494 following. Conservation is
+  `4,119 - 3,941 = 100 identified gains + 78 unattributed`, with zero identified losses. The old
+  anchor predates this absence; the delta is not evidence that all 178 arrived overnight.
+  The feed displayed "While you were away"; Diagnostics displayed "Working normally" for profiles,
+  notifications and lists. The real screenshot and accessibility text are retained privately.
+- All legacy columns of the action ledger (1,046 rows), prune ledger (539), journal (3), and old
+  prune scan/remaining rows match the backup. The uncertain journal entry remains uncertain,
+  attempts zero, without a retry. No action was dispatched by the observed production work.
+- Settings v2 migration preserved the v1 file bytes, Practice, auto-accept, seed, tour completion,
+  18 protected account names and eight protected words. It consumed carried bookkeeping.
+
+**L4 is partial, not passed.** The dashboard observer missed installation, leaving zero startup
+frames/status pushes. The run therefore does not prove reveal-relative network timing, the boot
+movie, post-Start settlement, probation or action cadence. The reusable observer now detects the
+dashboard again after its preload and URL are available. A fresh, network-blocked disposable-profile
+launch verified one install, 106 renderer events and 67 frames, normal exit and profile removal
+(`results/production-l4-observer/local-2026-11-04T105724Z/`). This local repair does not supply the
+missing live visual evidence; the original launched scripts and their hashes are preserved.
+
+The live screen also exposed an elapsed-session label with meaningless `0 of 0` progress.
+`63a3847` omits progress when neither planned nor completed work exists, retaining meaningful counts.
+All 51 existing sidebar copy/zone checks, typecheck and lint passed for that correction.
+
+### Remaining live sequence and actual eligibility
 
 The exact request budgets, stop conditions and do-not-run list are in
 [spec section 22](../superpowers/specs/2026-11-02-plan-derived-overhaul-design.md#22-the-minimal-live-test-plan-phase-l-strictly-sequential-run-by-the-lead-only-owner-present).
-L1 now qualifies as recorded above; L4 is the supervised reopen after a night away; L5 observes only approved
-planned unfollows. Optional Boost follows also require approval. No live success is inferred from offline tests.
+L1 qualifies on retained evidence; the production pre-Start portion of L4 is recorded above, with
+the visual and post-Start portions still unqualified. L5 observes only approved, naturally eligible
+planned unfollows. No live success is inferred from offline tests.
 
-Before production L4, the full profile was backed up again (33,805 files, sizes verified; all 15 critical
-hashes unchanged). Record: `results/codex-design-cleanup/pre-production-l4-backup.json`.
-Use one designated runner with Epo quit before a probe, keep run intent stopped until the supervised Start, and follow section 22's
-spacing and first-wall stop rules. L4 requires Epo to remain quit for at least one night; its first upgraded launch
-must read exactly one head page and no census, following list or third-party profile before Start.
+The actual migrated account state invalidates the old assumed L5 queue. Saved `weaveEnabled: false`
+correctly became `cleanup: 'off'`. Startup protection also moved 32 records to `kept`, all for an
+existing protected biography word: 25 previously followed back and **all seven queued unfollows**.
+This includes the record linked to the uncertain journal entry; the entry itself remains unchanged.
+The migration's wider biography-word matching was intentional and disclosed; no word was added.
+Thus the old expectation that this record stays `unfollow_queued`, then supplies the first Requested
+unfollow, no longer applies. Do not weaken protections, undo `kept`, enable cleanup, fabricate due
+records or alter the clock merely to manufacture a passing test.
+
+All of today's drawn sessions had elapsed at launch. The UI's next session was 1:48 PM Pacific,
+but saved cleanup-off intent means that session will not provide the proposed unfollow sequence.
+No test or automation has been scheduled for that time. L5 needs actual eligible, unprotected work
+and the owner's intended cleanup setting. Optional Boost is not a mandatory validation requirement.
+Future live work remains lead-only and sequential, with the existing first-wall stop rules.
 
 `EMPTY_BIO` records the empty-string form observed in the scrubbed 2026-11-04 body
 ([ADR 0806](../adr/0806-one-parser-tiers.md#amendment--2026-11-04-observed-empty-string-biography)).
 Null and omitted biographies remain unread and fail safe; this single field observation does not qualify L1.
-S8 deletion of the legacy extractors and reverse-shadow comparators
-requires zero `shadow-disagreed` results from both L1 and L4, then a separate gated deletion commit.
+S8's narrow parser prerequisite is now supported: six canonical, non-partial profile/feed/requests
+reads in L1 and the actually admitted canonical, clean, non-partial list page in production L4,
+all with zero shadow disagreements. This qualifies the separate comparator-deletion slice under
+section 22; it does not turn the partial L4 run or the unperformed L5 run into a pass.
