@@ -103,13 +103,3 @@ export function computeMomentum(points: NetGrowthPoint[], baselineAt: number | n
   const prior = points[n - 1 - h].cumulativeNet - points[n - 1 - 2 * h].cumulativeNet;
   return { ready: true, delta: recent - prior, halfDays };
 }
-
-/**
- * How far ahead the projection overlay extends for a realized window of
- * `windowLen` days: half the window, clamped to [7, 30] so a 14-day view
- * projects a readable week and "All" never dwarfs the realized line.
- */
-export function overlayHorizonDays(windowLen: number): number {
-  if (windowLen <= 0) return 7;
-  return Math.min(30, Math.max(7, Math.round(windowLen / 2)));
-}

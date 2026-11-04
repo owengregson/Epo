@@ -8,6 +8,10 @@ import { EMPIRICAL } from './fundamentals';
 import { MS_PER_DAY } from './units';
 
 export const LIVE = {
+  /** Guards: conversion verdicts drawn from too few resolved follow outcomes. */
+  CONVERSION_VERDICT_MIN: 20,
+  /** Guards: false precision in a projected pool runway beyond the useful display horizon. */
+  RUNWAY_CAP_DAYS: 90,
   /** Guards: per-push shaping cost and payload size of the feed (items after grouping). */
   FEED_LIMIT: 60,
   /** Guards: the sidebar narrating more than the recent past; older detail lives on the People page. */

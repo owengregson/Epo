@@ -3,17 +3,13 @@ import type { ChurnConfig } from '../engine/churn-scheduler';
 import type { FollowbackConfig } from '../engine/followback-watcher';
 import type { PruneConfig } from '../engine/prune-engine';
 import type { ScannerConfig } from '../engine/scanner';
-import { SCORER_DEFAULTS, type ScorerConfig } from '../engine/scorer';
+import type { ScorerConfig } from '../engine/scorer';
 import type { RateGovernorConfig } from '../governors/rate-governor';
 import { MS_PER_DAY } from '../timing/units';
 import type { EffectiveSettings } from './effective';
-import type { Settings } from './v1/settings-v1-types';
 
-/**
- * Project the Scorer's config out of Settings (`bandEdgeScore` and the mutual
- * knobs are not user-tunable — they carry the component defaults).
- */
-export function toScorerConfig(s: Settings): ScorerConfig {
+/** Project every resolved audience knob, including Advanced scorer overrides. */
+export function toScorerConfig(s: Pick<EffectiveSettings, 'bandLow' | 'bandHigh' | 'peakLow' | 'peakHigh' | 'hardLow' | 'hardHigh' | 'minFollowers' | 'maxFollowers' | 'privateBoost' | 'bandEdgeScore' | 'mutualCap' | 'mutualWeight'>): ScorerConfig {
   return {
     bandLow: s.bandLow,
     bandHigh: s.bandHigh,
@@ -24,9 +20,9 @@ export function toScorerConfig(s: Settings): ScorerConfig {
     minFollowers: s.minFollowers,
     maxFollowers: s.maxFollowers,
     privateBoost: s.privateBoost,
-    bandEdgeScore: SCORER_DEFAULTS.bandEdgeScore,
-    mutualCap: SCORER_DEFAULTS.mutualCap,
-    mutualWeight: SCORER_DEFAULTS.mutualWeight,
+    bandEdgeScore: s.bandEdgeScore,
+    mutualCap: s.mutualCap,
+    mutualWeight: s.mutualWeight,
   };
 }
 
@@ -44,12 +40,12 @@ export function toChurnConfig(s: ChurnKnobs): ChurnConfig {
 }
 
 /** Project the Rate Governor's config out of Settings: the hard ceiling (the plan paces; spec §5.13 S2). */
-export function toRateGovernorConfig(s: Settings): RateGovernorConfig {
+export function toRateGovernorConfig(s: Pick<EffectiveSettings, 'dailyHardCeiling'>): RateGovernorConfig {
   return { dailyHardCeiling: s.dailyHardCeiling };
 }
 
 /** Project the follow-back appliers' config out of Settings (days → ms). */
-export function toFollowbackConfig(s: Settings): FollowbackConfig {
+export function toFollowbackConfig(s: Pick<EffectiveSettings, 'holdAfterFollowbackDays' | 'autoAcceptFollowRequests'>): FollowbackConfig {
   return {
     holdAfterFollowbackMs: s.holdAfterFollowbackDays * MS_PER_DAY,
     autoAcceptRequests: s.autoAcceptFollowRequests,
@@ -57,27 +53,21 @@ export function toFollowbackConfig(s: Settings): FollowbackConfig {
 }
 
 /** Project the Scanner's config out of Settings. */
-export function toScannerConfig(s: Settings): ScannerConfig {
+export function toScannerConfig(s: Pick<EffectiveSettings, 'dailyPlanSize'>): ScannerConfig {
   return {
     dailyPlanSize: s.dailyPlanSize,
   };
 }
 
 /** Project the Chain Controller's config out of Settings. */
-export function toChainConfig(s: Settings): ChainConfig {
+export function toChainConfig(s: Pick<EffectiveSettings, 'minFollowBackRate' | 'minPoolSize'>): ChainConfig {
   return {
     minFollowBackRate: s.minFollowBackRate,
     minPoolSize: s.minPoolSize,
   };
 }
 
-/**
- * Project the Prune Engine's config out of Settings: the cap a rig without the plan reads, and the SCAN
- * pacing (seconds → ms) clamped so `0 ≤ scanMinMs ≤ scanMaxMs`. The plan paces the run (spec §5.13 S2);
- * protection is the predicate's on every path, so no list rides here.
- */
-export function toPruneConfig(s: Settings): PruneConfig {
-  const scanMinMs = Math.max(0, s.pruneScanMinSeconds * 1000);
-  const scanMaxMs = Math.max(scanMinMs, s.pruneScanMaxSeconds * 1000);
-  return { dailyLimit: s.pruneDailyLimit, scanMinMs, scanMaxMs };
+/** The no-plan test rig's ceiling. Production reads the plan's unfollow budget and tempo. */
+export function toPruneConfig(s: Pick<EffectiveSettings, 'dailyHardCeiling'>): PruneConfig {
+  return { dailyLimit: s.dailyHardCeiling };
 }

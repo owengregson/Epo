@@ -6,6 +6,7 @@
  * the store so prune candidates carry usernames.
  */
 
+
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
@@ -25,6 +26,7 @@ import {
   mkResp,
 } from '../kit/fakes';
 import { openTestStore } from '../kit/store';
+import { fixedTempo } from '../kit/tempo';
 
 beforeAll(() => setLevel('error'));
 
@@ -102,16 +104,17 @@ test('a followers-list response is ignored while the following dialog drives the
   expect(store.getAccount('91')).toBeNull();
 });
 
-test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape', async () => {
+test('fetchAllPks threads shouldStop and uses the plan tempo for scan waits', async () => {
   const tab = new FakeTab();
   const actor = new FakeActor();
   const sleeps: number[] = [];
+  const tempo = fixedTempo(2);
   const pageReader = new FollowersPageReader({
     tab,
     reader,
     actor,
     clock,
-    scrollWaitMs: 1,
+    tempo,
     sleep: async (ms) => {
       sleeps.push(ms);
     },
@@ -135,12 +138,10 @@ test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape'
   let stop = false;
   const { pks } = await source.fetchAllPks({
     shouldStop: () => stop,
-    scrollMinMs: 1_000,
-    scrollMaxMs: 3_000,
   });
 
   // Pacing reached the reader: every wait is the deterministic midpoint draw.
-  expect(sleeps).toEqual([2_000, 2_000, 2_000]);
+  expect(sleeps).toEqual(Array(3).fill(tempo.policy('scroll.wait.dialog').sample(() => 0.5)));
   expect([...pks].sort()).toEqual(['11', '51', '52']);
 
   // And an immediate stop reaches the reader too: no scroll, no wait.
@@ -151,7 +152,7 @@ test('fetchAllPks threads shouldStop + the jittered scan pacing into the scrape'
   const { pks: stopped } = await source.fetchAllPks({ shouldStop: () => stop });
   expect(actor.scrollCalls).toBe(0);
   expect(sleeps).toEqual([]);
-  expect(stopped).toEqual(['36']); // the open-page capture is still returned
+  expect(stopped).toEqual([]); // a stopped caller never opens the dialog
 });
 
 test('fetchAllPks threads onProgress into the scrape (live mid-scan counts)', async () => {
@@ -246,8 +247,10 @@ test('every parsed row reconciles the we-follow edge IMMEDIATELY — a stopped w
   const tab = new FakeTab();
   const actor = new FakeActor();
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
-  actor.onOpen = () =>
+  let stopped = false;
+  actor.onOpen = () => { stopped = true;
     tab.emit(mkResp(followingUrl('42'), followersBody(['11', '12'], 'C1', true)));
+  };
 
   store.setOwnPk('me-pk');
   const source = new AdapterBackedOwnFollowingSource({
@@ -259,8 +262,8 @@ test('every parsed row reconciles the we-follow edge IMMEDIATELY — a stopped w
     cfg: { maxRounds: 5, noNewStop: 2 },
   });
 
-  // Immediate stop: only the on-open page lands; the walk is INCOMPLETE.
-  const res = await source.fetchAllPks({ shouldStop: () => true });
+  // Stop during open: only the on-open page lands; the walk is INCOMPLETE.
+  const res = await source.fetchAllPks({ shouldStop: () => stopped });
   expect(res.complete).toBe(false);
 
   // The knowledge already paid for is in the graph anyway: accounts AND edges.
@@ -274,8 +277,10 @@ test('a following row for a still-QUEUED candidate heals the drift on sight (ext
   const tab = new FakeTab();
   const actor = new FakeActor();
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
-  actor.onOpen = () =>
+  let stopped = false;
+  actor.onOpen = () => { stopped = true;
     tab.emit(mkResp(followingUrl('42'), followersBody(['27'], null, false)));
+  };
 
   store.setOwnPk('me-pk');
   // A queued candidate we ALREADY follow (externally) — the row must drop it.
@@ -289,7 +294,7 @@ test('a following row for a still-QUEUED candidate heals the drift on sight (ext
     ownPk: 'me-pk',
     cfg: { maxRounds: 5, noNewStop: 2 },
   });
-  await source.fetchAllPks({ shouldStop: () => true });
+  await source.fetchAllPks({ shouldStop: () => stopped });
 
   expect(store.getFollowRecord('27')!.state).toBe('external');
 });

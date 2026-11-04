@@ -53,8 +53,8 @@ export interface MigrationBasis {
   readonly privateEdge: number;
   /** The highest refill threshold that still has an effect. */
   readonly refillMax: number;
-  /** The interim recommendations while the plan port is not registered. */
-  readonly interim: { readonly cleanupPerDay: number; readonly censusEveryDays: number; readonly checksEveryHours: number };
+  /** Historical recommendations used only when translating v1 settings. */
+  readonly historical: { readonly cleanupPerDay: number; readonly censusEveryDays: number; readonly checksEveryHours: number };
 }
 
 /** The kernel's ordinal pattern for an intent. */
@@ -79,7 +79,7 @@ export function migrationBasis(math: PlanMath): MigrationBasis {
   const gap = (i: Intent): GapInputs => gapInputsOf(derivePattern(patternOf(i)));
   // The resolver rounds the typical row before the minimum row reads it; the basis does the same.
   const typical = (i: Intent): number => Math.round(math.gapTypicalSeconds(gap(i)));
-  const { AUDIENCE_SIZE, RATIO_CURVE, PRIVATE_EDGE, INTERIM } = SETTINGS_POLICY;
+  const { AUDIENCE_SIZE, RATIO_CURVE, PRIVATE_EDGE, V1_MIGRATION } = SETTINGS_POLICY;
   return {
     gapTypicalSeconds: typical,
     gapMinimumSeconds: (i) => Math.round(math.gapMinimumSeconds(gap(i), typical(i))),
@@ -88,6 +88,6 @@ export function migrationBasis(math: PlanMath): MigrationBasis {
     likelyCurve: RATIO_CURVE,
     privateEdge: PRIVATE_EDGE,
     refillMax: EXPLORATION_POLICY.queuedPerSource,
-    interim: { cleanupPerDay: INTERIM.pruneDailyLimit, censusEveryDays: INTERIM.pruneScheduleDays, checksEveryHours: INTERIM.followbackSweepHours },
+    historical: { cleanupPerDay: V1_MIGRATION.pruneDailyLimit, censusEveryDays: V1_MIGRATION.pruneScheduleDays, checksEveryHours: V1_MIGRATION.followbackSweepHours },
   };
 }

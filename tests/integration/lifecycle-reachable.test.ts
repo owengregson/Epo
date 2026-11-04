@@ -17,6 +17,7 @@ import { journalSettler, wireChurn, wireMutationPolicy } from '@/main/services/u
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS, toRateGovernorConfig } from '@/settings/settings';
 import { DelayManager } from '@/timing/delay-manager';
 import { setLevel } from '@/utils/logger';
@@ -54,11 +55,14 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
     return { ok: true, obs: { accountPk: a.pk, observedAt: clock.now(), source: 'profile', fields: { username } },
       viewer: { following: true, requested: false, followsUs: false } };
   });
-  const d = { resolveSettings: () => settings, driverSignal: () => undefined, plan: fakePlanHost(settings),
+  const d = { resolveSettings: () => effectiveFromV1(settings), driverSignal: () => undefined, plan: fakePlanHost(settings),
     protection: { index: () => UNCONFIGURED_PROTECTION, setCapabilities: () => undefined } } as unknown as GraphBuildDeps;
   // The production plan over the store: its cadence admits every write, the loop acts inside its session.
   const plan = kitPlan(store, clock, settings);
-  intoSession(plan, clock, (v) => v.plan.kinds.unfollow >= Object.values(accounts).filter((a) => a.record).length);
+  const ready = intoSession(plan, clock, (v) => v.plan.kinds.unfollow >= Object.values(accounts).filter((a) => a.record).length);
+  const eligible = ready.plan.sessions.find((s) => s.mix.unfollow > 0);
+  if (eligible === undefined) throw new Error('the lifecycle fixture has no allocated unfollow session');
+  clock.set(eligible.startAt);
   const rate = plan.rateGovernor(toRateGovernorConfig(settings));
   const readBudget = new ReadBudget({ store, clock, limits: readLimits() });
   const profiles = { visit } as unknown as TabProfileVisitor;
@@ -84,7 +88,7 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
   const adapter = { sentinel: new FakeSentinel(), actor } as unknown as InstagramAdapter;
   const churnActions = new AdapterBackedChurnActions({ adapter, store, ownPk: 'me', dryRun: false, clock });
   const churn = wireChurn(d, { frontier: { pickQueued: () => null } as unknown as SourceFrontier, store,
-    clock: clock as unknown as SystemClock, rate, churnActions, ownPk: 'me', settings, dayClock });
+    clock: clock as unknown as SystemClock, rate, churnActions, ownPk: 'me', settings: effectiveFromV1(settings), dayClock });
   const engine = new Engine(testDeps({ store, clock, rate, churn, followback: sweep, settings,
     delays: new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); } }),
     settleJournal: journalSettler(d, { store, profiles, ownPk: 'me', clock, readBudget, dayClock }) }));
@@ -98,8 +102,9 @@ test('a due lifecycle unfollow executes end to end after nine days away while a 
   // Two due unfollows: the stuck write's unknown outcome reserves one of the day's unfollows (spec §9.8).
   const r = rig({ alice: { pk: 'a', page: 'non-follower', record: true }, xavier: { pk: 'x', page: 'unreadable' },
     zara: { pk: 'z', page: 'non-follower', record: true } });
-  const stuck = r.store.beginEffectIntent({ accountPk: 'x', username: 'xavier', action: 'unfollow', channel: 'manual', at: r.clock.now() });
-  r.store.markEffectUncertain(stuck.id, r.clock.now());
+  // The existing uncertain write reserves the day, before the session allocated to the due lifecycle action.
+  const stuck = r.store.beginEffectIntent({ accountPk: 'x', username: 'xavier', action: 'unfollow', channel: 'manual', at: r.clock.now() - 1 });
+  r.store.markEffectUncertain(stuck.id, r.clock.now() - 1);
   await r.stepUntilPressed(1);
   expect(r.presses).toEqual(['alice']);
   expect(r.store.getFollowRecord('a')?.state).toBe('unfollowed');
@@ -116,7 +121,7 @@ test('on proceed the dispatch closure admits once; a refusal there marks no disp
   const prepare = () => prepareAction({ tab: r.tab as never, prepareProfile: r.policy.prepareProfile,
     beforeMutation: r.policy.beforeMutation, abortSignal: () => undefined }, 'unfollow', 'alice', 'a', onDispatch);
   const refused = await prepare();
-  expect(r.visit).toHaveBeenCalledWith('alice');
+  expect(r.visit).toHaveBeenCalledWith('alice', { pk: 'a' });
   // A deadline armed between the review and the dispatch: the closure's re-check refuses it.
   r.store.setActionDelayDeadline(r.clock.now() + 60_000);
   await expect(refused()).rejects.toBeInstanceOf(ActionDeferredError);

@@ -363,7 +363,18 @@
     linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(0, 0, 0, 0.05)),
     var(--bg);
 }
+/* The eager graph measures and fits before reveal, without exposing hidden controls. */
+.stage-view[data-stage="graph"][hidden] {
+  display: block;
+  visibility: hidden;
+  pointer-events: none;
+}
 .stage-view.active {
   display: block;
   animation: viewIn var(--dur-3) var(--ease, ease) both;
+}
+
+/* Stage tabs carry their own labels; the tooltip needs no extra badge. */
+.stagebar [data-tip]::after {
+  content: none;
 }

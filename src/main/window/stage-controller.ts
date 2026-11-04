@@ -14,7 +14,7 @@ import * as logger from '@/utils/logger';
 
 export interface StageController {
   /** Validates, serializes and curtain-reveals into Live; resolves once the request (or a later one) applied. */
-  set(mode: StageMode, covered: boolean): Promise<void>;
+  set(mode: StageMode, covered: boolean, reducedMotion?: boolean): Promise<void>;
   /** Boot: the tab under the dashboard from frame 1. */
   cover(): void;
   current(): { mode: StageMode; covered: boolean };
@@ -37,7 +37,7 @@ const TIME = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-di
 
 export function createStageController(d: StageControllerDeps): StageController {
   let current: { mode: StageMode; covered: boolean } = { mode: 'tab', covered: false };
-  let latest: { mode: StageMode; covered: boolean } | null = null;
+  let latest: { mode: StageMode; covered: boolean; reducedMotion: boolean } | null = null;
   let running: Promise<void> | null = null;
   let title: string | null = null;
   let badge: string | null = null;
@@ -47,11 +47,11 @@ export function createStageController(d: StageControllerDeps): StageController {
     Promise.race([d.veil.curtain('opaque'), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms))]);
 
   /** One transition: into Live behind the curtain, anything else at once. */
-  const apply = async (next: { mode: StageMode; covered: boolean }): Promise<void> => {
+  const apply = async (next: { mode: StageMode; covered: boolean; reducedMotion: boolean }): Promise<void> => {
     if (next.mode === current.mode && next.covered === current.covered) return;
     const entering = live(next) && !live(current);
-    current = next;
-    if (!entering) return d.shell.setStage(next.mode, next.covered);
+    current = { mode: next.mode, covered: next.covered };
+    if (!entering || next.reducedMotion) return d.shell.setStage(next.mode, next.covered);
     const painted = await paintedWithin(d.timing.paintMaxMs);
     d.shell.setStage(next.mode, next.covered);
     if (painted) await d.veil.curtain('clear');
@@ -73,12 +73,12 @@ export function createStageController(d: StageControllerDeps): StageController {
   };
 
   return {
-    set(mode, covered) {
+    set(mode, covered, reducedMotion = false) {
       if (!isStageMode(mode)) {
         logger.warn('stage: unknown mode refused', { mode: String(mode) });
         return Promise.resolve();
       }
-      latest = { mode, covered };
+      latest = { mode, covered, reducedMotion };
       running ??= drain();
       return running;
     },

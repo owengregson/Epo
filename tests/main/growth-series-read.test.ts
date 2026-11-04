@@ -1,7 +1,7 @@
 /**
  * The `growth:series` read envelope through a BUILT Foundation: the `days`
  * parameter reaches the store's parameterized series (window → series length),
- * omitted/invalid days fall back to the 14-day default, and the envelope
+ * omitted/invalid days refuse an unbounded read, and the envelope
  * carries the followers-measurement baseline the renderer's honesty gates
  * (window "All", the momentum delta) read.
  */
@@ -17,7 +17,7 @@ function daysAgo(k: number): number {
   return d.getTime();
 }
 
-test('growth:series read: days parameter, default, and baseline envelope', async () => {
+test('growth:series read requires an explicit valid span and preserves its baseline', async () => {
   const { foundation: f } = await builtFoundation();
   const store = foundationStore(f);
 
@@ -28,8 +28,8 @@ test('growth:series read: days parameter, default, and baseline envelope', async
   store.observeOwnFollowerEvent('f2', '4242', daysAgo(10));
   store.observeOwnFollowerEvent('f3', '4242', daysAgo(3));
 
-  // Default window: 14 points, both gains inside, baseline in the envelope.
-  const dflt = await f.growthSeries();
+  // The renderer supplies its chosen window; main has no second default.
+  const dflt = await f.growthSeries(14);
   expect(dflt.points).toHaveLength(14);
   expect(dflt.points[13].cumulativeNet).toBe(3);
   expect(dflt.baselineAt).toBe(baselineAt);
@@ -43,9 +43,11 @@ test('growth:series read: days parameter, default, and baseline envelope', async
   expect(week.points).toHaveLength(7);
   expect(week.points[6].cumulativeNet).toBe(1);
 
-  // Invalid days fall back to the 14-day default, never an empty fabrication.
-  expect((await f.growthSeries(0)).points).toHaveLength(14);
-  expect((await f.growthSeries(Number.NaN)).points).toHaveLength(14);
+  const read = jest.spyOn(store, 'netGrowthSeries');
+  for (const days of [undefined, 0, -1, Number.NaN, Infinity]) {
+    expect(await f.growthSeries(days)).toEqual({ points: [], baselineAt: null });
+  }
+  expect(read).not.toHaveBeenCalled();
 
   await f.dispose();
 });

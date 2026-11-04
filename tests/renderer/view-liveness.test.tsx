@@ -14,11 +14,9 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
 import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
-import type { Settings } from '@/types';
 import { chainTarget, type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
-const SEEDED: Settings = { ...DEFAULT_SETTINGS, seed: 'someone', tourCompletedAt: 1 };
+const SEEDED = { seed: 'someone', app: { tourCompletedAt: 1 } };
 
 let bridge: FakeBridge;
 
@@ -29,7 +27,7 @@ beforeEach(() => {
 /** Mount the shell and let the mount-time pulls land. */
 async function mountApp(): Promise<void> {
   render(<App />);
-  await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'getSettings')).toBe(true));
+  await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'settingsView')).toBe(true));
   await act(async () => {});
 }
 

@@ -1,5 +1,5 @@
 import { prepareAction } from '@/adapter/action-admission';
-import { ActionAbortedError, ActionBlockedError, ActionDeferredError } from '@/adapter/errors';
+import { ActionAbortedError, ActionBlockedError, ActionDeferredError, ActionReviewedError } from '@/adapter/errors';
 import { ScriptedTab } from '../kit/tabs';
 
 test('an expected PK requires a verifier, and dispatch is journaled only after admission', async () => {
@@ -87,6 +87,26 @@ describe('one admission per action (spec §11.1 F1)', () => {
     stopped.token.abort();
     await expect(stopped.dispatch()).rejects.toBeInstanceOf(ActionAbortedError);
     expect(stopped.admit).toHaveBeenCalledTimes(1);
+  });
+
+  test('a rule added after the header press stops the confirm without another read or admission', async () => {
+    const tab = new ScriptedTab();
+    let protectedNow = false;
+    const beforeMutation = jest.fn(async () => {});
+    const journal = jest.fn();
+    const prepareProfile = jest.fn(async () => {
+      await tab.goto('https://www.instagram.com/alice/');
+      return () => {
+        if (protectedNow) throw new ActionReviewedError({ kind: 'protected', by: 'account', match: 'a' });
+      };
+    });
+    const dispatch = await prepareAction({ tab, prepareProfile, beforeMutation }, 'unfollow', 'alice', 'a', journal);
+    await dispatch();
+    protectedNow = true;
+    await expect(dispatch()).rejects.toMatchObject({ verdict: { kind: 'protected', by: 'account', match: 'a' } });
+    expect(prepareProfile).toHaveBeenCalledTimes(1);
+    expect(beforeMutation).toHaveBeenCalledTimes(1);
+    expect(journal).toHaveBeenCalledTimes(1);
   });
 
   test('a refused admission refuses every later call: nothing is ever pressed after a refusal', async () => {

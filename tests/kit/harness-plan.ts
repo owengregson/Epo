@@ -33,9 +33,9 @@ import { openTestStore } from './store';
  * interval. Production injects a PERSISTED cadence instead (PRINCIPLES §3).
  */
 export const memorySweepCadence = (): SweepCadence => {
-  let last = 0;
+  let last: number | null = null;
   return {
-    isDue: (now, everyMs) => now - last >= everyMs,
+    lastSweepEndedAt: () => last,
     markRun: (now) => {
       last = now;
     },
@@ -102,7 +102,7 @@ export function fakePlanHost(settings: Settings = DEFAULT_SETTINGS): FakePlanHos
 /** The plan wiring over a real store, as the graph builds it (the edge timer on `scheduler`). */
 export function storePlanWiring(store: KnowledgeStore, clock: Clock, host: FakePlanHost = fakePlanHost(),
   scheduler: ScheduleManager = new ScheduleManager(), delays: DelayManager = new DelayManager({ clock })): PlanWiring {
-  return wirePlan(store, clock, 'ME', delays, { plan: host, settings: host.settingsNow, scheduler });
+  return wirePlan(store, clock, 'ME', delays, { plan: host, settings: host.settings.effective(), scheduler });
 }
 
 const kitPlans: PlanWiring[] = [];
@@ -153,7 +153,7 @@ export const ONE_SLICE_READS = EXPLORATION_POLICY.profilesPerSlice + EXPLORATION
 
 /** A plan view at `now` from a drawn plan, with the fields a loop test steers set. */
 export function stubPlanView(now: number, o: { open: boolean; nextSessionAt: number | null; target: number;
-  hourCap?: number; usedAuto?: number; mixDraw?: number | null; unfollowsLeft?: number; exploreLeft?: number }): PlanView {
+  checkEveryMs?: number; hourCap?: number; usedAuto?: number; mixDraw?: number | null; unfollowsLeft?: number; exploreLeft?: number }): PlanView {
   const plan = drawDayPlan(drawInput(now));
   const base = viewPlan(plan, viewInputs(plan, now));
   const reads = { reconcile: 0, explore: o.exploreLeft ?? ONE_SLICE_READS, explorePages: 0, checks: 0, checkPages: 0 };
@@ -178,6 +178,8 @@ export function stubPlanView(now: number, o: { open: boolean; nextSessionAt: num
     nextSessionAt: o.open ? null : o.nextSessionAt,
     used: { ...base.used, auto: usedAuto },
     admits,
+    checkDue: (last) => o.open && (o.checkEveryMs ?? 3_600_000) !== Number.POSITIVE_INFINITY
+      && (last === null || now - last >= (o.checkEveryMs ?? 3_600_000)),
     mixDraw: () => o.mixDraw ?? null,
   };
 }
@@ -191,6 +193,7 @@ export class FakePlan implements EnginePacing {
   gapMs = 4 * 60_000;
   target = 25;
   hourCap: number | undefined;
+  checkEveryMs = 3_600_000;
   usedAuto = 0;
   /** The mix draw the open session offers (null: an unfollow first whenever one is due). */
   mixDrawValue: number | null = null;
@@ -207,7 +210,7 @@ export class FakePlan implements EnginePacing {
   constructor(private readonly nextStart: number,
     private readonly deadlines?: Pick<KnowledgeStore, 'setActionDelayDeadline'>) {}
   view(now: number): PlanView {
-    return stubPlanView(now, { open: this.open, nextSessionAt: this.nextStart, target: this.target, hourCap: this.hourCap,
+    return stubPlanView(now, { open: this.open, nextSessionAt: this.nextStart, target: this.target, hourCap: this.hourCap, checkEveryMs: this.checkEveryMs,
       usedAuto: this.usedAuto, mixDraw: this.mixDrawValue, unfollowsLeft: this.unfollowsLeft, exploreLeft: this.exploreLeft });
   }
   /** Local-midnight plan-days: the Phase F default clock (the loop tests steer no boundary of their own). */

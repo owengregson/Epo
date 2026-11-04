@@ -4,9 +4,11 @@
  * strictly — its set is complete only when it read whole and the server said there is no next page.
  */
 
+import type { ObservedRead } from '@/adapter/observed-reads';
 import type { Reader } from '@/adapter/reader';
 import type { FollowEvent, Observation } from '@/adapter/surface-types';
 import { admits } from '@/surface/read/admission';
+import type { SurfaceRead } from '@/surface/read/types';
 import type { Tier } from '@/surface/schema/projection';
 import { type Decoded, decodeBody } from '@/surface/transport/decode';
 
@@ -24,6 +26,7 @@ export interface DrawerReadCtx {
   readonly reader: Pick<Reader, 'read' | 'recover' | 'env'>;
   /** The read's observation time (requester rows are stamped with it). */
   readonly now: number;
+  readonly observed?: ObservedRead;
 }
 
 /** Why a drawer body could not be read as data. */
@@ -47,19 +50,25 @@ const decodedOf = (resp: DrawerBody, ctx: DrawerReadCtx): Decoded => (typeof res
 
 /** Read one drawer body. */
 export function readDrawerBody(resp: DrawerBody, ctx: DrawerReadCtx): DrawerRead {
-  const none = { rows: [], pendingComplete: false };
   const feed = resp.kind === 'activity-feed';
-  const failed = (failure: DrawerFailure): DrawerRead =>
-    ({ events: null, pendingPreview: [], requests: none, tier: 'canonical', partial: false, failure });
-  const decoded = decodedOf(resp, ctx);
+  const decoded = ctx.observed?.decoded ?? decodedOf(resp, ctx);
   const gate = resp.status === undefined || resp.mime === undefined ? {} : { status: resp.status, mime: resp.mime };
-  let read = ctx.reader.read(resp.kind, { decoded, ...gate }, { at: ctx.now });
+  let read = ctx.observed?.read ?? ctx.reader.read(resp.kind, { decoded, ...gate }, { at: ctx.now });
   if (!read.ok && read.kind === 'mismatch') {
     // The container moved: the drawer pass is armed by construction, so its stories or rows may be read from
     // their new place (C2, spec §10.6) — follow events and requester rows only, never a complete set.
     const moved = ctx.reader.recover(resp.kind, decoded, { at: ctx.now, arm: feed ? 'drawer' : 'requests-panel' });
     if (moved.ok) read = moved;
   }
+  return projectDrawerRead(resp.kind, read);
+}
+
+/** Project an already-read routed body or a witnessed deadline candidate without reading it again. */
+export function projectDrawerRead(kind: DrawerBodyKind, read: SurfaceRead): DrawerRead {
+  const none = { rows: [], pendingComplete: false };
+  const feed = kind === 'activity-feed';
+  const failed = (failure: DrawerFailure): DrawerRead =>
+    ({ events: null, pendingPreview: [], requests: none, tier: 'canonical', partial: false, failure });
   if (!read.ok) {
     if (read.kind === 'wall') return failed(feed ? 'feed-walled' : 'requests-walled');
     return failed(feed ? 'shape-mismatch' : 'requests-unreadable');
@@ -69,6 +78,6 @@ export function readDrawerBody(resp: DrawerBody, ctx: DrawerReadCtx): DrawerRead
   if (feed) return { events: p.events, pendingPreview: p.pendingPreview, requests: none, tier: read.tier, partial: read.partial };
   // Complete only from a complete read with every row read and the server's own flags false.
   const pendingComplete = admits('destructive', read) && p.rowIssues.length === 0
-    && p.continuation?.kind === 'end' && p.continuation.evidence === 'flags-false';
+    && p.continuation?.kind === 'end' && p.continuation.evidence === 'flags-false' && p.continuation.vetoKey === undefined;
   return { events: null, pendingPreview: [], requests: { rows: p.facts, pendingComplete }, tier: read.tier, partial: read.partial };
 }

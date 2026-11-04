@@ -45,7 +45,7 @@ export interface ProfileEnricherDeps {
   /** Reads a profile by opening it; the observer behind it writes the store. */
   visitor: ProfileVisitor;
   /** For the permanent `gone` marker only — the counts are the observer's write. */
-  store: Pick<KnowledgeStore, 'markEnrichmentFailed'>;
+  store: Pick<KnowledgeStore, 'markEnrichmentFailed'> & Partial<Pick<KnowledgeStore, 'pkByUsername'>>;
   sentinel: Sentinel;
   clock?: Clock;
   /** Max usernames enriched per pass; absent, the caller's slice is the bound (`min(profilesPerSlice, explore left)`). */
@@ -61,7 +61,7 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
   private readonly readBudget?: ReadBudget;
   private readResumeAt: number | null = null;
   private readonly visitor: ProfileVisitor;
-  private readonly store: Pick<KnowledgeStore, 'markEnrichmentFailed'>;
+  private readonly store: Pick<KnowledgeStore, 'markEnrichmentFailed'> & Partial<Pick<KnowledgeStore, 'pkByUsername'>>;
   private readonly sentinel: Sentinel;
   private readonly clock: Clock;
   private readonly batchCap: number | undefined;
@@ -121,7 +121,8 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         this.readResumeAt = permit.resumeAt;
         break;
       }
-      const visit = await this.visitor.visit(username);
+      const pk = this.store.pkByUsername?.(username) ?? undefined;
+      const visit = await this.visitor.visit(username, pk === undefined ? undefined : { pk });
       if (!visit.ok) {
         // `gone` is the page itself saying the profile is not available
         // (deleted / renamed / hidden from us) with no profile fetched: mark it
@@ -144,10 +145,11 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         }
         continue;
       }
-      if (countsUnread(visit)) {
-        // A body without a valid count pair is a failed read (spec §10.4): it counts in the
-        // streak, so a drifted count ends the pass instead of re-visiting every pass.
-        logger.warn('rim.profile-enricher: profile read without its counts, skipping', { username });
+      if (countsUnread(visit) || visit.tier === 'recovered' || visit.partial === true
+        || typeof visit.obs.fields.followers !== 'number' || typeof visit.obs.fields.following !== 'number') {
+        // Incomplete/C2 facts remain in the observer, but cannot qualify a candidate (spec §10.6).
+        // Count failed reads toward the existing wall streak; never loop to re-request.
+        logger.warn('rim.profile-enricher: profile read did not qualify enrichment, skipping', { username });
         walledInARow += 1;
         if (walledInARow >= RECOVERY.BLOCKED_STREAK_ENTRY) break;
         continue;

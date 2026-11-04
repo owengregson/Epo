@@ -17,9 +17,6 @@ export interface UpdateEnvironment {
   portableDir: string | undefined;
 }
 
-/** The status the updater keeps: it always knows when its last check finished (null before the first). */
-export type CheckedUpdateStatus = UpdateStatus & { checkedAt: number | null };
-
 /**
  * What "update itself" means on this install (the platform matrix in
  * docs/RELEASE.md §5):
@@ -51,7 +48,7 @@ export function isBenignFeedError(message: string): boolean {
 }
 
 /** The pre-first-check status for a given mode and app version: nothing is claimed yet. */
-export function initialStatus(mode: UpdateMode, current: string): CheckedUpdateStatus {
+export function initialStatus(mode: UpdateMode, current: string): UpdateStatus {
   return { state: 'unchecked', mode, current, version: null, percent: null, error: null, checkedAt: null };
 }
 
@@ -69,7 +66,7 @@ export type UpdateEvent =
  * stamps `checkedAt`; only a check that found nothing reads as up to date (`idle`); a download's progress and
  * failure keep the check time, and its failure is always an error.
  */
-export function nextUpdateStatus(s: CheckedUpdateStatus, e: UpdateEvent, now: number): CheckedUpdateStatus {
+export function nextUpdateStatus(s: UpdateStatus, e: UpdateEvent, now: number): UpdateStatus {
   switch (e.kind) {
     case 'checking':
       return { ...s, state: 'checking', error: null };

@@ -36,14 +36,6 @@ export const EXPLORATION_POLICY = {
   sourceShare: 0.4,
   /** How many recent follows the share is measured over. */
   shareWindow: 100,
-  /** A low-yield source may be retried after a day: membership and evidence change. */
-  lowYieldRevisitMs: DAY,
-  /** A verified-ended or covered source is revalidated from the head after a week. */
-  endedRevisitMs: 7 * DAY,
-  /** A profile older than this is re-read before a source decision rests on it. */
-  profileFreshMs: 7 * DAY,
-  /** A failed enrichment may be retried after a week, never rejected forever on old data. */
-  enrichmentRetryMs: 7 * DAY,
   /** Prior follow-back rate for an unknown source: regularises small samples, not a yield claim. */
   priorRate: 0.15,
   /** Observations the prior is worth. */

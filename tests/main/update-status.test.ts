@@ -4,10 +4,11 @@
  * on every completed check; a download's own progress and failure never pose as a check.
  */
 
-import { type CheckedUpdateStatus, initialStatus, nextUpdateStatus, type UpdateEvent } from '@/main/update-core';
+import { initialStatus, nextUpdateStatus, type UpdateEvent } from '@/main/update-core';
+import type { UpdateStatus } from '@/shared/update-status';
 
 const T = 1_800_000_000_000;
-const run = (events: UpdateEvent[], start = initialStatus('notify', '3.2.0')): CheckedUpdateStatus =>
+const run = (events: UpdateEvent[], start = initialStatus('notify', '3.2.0')): UpdateStatus =>
   events.reduce((s, e, i) => nextUpdateStatus(s, e, T + i), start);
 
 test('before any check the state is unchecked, with no check time', () => {

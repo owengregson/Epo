@@ -149,7 +149,7 @@ describe('L-TOKENS: every token a stylesheet reads is declared', () => {
 });
 
 /** The sheets this stream restyled onto the rungs (the feature sheets belong to their streams). */
-const RESTYLED = ['base', 'controls', 'shell', 'graph', 'chain', 'queues', 'prune', 'overview', 'tour', 'gallery'].map(
+const RESTYLED = ['base', 'controls', 'shell', 'graph', 'chain', 'queues', 'prune', 'tour', 'gallery'].map(
   (n) => `${n}.css`,
 );
 

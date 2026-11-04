@@ -104,8 +104,6 @@ export const PROVENANCE: Readonly<Record<string, Tier>> = {
   'HARNESS.CAPTURE_SHORT_SETTLE_MS': 'harness',
   'HARNESS.OP_DELAY_MIN_MS': 'harness',
   'HARNESS.OP_DELAY_MAX_MS': 'harness',
-  'HARNESS.ENRICH_PACE_MIN_MS': 'harness',
-  'HARNESS.ENRICH_PACE_MAX_MS': 'harness',
   'HARNESS.FOLLOW_UNFOLLOW_GAP_MS': 'harness',
   'CIRCADIAN.BUMPS': 'derived',
   'CIRCADIAN.OVERNIGHT_FLOOR': 'derived',

@@ -41,3 +41,26 @@ describe('the live sheets', () => {
     expect(literalDurations(html)).toEqual([]);
   });
 });
+
+test('the visible app has at most two infinite CSS loops, including loading skeletons', () => {
+  const sheets = fs.readdirSync(STYLES).filter((file) => file.endsWith('.css') && file !== 'boot.css');
+  const loops = sheets.flatMap((name) => [...sheet(name).matchAll(/animation(?:-iteration-count)?\s*:[^;{}]*\binfinite\b/g)]);
+  expect(loops.length).toBeLessThanOrEqual(2);
+  expect(sheet('shell.css')).toMatch(/\.stagebar \[data-tip\]::after\s*\{\s*content: none;/);
+});
+
+
+test('the eager graph stays measurable but invisible before selection', () => {
+  const shell = sheet('shell.css');
+  const hiddenGraph = shell.match(/\.stage-view\[data-stage="graph"\]\[hidden\]\s*\{([^}]+)\}/)?.[1];
+  expect(hiddenGraph).toMatch(/display: block/);
+  expect(hiddenGraph).toMatch(/visibility: hidden/);
+  expect(hiddenGraph).toMatch(/pointer-events: none/);
+  const graph = sheet('graph.css').match(/\.graph-stage\s*\{([^}]+)\}/)?.[1];
+  expect(graph).toMatch(/display: block/);
+});
+
+
+test('the graph failure retry accepts pointer input over the pass-through message layer', () => {
+  expect(sheet('graph.css')).toMatch(/\.graph-empty button\s*\{\s*pointer-events: auto;/);
+});

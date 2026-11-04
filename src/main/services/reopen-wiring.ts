@@ -3,6 +3,7 @@
  * followers head and the following check (spec §9), with the sweep's cadence anchored on its own persisted end.
  */
 
+
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
@@ -22,8 +23,9 @@ import { storeHeadFacts, walkFollowersHead } from '@/rim/followers-head';
 import { checkFollowing, storeFollowingFacts } from '@/rim/following-check';
 import { settleFromChannels } from '@/rim/journal-settlement';
 import type { ListPageWalker } from '@/rim/list-page-walker';
+import type { EffectiveSettings } from '@/settings/effective';
+import { toFollowbackConfig } from '@/settings/mappers';
 import { toPlanIntent } from '@/settings/plan-intent';
-import { type Settings, toFollowbackConfig } from '@/settings/settings';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { GraphBuildDeps, WiringParts } from './graph-types';
 import type { createMutationPolicy } from './mutation-policy';
@@ -36,7 +38,7 @@ export interface FollowbackWiring {
   store: KnowledgeStore;
   clock: SystemClock;
   ownPk: string;
-  settings: Settings;
+  settings: EffectiveSettings;
   readBudget: ReadBudget;
   policy: ReturnType<typeof createMutationPolicy>;
   adapter: InstagramAdapter;
@@ -105,22 +107,18 @@ export function wireFollowback(d: GraphBuildDeps, w: FollowbackWiring): Followba
         await d.launch.land(signal);
         return true;
       },
-      visit: async () => {
-        const r = await policy.refreshOwnStats();
+      visit: async (use) => {
+        const r = await policy.refreshOwnStats(use);
         return r.ok ? 'ok' : r.reason === 'read-budget' ? 'read-budget' : 'failed';
       },
     },
     head: (a) => walkFollowersHead({ walker, facts: storeHeadFacts(store, ownPk), clock, sentinel }, a),
-    following: (a) => checkFollowing({ walker, facts: storeFollowingFacts(store, ownPk), clock, sentinel }, a),
+    following: (a) => checkFollowing({ walker, facts: storeFollowingFacts(store, ownPk, w.plan.dayClock), clock, sentinel }, a),
     autoAccept: () => d.resolveSettings().autoAcceptFollowRequests,
     // Every step's transition reaches the status at once (spec §9.6 output).
     report: () => d.plan.pushStatus(),
   });
   const cadence: SweepCadence = {
-    isDue: (now, everyMs) => {
-      const last = sweep.lastSweepEndedAt();
-      return last === null || now - last >= everyMs;
-    },
     // The sweep persisted its own end (one writer of reopen_state).
     markRun: () => {},
     lastSweepEndedAt: () => sweep.lastSweepEndedAt(),

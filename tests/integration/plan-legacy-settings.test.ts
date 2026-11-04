@@ -60,7 +60,7 @@ function expectThePlanRuns(svc: SettingsService): void {
   store.setOwnPk('ME');
   const clock = planClock(FROM);
   const plan = wirePlan(store, clock, 'ME', new DelayManager({ clock }),
-    { plan: hostOf(svc), settings: svc.resolveSettings(), scheduler: new ScheduleManager() });
+    { plan: hostOf(svc), settings: svc.effective(), scheduler: new ScheduleManager() });
   opened.push({ plan, store });
   expect(svc.effective().pattern).toMatchObject({ consistency: 'clockwork', rhythm: 'trickle' });
   expect(toPlanIntent(svc.effective()).consistencyScale).toBe(SCALES.consistency.clockwork);

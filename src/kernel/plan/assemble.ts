@@ -21,6 +21,8 @@ export interface DrawOptions {
   readonly probationAt?: (startAt: number) => boolean;
   /** The one-time upgrade probation: the first kept session runs gently. */
   readonly upgradeProbation?: boolean;
+  /** A valid allocation charge recovered while another persisted plan field is repaired. */
+  readonly forfeited?: number;
 }
 
 /** The plan-day's ceilings; a short transition day prorates every day counter. */
@@ -62,4 +64,3 @@ export function assemble(input: DrawInput, seed: number, opts: DrawOptions, volu
     ceilings: dayCeilings(input), kinds, reads: reads.plan, dayTempo: { z: dayLatent(seed) }, sessions, demand: input.demand,
   };
 }
-

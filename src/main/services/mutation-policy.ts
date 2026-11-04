@@ -1,10 +1,11 @@
+import { ActionAbortedError } from '@/adapter/errors';
 import type { FollowbackWatcher } from '@/engine/followback-watcher';
 import type { Clock } from '@/governors/clock';
 import type { ReadBudget } from '@/governors/read-budget';
 import type { ParkSlots } from '@/kernel/derive-parks';
 import type { Writer } from '@/kernel/plan';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
-import type { Settings } from '@/settings/settings';
+import type { EffectiveSettings } from '@/settings/effective';
 import type { SurfaceGate } from '@/shared/surface-gate';
 import type { ProtectionIndex } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -26,7 +27,7 @@ interface MutationPolicyDeps {
   readBudget: ReadBudget;
   profiles(): ProfileVisitor;
   followback(): FollowbackWatcher;
-  settings(): Settings;
+  settings(): EffectiveSettings;
   protection(): ProtectionIndex;
   signal(): AbortSignal | undefined;
   validateIdentity?(): Promise<boolean>;
@@ -58,22 +59,31 @@ export function createMutationPolicy(d: MutationPolicyDeps) {
   // The write under review and the one it admitted: actions are serialized on the one tab.
   let writer: Writer = 'growth';
   let reviewed: ReviewedAction | null = null;
+  let dispatchGuard: (() => void) | null = null;
+  const review = createClickReview({ ...d, active, writer: () => writer,
+    preflight: (kind, w, now, subject) => d.cadence.preflight(kind, w, now, subject) });
   const admission = createMutationAdmission({ ...d, active, takeReviewed: () => {
     const r = reviewed;
     reviewed = null;
+    if (r !== null) dispatchGuard?.();
     return r;
   } });
-  const review = createClickReview({ ...d, active, writer: () => writer,
-    preflight: (kind, w, now, subject) => d.cadence.preflight(kind, w, now, subject) });
   const ownStats = createOwnStats({ ...d, active });
   return {
     resolveIdentity: ownStats.resolveIdentity,
     beforeMutation: admission.beforeMutation,
-    prepareProfile: async (username: string, expectedPk: string, action: 'follow' | 'unfollow'): Promise<void> => {
+    prepareProfile: async (username: string, expectedPk: string, action: 'follow' | 'unfollow'): Promise<() => void> => {
       reviewed = null;
+      dispatchGuard = null;
       writer = writerFor(d.store, expectedPk, cleanupRunning);
       await review.prepareProfile(username, expectedPk, action);
       reviewed = { kind: action, writer, subject: { pk: expectedPk } };
+      const protectionGuard = review.dispatchGuard();
+      dispatchGuard = () => {
+        if (d.settings().dryRun) throw new ActionAbortedError('mutation-practice');
+        protectionGuard();
+      };
+      return dispatchGuard;
     },
     canAccept: admission.canAccept,
     onAccepted: admission.onAccepted,

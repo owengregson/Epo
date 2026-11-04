@@ -356,6 +356,9 @@ export interface PlanIntent {
    `(s − 1 + u('start', s))/n` of `[S, E)`; `start_s = c_s − L_s/2`; a forward pass enforces
    `start_{s+1} ≥ start_s + L_s + SESSION_BOUNDARY`, a backward pass `start_n + L_n ≤ E`; also no session may intersect
    quiet hours (clip, then re-run the passes). Infeasible → merge the two smallest adjacent sessions and repeat.
+   Reserve one additional `SESSION_BOUNDARY` after each expected length, including the final session's tail;
+   L4 already bounds a drawn gap plus its pre-action work by that span. This reserve is part of placement and
+   feasibility, while `expectedEnd` continues to mean `start + b_s × targetMean_s`.
    Replaces the rejection sampler (`session-planner.ts:314-324`) and the 20-minute midnight tail (`:283`).
 9. **Reads** (§5.8). The census is **not** pinned here: `censusDue` is a durable predicate evaluated per session
    (§5.8.3).
@@ -377,12 +380,14 @@ For session `s`: `windowEnd_s = start_{s+1}` (or `E`); `used_s` = mutations (led
 `at ∈ [start_s, windowEnd_s)`.
 
 - `now < start_s` → `later` (the first is `next`).
-- **Unjoined** (`used_s = 0`): open while `now < expectedEnd_s` with `fit = ⌊(expectedEnd_s − now)/targetMean_s⌋`;
+- **Unjoined** (`used_s = 0`): at its exact start the full `b_s` is available, independent of millisecond
+  rounding. Later, open while `now < expectedEnd_s` with `fit = ⌊(expectedEnd_s − now)/targetMean_s⌋`;
   afterwards `skipped` (or `before-open`). The budget is forfeited: **missed sessions expire, no catch-up** [owner Q6
   default]. A late join's effective budget is `min(b_s, fit at the moment it joins)` [arch r2]: joining one action
-  before `expectedEnd_s` never unlocks the full `b_s` until `expectedEnd_s + L_s`.
+  before `expectedEnd_s` never unlocks the full `b_s`.
 - **Joined** (`used_s > 0`): open while `used_s < b'_s` (the effective budget), `now < closesAt_s`, day volume remains
-  and no cap binds; then `done` or `partial`. `closesAt_s = min(windowEnd_s − SESSION_BOUNDARY, expectedEnd_s + L_s)`.
+  and no cap binds; then `done` or `partial`. `closesAt_s` is the earliest of the next session's start minus
+  `SESSION_BOUNDARY`, the next quiet-hours start, and the plan-day end. The expected duration is not a hard close.
 - Start pressed between sessions **parks with a countdown** to the next session; **Boost is the act-now control**
   [owner Q4 default]. When no session remains before the next plan-day boundary, `nextSessionAt` is the next plan-day's
   first session (a pure draw of the next key); if that day is also empty (days off), parks end at the next plan-day
@@ -445,7 +450,9 @@ first.
 - **Run-time transfers** [arch r2]. An open session with unfollow budget but no unfollow work may use it for follows
   while `follows < min(F + slack, P0 − followsDoneToday)`; accepts use `A_s`, then slack, then the session's follow share
   (accepting is growth), **never** the unfollow share; unfollows never take follow or accept budget. `PlanView.admits
-  ('follow')` refuses `kind-spent` once today's follows (all writers) reach `P0`. Property: for any availability of
+  ('follow')` refuses `kind-spent` once today's follows (all writers) reach `P0`. Automatic unfollows, including
+  Prune runs, also refuse once the open session's unfollow allocation is spent; per-session ledger kind counts
+  distinguish those unfollows from follows and accepts. Property: for any availability of
   unfollow work and any arrival of requests, cumulative follows ≤ `P0` and the automatic total ≤ `V`.
 - **Where the mix is decided:** `src/engine/plan-mix.ts`, inside the `action` fact source. It asks churn for the best
   due unfollow and the best queued follow (`nextDue(now, kind)`), applies `admits`, draws `u('mix', s, k)` against
@@ -521,7 +528,7 @@ session runs it — an overdue census runs first (PRINCIPLES §3), including for
 day's peak. `censusWalkMax = min(CENSUS_POLICY.maxWalkPages (1 000 = 5 × LIST_WALK_MAX_PAGES), the pages that fit the
 host session's remaining window at E[walk.page] + E[walk.rest]/E[walk.rest-every] + LATENCY.fetchEnvelope.p50)`. An
 account whose header needs more pages is refused with **"too large to check in full"**: cleanup absence verdicts stay
-off, the Clean up page explains why, and nothing walks partially. This fixes "cleanup does nothing without a manual
+off, the Prune page explains why, and nothing walks partially. This fixes "cleanup does nothing without a manual
 scan" and the unbounded large-account walk. The scheduled bulk prune (30-min watcher, `pruneScheduleDays`) is
 **retired** (§14 C14).
 
@@ -1046,8 +1053,8 @@ Advanced-only rungs. A section with overrides shows "Fine-tuned in Advanced (2) 
 
 **One word per concept** [arch r2]: pace cards **Gentle · Balanced · Faster**; consistency **Even · Typical ·
 Varied**; cleanup **Leave them alone · a few a day · more each day**; session chips **relaxed · normal · quick**; the
-stage tab, the posture and every Settings line say **clean up** ("Clean up" tab, "Cleaning up" posture), never
-"prune" or "whitelist" (owner Q28). The card numbers ("about 44 a day") are illustrative values at Typical
+stage tab, the posture and every Settings line say **Prune** ("Prune" tab, "Pruning" posture); the protected
+accounts belong to **Protection**, never "whitelist" (recorded owner Q28, §18.3). The card numbers ("about 44 a day") are illustrative values at Typical
 consistency and come from `SettingsView.options`, never from copy.
 
 ### 6.5 Advanced mode
@@ -1091,7 +1098,7 @@ keyword match (anywhere / whole words).
 | `sessions.gapMinimum` | Shortest pause between actions (effective) | the plan's floor at pace 1, `gapFloorSeconds·τ_ref` (≈ 130 s Standard) | ↓ | slower only: ≥ recommended · C ≥ the burst floor of the effective cap · C ≤ gapTypical | replan | `gapFloorSeconds` (same rule) |
 | `unfollow.waitDays` | Days to wait for a follow-back | `PATIENCE[p].waitDays` 2/4/7 | ↓ | E ≥ 2 · G ≤ 60 | now | `maxWaitForFollowbackDays` |
 | `unfollow.holdDays` | Days to keep someone who followed back | `PATIENCE[p].holdDays` 1/2/4 (inactive when `mutuals:'keep'`) | ↓ | E ≥ 1 · G ≤ 60 | now (future holds) | `holdAfterFollowbackDays` |
-| `unfollow.cleanupShare` | Most of a session spent cleaning up | `CLEANUP[cleanup]` share of room (inactive when off) | ↑ | E ≤ 0.5 · G ≥ 0 | replan | `maxUnfollowFractionPerSession` (+`weaveEnabled`) |
+| `unfollow.cleanupShare` | Most of a session spent pruning | `CLEANUP[cleanup]` share of room (inactive when off) | ↑ | E ≤ 0.5 · G ≥ 0 | replan | `maxUnfollowFractionPerSession` (+`weaveEnabled`) |
 | `unfollow.cleanupPerDay` | Most cleanup unfollows a day | the plan's `U_prune` (lowering override only) | ↑ | C ≤ effective ceiling · G ≥ 0 | replan | `pruneDailyLimit` |
 | `unfollow.censusEveryDays` | Re-check who follows you back every (days) | the plan's census slot (patience) | ↓ | G [1, 30] | replan | `pruneScheduleDays` |
 | `unfollow.attempts` | Attempts before skipping an account (follows and unfollows) | `retryLimit()` (3) | · | G [0, 10] | now | `maxRetries` |
@@ -1501,7 +1508,7 @@ all-digit entries match pk *or* username exactly as today (monotone law).
 
 ### 7.8 Protection UI (one section, identical in Easy and Advanced apart from extras)
 
-> **Protection** — Epo never unfollows anyone protected here — not in its daily cycle, not when cleaning up, not
+> **Protection** — Epo never unfollows anyone protected here — not in its daily cycle, not when pruning, not
 > during Boost — whether or not they follow you back.
 
 - **People**: "Add @username" with typeahead over accounts you follow (store-only `suggestAccounts`); [Paste a list];
@@ -1517,7 +1524,7 @@ all-digit entries match pk *or* username exactly as today (monotone law).
   **12** · Bios not read yet: **96** (checked before any unfollow)." Unknown values show "—" with a reason, never 0.
 - **Advanced extras**: keyword matching anywhere / whole words; a paged **Currently kept** table (`keptList`); [Re-check
   unreadable profiles]; the protection state with the review action.
-- **Clean up page** (the `prune` stage, T2 §8.9): the whitelist card becomes a read-only tile with a deep link to
+- **Prune page** (the `prune` stage, T2 §8.9): the whitelist card becomes a read-only tile with a deep link to
   Settings → Protection; the schedule card, daily-limit stepper and scan-pacing steppers are removed ("Today's cleanup
   allowance: **N**" read-only, from the plan); candidates come annotated from main (`protectedBy`, `bioUnread`) with
   "Show protected (N)"; actions "Unfollow these gradually" (opens the cleanup confirm) and "Run now"; an account too
@@ -1610,6 +1617,12 @@ invariants (laws L13, L13b): Σ b_s(remainder) = R + lift exactly (lift only ins
 - **`boost-end`** (expiry or user): re-plan the remainder with normal mixes; session times kept. The first post-Boost
   sweep reads exactly the accumulated delta (frontiers, §9). Toast "Boost ended. Unfollows that waited will be spread
   over the next sessions."
+
+Replay uses already-planned volume when computing lift; a skipped or ended session is never extended by the
+overlay. Lowering a target may trim unspent allocations, recorded in optional persisted `volume.forfeited`
+(older plans: zero), and later replans cannot refund them. Actual ledger usage is preserved even if a newly
+lowered target is below it; in that case no additional automatic work is admitted. `volume.planned` is the sum
+of session budgets, with actual already-used volume the only possible exception to a newly lowered ceiling.
 
 ### 8.4 Behaviour per rule and source
 
@@ -2544,7 +2557,7 @@ same function for the window title and Dock badge. Precedence (first match wins;
 | 20 | `working` | running (default) | Working | live | pause |
 
 Boost and Practice are **overlays** (pills), not kinds. During a prune the buttons control the prune ("Pause
-clean-up", "Stop clean-up"; the unified transport). **Stop has no confirm**; an Undo toast offers to resume (Stop is
+pruning", "Stop pruning"; the unified transport). **Stop has no confirm**; an Undo toast offers to resume (Stop is
 not destructive: Start resumes today's plan) [owner Q29 default].
 
 **Attention** (`src/shared/attention.ts`): `classifyBlock(raw)` maps every persisted runtime-block literal and every
@@ -2577,7 +2590,7 @@ you press Start." A test greps every `blockRuntime('…')`, `stopForIncident('�
   `setVisible(false)`.
 - **Stage hosting** (`src/renderer/app/StageHost.tsx`) [arch r2, "a fully preloaded app"]: **Graph mounts eagerly
   behind the splash** (today it stays mounted, `GraphStage.tsx:3-5`, so its layout and camera are ready before the
-  intro); **People** and **Clean up** mount on first activation but render instantly from data fetched at shell level
+  intro); **People** and **Prune** mount on first activation but render instantly from data fetched at shell level
   behind the splash (chain list, growth series, queue lanes, the last census — fetches, not mount effects); **Settings
   mounts lazily** (the second guard for item 10: nothing on it can run mount effects at boot; its `settingsView` and
   `settingsFacts` are preloaded through their pushes). Every page paints opaque `var(--bg)`, resets scroll on open and
@@ -4337,7 +4350,7 @@ export interface SettingsView {
                         readonly bySection: Readonly<Partial<Record<SectionId, number>>> };
   readonly effective: EffectiveSummary;          // what OTHER views may read (below)
   readonly notices: readonly SettingsNotice[];
-  readonly app: { readonly tourCompletedAt: number | null };
+  readonly app: { readonly tourCompletedAt: number | null; readonly tourVersionSeen: string | null };
 }
 
 export interface EasyMatch {
@@ -4741,7 +4754,7 @@ ceiling, velocity. Risk is a *share of Instagram's known limits*, never a warnin
 | Who to follow | "Starting account" · placeholder "@username" · help "Epo finds people through this account's followers. Pick one whose followers look like your audience." · Account size: "Smaller accounts (up to {max})" · "Everyday accounts ({min}–{max})" *(Recommended)* · "Larger accounts (up to {max})" · hint "Very large accounts rarely follow back." · Prefer: "People likely to follow you back" *(Recommended)* · "Reach more people (fewer follow back)" · "Give private accounts a small edge" · hint "Epo favours accounts that follow about as many people as follow them, and private accounts. They follow back most often." · **Follow requests**: "Accept follow requests automatically" + pill "Your account is private"/"Your account is public" + help "Each accepted request counts toward your daily and hourly limits." |
 | Unfollowing | Lead: "Epo unfollows people it followed who didn't follow back, so your following count stays healthy. Everyone in Protection is always kept." · "If someone doesn't follow back, unfollow them after" 2 days · 4 days · 1 week · "When someone follows you back": "Unfollow them after {hold} days. Most keep following you, and your following count stays low." / "Keep following them. Your following count grows over time." · "People you followed yourself" (accounts Epo didn't follow for you): "Leave them alone" *(Recommended)* · "Unfollow those who don't follow back, a few a day" · "…more each day" |
 | Cleanup confirm | "Epo found {n} accounts you follow that don't follow you back (checked {ago}). {k} of them are protected and will be kept. Epo will unfollow the rest a few at a time, mixed into its normal sessions, inside your daily limits." [Turn on] [Review the list] [Cancel] · Without a census: "Epo will first check who follows you back (reading only), then start slowly." |
-| Protection | Lead: "Epo never unfollows anyone protected here — not in its daily cycle, not when cleaning up, not during Boost — whether or not they follow you back." · People: "Never unfollow these accounts" · "Add @username" · [Paste a list] · badges "You follow · Follows you" / "Renamed from @{old}" / "Not seen yet — check the spelling" / "Not among accounts you follow" / "Not a valid username" · Empty: "No one yet. Add friends, family or brands you want to keep following." · Keywords: "Never unfollow anyone whose bio mentions…" · "{word} · {n} people" · "Add a word or phrase" · hint "Matches anywhere in the bio, ignoring capitals, accents and fancy fonts. Epo re-reads the bio right before every unfollow. If it can't read a bio, it keeps the account and checks again later." · "Keep verified accounts" + "Accounts with Instagram's verified badge: brands, creators and public figures." · "Also always kept: your starting account and the accounts Epo explores through." · Summary: "Protecting {p} of the {f} accounts Epo has seen you follow · Kept so far: {k} · Bios not read yet: {u} (checked before any unfollow)." · Remove toast: "Removed @{u} from Protection. [Undo]" · Own-follow note: "Accounts Epo follows that match your keywords are kept too, even if they don't follow back." |
+| Protection | Lead: "Epo never unfollows anyone protected here — not in its daily cycle, not when pruning, not during Boost — whether or not they follow you back." · People: "Never unfollow these accounts" · "Add @username" · [Paste a list] · badges "You follow · Follows you" / "Renamed from @{old}" / "Not seen yet — check the spelling" / "Not among accounts you follow" / "Not a valid username" · Empty: "No one yet. Add friends, family or brands you want to keep following." · Keywords: "Never unfollow anyone whose bio mentions…" · "{word} · {n} people" · "Add a word or phrase" · hint "Matches anywhere in the bio, ignoring capitals, accents and fancy fonts. Epo re-reads the bio right before every unfollow. If it can't read a bio, it keeps the account and checks again later." · "Keep verified accounts" + "Accounts with Instagram's verified badge: brands, creators and public figures." · "Also always kept: your starting account and the accounts Epo explores through." · Summary: "Protecting {p} of the {f} accounts Epo has seen you follow · Kept so far: {k} · Bios not read yet: {u} (checked before any unfollow)." · Remove toast: "Removed @{u} from Protection. [Undo]" · Own-follow note: "Accounts Epo follows that match your keywords are kept too, even if they don't follow back." |
 | Protection paused | needs-review: "Check your protection list before Epo unfollows anyone. Epo restored it from a saved copy." [Review protection] → [My protection list is right] · unavailable: "Epo couldn't read your settings and found no saved copy, so it won't unfollow anyone until you check Protection." |
 | Boost (Settings) | Lead: "Boost has Epo spend the next hours finding and following new people. Unfollowing, cleanup and routine checks wait until it ends. Your daily safety limits never change." · "Default length" · "Keep accepting follow requests during Boost" + "Matters only for private accounts: their follow-backs arrive as requests." · Checklist: "More follows and more exploring of new accounts" · "Unfollows, cleanup and follow-back checks wait" · "Quiet hours and days off still apply" · "Your daily and hourly limits never go up" · "This is where you choose how long a Boost lasts. Start or end one with the Boost button in the left panel. [Show me]" · On: "Boost is on until {time} · {n} follows so far · [End Boost]" |
 | Boost (sidebar) | One control, one tap: button "⚡ Boost for {h} h" / "Start Epo and Boost" · preview "Until {time} · about +{n} follows today, within your usual limits · {k} unfollows will wait" · link "Change length in Settings" · act-now only: "Boost starts working now instead of at {time}. There are no unfollows to swap today, so follows stay about {n}." · disabled: "Today has no unfollows to swap for follows, and Epo is already working." · backlog: "Too many unfollows are still waiting from earlier Boosts. Boost is available again in about {d} days." · light day: "Today is a light day — Boost would shape tomorrow's sessions until {time}." · "Most of this falls in your quiet hours; Boost starts at {time}." · "Today's limit is already reached; Boost starts helping tomorrow." · Paused: "⚡ Boost on until {time} — Epo is stopped. Press Start to use it." · On: "⚡ Boost on · ends {time} · {h} h {m} m left" [End Boost] · Waiting: "⚡ Boost starts at {time} (quiet hours)" · Ended toast: "Boost ended. Unfollows that waited will be spread over the next sessions." · Unavailable: "Sign in to use Boost" / "Choose a starting account first" / "Epo needs your attention first" |
@@ -4760,7 +4773,7 @@ ceiling, velocity. Risk is a *share of Instagram's known limits*, never a warnin
 ## Appendix C — Sidebar, boot, stage, feed contracts and copy (normative)
 
 Reconciled from T3 §10 and §15 with §14 (C3, C4, C7, C8, C22, C26) and revision 2 (the landing behind the splash,
-posture inputs, one-tap Boost, Clean up, liveOpText ownership). Where a line here and §1–§24 disagree, §1–§24 win.
+posture inputs, one-tap Boost, Prune, liveOpText ownership). Where a line here and §1–§24 disagree, §1–§24 win.
 
 All payload types live in `src/shared/*`: pure, renderer-safe, never importing `@/types` (the cycle hub,
 U12 §3.3) or `@/kernel`. New renderer files import only renderer, shared and `@/ipc/contract` code, so the
@@ -5152,7 +5165,7 @@ export declare class LogRing {
 
 // ── src/main/window/stage-controller.ts (≤ 150 lines) ────────────────────────────────────────
 export interface StageController {
-  set(mode: StageMode, covered: boolean): Promise<void>;   // validates, serializes, curtain-reveals into Live
+  set(mode: StageMode, covered: boolean, reducedMotion?: boolean): Promise<void>;   // validates, serializes, cuts under reduced motion
   cover(): void;                                            // boot: tab under the dashboard from frame 1
   current(): { mode: StageMode; covered: boolean };
   onPosture(p: Posture): void;                              // window title + macOS Dock badge (posture.ts from F2b)
@@ -5254,7 +5267,7 @@ export function flipInsert(container: HTMLElement, mutate: () => void, opts?: { 
 export function BootGate(p: { children: ComponentChildren }): JSX.Element;  // readiness R4, captions, intro, bootRevealed()
 
 // app/StageHost.tsx · app/PopoverHost.tsx
-export function StageHost(p: { mode: StageMode; active: boolean; mount: 'eager' | 'on-activation' | 'lazy';   // Graph eager; People/Clean up on activation; Settings lazy
+export function StageHost(p: { mode: StageMode; active: boolean; mount: 'eager' | 'on-activation' | 'lazy';   // Graph eager; People/Prune on activation; Settings lazy
   children: ComponentChildren }): JSX.Element;
 export interface PopoverRequest { anchor: Element; content: () => JSX.Element; labelledBy: string }
 export function usePopover(): { open(r: PopoverRequest): void; close(): void };   // clamps to the sidebar rect on the Live stage
@@ -5297,9 +5310,9 @@ projection, never a literal.
 | `resting` | Resting | "Between sessions." | "Next session at 2:40 PM" |
 | `working` | Working | the live op sentence; else "Finding people through @studio.lumen's followers" (source); Boost: "Finding and following new people"; careful: "Checking that Instagram's limit has lifted" | "Next step in 1:12" |
 
-- **Primary labels:** Start · Starting… · Pause · Resume · Sign in · Set up · Pause clean-up · Resume clean-up ·
-  Open Live · Choose account · Check for updates · Open Clean up · Diagnostics.
-- **Secondary labels:** Stop · Stop clean-up · Start.
+- **Primary labels:** Start · Starting… · Pause · Resume · Sign in · Set up · Pause pruning · Resume pruning ·
+  Open Live · Choose account · Check for updates · Open Prune · Diagnostics.
+- **Secondary labels:** Stop · Stop pruning · Start.
 - **Stop toast:** "Stopped. Today's progress is kept. [Undo]".
 - **Pills** (indicators only): "⚡ Boost" · "Practice".
 
@@ -5321,7 +5334,7 @@ projection, never a literal.
 | `seed-missing` | Choose a starting account so Epo knows where to find people. | choose-seed |
 | `seed-unresolved` | Epo couldn't open your starting account. Check the spelling, or choose another. | choose-seed |
 | `runtime-error` | Something unexpected stopped Epo. Press Start to try again. | start |
-| `scan-failed`, `run-failed` | Clean-up stopped early. Your previous check is kept. Try again from the Clean up page. | open-prune |
+| `scan-failed`, `run-failed` | Pruning stopped early. Your previous check is kept. Try again from the Prune page. | open-prune |
 | `actions-unconfirmed` | Epo couldn't confirm its last {n} {unfollows/follows}, so they wait until the next session. If it happens again, Epo takes a break. | wait |
 | `runtime-recovery-exhausted` | The Instagram page needed several repairs in a short time. Check the Live tab, then press Start. | show-live |
 | `tab-recovery-failed`, `wake-recovery-failed`, `wake-sentinel-failed`, `wake-reconciliation-failed` | The Instagram page didn't recover by itself. Check the Live tab, then press Start. | show-live |
@@ -5355,14 +5368,14 @@ repairs … within an hour" (`runtime-copy.ts:14`).
 
 | Reason | Text |
 |---|---|
-| `prune-running` | A clean-up is using Instagram. Epo starts when it finishes. |
+| `prune-running` | Pruning is using Instagram. Epo starts when it finishes. |
 | `manual-running` | Epo is finishing a quick task. Try again in a moment. |
 | `starting` | One moment — Epo is finishing starting up. |
 | `runtime-not-ready` | Epo needs your attention first (see above). |
 | `offline` | You're offline. Epo starts when you're back online. |
 | `not-logged-in` | Sign in to Instagram first. |
 | `engine-running` | Epo is busy. Pause it first. |
-| `boost-active` | Boost is on. End Boost to run a clean-up now. |
+| `boost-active` | Boost is on. End Boost to run Prune now. |
 | `nothing-to-shift` | Today has no unfollows to swap for follows, and Epo is already working. |
 | `backlog` | Too many unfollows are still waiting from earlier Boosts. Boost is available again in about {d} days. |
 | any other | That didn't work. Diagnostics has details. |
@@ -5396,7 +5409,7 @@ repairs … within an hour" (`runtime-copy.ts:14`).
 | Kind | Copy |
 |---|---|
 | followed | "Followed @jane" · grouped "Followed 6 people · @a, @b +4" · Boost suffix "· Boost" · you: "You followed @jane" · practice: "Practice: would follow @jane" |
-| unfollowed | "Unfollowed @carl · didn't follow back" · "· after following back" · "· clean-up" · "You unfollowed @carl" · practice: "Practice: would unfollow @carl" |
+| unfollowed | "Unfollowed @carl · didn't follow back" · "· after following back" · "· Pruned" · "You unfollowed @carl" · practice: "Practice: would unfollow @carl" |
 | followed-back | "@bob followed you back" (+ "· 2 days after you followed" when dated) |
 | new-followers | dated: "@dana started following you" · grouped "3 new followers · @a, @b +1" · undated: "Found 3 new followers" |
 | lost-followers | "2 people stopped following you" (a count only; owner Q30) |
@@ -5442,7 +5455,7 @@ repairs … within an hour" (`runtime-copy.ts:14`).
   4. **Results:** "Your results: followers gained today, your follower count, and who followed back."
   5. **Activity:** "Everything Epo did, including what happened while you were away."
   6. **Stage bar** (Live stage, card docked over the sidebar): "Live shows Instagram as Epo uses it; sign in
-     there first. People, Graph and Clean up show who Epo works with. Settings is where you choose how Epo works.
+     there first. People, Graph and Prune show who Epo works with. Settings is where you choose how Epo works.
      ⌘1–⌘5 switch pages."
   7. **Settings:** T2's step.
   8. **Done:** "Sign in on the Live tab, choose a starting account, and press Start. You can replay this tour
@@ -6229,7 +6242,7 @@ export declare function catchUpStep(sweep: FrontierSweep, admit: () => CatchUpAd
 | Catch-up skipped | "Catching up after Instagram's limit clears." · "Catching up when you're back online." |
 | Net today tooltip | "Changes Epo can place on today. Changes from while Epo was closed that can't be placed on one day are under 'While you were away'." |
 | Census does not fit today | "Your followers list is too long to check in one of today's sessions — Epo checks it in a longer session." |
-| Census too large | "Your followers list is too long to check in full, so Epo won't clean up people you followed yourself. Everything else works as usual." |
+| Census too large | "Your followers list is too long to check in full, so Epo won't prune people you followed yourself. Everything else works as usual." |
 
 Avoid: "human", "bot", "mimic", "emulate", "stealth", "natural", "detect". The ADR 0212 amendment also neutralizes
 its own "the bot cannot expire them".
@@ -6252,7 +6265,7 @@ code evidence. Items adopted as proposed are not repeated here.
 2. **Launch readiness.** Adopted for the IG first navigation, the landing and `confirm-account`, which now run behind
    the splash (bounded by the derived `IG_READY_DEADLINE_MS`). The catch-up's drawer pass stays **after** the reveal:
    its typical cost is 20–60 s (§9.6), which would turn the splash into a minute-long wait; the owner's "fully
-   preloaded" is met by the data, the eager Graph, the preloaded People/Clean up data and the already-landed profile.
+   preloaded" is met by the data, the eager Graph, the preloaded People/Prune data and the already-landed profile.
    Q40 asks the owner about the longer splash.
 3. **Boost volume.** The lead's decision ("reallocates, never adds") stays the default and is made honest (the
    `nothing-to-shift` and `light-day` reasons, a disabled Start, laws L13b/L14b). The A4-compatible alternative is put

@@ -236,6 +236,10 @@ const fileOf = (e: Entry): string => e.key.split(' :: ')[0];
 const isLiteral = (e: Entry): boolean => !/^[A-Za-z_]+[.]([A-Za-z_]+|[*])$/.test(e.key.split(' :: ')[3]);
 
 describe('the tree against static-timing.allow.json', () => {
+  test('the completed migration has no pending timings', () => {
+    expect(allow.filter((entry) => entry.class === 'PENDING')).toEqual([]);
+  });
+
   test('every finding is listed', () => {
     const unlisted = [...found]
       .filter(([key, lines]) => lines.length > (listed.get(key) ?? 0))

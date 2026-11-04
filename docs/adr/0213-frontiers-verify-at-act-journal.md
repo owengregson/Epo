@@ -78,3 +78,17 @@ supervisor, its presence holds, `REENTRY_POLICY` and the timezone comparison are
   time away; with no return phase there is nothing to hold.
 - A stored anchor list for the followers head: a re-follower at the top would fake the frontier; the run
   of known followers needs no list.
+
+
+## Read allowances and entry spacing
+
+The draw's head allowance uses identified gains plus the positive follower-header residual since
+its last head frontier (or complete census). Missing evidence contributes zero, reserving the two
+pages a frontier run can straddle; the hard frontier maximum still bounds large hints. The measured
+head page size takes precedence over the last complete census's page-size measurement, then the
+kernel fallback. Census admission fits both lists in the current session before either walk begins.
+
+The drawer shares the Reader's observed-response memo with every other consumer. Sweep header
+visits retain their `catch-up` or `check` debit use. The dialog fallback shares the graph's activity
+clock, and boot landing/identity confirmation record their ends there so the first catch-up read
+waits from the completed landing. No additional pre-reveal navigation is introduced.

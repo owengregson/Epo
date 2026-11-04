@@ -17,6 +17,7 @@
 
 import type { Sentinel } from '@/adapter/sentinel';
 import type { PruneScanFetch, PruneScanOpts } from '@/engine/prune-engine';
+import { measuredRowsPerPage } from '@/kernel/derive-reentry';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { ListPageWalker } from '@/rim/list-page-walker';
 import type { WalkResult } from '@/rim/list-walk-types';
@@ -77,13 +78,13 @@ export async function walkOwnList(args: WalkOwnListArgs): Promise<OwnListFetch> 
   }
 
   if (args.walker !== undefined && args.ownPk !== undefined) {
+    const pageSizes: number[] = [];
     const walk = await args.walker.walkAll({
       pk: args.ownPk,
       which,
       onObservation: args.onRow,
+      stopAfterPage: (page) => { pageSizes.push(page.length); return false; },
       sentinel,
-      pageMinMs: opts?.scrollMinMs,
-      pageMaxMs: opts?.scrollMaxMs,
       shouldStop: opts?.shouldStop,
       onProgress: opts?.onProgress,
       readUse: 'census',
@@ -95,7 +96,10 @@ export async function walkOwnList(args: WalkOwnListArgs): Promise<OwnListFetch> 
     // Only a failure to FETCH falls back; a shape mismatch would drift identically
     // through the dialog path.
     if (walk.reason !== 'fetch-failed') {
-      return { pks: walk.pks, complete: walk.complete, reason: walk.reason, quarantined: walk.quarantined,
+      // The last page may be short or a plain end probe; only earlier pages measure a full page.
+      const full = pageSizes.slice(0, -1);
+      return { rowsPerPage: measuredRowsPerPage({ rows: full.reduce((sum, size) => sum + size, 0), fullPages: full.length }, null),
+        pks: walk.pks, complete: walk.complete, reason: walk.reason, quarantined: walk.quarantined,
         rows: walk.pks.length, pages: walk.pages,
         ...(walk.endEvidence === undefined ? {} : { endEvidence: walk.endEvidence }),
         ...(walk.stopDetail === undefined ? {} : { stopDetail: walk.stopDetail }),
@@ -108,15 +112,13 @@ export async function walkOwnList(args: WalkOwnListArgs): Promise<OwnListFetch> 
   }
 
   const result = await args.pageReader.collect({
-    dialog: which,
+    dialog: which, readUse: 'census',
     targetUsername: args.ownUsername,
     onObservation: args.onRow,
     sentinel,
-    maxRounds: args.bounds.maxRounds,
+    maxRounds: Math.min(args.bounds.maxRounds, args.census === undefined ? args.bounds.maxRounds : Math.max(0, args.census.pages - 1)),
     noNewStop: args.bounds.noNewStop,
     shouldStop: opts?.shouldStop,
-    scrollMinMs: opts?.scrollMinMs,
-    scrollMaxMs: opts?.scrollMaxMs,
     onProgress: opts?.onProgress,
     // An unopened dialog must FAIL the scan, never read as an empty list.
     throwOnOpenFailure: true,
@@ -127,7 +129,7 @@ export async function walkOwnList(args: WalkOwnListArgs): Promise<OwnListFetch> 
   return {
     pks: result.observedPks,
     complete: result.endReason === 'no-more-pages',
-    reason: result.endReason,
+    reason: result.endReason, pages: result.pages, rowsPerPage: result.rowsPerPage,
     ...(result.retryAt === undefined ? {} : { retryAt: result.retryAt }),
   };
 }

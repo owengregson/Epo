@@ -13,7 +13,6 @@ import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
 import { CompatibilityNotice } from '@/renderer/live/CompatibilityNotice';
 import { CompatibilityLine } from '@/renderer/settings/compatibility/CompatibilityLine';
 import { CompatibilityPanel } from '@/renderer/settings/compatibility/CompatibilityPanel';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { SurfaceReport, SurfaceSummary } from '@/shared/surface-health';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
@@ -41,7 +40,7 @@ const report = (over: Partial<SurfaceReport> = {}): SurfaceReport => ({
 });
 
 beforeEach(() => {
-  fake = installFakeBridge(DEFAULT_SETTINGS);
+  fake = installFakeBridge();
   toast.mockReset();
 });
 

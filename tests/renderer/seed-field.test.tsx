@@ -10,7 +10,6 @@ import type { ComponentChildren } from 'preact';
 import { ShellContext, settingsFactsSignal, settingsViewSignal, statusSignal } from '@/renderer/app/shell-context';
 import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
 import { SettingsStage } from '@/renderer/settings/SettingsStage';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { SeedStatus, SettingsFacts } from '@/shared/settings-facts';
 import type { SettingsSaveResult } from '@/shared/settings-ops';
 import type { SettingsView } from '@/shared/settings-view';
@@ -35,7 +34,7 @@ async function mount(f: SettingsFacts | null, v: SettingsView = view()): Promise
 }
 
 beforeEach(() => {
-  bridge = installFakeBridge(DEFAULT_SETTINGS);
+  bridge = installFakeBridge();
 });
 
 describe('the starting-account field', () => {

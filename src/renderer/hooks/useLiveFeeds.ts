@@ -12,7 +12,7 @@ import {
 import { settingsFactsSignal, settingsViewSignal, statusSignal } from '@/renderer/app/shell-context';
 import { LANE_STATE } from '@/renderer/cards/queues/lanes';
 import { DEFAULT_GROWTH_WINDOW, windowDays } from '@/renderer/charts/growth-window';
-import { chainListKey } from '@/renderer/hooks/useChainList';
+import { chainListKey } from '@/renderer/hooks/chain-list-key';
 import { useKeepAlivePoll } from '@/renderer/hooks/useKeepAlivePoll';
 
 /** A pushed channel as a keep-alive subscription. */

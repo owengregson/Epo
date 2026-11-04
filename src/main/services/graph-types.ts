@@ -23,12 +23,10 @@ import type { CursorObserver } from '@/interaction/input-driver';
 import type { PlanDayClock } from '@/kernel/plan';
 import type { CatchUpLaunch } from '@/main/modules/catch-up';
 import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import type { IgActivityClock } from '@/rim/ig-activity-clock';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { FollowerAcquisition } from '@/rim/types';
 import type { EffectiveSettings } from '@/settings/effective';
-import type {
-  Settings,
-} from '@/settings/settings';
 import type { StartupStep } from '@/shared/boot';
 import type { SettingsCapabilities } from '@/shared/settings-view';
 import type { StatusFields } from '@/shared/status-fields';
@@ -53,6 +51,7 @@ export interface WiringParts {
 export interface GraphPlan {
   readonly service: PlanService;
   readonly dayClock: PlanDayClock;
+  readonly activity: IgActivityClock;
   /** The machine woke: the plan and its next edge are re-read from the wall clock. */
   resumed(): void;
   /** A census completed: the remainder re-plans its demand. */
@@ -144,14 +143,12 @@ export interface GraphBuildDeps {
   /** The Foundation's one ScheduleManager (the follow-back sweep cadence rides it). */
   scheduler: ScheduleManager;
   /** The settings snapshot the graph is constructed from. */
-  settings: Settings;
+  settings: EffectiveSettings;
   /** Re-read of the live settings (the persisted cadence getters call this). */
-  resolveSettings(): Settings;
+  resolveSettings(): EffectiveSettings;
   /** The settings service's protection surface: the live index and the capability flags (spec §6.3, §7). */
   protection: { index(): ProtectionIndex; setCapabilities(patch: Partial<SettingsCapabilities>): void };
   plan: PlanHost;
-  /** Persist a settings patch (cadence timestamps, `pruneLastRunAt`). */
-  updateSettings(partial: Partial<Settings>): void;
   /** The v1 sweep stamp the settings migration carried: taken once by the reopen state, then consumed (spec §9.11). */
   bookkeeping?: { take(): { readonly forPk: string | null; readonly sweepLastRunAt: number | null } | null; consume(): void };
   /** The launch's state the catch-up admits on, and BL's landing (spec §9.6); absent: no catch-up step. */

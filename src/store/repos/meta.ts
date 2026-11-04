@@ -31,6 +31,8 @@ export const META_KEYS = {
   planState: 'plan_state',
   /** The reopen frontiers; raw JSON owned by the frontier sweep. */
   reopenState: 'reopen_state',
+  /** Complete outside-follow checks and discoveries retained through interrupted reads. */
+  outsideFollowing: 'outside_following',
   /** Set-once stamp of the follower change log's deterministic backfill. */
   followerChangesBackfilledAt: 'follower_changes_backfilled_at',
   /** The surface latency reservoir; raw JSON owned by the surface sink. */

@@ -149,32 +149,3 @@
 .pcomp-legend .dot.unresolvable {
   background: #63687a;
 }
-
-/* Whitelist add row: input + Add button on one line (input margin lives on the row). */
-.wl-add {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  margin-top: var(--sp-2);
-}
-.wl-add .tinput {
-  flex: 1;
-  min-width: 0;
-  margin-top: 0;
-}
-.wl-add .tbtn {
-  flex: 0 0 auto;
-}
-
-/* Whitelist entries: removable chips — the × warms to danger on hover. */
-.wl-chips {
-  margin-top: var(--sp-3);
-}
-.wl-chip .icon {
-  font-size: var(--fs-micro);
-  margin-left: var(--sp-1);
-  color: var(--faint);
-}
-.wl-chip:hover .icon {
-  color: var(--danger);
-}

@@ -4,6 +4,7 @@
  * fields, requesters and the current relationship decide it. A refusal before the visit spends no read.
  */
 
+
 import { ActionAbortedError, ActionDeferredError, ActionReviewedError } from '@/adapter/errors';
 import { journalBlocks } from '@/engine/journal';
 import { freshSubject } from '@/engine/protection-gate';
@@ -12,8 +13,9 @@ import type { Clock } from '@/governors/clock';
 import type { Admission } from '@/governors/plan-types';
 import type { ReadBudget } from '@/governors/read-budget';
 import type { MutationKind, Writer } from '@/kernel/plan';
-import type { ProfileSeen, ProfileVisitor } from '@/rim/profile-visit-port';
-import { type Settings, toScorerConfig } from '@/settings/settings';
+import { countsUnread, type ProfileSeen, type ProfileVisitor } from '@/rim/profile-visit-port';
+import type { EffectiveSettings } from '@/settings/effective';
+import { toScorerConfig } from '@/settings/mappers';
 import { type ClickVerdict, protectionClickVerdict } from '@/shared/click-verdict';
 import { NEVER_PAUSED, type SurfaceGate } from '@/shared/surface-gate';
 import { type ProtectionIndex, protectionVerdict } from '@/shared/unfollow-protection';
@@ -25,7 +27,7 @@ export interface ClickReviewDeps {
   clock: Clock;
   readBudget: ReadBudget;
   profiles(): ProfileVisitor;
-  settings(): Settings;
+  settings(): EffectiveSettings;
   /** The live protection index (the settings service's): every unfollow is judged on it (spec §7). */
   protection(): ProtectionIndex;
   signal(): AbortSignal | undefined;
@@ -52,6 +54,7 @@ const deferred = (reason: string, until: number | null): ActionDeferredError =>
 /** The click-review half of the mutation policy (see `mutation-policy.ts`). */
 export function createClickReview(d: ClickReviewDeps) {
   const { store, clock, readBudget, ownPk, active } = d;
+  let dispatchReview: { username: string; pk: string; seen: ProfileSeen } | null = null;
 
   /** Steps 0a–0c: the plan with this account's journal, the surface gate, a paused index, the read. */
   const admit = (action: 'follow' | 'unfollow', pk: string): void => {
@@ -68,7 +71,7 @@ export function createClickReview(d: ClickReviewDeps) {
   /** Steps 1–4: the visit's own outcome. A wall goes to the recovery ladder, unchanged. */
   const visit = async (username: string, pk: string, token: AbortSignal | undefined): Promise<ProfileSeen> => {
     const started = clock.now();
-    const seen = await d.profiles().visit(username);
+    const seen = await d.profiles().visit(username, { pk });
     if (!await active() || token?.aborted || token !== d.signal()) throw new ActionAbortedError('profile-admission');
     if (!seen.ok && seen.kind === 'walled') throw new ActionDeferredError('profile walled', { reason: 'walled', until: null });
     if (!seen.ok) throw reviewed({ kind: 'unavailable', evidence: seen.kind === 'gone' ? 'absent' : 'unreadable' });
@@ -78,13 +81,18 @@ export function createClickReview(d: ClickReviewDeps) {
     return seen;
   };
 
-  /** Steps 5–13 on the fresh page (after its edge write); returning means proceed. */
-  const unfollowReview = (username: string, pk: string, seen: ProfileSeen, now: number): void => {
+  /** Protection uses the current rules against this visit's evidence, including immediately before dispatch. */
+  const protect = (username: string, pk: string, seen: ProfileSeen): void => {
     const verdict = protectionClickVerdict(protectionVerdict(freshSubject(seen.obs, username), d.protection()));
     if (verdict !== null) throw reviewed(verdict);
     if (store.getTarget(pk) || store.getAccount(pk)?.role === 'retained_target') {
       throw reviewed({ kind: 'protected', by: 'source', match: pk });
     }
+  };
+
+  /** Steps 5–13 on the fresh page (after its edge write); returning means proceed. */
+  const unfollowReview = (username: string, pk: string, seen: ProfileSeen, now: number): void => {
+    protect(username, pk, seen);
     const v = seen.viewer;
     // Step 7: they asked to follow you — the fresh flag (which also records the request) or an open request.
     const asked = v.incomingRequest === true;
@@ -103,17 +111,40 @@ export function createClickReview(d: ClickReviewDeps) {
   };
 
   return {
+    /** A local guard for every press of this action: reuse its evidence against the latest protection rules. */
+    dispatchGuard: (): (() => void) => {
+      const r = dispatchReview;
+      dispatchReview = null;
+      return () => {
+        if (r === null) return;
+        if ((d.surfaceGate ?? NEVER_PAUSED).paused('unfollows')) throw deferred('surface-paused', null);
+        protect(r.username, r.pk, r.seen);
+        if (store.getEdge(r.pk, ownPk, 'requests')?.status === 'active') throw reviewed({ kind: 'request-pending' });
+      };
+    },
     prepareProfile: async (username: string, expectedPk: string, action: 'follow' | 'unfollow'): Promise<void> => {
+      dispatchReview = null;
       const token = d.signal();
       if (!await active()) throw new ActionAbortedError('profile-admission');
       admit(action, expectedPk);
       const seen = await visit(username, expectedPk, token);
+      // Recovered/partial facts may enrich the pool, but cannot prove a follow is still eligible (§10.6).
+      if (action === 'follow' && (seen.tier === 'recovered' || seen.partial || countsUnread(seen))) {
+        throw reviewed({ kind: 'unavailable', evidence: 'unreadable' });
+      }
       const now = seen.obs.observedAt;
       d.onProgress?.('mutation-profile-verified');
       if (seen.viewer.followsUs !== null) store.observeEdge(expectedPk, ownPk, 'follows', seen.viewer.followsUs, now, { source: 'visit' });
-      if (action === 'unfollow') return unfollowReview(username, expectedPk, seen, now);
+      if (action === 'unfollow') {
+        unfollowReview(username, expectedPk, seen, now);
+        dispatchReview = { username, pk: expectedPk, seen };
+        return;
+      }
       const account = store.getAccount(expectedPk);
       const rec = store.getFollowRecord(expectedPk);
+      const freshCounts = [seen.obs.fields.followers, seen.obs.fields.following]
+        .every((n) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0);
+      if (rec?.state === 'queued' && !freshCounts) throw reviewed({ kind: 'unavailable', evidence: 'unreadable' });
       if (rec?.state === 'queued' && (!account || !scoreCandidate(account, toScorerConfig(d.settings())).eligible)) {
         store.upsertFollowRecord({ ...rec, score: 0 });
         throw new ActionDeferredError('profile no longer eligible');

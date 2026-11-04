@@ -43,9 +43,11 @@ describe('look before acting', () => {
   const run = async (tempo: ReturnType<typeof referenceTempoSource>) => {
     const calls: string[] = [];
     const pauses: number[] = [];
-    const review = async (username: string): Promise<void> => { calls.push(`review:${username}`); };
+    const guard = jest.fn();
+    const review = async (username: string): Promise<() => void> => { calls.push(`review:${username}`); return guard; };
     const wrapped = lookBeforeActing(review, tempo, undefined, async (ms) => { calls.push('pause'); pauses.push(ms); });
-    await wrapped?.('jane', 'pk1', 'unfollow');
+    expect(await wrapped?.('jane', 'pk1', 'unfollow')).toBe(guard);
+    expect(guard).not.toHaveBeenCalled();
     return { calls, pauses };
   };
 

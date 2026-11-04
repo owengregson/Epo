@@ -218,3 +218,20 @@ describe('the activity clock (spec §5.13 S2b, §5.16)', () => {
     expect(other.activity.lastEndAt()).toBeNull();
   });
 });
+
+
+test('demand uses census page measurement until a head walk measures it and hints known plus residual gains', () => {
+  const s = store();
+  s.setOwnPk('ME');
+  const plan = wire(s, planClock(T0));
+  const window = plan.service.view(T0).window;
+  s.savePruneCensus({ at: T0 - 100, following: 0, followers: 100, scrapedFollowing: 0, scrapedFollowers: 100,
+    notFollowingBack: 0, candidates: 0, rowsPerPage: 25 });
+  s.ensureFollowersBaseline(T0 - 1000);
+  s.observe({ accountPk: 'ME', source: 'profile', observedAt: T0 - 100, fields: { followers: 100, following: 0 } });
+  s.observeEdge('gain', 'ME', 'follows', true, T0 - 50);
+  s.observe({ accountPk: 'ME', source: 'profile', observedAt: T0, fields: { followers: 106, following: 0 } });
+  const demand = planDemand(s, effectiveFromV1(DEFAULT_SETTINGS), 'ME', window, T0);
+  expect(demand.census.rowsPerPage).toBe(25);
+  expect(demand.headGainsHint).toBe(6);
+});

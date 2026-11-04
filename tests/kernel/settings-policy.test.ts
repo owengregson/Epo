@@ -19,15 +19,15 @@ test("the scorer's recommendations are today's defaults, one declaration", () =>
 });
 
 test('the v1 defaults restate the policy (the frozen v1 file keeps its own copy)', () => {
-  const { RATIO_CURVE, AUDIENCE_SIZE, PRIVATE_EDGE, RECOMMENDED, INTERIM } = SETTINGS_POLICY;
+  const { RATIO_CURVE, AUDIENCE_SIZE, PRIVATE_EDGE, RECOMMENDED, V1_MIGRATION } = SETTINGS_POLICY;
   expect(DEFAULT_SETTINGS).toMatchObject({
     ...RATIO_CURVE, minFollowers: AUDIENCE_SIZE.everyday.min, maxFollowers: AUDIENCE_SIZE.everyday.max,
     privateBoost: PRIVATE_EDGE, minPoolSize: RECOMMENDED.minPoolSize, lowWaterCandidates: RECOMMENDED.lowWaterCandidates,
-    minFollowBackRate: RECOMMENDED.minFollowBackRate, pruneDailyLimit: INTERIM.pruneDailyLimit,
-    followbackSweepHours: INTERIM.followbackSweepHours,
+    minFollowBackRate: RECOMMENDED.minFollowBackRate, pruneDailyLimit: V1_MIGRATION.pruneDailyLimit,
+    followbackSweepHours: V1_MIGRATION.followbackSweepHours,
   });
   // v1 ships with the schedule off; the interim census spacing is what a schedule that was on recommends.
-  expect(INTERIM.pruneScheduleDays).toBeGreaterThan(DEFAULT_SETTINGS.pruneScheduleDays);
+  expect(V1_MIGRATION.pruneScheduleDays).toBeGreaterThan(DEFAULT_SETTINGS.pruneScheduleDays);
 });
 
 test('the follow-back floor is the exploration prior, linked rather than a twin literal', () => {

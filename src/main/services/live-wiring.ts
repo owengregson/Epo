@@ -40,7 +40,7 @@ function resumeTargetContributor(deps: LiveWiringDeps): StatusContributor {
   const frontierOf = (graph: BuiltGraph): ResumeFrontier => {
     if (deps.frontier !== undefined) return deps.frontier;
     if (readOnly?.store !== graph.store) {
-      readOnly = { store: graph.store, frontier: new SourceFrontier({ store: graph.store, clock: graph.clock }) };
+      readOnly = { store: graph.store, frontier: new SourceFrontier({ store: graph.store, clock: graph.clock, planDay: graph.plan.dayClock }) };
     }
     return readOnly.frontier;
   };

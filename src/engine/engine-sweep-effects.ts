@@ -1,6 +1,6 @@
 /**
  * The follow-back sweep (spec §9.6): the frontier sweep in session or check mode — every step's failure
- * ends that step only, so a sweep always ends — then the churn timers it made due, and pacing.
+ * ends that step only, so a sweep always ends — then advances the churn timers it made due.
  */
 
 import type { EngineDeps, StepResult, SweepCadence } from './ports';
@@ -11,7 +11,6 @@ export interface EngineSweepContext {
   readonly sweepCadence: SweepCadence;
   superseded(token: AbortController): boolean;
   noteProgress(phase: string): void;
-  pacingSleep(): Promise<void>;
 }
 
 /** The first sweep of an open plan session runs in session mode; later ones, and any outside a session, check. */
@@ -26,13 +25,12 @@ export function sweepModeAt(deps: Pick<EngineDeps, 'pacing'>, lastSweepEndedAt: 
 /** Run one sweep, then advance the timers it made due. */
 export async function runFollowbackSweep(ctx: EngineSweepContext, token: AbortController): Promise<StepResult> {
   const { clock, followback, churn } = ctx.deps;
-  const mode = sweepModeAt(ctx.deps, ctx.sweepCadence.lastSweepEndedAt?.() ?? null, clock.now());
+  const mode = sweepModeAt(ctx.deps, ctx.sweepCadence.lastSweepEndedAt() ?? null, clock.now());
   await followback.run(mode, token.signal);
   if (ctx.superseded(token)) return 'aborted';
   const at = clock.now();
   ctx.sweepCadence.markRun(at);
   churn.advanceTimers(at);
   ctx.noteProgress('relationships-reconciled');
-  await ctx.pacingSleep();
   return 'swept-followback';
 }

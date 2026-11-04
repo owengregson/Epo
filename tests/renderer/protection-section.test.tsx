@@ -11,7 +11,6 @@ import { ShellContext, settingsFactsSignal, settingsViewSignal } from '@/rendere
 import { GALLERY_SETTINGS_FACTS, GALLERY_SETTINGS_VIEW } from '@/renderer/gallery/settings-fixture';
 import { parseHandles } from '@/renderer/settings/fields/PeopleList';
 import { SettingsStage } from '@/renderer/settings/SettingsStage';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { SettingsFacts } from '@/shared/settings-facts';
 import type { SettingsOp, SettingsSaveResult } from '@/shared/settings-ops';
 import type { SettingsView } from '@/shared/settings-view';
@@ -36,7 +35,7 @@ async function mount(f: SettingsFacts | null = GALLERY_SETTINGS_FACTS, v: Settin
 }
 
 beforeEach(() => {
-  bridge = installFakeBridge(DEFAULT_SETTINGS);
+  bridge = installFakeBridge();
 });
 
 describe('the Protection section', () => {

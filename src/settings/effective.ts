@@ -1,8 +1,4 @@
-/**
- * What the engine consumes (spec §6.9, Appendix B.3): a flat record keeping the v1 field names wherever the
- * meaning is unchanged, so the `toXConfig` mappers and engine call sites barely move. There is no alias: the
- * renderer keeps the frozen v1 `Settings` until the Settings stage replaces it.
- */
+/** The current engine settings, resolved from intent and Advanced overrides. Frozen v1 inputs are migration-only. */
 import { SCORER_DEFAULTS } from '@/engine/scorer';
 import { derivePattern } from '@/kernel/derive';
 import { deriveQuietHours, type QuietWindow } from '@/kernel/derive-schedule';
@@ -15,7 +11,6 @@ import { patternOf } from './basis';
 import type { SettingsDocV2 } from './doc';
 import type { PatternSettings } from './pattern-map';
 import { numberOf, type ResolvedParams } from './resolve';
-import { DEFAULT_SETTINGS } from './v1/settings-v1';
 import type { Settings } from './v1/settings-v1-types';
 
 export interface EffectiveSettings {
@@ -50,12 +45,6 @@ export interface EffectiveSettings {
   // prefs
   dryRun: boolean;
   boost: { readonly hours: number; readonly acceptRequests: boolean };
-  /** @transitional — the sweep cadence moves to plan checks. */
-  followbackSweepHours: number;
-  /** @transitional — the prune daily plan and the scheduled prune are deleted. */
-  pruneDailyLimit: number; pruneScheduleDays: number;
-  /** @transitional — superseded by the walk.page tempo. */
-  pruneScanMinSeconds: number; pruneScanMaxSeconds: number;
 }
 
 /**
@@ -81,16 +70,13 @@ export function effectiveFromV1(v1: Settings): EffectiveSettings {
     hourlyVelocityCap: v1.hourlyVelocityCap,
     quietHours: null, daysOff: [],
     checkSpacingHoursOverride: null, cleanupPerDayOverride: null, censusEveryDaysOverride: null,
-    // Today's engine paces the scan from pruneScan*Seconds itself, so no walk.page factor here.
+    // Refused migration runs under review; the v1 file has no plan tempo overrides.
     tempoOverrides: {},
     weaveEnabled: v1.weaveEnabled, maxUnfollowFractionPerSession: v1.maxUnfollowFractionPerSession,
     lowWaterCandidates: v1.lowWaterCandidates, minFollowBackRate: v1.minFollowBackRate, minPoolSize: v1.minPoolSize,
     dryRun: v1.dryRun,
     // v1 has no Boost; its preferences read as the defaults until a v2 document exists.
     boost: { hours: SETTINGS_POLICY.BOOST.DEFAULT_HOURS, acceptRequests: true },
-    followbackSweepHours: v1.followbackSweepHours,
-    pruneDailyLimit: v1.pruneDailyLimit, pruneScheduleDays: v1.pruneScheduleDays,
-    pruneScanMinSeconds: v1.pruneScanMinSeconds, pruneScanMaxSeconds: v1.pruneScanMaxSeconds,
   };
 }
 
@@ -112,7 +98,6 @@ export function effectiveFrom(doc: SettingsDocV2, r: ResolvedParams): EffectiveS
   const curve = r['audience.ratioCurve'].value as RatioCurve;
   const range = r['audience.followerRange'].value as { min: number; max: number };
   const cleanupOn = intent.cleanup !== 'off';
-  const scanFactor = overridden('tempo.walk.page') ?? 1;
   return {
     seed: doc.seed,
     ...curve, minFollowers: range.min, maxFollowers: range.max, privateBoost: n('audience.privateBoost'),
@@ -138,9 +123,5 @@ export function effectiveFrom(doc: SettingsDocV2, r: ResolvedParams): EffectiveS
     lowWaterCandidates: n('explore.refillBelow'), minFollowBackRate: n('explore.moveOnRate'), minPoolSize: n('explore.moveOnPool'),
     dryRun: prefs.practice,
     boost: { ...prefs.boost },
-    followbackSweepHours: n('checks.everyHours'),
-    pruneDailyLimit: n('unfollow.cleanupPerDay'), pruneScheduleDays: cleanupOn ? n('unfollow.censusEveryDays') : 0,
-    pruneScanMinSeconds: DEFAULT_SETTINGS.pruneScanMinSeconds * scanFactor,
-    pruneScanMaxSeconds: DEFAULT_SETTINGS.pruneScanMaxSeconds * scanFactor,
   };
 }

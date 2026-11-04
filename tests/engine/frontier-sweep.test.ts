@@ -109,7 +109,7 @@ test('a session reads the following list when its count moved outside Epo, once 
   const { sweep, calls } = sweepWith();
   const res = await sweep.run('session', new AbortController().signal);
   expect(calls.following).toBe(1);
-  expect(store.reopen.get()?.following).toEqual({ checkedAt: NOW, count: 3, complete: true });
+  expect(store.reopen.get()?.following).toEqual({ checkedAt: NOW, count: 3, complete: true, added: 2 });
   expect(res.summary?.following.outsideEpo).toBe(1);
   clock.advance(HOUR);
   await sweep.run('session', new AbortController().signal);

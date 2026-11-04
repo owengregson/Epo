@@ -1,6 +1,5 @@
 /**
  * LiveTestHarness — the engine of the live action smoke-test.
- *
  * Reuses the production rim/adapter/store and prints a PASS/FAIL report.
  * Reads are paced; acquireMaxRounds bounds both direct pages and fallback
  * scroll rounds, and enrichCap bounds profile reads. Follow/unfollow require
@@ -31,6 +30,7 @@ import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { FollowerAcquisition } from '@/rim/types';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS, toRateGovernorConfig, toScannerConfig, toScorerConfig } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { HARNESS, SCHEDULER } from '@/timing/config';
@@ -88,8 +88,6 @@ interface LiveTestConfig {
   dryRun: boolean;
   opDelayMinMs: number;
   opDelayMaxMs: number;
-  enrichPaceMinMs: number;
-  enrichPaceMaxMs: number;
   followUnfollowGapMs: number;
   acquireMaxRounds: number;
   enrichCap: number;
@@ -132,8 +130,6 @@ export class LiveTestHarness {
       dryRun: process.env.EPO_TEST_DRY === '1',
       opDelayMinMs: envInt('EPO_TEST_OP_DELAY_MIN_MS', HARNESS.OP_DELAY_MIN_MS),
       opDelayMaxMs: envInt('EPO_TEST_OP_DELAY_MAX_MS', HARNESS.OP_DELAY_MAX_MS),
-      enrichPaceMinMs: envInt('EPO_TEST_ENRICH_PACE_MIN_MS', HARNESS.ENRICH_PACE_MIN_MS),
-      enrichPaceMaxMs: envInt('EPO_TEST_ENRICH_PACE_MAX_MS', HARNESS.ENRICH_PACE_MAX_MS),
       followUnfollowGapMs: envInt('EPO_TEST_FOLLOW_UNFOLLOW_GAP_MS', HARNESS.FOLLOW_UNFOLLOW_GAP_MS),
       acquireMaxRounds: envInt('EPO_TEST_ACQUIRE_ROUNDS', 3),
       enrichCap: envInt('EPO_TEST_ENRICH_CAP', 5),
@@ -501,7 +497,7 @@ export class LiveTestHarness {
       dryRun: this.cfg.dryRun,
     });
 
-    const scorerCfg = toScorerConfig(DEFAULT_SETTINGS);
+    const scorerCfg = toScorerConfig(effectiveFromV1(DEFAULT_SETTINGS));
     const scanner = new Scanner({ store, scorerCfg, cfg: toScannerConfig(DEFAULT_SETTINGS) });
 
     logger.info('livetest: graph built', {

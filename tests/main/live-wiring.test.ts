@@ -158,7 +158,7 @@ test('a built Foundation pushes the real feed when a write settles', async () =>
 });
 
 describe('the resume target', () => {
-  const graphOf = (s: KnowledgeStore): BuiltGraph => ({ store: s, clock: { now: () => NOW } }) as unknown as BuiltGraph;
+  const graphOf = (s: KnowledgeStore): BuiltGraph => ({ store: s, clock: { now: () => NOW }, plan: { dayClock: utcDays } }) as unknown as BuiltGraph;
   const contributor = (frontier?: SourceFrontier) => {
     const parts = liveWiringParts(frontier === undefined ? {} : { frontier });
     expect(parts.startupSteps).toEqual([]);

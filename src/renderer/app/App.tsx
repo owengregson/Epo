@@ -2,6 +2,7 @@ import { type JSX } from 'preact';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { ConfirmHost } from '@/renderer/app/ConfirmHost';
 import { liveRevealedSignal, liveSlotSignal } from '@/renderer/app/live-signals';
+import { reducedMotionSignal } from '@/renderer/app/motion-signal';
 import { PopoverHost } from '@/renderer/app/PopoverHost';
 import { StageBar } from '@/renderer/app/StageBar';
 import { StageHost } from '@/renderer/app/StageHost';
@@ -22,7 +23,6 @@ import { useEngineStatus } from '@/renderer/hooks/useEngineStatus';
 import { useGraphBoard } from '@/renderer/hooks/useGraphBoard';
 import { useLiveFeeds } from '@/renderer/hooks/useLiveFeeds';
 import { usePruneStatus } from '@/renderer/hooks/usePruneStatus';
-import { useSettings } from '@/renderer/hooks/useSettings';
 import { useStageRequest } from '@/renderer/hooks/useStageRequest';
 import { useToasts } from '@/renderer/hooks/useToasts';
 import { useTourGate } from '@/renderer/hooks/useTourGate';
@@ -50,14 +50,14 @@ export function App(): JSX.Element {
   // nothing, so a push re-renders only the components that read it.
   useEngineStatus();
   usePruneStatus();
-  useSettings();
   useLiveFeeds();
 
   const toasts = useToasts();
   const confirmCtl = useConfirm();
   const updateStatus = useUpdateStatus();
   const control = useControl(toasts.push);
-  const tour = useTourGate(useCallback(() => showStage('tab'), []));
+  const tour = useTourGate(useCallback(() => showStage('tab'), []), toasts.push);
+  const reducedMotion = reducedMotionSignal.value;
   // Both are stable callbacks, so the services object is built once.
   const services = useMemo<ShellServices>(
     () => ({ confirm: confirmCtl.confirm, toast: toasts.push }),
@@ -73,8 +73,8 @@ export function App(): JSX.Element {
   const revealed = liveRevealedSignal.value;
   useEffect(() => {
     modalSignal.value = modalOpen;
-    void window.epo.setStage(stage, modalOpen || !revealed);
-  }, [stage, modalOpen, revealed]);
+    void window.epo.setStage(stage, modalOpen || !revealed, reducedMotion);
+  }, [stage, modalOpen, revealed, reducedMotion]);
 
   useStageRequest(showStage, !tour.open);
   useUpdateToasts(updateStatus, tour.open, toasts.push);
@@ -125,7 +125,7 @@ export function App(): JSX.Element {
         <TooltipHost />
         <PopoverHost />
         <ConfirmHost {...confirmCtl.state} onClose={confirmCtl.close} />
-        <Tour open={tour.open} onClose={tour.closeTour} setStage={showStage} />
+        <Tour steps={tour.steps} open={tour.open} onClose={tour.closeTour} setStage={showStage} />
       </div>
       </ShellControlsContext.Provider>
     </ShellContext.Provider>

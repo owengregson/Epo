@@ -100,8 +100,7 @@ export class ListPageWalker {
     const form = SURFACE.listForm(which);
     const endpoint = which === 'following' ? 'following-list' : 'followers-list';
 
-    // Live veil readout: an 'api' phase counting rows as they arrive; `maxNewPks` (when set)
-    // is a real denominator, so the overlay draws a determinate bar.
+    // Rows stream to the veil; the requested count gives a real progress denominator.
     const reportActivity = (count: number): void =>
       this.reporter.report({
         kind: 'api',
@@ -205,8 +204,7 @@ export class ListPageWalker {
       const callerNewBefore = callerNewPks;
       for (const obs of parsed.facts) {
         if (!observed.has(obs.accountPk)) {
-          // Newness to the CALLER must be judged BEFORE onObservation writes
-          // the row's edge into the store, or every row would read as known.
+          // Judge newness before writing the edge into the store.
           if (args.isKnown === undefined || !args.isKnown(obs.accountPk)) callerNewPks += 1;
         }
         observed.add(obs.accountPk);
@@ -221,6 +219,8 @@ export class ListPageWalker {
       rows += parsed.facts.length;
       quarantined += parsed.rowIssues.length;
       lastPage = { rows: parsed.facts.length, continuation: continuation.kind };
+      // Partial GraphQL data also withholds absence, even when its pagination flags look final.
+      if (read.partial) { reason = 'shape-mismatch'; stopDetail = 'incomplete-stream'; break; }
       // The caller's stop, once this page's rows are written and before any pacing sleep.
       if (args.stopAfterPage?.(parsed.facts) === true) { reason = 'caller-stop'; break; }
 
@@ -251,8 +251,7 @@ export class ListPageWalker {
         this.reader.report({ endpoint, cls: 'end-claim-false', path: '(walk)', detail: { pages } }, now);
       }
 
-      // Demand-driven stop (growth acquisition): the caller has the NEW pks it needs —
-      // end here, resume cursor intact. Newness is caller-level when `isKnown` is given.
+      // Demand met: end here with the resume cursor intact.
       const demandMet =
         args.maxNewPks !== undefined &&
         (args.isKnown === undefined ? observed.size : callerNewPks) >= args.maxNewPks;

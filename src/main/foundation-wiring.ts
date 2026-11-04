@@ -18,6 +18,7 @@
  * silent `catch {}`).
  */
 
+
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -54,7 +55,7 @@ import { openGraphPlanDay } from '@/main/services/plan-wiring';
 import { RuntimeCoordinator, type RuntimeSnapshot } from '@/main/services/runtime-coordinator';
 import { TabLease } from '@/main/services/tab-lease';
 import { TabActivity } from '@/main/tab-activity';
-import type { Settings } from '@/settings/settings';
+import type { EffectiveSettings } from '@/settings/effective';
 import { RECOVERY, SCHEDULER, TAB } from '@/timing/config';
 import { sample, sleep, TIMED_OUT, withTimeout } from '@/timing/primitives';
 import { ScheduleManager } from '@/timing/schedule-manager';
@@ -65,7 +66,7 @@ import type {
   ChainTargetView,
   EpoStatus,
   FollowState,
-  GraphSnapshot,
+  GraphSnapshotRead,
   GrowthSeriesRead,
   PruneControlResult,
   PruneScanResult,
@@ -205,7 +206,7 @@ export class Foundation {
   private preparation: AbortController | null = null;
   private readonly signals = new DriverSignal();
 
-  /** Settings load, cache, persist and live reload. */
+  /** EffectiveSettings load, cache, persist and live reload. */
   readonly settings: SettingsService;
   /** The manual prune controls and the scheduled prune over them. */
   private readonly prune: PruneControl;
@@ -757,7 +758,7 @@ export class Foundation {
 
   /** Hold self-starting work until the first-launch tour is complete. */
   tourPending(): boolean {
-    return this.resolveSettings().tourCompletedAt === null;
+    return this.settings.app().tourCompletedAt === null;
   }
 
   /** Pause growth during the tour; return only a pause that the tour itself owns. */
@@ -1140,7 +1141,6 @@ export class Foundation {
       settings: this.resolveSettings(), resolveSettings: () => this.resolveSettings(),
       protection: { index: () => this.settings.protection(), setCapabilities: (p) => this.settings.setCapabilities(p) },
       plan: { runIntent: () => this.runtime.snapshot().desired, settings: this.settings, pushStatus: () => this.pushStatus() },
-      updateSettings: (partial) => { void this.updateSettings(partial); },
       bookkeeping: { take: () => this.settings.takeBookkeeping(), consume: () => { this.settings.apply([{ op: 'consume-bookkeeping' }], 'system'); } },
       launch: { signedInPk: () => this.igSession.readCookie('ds_user_id'), online: () => this.lastOnline, block: () => this.runtime.snapshot().blockedReason,
         tabFree: () => !this.lease.tourHeld() && !this.manualDriving && !this.isEngineDriving() && [null, 'startup'].includes(this.lease.owner()),
@@ -1229,17 +1229,15 @@ export class Foundation {
     }
   }
 
-  /**
-   * Cumulative net own-follower growth per day for the last `days` days
-   * (default 14 when omitted or invalid — the IPC boundary is untyped), plus
-   * the followers-measurement baseline the renderer's window/momentum honesty
-   * gates read. Builds the graph if needed; empty read when not logged in.
-   * Never throws.
-   */
+  /** Cumulative net follower growth for the renderer's explicit span; missing or invalid spans refuse the read. */
   async growthSeries(days?: number): Promise<GrowthSeriesRead> {
+    if (typeof days !== 'number' || !Number.isFinite(days) || days < 1) {
+      logger.warn('foundation.growthSeries: an explicit positive day span is required');
+      return { points: [], baselineAt: null };
+    }
     const graph = await this.builtGraph();
     if (graph === null) return { points: [], baselineAt: null };
-    const d = typeof days === 'number' && Number.isFinite(days) && days >= 1 ? Math.floor(days) : 14;
+    const d = Math.floor(days);
     try {
       return {
         points: graph.store.netGrowthSeries(d, graph.ownPk),
@@ -1274,10 +1272,10 @@ export class Foundation {
    * and sweeps). Null before login/build — there is nothing to draw. Never
    * throws across IPC.
    */
-  async graphSnapshot(): Promise<GraphSnapshot | null> {
-    const graph = await this.builtGraph();
-    if (graph === null) return null;
+  async graphSnapshot(): Promise<GraphSnapshotRead> {
     try {
+      const graph = await this.builtGraph();
+      if (graph === null) return null;
       const settings = this.resolveSettings();
       return shapeGraphSnapshot(graph.store.graphSnapshotRows(), {
         now: graph.clock.now(),
@@ -1285,12 +1283,11 @@ export class Foundation {
       });
     } catch (e) {
       logger.error('foundation.graphSnapshot: failed', { error: String(e) });
-      return null;
+      return { unavailable: true };
     }
   }
 
   /** The persisted settings (loaded lazily and cached; defaults on any failure). */
-  getSettings(): Promise<Settings> { return this.settings.getSettings(); }
 
   /**
    * Wipe everything EXCEPT settings: tear down the graph, delete the knowledge DB
@@ -1348,11 +1345,8 @@ export class Foundation {
     return s;
   }
 
-  /** Merge, persist and live-reload a settings partial (see {@link SettingsService.updateSettings}). */
-  updateSettings(partial: Partial<Settings>): Promise<Settings> { return this.settings.updateSettings(partial); }
-
-  /** The cached settings, loaded once from disk (see {@link SettingsService.resolveSettings}). */
-  private resolveSettings(): Settings { return this.settings.resolveSettings(); }
+  /** The current resolved settings, including live intent and overrides. */
+  private resolveSettings(): EffectiveSettings { return this.settings.effective(); }
 
   // -------------------------------------------------------------------------
   // Status projection helpers
@@ -1383,7 +1377,7 @@ export class Foundation {
   }
 
   private notBuiltPruneStatus(): PruneStatus {
-    return notBuiltPruneStatus(this.resolveSettings());
+    return notBuiltPruneStatus();
   }
 
   private notBuiltStatus(loggedIn: boolean): EpoStatus {

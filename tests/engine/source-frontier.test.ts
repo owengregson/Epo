@@ -12,7 +12,7 @@ import { makeEngineHarness } from '../kit/engine-harness';
 import { openTestStore } from '../kit/store';
 
 let store: KnowledgeStore;
-const now = 20 * POLICY.endedRevisitMs;
+const now = 20 * 7 * 86_400_000;
 let clock: FakeClock;
 let frontier: SourceFrontier;
 beforeEach(() => {
@@ -63,11 +63,11 @@ test('rechecking a deferred source does not restart its deadline; ended sources 
   account('a'); frontier.beginVisit('a', 'seed');
   frontier.endVisit('a', 'verified-ended');
   const deadline = frontier.nextResumeAt();
-  clock.advance(POLICY.lowYieldRevisitMs);
+  clock.advance(86_400_000);
   frontier.endVisit('a', 'verified-ended');
   expect(frontier.nextResumeAt()).toBe(deadline);
   expect(frontier.next()).toBeNull();
-  clock.advance(POLICY.endedRevisitMs);
+  clock.advance(7 * 86_400_000);
   expect(frontier.next()?.pk).toBe('a');
 });
 

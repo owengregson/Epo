@@ -3,15 +3,15 @@
   "allow": [
     {
       "file": "src/main/foundation-wiring.ts",
-      "lines": 1392
+      "lines": 1386
     },
     {
       "file": "src/engine/prune-engine.ts",
-      "lines": 1107
+      "lines": 1077
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 918
+      "lines": 915
     },
     {
       "file": "src/kernel/derive.ts",
@@ -23,7 +23,7 @@
     },
     {
       "file": "src/livetest/steps.ts",
-      "lines": 720
+      "lines": 716
     },
     {
       "file": "src/adapter/actor.ts",
@@ -54,35 +54,31 @@
       "lines": 390
     },
     {
-      "file": "src/rim/follower-acquisition.ts",
-      "lines": 359
-    },
-    {
-      "file": "src/types.ts",
-      "lines": 352
-    },
-    {
-      "file": "src/main/services/graph-builder.ts",
-      "lines": 351
-    },
-    {
-      "file": "src/rim/followers-page-reader.ts",
-      "lines": 351
-    },
-    {
       "file": "src/engine/recovery.ts",
       "lines": 339
     },
     {
-      "file": "src/rim/list-page-walker.ts",
-      "lines": 326
+      "file": "src/types.ts",
+      "lines": 337
     },
     {
-      "file": "src/renderer/charts/GrowthChart.tsx",
+      "file": "src/rim/follower-acquisition.ts",
+      "lines": 328
+    },
+    {
+      "file": "src/rim/followers-page-reader.ts",
+      "lines": 325
+    },
+    {
+      "file": "src/rim/list-page-walker.ts",
       "lines": 325
     },
     {
       "file": "src/kernel/policy.ts",
+      "lines": 320
+    },
+    {
+      "file": "src/main/services/graph-builder.ts",
       "lines": 320
     }
   ]

@@ -145,3 +145,11 @@ describe('a moved container is read from its new place (C2, spec §10.6), never 
     expect(read.events?.map((e) => e.pk)).toEqual(['42']);
   });
 });
+
+
+test('an unexplained cursor key vetoes complete pending-set claims even beside false flags', () => {
+  const read = requests({ users: [{ pk: '31', username: 'user_031' }], big_list: false,
+    next_max_id: null, future_cursor: 'opaque', status: 'ok' });
+  expect(read.requests.rows).toHaveLength(1);
+  expect(read.requests.pendingComplete).toBe(false);
+});

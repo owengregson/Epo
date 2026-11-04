@@ -55,7 +55,7 @@ export function boostActiveAt(boost: BoostWindow | null, t: number): boolean {
 export function viewPlan(plan: DayPlan, inputs: PlanViewInputs): PlanView {
   const { now, used, intent } = inputs;
   const usage = { auto: used.auto, follow: used.follow, perSession: used.perSession, joinedAt: inputs.joinedAt };
-  const statuses = plan.sessions.map((_, i) => sessionStatus(plan, i, now, usage));
+  const statuses = plan.sessions.map((_, i) => sessionStatus(plan, i, now, usage, intent.quietHours));
   const firstLater = statuses.findIndex((s) => s.state === 'later');
   const sessions = statuses.map((s, idx) => ({
     idx, state: (idx === firstLater ? 'next' : s.state) as SessionState, used: s.used, budget: s.budget, closesAt: s.closesAt,
@@ -70,14 +70,15 @@ export function viewPlan(plan: DayPlan, inputs: PlanViewInputs): PlanView {
   const share = (kind: keyof KindBudgets): number => {
     if (openPlanned === null || openPlanned.budget <= 0) return 0;
     const st = statuses[openIdx];
-    return Math.max(0, Math.round((openPlanned.mix[kind] * (st.budget - st.used)) / openPlanned.budget));
+    const spent = used.perSessionKinds?.[openIdx]?.[kind] ?? st.used;
+    return Math.max(0, Math.min(st.budget - st.used, Math.round((openPlanned.mix[kind] * st.budget) / openPlanned.budget) - spent));
   };
   const mixLeft: KindBudgets = openPlanned === null ? ZERO_KINDS : { follow: share('follow'), unfollow: share('unfollow'), accept: share('accept') };
   const tempo = openPlanned === null ? inputs.ambient : probation && !openPlanned.tempo.probation ? inputs.probationTempo(openIdx) : openPlanned.tempo;
   const tomorrowFirst = (): number | null => inputs.tomorrow()?.sessions.find((s) => s.budget > 0)?.startAt ?? null;
   const nextSessionAt = firstLater >= 0 ? plan.sessions[firstLater].startAt : tomorrowFirst();
-  const dayVolume = Math.max(plan.volume.drawn, plan.volume.planned);
-  const R = keptRemainder(plan, now, usage);
+  const dayVolume = Math.min(plan.ceilings.automaticMax, plan.volume.planned);
+  const R = keptRemainder(plan, now, usage, intent.quietHours);
   const remaining = Math.max(0, Math.min(R, dayVolume - used.auto, plan.ceilings.day - used.all - used.outside));
   const hourCap = probation ? plan.ceilings.probationHour : plan.ceilings.hour;
   const nextOrEdge = nextSessionAt ?? plan.window.endsAt;
@@ -95,7 +96,7 @@ export function viewPlan(plan: DayPlan, inputs: PlanViewInputs): PlanView {
     return used.accept >= plan.kinds.accept + plan.kinds.slack + Math.max(0, plan.kinds.follow - used.follow);
   };
 
-  const admits = (kind: MutationKind, writer: Writer, subject?: { pk: string; intentId?: string }): Admission => {
+  const admits = (kind: MutationKind, writer: Writer, subject?: { pk: string; intentId?: string }, ownedDeadline?: number): Admission => {
     if (subject !== undefined && inputs.journal.blocks(subject.pk, subject.intentId)) return refuse('journal', null);
     if (kind !== 'accept' && inputs.unconfirmed !== null && inputs.unconfirmed.kind === kind) return refuse('unconfirmed', null);
     if (!AUTOMATIC.includes(writer)) return manualOpen();
@@ -106,11 +107,13 @@ export function viewPlan(plan: DayPlan, inputs: PlanViewInputs): PlanView {
     if (probation && inputs.hourly.lastHour >= hourCap) {
       return refuse('probation', velocityWakeAt(inputs.hourly.recentTimes, hourCap, now));
     }
-    if (inputs.deadline !== null && inputs.deadline > now) return refuse('deadline', inputs.deadline);
+    const passOwnsGap = kind === 'accept' && writer === 'accept-pass' && inputs.deadline === ownedDeadline;
+    if (inputs.deadline !== null && inputs.deadline > now && !passOwnsGap) return refuse('deadline', inputs.deadline);
     if (used.auto >= dayVolume || (remaining <= 0 && firstLater < 0)) return refuse('day-done', tomorrowFirst() ?? plan.window.endsAt);
     if (kind === 'unfollow' && (boostOn || mixOf === 'boost')) return refuse('deferred-by-boost', inputs.boost?.endsAt ?? null);
     if (openPlanned === null) return refuse('session-closed', nextOrEdge);
     if (kindSpent(kind)) return refuse('kind-spent', plan.window.endsAt);
+    if (kind === 'unfollow' && mixLeft.unfollow <= 0) return refuse('kind-spent', nextOrEdge);
     return OK;
   };
 
@@ -128,6 +131,7 @@ export function viewPlan(plan: DayPlan, inputs: PlanViewInputs): PlanView {
     freshSince: plan.window.startsAt,
     tempo,
     admits,
+    admitsAcceptDuringPass: (ownedDeadline) => admits('accept', 'accept-pass', undefined, ownedDeadline),
     manualOpen,
     checkDue: (lastSweepEndedAt) => openPlanned !== null && (lastSweepEndedAt === null || lastSweepEndedAt < openPlanned.startAt
       || (mixOf === 'normal' && now - lastSweepEndedAt >= spacing)),

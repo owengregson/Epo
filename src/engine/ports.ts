@@ -8,10 +8,11 @@
  * `engine.ts` re-exports every name here, so consumers may import from either.
  */
 
+import type { EffectiveSettings } from '@/settings/effective';
+
 import type { SentinelStatus } from '../adapter/sentinel';
 import type { Clock } from '../governors/clock';
 import type { AcquireEndReason } from '../rim/follower-acquisition';
-import type { Settings } from '../settings/settings';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { FollowRecord } from '../store/types';
 import type { DelayManager } from '../timing/delay-manager';
@@ -29,7 +30,6 @@ export type { EnginePacing, EngineRate };
 export type StepResult =
   | 'aborted'
   | 'halted'
-  | 'waited-active-hours'
   | 'waited-session'
   | 'waited-ceiling'
   | 'swept-followback'
@@ -43,12 +43,10 @@ export type EngineState = 'idle' | 'running' | 'paused' | 'halted';
 
 /** The follow-back sweep's cadence port (see {@link EngineDeps.sweepCadence}). */
 export interface SweepCadence {
-  /** Due when no plan is consulted (the legacy model): `everyMs` since the last sweep ended. */
-  isDue(now: number, everyMs: number): boolean;
   /** A sweep ended (the in-memory kit records it; production's frontier sweep persists its own end). */
   markRun(now: number): void;
-  /** The last sweep's end, the plan's check anchor (spec C11); absent in kits that keep the legacy cadence. */
-  lastSweepEndedAt?(): number | null;
+  /** The last sweep's end, the plan's check anchor (spec C11). */
+  lastSweepEndedAt(): number | null;
 }
 
 // ---------------------------------------------------------------------------------
@@ -175,7 +173,7 @@ export interface EngineEnricher {
  * from the completed census as ONE interleaved action stream (so unfollows never burst
  * and the follow→unfollow batch-correlation signal is defeated). Implemented by the
  * PruneEngine over its scanned candidate set; only consulted in the organic model with
- * `Settings.weaveEnabled`. `nextCandidate` is pure selection (live whitelist + live-graph
+ * `EffectiveSettings.weaveEnabled`. `nextCandidate` is pure selection (live whitelist + live-graph
  * follows-us guard + freshness + daily cap; consumes only leading skips) and mutates
  * nothing actionable until `executeUnfollow`, which does the DOM unfollow + ledger row +
  * edge reconcile and returns the outcome.
@@ -219,7 +217,7 @@ export interface EngineDeps {
    * `ProfileEnricher` in production; tests inject a fake).
    */
   enricher: EngineEnricher;
-  settings: Settings;
+  settings: Pick<EffectiveSettings, 'seed' | 'lowWaterCandidates' | 'weaveEnabled'>;
   /**
    * The plan (spec §5.15): the one pacing model. The loop parks exactly where the plan says
    * (sessions, the day done, the rolling hour) and serves the deadline the dispatch armed.
@@ -228,7 +226,7 @@ export interface EngineDeps {
   /**
    * The woven prune-unfollow feed. Injected by the composition root (the
    * PruneEngine); the loop weaves its candidates into the action stream only in the
-   * organic model when `Settings.weaveEnabled`. Absent → no woven unfollows.
+   * organic model when `EffectiveSettings.weaveEnabled`. Absent → no woven unfollows.
    */
   unfollowFeed: EngineUnfollowFeed;
   /**
@@ -241,10 +239,8 @@ export interface EngineDeps {
   rng?: () => number;
   /**
    * Per-install noise entropy (store meta `install_entropy`, drawn once and
-   * persisted): seeds the DEDICATED timing-noise rng and the restart-stable
-   * daily-boundary jitter, so no two installs share wake offsets while one
-   * install's offset survives a mid-park relaunch. Absent (plain test
-   * fakes pass 0), keeping every noise draw deterministic under a fake clock.
+   * persisted): seeds the dedicated timing-noise stream and stable plan-day draws.
+   * Test rigs pass zero to keep their draws deterministic.
    */
   installEntropy: number;
   /**

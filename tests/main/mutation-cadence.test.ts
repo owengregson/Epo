@@ -121,6 +121,57 @@ describe('accept passes: one deadline per pass, inside the accept budget', () =>
     rig.clock.t = followDeadline + 2;
     expect(c.acceptAllowed(rig.clock.now())).toBe(true);
   });
+
+  test.each(['dailyHardCeiling', 'hourlyVelocityCap', 'dailyOperatingRate'] as const)(
+    'an owed pass rechecks a lowered %s before another accept', (key) => {
+      const c = cadence();
+      expect(c.acceptAllowed(rig.clock.now())).toBe(true);
+      const owed = c.acceptPassEnded(rig.clock.now());
+      write('accepted');
+      rig.host.change({ [key]: 1 });
+      expect(owed).toBeGreaterThan(rig.clock.now());
+      expect(c.acceptAllowed(rig.clock.now())).toBe(false);
+      expect(rig.store.getActionDelayDeadline()).toBe(owed);
+    });
+
+  test('a joined session closing ends its accept pass even while its own gap is owed', () => {
+    write('joined');
+    const open = view().open?.idx ?? 0;
+    const closesAt = view().sessions[open].closesAt ?? 0;
+    rig.clock.t = closesAt - 1;
+    const c = cadence();
+    expect(c.acceptAllowed(rig.clock.now())).toBe(true);
+    const owed = c.acceptPassEnded(rig.clock.now());
+    rig.clock.advance(2);
+    expect(owed).toBeGreaterThan(rig.clock.now());
+    expect(c.acceptAllowed(rig.clock.now())).toBe(false);
+  });
+
+  test('a lowered per-pass cap counts accepts already completed by the pass', () => {
+    let lowered = false;
+    const c = createMutationCadence({ store: rig.store, plan: { view: (now) => {
+      const v = rig.plan.service.view(now);
+      return lowered ? { ...v, plan: { ...v.plan, ceilings: { ...v.plan.ceilings, acceptsPerPass: 1 } } } : v;
+    } } });
+    expect(c.acceptAllowed(rig.clock.now())).toBe(true);
+    c.acceptPassEnded(rig.clock.now());
+    lowered = true;
+    expect(c.acceptAllowed(rig.clock.now())).toBe(false);
+  });
+
+  test.each(['day', 'session'] as const)('a changed %s cannot inherit an earlier accept pass', (changed) => {
+    let moved = false;
+    const c = createMutationCadence({ store: rig.store, plan: { view: (now) => {
+      const v = rig.plan.service.view(now);
+      if (!moved) return v;
+      return changed === 'day' ? { ...v, window: { ...v.window, key: `${v.window.key}-changed` } }
+        : { ...v, plan: { ...v.plan, sessions: v.plan.sessions.map((s) => ({ ...s, startAt: s.startAt + 1 })) } };
+    } } });
+    expect(c.acceptAllowed(rig.clock.now())).toBe(true);
+    c.acceptPassEnded(rig.clock.now());
+    moved = true;
+    expect(c.acceptAllowed(rig.clock.now())).toBe(false);
+  });
 });
 
 test('manualOpen is the ceiling and the hourly cap only', () => {

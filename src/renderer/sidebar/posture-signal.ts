@@ -5,18 +5,16 @@
  */
 import { computed, type ReadonlySignal } from '@preact/signals';
 import { activitySignal, pendingControlSignal } from '@/renderer/app/live-signals';
-import { pruneSignal, settingsFactsSignal, settingsSignal, settingsViewSignal, statusSignal } from '@/renderer/app/shell-context';
+import { pruneSignal, settingsFactsSignal, settingsViewSignal, statusSignal } from '@/renderer/app/shell-context';
 import { derivePosture, type Posture, type PostureInput } from '@/shared/posture';
 
-/** A starting account is chosen: the store's facts once built, else the settings view, else the old settings. */
+/** A starting account is chosen: the store's facts once built, else the settings view. */
 function seedChosen(): boolean {
   const facts = settingsFactsSignal.value;
   if (facts?.built) return facts.seed.kind !== 'none';
   const view = settingsViewSignal.value;
-  if (view !== null) return view.seed.trim() !== '';
-  const old = settingsSignal.value;
-  // Until any of them loads, assume yes: a first paint never flashes "Get set up" at a set-up install.
-  return old === null || Boolean(old.seed?.trim());
+  // Before the first projection, avoid flashing setup instructions at an existing install.
+  return view === null || view.seed.trim() !== '';
 }
 
 export const postureInputSignal: ReadonlySignal<PostureInput> = computed(() => {

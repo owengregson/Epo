@@ -55,14 +55,10 @@ export const ENGINE_WAIT_CLASS = {
  * one for the whole hold.
  */
 export type EngineParkReason =
-  /** @deprecated-renderer No wait parks under it any more (active hours retired); the old live-status card still names it. */
-  | 'active-hours'
   | 'daily-ceiling'
   | 'session'
   | 'velocity'
   | 'enrich-backoff'
-  /** @deprecated-renderer No wait parks under it any more; the old live-status card still names it. */
-  | 'reconcile-backoff'
   /** The rolling profile-read allowance is spent; it reopens at a known time. */
   | 'read-budget'
   | 'recovery';

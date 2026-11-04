@@ -1,7 +1,7 @@
 /**
  * The unfollowing rows of the parameter catalog (spec §6.5): follow-back wait and hold, pruning share and
  * daily cap, census spacing, attempts, and the follow-back check spacing (slower only, ≥ the briskest
- * derived spacing). The interim recommendations hold until the plan capability is on (spec C16).
+ * derived spacing).
  */
 import { CLEANUP, PATIENCE } from '@/kernel/derive';
 import { checkSpacingHours, ENVELOPE } from '@/kernel/derive-envelope';
@@ -11,7 +11,6 @@ import type { Intent } from '@/shared/settings-intent';
 import { type DeriveCtx, num, type ParamSpec } from './params-spec';
 
 const { whole, share, hours } = SETTINGS_POLICY.PARAM_STEP;
-const { INTERIM } = SETTINGS_POLICY;
 const ROW = { kind: 'int', step: whole, needs: null, deps: [], section: 'unfollow' } as const;
 
 const cleanupOff = (i: Intent): 'cleanup-off' | null => (i.cleanup === 'off' ? 'cleanup-off' : null);
@@ -38,14 +37,14 @@ export const LIFECYCLE_SPECS = {
   'unfollow.cleanupPerDay': {
     ...ROW, unit: 'per-day', risk: 'higher-is-riskier', applies: 'replan', deps: ['pace.dailyCeiling'],
     // With the plan the day's pruning is the plan's; an override only lowers it, so the ceiling recommends.
-    derive: (c: DeriveCtx) => (c.plan ? num(c, 'pace.dailyCeiling') : INTERIM.pruneDailyLimit),
+    derive: (c: DeriveCtx) => num(c, 'pace.dailyCeiling'),
     bounds: (c: DeriveCtx) => ({ min: G.cleanupPerDay.min, max: num(c, 'pace.dailyCeiling') }),
     inactive: cleanupOff,
   },
   'unfollow.censusEveryDays': {
     ...ROW, unit: 'days', risk: 'lower-is-riskier', applies: 'replan', deps: ['unfollow.waitDays'],
     // With the plan the census slot follows the follow-back wait.
-    derive: (c: DeriveCtx) => (c.plan ? num(c, 'unfollow.waitDays') : INTERIM.pruneScheduleDays),
+    derive: (c: DeriveCtx) => num(c, 'unfollow.waitDays'),
     bounds: () => G.censusEveryDays,
     inactive: cleanupOff,
   },
@@ -56,7 +55,7 @@ export const LIFECYCLE_SPECS = {
   },
   'checks.everyHours': {
     ...ROW, kind: 'number', step: hours, unit: 'hours', risk: 'lower-is-riskier', applies: 'replan',
-    derive: (c: DeriveCtx) => (c.plan ? checkSpacingHours(1) : INTERIM.followbackSweepHours),
+    derive: () => checkSpacingHours(1),
     bounds: () => ({ min: ENVELOPE.checksEveryHours.min, max: G.checksEveryHours.max }),
   },
 } satisfies Record<string, ParamSpec>;

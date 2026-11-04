@@ -50,7 +50,6 @@ describe('timing/config — registry invariants', () => {
 
   test('every min/max pair is ordered', () => {
     expect(HARNESS.OP_DELAY_MIN_MS).toBeLessThanOrEqual(HARNESS.OP_DELAY_MAX_MS);
-    expect(HARNESS.ENRICH_PACE_MIN_MS).toBeLessThanOrEqual(HARNESS.ENRICH_PACE_MAX_MS);
     expect(RIM.NOTIFICATIONS_SCROLL_WAIT_MIN_MS).toBeLessThanOrEqual(
       RIM.NOTIFICATIONS_SCROLL_WAIT_MAX_MS,
     );

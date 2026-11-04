@@ -1,13 +1,4 @@
-/**
- * The dependency-graph construction step.
- *
- * `Foundation.build()` used to be a 400-line method reaching into `this` at
- * two dozen points; it is a free function here, taking every collaborator it
- * needs as an explicit {@link GraphBuildDeps} field. Construction ORDER is
- * load-bearing in one place only — the woven-unfollow feed closes over a
- * `pruneEngineRef` that the PruneEngine (built after the Engine) fills in;
- * that ref is only ever read at run time.
- */
+/** Compose one store, plan, activity clock and set of live ports for the signed-in account. */
 
 import * as path from 'node:path';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
@@ -33,7 +24,7 @@ import { SpacedListPageWalker } from '@/rim/spaced-list-walker';
 import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
 import {
   toChainConfig, toRateGovernorConfig, toScannerConfig, toScorerConfig,
-} from '@/settings/settings';
+} from '@/settings/mappers';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { DelayManager } from '@/timing/delay-manager';
 import { cryptoUniform } from '@/utils/entropy';
@@ -54,27 +45,16 @@ export function buildGraph(
   d: GraphBuildDeps,
 ): BuiltGraph {
   const store = new KnowledgeStore(path.join(d.userDataDir, d.dbFile), { policy: STORE_POLICY, rng: cryptoUniform });
-  // The reconciliation sink + already-following exclusion anchor on our own pk; store-first identity: the own
-  // username is the store's own account row unless confirm-account gave one (spec §12.8).
   store.setOwnPk(ownPk);
   const ownUsername = given ?? store.getAccount(ownPk)?.username;
   const clock = new SystemClock();
-  const frontier = new SourceFrontier({ store, clock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
-  // The shared wait owner: growth and prune wait through ONE DelayManager
-  // (keys namespaced `engine:` / `prune:`), so pending deadlines are readable
-  // from a single registry.
   const delays = new DelayManager({ clock });
   const { settings, driverSignal } = d;
   const plan = wirePlan(store, clock, ownPk, delays, d);
+  const frontier = new SourceFrontier({ store, clock, planDay: plan.dayClock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
   const readBudget = plan.readBudget;
   const rate = plan.rateGovernor(toRateGovernorConfig(settings));
 
-  // Interactor: every Actor click/scroll becomes native input events
-  // (sendInputEvent) shaped by the motion profile; the tab is the one Electron
-  // seam it drives. When a cursor observer is wired (the veil's digital-cursor
-  // display), the driver is decorated so every synthetic move/press also
-  // reports the virtual cursor's state — pure observation, the event stream is
-  // unchanged.
   const interactor = createTabInteractor(d.tab, {
     abortSignal: driverSignal,
     observer: d.cursorObserver, tempo: plan.tempo,
@@ -83,8 +63,6 @@ export function buildGraph(
   const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, cadence: plan.cadence, readBudget, dayClock: plan.dayClock,
     nextSessionAt: plan.nextSessionAt, surfaceGate: surfaceGateOf(store), cleanupRunning: () => pruneEngineRef?.status().state === 'running', profiles: () => profiles, followback: () => followback });
 
-  // The adapter owns the single Actor + Sentinel instances the whole rim shares;
-  // the Reader is pure and held directly.
   const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub, sink } = wireSurface({ tab: d.tab, store, ownPk, clock, day: plan.dayClock });
   const adapter = new InstagramAdapter(d.tab, {
     interactor,
@@ -93,7 +71,6 @@ export function buildGraph(
     beforeMutation: policy.beforeMutation,
     prepareProfile: policy.prepareProfile,
   });
-  // Log ONCE, at build, which Instagram surface capture this graph runs against.
   logger.info('foundation: instagram adapter surface', {
     adapterVersion: adapter.adapterVersion,
   });
@@ -112,12 +89,9 @@ export function buildGraph(
     tab: d.tab,
     reader,
     actor,
-    abortSignal: driverSignal, tempo: plan.tempo,
+    abortSignal: driverSignal, tempo: plan.tempo, activity: plan.activity,
     reporter: d.reporter,
   });
-  // The prune scan's FAST census path: direct friendships-API pagination at
-  // full page size (~4× the dialog's scroll batches). The sources fall back
-  // to the dialog-scroll pageReader when the direct walk cannot fetch.
   const listWalker = new SpacedListPageWalker(plan.activity, {
     onProgress: d.onProgress,
     readBudget,
@@ -127,9 +101,6 @@ export function buildGraph(
     reporter: d.reporter,
   });
 
-  // Growth acquisition pages the friendships API directly (cursor-resumed,
-  // demand-bounded via the walker); the dialog-scroll pageReader is its
-  // fallback, and the profile visitor serves the one-off seed pk resolution.
   const acquisition = new AdapterBackedAcquisition({
     onProgress: d.onProgress,
     readBudget,
@@ -138,7 +109,7 @@ export function buildGraph(
     sentinel,
     walker: listWalker,
     visitor: profiles,
-    ownPk, tempo: plan.tempo,
+    ownPk, tempo: plan.tempo, planDay: plan.dayClock,
   });
   const churnActions = new AdapterBackedChurnActions({
     validateIdentity: d.validateIdentity,
@@ -148,7 +119,6 @@ export function buildGraph(
     dryRun: settings.dryRun,
   });
 
-  // The prune scan's whole-followers-list scraper. Needs our username for the
   // dialog fallback path; when it could not be resolved the prune port below
   // degrades to a loud incomplete result.
   const liveOwnFollowers = ownUsername
@@ -187,14 +157,14 @@ export function buildGraph(
     ownPk,
     enricher,
     clock,
-    minPoolSize: settings.minPoolSize,
+    minPoolSize: settings.minPoolSize, planDay: plan.dayClock,
   });
 
   const churn = wireChurn(d, { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock: plan.dayClock, nextSessionAt: plan.nextSessionAt, reviewBound: plan.reviewBound });
   churn.advanceTimers(clock.now()); // timers that came due while Epo was closed move now, store-only (spec §9.2 T)
   const scanner = new Scanner({
     store,
-    scorerCfg: toScorerConfig(settings),
+    scorerCfg: toScorerConfig(settings), planDay: plan.dayClock,
     cfg: toScannerConfig(settings),
   });
   const { watcher: followback, sweep, cadence: sweepCadence, parts: reopenParts } = wireFollowback(d, { store, clock, ownPk, settings,
@@ -213,7 +183,7 @@ export function buildGraph(
     ownPk,
     discovery,
     ownFollowers: ownFollowersTarget,
-    cfg: toChainConfig(settings),
+    cfg: toChainConfig(settings), planDay: plan.dayClock,
   });
 
   // Woven prune feed: the growth loop drains unfollows from the PruneEngine's
@@ -229,7 +199,7 @@ export function buildGraph(
   };
 
   // Per-install noise entropy (store meta, drawn once): seeds the engines'
-  // dedicated timing-noise rngs + the restart-stable daily-boundary jitter.
+  // dedicated timing-noise rngs + the stable plan-day draws.
   const installEntropy = store.installEntropy();
 
   const engine = createEngine({ tempo: plan.tempo,
@@ -309,7 +279,6 @@ export function buildGraph(
     sentinel,
     delays,
     installEntropy,
-    lastRunAt: settings.pruneLastRunAt,
     plan: plan.prunePlan,
     onStatus: (s) => d.onPruneStatus(s),
     ...pruneUnfollowDeps(d, { settings, policy, ownUsername, dayClock: plan.dayClock }),

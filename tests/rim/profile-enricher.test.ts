@@ -201,3 +201,27 @@ test('a later successful stats observation heals the enrich-failed marker', asyn
   store.observe({ accountPk: '77', observedAt: 3, source: 'profile', fields: { followers: 10, following: 5 } });
   expect(store.getAccount('77')?.enrichFailedAt).toBeUndefined();
 });
+
+
+test('a known enrichment username carries its pk into profile recovery', async () => {
+  store.observe({ accountPk: 'known', source: 'profile', observedAt: 1, fields: { username: 'known_name' } });
+  const visit = jest.fn(async () => ok('known', 'known_name'));
+  const enricher = new AdapterBackedProfileEnricher({ store, clock, visitor: { visit },
+    sentinel: new FakeSentinel() as unknown as Sentinel });
+  await enricher.enrich(['known_name']);
+  expect(visit).toHaveBeenCalledWith('known_name', { pk: 'known' });
+});
+
+
+test.each([
+  { tier: 'recovered' as const }, { partial: true },
+  { obs: { accountPk: '42', observedAt: 1, source: 'profile' as const, fields: { username: 'partial', followers: 10 } } },
+])('a current incomplete or recovered profile is not successful enrichment: %j', async (changed) => {
+  const { enricher, visitor } = build();
+  const base = ok('42', 'partial');
+  if (!base.ok) throw new Error('fixture');
+  visitor.outcomes = { partial: { ...base, ...changed } };
+  expect(await enricher.enrich(['partial'])).toBe(0);
+  expect(visitor.visited).toEqual(['partial']);
+  expect(store.getAccount('42')?.enrichFailedAt).toBeUndefined();
+});

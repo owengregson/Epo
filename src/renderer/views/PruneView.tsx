@@ -52,8 +52,8 @@ export function PruneView(): JSX.Element {
     }
     let alive = true;
     window.epo.pruneCandidates().then(
-      (rows) => {
-        if (alive) setList(rows.length === 0 && remaining > 0 ? { kind: 'failed' } : { kind: 'ok', rows });
+      (result) => {
+        if (alive) setList(result.ok ? { kind: 'ok', rows: result.candidates } : { kind: 'failed' });
       },
       () => {
         if (alive) setList({ kind: 'failed' });

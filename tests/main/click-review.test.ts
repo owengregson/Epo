@@ -10,6 +10,7 @@ import type { Admission } from '@/governors/plan-types';
 import { ReadBudget } from '@/governors/read-budget';
 import { type ClickReviewDeps, createClickReview } from '@/main/services/click-review';
 import type { ProfileVisit } from '@/rim/profile-visit-port';
+import { effectiveFromV1 } from '@/settings/effective';
 import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { PausedActivity } from '@/shared/surface-gate';
 import { compileProtection } from '@/shared/unfollow-protection';
@@ -36,7 +37,7 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 const review = (over: Partial<ClickReviewDeps> = {}) => createClickReview({
-  store, ownPk: 'me', clock, readBudget: budget, profiles: () => ({ visit }), settings: () => DEFAULT_SETTINGS,
+  store, ownPk: 'me', clock, readBudget: budget, profiles: () => ({ visit }), settings: () => effectiveFromV1(DEFAULT_SETTINGS),
   protection: () => UNCONFIGURED_PROTECTION, signal: () => undefined, active: async () => true, ...over,
 });
 const profileReads = (): number => budget.snapshot().debits.filter((d) => d.kind === 'profile').length;
@@ -67,6 +68,49 @@ test('the preflight hears which loop asks', async () => {
   await review({ preflight, writer: () => 'cleanup-run' }).prepareProfile('alice', 'a', 'follow');
   expect(writers).toEqual(['cleanup-run']);
   expect(visit).toHaveBeenCalledTimes(1);
+});
+
+describe('a fresh follow requires complete declared profile evidence', () => {
+  const presence = { counts: 'read', bio: 'read', isPrivate: 'read', isVerified: 'read', relationship: 'read' } as const;
+  const queue = (): void => {
+    store.observe({ accountPk: 'a', observedAt: clock.now() - 1, source: 'profile',
+      fields: { username: 'alice', followers: 500, following: 550, isPrivate: false } });
+    store.upsertFollowRecord({ accountPk: 'a', targetPk: 'seed', state: 'queued', score: 10, retryCount: 0 });
+  };
+  test.each([
+    { tier: 'recovered' as const, partial: false, counts: 'read' as const },
+    { tier: 'canonical' as const, partial: true, counts: 'read' as const },
+    { tier: 'normalized' as const, partial: true, counts: 'read' as const },
+    { tier: 'canonical' as const, partial: false, counts: 'absent' as const },
+    { tier: 'canonical' as const, partial: false, counts: 'partial' as const },
+    { tier: 'canonical' as const, partial: false, counts: 'invalid' as const },
+  ])('$tier partial=$partial counts=$counts cannot reuse stored eligibility', async ({ tier, partial, counts }) => {
+    queue();
+    visit.mockResolvedValue({ ok: true, tier, partial, presence: { ...presence, counts },
+      obs: { accountPk: 'a', observedAt: clock.now(), source: 'profile', fields: { username: 'alice' } },
+      viewer: { following: null, requested: null, followsUs: null } });
+    await expect(review().prepareProfile('alice', 'a', 'follow')).rejects.toMatchObject({
+      verdict: { kind: 'unavailable', evidence: 'unreadable' },
+    });
+    expect(visit).toHaveBeenCalledTimes(1);
+    expect(profileReads()).toBe(1);
+    expect(store.getFollowRecord('a')).toMatchObject({ state: 'queued', score: 10 });
+  });
+  test.each(['canonical', 'normalized'] as const)('complete %s evidence still permits the follow', async (tier) => {
+    queue();
+    visit.mockResolvedValue({ ok: true, tier, partial: false, presence,
+      obs: { accountPk: 'a', observedAt: clock.now(), source: 'profile',
+        fields: { username: 'alice', followers: 500, following: 550, isPrivate: false } },
+      viewer: { following: false, requested: false, followsUs: false } });
+    await expect(review().prepareProfile('alice', 'a', 'follow')).resolves.toBeUndefined();
+  });
+  test('missing fresh counts cannot authorize a queued follow even without parser metadata', async () => {
+    queue();
+    await expect(review().prepareProfile('alice', 'a', 'follow')).rejects.toMatchObject({
+      verdict: { kind: 'unavailable', evidence: 'unreadable' },
+    });
+    expect(store.getFollowRecord('a')).toMatchObject({ state: 'queued', score: 10 });
+  });
 });
 
 test('a surface gate pausing unfollows defers an unfollow before any read; a follow still proceeds', async () => {

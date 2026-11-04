@@ -5,6 +5,7 @@ import { SEED_TARGET } from '@/renderer/app/shell-services';
 import { FindsPanel } from '@/renderer/pages/people/FindsPanel';
 import { GrowthPanel } from '@/renderer/pages/people/GrowthPanel';
 import { ProgressPanel } from '@/renderer/pages/people/ProgressPanel';
+import { SelectedPerson } from '@/renderer/pages/people/SelectedPerson';
 import { Button } from '@/renderer/ui/Button';
 import { Skeleton } from '@/renderer/ui/Skeleton';
 
@@ -37,6 +38,7 @@ export function PeoplePage(): JSX.Element {
         <h1>People</h1>
         <p>Where Epo finds people, and who’s in progress.</p>
       </header>
+      <SelectedPerson active={active} />
       <GrowthPanel active={active} />
       <div class="people-cols">
         <section class="stage-col people-panel" aria-labelledby="people-finds-h">

@@ -19,18 +19,6 @@
 
 <br>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/growth-dark.svg">
-    <img src="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/growth.svg" width="820" alt="Followers gained over 30 days on the default settings, simulated by the app's own growth model">
-  </picture>
-</p>
-
-<p align="center">
-  <sub>Simulated by the same growth model that ships in the app, on the default settings.
-  Regenerated every night.</sub>
-</p>
-
 > **Before you start.** Tools like this one are against Instagram's terms of service.
 > An account that runs one can be restricted or banned. Epo is careful by design, but
 > the risk never reaches zero. Do not run it on an account you cannot afford to lose.

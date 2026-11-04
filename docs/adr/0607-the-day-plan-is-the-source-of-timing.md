@@ -97,12 +97,12 @@ settings rules keep the retired sweep factor's range as `BOUNDS.SETTINGS_V1.SWEE
 | Path | From | To | ADR |
 |---|---|---|---|
 | `groups.RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS` | 2 h | 3 h | 0606 §1 |
+| `grid.caution=cautious.gapFloorSeconds` | 60 s | 70 s | 0606 §4 |
+| `personas.casual.gapFloorSeconds` | 60 s | 70 s | 0606 §4 |
 
-The Cautious gap floor 60 → 70 s (owner Q11, ADR 0606 §4) is decided and prepared as its own commit
-(`grid.caution=cautious.gapFloorSeconds` and `personas.casual.gapFloorSeconds`, 60 → 70). It lands once
-the frozen v1 pipeline resolves a named persona through `V1_DERIVED` instead of the live derivation:
-`sanitizeSettings` re-derives through `resolvePattern`, so the migration would otherwise read 70 from a
-v1 file that holds 60 and record a spurious `sessions.gapMinimum` override.
+The Cautious gap floor takes its derived 70 s (owner Q11, ADR 0606 §4). The frozen v1 sanitizer
+resolves named personas and custom patterns through `V1_DERIVED`, so migration still reads the
+historical 60 s value without inventing a `sessions.gapMinimum` override.
 
 **Overrides outside the registry** (covered by the override tests, not the tally): the advisory
 `ENGINE.ACTIONS_FAILING_HALT` entry and the advisory mechanism are gone — the loop reads
@@ -128,3 +128,27 @@ boundary). Spec §17.8's `RIM.LIST_WALK_FETCH_RETRIES` landed as `SURFACE_BOUNDS
 - A rolling 24 h as the reset boundary: it lets catch-up reads spend twice D6 around the boundary.
 - Plan-seeded micro-noise: the interactor is rebuilt every graph build, so it would replay paths.
 - A day-seeded phase: circular with the day key, and a repair would move the current window.
+
+## Remaining read consumers
+
+Source profile freshness, failed-enrichment retries and ended-source revisits count seven plan-day
+boundaries using the graph's `PlanDayClock`. Low-yield revisits start at the next plan boundary.
+The four fixed exploration windows are retired. The unused live-test enrichment pace knobs and
+their two HARNESS registry keys are retired too; the harness visitor uses the shared visit cadence.
+The live registry consequently has 99 keys: 40 derived, 34 policy, 16 override and 9 harness keys.
+
+## Amendment — session realization and unfollow shares
+
+An exact-start join keeps the entire session budget; rounding its expected end to milliseconds cannot
+forfeit an action. A genuinely late join retains the existing mean-gap proration. Once joined, the
+session may spend that effective budget until the next session minus the separation boundary, quiet
+hours, or the plan-day end. The old `expectedEnd + expectedLength` cutoff is removed. Placement reserves
+one existing session-boundary span beyond each expected length, including the final session; L4 already
+bounds one gap plus pre-action work by that span. No new timing dial or faster gap is introduced.
+
+The production ledger supplies kind counts per session. Every automatic unfollow writer, including
+Prune runs, spends only the open session's unfollow share and the day's unfollow budget. Follows and
+accepts no longer indirectly deplete that share through a proportional estimate of all session usage.
+Single-account manual actions retain their existing hard-day and hourly admission rules. The I11 test
+now asserts exact realization on every complete simulated day for every persona, alongside gap floors,
+hour caps and read-budget checks; the production Prune integration test pins the session share.

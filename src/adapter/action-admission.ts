@@ -4,7 +4,7 @@ import { SURFACE } from './ig-surface';
 
 /**
  * Bind navigation, identity and durable dispatch to one mutation, admitted and journaled at most once
- * (ADR 0308): later calls, the later confirm layers, re-run only the stop and same-profile check.
+ * (ADR 0308): later confirm layers re-run the stop, same-profile and local policy guard without another admission.
  */
 export async function prepareAction(d: Pick<ActorOptions, 'prepareProfile' | 'beforeMutation' | 'abortSignal'> & {
   tab: AdapterTab;
@@ -15,9 +15,10 @@ export async function prepareAction(d: Pick<ActorOptions, 'prepareProfile' | 'be
     if (originalSignal?.aborted || d.abortSignal?.()?.aborted || originalSignal !== d.abortSignal?.()) throw new ActionAbortedError(component);
   };
   checkAbort();
+  let policyGuard: void | (() => void);
   if (expectedPk !== undefined) {
     if (!d.prepareProfile) throw new ActionBlockedError(component, 'identity verification unavailable');
-    await d.prepareProfile(username, expectedPk, action);
+    policyGuard = await d.prepareProfile(username, expectedPk, action);
   } else await d.tab.goto(SURFACE.profileUrl(username));
   checkAbort();
   const check = (): void => {
@@ -25,6 +26,7 @@ export async function prepareAction(d: Pick<ActorOptions, 'prepareProfile' | 'be
     if (expectedPk !== undefined && !profileMatches(d.tab.currentUrl(), username)) {
       throw new ActionBlockedError(component, 'profile changed before mutation');
     }
+    if (typeof policyGuard === 'function') policyGuard();
   };
   let admission: Promise<void> | null = null;
   return () => {

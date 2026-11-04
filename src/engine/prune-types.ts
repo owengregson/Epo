@@ -24,8 +24,7 @@ import type { ProtectionPort } from './protection-port';
  */
 export interface PruneScanOpts {
   shouldStop?: () => boolean;
-  scrollMinMs?: number;
-  scrollMaxMs?: number;
+  census?: { readonly pages: number; readonly walkMax: number };
   /**
    * Live-progress callback (additive): the source relays the scrape's CUMULATIVE
    * observed count as pages land, so the scan's counts can update mid-scrape
@@ -43,6 +42,8 @@ export interface PruneScanOpts {
  */
 export interface PruneScanFetch {
   retryAt?: number;
+  pages?: number;
+  rowsPerPage?: number | null;
   pks: string[];
   complete: boolean;
   /** Why the underlying walk/scrape ended (diagnostic; drives stop-vs-fail). */
@@ -97,7 +98,7 @@ export interface PruneStatus {
   /**
    * Whether a FRESH, complete scan is cached and ready for a 2-step run:
    * a manual Run consumes exactly this reviewed candidate set instead of walking
-   * the lists again. Expires after {@link PRUNE_SCAN_FRESH_MS} and is cleared once
+   * the lists again. Expires after the plan's census freshness and is cleared once
    * consumed — so the UI's Run button locks until a fresh scan exists. Whitelist
    * edits do NOT clear it: the cached census is raw, and the actionable set is
    * re-derived against the live whitelist.
@@ -184,9 +185,6 @@ export interface PruneScanEstimates {
 export interface PruneConfig {
   /** The cap a rig without the plan reads (the plan's cleanup budget binds in main). */
   dailyLimit: number;
-  /** SCAN pacing: each inter-scroll wait is a fresh jittered draw in [min,max] ms. */
-  scanMinMs: number;
-  scanMaxMs: number;
 }
 
 /** Everything the PruneEngine composes, already constructed. */
@@ -257,5 +255,6 @@ export interface PrunePlan {
   cleanupToday(now: number): { readonly done: number; readonly limit: number };
   /** How long a complete census stays fresh (the plan's patience wait). */
   censusFreshMs(): number;
+  censusBounds?(now: number, header: { followers: number | null }): { followers: number; following: number; walkMax: number };
   dayWindow(now: number): { readonly startsAt: number; readonly endsAt: number };
 }

@@ -11,12 +11,11 @@ import { act, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
 import { BootGate } from '@/renderer/boot/BootGate';
 import { SPLASH, splashCaption } from '@/renderer/boot/boot-copy';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { BootView } from '@/shared/boot';
-import type { EpoStatus, Settings } from '@/types';
+import type { EpoStatus } from '@/types';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
-const SEEDED: Settings = { ...DEFAULT_SETTINGS, seed: 'someone', tourCompletedAt: 1 };
+const SEEDED = { seed: 'someone', app: { tourCompletedAt: 1 } };
 const T = Date.now();
 
 function boot(over: Partial<BootView> = {}): BootView {
@@ -47,7 +46,7 @@ const splash = (): HTMLElement | null => document.getElementById('boot');
 const stages = (): unknown[][] => bridge.calls.filter((c) => c[0] === 'setStage');
 const revealed = (): number => bridge.calls.filter((c) => c[0] === 'bootRevealed').length;
 
-async function mount(status: EpoStatus, settings?: Settings): Promise<void> {
+async function mount(status: EpoStatus, settings?: Parameters<typeof installFakeBridge>[0]): Promise<void> {
   if (settings !== undefined) bridge = installFakeBridge(settings);
   bridge.data.status = status;
   render(
@@ -84,7 +83,7 @@ describe('the launch gate', () => {
     expect(document.querySelector('.live-placeholder')?.textContent).toContain('Opening Instagram');
 
     await push(idleStatus({ boot: ready({ phase: 'live', ig: 'placeholder', tab: 'settled' }) }));
-    await waitFor(() => expect(stages().at(-1)).toEqual(['setStage', 'tab', false]));
+    await waitFor(() => expect(stages().at(-1)).toEqual(['setStage', 'tab', false, false]));
     expect(document.querySelector('.live-placeholder')).toBeNull();
     await push(idleStatus({ boot: ready({ phase: 'live', ig: 'ready', tab: 'settled' }) }));
     expect(revealed()).toBe(1);
@@ -93,7 +92,7 @@ describe('the launch gate', () => {
   it('a reload while main is already live skips the intro and tells main nothing', async () => {
     await mount(idleStatus({ boot: ready({ phase: 'live', tab: 'settled', ig: 'ready' }) }));
     await waitFor(() => expect(splash()).toBeNull());
-    await waitFor(() => expect(stages().at(-1)).toEqual(['setStage', 'tab', false]));
+    await waitFor(() => expect(stages().at(-1)).toEqual(['setStage', 'tab', false, false]));
     expect(revealed()).toBe(0);
   });
 
@@ -116,7 +115,7 @@ describe('the launch gate', () => {
   });
 
   it('the first-launch tour opens only after the reveal', async () => {
-    await mount(idleStatus({ boot: ready() }), { ...SEEDED, tourCompletedAt: null });
+    await mount(idleStatus({ boot: ready() }), { ...SEEDED, app: { tourCompletedAt: null } });
     await act(() => sleep(700));
     expect(document.querySelector('.tour-card, [data-tour-step]')).toBeNull();
     await push(idleStatus({ boot: ready({ ig: 'ready', tab: 'settled' }) }));
@@ -134,4 +133,17 @@ describe('the splash caption', () => {
     expect(splashCaption(ready({ ig: 'ready' }), 1_300, delays)).toBe(SPLASH.almost);
     expect(splashCaption(ready(), 2_600, delays)).toBe(SPLASH.slow);
   });
+});
+
+
+test('the splash waits for the store-only graph preload before revealing Live', async () => {
+  let finish!: () => void;
+  bridge.stub('graphSnapshot', () => new Promise<null>((resolve) => { finish = () => resolve(null); }));
+  await mount(idleStatus({ boot: ready({ ig: 'ready', tab: 'settled' }) }));
+  await act(() => sleep(700));
+  expect(splash()).not.toBeNull();
+  expect(revealed()).toBe(0);
+  await act(async () => finish());
+  await waitFor(() => expect(splash()).toBeNull());
+  await waitFor(() => expect(revealed()).toBe(1));
 });

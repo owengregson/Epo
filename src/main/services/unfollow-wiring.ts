@@ -4,6 +4,7 @@
  * all on the plan's one plan-day boundary (spec §4.4), handed in by the graph build.
  */
 
+
 import { ChurnScheduler } from '@/engine/churn-scheduler';
 import type { FollowbackWatcher } from '@/engine/followback-watcher';
 import { planDaySlots } from '@/engine/journal';
@@ -20,7 +21,8 @@ import type { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { settleNextIntent } from '@/rim/journal-settlement';
 import type { TabProfileVisitor } from '@/rim/profile-visit';
 import type { ProfileVisitor } from '@/rim/profile-visit-port';
-import { type Settings, toChurnConfig, toPruneConfig, toScorerConfig } from '@/settings/settings';
+import type { EffectiveSettings } from '@/settings/effective';
+import { toChurnConfig, toPruneConfig, toScorerConfig } from '@/settings/mappers';
 import type { StatusFields } from '@/shared/status-fields';
 import type { SurfaceGate } from '@/shared/surface-gate';
 import type { KnowledgeStore } from '@/store/knowledge-store';
@@ -91,7 +93,7 @@ export interface ChurnWiring {
   rate: RateGovernor;
   churnActions: AdapterBackedChurnActions;
   ownPk: string;
-  settings: Settings;
+  settings: EffectiveSettings;
   /** The plan's plan-day boundary (protection re-checks, the reconciler's day roll, the park slots). */
   dayClock: PlanDayClock;
   nextSessionAt?: NextSessionAt;
@@ -101,7 +103,7 @@ export interface ChurnWiring {
 
 /** The churn scheduler with its config, the frontier's pick, the live eligibility check and protection. */
 export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
-  const { frontier, store, clock, rate, churnActions, ownPk, settings, dayClock, reviewBound } = w;
+  const { frontier, store, clock, rate, churnActions, ownPk, dayClock, reviewBound } = w;
   const next = w.nextSessionAt ?? noNextSession;
   const { port } = wireProtection(d, clock, dayClock);
   const reconciler = new ProtectionReconciler({ store, port, clock, dayClock });
@@ -135,17 +137,12 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
 /** The prune engine's unfollow-facing deps: its config, protection, the run stamp, the own-stats refresh. */
 export function pruneUnfollowDeps(
   d: GraphBuildDeps,
-  w: { settings: Settings; policy: MutationPolicy; ownUsername: string | undefined; dayClock: PlanDayClock },
-): Pick<PruneEngineDeps, 'cfg' | 'protection' | 'onRunComplete' | 'refreshOwnStats'> {
+  w: { settings: EffectiveSettings; policy: MutationPolicy; ownUsername: string | undefined; dayClock: PlanDayClock },
+): Pick<PruneEngineDeps, 'cfg' | 'protection' | 'refreshOwnStats'> {
   const { settings, policy, ownUsername } = w;
   return {
     cfg: toPruneConfig(settings),
     protection: wireProtection(d, new SystemClock(), w.dayClock).port,
-    // Persist the completed run's timestamp through the one settings save path
-    // (also reloads live configs — harmless, and keeps one write path).
-    onRunComplete: (at) => {
-      d.updateSettings({ pruneLastRunAt: at });
-    },
     // A scan's first act: ONE active profile-info fetch for our own account, so
     // the header counts sizing the progress bar (and backing the census
     // coverage guard) are fresh in the store — the passive observer alone can

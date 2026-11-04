@@ -27,6 +27,8 @@ export interface UsageTally {
   readonly unfollow: number;
   readonly accept: number;
   readonly perSession: readonly number[];
+  /** Ledger kind totals inside each session window; older callers may omit them and fail closed. */
+  readonly perSessionKinds?: readonly KindBudgets[];
   readonly outside: number;
 }
 
@@ -60,6 +62,8 @@ export interface PlanView {
   /** The open session's tempo, else the ambient one. */
   readonly tempo: SessionTempo;
   admits(kind: MutationKind, writer: Writer, subject?: { pk: string; intentId?: string }): Admission;
+  /** Recheck every current accept constraint, except the exact deadline this pass already owns. */
+  admitsAcceptDuringPass(ownedDeadline: number): Admission;
   manualOpen(): Admission;
   checkDue(lastSweepEndedAt: number | null): boolean;
   checkLight(): boolean;

@@ -100,6 +100,8 @@ export interface PlanIntent {
 
 /** A store snapshot the plan wiring builds; audit only inside the plan. */
 export interface PlanDemand {
+  /** Known gains plus positive header residual since the head frontier; absent in older snapshots. */
+  readonly headGainsHint?: number;
   readonly lifecycleDueByDayEnd: number;
   readonly lifecycleBacklog: number;
   readonly pruneStock: number;
@@ -164,7 +166,9 @@ export interface DayPlan {
   readonly intentDigest: string;
   readonly seed: number;
   readonly volume: { readonly lognormal: number; readonly band: number; readonly rest: boolean;
-    readonly drawn: number; readonly planned: number; readonly binding: PlanBinding };
+    readonly drawn: number; readonly planned: number; readonly binding: PlanBinding;
+    /** Unspent allocations removed by re-plans; never refunded by a later lift (absent in older plans). */
+    readonly forfeited?: number };
   readonly ceilings: { readonly automaticMax: number; readonly day: number; readonly hour: number;
     readonly unfollowHour: number; readonly probationHour: number; readonly followDay: number; readonly acceptsPerPass: number };
   readonly kinds: KindBudgets & { readonly lifecycleUnfollow: number; readonly slack: number };

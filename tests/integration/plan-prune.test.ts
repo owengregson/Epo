@@ -126,6 +126,10 @@ async function rig(before?: (store: KnowledgeStore, session: PlanView) => void):
     tempo: plan.tempo, delays: new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); r.afterSleep?.(); } }) });
   r.engine = engine;
 
+  store.observe({ accountPk: 'me', source: 'profile', observedAt: clock.now(),
+    fields: { followers: MUTUALS.length, following: CANDIDATES.length + MUTUALS.length } });
+  intoSession(plan, { now: () => clock.now(), set: (t: number) => { clock.t = t; } });
+
   // The census lands and re-plans the demand (the scan command's trigger); the next plan-day sizes cleanup from it.
   expect((await engine.scan()).aborted).toBe(false);
   plan.demandChanged();
@@ -180,6 +184,8 @@ describe('I3: a cleanup run under the plan', () => {
     // The run spends only what the plan holds for cleanup today; its remainder stays runnable.
     const day = r.plan.service.view(r.clock.now());
     expect(presses.length).toBeLessThanOrEqual(day.plan.kinds.unfollow);
+    const session = r.session.plan.sessions[r.session.open?.idx ?? 0];
+    expect(presses.length).toBeLessThanOrEqual(session.mix.unfollow);
     expect(r.store.pruneScanRemainingCount()).toBe(CANDIDATES.length - of(r.events, 'consumed').length);
     expect(r.engine.status().state).toBe('done');
   });

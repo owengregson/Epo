@@ -220,7 +220,7 @@
   "caution": {
    "cautious": {
     "hourlyCap": 14,
-    "minGapSeconds": 60
+    "minGapSeconds": 70
    },
    "standard": {
     "hourlyCap": 22,
@@ -1779,6 +1779,7 @@
  },
  "notices": [],
  "app": {
-  "tourCompletedAt": 1793610000000
+  "tourCompletedAt": 1793610000000,
+  "tourVersionSeen": "plan-derived"
  }
 }

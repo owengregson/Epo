@@ -2,7 +2,6 @@ import { type JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import { chainListSignal, growthSeriesSignal, queueLanesSignal } from '@/renderer/app/live-signals';
 import {
-  adoptSettings,
   pruneSignal,
   ShellContext,
   type ShellControls,
@@ -14,7 +13,7 @@ import {
 import { LivePlaceholder } from '@/renderer/boot/LivePlaceholder';
 import { DiagnosticsPanel } from '@/renderer/diagnostics/DiagnosticsPanel';
 import { DIRECTION_SCENARIOS } from '@/renderer/gallery/direction/scenarios';
-import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, GALLERY_SETTINGS, type Scenario } from '@/renderer/gallery/fixtures';
+import { SCENARIOS as BASE_SCENARIOS, GALLERY_CHAIN, type Scenario } from '@/renderer/gallery/fixtures';
 import { LIVE_SCENARIOS, resetLiveGallery } from '@/renderer/gallery/fixtures-live';
 import { SETTINGS_SCENARIOS } from '@/renderer/gallery/fixtures-settings';
 import { SURFACE_SCENARIOS } from '@/renderer/gallery/fixtures-surface';
@@ -44,7 +43,9 @@ const SCENARIOS: Scenario[] = [
 /** Publish one scenario onto the shell's signals — this IS mounting a story. */
 function applyScenario(s: Scenario): void {
   statusSignal.value = s.status;
-  pruneSignal.value = s.prune;
+  const allocation = s.status.plan?.kinds.unfollow;
+  pruneSignal.value = allocation === undefined ? s.prune
+    : { ...s.prune, dailyLimit: allocation.planned, dailyDone: allocation.done };
   resetLiveGallery();
   s.apply?.();
 }
@@ -55,6 +56,7 @@ const NOOP_SERVICES: ShellServices = { confirm: () => Promise.resolve(true), toa
 
 const NOOP_CONTROLS: ShellControls = {
   showStage: noop,
+  openPerson: noop,
   openSettings: noop,
   start: noop,
   pauseResume: noop,
@@ -94,6 +96,7 @@ function Surface({ surface }: { surface: SurfaceKey }): JSX.Element {
 export function Gallery(): JSX.Element {
   const [scenarioKey, setScenarioKey] = useState(SCENARIOS[1]?.key ?? 'idle');
   const [surface, setSurface] = useState<SurfaceKey>('people');
+  const [controlsHidden, setControlsHidden] = useState(false);
 
   return (
     <ShellContext.Provider value={NOOP_SERVICES}>
@@ -107,7 +110,9 @@ export function Gallery(): JSX.Element {
             </section>
           </div>
         </div>
-        <aside class="gallery-rail">
+        {controlsHidden ? <button type="button" class="tbtn gallery-show" onClick={() => setControlsHidden(false)}>Show gallery controls</button> : null}
+        <aside class="gallery-rail" hidden={controlsHidden}>
+          <button type="button" class="tbtn" onClick={() => setControlsHidden(true)}>Hide gallery controls</button>
           <div class="gallery-rail__h">Scenario</div>
           {SCENARIOS.map((s) => (
             <button
@@ -152,7 +157,6 @@ export function Gallery(): JSX.Element {
  */
 export function primeGallery(): void {
   installGalleryBridge();
-  adoptSettings(GALLERY_SETTINGS);
   chainListSignal.value = GALLERY_CHAIN;
   growthSeriesSignal.value = { points: [], baselineAt: null };
   queueLanesSignal.value = GALLERY_LANES;

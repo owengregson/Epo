@@ -10,7 +10,7 @@
 import type { SentinelStatus } from '../adapter/sentinel';
 import { coldFailingThreshold } from '../kernel/derive';
 import { tempoOrReference } from '../kernel/tempo';
-import type { Settings } from '../settings/settings';
+import type { EffectiveSettings } from '../settings/effective';
 import type { WaitResult } from '../timing/delay-manager';
 import { mulberry32 } from '../timing/noise';
 import { type DelayPolicy, type Rng, TIMED_OUT, withTimeout } from '../timing/primitives';
@@ -86,7 +86,7 @@ export class Engine {
   /** The ONE wait gate: every Engine wait is a named `engine:*` entry here. */
   private readonly waits: WaitRunner<EngineWaitKey, EngineParkReason>;
   /** Live settings — swapped by {@link applySettings} when the user saves changes. */
-  private settings: Settings;
+  private settings: Pick<EffectiveSettings, 'seed' | 'lowWaterCandidates' | 'weaveEnabled'>;
 
   private engineState: EngineState = 'idle';
   /** Epoch ms of the current run's idle→running transition; null when not running. */
@@ -223,7 +223,7 @@ export class Engine {
       acquisition: deps.acquisition,
       scanner: deps.scanner,
       enricher: deps.enricher,
-      settings: (): Settings => this.settings,
+      settings: (): Pick<EffectiveSettings, 'seed' | 'lowWaterCandidates' | 'weaveEnabled'> => this.settings,
       wait: (key, policyOrMs) => this.engineWait(key, policyOrMs),
       idle: (events) => this.idleWait(this.deps.clock.now(), events),
       recover: (token, kind) => this.enterRecovery(token, kind),
@@ -254,14 +254,11 @@ export class Engine {
       noteProgress: (phase) => this.noteProgress(phase),
       healIncidentWindow: (incident) => this.healIncidentWindow(incident),
       // The activity clock spaces the next Instagram entry (spec §5.16), so a step's end waits nothing.
-      pacingSleep: () => Promise.resolve(),
     };
   }
 
-  /** Swap the Engine's own settings-derived knobs at runtime (seed, active-hours,
-   *  follow-back cadence, low-water) — the governor/component configs reload
-   *  separately. Applied between steps, so an in-flight iteration is never torn. */
-  applySettings(settings: Settings): void {
+  /** Swap the seed, refill and cleanup preferences; component configs reload separately. */
+  applySettings(settings: Pick<EffectiveSettings, 'seed' | 'lowWaterCandidates' | 'weaveEnabled'>): void {
     this.settings = settings;
   }
 

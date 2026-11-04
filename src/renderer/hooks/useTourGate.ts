@@ -1,65 +1,66 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { adoptSettings, settingsSignal } from '@/renderer/app/shell-context';
+import { settingsViewSignal } from '@/renderer/app/shell-context';
 import { appRevealedSignal } from '@/renderer/boot/BootGate';
+import type { ToastControls } from '@/renderer/hooks/useToasts';
+import { NEW_LOOK_STEPS, NEW_LOOK_VERSION, TOUR_STEPS, type TourStep } from '@/renderer/tour/steps';
+import type { SettingsOp } from '@/shared/settings-ops';
 
 export interface TourGate {
   open: boolean;
-  /** Replay the tour from Settings. */
+  steps: readonly TourStep[];
   openTour(): void;
-  /** Every close path — Finish, Skip, ×, Esc — routes here. */
   closeTour(): void;
 }
 
-/**
- * The intro tour's open/close policy. Auto-opens once per install (persisted
- * `tourCompletedAt`), right after the launch reveal — never under the splash or
- * during the intro (spec §12.8, the tour keys on the reveal). Any way out
- * persists completion, so it never nags twice.
- *
- * The tour runs over a QUIET app: while it is open the foundation holds all
- * self-starting work and pauses a running engine. On FIRST launch main engages
- * that hold itself (before this renderer loads); a replay engages it here.
- * Every close path releases it, returning the app to its pre-tour state.
- *
- * @param onSettled runs on close, before the completion write: the shell uses
- *                  it to land on the Live stage (where sign-in is).
- */
-export function useTourGate(onSettled: () => void): TourGate {
+/** First-run and new-look tours wait for the reveal; acknowledgments persist through v2 settings. */
+export function useTourGate(onSettled: () => void, toast: ToastControls['push']): TourGate {
   const [open, setOpen] = useState(false);
+  const [steps, setSteps] = useState(TOUR_STEPS);
   const autoChecked = useRef(false);
 
+  const save = useCallback(async (ops: readonly SettingsOp[]): Promise<void> => {
+    try {
+      const result = await window.epo.applySettings(ops);
+      if (result.kind !== 'saved') throw new Error('Tour progress was not saved');
+      if (result.view.rev >= (settingsViewSignal.peek()?.rev ?? 0)) settingsViewSignal.value = result.view;
+    } catch {
+      toast('error', 'Epo couldn’t save your tour progress. It may offer the tour again next time.');
+    }
+  }, [toast]);
+
+  const begin = useCallback((next: readonly TourStep[]): void => {
+    setSteps(next);
+    void window.epo.setTourHold(true).then(() => setOpen(true), () => {
+      toast('error', 'Epo couldn’t pause for the tour. Try again from Settings.');
+    });
+  }, [toast]);
+
   useEffect(() => {
-    // Both are signals: the check runs on whichever lands last, the settings load or the reveal.
     const check = (): void => {
-      const settings = settingsSignal.peek();
-      if (autoChecked.current || settings === null || !appRevealedSignal.peek()) return;
+      const app = settingsViewSignal.peek()?.app;
+      if (autoChecked.current || app === undefined || !appRevealedSignal.peek()) return;
       autoChecked.current = true;
-      if (settings.tourCompletedAt === null) setOpen(true);
+      if (app.tourCompletedAt === null) begin(TOUR_STEPS);
+      else if (app.tourVersionSeen !== NEW_LOOK_VERSION) {
+        toast('info', 'Epo has a new look.', { label: 'Take the tour', run: () => begin(NEW_LOOK_STEPS) });
+        void save([{ op: 'tour-version-seen', version: NEW_LOOK_VERSION }]);
+      }
     };
-    const offSettings = settingsSignal.subscribe(check);
+    const offSettings = settingsViewSignal.subscribe(check);
     const offReveal = appRevealedSignal.subscribe(check);
-    return () => {
-      offSettings();
-      offReveal();
-    };
-  }, []);
+    return () => { offSettings(); offReveal(); };
+  }, [begin, save, toast]);
 
-  const openTour = useCallback(() => {
-    void window.epo.setTourHold(true);
-    setOpen(true);
-  }, []);
-
+  const openTour = useCallback(() => begin(TOUR_STEPS), [begin]);
   const closeTour = useCallback(() => {
     setOpen(false);
     onSettled();
-    void window.epo.setTourHold(false);
-    window.epo
-      .updateSettings({ tourCompletedAt: Date.now() })
-      .then(adoptSettings)
-      .catch(() => {
-        /* foundation logs; worst case the tour offers itself again next launch */
-      });
-  }, [onSettled]);
+    void window.epo.setTourHold(false).catch(() => toast('error', 'Epo couldn’t release the tour pause. Restart Epo to continue.'));
+    void save([
+      { op: 'tour-completed', at: Date.now() },
+      { op: 'tour-version-seen', version: NEW_LOOK_VERSION },
+    ]);
+  }, [onSettled, save, toast]);
 
-  return { open, openTour, closeTour };
+  return { open, steps, openTour, closeTour };
 }

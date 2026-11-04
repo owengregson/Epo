@@ -107,7 +107,7 @@ export async function arbitrate(input: ArbiterInput): Promise<Verdict> {
   }
 
   const verified = await input.verifyPostState();
-  if (verified) {
+  if (verified && !input.observed?.classification.exchangeError && !input.observed?.classification.partial) {
     return {
       kind: 'landed',
       effect: 'commit',
@@ -131,12 +131,17 @@ export async function arbitrate(input: ArbiterInput): Promise<Verdict> {
     };
   }
 
+  if (input.observed?.classification.partial) {
+    return { kind: 'ambiguous', effect: 'mark-unverified', op: input.op, evidence: base('response') };
+  }
+
   return {
     kind: 'refused',
     effect: 'fail',
     op: input.op,
     evidence: base(input.observed === null ? 'dom' : 'both'),
-    detail: 'post-click state not confirmed',
+    detail: input.observed?.classification.exchangeError
+      ? input.observed.classification.detail : 'post-click state not confirmed',
   };
 }
 

@@ -39,7 +39,7 @@ import type {
   ChainTargetView,
   EpoStatus,
   FollowState,
-  GraphSnapshot,
+  GraphSnapshotRead,
   GrowthSeriesRead,
   LogEntry,
   PruneCandidate,
@@ -48,7 +48,6 @@ import type {
   PruneStatus,
   QueueListResult,
   ReadFollowersResult,
-  Settings,
   StageMode,
   UpdateStatus,
 } from '@/types';
@@ -64,6 +63,9 @@ export interface PruneCandidateView extends PruneCandidate {
   /** True when a configured bio rule could not be judged from the stored facts. */
   readonly bioUnread: boolean;
 }
+
+export type PruneCandidatesResult = { readonly ok: true; readonly candidates: PruneCandidateView[] }
+  | { readonly ok: false; readonly reason: 'unavailable' };
 
 /**
  * Bridge method → IPC channel. The ONLY place a channel string appears.
@@ -95,8 +97,6 @@ export const CHANNELS = {
   growthSeries: 'growth:series',
   checkSeed: 'seed:check',
   queueList: 'queue:list',
-  getSettings: 'settings:get',
-  updateSettings: 'settings:update',
   clearData: 'data:clear',
   graphSnapshot: 'graph:snapshot',
   setStage: 'stage:set',
@@ -144,7 +144,7 @@ export interface IpcContract extends SettingsIpcContract, PlanIpcContract, LiveI
   /** READ-ONLY prune scan: the raw following − followers census (no unfollows). */
   scanPrune: { req: []; res: PruneScanResult };
   /** The persisted scan's not-yet-visited candidates (raw census), annotated by protection. */
-  pruneCandidates: { req: []; res: PruneCandidateView[] };
+  pruneCandidates: { req: []; res: PruneCandidatesResult };
   /** Start one prune run (mutually exclusive with the growth engine). */
   startPrune: { req: []; res: PruneControlResult };
   /** Stop an active prune scan/run between actions. */
@@ -165,20 +165,16 @@ export interface IpcContract extends SettingsIpcContract, PlanIpcContract, LiveI
   checkSeed: { req: [username: string]; res: SeedCheckResult };
   /** A capped page of follow_records in one lifecycle state, joined to accounts. */
   queueList: { req: [state: FollowState]; res: QueueListResult };
-  /** The persisted settings object. */
-  getSettings: { req: []; res: Settings };
-  /** Merge a partial into settings, persist, and reload the live engine configs. */
-  updateSettings: { req: [partial: Partial<Settings>]; res: Settings };
   /** Wipe the knowledge DB + IG session (logout); settings kept. */
   clearData: { req: []; res: EpoStatus };
   /** The full knowledge graph shaped for the Graph view (null before login). */
-  graphSnapshot: { req: []; res: GraphSnapshot | null };
+  graphSnapshot: { req: []; res: GraphSnapshotRead };
   /**
    * Swap the window region right of the console. `covered` hides the native
    * views even on 'tab' while a renderer modal is open — they float above
    * anything the renderer draws, so no CSS stacking can put a dialog over them.
    */
-  setStage: { req: [mode: StageMode, covered: boolean]; res: void };
+  setStage: { req: [mode: StageMode, covered: boolean, reducedMotion: boolean]; res: void };
   /** Park/unpark the app while the intro tour is on screen. */
   setTourHold: { req: [held: boolean]; res: void };
   /** Ask the updater to check the release feed now. */

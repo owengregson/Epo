@@ -10,7 +10,7 @@
 import type { EngineParkReason, EngineStatus } from '@/engine/engine';
 import type { PruneCandidate, PruneState, PruneStatus } from '@/engine/prune-engine';
 import type { BridgeInvokers, PushContract, PushMethod } from '@/ipc/contract';
-import type { Settings } from '@/settings/v1/settings-v1-types';
+import { LIVE } from '@/kernel/live-policy';
 import type { LogEntry, LogLevel } from '@/shared/log-entry';
 import type { StageMode } from '@/shared/stage-mode';
 import type { StatusFields } from '@/shared/status-fields';
@@ -29,7 +29,6 @@ export type {
   PruneState,
   PruneStatus,
   ResponseHandler,
-  Settings,
   TabResponse,
   Target,
   Unsubscribe,
@@ -113,13 +112,12 @@ export interface ChainTargetView extends Target {
  * or ran out the follow-back wait). Below it the UI shows the raw n-of-m tally
  * and says the verdict is still forming.
  */
-export const CONVERSION_VERDICT_MIN = 20;
-
 /**
  * Runway display clamp: past this many days the projection is noise, so the UI
  * reports "> N days" instead of false precision.
  */
-export const RUNWAY_CAP_DAYS = 90;
+export const CONVERSION_VERDICT_MIN = LIVE.CONVERSION_VERDICT_MIN;
+export const RUNWAY_CAP_DAYS = LIVE.RUNWAY_CAP_DAYS;
 
 /** Per-lifecycle-state follow_record counts for one chain target (the funnel). */
 export type TargetFunnelCounts = Record<FollowState, number>;
@@ -233,15 +231,7 @@ export interface GraphHub {
   memberCount: number;
 }
 
-/**
- * The whole knowledge graph shaped for the Graph view's canvas. Columnar and
- * typed-array-backed on purpose: tens of thousands of nodes cross the IPC
- * boundary as a handful of flat buffers (structured-clone-friendly) instead
- * of an object per account. Index `i` across every parallel array describes
- * one node; `hubIndex[i]` names its primary cluster ("who knows them" — the
- * chain target whose follower list surfaced it, or the self hub for your own
- * followers/follows).
- */
+/** The graph is columnar: index i identifies one node across all arrays; hubIndex names its source cluster. */
 export interface GraphSnapshot {
   /** Epoch ms the snapshot (and its timer `progress` values) was computed. */
   at: number;
@@ -260,6 +250,9 @@ export interface GraphSnapshot {
   /** Per-status node totals (the legend), consistent with `statuses`. */
   counts: Record<GraphNodeStatus, number>;
 }
+
+/** Unavailable is a failed store read; null means no built account graph. */
+export type GraphSnapshotRead = GraphSnapshot | { readonly unavailable: true } | null;
 
 /** What fills the window region right of the console (one home: `src/shared/stage-mode.ts`). */
 export type { StageMode };
@@ -292,14 +285,6 @@ export interface PruneControlResult {
   status: PruneStatus;
 }
 
-/** Result of a read-only seed-username precheck (existence + followers visibility). */
-export interface SeedCheck {
-  ok: boolean;
-  exists: boolean;
-  followersVisible: boolean;
-  isPrivate: boolean;
-  reason?: string;
-}
 
 // ---------------------------------------------------------------------------
 // Self-updater (docs/RELEASE.md §5; one home: `src/shared/update-status.ts`)

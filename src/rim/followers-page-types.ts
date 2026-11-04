@@ -1,10 +1,12 @@
 import type { Sentinel } from '@/adapter/sentinel';
 import type { ReadPurpose } from '@/governors/read-budget';
+import type { ReadUse } from '@/kernel/plan';
 import type { Observation } from '@/store/types';
 
 /** One scrape run's parameters. */
 export interface CollectArgs {
   readPurpose?: ReadPurpose;
+  readUse?: ReadUse;
   targetUsername: string;
   /**
    * Which profile-stat dialog to open and which paginated endpoint to parse:
@@ -74,6 +76,8 @@ export interface CollectArgs {
 /** What a scrape yields back to its caller. */
 export interface CollectResult {
   retryAt?: number;
+  pages?: number;
+  rowsPerPage?: number | null;
   observedPks: string[];
   targetPk: string | null;
   cursor: string | null;

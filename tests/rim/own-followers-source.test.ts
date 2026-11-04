@@ -16,6 +16,7 @@ import {
   mkResp,
 } from '../kit/fakes';
 import { openTestStore } from '../kit/store';
+import { fixedTempo } from '../kit/tempo';
 
 beforeAll(() => setLevel('error'));
 
@@ -92,25 +93,27 @@ test('fetchAllPks threads onProgress into the scrape (live mid-scan counts)', as
   expect(seen[seen.length - 1]).toBe(3);
 });
 
-test('fetchAllPks threads shouldStop into the scrape (immediate stop: no scroll, open page kept)', async () => {
+test('fetchAllPks threads shouldStop into the scrape (immediate stop: no dialog or scroll)', async () => {
   const { source, actor } = buildSource({ withStore: true });
 
   const { pks } = await source.fetchAllPks({ shouldStop: () => true });
 
   expect(actor.scrollCalls).toBe(0);
-  expect([...pks].sort()).toEqual(['11', '12']); // only the on-open page landed
+  expect(actor.openCalls).toBe(0);
+  expect(pks).toEqual([]);
 });
 
-test('fetchAllPks threads the jittered scan pacing into the scrape', async () => {
+test('fetchAllPks uses the plan tempo for scan waits', async () => {
   const tab = new FakeTab();
   const actor = new FakeActor();
   const sleeps: number[] = [];
+  const tempo = fixedTempo(2);
   const pageReader = new FollowersPageReader({
     tab,
     reader,
     actor,
     clock,
-    scrollWaitMs: 1,
+    tempo,
     sleep: async (ms) => {
       sleeps.push(ms);
     },
@@ -125,12 +128,12 @@ test('fetchAllPks threads the jittered scan pacing into the scrape', async () =>
     store,
   });
 
-  const { pks } = await source.fetchAllPks({ scrollMinMs: 1_000, scrollMaxMs: 3_000 });
+  const { pks } = await source.fetchAllPks();
 
   expect(pks).toEqual(['11']);
   // Every wait the scrape took was the deterministic midpoint draw, not 2000ms fixed.
   expect(sleeps.length).toBeGreaterThan(0);
-  for (const ms of sleeps) expect(ms).toBe(2_000);
+  for (const ms of sleeps) expect(ms).toBe(tempo.policy('scroll.wait.dialog').sample(() => 0.5));
 });
 
 test('fetchAllPks with a blocked sentinel yields an empty scrape (warned, never a throw)', async () => {
@@ -210,8 +213,10 @@ test('every parsed follower row writes its follows-us edge IMMEDIATELY — a sto
   const tab = new FakeTab();
   const actor = new FakeActor();
   const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
-  actor.onOpen = () =>
+  let stopped = false;
+  actor.onOpen = () => { stopped = true;
     tab.emit(mkResp(followersUrl('42'), followersBody(['11', '12'], 'C1', true)));
+  };
 
   const source = new AdapterBackedOwnFollowersSource({
     pageReader,
@@ -221,8 +226,8 @@ test('every parsed follower row writes its follows-us edge IMMEDIATELY — a sto
     ownPk: 'me-pk',
   });
 
-  // Immediate stop: only the on-open page lands; the walk is INCOMPLETE.
-  const res = await source.fetchAllPks({ shouldStop: () => true });
+  // Stop during open: only the on-open page lands; the walk is INCOMPLETE.
+  const res = await source.fetchAllPks({ shouldStop: () => stopped });
   expect(res.complete).toBe(false);
 
   // The knowledge already paid for is in the graph anyway — accounts AND the

@@ -9,12 +9,11 @@
  */
 import { act, fireEvent, render, screen } from '@testing-library/preact';
 import { chainListSignal, growthSeriesSignal, queueLanesSignal } from '@/renderer/app/live-signals';
-import { type ShellControls, ShellControlsContext, stageSignal, statusSignal } from '@/renderer/app/shell-context';
+import { type ShellControls, ShellControlsContext, settingsViewSignal, stageSignal, statusSignal } from '@/renderer/app/shell-context';
 import { runwayText } from '@/renderer/cards/chain/PoolRunwayCard';
 import { keptWhy } from '@/renderer/cards/queues/QueueRowItem';
 import { crumbTier, detailTargetPk } from '@/renderer/hooks/useTargetDetail';
 import { PeoplePage } from '@/renderer/pages/PeoplePage';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import { chainTarget, type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
 let bridge: FakeBridge;
@@ -31,7 +30,7 @@ const LANES = {
 };
 
 beforeEach(() => {
-  bridge = installFakeBridge(DEFAULT_SETTINGS);
+  bridge = installFakeBridge();
   openSettings.mockReset();
   statusSignal.value = idleStatus({ queued: 7, pendingFollowback: 2, currentTargetPk: '200' });
   chainListSignal.value = [
@@ -154,5 +153,33 @@ describe('the People page’s plain readings', () => {
     expect(keptWhy({ reason: 'account', match: null })).toBe('Kept · on your protection list');
     expect(keptWhy({ reason: 'unreadable-bio', match: null })).toMatch(/^Kept until Epo can read the profile/);
     expect(keptWhy({ reason: 'something-new', match: null })).toBe('Kept · protected');
+  });
+});
+
+
+describe('queue progress uses the effective v2 settings', () => {
+  const DAY = 86_400_000;
+  it('updates the waiting bar when the persisted wait window changes', async () => {
+    jest.spyOn(Date, 'now').mockReturnValue(10 * DAY);
+    try {
+      const settings = bridge.data.settingsView;
+      settingsViewSignal.value = { ...settings, effective: { ...settings.effective, waitDays: 4 } };
+      queueLanesSignal.value = { ...LANES, waiting: { rows: [{ ...row('2', 'waiting'), followedAt: 9 * DAY }], truncated: false } };
+      mount();
+      await act(async () => { fireEvent.click(document.querySelector('[data-lane="waiting"]') as HTMLElement); });
+      expect(document.querySelector<HTMLElement>('.qbar i')?.style.width).toBe('25%');
+      await act(async () => { settingsViewSignal.value = { ...settings, effective: { ...settings.effective, waitDays: 2 } }; });
+      expect(document.querySelector<HTMLElement>('.qbar i')?.style.width).toBe('50%');
+    } finally { jest.restoreAllMocks(); }
+  });
+
+  it('a keep-followers setting removes the stale unfollow countdown and progress bar', async () => {
+    const settings = bridge.data.settingsView;
+    settingsViewSignal.value = { ...settings, effective: { ...settings.effective, holdDays: null } };
+    queueLanesSignal.value = { ...LANES, back: { rows: [{ ...row('2', 'follower'), holdUntil: Date.now() + DAY }], truncated: false } };
+    mount();
+    await act(async () => { fireEvent.click(document.querySelector('[data-lane="back"]') as HTMLElement); });
+    expect(screen.getByText('Followed you back · kept')).toBeTruthy();
+    expect(document.querySelector('.qbar')).toBeNull();
   });
 });

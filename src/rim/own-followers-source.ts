@@ -88,7 +88,7 @@ export class AdapterBackedOwnFollowersSource implements PruneOwnFollowers {
       ownPk: this.ownPk,
       bounds: OWN_FOLLOWERS_FETCH_ALL_BOUNDS,
       onRow: (obs) => this.ingestRow(obs),
-      opts,
+      opts, census: opts?.census,
     });
   }
 

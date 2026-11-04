@@ -78,8 +78,9 @@ describe.each(NAMED)('I11: a week as %s', (persona) => {
     }
   });
 
-  // Spec §20.3 asks every whole plan-day to realize exactly V.planned. The plan kernel's late-join and close
-  // rules (src/kernel/plan/status.ts, PC) prorate a session joined even at its start and close a joined
-  // session before its budget is spent at the drawn gaps, so some days land a few short.
-  test.todo(`${persona}: every whole plan-day realizes exactly V.planned (blocked on PC's close and proration rules)`);
+  test('every whole plan-day realizes exactly V.planned', () => {
+    for (const day of week) {
+      expect({ day, realized: byDay.get(day) ?? 0 }).toEqual({ day, realized: run.plans.get(day)?.volume.planned });
+    }
+  });
 });

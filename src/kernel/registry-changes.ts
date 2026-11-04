@@ -40,8 +40,10 @@ const SCHEDULED_PRUNE: RetiredKey = {
   reason: 'the scheduled bulk prune, its 30-minute watcher and its launch retired: nothing is scheduled or launched',
 };
 
-/** The 18 retired keys (spec §5.12): 9 derived, 7 policy, 2 override. */
+/** The retired keys (spec §5.12): 9 derived, 7 policy, 2 override and 2 unused harness values. */
 export const RETIRED: Readonly<Record<string, RetiredKey>> = {
+  'HARNESS.ENRICH_PACE_MIN_MS': ENTRY_SPACING,
+  'HARNESS.ENRICH_PACE_MAX_MS': ENTRY_SPACING,
   'ENGINE.VELOCITY_PARK_MEDIAN_MS': VELOCITY,
   'ENGINE.VELOCITY_PARK_SIGMA': VELOCITY,
   'ENGINE.VELOCITY_PARK_MIN_MS': VELOCITY,
@@ -86,4 +88,8 @@ export const RETIRED: Readonly<Record<string, RetiredKey>> = {
 export const CHANGED: readonly ChangedValue[] = [
   // The prune cool-down rises from 2 h to the p50 soft wall it exists to sit out (ADR 0606).
   { path: 'groups.RECOVERY.PRUNE_COOLDOWN_AFTER_RATE_HALT_MS', from: 7_200_000, to: 10_800_000, adr: '0606' },
+  // The Cautious gap floor takes its derived 70 s (owner Q11): at cap 14 the burst tolerance sanctions no
+  // faster pace, so the pinned 60 s allowed a 4.3× burst (ADR 0606 §4). The grid point and the persona carry it.
+  { path: 'grid.caution=cautious.gapFloorSeconds', from: 60, to: 70, adr: '0606' },
+  { path: 'personas.casual.gapFloorSeconds', from: 60, to: 70, adr: '0606' },
 ];

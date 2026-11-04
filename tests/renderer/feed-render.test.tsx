@@ -8,15 +8,13 @@
  */
 import { act, fireEvent, render, waitFor } from '@testing-library/preact';
 import { App } from '@/renderer/app/App';
-import { stageSignal } from '@/renderer/app/shell-context';
+import { peopleTargetSignal, stageSignal } from '@/renderer/app/shell-context';
 import { rowFace } from '@/renderer/sidebar/copy/feed-copy';
 import { feedEntries } from '@/renderer/sidebar/feed-entries';
-import { DEFAULT_SETTINGS } from '@/settings/settings';
 import type { FeedItem, FeedView, Person } from '@/shared/feed';
-import type { Settings } from '@/types';
 import { type FakeBridge, idleStatus, installFakeBridge } from '../kit/render-bridge';
 
-const SEEDED: Settings = { ...DEFAULT_SETTINGS, seed: 'someone', tourCompletedAt: 1 };
+const SEEDED = { seed: 'someone', app: { tourCompletedAt: 1 } };
 const HOUR = 3_600_000;
 const T = Date.now();
 const DAYS = [
@@ -115,7 +113,7 @@ describe('rendered rows', () => {
 
   async function mount(view: FeedView): Promise<void> {
     render(<App />);
-    await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'getSettings')).toBe(true));
+    await waitFor(() => expect(bridge.calls.some((c) => c[0] === 'settingsView')).toBe(true));
     await act(async () => bridge.emit('feed', view));
   }
 
@@ -148,5 +146,7 @@ describe('rendered rows', () => {
       fireEvent.click(document.querySelector('[data-zone="activity"] .sb-handle') as HTMLButtonElement);
     });
     expect(stageSignal.value).toBe('people');
+    expect(peopleTargetSignal.value).toEqual(person('jane'));
+    await waitFor(() => expect(document.querySelector('[data-person-pk="jane"]')?.textContent).toContain('stored details'));
   });
 });

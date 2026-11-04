@@ -34,7 +34,7 @@ function fixture() {
   const churn = new ChurnScheduler({ store, clock, ownPk: 'me', rate: base.rate as never, actions,
     cfg: { ...DEFAULT_CONFIGS.churn, maxWaitForFollowbackMs: 3 * DAY } });
   let lastSweep: number | null = null;
-  const cadence = { isDue: () => lastSweep === null, markRun: (at: number) => { lastSweep = at; } };
+  const cadence = { lastSweepEndedAt: () => lastSweep, markRun: (at: number) => { lastSweep = at; } };
   const settings = { ...DEFAULT_SETTINGS, seed: 'hub', lowWaterCandidates: 0,
     activeHoursStart: 0, activeHoursEnd: 24, followbackSweepHours: 1 };
   const delays = new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); } });
@@ -93,7 +93,7 @@ test('an uncertain follow is observed by PK in the journal step: the follow mirr
   const followback = new FakeFollowback();
   const engine = f.make(followback, { settleJournal: f.settler(profiles) });
   expect(await engine.stepOnce()).toBe('swept-followback');
-  expect(profiles.visit).toHaveBeenCalledWith('old');
+  expect(profiles.visit).toHaveBeenCalledWith('old', { pk: 'old' });
   expect(f.store.pendingEffectIntents()).toEqual([]);
   // Spec §9.8: a landed follow is ours from its dispatch, never leaked as external.
   expect(f.store.getFollowRecord('old')).toMatchObject({ state: 'pending_followback', followedAt: dispatchedAt });

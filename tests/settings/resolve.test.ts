@@ -151,12 +151,13 @@ describe('laws', () => {
     expect(numberOf(r, 'pace.dailyVolume')).toBe(50);
   });
 
-  test('with the plan the interim recommendations give way to the plan-derived ones', () => {
-    const interim = resolveDoc(docOf());
+  test('lifecycle recommendations are derived even before the plan capability is registered', () => {
+    const before = resolveDoc(docOf());
     const planned = resolveDoc(docOf(), true);
-    expect([interim['unfollow.cleanupPerDay'].recommended, interim['unfollow.censusEveryDays'].recommended])
-      .toEqual([SETTINGS_POLICY.INTERIM.pruneDailyLimit, SETTINGS_POLICY.INTERIM.pruneScheduleDays]);
-    expect(planned['unfollow.censusEveryDays'].recommended).toBe(numberOf(planned, 'unfollow.waitDays'));
-    expect(planned['checks.everyHours'].recommended).toBe(1);
+    for (const r of [before, planned]) {
+      expect(r['unfollow.cleanupPerDay'].recommended).toBe(numberOf(r, 'pace.dailyCeiling'));
+      expect(r['unfollow.censusEveryDays'].recommended).toBe(numberOf(r, 'unfollow.waitDays'));
+      expect(r['checks.everyHours'].recommended).toBe(1);
+    }
   });
 });
