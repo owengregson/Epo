@@ -61,6 +61,10 @@ test('a direct-script development launch reports Epo’s manifest version instea
   expect(initialStatus('off', resolveAppVersion(false, '44.1.1')).current).toBe(packageVersion);
 });
 
+test('a branded default-runtime launch reports Epo even when Electron classifies the executable as packaged', () => {
+  expect(initialStatus('off', resolveAppVersion(true, '44.1.1', true)).current).toBe(packageVersion);
+});
+
 test('a packaged install preserves its installed app version even when the source manifest differs', () => {
   expect(initialStatus('notify', resolveAppVersion(true, '3.1.2')).current).toBe('3.1.2');
 });

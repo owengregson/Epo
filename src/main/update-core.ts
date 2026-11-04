@@ -6,21 +6,24 @@
  * solely from the composed app — touches electron-updater.
  */
 
+import { isInstalledApp } from '@/main/app-environment';
 import type { UpdateMode, UpdateStatus } from '@/shared/update-status';
 import { version as packageVersion } from '../../package.json';
 
 export interface UpdateEnvironment {
   /** `process.platform`. */
   platform: NodeJS.Platform;
-  /** `app.isPackaged` — dev runs have no update artifacts to apply. */
+  /** `app.isPackaged`; the branded dev executable can also report true. */
   isPackaged: boolean;
+  /** `process.defaultApp` — a script passed to Electron, not an installed build. */
+  defaultApp?: boolean;
   /** `process.env.PORTABLE_EXECUTABLE_DIR` — set by electron-builder's portable launcher. */
   portableDir: string | undefined;
 }
 
 /** Direct-script development launches report Electron's version; packaged installs report their app version. */
-export function resolveAppVersion(isPackaged: boolean, runtimeVersion: string): string {
-  return isPackaged ? runtimeVersion : packageVersion;
+export function resolveAppVersion(isPackaged: boolean, runtimeVersion: string, defaultApp?: boolean): string {
+  return isInstalledApp(isPackaged, defaultApp) ? runtimeVersion : packageVersion;
 }
 
 /**
@@ -33,7 +36,7 @@ export function resolveAppVersion(isPackaged: boolean, runtimeVersion: string): 
  * - Windows NSIS: full download-and-install.
  */
 export function resolveUpdateMode(env: UpdateEnvironment): UpdateMode {
-  if (!env.isPackaged) return 'off';
+  if (!isInstalledApp(env.isPackaged, env.defaultApp)) return 'off';
   if (env.platform === 'win32') return env.portableDir !== undefined ? 'notify' : 'full';
   if (env.platform === 'darwin') return 'notify';
   return 'off'; // no Linux packages are shipped

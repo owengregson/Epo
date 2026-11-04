@@ -92,6 +92,23 @@ test('the application menu is installed before the dashboard loads', async () =>
   expect(menus).toHaveLength(1);
 });
 
+test('a branded direct-script runtime retains the development menu despite app.isPackaged', async () => {
+  const property = Object.getOwnPropertyDescriptor(process, 'defaultApp');
+  Object.defineProperty(process, 'defaultApp', { configurable: true, value: true });
+  try {
+    menus.length = 0;
+    await launchWindow({ handles: handles() });
+    expect(menus[0]).toEqual(expect.objectContaining({
+      template: expect.arrayContaining([expect.objectContaining({
+        label: 'View', submenu: expect.arrayContaining([{ role: 'reload' }, { role: 'toggleDevTools' }]),
+      })]),
+    }));
+  } finally {
+    if (property === undefined) Reflect.deleteProperty(process, 'defaultApp');
+    else Object.defineProperty(process, 'defaultApp', property);
+  }
+});
+
 test('the fallback timer reveals a window whose dashboard never finishes loading', async () => {
   await launchWindow({ handles: handles() });
   jest.advanceTimersByTime(BOOT.SHOW_FALLBACK_MS - 1);
