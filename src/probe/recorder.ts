@@ -13,7 +13,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import type { WebContents } from 'electron';
 import { SURFACE } from '@/adapter/ig-surface';
+import { gateObserved } from '@/surface/read/gate';
 import { decodeBody } from '@/surface/transport/decode';
+import { TAB } from '@/timing/config';
+import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 
 export interface Exchange {
   n: number;
@@ -76,13 +79,18 @@ export class TrafficRecorder {
   private readonly t0 = Date.now();
   private step = 'start';
   private readonly bodies: string;
+  private readonly pending = new Set<Promise<void>>();
   private readonly listener = (_e: unknown, method: string, params: unknown): void => {
-    void this.onMessage(method, params as Record<string, unknown>);
+    const task = this.onMessage(method, params as Record<string, unknown>)
+      .catch((error: unknown) => this.onFailure?.({ step: this.step, detail: String(error) }))
+      .finally(() => this.pending.delete(task));
+    this.pending.add(task);
   };
 
   constructor(
     private readonly wc: WebContents,
     out: string,
+    private readonly onFailure?: (failure: { step: string; detail: string; exchange?: number }) => void,
   ) {
     this.bodies = path.join(out, 'bodies');
     mkdirSync(this.bodies, { recursive: true });
@@ -94,6 +102,24 @@ export class TrafficRecorder {
 
   stop(): void {
     this.wc.debugger.off('message', this.listener);
+  }
+
+  /** Stop first, then retain every body already requested; CDP reads have the tab's bounded deadline. */
+  async drain(): Promise<void> {
+    await Promise.all([...this.pending]);
+    for (const ex of this.byId.values()) this.fail(ex, 'incomplete exchange at recorder stop');
+    this.byId.clear();
+  }
+
+  private fail(ex: Exchange, detail: string): void {
+    ex.failed = detail;
+    this.onFailure?.({ step: ex.step, detail, exchange: ex.n });
+  }
+
+  private async command<T>(method: string, requestId: string): Promise<T> {
+    const result = await withTimeout(this.wc.debugger.sendCommand(method, { requestId }) as Promise<T>, TAB.GET_BODY_TIMEOUT_MS);
+    if (result === TIMED_OUT) throw new Error(`${method}: timed out`);
+    return result;
   }
 
   setStep(step: string): void {
@@ -128,15 +154,15 @@ export class TrafficRecorder {
         headers,
         epoKind: SURFACE.matchEndpoint(req.url, headers['x-fb-friendly-name']) ?? null,
       };
-      let post = req.postData;
-      if (post === undefined && req.hasPostData === true) {
-        post = await this.wc.debugger
-          .sendCommand('Network.getRequestPostData', { requestId: id })
-          .then((r: { postData: string }) => r.postData, () => undefined);
-      }
-      if (post !== undefined) Object.assign(ex, formOf(post));
+      // Publish before asynchronous POST metadata: response events can arrive during that CDP await.
       this.exchanges.push(ex);
       this.byId.set(id, ex);
+      let post = req.postData;
+      if (post === undefined && req.hasPostData === true) {
+        post = await this.command<{ postData: string }>('Network.getRequestPostData', id)
+          .then((r) => r.postData, (error: unknown) => { this.fail(ex, `request metadata: ${String(error)}`); return undefined; });
+      }
+      if (post !== undefined) Object.assign(ex, formOf(post));
       return;
     }
     const ex = this.byId.get(id);
@@ -145,18 +171,20 @@ export class TrafficRecorder {
       const res = p.response as { status: number; mimeType: string };
       ex.status = res.status;
       ex.mime = res.mimeType;
+      if (gateObserved(res.status, res.mimeType, SURFACE.transport.parseableMime).kind !== 'data') {
+        this.fail(ex, `unsafe API response: ${res.status} ${res.mimeType}`);
+      }
     } else if (method === 'Network.loadingFailed') {
-      ex.failed = String(p.errorText ?? 'failed');
+      this.fail(ex, String(p.errorText ?? 'failed'));
       this.byId.delete(id);
     } else if (method === 'Network.loadingFinished') {
       this.byId.delete(id);
-      const got = await this.wc.debugger
-        .sendCommand('Network.getResponseBody', { requestId: id })
+      const got = await this.command<{ body: string; base64Encoded: boolean }>('Network.getResponseBody', id)
         .then(
           (r: { body: string; base64Encoded: boolean }) =>
             r.base64Encoded ? Buffer.from(r.body, 'base64').toString('utf8') : r.body,
           (e: unknown) => {
-            ex.failed = `body: ${String(e)}`;
+            this.fail(ex, `body: ${String(e)}`);
             return null;
           },
         );
@@ -165,6 +193,7 @@ export class TrafficRecorder {
       const decoded = decodeBody(got, SURFACE.transport);
       if (!decoded.ok) {
         ex.textHead = got.slice(0, 300);
+        this.fail(ex, 'API body was not decodable data');
         return;
       }
       const json = decoded.json;

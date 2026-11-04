@@ -1,110 +1,74 @@
-/**
- * READ-ONLY end-to-end check of the 2026-10-08 fixes, through PRODUCTION code
- * only (`EPO_PROBE=verify`, `EPO_PROBE_TARGET=<a public account we follow>`):
- *
- *  1. profile VISITS (`TabProfileVisitor` + `ProfileObserver`): our own
- *     profile, the target, and a username that does not exist → ok / ok / gone;
- *  2. the notifications drawer through the production Actor (settle-then-press):
- *     open, Follows filter, Follow-requests panel (NOTHING is confirmed), close —
- *     with the activity-feed and pending-requests bodies read by the Reader;
- *  3. the rail's own-profile link (settle-then-press) lands on our profile.
- *
- * The observer writes to a no-op store and every read reports to a `MemorySink`, whose tallies and
- * drift (paths and classes, never values) close `verify.json`: the probe never touches the real graph.
- */
-
+/** Read-only L1 parsing check. A failed step, wall or drift stops the sequence; no retry or mutation is invoked. */
 import { writeFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { webContents } from 'electron';
 import { Actor } from '@/adapter/actor';
 import { resolveOwnUsername } from '@/adapter/identity';
 import { SURFACE } from '@/adapter/ig-surface';
-import { Reader } from '@/adapter/reader';
 import { Sentinel } from '@/adapter/sentinel';
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
-import { SystemClock } from '@/governors/clock';
-import { TrafficRecorder } from '@/probe/recorder';
-import { ProfileObserver } from '@/rim/profile-observer';
+import type { VerifyEvidence } from '@/probe/verify-evidence';
 import { TabProfileVisitor } from '@/rim/profile-visit';
-import type { SurfaceRead } from '@/surface/read/types';
-import { MemorySink } from '@/surface/sink';
+import type { ProfileVisit } from '@/rim/profile-visit-port';
 import { sleep } from '@/timing/primitives';
 import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
 
-const settle = (): Promise<void> => sleep(5000 + cryptoUniform() * 3000);
+const settle = (signal: AbortSignal): Promise<void> => sleep(5000 + cryptoUniform() * 3000, signal);
+const summary = (visit: ProfileVisit): unknown => visit.ok
+  ? { ok: true, pk: visit.obs.accountPk, ...visit.obs.fields, viewer: visit.viewer,
+    tier: visit.tier, partial: visit.partial, presence: visit.presence } : visit;
 
-/** A drawer read as the probe records it: its tier and counts, or its typed failure. */
-const readSummary = (read: SurfaceRead): Record<string, unknown> =>
-  read.ok
-    ? { tier: read.tier, partial: read.partial, followEvents: read.projection.events.length, rows: read.projection.facts.length,
-        continuation: read.projection.continuation?.kind ?? null }
-    : { failure: read.kind };
+function validProfile(visit: ProfileVisit, target: boolean): boolean {
+  if (!visit.ok || visit.tier !== 'canonical' || visit.partial !== false) return false;
+  const { counts, bio, isVerified, isPrivate, relationship } = visit.presence ?? {};
+  return counts === 'read' && bio === 'read' && isVerified === 'read'
+    && (relationship === 'read' || (!target && relationship === 'self'))
+    && (!target || (isPrivate === 'read' && visit.obs.fields.isPrivate === false
+      && visit.viewer.following === true && visit.viewer.requested === false));
+}
 
-export async function verifyProbe(tab: InstagramTab, out: string): Promise<void> {
-  const target = process.env.EPO_PROBE_TARGET?.trim() ?? '';
-  if (target === '') throw new Error('EPO_PROBE_TARGET (a public account we follow) is required');
-  const sink = new MemorySink();
-  const reader = new Reader({ sink });
-  const result: Record<string, unknown> = {};
-  const observer = new ProfileObserver({ tab, reader, store: { observe: () => {} }, clock: new SystemClock() });
-  const stopObserver = observer.start();
-  // Every body the drawer fetches, read once by the production Reader.
-  const drawer: Array<Record<string, unknown>> = [];
-  const stopDrawer = tab.onResponse((resp) => {
-    const kind = reader.kindOf(resp);
-    if (kind !== 'activity-feed' && kind !== 'friend-requests') return;
-    reader.observed.read(resp)?.then(
-      ({ read }) => drawer.push({ kind, method: resp.method, status: resp.status, ...readSummary(read) }),
-      (e: unknown) => drawer.push({ kind, error: String(e) }),
-    );
-  });
-  const interactor = createTabInteractor(tab);
-  const actor = new Actor(tab, { interactor });
-  const visitor = new TabProfileVisitor({ tab, observer, sentinel: new Sentinel(tab) });
-  // Every API exchange the page's own client makes, per step (evidence when a read goes quiet).
-  const wc = webContents.getAllWebContents().find((c) => c.getURL().includes('instagram.com'));
-  const rec = wc === undefined ? null : new TrafficRecorder(wc, out);
-  rec?.start();
-  const step = async (name: string, fn: () => Promise<unknown>): Promise<void> => {
+export async function verifyProbe(tab: InstagramTab, evidence: VerifyEvidence, target: string): Promise<void> {
+  const { result, abort, observer } = evidence;
+  if (observer === null) throw new Error('verify observer was not installed before initial navigation');
+  const abortSignal = () => abort.signal;
+  const interactor = createTabInteractor(tab, { abortSignal });
+  const actor = new Actor(tab, { interactor, abortSignal });
+  const visitor = new TabProfileVisitor({ tab, observer, sentinel: new Sentinel(tab), abortSignal });
+  const step = async <T>(name: string, fn: () => Promise<T>, accepts: (value: T) => boolean, format: (value: T) => unknown = (v) => v) => {
+    evidence.begin(name);
+    await evidence.check(tab);
     logger.info('probe.verify step', { step: name });
-    rec?.setStep(name);
-    result[name] = await fn().catch((e: unknown) => ({ threw: String(e) }));
-    await settle();
-    writeFileSync(path.join(out, `${name}.png`), await tab.captureScreenshot());
+    evidence.assert();
+    const value = await evidence.wait(fn());
+    result[name] = format(value);
+    if (!accepts(value)) evidence.stop('step-result', { step: name, result: result[name] });
+    evidence.assert();
+    await evidence.check(tab);
+    await evidence.wait(settle(abort.signal));
+    await evidence.check(tab);
+    writeFileSync(path.join(evidence.out, `${name}.png`), await evidence.wait(tab.captureScreenshot()));
   };
-  const summary = (v: Awaited<ReturnType<typeof visitor.visit>>): unknown =>
-    v.ok
-      ? { ok: true, pk: v.obs.accountPk, followers: v.obs.fields.followers, following: v.obs.fields.following, viewer: v.viewer }
-      : v;
-  try {
-    const own = (await resolveOwnUsername(tab, { interactor })) ?? '';
-    result.ownUsername = own;
-    await step('visit-own', async () => summary(await visitor.visit(own)));
-    await step('visit-target', async () => summary(await visitor.visit(target)));
-    const nx = `epo_nx_${cryptoUniform().toString(36).slice(2, 10)}${cryptoUniform().toString(36).slice(2, 8)}`;
-    await step('visit-nonexistent', async () => summary(await visitor.visit(nx)));
-    await step('home', () => tab.goto(IG_HOME_URL));
-    await step('drawer-open', () => actor.clickNotifications());
-    await step('drawer-follows', () => actor.clickNotificationsFollowsFilter());
-    await step('drawer-requests', () => actor.clickFollowRequestsEntry());
-    await step('drawer-close', () => actor.clickNotificationsClose());
-    result['drawer-closed'] = !(await tab.evaluate<{ found: boolean }>(SURFACE.locateNotificationsCloseScript())).found;
-    await step('own-profile-link', async () => {
-      const clicked = await actor.clickOwnProfileLink();
-      await sleep(3000);
-      return { clicked, url: tab.currentUrl() };
-    });
-  } finally {
-    stopDrawer();
-    stopObserver();
-    rec?.stop();
-    writeFileSync(path.join(out, 'traffic.json'), JSON.stringify(rec?.exchanges ?? [], null, 2), 'utf8');
-    result.drawerBodies = drawer;
-    const health = sink.snapshot();
-    result.surface = { tallies: health.tallies,
-      drift: health.drift.map(({ signal }) => ({ endpoint: signal.endpoint, cls: signal.cls, path: signal.path })) };
-    writeFileSync(path.join(out, 'verify.json'), JSON.stringify(result, null, 2), 'utf8');
-  }
+  await evidence.check(tab);
+  const own = await evidence.wait(resolveOwnUsername(tab, { interactor, signal: abort.signal }));
+  result.ownUsername = own ?? null;
+  if (!own) { evidence.stop('own-username-unavailable'); evidence.assert(); return; }
+  await step('visit-own', () => visitor.visit(own), (visit) => validProfile(visit, false), summary);
+  await step('visit-target', () => visitor.visit(target), (visit) => validProfile(visit, true), summary);
+  const nx = `epo_nx_${cryptoUniform().toString(36).slice(2, 10)}${cryptoUniform().toString(36).slice(2, 8)}`;
+  await step('visit-nonexistent', () => visitor.visit(nx), (visit) => !visit.ok && visit.kind === 'gone', summary);
+  await step('home', () => tab.goto(IG_HOME_URL), () => true);
+  await step('drawer-open', () => actor.clickNotifications(), (clicked) => clicked);
+  await step('drawer-follows', () => actor.clickNotificationsFollowsFilter(), (clicked) => clicked);
+  await step('drawer-requests', () => actor.clickFollowRequestsEntry(), (clicked) => clicked);
+  await step('drawer-close', () => actor.clickNotificationsClose(), (clicked) => clicked);
+  result['drawer-closed'] = !(await evidence.wait(tab.evaluate<{ found: boolean }>(SURFACE.locateNotificationsCloseScript()))).found;
+  if (!result['drawer-closed']) { evidence.stop('drawer-still-open'); evidence.assert(); }
+  await step('own-profile-link', async () => {
+    const clicked = await actor.clickOwnProfileLink();
+    evidence.assert();
+    await evidence.wait(sleep(3000, abort.signal));
+    evidence.assert();
+    return { clicked, url: tab.currentUrl() };
+  }, (value) => value.clicked && SURFACE.usernameFromProfileUrl(value.url)?.toLowerCase() === own.toLowerCase());
 }

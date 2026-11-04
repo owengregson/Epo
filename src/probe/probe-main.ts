@@ -22,6 +22,7 @@ import { SystemClock } from '@/governors/clock';
 import { awaitLogin, bootstrapApp, ensureInstagramOrigin, openToolWindow } from '@/main/bootstrap';
 import { electronIgSession } from '@/main/services/ig-session';
 import { SOLO_PHASES } from '@/probe/phases';
+import { launchVerify } from '@/probe/verify-launch';
 import { ListPageWalker } from '@/rim/list-page-walker';
 import { ProfileObserver } from '@/rim/profile-observer';
 import { TabProfileVisitor } from '@/rim/profile-visit';
@@ -34,9 +35,7 @@ const PHASE = process.env.EPO_PROBE ?? 'health';
 const OUT = process.env.EPO_PROBE_OUT ?? '';
 const TARGET = process.env.EPO_PROBE_TARGET?.trim() ?? '';
 const FOLLOW_HOLD_MS = 45_000; // between the probe's follow and its unfollow
-
 const save = (name: string, value: unknown): void => writeFileSync(path.join(OUT, name), JSON.stringify(value, null, 2), 'utf8');
-
 interface Health {
   sentinel: string;
   ownPk: string | null;
@@ -272,6 +271,7 @@ async function main(): Promise<void> {
     throw new Error('EPO_PROBE_OUT must name a directory OUTSIDE the repository');
   }
   mkdirSync(OUT, { recursive: true });
+  if (PHASE === 'verify') return launchVerify(OUT, TARGET);
   const tool = openToolWindow({ title: `Epo — live probe (${PHASE})` });
   await tool.ready;
   if (!(await awaitLogin(tool.isOpen))) return;

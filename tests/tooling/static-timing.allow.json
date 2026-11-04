@@ -137,7 +137,6 @@
     {"key":"src/probe/unfollow-hover.ts :: unfollowHoverProbe :: while :: 4000","class":"HARNESS","reason":"harness: the supervised probe (npm run probe) is dev-only; its values never reach production"},
     {"key":"src/probe/verify.ts :: settle :: sleep :: 3000","class":"HARNESS","reason":"harness: the supervised probe (npm run probe) is dev-only; its values never reach production"},
     {"key":"src/probe/verify.ts :: settle :: sleep :: 5000","class":"HARNESS","reason":"harness: the supervised probe (npm run probe) is dev-only; its values never reach production"},
-    {"key":"src/probe/verify.ts :: verifyProbe :: JSON.stringify :: 2","class":"HARNESS","reason":"harness: the supervised probe (npm run probe) is dev-only; its values never reach production","count":2},
     {"key":"src/probe/verify.ts :: verifyProbe :: cryptoUniform().toString :: 36","class":"HARNESS","reason":"harness: the supervised probe (npm run probe) is dev-only; its values never reach production","count":2},
     {"key":"src/probe/verify.ts :: verifyProbe :: cryptoUniform().toString().slice :: 10","class":"HARNESS","reason":"harness: the supervised probe (npm run probe) is dev-only; its values never reach production"},
     {"key":"src/probe/verify.ts :: verifyProbe :: cryptoUniform().toString().slice :: 2","class":"HARNESS","reason":"harness: the supervised probe (npm run probe) is dev-only; its values never reach production","count":2},
