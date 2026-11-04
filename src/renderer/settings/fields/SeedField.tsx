@@ -134,7 +134,7 @@ export function SeedField({ s }: { s: StageApi }): JSX.Element {
   const red = line?.tone === 'error';
 
   return (
-    <div class="set-field" data-row="seed">
+    <div class="set-field" data-row="seed" data-tour="seed">
       <label class="set-field__label" for={`${id}-in`}>
         {SEED_COPY.label}
       </label>

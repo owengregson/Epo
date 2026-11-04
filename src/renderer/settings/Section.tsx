@@ -6,9 +6,6 @@ import { fill } from './format';
 import { sectionDomId } from './sections';
 import type { StageApi } from './stage-api';
 
-/** The intro tour's anchors on this page (its settings step points at the starting account). */
-const TOUR_ANCHOR: Partial<Record<SectionId, string>> = { audience: 'seed' };
-
 /** Param keys whose recommendation a section's "Use recommended" restores. */
 function overriddenKeys(s: StageApi, section: SectionId) {
   return s.view.params.filter((p) => p.section === section && p.override !== null).map((p) => p.key);
@@ -29,7 +26,7 @@ export function Section({ id, s, children }: { id: SectionId; s: StageApi; child
     s.send(`reset:${id}`, keys.map((key) => ({ op: 'clear-override', key })));
   };
   return (
-    <section class="set-sec" id={sectionDomId(id)} data-section={id} data-tour={TOUR_ANCHOR[id]} aria-labelledby={`${sectionDomId(id)}-h`}>
+    <section class="set-sec" id={sectionDomId(id)} data-section={id} aria-labelledby={`${sectionDomId(id)}-h`}>
       <div class="set-sec__head">
         <h2 id={`${sectionDomId(id)}-h`}>{copy.title}</h2>
         {question === undefined ? null : <p>{question}</p>}

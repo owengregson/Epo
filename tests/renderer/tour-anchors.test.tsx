@@ -51,6 +51,7 @@ describe('the intro tour', () => {
       if (step === undefined) break;
       seen.add(step.id);
       if (step.target !== undefined && anchorFor(step.target) === null) unresolved.push(`${step.id} → ${step.target}`);
+      if (step.target === 'seed') expect(anchorFor('seed')?.getAttribute('data-row')).toBe('seed');
       await act(async () => {
         fireEvent.click(document.querySelector('.tour-next') as HTMLButtonElement);
       });
