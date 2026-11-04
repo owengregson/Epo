@@ -2,7 +2,8 @@
  * The plan wiring (ADR 0607, spec §5.13 S1): the plan service, the single writer of the day plan,
  * over the store and the live settings; its plan-backed day clock (the one boundary every day
  * counter reads); the loop's plan port; the plan and Boost status contributors; and the settings
- * preview port; the cadence, the read budget and the plan-backed tempo the whole graph runs on.
+ * preview port; the cadence, the read budget, the plan-backed tempo the whole graph runs on and the
+ * activity clock every Instagram operation enters on.
  */
 
 import type { EngineWaitKey } from '@/engine/engine-waits';
@@ -19,6 +20,7 @@ import { ReadBudget, type ReadBudgetConfig } from '@/governors/read-budget';
 import type { PlanDayClock } from '@/kernel/plan';
 import type { TempoSource } from '@/kernel/tempo';
 import { PlanControl } from '@/main/modules/plan-control';
+import { createIgActivityClock, type IgActivityClock } from '@/rim/ig-activity-clock';
 import type { EffectiveSettings } from '@/settings/effective';
 import { toPlanIntent } from '@/settings/plan-intent';
 import { toReadAllowance } from '@/settings/read-allowance';
@@ -61,6 +63,8 @@ export interface PlanWiring extends GraphPlan {
   readonly readBudget: ReadBudget;
   /** The plan-backed tempo (spec §5.9, §5.11): every Instagram-facing wait, dwell and gesture follows the session. */
   readonly tempo: TempoSource;
+  /** The graph's one activity clock (spec §5.16): each visit, walk and drawer enters a drawn dwell after the last. */
+  readonly activity: IgActivityClock;
 }
 
 /** The loop's waits a re-plan can move: the plan's own parks. */
@@ -141,6 +145,7 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     censusFreshMs: () => service.snapshot(clock.now()).intent.patienceWaitMs,
     dayWindow: (now) => dayClock.window(now),
   };
+  const tempo = service.tempo();
   return {
     service,
     dayClock,
@@ -148,7 +153,8 @@ export function wirePlan(store: KnowledgeStore, clock: Clock, ownPk: string, del
     breaker,
     prunePlan,
     readBudget: new ReadBudget({ store, clock, limits: () => planReadLimits(service, effective, clock.now()) }),
-    tempo: service.tempo(),
+    tempo,
+    activity: createIgActivityClock({ tempo }),
     nextSessionAt: (now) => service.view(now).nextSessionAt,
     reviewBound: (now) => {
       const open = service.view(now).open;

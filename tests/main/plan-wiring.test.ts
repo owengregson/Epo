@@ -206,3 +206,15 @@ describe('the plan-backed tempo (spec §5.13 S2 item 9, §5.11)', () => {
     expect(host.capabilities).toMatchObject({ plan: false, tempo: false, boost: false });
   });
 });
+
+describe('the activity clock (spec §5.13 S2b, §5.16)', () => {
+  test('each graph holds one clock of its own; an end noted on it spaces the next entry', () => {
+    const plan = wire(store(), planClock(T0));
+    const other = wire(store(), planClock(T0));
+    expect(plan.activity).not.toBe(other.activity);
+    expect(plan.activity.lastEndAt()).toBeNull();
+    plan.activity.noteEnd(T0);
+    expect(plan.activity.lastEndAt()).toBe(T0);
+    expect(other.activity.lastEndAt()).toBeNull();
+  });
+});

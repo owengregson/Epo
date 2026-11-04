@@ -24,12 +24,12 @@ import { STORE_POLICY } from '@/kernel/store-policy';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
-import { ListPageWalker } from '@/rim/list-page-walker';
 import { AdapterBackedOwnFollowersSource } from '@/rim/own-followers-source';
 import { AdapterBackedOwnFollowersTargetSource } from '@/rim/own-followers-target-source';
 import { AdapterBackedOwnFollowingSource } from '@/rim/own-following-source';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
 import { TabProfileVisitor } from '@/rim/profile-visit';
+import { SpacedListPageWalker } from '@/rim/spaced-list-walker';
 import { StoreBackedTargetDiscovery } from '@/rim/target-discovery';
 import {
   toChainConfig, toRateGovernorConfig, toScannerConfig, toScorerConfig,
@@ -106,7 +106,7 @@ export function buildGraph(
     tab: d.tab,
     observer: profileObserver,
     sentinel,
-    abortSignal: driverSignal, tempo: plan.tempo,
+    abortSignal: driverSignal, activity: plan.activity,
   });
 
   const pageReader = new FollowersPageReader({
@@ -121,7 +121,7 @@ export function buildGraph(
   // The prune scan's FAST census path: direct friendships-API pagination at
   // full page size (~4× the dialog's scroll batches). The sources fall back
   // to the dialog-scroll pageReader when the direct walk cannot fetch.
-  const listWalker = new ListPageWalker({
+  const listWalker = new SpacedListPageWalker(plan.activity, {
     onProgress: d.onProgress,
     readBudget,
     tab: d.tab,
