@@ -40,6 +40,15 @@ not guarantees that a particular source can produce enough eligible candidates.
 If only one viable source remains, it may continue. Historical sources remain
 resumable; the live-frontier limit does not erase their obligations.
 
+Lifetime preference also covers sources with queued obligations outside the live
+frontier. Its known count is the maximum of the persisted source tally, the
+recent window and successful follow-ledger entries matching the retained record's
+`followedAt` exactly. These overlap, so they are not added. A simulated timestamp,
+failed follow or unfollow contributes nothing; an old cycle cannot be attributed
+to a newly queued source. This is a lower bound when historical source provenance
+is unavailable. One grouped store read per exploration selection supplies the
+counts; ordinary opportunities need no extra read. Frontier v1 remains unchanged.
+
 Discovery applies source-size and mature-quality gates before truncating the
 five candidates. Raw audience size is a viability gate, not the optimization
 target. Private fallback sources require an observed active follow from our

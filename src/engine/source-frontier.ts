@@ -37,7 +37,7 @@ export interface SourceFrontierSnapshot {
 
 type FrontierStore = Pick<KnowledgeStore,
   'getSourceFrontierState' | 'setSourceFrontierState' | 'listTargets' | 'getAccount' |
-  'followRecordsByState' | 'followersOf'>;
+  'followRecordsByState' | 'followersOf' | 'followRecords'>;
 
 /** Durable source visits. Rotation is a scheduling decision, never a claim of absence. */
 export class SourceFrontier {
@@ -85,6 +85,16 @@ export class SourceFrontier {
 
   private save(state: SourceFrontierSnapshot): void {
     this.deps.store.setSourceFrontierState(JSON.stringify(state));
+  }
+
+  /** Overlapping evidence is a lower bound on lifetime use, never three additive counts. */
+  private followTotals(state: SourceFrontierSnapshot): Map<string, number> {
+    const totals = this.deps.store.followRecords.successfulFollowsBySource();
+    const recent = new Map<string, number>();
+    for (const pk of state.recentFollowSources) recent.set(pk, (recent.get(pk) ?? 0) + 1);
+    for (const source of state.sources) totals.set(source.pk, Math.max(totals.get(source.pk) ?? 0, source.totalFollows));
+    for (const [pk, count] of recent) totals.set(pk, Math.max(totals.get(pk) ?? 0, count));
+    return totals;
   }
 
   offer(pk: string, source: Target['source']): void {
@@ -188,6 +198,7 @@ export class SourceFrontier {
     if (candidates.length < POLICY.rankMinCandidates) return candidates[0] ?? null;
     const exploration = (state.totalFollows + 1) % Math.round(1 / POLICY.explorationFraction) === 0;
     const yields = matureYields(this.deps.store, now, this.deps.outcomeWindowMs?.());
+    const totals = exploration ? this.followTotals(state) : new Map<string, number>();
     const utility = new Map(candidates.map((source) => {
       const quality = (yields.get(source.pk) ?? priorYield()).rate;
       const overlap = observedOverlap(this.deps.store, source.pk, recent) ?? POLICY.unknownOverlap;
@@ -195,7 +206,7 @@ export class SourceFrontier {
       return [source.pk, quality * (1 - POLICY.overlapWeight * overlap) - share * POLICY.sharePenalty];
     }));
     candidates.sort((a, b) => {
-      if (exploration && a.totalFollows !== b.totalFollows) return a.totalFollows - b.totalFollows;
+      if (exploration && totals.get(a.pk) !== totals.get(b.pk)) return (totals.get(a.pk) ?? 0) - (totals.get(b.pk) ?? 0);
       return (utility.get(b.pk) ?? 0) - (utility.get(a.pk) ?? 0) || a.lastVisitedAt - b.lastVisitedAt || a.pk.localeCompare(b.pk);
     });
     return candidates[0] ?? null;
@@ -223,9 +234,10 @@ export class SourceFrontier {
       if (under.length > 0) sources = under;
     }
     const exploration = (state.totalFollows + 1) % Math.round(1 / POLICY.explorationFraction) === 0;
+    const totals = exploration ? this.followTotals(state) : new Map<string, number>();
     sources.sort((a, b) => {
       if (exploration) {
-        const total = (pk: string): number => state.sources.find((s) => s.pk === pk)?.totalFollows ?? 0;
+        const total = (pk: string): number => totals.get(pk) ?? 0;
         if (total(a) !== total(b)) return total(a) - total(b);
       }
       return counts(a) - counts(b) || a.localeCompare(b);

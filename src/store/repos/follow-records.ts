@@ -27,6 +27,18 @@ export class FollowRecordRepo {
     private readonly changed: () => void,
   ) {}
 
+  /** Proven successful follows for retained cycles; unknown historical source attribution stays uncounted. */
+  successfulFollowsBySource(): Map<string, number> {
+    const rows = this.db.prepare(`
+      SELECT fr.target_pk AS source, COUNT(DISTINCT fr.account_pk) AS total
+      FROM follow_records fr JOIN action_ledger al
+        ON al.account_pk = fr.account_pk AND al.at = fr.followed_at
+      WHERE fr.target_pk IS NOT NULL AND al.action = 'follow' AND al.result = 'ok'
+      GROUP BY fr.target_pk
+    `).all() as Array<{ source: string; total: number }>;
+    return new Map(rows.map((row) => [row.source, row.total]));
+  }
+
   /** Insert or fully replace a record, keyed on account_pk. */
   upsert(rec: FollowRecord): void {
     this.db.transaction(() => {
