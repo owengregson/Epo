@@ -110,7 +110,7 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
   const { port } = wireProtection(d, clock, dayClock);
   const reconciler = new ProtectionReconciler({ store, port, clock, dayClock });
   const churn = new ChurnScheduler({
-    pickQueued: (records) => frontier.pickQueued(records),
+    pickQueued: (records) => frontier.pickQueued(records), freshCandidateSelection: frontier.qualityEnabled(),
     mayFollow: (record) => frontier.allowsFollow(record),
     validateFollow: (record) => {
       const account = store.getAccount(record.accountPk);

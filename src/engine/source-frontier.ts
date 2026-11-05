@@ -117,13 +117,14 @@ export class SourceFrontier {
   /** Rechecked at the fresh profile and physical click; journal admission is owned by its existing guard. */
   allowsFollow(record: FollowRecord): boolean {
     if (this.deps.quality === undefined) return true;
-    if (record.targetPk === null || this.deps.store.getTarget(record.targetPk)?.status === 'retired') return false;
+    const target = record.targetPk === null ? null : this.deps.store.getTarget(record.targetPk);
+    if (record.targetPk === null || target === null || target.status === 'retired') return false;
     const state = this.snapshot().quality;
     if (!state?.qualifiedSources.includes(record.targetPk)) return false;
     const cfg = this.deps.quality.scorer();
     const { floor } = anchoredQuality(state, cfg);
     const account = this.deps.store.getAccount(record.accountPk);
-    if (floor === null || this.deps.quality.readyCount() === 0 || account === null) return false;
+    if (floor === null || this.deps.quality.readyCount() === 0 || account === null || !account.username?.trim()) return false;
     const s = scoreCandidate(account, cfg);
     return s.eligible && s.score >= floor;
   }

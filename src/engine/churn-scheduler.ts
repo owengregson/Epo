@@ -95,7 +95,7 @@ export class ChurnScheduler {
       store: deps.store,
       ownPk,
       cfg: () => this.cfg,
-      pickQueued: deps.pickQueued,
+      pickQueued: deps.pickQueued, freshCandidateSelection: deps.freshCandidateSelection,
       // Requesters are a live predicate (spec §9.9): an open `requests` edge into our account.
       hasActiveRequest: deps.hasActiveRequest
         ?? ((pk) => ownPk !== undefined && deps.store.getEdge(pk, ownPk, 'requests')?.status === 'active'),

@@ -47,10 +47,11 @@ export function anchoredQuality(state: CandidateQualitySnapshot | null, cfg: Sco
 export function scoreQueue(store: QualityStore, records: readonly FollowRecord[], cfg: ScorerConfig, now: number): ScoredRecord[] {
   const unsettled = store.effectIntents.pending();
   return records.flatMap((r) => {
-    if (r.state !== 'queued' || r.targetPk === null || store.getTarget(r.targetPk)?.status === 'retired'
+    const target = r.targetPk === null ? null : store.getTarget(r.targetPk);
+    if (r.state !== 'queued' || target === null || target.status === 'retired'
       || (r.recheckAt ?? now) > now || store.hasActiveRequest(r.accountPk) || journalBlocks(r.accountPk, unsettled)) return [];
     const account = store.getAccount(r.accountPk);
-    if (account === null) return [];
+    if (account === null || !account.username?.trim()) return [];
     const score = scoreCandidate(account, cfg);
     return score.eligible && Number.isFinite(score.score) ? [{ ...r, score: score.score }] : [];
   });

@@ -3,7 +3,8 @@
  * the churn scheduler runs on it, and the graph-open pass re-judges the kept records at build.
  */
 import type { FollowbackWatcher } from '@/engine/followback-watcher';
-import type { SourceFrontier } from '@/engine/source-frontier';
+import { SCORER_DEFAULTS } from '@/engine/scorer';
+import { SourceFrontier } from '@/engine/source-frontier';
 import { FakeClock, type SystemClock } from '@/governors/clock';
 import { calendarPlanDayClock } from '@/governors/plan-day-clock';
 import type { RateGovernor } from '@/governors/rate-governor';
@@ -43,8 +44,8 @@ const deps = (): GraphBuildDeps => ({
 /** The kit's plan-day boundary: local midnight over the fake clock (the graph build hands the plan's). */
 const dayOf = (clock: FakeClock) => calendarPlanDayClock({ now: () => clock.now() });
 
-const churnFor = (clock: FakeClock) => wireChurn(deps(), {
-  frontier: { pickQueued: () => null } as unknown as SourceFrontier, store, clock, rate: {} as RateGovernor,
+const churnFor = (clock: FakeClock, frontier = new SourceFrontier({ store, clock })) => wireChurn(deps(), {
+  frontier, store, clock, rate: {} as RateGovernor,
   churnActions: new FakeActions() as unknown as AdapterBackedChurnActions, ownPk: 'me', settings: effectiveFromV1(DEFAULT_SETTINGS),
   dayClock: dayOf(clock),
 });
@@ -71,7 +72,7 @@ test('the churn runs on the settings index: a protected record is kept at select
 test('building the churn marks protection as wired on every path', () => {
   const setCapabilities = jest.fn();
   wireChurn({ ...deps(), protection: { index: () => compileProtection(rules, 'ready', rev), setCapabilities } } as GraphBuildDeps, {
-    frontier: { pickQueued: () => null } as unknown as SourceFrontier, store, clock: new FakeClock(T0), rate: {} as RateGovernor,
+    frontier: new SourceFrontier({ store, clock: new FakeClock(T0) }), store, clock: new FakeClock(T0), rate: {} as RateGovernor,
     churnActions: new FakeActions() as unknown as AdapterBackedChurnActions, ownPk: 'me', settings: effectiveFromV1(DEFAULT_SETTINGS),
     dayClock: dayOf(new FakeClock(T0)),
   });
@@ -92,6 +93,19 @@ test('the unfollowsPaused contributor names a paused index, and nothing before t
 test('the churn reports the live protection state', () => {
   const churn = churnFor(new FakeClock(T0));
   expect(churn.protectionState()).toBe('ready');
+});
+
+test('quality-enabled production wiring lets the current-profile selector reconsider a stored zero', () => {
+  const clock = new FakeClock(T0);
+  const frontier = new SourceFrontier({ store, clock, quality: {
+    scorer: () => SCORER_DEFAULTS, readyCount: () => 1, capacity: () => 10,
+  } });
+  store.addTarget({ accountPk: 'source', source: 'seed', status: 'active', chainIndex: 0 });
+  store.observe({ accountPk: 'a', observedAt: T0, source: 'profile',
+    fields: { username: 'alice', followers: 500, following: 550 } });
+  store.upsertFollowRecord({ accountPk: 'a', targetPk: 'source', state: 'queued', retryCount: 0, score: 0 });
+  frontier.refreshQuality();
+  expect(churnFor(clock, frontier).nextDue(T0, 'follow')).toMatchObject({ accountPk: 'a', score: 1 });
 });
 
 describe('the wired journal (spec §9.8)', () => {

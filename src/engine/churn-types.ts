@@ -100,6 +100,8 @@ export interface ChurnDeps {
   ownPk?: string;
   cfg: ChurnConfig;
   pickQueued?: (records: FollowRecord[]) => FollowRecord | null;
+  /** The supplied selector re-scores current profile facts, including formerly zero-scored candidates. */
+  freshCandidateSelection?: boolean;
   validateFollow?: (rec: FollowRecord, now: number) => Promise<boolean> | boolean;
   /** Quality deferral preserves the queued record and its eligible score. */
   mayFollow?: (rec: FollowRecord, now: number) => boolean;

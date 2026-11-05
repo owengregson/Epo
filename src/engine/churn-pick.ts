@@ -15,6 +15,7 @@ export interface ChurnPickDeps {
   ownPk?: string;
   cfg(): ChurnConfig;
   pickQueued?: ChurnDeps['pickQueued'];
+  freshCandidateSelection?: ChurnDeps['freshCandidateSelection'];
   /** Whether `pk` has asked to follow us and the request is open (a live predicate, spec §9.9). */
   hasActiveRequest(pk: string): boolean;
   /** True while protection is paused for a review: no unfollow is offered, follows continue (spec §7.6). */
@@ -47,7 +48,8 @@ export class ChurnPick {
     const unsettled = this.store.effectIntents.pending();
     // Neither parked until later nor blocked by its own unsettled write.
     const open = (r: FollowRecord): boolean => (r.recheckAt ?? now) <= now && !journalBlocks(r.accountPk, unsettled);
-    const queued = kind === 'unfollow' ? [] : this.store.followRecordsByState('queued').filter((r) => r.score !== 0 && open(r));
+    const fresh = this.pickQueued !== undefined && this.deps.freshCandidateSelection === true;
+    const queued = kind === 'unfollow' ? [] : this.store.followRecordsByState('queued').filter((r) => (fresh || r.score !== 0) && open(r));
     const chosenFollow = this.pickQueued ? this.pickQueued(queued) : queued.sort(compareByScoreDesc)[0] ?? null;
     if (kind === 'follow') return chosenFollow;
     const unfollows = !this.unfollowsOffered(now) ? [] : this.store.followRecordsByState('unfollow_queued')
