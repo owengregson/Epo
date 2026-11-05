@@ -1,6 +1,7 @@
 import { PAGE_BUNDLE } from '@/adapter/page/bundle.generated';
 import type { RendererCanaryTiming } from '@/adapter/page/renderer-canary';
 import { RENDERER_HEALTH } from '@/kernel/renderer-health-policy';
+import { jsonForScript } from '@/shared/script-json';
 
 export interface RendererCanaryHealth {
   healthy: boolean;
@@ -19,7 +20,7 @@ export function rendererCanaryTiming(windowMs: number): RendererCanaryTiming {
 }
 
 export function rendererCanaryScript(windowMs: number): string {
-  return `(() => { ${PAGE_BUNDLE}; return __epoPage.measureRendererCanary(${JSON.stringify(rendererCanaryTiming(windowMs))}); })()`;
+  return `(() => { ${PAGE_BUNDLE}; return __epoPage.measureRendererCanary(${jsonForScript(rendererCanaryTiming(windowMs))}); })()`;
 }
 
 /** Frames divided by ACTUAL time, including a late first frame or late timer. */

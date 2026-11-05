@@ -22,6 +22,7 @@ import type { InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { CAPTURE_PATTERNS } from '@/adapter/versions/2026-08-12';
 import { type Classification, classifyRequest, isInterestingJson } from '@/capture/classify';
+import { jsonForScript } from '@/shared/script-json';
 import { HARNESS } from '@/timing/config';
 import { sleep } from '@/timing/primitives';
 import type { TabResponse, Unsubscribe } from '@/types';
@@ -194,9 +195,7 @@ export class CaptureHarness {
   private async captureOuterHtml(selector: string): Promise<string | null> {
     try {
       return await this.tab.evaluate<string | null>(
-        `(() => { const el = document.querySelector(${JSON.stringify(
-          selector,
-        )}); return el ? el.outerHTML : null; })()`,
+        `(() => { const el = document.querySelector(${jsonForScript(selector)}); return el ? el.outerHTML : null; })()`,
       );
     } catch (e) {
       logger.warn('capture.evaluate outerHTML failed', {
@@ -257,7 +256,7 @@ export class CaptureHarness {
     let probe: { html: string; text: string } | null;
     try {
       probe = await this.tab.evaluate<{ html: string; text: string } | null>(
-        `(() => { const el = document.querySelector(${JSON.stringify(CAPTURE_PATTERNS.dialogSelector)}); return el ? { html: el.outerHTML, text: (el.textContent || '').trim() } : null; })()`,
+        `(() => { const el = document.querySelector(${jsonForScript(CAPTURE_PATTERNS.dialogSelector)}); return el ? { html: el.outerHTML, text: (el.textContent || '').trim() } : null; })()`,
       );
     } catch (e) {
       logger.warn('capture.snapshotAnyDialog evaluate failed', {
@@ -297,8 +296,8 @@ export class CaptureHarness {
           ].join(';');
           (document.body || document.documentElement).appendChild(el);
         }
-        var title = ${JSON.stringify(`Epo capture: ${text}`)};
-        var instr = ${JSON.stringify(instruction)};
+        var title = ${jsonForScript(`Epo capture: ${text}`)};
+        var instr = ${jsonForScript(instruction)};
         el.innerHTML = '<span>' + title + '</span>' +
           (instr ? '<span style="opacity:0.7;font-weight:400;margin-left:10px">' + instr + '</span>' : '');
         return true;

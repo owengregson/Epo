@@ -39,7 +39,7 @@
     },
     {
       "file": "src/capture/capture-harness.ts",
-      "lines": 537
+      "lines": 536
     },
     {
       "file": "src/engine/churn-scheduler.ts",

@@ -68,3 +68,14 @@ Two rules keep the layering intact:
 - **Generate at build time instead of committing.** Every test run and every
   `npm start` would need a build step, and a developer running `npx jest`
   against a stale `dist/` would silently test something else.
+
+## Amendment — script data encoding (2026-11-04)
+
+The page-call, click-guard, canary, and capture script composers use
+`shared/script-json.ts` for data expressions. It retains
+`JSON.stringify` conversions and errors (including the existing top-level
+`undefined` expression), then escapes angle brackets and Unicode line/paragraph
+separators. Values round-trip unchanged while literal closing-script delimiters
+cannot enter the generated source. This is source encoding, not HTML sanitization
+of a value later rendered in the page. The function-local bundle, typed page
+mechanics, version-owned selectors, and structured CDP arguments remain unchanged.

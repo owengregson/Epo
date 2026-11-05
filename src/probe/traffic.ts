@@ -19,6 +19,7 @@ import { SURFACE } from '@/adapter/ig-surface';
 import { IG_HOME_URL, type InstagramTab } from '@/adapter/tab';
 import { createTabInteractor } from '@/adapter/tab-interactor';
 import { type Exchange, TrafficRecorder } from '@/probe/recorder';
+import { hasWebOrigin } from '@/shared/url-origin';
 import { sleep } from '@/timing/primitives';
 import { cryptoUniform } from '@/utils/entropy';
 import * as logger from '@/utils/logger';
@@ -73,7 +74,7 @@ function summarize(exchanges: Exchange[]): string[] {
 export async function traffic(tab: InstagramTab, out: string): Promise<void> {
   const target = process.env.EPO_PROBE_TARGET?.trim() ?? '';
   if (target === '') throw new Error('EPO_PROBE_TARGET (a public account we follow) is required');
-  const wc = webContents.getAllWebContents().find((c) => c.getURL().includes('instagram.com'));
+  const wc = webContents.getAllWebContents().find((c) => hasWebOrigin(c.getURL(), IG_HOME_URL));
   if (wc === undefined) throw new Error('no Instagram webContents to record');
   const save = (name: string, value: unknown): void =>
     writeFileSync(path.join(out, name), typeof value === 'string' ? value : JSON.stringify(value, null, 2), 'utf8');

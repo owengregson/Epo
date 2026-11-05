@@ -2,6 +2,7 @@ import { AdapterStaleError } from '@/adapter/errors';
 import { PAGE_BUNDLE } from '@/adapter/page/bundle.generated';
 import type { ClickGuard } from '@/interaction/interactor';
 import type { ElementRect, Point } from '@/interaction/motion-profile';
+import { jsonForScript } from '@/shared/script-json';
 import * as logger from '@/utils/logger';
 
 type Command = (method: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -16,7 +17,7 @@ export async function prepareClickGuard(
 ): Promise<ClickGuard> {
   const cfg = { target, point };
   const result = await command('Runtime.evaluate', {
-    expression: `(() => { ${PAGE_BUNDLE}; return __epoPage.clickTarget(${JSON.stringify(cfg)}); })()`,
+    expression: `(() => { ${PAGE_BUNDLE}; return __epoPage.clickTarget(${jsonForScript(cfg)}); })()`,
     returnByValue: false,
   }) as RemoteResult;
   const objectId = result.result?.objectId;

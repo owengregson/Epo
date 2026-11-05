@@ -15,6 +15,7 @@ import { IG_HOME_URL, InstagramTab } from '@/adapter/tab';
 import { RUNTIME_BOUNDS } from '@/kernel/runtime-bounds';
 import { claimAppIdentity } from '@/main/app-identity';
 import { electronIgSession } from '@/main/services/ig-session';
+import { hasWebOrigin } from '@/shared/url-origin';
 import { HARNESS } from '@/timing/config';
 import { sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
@@ -141,11 +142,11 @@ export async function awaitLogin(
 }
 
 /**
- * Put the tab on an instagram.com origin so the page's own fetches are
+ * Put the tab on the canonical home origin so the page's own fetches are
  * same-origin (identity resolution and the direct JSON reads both require it).
  */
 export async function ensureInstagramOrigin(tab: InstagramTab): Promise<void> {
-  if (tab.currentUrl().includes('instagram.com')) return;
+  if (hasWebOrigin(tab.currentUrl(), IG_HOME_URL)) return;
   await tab.goto(IG_HOME_URL);
   await sleep(RUNTIME_BOUNDS.ORIGIN_SETTLE_MS);
 }
