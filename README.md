@@ -105,27 +105,6 @@ hand, fixes its own records to match, and never unfollows anyone you followed yo
 <br>
 
 <p align="center">
-  <img src="project/assets/headers/autopilot.svg" height="54" alt="A day on autopilot">
-</p>
-
-This chart is not a mock-up. A nightly job runs the same planner that ships in the app
-and draws one real planned day, so it changes every night.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/pace-dark.svg">
-    <img src="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/pace.svg" width="820" alt="One planned day of Epo activity: paced actions inside the active-hours window, under the daily cap">
-  </picture>
-</p>
-
-<p align="center">
-  <sub>Each dot is one planned action. The band is the active-hours window. The dashed
-  line is the daily cap.</sub>
-</p>
-
-<br>
-
-<p align="center">
   <img src="project/assets/headers/safety.svg" height="54" alt="Safety limits">
 </p>
 
