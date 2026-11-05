@@ -1,6 +1,5 @@
-/** @jsx h */
-import { h } from 'preact';
-import { clamp } from '../lib/format';
+import { type JSX } from 'preact';
+import { clamp } from '@/renderer/lib/format';
 
 export interface MeterProps {
   /** Fill percentage 0..100. */
@@ -17,7 +16,7 @@ export interface MeterProps {
 }
 
 /** A thin progress meter (`.bar`) with an animated fill. */
-export function Meter({ pct, brass, live, class: cls }: MeterProps): h.JSX.Element {
+export function Meter({ pct, brass, live, class: cls }: MeterProps): JSX.Element {
   const w = clamp(pct, 0, 100);
   const classes = ['bar', brass ? 'brass' : null, live ? 'live' : null, cls || null]
     .filter(Boolean)

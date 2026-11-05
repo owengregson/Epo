@@ -1,0 +1,365 @@
+/*
+ * Shell — the console column and the stage pane.
+ * Console root, header + transport, nav rail, view stage, ticker, toasts,
+ * and the stage pane that hosts the Instagram tab, the graph, and Prune.
+ */
+
+/* ---------- shell: console + stage area ---------- */
+/* The dashboard view spans the whole window (bottom layer): the console
+   column on the left, and the stage area (stage bar + graph canvas) on the
+   right. In 'tab' mode the native Instagram view covers the stage BODY; the
+   stage bar strip above it always belongs to this page. */
+.shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+/* 460px = SHELL_GEOMETRY.SIDEBAR_WIDTH_PX (src/kernel/shell-geometry.ts); a test pins the two. */
+.shell > .console {
+  flex: 0 0 460px;
+  min-width: 0;
+}
+
+/* ---------- console root ---------- */
+/* Size containers drive responsive columns and control layouts. Spacing remains
+   the same 4px rhythm at every nesting level (design/scale.ts). */
+.console,
+.stage-page,
+.stage-col {
+  container-type: inline-size;
+  container-name: console;
+}
+.console {
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(0, 0, 0, 0.06)),
+    var(--bg);
+  border-right: 1px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* The Live tab dot breathes: an opacity loop on the compositor, never a
+   box-shadow pulse (ADR 0405). 2.2 s is the second breath of spec §12.7. */
+@keyframes beaconBreath {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.tbtn {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  height: var(--h-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
+  border-radius: var(--r);
+  background: var(--grad-control);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--elev-1);
+  color: var(--muted);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition:
+    color var(--dur-1),
+    border-color var(--dur-1),
+    background var(--dur-1),
+    transform var(--dur-1),
+    opacity var(--dur-1);
+}
+.tbtn .icon {
+  flex: 0 0 auto;
+  font-size: var(--fs-label);
+}
+.tbtn:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+.tbtn:active {
+  transform: translateY(1px);
+}
+/* House keyboard-focus convention (matches .seg/.chip/.toggle/.dual-h). */
+.tbtn:focus-visible,
+.toast__close:focus-visible {
+  outline: 2px solid var(--silver);
+  outline-offset: 2px;
+}
+.tbtn.danger:hover {
+  color: var(--danger);
+  border-color: var(--danger-border-soft);
+}
+.tbtn[disabled] {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ---------- toasts — typed control failures, docked above the footer ---------- */
+.toasts {
+  position: absolute;
+  left: var(--sp-4);
+  right: var(--sp-4);
+  bottom: calc(var(--h-md) + var(--sp-3));
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--grad-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--elev-5);
+  font-size: var(--fs-body);
+  color: var(--silver);
+  animation: toastIn var(--dur-2) var(--ease) both;
+}
+.toast[data-kind="error"] {
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+.toast__msg {
+  flex: 1;
+  min-width: 0;
+}
+.toast__close {
+  appearance: none;
+  background: none;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: var(--fs-lead);
+  line-height: 1;
+  padding: 0 var(--sp-1);
+}
+.toast__close:hover {
+  color: var(--silver);
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- stage pane: bar + body ---------- */
+.stagepane {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 44px = SHELL_GEOMETRY.STAGE_BAR_HEIGHT_PX (src/kernel/shell-geometry.ts), pinned
+   by a test; the native Instagram view starts exactly below this strip. */
+.stagebar {
+  flex: 0 0 44px;
+  height: 44px;
+  container-type: inline-size;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent), var(--bg);
+}
+
+/* The stage selector — the console's own recessed segmented control (the
+   .seg recipe, controls.css) stretched across the FULL bar width, plus a
+   raised active segment that SLIDES between the equal-width tabs. The thumb
+   geometry is data-driven (--seg-n / --seg-i, set by StageBar.tsx), so tabs
+   can be added or removed without touching this file. Static px stand in for
+   the console-scoped --sp rhythm out here. */
+.stageseg {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--inset-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--inset-shadow);
+}
+.stageseg button {
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  height: var(--h-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--r-sm, 5px);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  transition: color var(--dur-1);
+}
+.stageseg button:hover {
+  color: var(--silver);
+}
+.stageseg button:focus-visible {
+  outline: 2px solid var(--silver);
+  outline-offset: -2px;
+}
+.stageseg button.active {
+  color: var(--chrome);
+}
+.stageseg button .icon {
+  font-size: 10px;
+  color: var(--faint);
+  transition: color var(--dur-1);
+}
+.stageseg button:hover .icon,
+.stageseg button.active .icon {
+  color: var(--silver);
+}
+/* Live context riding inside a tab (the graph's node count). */
+.stageseg-aux {
+  margin-left: 4px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: color var(--dur-1);
+}
+.stageseg button.active .stageseg-aux {
+  color: var(--silver);
+}
+/* Equal tabs use the full available stage width at every window size. */
+.stagebar .stageseg button {
+  flex: 1 1 0;
+  font-size: var(--fs-label);
+  font-weight: 500;
+}
+.stagebar .stageseg button .icon {
+  font-size: 15px;
+}
+/* Epo is using the Instagram page while another stage shows: a 6 px live dot. */
+.stageseg-dot {
+  position: absolute;
+  top: 5px;
+  right: 9px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--st-live);
+  animation: beaconBreath 2.2s var(--ease-in-out) infinite;
+}
+/* The graph repeats its total in its own legend. Secondary counts yield before
+   navigation labels when the stage cannot give each tab enough room. */
+@container (max-width: 900px) {
+  .stagebar .stageseg-aux {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stageseg-dot {
+    animation: none;
+  }
+}
+/* The raised active segment (the .seg active recipe), gliding under the
+   labels. One slot = one equal flex share of the track (2px pad each side,
+   2px gaps); translateX percentages resolve against the thumb's own width,
+   so one step is exactly one slot plus one gap. */
+.stageseg-thumb {
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px - (var(--seg-n, 3) - 1) * 2px) / var(--seg-n, 3));
+  box-sizing: border-box;
+  border-radius: var(--r-sm, 5px);
+  background-color: var(--active-fill);
+  background-image: var(--sheen);
+  border: 1px solid var(--border-hover);
+  box-shadow: var(--elev-1);
+  transform: translateX(calc(var(--seg-i, 0) * (100% + 2px)));
+  transition: transform var(--dur-2) var(--ease, ease);
+  pointer-events: none;
+}
+
+.stagepane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  background: var(--bg);
+}
+
+/* ---------- stage-hosted console pages (Prune) ---------- */
+/* A console page living on the stage: kept mounted (state survives tab
+   round-trips), shown class-driven, replaying the viewIn entrance each time
+   it is selected. */
+@keyframes viewIn {
+  from {
+    opacity: 0;
+    transform: scale(1.035) translateY(8px);
+    filter: brightness(1.25);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: brightness(1);
+  }
+}
+.stage-view {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(0, 0, 0, 0.05)),
+    var(--bg);
+}
+/* The eager graph measures and fits before reveal, without exposing hidden controls. */
+.stage-view[data-stage="graph"][hidden] {
+  display: block;
+  visibility: hidden;
+  pointer-events: none;
+}
+.stage-view.active {
+  display: block;
+  /* Release the finished transform: forward fill can retain its enlarged scroll bounds. */
+  animation: viewIn var(--dur-3) var(--ease, ease);
+}
+
+/* Stage tabs carry their own labels; the tooltip needs no extra badge. */
+.stagebar [data-tip]::after {
+  content: none;
+}

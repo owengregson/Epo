@@ -2,46 +2,25 @@
  * Preload bridge — exposes `window.epo` to the renderer.
  *
  * Runs with `contextIsolation: true` / `nodeIntegration: false`; the renderer
- * never touches `ipcRenderer` directly. Push subscriptions (`on`/`off`) keep a
- * per-channel map from the caller's callback to the wrapped `ipcRenderer`
- * listener so `off` removes the *exact* listener that `on` added — no leaks.
- * Every push channel (the streaming log and the pushed projections) flows
- * through the same map.
+ * never touches `ipcRenderer` directly. BOTH halves are GENERATED from the
+ * contract's channel maps (`CHANNELS` / `PUSH`), so a new channel — invoke or
+ * push — needs no edit here. Push subscriptions
+ * (`on`/`off`) keep a per-channel map from the caller's callback
+ * to the wrapped `ipcRenderer` listener so `off` removes the *exact* listener
+ * that `on` added — no leaks.
  */
 
 import type { IpcRendererEvent } from 'electron';
 import { contextBridge, ipcRenderer } from 'electron';
-import type { Settings } from '@/settings/settings';
-import type {
-  ActionResult,
-  ChainTargetDetail,
-  ChainTargetView,
-  EpoBridge,
-  EpoEventChannel,
-  EpoEventPayloads,
-  EpoStatus,
-  FollowState,
-  GraphSnapshot,
-  GrowthSeriesRead,
-  PruneCandidate,
-  PruneControlResult,
-  PruneScanResult,
-  PruneStatus,
-  QueueListResult,
-  ReadFollowersResult,
-  SeedCheck,
-  StageMode,
-  UpdateStatus,
-} from '@/types';
+import { type BridgeInvokers, type BridgeMethod, CHANNELS, PUSH } from '@/ipc/contract';
+import type { EpoBridge, EpoEventChannel, EpoEventPayloads, PruneStatus } from '@/types';
 
-/** Renderer-facing channel -> underlying IPC channel. */
-const EVENT_CHANNELS: Record<EpoEventChannel, string> = {
-  log: 'epo:log',
-  status: 'epo:status',
-  pruneStatus: 'epo:prune-status',
-  updateStatus: 'epo:update-status',
-  chainList: 'epo:chain-list',
-};
+/**
+ * Renderer-facing channel -> underlying IPC channel. DERIVED from the
+ * contract's push table (ADR 1008); this used to be a hand-kept copy of the
+ * same five strings `main.ts` also wrote by hand.
+ */
+const EVENT_CHANNELS: Record<EpoEventChannel, string> = PUSH;
 
 type AnyListener = (payload: unknown) => void;
 type IpcListener = (event: IpcRendererEvent, payload: unknown) => void;
@@ -84,50 +63,18 @@ function off<C extends EpoEventChannel>(
   }
 }
 
+/** One `ipcRenderer.invoke` thunk per contract method. */
+const invokers = Object.fromEntries(
+  (Object.keys(CHANNELS) as BridgeMethod[]).map((method) => [
+    method,
+    (...args: unknown[]): Promise<unknown> => ipcRenderer.invoke(CHANNELS[method], ...args),
+  ]),
+) as BridgeInvokers;
+
 const bridge: EpoBridge = {
-  login: (): Promise<EpoStatus> => ipcRenderer.invoke('foundation:login'),
-  readFollowers: (target: string): Promise<ReadFollowersResult> =>
-    ipcRenderer.invoke('foundation:readFollowers', target),
-  followOne: (username: string): Promise<ActionResult> =>
-    ipcRenderer.invoke('foundation:followOne', username),
-  unfollowOne: (username: string): Promise<ActionResult> =>
-    ipcRenderer.invoke('foundation:unfollowOne', username),
-  status: (): Promise<EpoStatus> => ipcRenderer.invoke('foundation:status'),
-  startEngine: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:start'),
-  pauseEngine: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:pause'),
-  resumeEngine: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:resume'),
-  stopEngine: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:stop'),
-  restartFromSeed: (seed: string): Promise<EpoStatus> =>
-    ipcRenderer.invoke('engine:restartFromSeed', seed),
-  engineStatus: (): Promise<EpoStatus> => ipcRenderer.invoke('engine:status'),
-  scanPrune: (): Promise<PruneScanResult> => ipcRenderer.invoke('prune:scan'),
-  pruneCandidates: (): Promise<PruneCandidate[]> => ipcRenderer.invoke('prune:candidates'),
-  startPrune: (): Promise<PruneControlResult> => ipcRenderer.invoke('prune:start'),
-  stopPrune: (): Promise<PruneStatus> => ipcRenderer.invoke('prune:stop'),
-  pruneStatus: (): Promise<PruneStatus> => ipcRenderer.invoke('prune:status'),
+  ...invokers,
   onPruneStatus: (cb: (status: PruneStatus) => void): void => on('pruneStatus', cb),
   offPruneStatus: (cb: (status: PruneStatus) => void): void => off('pruneStatus', cb),
-  chainList: (): Promise<ChainTargetView[]> => ipcRenderer.invoke('chain:list'),
-  chainDetail: (targetPk: string): Promise<ChainTargetDetail | null> =>
-    ipcRenderer.invoke('chain:detail', targetPk),
-  growthSeries: (days?: number): Promise<GrowthSeriesRead> =>
-    ipcRenderer.invoke('growth:series', days),
-  checkSeed: (username: string): Promise<SeedCheck> => ipcRenderer.invoke('seed:check', username),
-  queueList: (state: FollowState): Promise<QueueListResult> =>
-    ipcRenderer.invoke('queue:list', state),
-  getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
-  updateSettings: (partial: Partial<Settings>): Promise<Settings> =>
-    ipcRenderer.invoke('settings:update', partial),
-  resetSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:reset'),
-  clearData: (): Promise<EpoStatus> => ipcRenderer.invoke('data:clear'),
-  showTab: () => ipcRenderer.invoke('tab:show'),
-  hideTab: () => ipcRenderer.invoke('tab:hide'),
-  graphSnapshot: (): Promise<GraphSnapshot | null> => ipcRenderer.invoke('graph:snapshot'),
-  setStage: (mode: StageMode): Promise<void> => ipcRenderer.invoke('stage:set', mode),
-  setTourHold: (held: boolean): Promise<void> => ipcRenderer.invoke('tour:hold', held),
-  checkForUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:check'),
-  installUpdate: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:install'),
-  openLatestRelease: (): Promise<void> => ipcRenderer.invoke('update:open-latest'),
   on,
   off,
 };

@@ -1,15 +1,12 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import Database from 'better-sqlite3';
-import { KnowledgeStore } from '@/store/knowledge-store';
-import { MIGRATIONS } from '@/store/schema';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord, Target } from '@/store/types';
+import { memoryStore } from '../kit/store';
+import { LATEST_SCHEMA_VERSION, withLegacyDb } from '../kit/store-legacy-db';
 
 const OWN = 'me';
 
 let s: KnowledgeStore;
-beforeEach(() => { s = new KnowledgeStore(':memory:'); });
+beforeEach(() => { s = memoryStore(); });
 afterEach(() => s.close());
 
 const target = (over: Partial<Target> & { accountPk: string }): Target => ({
@@ -92,27 +89,21 @@ test('exhaustedTargetsSince: stamped + exhausted + fresh only, most recent first
 });
 
 test('an existing pre-exhausted_at database migrates cleanly, preserving target rows', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'epo-target-mig-'));
-  try {
-    const dbPath = path.join(dir, 'pre.db');
-    // Build a database at the schema version just BEFORE the exhausted_at
-    // migration, exactly as a live install would have it.
-    const raw = new Database(dbPath);
-    const prior = 10; // schema version just BEFORE the exhausted_at migration (index 10)
-    for (let i = 0; i < prior; i += 1) raw.exec(MIGRATIONS[i]);
-    raw.pragma(`user_version = ${prior}`);
-    raw
+  // Version 10 is the schema immediately before the exhausted_at column.
+  withLegacyDb(10, (legacy) => {
+    legacy.raw
       .prepare(
         `INSERT INTO targets (account_pk, source, status, chain_index)
          VALUES (?, 'seed', 'exhausted', 0)`,
       )
       .run('T1');
-    const before = raw.prepare(`PRAGMA table_info(targets)`).all() as Array<{ name: string }>;
+    const before = legacy.raw.prepare(`PRAGMA table_info(targets)`).all() as Array<{
+      name: string;
+    }>;
     expect(before.some((c) => c.name === 'exhausted_at')).toBe(false);
-    raw.close();
 
     // Opening through the store applies the pending migration.
-    const store = new KnowledgeStore(dbPath);
+    const store = legacy.open();
     // The pre-existing row survived, UN-stamped — old exhaustions are never
     // auto-revived, only ones evidence-stamped after this migration.
     expect(store.getTarget('T1')).toEqual(
@@ -121,15 +112,11 @@ test('an existing pre-exhausted_at database migrates cleanly, preserving target 
     expect(store.exhaustedTargetsSince(0)).toEqual([]);
     // The new column works end to end.
     store.setTargetStatus('T1', 'exhausted', 7777);
-    expect(store.getTarget('T1')!.exhaustedAt).toBe(7777);
+    expect(store.getTarget('T1')?.exhaustedAt).toBe(7777);
     store.close();
 
-    const check = new Database(dbPath);
-    expect(check.pragma('user_version', { simple: true })).toBe(MIGRATIONS.length);
-    check.close();
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+    expect(legacy.schemaVersion()).toBe(LATEST_SCHEMA_VERSION);
+  });
 });
 
 test('listTargets orders by chain_index, nulls last', () => {
@@ -151,28 +138,30 @@ test('nextChainIndex is (MAX ?? -1) + 1', () => {
   expect(s.nextChainIndex()).toBe(5);
 });
 
-test('targetYield counts followed records aimed at the target, computes rate', () => {
-  // Aimed at T and past follow stage: 4 total, 2 reciprocated.
+test('targetYield counts followed records aimed at the target; the rate folds the one classifier', () => {
+  // Aimed at T and past the follow stage: 4 total; two follow-backs inside the window, one no-follow-back.
   s.upsertFollowRecord(
-    rec({ accountPk: '1', targetPk: 'T', state: 'pending_followback' }),
+    rec({ accountPk: '1', targetPk: 'T', state: 'pending_followback', followedAt: 100 }),
   );
   s.upsertFollowRecord(
-    rec({ accountPk: '2', targetPk: 'T', state: 'followed_back', followedBackAt: 500 }),
+    rec({ accountPk: '2', targetPk: 'T', state: 'followed_back', followedAt: 100, followedBackAt: 500 }),
   );
   s.upsertFollowRecord(
-    rec({ accountPk: '3', targetPk: 'T', state: 'unfollow_queued', followedBackAt: 600 }),
+    rec({ accountPk: '3', targetPk: 'T', state: 'unfollow_queued', followedAt: 100, followedBackAt: 600 }),
   );
-  s.upsertFollowRecord(rec({ accountPk: '4', targetPk: 'T', state: 'unfollowed' }));
+  s.upsertFollowRecord(rec({ accountPk: '4', targetPk: 'T', state: 'unfollowed', followedAt: 100,
+    unfollowReason: 'no-followback' }));
   // Excluded: still queued (never followed), and a different target.
   s.upsertFollowRecord(rec({ accountPk: '5', targetPk: 'T', state: 'queued' }));
   s.upsertFollowRecord(
-    rec({ accountPk: '6', targetPk: 'OTHER', state: 'followed_back', followedBackAt: 700 }),
+    rec({ accountPk: '6', targetPk: 'OTHER', state: 'followed_back', followedAt: 100, followedBackAt: 700 }),
   );
 
-  const y = s.targetYield('T', OWN);
+  const y = s.targetYield('T', OWN, { windowMs: 1_000, now: 800 });
   expect(y.total).toBe(4);
   expect(y.followedBack).toBe(2);
-  expect(y.followBackRate).toBeCloseTo(0.5);
+  // Successes over decided outcomes; the pending follow is no evidence either way.
+  expect(y.followBackRate).toBeCloseTo(2 / 3);
 });
 
 test('targetYield returns 0 rate when no follows exist for the target', () => {

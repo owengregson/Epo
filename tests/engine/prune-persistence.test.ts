@@ -1,67 +1,35 @@
-/**
- * Prune persistence across restarts: a completed scan's census + reviewed
- * candidate set survive in the store, and a NEW PruneEngine over the same store
- * (the restart) rehydrates them — counts restored, remaining candidates
- * runnable while fresh, everything gone when the whitelist changes. Restart is
- * simulated by constructing a second engine over the same `:memory:` store.
- */
-import { KnowledgeStore } from '@/store/knowledge-store';
-import { FakeClock } from '@/governors/clock';
+import type { SentinelStatus } from '@/adapter/sentinel';
 import {
   PruneEngine,
-  PRUNE_SCAN_FRESH_MS,
-  type PruneConfig,
   type PruneEngineDeps,
   type PruneScanFetch,
 } from '@/engine/prune-engine';
-import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
-import type { SentinelStatus } from '@/adapter/sentinel';
-import { setLevel } from '@/utils/logger';
-
-beforeAll(() => setLevel('error'));
-
-const T0 = Date.parse('2026-08-12T12:00:00'); // local noon
-const OWN_PK = 'ME';
-
-const CFG: PruneConfig = {
-  dailyLimit: 50,
-  whitelist: [],
-  bioFilterWords: [],
-  minDelayMs: 60_000,
-  maxDelayMs: 60_000,
-  jitterPercent: 0,
-  scanMinMs: 1_000,
-  scanMaxMs: 3_000,
-};
-
-class FakeListSource {
-  constructor(private readonly pks: string[]) {}
-  async fetchAllPks(): Promise<PruneScanFetch> {
-    return { pks: [...this.pks], complete: true, reason: 'no-more-pages' };
-  }
-}
-
-class FakeChurnActions {
-  unfollows: string[] = [];
-  async unfollow(username: string): Promise<ChurnActionOutcome> {
-    this.unfollows.push(username);
-    return { status: 'ok' };
-  }
-}
+import { FakeClock } from '@/governors/clock';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import {
+  PRUNE_CFG as CFG,
+  FakeListSource,
+  FakePruneActions,
+  kitStore,
+  OWN_PK,
+  T0,
+} from '../kit/engine-harness';
+import { ProtectionRig } from '../kit/harness-journal';
+import { CENSUS_FRESH_MS, fakePrunePlan } from '../kit/harness-plan';
 
 interface World {
   store: KnowledgeStore;
   clock: FakeClock;
-  churn: FakeChurnActions;
+  churn: FakePruneActions;
   /** Construct a PruneEngine over the SAME store/clock — a fresh one models a restart. */
   boot: (over?: Partial<PruneEngineDeps>) => PruneEngine;
 }
 
 const world = (following: string[], followers: string[]): World => {
-  const store = new KnowledgeStore(':memory:');
+  const store = kitStore();
   store.setOwnPk(OWN_PK);
   const clock = new FakeClock(T0);
-  const churn = new FakeChurnActions();
+  const churn = new FakePruneActions();
   // Give every non-self pk a stored username (u<pk>), as the live sources do.
   for (const pk of following) {
     if (pk === OWN_PK) continue;
@@ -84,6 +52,7 @@ const world = (following: string[], followers: string[]): World => {
       cfg: CFG,
       sleep: async () => {},
       rng: () => 0.5,
+      plan: fakePrunePlan(store),
       ...over,
     });
   return { store, clock, churn, boot };
@@ -121,7 +90,7 @@ describe('PruneEngine persistence across restarts', () => {
   test('a stale snapshot restores the counts but locks Run (freshness expired)', async () => {
     const w = world([OWN_PK, '1'], []);
     await w.boot().scan();
-    w.clock.advance(PRUNE_SCAN_FRESH_MS + 1);
+    w.clock.advance(CENSUS_FRESH_MS + 1);
 
     const s = w.boot().status();
     expect(s.candidates).toBe(1);
@@ -134,8 +103,13 @@ describe('PruneEngine persistence across restarts', () => {
     const w = world([OWN_PK, '1', '2', '3'], []);
     const first = w.boot();
     await first.scan();
-    // Stop the run after the first unfollow's delay begins — sleep interrupts it.
+    // Stop the run after the first unfollow's delay begins — sleep interrupts it (its dispatch armed the gap).
     let stopper!: PruneEngine;
+    const churn = w.churn.unfollow.bind(w.churn);
+    w.churn.unfollow = async (username: string) => {
+      w.store.setActionDelayDeadline(w.clock.now() + 60_000);
+      return churn(username);
+    };
     stopper = w.boot({ sleep: async () => stopper.stop() });
     await stopper.run();
     expect(w.churn.unfollows).toEqual(['u1']); // exactly one visited
@@ -220,20 +194,23 @@ describe('PruneEngine persistence across restarts', () => {
     w.store.close();
   });
 
-  test('a whitelist change re-derives the counts and keeps the snapshot (no re-scan)', async () => {
+  test('a protection change re-derives the counts and keeps the snapshot (no re-scan)', async () => {
     const w = world([OWN_PK, '1', '2'], []);
-    const e = w.boot();
+    const rig = new ProtectionRig(w.clock);
+    const e = w.boot({ protection: rig.port });
     await e.scan();
     expect(e.status().candidates).toBe(2);
 
-    // Adding to the whitelist hides that candidate live; the RAW snapshot stays.
-    e.applyConfig({ ...CFG, whitelist: ['u1'] });
+    // Protecting one hides that candidate live on the next reload; the RAW snapshot stays.
+    rig.account('1', 'u1');
+    e.applyConfig(CFG);
     expect(e.status().candidates).toBe(1);
     expect(e.status().scanReady).toBe(true);
     expect(w.store.getPruneScan()).not.toBeNull();
 
-    // Removing them restores the candidate — still without another scan.
-    e.applyConfig({ ...CFG, whitelist: [] });
+    // Removing it restores the candidate — still without another scan.
+    rig.settings = { ...rig.settings, accounts: [] };
+    e.applyConfig(CFG);
     expect(e.status().candidates).toBe(2);
     w.store.close();
   });
@@ -248,7 +225,7 @@ describe('PruneEngine persistence across restarts', () => {
       following: 3,
       followers: 1,
       scrapedFollowing: 3,
-      scrapedFollowers: 1,
+      scrapedFollowers: 1, rowsPerPage: null,
       notFollowingBack: 1,
       candidates: 1,
     });
@@ -301,13 +278,13 @@ describe('PruneEngine persistence across restarts', () => {
     w.store.close();
   });
 
-  test('a restart derives the restored counts against the CURRENT whitelist', async () => {
-    // Scan with an empty whitelist, then restart an engine whose settings now
-    // whitelist one of the two candidates: the raw persisted census re-derives.
+  test('a restart derives the restored counts against the CURRENT protection', async () => {
+    // Scan with nothing protected, then restart an engine whose settings now
+    // protect one of the two candidates: the raw persisted census re-derives.
     const w = world([OWN_PK, '1', '2'], []);
     await w.boot().scan();
 
-    const restarted = w.boot({ cfg: { ...CFG, whitelist: ['u1'] } });
+    const restarted = w.boot({ protection: new ProtectionRig(w.clock).account('1', 'u1').port });
     expect(restarted.status().remaining).toBe(1);
     expect(restarted.status().scanReady).toBe(true);
     await restarted.run();

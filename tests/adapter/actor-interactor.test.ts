@@ -1,84 +1,31 @@
 /**
- * Actor × Interactor integration: with a interactor wired, element LOCATING
- * stays in-page (the surface's locate scripts, matched here by their
- * `actor:locate-*` markers) but every click/scroll goes through the interactor;
- * without one, the unchanged in-page JS click scripts run.
+ * Actor × Interactor integration: element LOCATING stays in-page (the surface's
+ * locate scripts, matched here by the page call each ends with) and every
+ * click/scroll goes through the Interactor.
  */
 import { Actor, type ActorInteractor } from '@/adapter/actor';
 import type {
   LocateActionResult,
+  LocatedRect,
   LocateRectResult,
   LocateScrollResult,
-  LocatedRect,
 } from '@/adapter/ig-surface';
 import { setLevel } from '@/utils/logger';
+import { FakeInteractor, pageCall, ScriptedTab } from '../kit/tabs';
 
 beforeAll(() => setLevel('error'));
 
 const RECT: LocatedRect = { x: 300, y: 200, width: 120, height: 40 };
 
-/** A recording fake interactor (satisfies ActorInteractor structurally). */
-class FakeInteractor implements ActorInteractor {
-  clicks: LocatedRect[] = [];
-  scrolls: { container: LocatedRect; deltaPx: number; restPoint?: { x: number; y: number } }[] = [];
-  async click(target: LocatedRect): Promise<void> {
-    this.clicks.push(target);
-  }
-  async scroll(
-    container: LocatedRect,
-    deltaPx: number,
-    restPoint?: { x: number; y: number },
-  ): Promise<void> {
-    this.scrolls.push({ container, deltaPx, restPoint });
-  }
-}
-
-/**
- * A fake AdapterTab that dispatches on the script's marker comment. Scripted
- * results are keyed by marker; anything unscripted throws so an unexpected
- * script path fails loudly. Non-locate scripts (the JS click scripts, probes)
- * are matched on stable fragments of their source.
- */
-class ScriptedTab {
-  url = '';
-  evaluated: string[] = [];
-  handlers: Array<{ match: (s: string) => boolean; result: () => unknown }> = [];
-
-  on(match: (s: string) => boolean, result: () => unknown): void {
-    this.handlers.push({ match, result });
-  }
-  async goto(u: string): Promise<void> {
-    this.url = u;
-  }
-  currentUrl(): string {
-    return this.url;
-  }
-  async evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T> {
-    const script = String(fnOrString);
-    this.evaluated.push(script);
-    for (const h of this.handlers) {
-      if (h.match(script)) return h.result() as T;
-    }
-    throw new Error(`unscripted evaluate: ${script.slice(0, 80)}`);
-  }
-}
-
-const marker =
-  (m: string) =>
-  (s: string): boolean =>
-    s.includes(m);
-
-const buildActor = (
-  tab: ScriptedTab,
-  interactor?: ActorInteractor,
-): Actor => new Actor(tab, { pollIntervalMs: 1, pollTimeoutMs: 5, interactor });
+const buildActor = (tab: ScriptedTab, interactor: ActorInteractor): Actor =>
+  new Actor(tab, { pollIntervalMs: 1, pollTimeoutMs: 5, interactor });
 
 describe('follow/unfollow with a interactor', () => {
   test('follow: locate script finds the button, the Interactor clicks its rect, state verified', async () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
     // Locate: a Follow button that would be clicked.
-    tab.on(marker('actor:locate-action'), (): LocateActionResult => ({
+    tab.on(pageCall('locateActionButton'), (): LocateActionResult => ({
       found: true,
       state: 'follow',
       wouldClick: true,
@@ -86,23 +33,25 @@ describe('follow/unfollow with a interactor', () => {
       rect: RECT,
     }));
     // Post-click verification reads Following.
-    tab.on(marker('actor:probe-state'), () => ({ found: true, state: 'following' }));
+    tab.on(pageCall('probeActionButton'), () => ({ found: true, state: 'following' }));
 
     const result = await buildActor(tab, h).follow('someone');
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.clicked).toBe(true);
     expect(h.clicks).toEqual([RECT]); // the interactor performed the click
-    // The in-page JS CLICK script never ran (no evaluate without a locate/probe marker).
+    // The in-page JS CLICK script never ran: every evaluate was a locate or a
+    // probe of the action-button DESCRIPTOR, nothing that presses in page.
     for (const s of tab.evaluated) {
-      expect(s.includes('actor:locate-action') || s.includes('actor:probe-state')).toBe(true);
+      expect(s.includes('"control":"action-button"')).toBe(true);
+      expect(s.includes('__epoPage.locate({') || s.includes('__epoPage.probe({')).toBe(true);
     }
   });
 
   test('follow: an already-Following button is a no-click idempotent ok', async () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
-    tab.on(marker('actor:locate-action'), (): LocateActionResult => ({
+    tab.on(pageCall('locateActionButton'), (): LocateActionResult => ({
       found: true,
       state: 'following',
       wouldClick: false,
@@ -121,7 +70,7 @@ describe('follow/unfollow with a interactor', () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
     const confirmRect: LocatedRect = { x: 400, y: 500, width: 200, height: 44 };
-    tab.on(marker('actor:locate-action'), (): LocateActionResult => ({
+    tab.on(pageCall('locateActionButton'), (): LocateActionResult => ({
       found: true,
       state: 'following',
       wouldClick: true,
@@ -129,16 +78,57 @@ describe('follow/unfollow with a interactor', () => {
       rect: RECT,
     }));
     tab.on(
-      marker('actor:locate-confirm'),
+      pageCall('locateConfirm'),
       (): LocateRectResult => ({ found: true, rect: confirmRect }),
     );
-    tab.on(marker('actor:probe-state'), () => ({ found: true, state: 'follow' }));
+    tab.on(pageCall('probeActionButton'), () => ({ found: true, state: 'follow' }));
 
     const result = await buildActor(tab, h).unfollow('someone');
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.clicked).toBe(true);
     expect(h.clicks).toEqual([RECT, confirmRect]); // button, then confirm
+  });
+
+  test('unfollow: a confirm menu that never shows is never chased with a second header press (ADR 0308)', async () => {
+    const tab = new ScriptedTab();
+    const h = new FakeInteractor();
+    tab.on(pageCall('locateActionButton'), (): LocateActionResult => (
+      { found: true, state: 'following', wouldClick: true, needsConfirm: true, rect: RECT }));
+    tab.on(pageCall('locateConfirm'), (): LocateRectResult => ({ found: false }));
+    tab.on(pageCall('probeActionButton'), () => ({ found: true, state: 'following' }));
+    tab.on(pageCall('confirmLayer'), () => ({ present: false }));
+    tab.on(pageCall('blockText'), () => '');
+
+    const result = await buildActor(tab, h).unfollow('someone');
+
+    // One header press, nothing else: the dispatched press ends unverified, honestly.
+    expect(h.clicks).toEqual([RECT]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/post-click state not confirmed/);
+  });
+
+  test('unfollow: a fallback-located confirm (self-recovery) is clicked like a primary hit', async () => {
+    const tab = new ScriptedTab();
+    const h = new FakeInteractor();
+    const confirmRect: LocatedRect = { x: 380, y: 510, width: 180, height: 40 };
+    tab.on(pageCall('locateActionButton'), (): LocateActionResult => ({
+      found: true,
+      state: 'following',
+      wouldClick: true,
+      needsConfirm: true,
+      rect: RECT,
+    }));
+    tab.on(
+      pageCall('locateConfirm'),
+      (): LocateRectResult => ({ found: true, rect: confirmRect, fallback: true }),
+    );
+    tab.on(pageCall('probeActionButton'), () => ({ found: true, state: 'follow' }));
+
+    const result = await buildActor(tab, h).unfollow('someone');
+
+    expect(result.ok).toBe(true);
+    expect(h.clicks).toEqual([RECT, confirmRect]);
   });
 });
 
@@ -147,11 +137,11 @@ describe('dialogs and scrolling with a interactor', () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
     tab.on(
-      marker('actor:locate-stat-followers'),
+      pageCall('locateStat', '"which":"followers"'),
       (): LocateRectResult => ({ found: true, rect: RECT }),
     );
     // The dialog-present script has no custom marker; match its source shape.
-    tab.on((s) => s.includes('present:'), () => ({ present: true }));
+    tab.on(pageCall('dialogPresent'), () => ({ present: true }));
 
     await buildActor(tab, h).openFollowersDialog('target');
 
@@ -162,12 +152,12 @@ describe('dialogs and scrolling with a interactor', () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
     tab.on(
-      marker('actor:locate-stat-followers'),
+      pageCall('locateStat', '"which":"followers"'),
       (): LocateRectResult => ({ found: true, rect: RECT }),
     );
     // Attempt 1's click never lands (dialog stays absent through the poll);
     // attempt 2's click works — the dialog appears once a second click happened.
-    tab.on((s) => s.includes('present:'), () => ({ present: h.clicks.length >= 2 }));
+    tab.on(pageCall('dialogPresent'), () => ({ present: h.clicks.length >= 2 }));
 
     await buildActor(tab, h).openFollowersDialog('target');
 
@@ -178,10 +168,10 @@ describe('dialogs and scrolling with a interactor', () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
     tab.on(
-      marker('actor:locate-stat-followers'),
+      pageCall('locateStat', '"which":"followers"'),
       (): LocateRectResult => ({ found: true, rect: RECT }),
     );
-    tab.on((s) => s.includes('present:'), () => ({ present: false }));
+    tab.on(pageCall('dialogPresent'), () => ({ present: false }));
 
     await expect(buildActor(tab, h).openFollowersDialog('target')).rejects.toThrow(
       /dialog/,
@@ -192,7 +182,7 @@ describe('dialogs and scrolling with a interactor', () => {
   test('scrollFollowers: remaining distance is interactor-scrolled, capped at 3 viewports', async () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
-    tab.on(marker('actor:locate-scroll'), (): LocateScrollResult => ({
+    tab.on(pageCall('locateScrollContainer'), (): LocateScrollResult => ({
       found: true,
       rect: { x: 100, y: 100, width: 400, height: 600 },
       scrollTop: 0,
@@ -210,7 +200,7 @@ describe('dialogs and scrolling with a interactor', () => {
   test('scrollFollowers: the hover-safe rest point is forwarded to the interactor', async () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
-    tab.on(marker('actor:locate-scroll'), (): LocateScrollResult => ({
+    tab.on(pageCall('locateScrollContainer'), (): LocateScrollResult => ({
       found: true,
       rect: { x: 100, y: 100, width: 400, height: 600 },
       scrollTop: 0,
@@ -227,7 +217,7 @@ describe('dialogs and scrolling with a interactor', () => {
   test('scrollFollowers: an already-bottomed container reports false, no scroll', async () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
-    tab.on(marker('actor:locate-scroll'), (): LocateScrollResult => ({
+    tab.on(pageCall('locateScrollContainer'), (): LocateScrollResult => ({
       found: true,
       rect: { x: 100, y: 100, width: 400, height: 600 },
       scrollTop: 4400,
@@ -242,7 +232,7 @@ describe('dialogs and scrolling with a interactor', () => {
   test('scrollFollowers: a missing container reports false (list fits — nothing to scroll)', async () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
-    tab.on(marker('actor:locate-scroll'), (): LocateScrollResult => ({ found: false }));
+    tab.on(pageCall('locateScrollContainer'), (): LocateScrollResult => ({ found: false }));
 
     expect(await buildActor(tab, h).scrollFollowers()).toBe(false);
     expect(h.scrolls).toEqual([]);
@@ -252,53 +242,26 @@ describe('dialogs and scrolling with a interactor', () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
     tab.on(
-      marker('actor:locate-profile-link'),
+      pageCall('locateProfileLink'),
       (): LocateRectResult => ({ found: true, rect: RECT }),
     );
 
     expect(await buildActor(tab, h).clickOwnProfileLink()).toBe(true);
     expect(h.clicks).toEqual([RECT]);
-    // Only the locate script ran — the in-page a.click() path never did.
+    // Only the LOCATE ran — the `profile-link-click` escape control (the
+    // identity resolver's in-page a.click(), ADR 0305) never did.
     for (const s of tab.evaluated) {
-      expect(s.includes('actor:locate-profile-link')).toBe(true);
+      expect(s.includes('"control":"profile-link"')).toBe(true);
+      expect(s.includes('"control":"profile-link-click"')).toBe(false);
     }
   });
 
   test('clickOwnProfileLink: link not hydrated yet reports false, nothing pressed', async () => {
     const tab = new ScriptedTab();
     const h = new FakeInteractor();
-    tab.on(marker('actor:locate-profile-link'), (): LocateRectResult => ({ found: false }));
+    tab.on(pageCall('locateProfileLink'), (): LocateRectResult => ({ found: false }));
 
     expect(await buildActor(tab, h).clickOwnProfileLink()).toBe(false);
     expect(h.clicks).toEqual([]);
-  });
-});
-
-describe('fallback without a interactor (behavior unchanged)', () => {
-  test('follow runs the in-page JS click script, never a locate script', async () => {
-    const tab = new ScriptedTab();
-    // The JS findAndAct script embeds the op constant; the locate scripts carry
-    // markers. Script the CLICK path only — a locate evaluation would throw.
-    tab.on(
-      (s) => s.includes('const OP =') && !s.includes('actor:locate-action'),
-      () => ({ found: true, state: 'follow', clicked: true, needsConfirm: false }),
-    );
-    tab.on(marker('actor:probe-state'), () => ({ found: true, state: 'following' }));
-
-    const result = await buildActor(tab, undefined).follow('someone');
-
-    expect(result.ok).toBe(true);
-    expect(tab.evaluated.some((s) => s.includes('actor:locate-action'))).toBe(false);
-  });
-
-  test('scrollFollowers runs the in-page jump script, never the locate script', async () => {
-    const tab = new ScriptedTab();
-    tab.on(
-      (s) => s.includes('best.scrollTop = best.scrollHeight'),
-      () => ({ found: true, scrollHeight: 5000, scrollTop: 5000 }),
-    );
-
-    expect(await buildActor(tab, undefined).scrollFollowers()).toBe(true);
-    expect(tab.evaluated.some((s) => s.includes('actor:locate-scroll'))).toBe(false);
   });
 });

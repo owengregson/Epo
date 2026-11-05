@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Epo local background input fixture</title>
+<style>
+  body { margin: 0; font: 18px system-ui; background: #fafaf8; color: #222; }
+  button { position: fixed; left: 40px; top: 60px; width: 200px; height: 64px; }
+  #scroller { position: fixed; left: 320px; top: 200px; width: 300px; height: 250px; overflow: auto; border: 1px solid; }
+  #contents { height: 20000px; background: repeating-linear-gradient(#fff 0 50px, #def 50px 100px); }
+  p { margin: 150px 40px 0; max-width: 600px; }
+</style>
+<button id="target">Local probe target</button>
+<p>This isolated fixture tests Electron input and page progress. It has no access to your account.</p>
+<div id="scroller"><div id="contents"></div></div>
+<script>
+  const metrics = { frames: 0, timers: 0, clicks: 0, trustedClicks: 0, wheels: 0, trustedWheels: 0, moves: 0, trustedMoves: 0, asyncAcks: 0 };
+  let previousTimer = performance.now();
+  let maximumTimerGap = 0;
+  setInterval(() => {
+    const now = performance.now();
+    maximumTimerGap = Math.max(maximumTimerGap, now - previousTimer);
+    previousTimer = now;
+    metrics.timers++;
+  }, 25);
+  const frame = () => { metrics.frames++; requestAnimationFrame(frame); };
+  requestAnimationFrame(frame);
+  target.addEventListener('click', (event) => {
+    metrics.clicks++;
+    metrics.trustedClicks += Number(event.isTrusted);
+    requestAnimationFrame(() => setTimeout(() => { metrics.asyncAcks++; }, 20));
+  });
+  document.addEventListener('mousemove', (event) => {
+    metrics.moves++;
+    metrics.trustedMoves += Number(event.isTrusted);
+  });
+  scroller.addEventListener('wheel', (event) => {
+    metrics.wheels++;
+    metrics.trustedWheels += Number(event.isTrusted);
+  });
+  window.probeSnapshot = () => ({
+    ...metrics, maximumTimerGap, scrollTop: scroller.scrollTop,
+    visibility: document.visibilityState, focused: document.hasFocus(),
+  });
+</script>

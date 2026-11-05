@@ -3,39 +3,32 @@
  *
  * The system's missing organ: followers-list observations carry no follower/
  * following counts, so `scoreCandidate` returns `no-counts` for every candidate
- * and the pool never shrinks. This class fetches the profile-info endpoint for
- * a batch of candidate usernames and writes the resulting `profiled` counts
- * into the store, so scoring can actually decide.
+ * and the pool never shrinks. This class reads the profile of each candidate in
+ * a batch so scoring can actually decide.
  *
- * Mechanism (per spec): for each username (up to `batchCap`), if the Sentinel
- * is `ok`, `tab.evaluate` the surface's in-page profile-info fetch script
- * (which resolves to a `FetchEnvelope` — it never rejects on an HTML/error
- * body), parse the JSON via {@link Reader.parseProfileInfo}, and — when
- * non-null — `store.observe` it.
+ * Mechanism (since 2026-10-08): for each username the caller hands it, if the
+ * Sentinel is `ok`, VISIT the profile (`ProfileVisitor`) — the page's own
+ * client fetches the profile, and the ProfileObserver writes the counts to the
+ * store as the body parses. Every REST profile read Epo used to compose is
+ * walled (`/users/<pk>/info/` answers 429), and a visit composes no request.
  *
- * Robustness: no silent catch. A per-username `tab.evaluate` rejection is
- * logged and skipped; a non-ok envelope (rate-limit wall, HTML interstitial,
- * network error) or a malformed/`null` body is WARN-logged and skipped; the
- * pass continues with the next username. Returns the number of usernames
- * actually enriched (observed).
+ * This class owns the PASS: sentinel gating, the wall streak, the permanent `gone` marker and the
+ * veil's progress; it waits nothing of its own (the visitor enters each visit on the activity
+ * clock, spec §5.16). No silent catch: every non-ok visit is a typed outcome, WARN-logged and
+ * skipped. Returns the number of usernames whose profile was actually read.
  */
 
 import {
   type ActivityReporter,
   NOOP_ACTIVITY_REPORTER,
 } from '@/adapter/activity-reporter';
-import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
-import type { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { type Clock, SystemClock } from '@/governors/clock';
-import type { RimTab } from '@/rim/types';
+import type { ReadBudget } from '@/governors/read-budget';
+import { countsUnread, type ProfileVisitor } from '@/rim/profile-visit-port';
 import type { KnowledgeStore } from '@/store/knowledge-store';
-import { RIM } from '@/timing/config';
-import { sample, sleep, uniform } from '@/timing/primitives';
+import { RECOVERY } from '@/timing/config';
 import * as logger from '@/utils/logger';
-
-/** Default number of usernames enriched per pass. */
-const DEFAULT_BATCH_CAP = 25;
 
 /**
  * The enrichment port the Engine calls before planning a target (structurally
@@ -43,67 +36,65 @@ const DEFAULT_BATCH_CAP = 25;
  */
 export interface ProfileEnricher {
   enrich(usernames: string[]): Promise<number>;
+  budgetResumeAt?(): number | null;
 }
 
 export interface ProfileEnricherDeps {
-  tab: RimTab;
-  reader: Reader;
-  store: KnowledgeStore;
+  onProgress?: (phase: string) => void;
+  readBudget?: ReadBudget;
+  /** Reads a profile by opening it; the observer behind it writes the store. */
+  visitor: ProfileVisitor;
+  /** For the permanent `gone` marker only — the counts are the observer's write. */
+  store: Pick<KnowledgeStore, 'markEnrichmentFailed'> & Partial<Pick<KnowledgeStore, 'pkByUsername'>>;
   sentinel: Sentinel;
   clock?: Clock;
-  /** Max usernames enriched per pass (default 25). */
+  /** Max usernames enriched per pass; absent, the caller's slice is the bound (`min(profilesPerSlice, explore left)`). */
   batchCap?: number;
-  /** Fixed pause between fetches, ms; default is a fresh jittered draw per fetch. */
-  paceMs?: number;
-  /** Injected for tests; defaults to a real `setTimeout` sleep. */
-  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
-  /**
-   * Provider of the ACTIVE driver's abort signal — a `stop()` ends the pass
-   * between usernames and interrupts the in-flight pacing sleep.
-   */
+  /** Provider of the ACTIVE driver's abort signal — a `stop()` ends the pass between usernames. */
   abortSignal?: () => AbortSignal | undefined;
   /** Live activity readout for the veil; defaults to a no-op. */
   reporter?: ActivityReporter;
 }
 
 export class AdapterBackedProfileEnricher implements ProfileEnricher {
-  private readonly tab: RimTab;
-  private readonly reader: Reader;
-  private readonly store: KnowledgeStore;
+  private readonly onProgress?: (phase: string) => void;
+  private readonly readBudget?: ReadBudget;
+  private readResumeAt: number | null = null;
+  private readonly visitor: ProfileVisitor;
+  private readonly store: Pick<KnowledgeStore, 'markEnrichmentFailed'> & Partial<Pick<KnowledgeStore, 'pkByUsername'>>;
   private readonly sentinel: Sentinel;
   private readonly clock: Clock;
-  private readonly batchCap: number;
-  private readonly paceMs?: number;
-  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  private readonly batchCap: number | undefined;
   private readonly abortSignal?: () => AbortSignal | undefined;
   private readonly reporter: ActivityReporter;
 
   constructor(deps: ProfileEnricherDeps) {
-    this.tab = deps.tab;
-    this.reader = deps.reader;
+    this.onProgress = deps.onProgress;
+    this.readBudget = deps.readBudget;
+    this.visitor = deps.visitor;
     this.store = deps.store;
     this.sentinel = deps.sentinel;
     this.clock = deps.clock ?? new SystemClock();
-    this.batchCap = deps.batchCap ?? DEFAULT_BATCH_CAP;
-    this.paceMs = deps.paceMs;
-    this.sleep = deps.sleep ?? sleep;
+    this.batchCap = deps.batchCap;
     this.abortSignal = deps.abortSignal;
     this.reporter = deps.reporter ?? NOOP_ACTIVITY_REPORTER;
   }
 
   async enrich(usernames: string[]): Promise<number> {
+    this.readResumeAt = null;
     const batch = usernames.slice(0, this.batchCap);
     let enriched = 0;
-    // Profile enrichment fetches web_profile_info directly — an 'api' phase.
-    // The batch size is an exact denominator, so the overlay draws a true bar.
+    // Enrichment visits profile pages — a 'page' phase. The batch size is an
+    // exact denominator, so the overlay draws a true bar.
     const reportActivity = (count: number): void =>
       this.reporter.report({
-        kind: 'api',
-        label: 'Reading profiles',
-        count,
-        total: batch.length,
+        kind: 'page',
+        op: { op: 'visit-profiles', done: count, total: batch.length },
       });
 
+    // Consecutive visits a WALL answered — or that never answered at all. A
+    // streak is a wall, not luck: the rest of the batch would only deepen it.
+    let walledInARow = 0;
     for (let i = 0; i < batch.length; i++) {
       const username = batch[i];
       // Progress = usernames COMPLETED so far, counted at the top of each
@@ -117,79 +108,56 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
         break;
       }
 
-      // The sentinel gates like any IG work — but blocking here just skips
-      // this username (a future pass retries it); it is not a failure.
+      // The sentinel gates like any IG work: a non-ok page ends the pass (a future pass retries
+      // the rest), so a persistent block can never spin the pass through the batch.
       const status = await this.sentinel.check();
       if (status !== 'ok') {
-        logger.warn('rim.profile-enricher: sentinel non-ok, skipping', { username, status });
-        // Pace even on a block: without this, a PERSISTENT sentinel wall turns the
-        // pass into a tight zero-delay `sentinel.check()` spin loop (parity with
-        // every other exit path below, which all pace before continuing).
-        await this.pace(i, batch.length);
-        continue;
+        logger.warn('rim.profile-enricher: sentinel non-ok, ending pass', { username, status });
+        break;
       }
 
-      let raw: unknown;
-      try {
-        raw = await this.tab.evaluate<unknown>(SURFACE.profileInfoScript(username));
-      } catch (e) {
-        logger.error('rim.profile-enricher: fetch/evaluate failed', {
-          username,
-          error: String(e),
-        });
-        // Pace even on failure so a run of errors cannot hammer the endpoint.
-        await this.pace(i, batch.length);
-        continue;
+      const permit = this.readBudget?.consume('profile');
+      if (permit !== undefined && !permit.allowed) {
+        this.readResumeAt = permit.resumeAt;
+        break;
       }
-
-      // The script resolves to a FetchEnvelope — an HTML wall, rate-limit or
-      // network error is a typed non-ok envelope, NOT a raw error. Skip and
-      // continue (a future pass retries) with a warn, never an error log.
-      const env = asFetchEnvelope(raw);
-      if (env === null) {
-        logger.warn('rim.profile-enricher: unexpected evaluate result (no envelope), skipping', {
-          username,
-        });
-        await this.pace(i, batch.length);
-        continue;
-      }
-      if (!env.ok) {
-        // A 404 is Instagram's definitive "no such profile" (deleted/
-        // suspended/renamed): mark it so the engine's batch selection stops
-        // resending it every pass of every cycle. Any OTHER non-ok status
-        // (rate wall, HTML interstitial, 5xx) is transient — never marked.
-        if (env.status === 404) {
+      const pk = this.store.pkByUsername?.(username) ?? undefined;
+      const visit = await this.visitor.visit(username, pk === undefined ? undefined : { pk });
+      if (!visit.ok) {
+        // `gone` is the page itself saying the profile is not available
+        // (deleted / renamed / hidden from us) with no profile fetched: mark it
+        // so batch selection stops resending it. Everything else is transient.
+        if (visit.kind === 'gone') {
           this.store.markEnrichmentFailed(username, this.clock.now());
-          logger.warn('rim.profile-enricher: profile 404, marking enrich-failed', { username });
+          logger.warn('rim.profile-enricher: profile gone, marking enrich-failed', { username });
         } else {
-          logger.warn('rim.profile-enricher: non-ok response, skipping', {
-            username,
-            status: env.status,
-            contentType: env.contentType,
-          });
+          logger.warn('rim.profile-enricher: visit failed, skipping', { kind: visit.kind, ...visit.detail });
         }
-        await this.pace(i, batch.length);
+        // A tab that cannot navigate will not recover mid-pass.
+        if (visit.kind === 'tab') break;
+        walledInARow = visit.kind === 'walled' || visit.kind === 'unanswered' ? walledInARow + 1 : 0;
+        if (walledInARow >= RECOVERY.BLOCKED_STREAK_ENTRY) {
+          logger.warn('rim.profile-enricher: read wall, ending the pass early', {
+            walledInARow,
+            unread: batch.length - i - 1,
+          });
+          break;
+        }
         continue;
       }
-
-      const obs = this.reader.parseProfileInfo(env.json, this.clock.now());
-      if (obs === null) {
-        // A 2xx body that yields no observation is AMBIGUOUS: it can be a
-        // genuinely-gone profile (`data.user` empty) but also a soft-block
-        // body a wall returns with status 200 — so it is skipped, never
-        // permanently marked. Definitive deletion is the 404 branch above.
-        logger.warn('rim.profile-enricher: profile body yielded no observation, skipping', {
-          username,
-        });
-        await this.pace(i, batch.length);
+      if (countsUnread(visit) || visit.tier === 'recovered' || visit.partial === true
+        || typeof visit.obs.fields.followers !== 'number' || typeof visit.obs.fields.following !== 'number') {
+        // Incomplete/C2 facts remain in the observer, but cannot qualify a candidate (spec §10.6).
+        // Count failed reads toward the existing wall streak; never loop to re-request.
+        logger.warn('rim.profile-enricher: profile read did not qualify enrichment, skipping', { username });
+        walledInARow += 1;
+        if (walledInARow >= RECOVERY.BLOCKED_STREAK_ENTRY) break;
         continue;
       }
-
-      this.store.observe(obs);
+      walledInARow = 0;
       enriched += 1;
-      logger.debug('rim.profile-enricher: enriched', { username, pk: obs.accountPk });
-
-      await this.pace(i, batch.length);
+      this.onProgress?.('profile-enriched');
+      logger.debug('rim.profile-enricher: enriched', { username, pk: visit.obs.accountPk });
     }
 
     this.reporter.clear();
@@ -201,15 +169,5 @@ export class AdapterBackedProfileEnricher implements ProfileEnricher {
     return enriched;
   }
 
-  /**
-   * Pacing between fetches; no wait after the final username. Each wait is a
-   * fresh jittered draw (an enrichment pass is the app's largest read burst —
-   * a fixed 1 s cadence used to fire 20 profile fetches in ~20 s).
-   */
-  private async pace(index: number, length: number): Promise<void> {
-    if (index >= length - 1) return;
-    const ms =
-      this.paceMs ?? sample(uniform(RIM.ENRICH_PACE_MIN_MS, RIM.ENRICH_PACE_MAX_MS));
-    await this.sleep(ms, this.abortSignal?.());
-  }
+  budgetResumeAt(): number | null { return this.readResumeAt; }
 }

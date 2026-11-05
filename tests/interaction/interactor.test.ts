@@ -2,13 +2,18 @@
  * Interactor facade: event sequences through a recording InputDriver, with an
  * injected rng + sleep recorder (no real timers, fully deterministic).
  */
-import { Interactor } from '@/interaction/interactor';
+
 import {
   ElectronInputDriver,
-  type PointerInputEvent,
   type InputDriver,
+  type PointerInputEvent,
 } from '@/interaction/input-driver';
-import { PRESS_MAX_MS, PRESS_MIN_MS, type ElementRect } from '@/interaction/motion-profile';
+import { Interactor } from '@/interaction/interactor';
+import type { ElementRect } from '@/interaction/motion-profile';
+import { MOTION } from '@/kernel/motion-policy';
+import { MOTION_REFERENCE } from '@/kernel/tempo';
+
+const [PRESS_MIN_MS, PRESS_MAX_MS] = MOTION_REFERENCE.pressMs;
 
 const mulberry32 = (seed: number) => (): number => {
   seed = (seed + 0x6d2b79f5) | 0;
@@ -128,6 +133,47 @@ describe('Interactor.moveTo', () => {
   });
 });
 
+describe('Interactor.click with an aim (part of the control is covered)', () => {
+  // Live 2026-11-02: the drawer header covers the lower half of the close X.
+  const X: ElementRect = { x: 428, y: 16, width: 16, height: 16 };
+  const EXPOSED: ElementRect = { x: 428, y: 16, width: 16, height: 8 };
+
+  test('the press lands inside the aim; the guard still identifies the control by its full rect', async () => {
+    for (let seed = 1; seed < 15; seed++) {
+      const driver = new RecordingDriver();
+      const guarded: Array<{ target: ElementRect; point: { x: number; y: number } }> = [];
+      const h = new Interactor({
+        driver,
+        rng: mulberry32(seed),
+        sleep: async () => {},
+        prepareClick: async (target, point) => {
+          guarded.push({ target, point });
+          return { validate: async () => true, dispose: async () => {} };
+        },
+      });
+      await h.click(X, EXPOSED);
+      const down = driver.events.find((e) => e.kind === 'down') as Extract<Recorded, { kind: 'down' }>;
+      expect(inside(down, EXPOSED)).toBe(true);
+      expect(guarded).toEqual([{ target: X, point: { x: down.x, y: down.y } }]);
+    }
+  });
+});
+
+describe('Interactor.hover', () => {
+  test('travels into the hitbox, then dwells in the settle band — and never presses', async () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const { h, driver, sleeps } = build(seed);
+      await h.hover(TARGET);
+      expect(driver.events.every((e) => e.kind === 'move')).toBe(true);
+      expect(inside(h.position(), TARGET)).toBe(true);
+      // The final pause is the settle dwell: the page reacts before any re-locate.
+      const dwell = sleeps[sleeps.length - 1];
+      expect(dwell).toBeGreaterThanOrEqual(MOTION.hoverSettleMs[0]);
+      expect(dwell).toBeLessThanOrEqual(MOTION.hoverSettleMs[1]);
+    }
+  });
+});
+
 describe('Interactor.scroll', () => {
   // Placed right of the Interactor's whole idle-start zone (x ≤ 720), so the
   // cursor always begins OUTSIDE and the enter-the-container move is exercised.
@@ -195,7 +241,7 @@ describe('Interactor.scroll', () => {
 describe('ElectronInputDriver', () => {
   test('maps port calls onto sendInputEvent payloads (wheel sign inverted)', () => {
     const sent: PointerInputEvent[] = [];
-    const driver = new ElectronInputDriver({ sendInputEvent: (e) => sent.push(e) });
+    const driver = new ElectronInputDriver({ sendInputEvent: (e) => { sent.push(e); } });
 
     driver.mouseMove(10.6, 20.2);
     driver.mouseDown(10, 20);
@@ -203,7 +249,7 @@ describe('ElectronInputDriver', () => {
     driver.wheel(10, 20, 120); // DOM +120 (content down) → Electron deltaY -120
 
     expect(sent).toEqual([
-      { type: 'mouseMove', x: 11, y: 20 },
+      { type: 'mouseMove', x: 10.6, y: 20.2 },
       { type: 'mouseDown', x: 10, y: 20, button: 'left', clickCount: 1 },
       { type: 'mouseUp', x: 10, y: 20, button: 'left', clickCount: 1 },
       { type: 'mouseWheel', x: 10, y: 20, deltaX: 0, deltaY: -120 },

@@ -1,21 +1,4 @@
-import {
-  type CircadianProfile,
-  intensityAt,
-  sampleNextSessionStart,
-  samplePhaseOffset,
-} from '@/timing/circadian';
-
-const seq = (...values: number[]): (() => number) => {
-  let i = 0;
-  return () => values[i++ % values.length];
-};
-
-const mulberry32 = (seed: number) => (): number => {
-  let t = (seed += 0x6d2b79f5);
-  t = Math.imul(t ^ (t >>> 15), t | 1);
-  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-};
+import { type CircadianProfile, intensityAt } from '@/timing/circadian';
 
 /** The default triple-peak profile (mirrors CIRCADIAN in timing/config). */
 const DEFAULT: CircadianProfile = {
@@ -75,55 +58,5 @@ describe('circadian/intensityAt', () => {
     };
     expect(intensityAt(sat(20), p)).toBeGreaterThan(0.95); // peak felt at 20:00 on Saturday
     expect(intensityAt(mon(20), p)).toBeLessThan(0.7); // still on the decay on a weekday
-  });
-});
-
-describe('circadian/sampleNextSessionStart — Lewis thinning', () => {
-  test('returns a strictly future time', () => {
-    const from = mon(9);
-    const next = sampleNextSessionStart(from, DEFAULT, 6, mulberry32(1));
-    expect(next).toBeGreaterThan(from);
-  });
-
-  test('sampled starts track the intensity curve (hourly counts correlate with λ)', () => {
-    const rng = mulberry32(42);
-    let t = mon(0);
-    const hourCounts = new Array(24).fill(0);
-    for (let i = 0; i < 4000; i++) {
-      t = sampleNextSessionStart(t, DEFAULT, 6, rng);
-      hourCounts[new Date(t).getHours()] += 1;
-    }
-    const intens = Array.from({ length: 24 }, (_, h) => intensityAt(mon(h, 30), DEFAULT));
-    // Pearson correlation between the hourly histogram and the intensity curve.
-    const mean = (a: number[]): number => a.reduce((x, y) => x + y, 0) / a.length;
-    const mc = mean(hourCounts);
-    const mi = mean(intens);
-    let num = 0;
-    let dc = 0;
-    let di = 0;
-    for (let h = 0; h < 24; h++) {
-      num += (hourCounts[h] - mc) * (intens[h] - mi);
-      dc += (hourCounts[h] - mc) ** 2;
-      di += (intens[h] - mi) ** 2;
-    }
-    const r = num / Math.sqrt(dc * di);
-    expect(r).toBeGreaterThan(0.8);
-    // Almost nothing lands in the 02:00–05:00 trough.
-    const trough = hourCounts[2] + hourCounts[3] + hourCounts[4];
-    expect(trough / 4000).toBeLessThan(0.02);
-  });
-
-  test('an all-zero-intensity profile hits the cap and falls back to from + 24h', () => {
-    const dead: CircadianProfile = { ...DEFAULT, dayOfWeekWeights: [0, 0, 0, 0, 0, 0, 0] };
-    const from = mon(9);
-    expect(sampleNextSessionStart(from, dead, 6, mulberry32(2))).toBe(from + 24 * 3600_000);
-  });
-});
-
-describe('circadian/samplePhaseOffset', () => {
-  test('maps the rng across [-max, +max]', () => {
-    expect(samplePhaseOffset(1.5, seq(0))).toBeCloseTo(-1.5, 10);
-    expect(samplePhaseOffset(1.5, seq(1))).toBeCloseTo(1.5, 10);
-    expect(samplePhaseOffset(1.5, seq(0.5))).toBeCloseTo(0, 10);
   });
 });

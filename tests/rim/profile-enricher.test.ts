@@ -1,327 +1,197 @@
-import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
-import { Reader } from '@/adapter/reader';
-import { SURFACE } from '@/adapter/ig-surface';
+/**
+ * AdapterBackedProfileEnricher — enrichment by VISITING profiles.
+ *
+ * Since 2026-10-08 a profile is read by opening it (`rim/profile-visit.ts`):
+ * the page's own GraphQL body carries the counts and the ProfileObserver
+ * writes it to the store. The enricher owns the PASS — sentinel gating, the
+ * wall streak, the permanent `gone` marker, progress — and is tested here
+ * against a scripted visitor. The spacing between visits is the activity
+ * clock's (`ig-activity-clock.test.ts`); the store write is the observer's,
+ * tested in `profile-visit.test.ts`.
+ */
 import type { Sentinel } from '@/adapter/sentinel';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
-import type { RimTab } from '@/rim/types';
-import type { ResponseHandler, Unsubscribe } from '@/types';
-import { FakeSentinel } from './fakes';
+import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
+import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
+import { toVeilInfo } from '@/shared/live-op';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import { RECOVERY } from '@/timing/config';
 import { setLevel } from '@/utils/logger';
+import { FakeSentinel } from '../kit/fakes';
+import { openTestStore } from '../kit/store';
 
 beforeAll(() => setLevel('error'));
 
-/** The `web_profile_info` body shape the Reader parses (data.user.*). */
-const profileBody = (
-  id: string,
-  username: string,
-  followers: number,
-  following: number,
-): unknown => ({
-  data: {
-    user: {
-      id,
-      username,
-      edge_followed_by: { count: followers },
-      edge_follow: { count: following },
-      is_private: false,
-      is_verified: false,
-    },
-  },
+const ok = (pk: string, username: string): ProfileVisit => ({
+  ok: true,
+  obs: { accountPk: pk, observedAt: 1, source: 'profile', fields: { username, followers: 10, following: 10 } },
+  viewer: { following: false, requested: false, followsUs: false },
 });
+const fail = (kind: 'gone' | 'walled' | 'unanswered' | 'tab'): ProfileVisit => ({ ok: false, kind, detail: {} });
 
-/**
- * A fake port-tab whose `evaluate` resolves the FetchEnvelope the surface's
- * in-page fetch script yields, wrapping the scripted `web_profile_info` body
- * chosen by matching the username the enricher embedded in the fetch script.
- * `wallFor` simulates an HTML/rate-limit wall: a typed non-ok envelope (the
- * in-page script never rejects on a non-JSON body).
- */
-class EnrichTab implements RimTab {
-  evalCalls: string[] = [];
-  bodies: Record<string, unknown> = {};
-  throwFor = new Set<string>();
-  wallFor = new Set<string>();
-  url = 'https://www.instagram.com/';
-
-  async goto(u: string): Promise<void> {
-    this.url = u;
-  }
-  onResponse(_handler: ResponseHandler): Unsubscribe {
-    return () => {};
-  }
-  currentUrl(): string {
-    return this.url;
-  }
-  async evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T> {
-    const s = String(fnOrString);
-    this.evalCalls.push(s);
-    const users = [...Object.keys(this.bodies), ...this.wallFor];
-    const user = users.find((u) => s.includes(JSON.stringify(u)));
-    if (user !== undefined && this.throwFor.has(user)) {
-      throw new Error(`fetch failed for ${user}`);
-    }
-    if (user !== undefined && this.wallFor.has(user)) {
-      return {
-        ok: false,
-        status: 429,
-        contentType: 'text/html; charset=utf-8',
-        textHead: '<!DOCTYPE html><html lang="en"> ... Please wait a few minutes',
-      } as T;
-    }
-    if (user === undefined) return undefined as T;
-    return {
-      ok: true,
-      status: 200,
-      contentType: 'application/json; charset=utf-8',
-      json: this.bodies[user],
-    } as T;
+/** A visitor answering a scripted outcome per username (`unanswered` when unscripted). */
+class ScriptedVisitor implements ProfileVisitor {
+  visited: string[] = [];
+  outcomes: Record<string, ProfileVisit> = {};
+  async visit(username: string): Promise<ProfileVisit> {
+    this.visited.push(username);
+    return this.outcomes[username] ?? fail('unanswered');
   }
 }
 
 const clock = new FakeClock(5_000_000);
-const noSleep = async (): Promise<void> => {};
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 
-interface Built {
-  enricher: AdapterBackedProfileEnricher;
-  tab: EnrichTab;
-  sentinel: FakeSentinel;
-  activity: Array<{ kind: string; label: string; count?: number; total?: number } | null>;
-}
+type Report = { kind: string; label: string; count?: number; total?: number } | null;
 
-const build = (opts?: {
-  sentinel?: FakeSentinel;
-  batchCap?: number;
-}): Built => {
-  const tab = new EnrichTab();
-  const sentinel = opts?.sentinel ?? new FakeSentinel();
-  const activity: Array<{
-    kind: string;
-    label: string;
-    count?: number;
-    total?: number;
-  } | null> = [];
+const build = (opts?: { sentinel?: FakeSentinel; batchCap?: number }) => {
+  const visitor = new ScriptedVisitor();
+  const activity: Report[] = [];
   const enricher = new AdapterBackedProfileEnricher({
-    tab,
-    reader: new Reader(),
+    visitor,
     store,
-    sentinel: sentinel as unknown as Sentinel,
+    sentinel: (opts?.sentinel ?? new FakeSentinel()) as unknown as Sentinel,
     clock,
     batchCap: opts?.batchCap,
-    sleep: noSleep,
-    reporter: {
-      report: (info) => activity.push(info),
-      clear: () => activity.push(null),
-    },
+    reporter: { report: (info) => activity.push(toVeilInfo(info)), clear: () => activity.push(null) },
   });
-  return { enricher, tab, sentinel, activity };
+  return { enricher, visitor, activity };
 };
 
-test('paces even when the sentinel blocks, so a persistent block cannot spin', async () => {
-  const tab = new EnrichTab();
-  const sentinel = new FakeSentinel([], 'challenge'); // every check is non-ok
-  const sleeps: number[] = [];
-  const enricher = new AdapterBackedProfileEnricher({
-    tab,
-    reader: new Reader(),
-    store,
-    sentinel: sentinel as unknown as Sentinel,
-    clock,
-    sleep: async (ms: number) => {
-      sleeps.push(ms);
-    },
-  });
+test('visits each username and counts the profiles that answered', async () => {
+  const { enricher, visitor } = build();
+  visitor.outcomes = { alice: ok('101', 'alice'), bob: ok('102', 'bob') };
 
-  const n = await enricher.enrich(['a', 'b', 'c']);
-
-  expect(n).toBe(0); // nothing enriched (all blocked)
-  expect(tab.evalCalls).toEqual([]); // never even fetched — blocked before evaluate
-  expect(sleeps.length).toBe(2); // paced after the 1st and 2nd (no wait after the last)
+  expect(await enricher.enrich(['alice', 'bob'])).toBe(2);
+  expect(visitor.visited).toEqual(['alice', 'bob']);
 });
 
-test('enriches each username: fetches web_profile_info, parses, and store.observe writes counts', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 1200, 300),
-    bob: profileBody('102', 'bob', 50, 75),
-  };
+test('the pass waits nothing of its own: the visits go straight to the visitor, which spaces them', async () => {
+  const { enricher, visitor } = build(); // no sleep to inject: the enrich pace is gone (spec §5.16)
+  visitor.outcomes = { a: ok('1', 'a'), b: fail('walled'), c: ok('3', 'c') };
 
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(2);
-  const a = store.getAccount('101');
-  expect(a?.username).toBe('alice');
-  expect(a?.followers).toBe(1200);
-  expect(a?.following).toBe(300);
-  expect(a?.enrichment).toBe('profiled');
-  expect(store.getAccount('102')?.followers).toBe(50);
+  expect(await enricher.enrich(['a', 'b', 'c'])).toBe(2);
+  expect(visitor.visited).toEqual(['a', 'b', 'c']);
 });
 
-test('the fetch script targets web_profile_info with the app-id header and encoded username', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = { alice: profileBody('101', 'alice', 10, 10) };
+test('a non-ok sentinel ends the pass at once: nothing is visited and nothing spins', async () => {
+  const sentinel = new FakeSentinel([], 'challenge');
+  const { enricher, visitor } = build({ sentinel });
 
-  await enricher.enrich(['alice']);
-
-  expect(tab.evalCalls).toHaveLength(1);
-  const script = tab.evalCalls[0];
-  expect(script).toContain('/api/v1/users/web_profile_info/?username=');
-  expect(script).toContain(`'x-ig-app-id': '${SURFACE.appId}'`);
-  expect(script).toContain("credentials: 'include'");
-  expect(script).toContain('encodeURIComponent("alice")');
+  expect(await enricher.enrich(['a', 'b', 'c'])).toBe(0);
+  expect(visitor.visited).toEqual([]); // blocked before any page load
+  expect(sentinel.checks).toBe(1); // one look, then the pass ends (a future pass retries)
 });
 
-test('a non-ok sentinel skips that username and returns the count of the rest', async () => {
-  // First username sees a challenge (skip); the rest fall through to `ok`.
-  const { enricher, tab } = build({ sentinel: new FakeSentinel(['challenge']) });
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 10, 10),
-    bob: profileBody('102', 'bob', 20, 20),
-  };
+test('a non-ok sentinel mid-pass ends it there; what was read stays read', async () => {
+  const { enricher, visitor } = build({ sentinel: new FakeSentinel(['ok', 'challenge']) });
+  visitor.outcomes = { alice: ok('101', 'alice'), bob: ok('102', 'bob'), carol: ok('103', 'carol') };
 
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1); // alice skipped, bob enriched
-  expect(store.getAccount('101')).toBeNull();
-  expect(store.getAccount('102')?.followers).toBe(20);
+  expect(await enricher.enrich(['alice', 'bob', 'carol'])).toBe(1);
+  expect(visitor.visited).toEqual(['alice']);
 });
 
-test('a malformed/unparseable body is skipped and the pass continues', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = {
-    alice: { data: { user: null } }, // no user → parseProfileInfo returns null
-    bob: profileBody('102', 'bob', 20, 20),
-  };
-
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1);
-  expect(store.getAccount('102')?.followers).toBe(20);
-});
-
-test('an HTML/rate-limit wall is a typed skip (non-ok envelope), never a throw', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = { bob: profileBody('102', 'bob', 20, 20) };
-  tab.wallFor.add('alice'); // alice gets a 429 text/html interstitial
-
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1); // alice skipped on the envelope, bob still enriched
-  expect(store.getAccount('101')).toBeNull();
-  expect(store.getAccount('102')?.followers).toBe(20);
-});
-
-test('a fetch/evaluate rejection is logged-and-skipped, not fatal to the pass', async () => {
-  const { enricher, tab } = build();
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 10, 10),
-    bob: profileBody('102', 'bob', 20, 20),
-  };
-  tab.throwFor.add('alice');
-
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1); // alice threw, bob still enriched
-  expect(store.getAccount('101')).toBeNull();
-  expect(store.getAccount('102')?.followers).toBe(20);
-});
-
-test('respects batchCap: only the first N usernames are attempted', async () => {
-  const { enricher, tab } = build({ batchCap: 1 });
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 10, 10),
-    bob: profileBody('102', 'bob', 20, 20),
-  };
-
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(1);
-  expect(tab.evalCalls).toHaveLength(1);
-  expect(store.getAccount('102')).toBeNull();
-});
-
-test('an aborted driver signal ends the pass between usernames (nothing fetched)', async () => {
-  const tab = new EnrichTab();
-  const ac = new AbortController();
-  ac.abort();
-  const enricher = new AdapterBackedProfileEnricher({
-    tab,
-    reader: new Reader(),
-    store,
-    sentinel: new FakeSentinel() as unknown as Sentinel,
-    clock,
-    sleep: noSleep,
-    abortSignal: () => ac.signal,
-  });
-  tab.bodies = { alice: profileBody('101', 'alice', 10, 10) };
-
-  const n = await enricher.enrich(['alice', 'bob']);
-
-  expect(n).toBe(0);
-  expect(tab.evalCalls).toEqual([]); // stop means stop: no fetch at all
-});
-
-test('reports determinate progress for the veil, advancing on SKIPS too, then clears', async () => {
-  // 'bob' has no scripted body → it is skipped; progress must still advance,
-  // otherwise the overlay bar stalls whenever a profile is unavailable.
-  const { enricher, tab, activity } = build();
-  tab.bodies = {
-    alice: profileBody('101', 'alice', 1200, 300),
-    carol: profileBody('103', 'carol', 900, 800),
-  };
-
-  await enricher.enrich(['alice', 'bob', 'carol']);
-
-  const reports = activity.filter(Boolean) as Array<{
-    kind: string;
-    label: string;
-    count?: number;
-    total?: number;
-  }>;
-  expect(reports.every((r) => r.kind === 'api' && r.label === 'Reading profiles')).toBe(true);
-  // A real denominator (the batch size) → the overlay draws a true bar.
-  expect(reports.every((r) => r.total === 3)).toBe(true);
-  // One report per username STARTED, including the skipped one.
-  expect(reports.map((r) => r.count)).toEqual([0, 1, 2]);
-  expect(activity[activity.length - 1]).toBeNull(); // cleared at the end
-});
-
-test('a 404 marks the account permanently un-enrichable; a 200 soft-block does NOT', async () => {
-  const { enricher, tab } = build();
-  // Both accounts are already known in the store (from a followers page).
+test('`gone` marks the account permanently un-enrichable; `unanswered` does NOT', async () => {
+  const { enricher, visitor } = build();
   for (const [pk, username] of [
     ['77', 'gone_forever'],
-    ['88', 'soft_blocked'],
+    ['88', 'blank_page'],
   ]) {
     store.observe({ accountPk: pk, observedAt: 1, source: 'followers-list', fields: { username } });
   }
-  // gone_forever → definitive 404; soft_blocked → 2xx body with no data.user
-  // (a challenge-wall shape), which is AMBIGUOUS and must not mark.
-  tab.bodies.gone_forever = undefined;
-  tab.evaluate = async <T,>(fnOrString: string | (() => T | Promise<T>)): Promise<T> => {
-    const s = String(fnOrString);
-    if (s.includes(JSON.stringify('gone_forever'))) {
-      return { ok: false, status: 404, contentType: 'application/json', textHead: '{}' } as T;
-    }
-    return {
-      ok: true,
-      status: 200,
-      contentType: 'application/json',
-      json: { status: 'fail', spam: true },
-    } as T;
+  visitor.outcomes = { gone_forever: fail('gone') };
+
+  expect(await enricher.enrich(['gone_forever', 'blank_page'])).toBe(0);
+  expect(store.getAccount('77')?.enrichFailedAt).toBeDefined(); // the page says: not available
+  expect(store.getAccount('88')?.enrichFailedAt).toBeUndefined(); // ambiguous → retryable
+});
+
+test('a WALL ends the pass: consecutive walled visits stop the batch instead of draining it', async () => {
+  const { enricher, visitor } = build();
+  const names = Array.from({ length: 12 }, (_, i) => `walled${i}`);
+  for (const n of names) visitor.outcomes[n] = fail('walled');
+
+  expect(await enricher.enrich(names)).toBe(0);
+  expect(visitor.visited).toHaveLength(RECOVERY.BLOCKED_STREAK_ENTRY);
+});
+
+test('pages that never answer count toward the wall streak too', async () => {
+  const { enricher, visitor } = build();
+  const names = Array.from({ length: 12 }, (_, i) => `blank${i}`); // unscripted → unanswered
+
+  expect(await enricher.enrich(names)).toBe(0);
+  expect(visitor.visited).toHaveLength(RECOVERY.BLOCKED_STREAK_ENTRY);
+});
+
+test('an isolated walled visit does not end the pass', async () => {
+  const { enricher, visitor } = build();
+  visitor.outcomes = {
+    w1: fail('walled'),
+    ok1: ok('11', 'ok1'),
+    w2: fail('walled'),
+    ok2: ok('12', 'ok2'),
   };
 
-  const enriched = await enricher.enrich(['gone_forever', 'soft_blocked']);
+  expect(await enricher.enrich(['w1', 'ok1', 'w2', 'ok2'])).toBe(2);
+});
 
-  expect(enriched).toBe(0);
-  expect(store.getAccount('77')?.enrichFailedAt).toBeDefined(); // 404 → permanent
-  expect(store.getAccount('88')?.enrichFailedAt).toBeUndefined(); // wall → retryable
+test('a tab that cannot navigate ends the pass at once (retrying cannot revive it)', async () => {
+  const { enricher, visitor } = build();
+  visitor.outcomes = { a: fail('tab'), b: ok('2', 'b') };
+
+  expect(await enricher.enrich(['a', 'b'])).toBe(0);
+  expect(visitor.visited).toEqual(['a']);
+});
+
+test('with no batchCap the caller bounds the slice: every username handed is visited', async () => {
+  const { enricher, visitor } = build();
+  const usernames = Array.from({ length: 30 }, (_, i) => `u${i}`);
+  visitor.outcomes = Object.fromEntries(usernames.map((u, i) => [u, ok(String(1_000 + i), u)]));
+
+  expect(await enricher.enrich(usernames)).toBe(30);
+  expect(visitor.visited).toEqual(usernames);
+});
+
+test('respects batchCap: only the first N usernames are visited', async () => {
+  const { enricher, visitor } = build({ batchCap: 1 });
+  visitor.outcomes = { alice: ok('101', 'alice'), bob: ok('102', 'bob') };
+
+  expect(await enricher.enrich(['alice', 'bob'])).toBe(1);
+  expect(visitor.visited).toEqual(['alice']);
+});
+
+test('an aborted driver signal ends the pass between usernames (nothing visited)', async () => {
+  const visitor = new ScriptedVisitor();
+  const ac = new AbortController();
+  ac.abort();
+  const enricher = new AdapterBackedProfileEnricher({
+    visitor,
+    store,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    clock,
+    abortSignal: () => ac.signal,
+  });
+
+  expect(await enricher.enrich(['alice', 'bob'])).toBe(0);
+  expect(visitor.visited).toEqual([]);
+});
+
+test('reports determinate progress for the veil, advancing on SKIPS too, then clears', async () => {
+  const { enricher, visitor, activity } = build();
+  visitor.outcomes = { alice: ok('101', 'alice'), carol: ok('103', 'carol') };
+
+  await enricher.enrich(['alice', 'bob', 'carol']);
+
+  const reports = activity.filter(Boolean) as Array<Exclude<Report, null>>;
+  expect(reports.every((r) => r.kind === 'page' && r.label === 'Looking at profiles')).toBe(true);
+  expect(reports.every((r) => r.total === 3)).toBe(true);
+  expect(reports.map((r) => r.count)).toEqual([0, 1, 2]);
+  expect(activity[activity.length - 1]).toBeNull();
 });
 
 test('a later successful stats observation heals the enrich-failed marker', async () => {
@@ -330,4 +200,28 @@ test('a later successful stats observation heals the enrich-failed marker', asyn
   expect(store.getAccount('77')?.enrichFailedAt).toBe(2);
   store.observe({ accountPk: '77', observedAt: 3, source: 'profile', fields: { followers: 10, following: 5 } });
   expect(store.getAccount('77')?.enrichFailedAt).toBeUndefined();
+});
+
+
+test('a known enrichment username carries its pk into profile recovery', async () => {
+  store.observe({ accountPk: 'known', source: 'profile', observedAt: 1, fields: { username: 'known_name' } });
+  const visit = jest.fn(async () => ok('known', 'known_name'));
+  const enricher = new AdapterBackedProfileEnricher({ store, clock, visitor: { visit },
+    sentinel: new FakeSentinel() as unknown as Sentinel });
+  await enricher.enrich(['known_name']);
+  expect(visit).toHaveBeenCalledWith('known_name', { pk: 'known' });
+});
+
+
+test.each([
+  { tier: 'recovered' as const }, { partial: true },
+  { obs: { accountPk: '42', observedAt: 1, source: 'profile' as const, fields: { username: 'partial', followers: 10 } } },
+])('a current incomplete or recovered profile is not successful enrichment: %j', async (changed) => {
+  const { enricher, visitor } = build();
+  const base = ok('42', 'partial');
+  if (!base.ok) throw new Error('fixture');
+  visitor.outcomes = { partial: { ...base, ...changed } };
+  expect(await enricher.enrich(['partial'])).toBe(0);
+  expect(visitor.visited).toEqual(['partial']);
+  expect(store.getAccount('42')?.enrichFailedAt).toBeUndefined();
 });

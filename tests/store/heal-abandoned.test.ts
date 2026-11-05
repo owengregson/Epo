@@ -5,19 +5,14 @@
  * store; the migration test builds a pre-migration-11 file DB exactly as a
  * live install would have it.
  */
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import Database from 'better-sqlite3';
-import { KnowledgeStore } from '@/store/knowledge-store';
-import { MIGRATIONS } from '@/store/schema';
-import type { FollowRecord } from '@/store/types';
-import { setLevel } from '@/utils/logger';
 
-beforeAll(() => setLevel('error'));
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { FollowRecord } from '@/store/types';
+import { memoryStore } from '../kit/store';
+import { LATEST_SCHEMA_VERSION, withLegacyDb } from '../kit/store-legacy-db';
 
 let s: KnowledgeStore;
-beforeEach(() => { s = new KnowledgeStore(':memory:'); });
+beforeEach(() => { s = memoryStore(); });
 afterEach(() => s.close());
 
 const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({
@@ -37,27 +32,23 @@ const heal = (over: Partial<Parameters<KnowledgeStore['healAbandonedInWindow']>[
   s.healAbandonedInWindow({ windowStartMs: 1000, windowEndMs: 2000, cap: 200, now: 5000, ...over });
 
 test('an existing pre-migration-11 database migrates cleanly, preserving abandoned rows un-stamped', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'epo-heal-mig-'));
-  try {
-    const dbPath = path.join(dir, 'pre.db');
-    // Build a database at the schema version just BEFORE the abandoned_at/
-    // healed_at migration (the final entry), exactly as a live install has it.
-    const raw = new Database(dbPath);
-    const prior = MIGRATIONS.length - 1;
-    for (let i = 0; i < prior; i += 1) raw.exec(MIGRATIONS[i]);
-    raw.pragma(`user_version = ${prior}`);
-    raw
+  // Pinned, not `LATEST - 1`: this fixture is specifically the schema just
+  // BEFORE migration 11 added abandoned_at/healed_at, and every migration
+  // appended after it must leave that fact alone.
+  withLegacyDb(11, (legacy) => {
+    legacy.raw
       .prepare(
         `INSERT INTO follow_records (account_pk, state, retry_count) VALUES (?, 'abandoned', 4)`,
       )
       .run('legacy');
-    const before = raw.prepare(`PRAGMA table_info(follow_records)`).all() as Array<{ name: string }>;
+    const before = legacy.raw.prepare(`PRAGMA table_info(follow_records)`).all() as Array<{
+      name: string;
+    }>;
     expect(before.some((c) => c.name === 'abandoned_at')).toBe(false);
     expect(before.some((c) => c.name === 'healed_at')).toBe(false);
-    raw.close();
 
     // Opening through the store applies the pending migration.
-    const store = new KnowledgeStore(dbPath);
+    const store = legacy.open();
     const got = store.getFollowRecord('legacy')!;
     expect(got.state).toBe('abandoned');
     expect(got.retryCount).toBe(4);
@@ -68,12 +59,8 @@ test('an existing pre-migration-11 database migrates cleanly, preserving abandon
     expect(store.getFollowRecord('legacy')).toMatchObject({ abandonedAt: 1500, healedAt: 9000 });
     store.close();
 
-    const check = new Database(dbPath);
-    expect(check.pragma('user_version', { simple: true })).toBe(MIGRATIONS.length);
-    check.close();
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+    expect(legacy.schemaVersion()).toBe(LATEST_SCHEMA_VERSION);
+  });
 });
 
 test('abandonedAt/healedAt round-trip; upserts that omit them preserve, never erase', () => {
@@ -114,7 +101,7 @@ test('heals only in-window abandoned records: queued again, retries reset, heale
   expect(s.getFollowRecord('after')!.state).toBe('abandoned');
 });
 
-test('the funnel moves with the heal: the abandoned segment shrinks, queued grows (§2/§4)', () => {
+test('the funnel moves with the heal: the abandoned segment shrinks, queued grows', () => {
   seedTarget();
   s.upsertFollowRecord(
     rec({ accountPk: 'a', targetPk: 'T', state: 'abandoned', retryCount: 4, abandonedAt: 1500 }),
@@ -238,7 +225,7 @@ test('legacy rows without abandoned_at fall back to the last fail ledger row —
   expect(s.getFollowRecord('mute')!.state).toBe('abandoned');
 });
 
-test('the heal fires the store mutation callback (§2 — the UI mirrors the graph, live)', () => {
+test('the heal fires the store mutation callback — the UI mirrors the graph, live', () => {
   seedTarget();
   s.upsertFollowRecord(
     rec({ accountPk: 'm', targetPk: 'T', state: 'abandoned', abandonedAt: 1500 }),

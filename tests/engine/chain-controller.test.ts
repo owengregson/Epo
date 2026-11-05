@@ -1,18 +1,19 @@
 import {
-  ChainController,
   CHAIN_DEFAULTS,
+  ChainController,
   type DiscoveredTarget,
-  type TargetDiscovery,
   type OwnFollowersTargetSource,
+  type TargetDiscovery,
 } from '@/engine/chain-controller';
 import { FakeClock } from '@/governors/clock';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { Target } from '@/store/types';
+import { openTestStore } from '../kit/store';
 
 const OWN = 'me';
 
 let store: KnowledgeStore;
-beforeEach(() => { store = new KnowledgeStore(':memory:'); });
+beforeEach(() => { store = openTestStore(':memory:'); });
 afterEach(() => store.close());
 
 /** A scripted discovery source returning a fixed candidate list. */

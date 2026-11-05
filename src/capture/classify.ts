@@ -21,6 +21,9 @@ export type Classification =
   | 'profile-info'
   | 'activity-feed'
   | 'graphql-other'
+  | 'mutation-follow'
+  | 'mutation-unfollow'
+  | 'mutation-suspect'
   | 'other';
 
 /**
@@ -31,7 +34,9 @@ export type Classification =
  */
 export function classify(url: string): Classification {
   const kind = SURFACE.matchEndpoint(url);
-  if (kind === 'web-profile-info') return 'profile-info';
+  // Both profile bodies (the fetched `/users/<pk>/info/` and the observed
+  // GraphQL query) capture under one classification.
+  if (kind === 'profile-info' || kind === 'profile-graphql') return 'profile-info';
   if (kind !== null) return kind;
 
   const u = url.toLowerCase();
@@ -52,12 +57,41 @@ export function classify(url: string): Classification {
   return 'other';
 }
 
+/** The request side of a response — what tells one GraphQL operation from another. */
+export interface CapturedRequest {
+  url: string;
+  method?: string;
+  requestHeaders?: Record<string, string>;
+}
+
 /**
- * True when a response is a JSON body from an Instagram API-ish endpoint —
- * the gate the harness uses before promptly fetching a body to save.
+ * Classify by the REQUEST, not just its URL: one GraphQL path serves every
+ * operation, so the follow mutation is only identifiable by its friendly name.
+ * A POSTed operation the mutation table does not recognise but whose name looks
+ * like one is kept as `mutation-suspect` — the capture that extends the table.
+ */
+export function classifyRequest(req: CapturedRequest): Classification {
+  const mutation = SURFACE.matchMutation(req);
+  if (mutation !== null) return mutation.kind === 'follow' ? 'mutation-follow' : 'mutation-unfollow';
+  const friendly = SURFACE.friendlyName(req.requestHeaders);
+  const kind = SURFACE.matchEndpoint(req.url, friendly);
+  if (kind === 'profile-info' || kind === 'profile-graphql') return 'profile-info';
+  if (kind !== null) return kind;
+  const posted = req.method?.toUpperCase() === 'POST';
+  if (posted && friendly !== undefined && CAPTURE_PATTERNS.mutationSuspectName.test(friendly)) {
+    return 'mutation-suspect';
+  }
+  return classify(req.url);
+}
+
+/**
+ * True when a response is a PARSEABLE body from an Instagram API-ish endpoint —
+ * the gate the harness uses before promptly fetching a body to save. The media
+ * type is the surface's own rule: `/api/graphql` answers `text/javascript`, and
+ * a json-only gate dropped every GraphQL body a capture run ever saw.
  */
 export function isInterestingJson(url: string, mimeType: string): boolean {
-  if (!mimeType.toLowerCase().includes('json')) return false;
+  if (!SURFACE.parseableMime(mimeType)) return false;
   const u = url.toLowerCase();
   return CAPTURE_PATTERNS.apiMarkers.some((marker) => u.includes(marker));
 }

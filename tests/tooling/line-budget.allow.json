@@ -1,0 +1,85 @@
+{
+  "budget": 300,
+  "allow": [
+    {
+      "file": "src/main/foundation-wiring.ts",
+      "lines": 1386
+    },
+    {
+      "file": "src/engine/prune-engine.ts",
+      "lines": 1077
+    },
+    {
+      "file": "src/engine/engine.ts",
+      "lines": 913
+    },
+    {
+      "file": "src/kernel/derive.ts",
+      "lines": 910
+    },
+    {
+      "file": "src/renderer/graph/world.ts",
+      "lines": 745
+    },
+    {
+      "file": "src/livetest/steps.ts",
+      "lines": 716
+    },
+    {
+      "file": "src/adapter/actor.ts",
+      "lines": 655
+    },
+    {
+      "file": "src/adapter/tab.ts",
+      "lines": 614
+    },
+    {
+      "file": "src/store/knowledge-store.ts",
+      "lines": 538
+    },
+    {
+      "file": "src/capture/capture-harness.ts",
+      "lines": 536
+    },
+    {
+      "file": "src/engine/churn-scheduler.ts",
+      "lines": 452
+    },
+    {
+      "file": "src/main/foundation-reads.ts",
+      "lines": 404
+    },
+    {
+      "file": "src/engine/target-pipeline.ts",
+      "lines": 389
+    },
+    {
+      "file": "src/engine/recovery.ts",
+      "lines": 339
+    },
+    {
+      "file": "src/types.ts",
+      "lines": 337
+    },
+    {
+      "file": "src/rim/follower-acquisition.ts",
+      "lines": 328
+    },
+    {
+      "file": "src/rim/followers-page-reader.ts",
+      "lines": 325
+    },
+    {
+      "file": "src/rim/list-page-walker.ts",
+      "lines": 325
+    },
+    {
+      "file": "src/kernel/policy.ts",
+      "lines": 320
+    },
+    {
+      "file": "src/main/services/graph-builder.ts",
+      "lines": 320
+    }
+  ]
+}

@@ -1,0 +1,232 @@
+/*
+ * Prune — the stage-hosted page (hero + two card columns) and its card internals.
+ * The page is a console-named size container, so cards keep their
+ * container-query typography at any pane width.
+ */
+
+/* Prune as a full PAGE on the wide stage: a hero strip, the census card
+   across the top, then two independent card columns. The page and each
+   column are console-named size containers (.stage-page / .stage-col, shell.css)
+   carrying the shared --sp rhythm, so cards keep their container-query layout at
+   any pane width. */
+.prune-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: var(--sp-6);
+}
+.prune-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.prune-hero h1 {
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--chrome);
+  line-height: 1.2;
+}
+.prune-hero p {
+  margin-top: var(--sp-1);
+  color: var(--muted);
+  font-size: var(--fs-body);
+}
+.prune-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-4);
+  align-items: start;
+}
+.prune-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.prune-page .card,
+.prune-page .tour-wrap {
+  margin-bottom: 0;
+}
+.prune-page .card-b > .tbtn.wide {
+  margin-top: var(--sp-4);
+}
+.prune-page .qrows > .link-btn {
+  margin: var(--sp-2) var(--sp-4);
+}
+.prune-page .qr-sub,
+.prune-page .qr-top {
+  flex-wrap: wrap;
+}
+.prune-page .qr-sub .ctx {
+  flex: 1 1 auto;
+  white-space: normal;
+}
+/* Resolves against .stage-page (the columns' nearest container ancestor):
+   below this width side-by-side columns would starve, so they stack. */
+@container console (max-width: 720px) {
+  .prune-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============ PRUNE ============ */
+/* Run progress shares the old Overview markup; its layout belongs to Prune. */
+.prune-page .hero-today {
+  margin-bottom: var(--sp-3);
+}
+.prune-gradual {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border);
+}
+.prune-gradual > .hint {
+  margin-top: 0;
+}
+.prune-page .ht-top,
+.prune-page .ht-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+.prune-page .ht-top .k,
+.prune-page .ht-top .dim {
+  color: var(--muted);
+}
+.prune-page .ht-top .v {
+  font-weight: 600;
+  color: var(--text);
+}
+.prune-page .ht-top b {
+  color: var(--chrome);
+}
+.prune-page .ht-foot {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-small);
+  color: var(--faint);
+}
+.prune-page .ht-foot b {
+  color: var(--silver);
+  font-weight: 600;
+}
+
+/* Candidates list: contained scroll so a thousand-row scan can't swallow the view. */
+.prune-list {
+  max-height: 320px;
+  overflow-y: auto;
+} /* 320px: ~8 rows before scrolling */
+/* On the stage-hosted prune page the list owns a whole column — let it run taller. */
+.prune-page .prune-list {
+  max-height: 480px;
+}
+
+/* Census card — the page-wide overview: stat tiles + the reciprocity bar
+   (how the following count splits: follow back / prunable / whitelisted).
+   auto-fit lets the tile row reflow at any pane width. */
+.prune-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sp-2);
+}
+.prune-stats .stat .k,
+.prune-stats .stat .ss {
+  white-space: normal;
+}
+.prune-stats .stat .v {
+  margin-top: var(--sp-2);
+}
+@container console (max-width: 800px) {
+  .prune-stats {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .prune-stats > .stat {
+    grid-column: span 2;
+  }
+  .prune-stats > .stat:nth-last-child(-n + 2) {
+    grid-column: span 3;
+  }
+}
+.pcomp {
+  margin-top: var(--sp-3);
+}
+.pcomp-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--inset-bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--inset-shadow-soft);
+}
+/* Segments only render when nonzero, so the 2px floor keeps slivers visible
+   without a zero-width segment ever painting its stray 1px divider. */
+.pcomp-seg {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  transition: width var(--dur-4) var(--ease);
+}
+.pcomp-seg + .pcomp-seg {
+  border-left: 1px solid rgba(0, 0, 0, 0.5);
+}
+.pcomp-seg.mutual {
+  background: linear-gradient(180deg, #7cbd97, #5d9c7b);
+}
+.pcomp-seg.prunable {
+  background: linear-gradient(180deg, #d28080, #b25e5e);
+}
+.pcomp-seg.shielded {
+  background: linear-gradient(180deg, #b6bcc9, #8d93a1);
+}
+.pcomp-seg.handled {
+  background: linear-gradient(180deg, #9b90c4, #7c70a6);
+}
+.pcomp-seg.exempt {
+  background: linear-gradient(180deg, #8fa8c9, #6d87a8);
+}
+.pcomp-seg.unresolvable {
+  background: linear-gradient(180deg, #747985, #575c68);
+}
+.pcomp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  margin-top: var(--sp-2);
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+.pcomp-legend b {
+  color: var(--text);
+  font-weight: 600;
+}
+.pcomp-legend .dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  margin-right: var(--sp-1);
+  vertical-align: -1px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.pcomp-legend .dot.mutual {
+  background: #6db28a;
+}
+.pcomp-legend .dot.prunable {
+  background: #c96a6a;
+}
+.pcomp-legend .dot.shielded {
+  background: #a7adba;
+}
+.pcomp-legend .dot.handled {
+  background: #8b7fb5;
+}
+.pcomp-legend .dot.exempt {
+  background: #7d97b8;
+}
+.pcomp-legend .dot.unresolvable {
+  background: #63687a;
+}

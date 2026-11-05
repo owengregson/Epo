@@ -1,383 +1,113 @@
-import type BetterSqlite3 from 'better-sqlite3';
-import Database from 'better-sqlite3';
-import { MS_PER_DAY, startOfLocalDay } from '../timing/units';
 import * as logger from '../utils/logger';
-import { runMigrations } from './migrations';
-import { projectAccount } from './projections';
-import {
-  type AccountState,
-  type Edge,
-  type EdgeType,
-  type EnrichmentLevel,
-  FOLLOW_STATES,
-  type FollowbackTiming,
-  type FollowRecord,
-  type FollowState,
-  type GraphAccountRow,
-  type GraphCrowdRow,
-  type GraphHubRow,
-  type GraphRecordRow,
-  type GraphSourceRows,
-  type Observation,
-  type PruneScanSnapshot,
-  SOURCE_CONFIDENCE,
-  type Source,
-  type Target,
-  type TargetFunnelRead,
+import { KnowledgeStoreBase } from './knowledge-store-base';
+import type { PruneCensusRecord } from './knowledge-types';
+import type { OutcomeWindow, TargetYield } from './repos/analytics';
+import type { CensusAuthority, ReconcileOutcome } from './repos/census';
+import type { HealResult } from './repos/follow-records';
+import type { GrowthPoint } from './repos/growth';
+import type { EdgeDating, RelationshipCounts } from './repos/relationships';
+import type {
+  AccountState,
+  Edge,
+  EdgeType,
+  EffectChannel,
+  EffectIntent,
+  EffectSettlement,
+  FollowbackTiming,
+  FollowRecord,
+  FollowState,
+  GraphSourceRows,
+  MutationAction,
+  Observation,
+  PruneScanSnapshot,
+  Target,
+  TargetFunnelRead,
 } from './types';
 
-interface AccountRow {
-  pk: string;
-  username: string | null;
-  enrichment: string;
-  followers: number | null;
-  following: number | null;
-  ratio: number | null;
-  mutuals: number | null;
-  is_private: number | null;
-  is_verified: number | null;
-  activity_signal: number | null;
-  bio: string | null;
-  role: string | null;
-  enrich_failed_at: number | null;
-  stats_observed_at: number | null;
-  stats_source: string | null;
-  first_seen_at: number;
-  last_seen_at: number;
-}
-
-interface EdgeRow {
-  src_pk: string;
-  dst_pk: string;
-  type: string;
-  first_seen_at: number;
-  last_confirmed_at: number;
-  status: string;
-}
-
-interface FollowRecordRow {
-  account_pk: string;
-  target_pk: string | null;
-  state: string;
-  followed_at: number | null;
-  followed_back_at: number | null;
-  hold_until: number | null;
-  unfollow_due_at: number | null;
-  retry_count: number;
-  score: number | null;
-  abandoned_at: number | null;
-  healed_at: number | null;
-}
-
-interface TargetRow {
-  account_pk: string;
-  source: string;
-  status: string;
-  chain_index: number | null;
-  exhausted_at: number | null;
-}
+export type { KnowledgeStoreOptions, PruneCensusRecord } from './knowledge-types';
 
 /**
- * The last COMPLETE prune census: the settled counts of the most recent scan
- * that verifiably walked both lists to the end, plus the scraped basis every
- * derived composition figure rests on. Persisted in the meta table (see
- * {@link KnowledgeStore.savePruneCensus}) so it survives relaunch, and only
- * ever replaced by the NEXT complete scan — an aborted or failed scan and a
- * run that consumes the candidate rows all leave it standing.
+ * The sole boundary to the SQLite knowledge graph — the only place outside
+ * `src/store/**` may reach for persistence. The engine underneath is reached
+ * only through the `SqliteDriver` port, so no other file names a DB vendor.
+ *
+ * This class holds almost no SQL of its own. It opens the database, owns the
+ * `onMutation` pulse and the own-account anchor, and delegates each table to a
+ * repo under `src/store/repos/`. Its whole public surface is kept intact on
+ * purpose: 22 consumers across four layers take the class, so the split had to
+ * be invisible to every one of them.
+ *
+ * When you add a method here it should be a delegation. Real SQL belongs in a
+ * repo; a write that spans several tables belongs in `CensusRepo`.
  */
-export interface PruneCensusRecord {
-  /** Epoch ms the census-completing scan finished. */
-  at: number;
-  /** Display counts: scraped list + ghost buffer = the numbers Instagram's
-   *  own profile header shows (see the GHOST BUFFER note in prune-engine). */
-  following: number;
-  followers: number;
-  /** The walked lists' true sizes — what the list API actually returned. The
-   *  gap to `following`/`followers` is deactivated/unavailable accounts the
-   *  header still counts but the list never resolves ("unresolvable"). */
-  scrapedFollowing: number;
-  scrapedFollowers: number;
-  /** Scraped follows of ours with no reciprocal follower row (self excluded). */
-  notFollowingBack: number;
-  /** Of those, the raw prune census: growth-managed accounts and chain targets
-   *  excluded, whitelist NOT applied (the runnable set derives from it live). */
-  candidates: number;
-}
-
-const boolOrUndef = (v: number | null): boolean | undefined =>
-  v === null ? undefined : v !== 0;
-const numOrUndef = (v: number | null): number | undefined => (v === null ? undefined : v);
-const strOrUndef = (v: string | null): string | undefined => (v === null ? undefined : v);
-const boolToInt = (v: boolean | undefined): number | null =>
-  v === undefined ? null : v ? 1 : 0;
-const orNull = <T>(v: T | undefined): T | null => (v === undefined ? null : v);
-
-/**
- * Own-follower edges first seen within this window before a census verdict are
- * treated as discoveries of that census's OWN walk: the followers walk streams
- * each row into the graph as it parses (docs/PRINCIPLES.md §1), minutes to
- * hours before `ingestScanCensus` runs, so by census time the walk's rows are
- * indistinguishable from event-observed edges by anything but age. On the
- * FIRST census those discoveries are pre-existing stock, never growth.
- * Generous: no complete walk spans a day; the cost of over-covering is one
- * day of pre-census event gains absorbed as stock, exactly once.
- */
-const FIRST_CENSUS_STOCK_WINDOW_MS = MS_PER_DAY;
-
-const rowToState = (row: AccountRow): AccountState => ({
-  pk: row.pk,
-  username: strOrUndef(row.username),
-  enrichment: row.enrichment as EnrichmentLevel,
-  followers: numOrUndef(row.followers),
-  following: numOrUndef(row.following),
-  ratio: numOrUndef(row.ratio),
-  mutuals: numOrUndef(row.mutuals),
-  isPrivate: boolOrUndef(row.is_private),
-  isVerified: boolOrUndef(row.is_verified),
-  activitySignal: numOrUndef(row.activity_signal),
-  bio: strOrUndef(row.bio),
-  role: strOrUndef(row.role),
-  enrichFailedAt: numOrUndef(row.enrich_failed_at),
-  statsObservedAt: numOrUndef(row.stats_observed_at),
-  statsSource: strOrUndef(row.stats_source) as Source | undefined,
-  firstSeenAt: row.first_seen_at,
-  lastSeenAt: row.last_seen_at,
-});
-
-const rowToEdge = (row: EdgeRow): Edge => ({
-  srcPk: row.src_pk,
-  dstPk: row.dst_pk,
-  type: row.type as EdgeType,
-  firstSeenAt: row.first_seen_at,
-  lastConfirmedAt: row.last_confirmed_at,
-  status: row.status as 'active' | 'removed',
-});
-
-const rowToTarget = (row: TargetRow): Target => ({
-  accountPk: row.account_pk,
-  source: row.source as Target['source'],
-  status: row.status as Target['status'],
-  chainIndex: row.chain_index,
-  exhaustedAt: numOrUndef(row.exhausted_at),
-});
-
-const rowToFollowRecord = (row: FollowRecordRow): FollowRecord => ({
-  accountPk: row.account_pk,
-  targetPk: row.target_pk,
-  state: row.state as FollowState,
-  followedAt: numOrUndef(row.followed_at),
-  followedBackAt: numOrUndef(row.followed_back_at),
-  holdUntil: numOrUndef(row.hold_until),
-  unfollowDueAt: numOrUndef(row.unfollow_due_at),
-  retryCount: row.retry_count,
-  score: numOrUndef(row.score),
-  abandonedAt: numOrUndef(row.abandoned_at),
-  healedAt: numOrUndef(row.healed_at),
-});
-
-/**
- * The sole boundary to the SQLite knowledge graph. This is the ONLY module permitted
- * to import `better-sqlite3` or contain SQL. Every write funnels through `observe`/
- * `observeEdge`/`recordAction`; every read through the typed queries.
- */
-export class KnowledgeStore {
-  private readonly db: BetterSqlite3.Database;
-  /** Our own account pk, set at build time via {@link setOwnPk}; null until then. */
-  private ownPk: string | null = null;
+export class KnowledgeStore extends KnowledgeStoreBase {
   /** One-time guard so an unset ownPk warns once, not on every reconciliation. */
   private warnedOwnPkUnset = false;
 
-  constructor(dbPath: string) {
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
-    // In WAL mode this fsyncs the WAL on every commit, so a committed action /
-    // observation survives an OS power loss (WAL already guarantees no corruption;
-    // FULL adds per-commit durability on top).
-    this.db.pragma('synchronous = FULL');
-    this.db.pragma('foreign_keys = ON');
-    runMigrations(this.db);
-    // Retention: the raw observation log and username history are append-only
-    // and nothing reads rows older than the projection they already fed —
-    // unbounded, one sweep of a large account adds thousands of rows per day.
-    // Keep a 90-day window (real wall-clock: retention is an operational
-    // concern of THIS process, not of any injected test clock).
-    const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
-    this.db.prepare(`DELETE FROM observations WHERE observed_at < ?`).run(cutoff);
-    this.db.prepare(`DELETE FROM username_history WHERE seen_at < ?`).run(cutoff);
-  }
+  protected reportFault(message: string, context: Record<string, unknown>): void { logger.error(message, context); }
+
+  // --- Accounts and edges (via AccountRepo / RelationshipRepo) --------------------
 
   /**
-   * Set the logged-in account's pk. Used only for the "already-following"
-   * candidate exclusion ({@link accountsWeFollow}) and for anchoring the edges
-   * that {@link reconcileOwnFollow} writes; keeps the constructor signature stable.
+   * Warn ONCE that the own pk is unset, then no-op. Every own-relationship path
+   * needs the anchor; a per-call warn would drown a scan's log in one line per
+   * row.
    */
-  setOwnPk(pk: string): void {
-    this.ownPk = pk;
-  }
-
-  // --- Mutation notifications (docs/PRINCIPLES.md §2 — the UI mirrors the graph) ----
-
-  private readonly mutationListeners = new Set<() => void>();
-
-  /**
-   * Subscribe to "the graph changed" pulses: fired synchronously after every
-   * public write (facts stream in per row, so this fires per row during scans/
-   * sweeps — subscribers MUST throttle). This is what lets status projections
-   * push while an operation is still running instead of when it ends. Returns
-   * a disposer.
-   */
-  onMutation(listener: () => void): () => void {
-    this.mutationListeners.add(listener);
-    return () => {
-      this.mutationListeners.delete(listener);
-    };
-  }
-
-  /** Notify subscribers; a throwing listener is logged, never re-thrown into a write. */
-  private changed(): void {
-    for (const listener of [...this.mutationListeners]) {
-      try {
-        listener();
-      } catch (e) {
-        logger.error('store.onMutation listener threw', { error: String(e) });
-      }
+  private warnOwnPkUnset(where: string): 'noop' {
+    if (!this.warnedOwnPkUnset) {
+      this.warnedOwnPkUnset = true;
+      logger.warn(`store.${where}: ownPk unset, skipping`);
     }
+    return 'noop';
   }
 
   /**
-   * Append an observation and re-project the account row in the same transaction —
+   * Append an observation and re-project the account row in one transaction —
    * the single write path that keeps the event log and projection consistent.
    */
   observe(obs: Observation): void {
-    const tx = this.db.transaction((o: Observation) => {
-      this.db
-        .prepare(
-          `INSERT INTO observations (account_pk, observed_at, source, confidence, field_set)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(o.accountPk, o.observedAt, o.source, SOURCE_CONFIDENCE[o.source], JSON.stringify(o.fields));
-
-      const existing = this.getAccount(o.accountPk);
-      const next = projectAccount(existing, o);
-
-      this.db
-        .prepare(
-          `INSERT INTO accounts (
-             pk, username, enrichment, followers, following, ratio, mutuals,
-             is_private, is_verified, activity_signal, bio,
-             stats_observed_at, stats_source, first_seen_at, last_seen_at
-           ) VALUES (
-             @pk, @username, @enrichment, @followers, @following, @ratio, @mutuals,
-             @is_private, @is_verified, @activity_signal, @bio,
-             @stats_observed_at, @stats_source, @first_seen_at, @last_seen_at
-           )
-           ON CONFLICT(pk) DO UPDATE SET
-             username = excluded.username,
-             enrichment = excluded.enrichment,
-             followers = excluded.followers,
-             following = excluded.following,
-             ratio = excluded.ratio,
-             mutuals = excluded.mutuals,
-             is_private = excluded.is_private,
-             is_verified = excluded.is_verified,
-             activity_signal = excluded.activity_signal,
-             bio = excluded.bio,
-             stats_observed_at = excluded.stats_observed_at,
-             stats_source = excluded.stats_source,
-             first_seen_at = excluded.first_seen_at,
-             last_seen_at = excluded.last_seen_at,
-             -- A successful stats read heals the enrichment-failure marker: the
-             -- account is demonstrably fetchable again.
-             enrich_failed_at = CASE WHEN excluded.followers IS NOT NULL
-                                     THEN NULL ELSE accounts.enrich_failed_at END`,
-        )
-        .run({
-          pk: next.pk,
-          username: orNull(next.username),
-          enrichment: next.enrichment,
-          followers: orNull(next.followers),
-          following: orNull(next.following),
-          ratio: orNull(next.ratio),
-          mutuals: orNull(next.mutuals),
-          is_private: boolToInt(next.isPrivate),
-          is_verified: boolToInt(next.isVerified),
-          activity_signal: orNull(next.activitySignal),
-          bio: orNull(next.bio),
-          stats_observed_at: orNull(next.statsObservedAt),
-          stats_source: orNull(next.statsSource),
-          first_seen_at: next.firstSeenAt,
-          last_seen_at: next.lastSeenAt,
-        });
-
-      if (o.fields.username !== undefined) {
-        this.db
-          .prepare(`INSERT INTO username_history (pk, username, seen_at) VALUES (?, ?, ?)`)
-          .run(o.accountPk, o.fields.username, o.observedAt);
-      }
-    });
-    tx(obs);
-    this.changed();
+    this.mutationPulse.atomic(() => this.db.transaction(() => {
+      this.accounts.observe(obs);
+      this.noteOwnHeader(obs);
+    }));
   }
 
-  /** Upsert a directed edge, dating first/last seen and its active/removed status. */
-  observeEdge(srcPk: string, dstPk: string, type: EdgeType, active: boolean, at: number): void {
-    const status = active ? 'active' : 'removed';
-    this.db
-      .prepare(
-        `INSERT INTO edges (src_pk, dst_pk, type, first_seen_at, last_confirmed_at, status)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(src_pk, dst_pk, type) DO UPDATE SET
-           last_confirmed_at = excluded.last_confirmed_at,
-           status = excluded.status,
-           first_seen_at = MIN(edges.first_seen_at, excluded.first_seen_at)`,
-      )
-      .run(srcPk, dstPk, type, at, at, status);
-    this.changed();
+  /** Upsert a directed edge; an own-follower transition also writes its dated change row (ADR 0704). */
+  observeEdge(srcPk: string, dstPk: string, type: EdgeType, active: boolean, at: number, dating?: EdgeDating): void {
+    this.relationships.observeEdge(srcPk, dstPk, type, active, at, dating);
   }
+
+  /** Whether `pk` has an open follow request into our account (the requester predicate, spec §9.9). */
+  hasActiveRequest(pk: string): boolean {
+    return this.ownPk !== null && this.relationships.hasActiveRequest(pk, this.ownPk);
+  }
+
+  activeRequestPks(): string[] { return this.ownPk === null ? [] : this.relationships.activeRequestPks(this.ownPk); }
 
   getAccount(pk: string): AccountState | null {
-    const row = this.db.prepare(`SELECT * FROM accounts WHERE pk = ?`).get(pk) as
-      | AccountRow
-      | undefined;
-    return row ? rowToState(row) : null;
+    return this.accounts.get(pk);
   }
 
-  /**
-   * The pk currently projected under `username` (case-insensitive; the
-   * most-recently-seen row wins if a rename ever leaves two). Lets acquisition
-   * resolve a known target without an Instagram request. `null` when unseen.
-   */
-  /**
-   * Stamp `username`'s account as permanently un-enrichable (deleted/suspended/
-   * unparseable profile body): enrichment batch selection skips marked accounts
-   * so a dead account can never head-of-line-block the pool. Cleared by any
-   * later successful stats observation (see the `observe` upsert).
-   */
+  /** Stamp `username`'s account permanently un-enrichable (selection skips it) until a later stats read. */
   markEnrichmentFailed(username: string, at: number): void {
-    this.db
-      .prepare(
-        `UPDATE accounts SET enrich_failed_at = ? WHERE username = ? COLLATE NOCASE`,
-      )
-      .run(at, username);
-    this.changed();
+    this.accounts.markEnrichmentFailed(username, at);
   }
 
+  /** The pk projected under `username` (case-insensitive): a known target resolves with no request. */
   pkByUsername(username: string): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT pk FROM accounts WHERE username = ? COLLATE NOCASE
-         ORDER BY last_seen_at DESC LIMIT 1`,
-      )
-      .get(username) as { pk: string } | undefined;
-    return row?.pk ?? null;
+    return this.accounts.pkByUsername(username);
+  }
+
+  /** Assign a role to an account (e.g. 'target', 'me'); the accounts row must exist. */
+  setRole(pk: string, role: string): void {
+    this.accounts.setRole(pk, role);
   }
 
   getEdge(srcPk: string, dstPk: string, type: EdgeType): Edge | null {
-    const row = this.db
-      .prepare(`SELECT * FROM edges WHERE src_pk = ? AND dst_pk = ? AND type = ?`)
-      .get(srcPk, dstPk, type) as EdgeRow | undefined;
-    return row ? rowToEdge(row) : null;
+    return this.relationships.getEdge(srcPk, dstPk, type);
   }
+
+  // --- Action ledgers (via LedgerRepo) --------------------------------------------
 
   recordAction(
     accountPk: string,
@@ -385,379 +115,177 @@ export class KnowledgeStore {
     result: 'ok' | 'fail',
     at: number,
   ): void {
-    this.db
-      .prepare(`INSERT INTO action_ledger (account_pk, action, at, result) VALUES (?, ?, ?, ?)`)
-      .run(accountPk, action, at, result);
-    this.changed();
+    this.ledgers.recordAction(accountPk, action, result, at);
   }
 
   actionCountSince(sinceMs: number): number {
-    const row = this.db
-      .prepare(`SELECT COUNT(*) AS c FROM action_ledger WHERE at >= ?`)
-      .get(sinceMs) as { c: number };
-    return row.c;
+    return this.ledgers.actionCountSince(sinceMs);
   }
 
   /**
-   * Follows that actually LANDED since `sinceMs` (`action = 'follow'`,
-   * `result = 'ok'`) — the realized-pace numerator the Targets console's
-   * runway divides by. Unlike {@link actionCountSince} it excludes unfollows
-   * and failures, so the rate reflects real forward progress only.
+   * Follows that actually LANDED since `sinceMs` — the realized-pace numerator
+   * the Targets console's runway divides by (unfollows and failures excluded).
    */
   followActionCountSince(sinceMs: number): number {
-    const row = this.db
-      .prepare(
-        `SELECT COUNT(*) AS c FROM action_ledger
-         WHERE at >= ? AND action = 'follow' AND result = 'ok'`,
-      )
-      .get(sinceMs) as { c: number };
-    return row.c;
+    return this.ledgers.followActionCountSince(sinceMs);
   }
 
-  /** Append one auto-prune attempt to the prune ledger (its own daily cap — §Phase 5). */
+  /** Append one auto-prune attempt to the prune ledger (its own daily cap). */
   recordPruneAction(accountPk: string, result: 'ok' | 'fail' | 'simulated', at: number): void {
-    this.db
-      .prepare(`INSERT INTO prune_ledger (account_pk, at, result) VALUES (?, ?, ?)`)
-      .run(accountPk, at, result);
-    this.changed();
+    this.ledgers.recordPruneAction(accountPk, result, at);
   }
 
   pruneCountSince(sinceMs: number): number {
-    const row = this.db
-      .prepare(`SELECT COUNT(*) AS c FROM prune_ledger WHERE at >= ?`)
-      .get(sinceMs) as { c: number };
-    return row.c;
+    return this.ledgers.pruneCountSince(sinceMs);
   }
 
   /**
-   * REAL prune actions since `sinceMs` — `ok`/`fail` rows only, excluding
-   * `simulated` (dry-run intent never touched Instagram). This is what the rate
-   * governor adds to the growth ledger so the hard ceiling caps the ACCOUNT's
-   * total write volume, not just one driver's share.
+   * REAL prune actions since `sinceMs` — `ok`/`fail` only, `simulated`
+   * excluded. What the rate governor adds to the growth ledger so the hard
+   * ceiling caps the ACCOUNT's total write volume, not one driver's share.
    */
   realPruneActionCountSince(sinceMs: number): number {
-    const row = this.db
-      .prepare(
-        `SELECT COUNT(*) AS c FROM prune_ledger WHERE at >= ? AND result IN ('ok', 'fail')`,
-      )
-      .get(sinceMs) as { c: number };
-    return row.c;
+    return this.ledgers.realPruneActionCountSince(sinceMs);
   }
 
-  // --- Prune scan snapshot (Phase 5 persistence) ----------------------------------
+  // --- Prune scan snapshot (via PruneScanRepo) -----------------------------------
 
-  /** Replace the durable prune-scan snapshot (singleton) with this one — one tx. */
+  /** Replace the durable prune-scan snapshot (singleton) with this one. */
   savePruneScan(snap: PruneScanSnapshot): void {
-    const tx = this.db.transaction(() => {
-      this.db.prepare(`DELETE FROM prune_scan`).run();
-      this.db.prepare(`DELETE FROM prune_scan_remaining`).run();
-      this.db
-        .prepare(
-          `INSERT INTO prune_scan (id, at, following_count, followers_count, candidate_count)
-           VALUES (1, ?, ?, ?, ?)`,
-        )
-        .run(snap.at, snap.following, snap.followers, snap.candidateCount);
-      const insert = this.db.prepare(`INSERT INTO prune_scan_remaining (pk, username) VALUES (?, ?)`);
-      for (const cand of snap.remaining) insert.run(cand.pk, cand.username);
-    });
-    tx();
-    this.changed();
+    this.pruneScan.save(snap);
   }
 
   /** The persisted prune-scan snapshot, or null when no scan has been saved. */
   getPruneScan(): PruneScanSnapshot | null {
-    const meta = this.db
-      .prepare(`SELECT at, following_count, followers_count, candidate_count FROM prune_scan WHERE id = 1`)
-      .get() as
-      | { at: number; following_count: number; followers_count: number; candidate_count: number }
-      | undefined;
-    if (meta === undefined) return null;
-    const rows = this.db
-      .prepare(`SELECT pk, username FROM prune_scan_remaining ORDER BY rowid`)
-      .all() as Array<{ pk: string; username: string | null }>;
-    return {
-      at: meta.at,
-      following: meta.following_count,
-      followers: meta.followers_count,
-      candidateCount: meta.candidate_count,
-      remaining: rows,
-    };
+    return this.pruneScan.get();
   }
 
   /** A run visited this candidate — drop it from the durable remaining set. */
   consumePruneScanCandidate(pk: string): void {
-    this.db.prepare(`DELETE FROM prune_scan_remaining WHERE pk = ?`).run(pk);
-    this.changed();
+    this.pruneScan.consumeCandidate(pk);
   }
 
   /** Forget the snapshot entirely (new scan starting, or whitelist change). */
   clearPruneScan(): void {
-    const tx = this.db.transaction(() => {
-      this.db.prepare(`DELETE FROM prune_scan`).run();
-      this.db.prepare(`DELETE FROM prune_scan_remaining`).run();
-    });
-    tx();
-    this.changed();
+    this.pruneScan.clear();
   }
 
-  /** How many raw census rows a run has not yet visited (0 when no snapshot).
-   *  A cheap COUNT twin of {@link getPruneScan}'s `remaining` — safe to read on
-   *  every status projection, unlike loading the full row set. */
+  /** How many raw census rows a run has not yet visited (0 when no snapshot). */
   pruneScanRemainingCount(): number {
-    const row = this.db.prepare(`SELECT COUNT(*) AS c FROM prune_scan_remaining`).get() as {
-      c: number;
-    };
-    return row.c;
+    return this.pruneScan.remainingCount();
   }
 
   // --- Last complete prune census (meta-backed) ------------------------------------
 
   /**
-   * Replace the durable last-COMPLETE-census record. Kept SEPARATE from the
-   * runnable-scan snapshot above on purpose: the snapshot's candidate rows are
-   * consumed by runs and replaced by the next scan, while THIS record is the
-   * settled whole-list census a finished scan produced — the display truth the
-   * prune panel anchors on. It is only ever replaced by the next COMPLETE scan,
-   * so an aborted/failed scan and a consumed run all leave it standing, and it
-   * survives relaunch (docs/PRINCIPLES.md §3) via the meta table.
+   * Replace the durable last-COMPLETE census (separate from the runnable snapshot, whose rows runs
+   * consume): only the next complete scan replaces it, and it survives relaunch (PRINCIPLES §3).
    */
   savePruneCensus(census: PruneCensusRecord): void {
-    this.setMeta('prune_last_census', JSON.stringify(census));
+    this.meta.setJson('pruneLastCensus', census);
     this.changed();
   }
+
+  /** When the last verified-complete census finished, or null (the plan's census predicate reads it). */
+  censusLastCompleteAt(): number | null { return this.census.lastCompleteAt(); }
 
   /** The persisted last-complete census, or null when no scan ever completed. */
   getPruneCensus(): PruneCensusRecord | null {
-    const raw = this.getMeta('prune_last_census');
-    if (raw === null) return null;
-    // Own-write round-trip: a corrupt value throws loud in JSON.parse rather
-    // than fabricating an empty census (no silent catches).
-    return JSON.parse(raw) as PruneCensusRecord;
+    return this.meta.json<PruneCensusRecord>('pruneLastCensus');
   }
 
-  // --- Churn lifecycle: follow_records (§3.4) ------------------------------------
+  // --- Churn lifecycle: follow_records (via FollowRecordRepo) ---------------------
 
   /** Insert or fully replace a churn-lifecycle record, keyed on account_pk. */
   upsertFollowRecord(rec: FollowRecord): void {
-    const tx = this.db.transaction((r: FollowRecord) => {
-      this.db
-        .prepare(
-          `INSERT INTO follow_records (
-             account_pk, target_pk, state, followed_at, followed_back_at,
-             hold_until, unfollow_due_at, retry_count, score, abandoned_at, healed_at
-           ) VALUES (
-             @account_pk, @target_pk, @state, @followed_at, @followed_back_at,
-             @hold_until, @unfollow_due_at, @retry_count, @score, @abandoned_at, @healed_at
-           )
-           ON CONFLICT(account_pk) DO UPDATE SET
-             target_pk = excluded.target_pk,
-             state = excluded.state,
-             followed_at = excluded.followed_at,
-             followed_back_at = excluded.followed_back_at,
-             hold_until = excluded.hold_until,
-             unfollow_due_at = excluded.unfollow_due_at,
-             retry_count = excluded.retry_count,
-             -- Preserve a known score through state transitions: a later upsert
-             -- that omits the score (undefined → null) must not wipe it.
-             score = COALESCE(excluded.score, follow_records.score),
-             -- Same preservation for the two history stamps: they are facts
-             -- about the past (last abandonment / the one heal), so a partial
-             -- upsert must never erase them. A re-abandonment writes a fresh
-             -- non-null abandoned_at and wins; healed_at is set exactly once
-             -- (by the healer) and never cleared — the never-heal-twice marker.
-             abandoned_at = COALESCE(excluded.abandoned_at, follow_records.abandoned_at),
-             healed_at = COALESCE(excluded.healed_at, follow_records.healed_at)`,
-        )
-        .run({
-          account_pk: r.accountPk,
-          target_pk: orNull(r.targetPk),
-          state: r.state,
-          followed_at: orNull(r.followedAt),
-          followed_back_at: orNull(r.followedBackAt),
-          hold_until: orNull(r.holdUntil),
-          unfollow_due_at: orNull(r.unfollowDueAt),
-          retry_count: r.retryCount,
-          score: orNull(r.score),
-          abandoned_at: orNull(r.abandonedAt),
-          healed_at: orNull(r.healedAt),
-        });
-    });
-    tx(rec);
+    this.followRecords.upsert(rec);
+  }
+
+  beginEffectIntent(input: {
+    accountPk: string; username: string; action: MutationAction; channel: EffectChannel; at: number;
+  }): EffectIntent {
+    const intent = this.effectIntents.begin(input);
+    this.changed();
+    return intent;
+  }
+
+  getEffectIntent(id: string): EffectIntent | null { return this.effectIntents.get(id); }
+  pendingEffectIntents(): EffectIntent[] { return this.effectIntents.pending(); }
+  markEffectDispatched(id: string, at: number): void {
+    this.effectIntents.mark(id, 'dispatched', at);
+    this.changed();
+  }
+  markEffectUncertain(id: string, at: number): void {
+    this.effectIntents.mark(id, 'uncertain', at);
     this.changed();
   }
 
+  /** No observer sees half a committed action; a failed write rolls back every component. */
+  settleEffectIntent(id: string, outcome: EffectSettlement): boolean {
+    return this.mutationPulse.atomic(() => this.effectIntents.settle(id, outcome));
+  }
+
+  additionalMutationCountSince(since: number): number {
+    return this.effectIntents.additionalCountSince(since);
+  }
+
+  getLifecycleState(): string | null { return this.meta.get('lifecycleState'); }
+  setLifecycleState(raw: string | null): void { this.meta.set('lifecycleState', raw); }
+  getLifecycleHealthState(): string | null { return this.meta.get('lifecycleHealthState'); }
+  setLifecycleHealthState(raw: string | null): void { this.meta.set('lifecycleHealthState', raw); }
+  getSourceFrontierState(): string | null { return this.meta.get('sourceFrontierState'); }
+  setSourceFrontierState(raw: string | null): void { this.meta.set('sourceFrontierState', raw); }
+  getReadBudgetState(): string | null { return this.meta.get('readBudgetState'); }
+  setReadBudgetState(raw: string | null): void { this.meta.set('readBudgetState', raw); }
+
   getFollowRecord(accountPk: string): FollowRecord | null {
-    const row = this.db
-      .prepare(`SELECT * FROM follow_records WHERE account_pk = ?`)
-      .get(accountPk) as FollowRecordRow | undefined;
-    return row ? rowToFollowRecord(row) : null;
+    return this.followRecords.get(accountPk);
   }
 
   followRecordsByState(state: FollowState): FollowRecord[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM follow_records WHERE state = ?`)
-      .all(state) as FollowRecordRow[];
-    return rows.map(rowToFollowRecord);
+    return this.followRecords.byState(state);
   }
 
   /** Every follow_record not yet in a terminal state. */
   activeFollowRecords(): FollowRecord[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM follow_records WHERE state NOT IN ('unfollowed', 'abandoned', 'external')`,
-      )
-      .all() as FollowRecordRow[];
-    return rows.map(rowToFollowRecord);
+    return this.followRecords.active();
   }
 
   /** All account_pks that already have a follow_record (for candidate exclusion). */
   followRecordPks(): Set<string> {
-    const rows = this.db
-      .prepare(`SELECT account_pk FROM follow_records`)
-      .all() as Array<{ account_pk: string }>;
-    return new Set(rows.map((r) => r.account_pk));
+    return this.followRecords.pks();
   }
 
   /**
-   * account_pks with a follow_record still in a NON-TERMINAL state — i.e. an
-   * account the growth engine is actively managing (queued, awaiting a
-   * follow-back, held after one, or already queued for its own unfollow). The
-   * auto-prune routine excludes these from its candidate set so the two systems
-   * never fight over the same account: growth owns its lifecycle end-to-end, and
-   * prune only ever touches follows growth is NOT tracking (manual/external/legacy
-   * follows). Terminal rows (`unfollowed`/`abandoned`/`external`) are NOT
-   * included, so an account the user later re-follows by hand is fair game again.
+   * account_pks the growth engine is ACTIVELY managing. The auto-prune routine
+   * excludes these so the two systems never fight over the same account.
    */
   activeFollowRecordPks(): Set<string> {
-    const rows = this.db
-      .prepare(
-        `SELECT account_pk FROM follow_records
-         WHERE state NOT IN ('unfollowed', 'abandoned', 'external')`,
-      )
-      .all() as Array<{ account_pk: string }>;
-    return new Set(rows.map((r) => r.account_pk));
+    return this.followRecords.activePks();
   }
 
   /**
-   * The recovery requeue-healer's store half: requeue `abandoned` records whose
-   * abandonment fell inside a CLOSED systemic-incident window
-   * [`windowStartMs`, `windowEndMs`] (the engine calls this exactly once per
-   * ladder reset — the proof moment that the window's failures were
-   * systemic-and-over, so the retries those records burned were spurious).
-   *
-   * The abandonment-time signal, in honesty order:
-   *  1. `abandoned_at` — the stamped transition (churn scheduler, migration 11).
-   *  2. Rows abandoned before the stamp shipped fall back to the record's last
-   *     `fail` action-ledger row: the abandoning transition writes its fail row
-   *     at the same instant, so the latest fail is the nearest recorded fact.
-   *  3. Neither exists → the record CANNOT be honestly placed in the window and
-   *     stays abandoned (absence of evidence is never evidence).
-   *
-   * What a heal does: `retry_count` back to 0 and the state back to where the
-   * burn interrupted the lifecycle — `queued` when the record was never
-   * followed (`followed_at IS NULL`), `unfollow_queued` when the abandonment
-   * ate the unfollow leg of an already-followed record (requeueing THOSE as
-   * 'queued' would re-follow an account we already follow). `healed_at` is
-   * stamped so a record heals exactly ONCE, ever. Nothing else is rewritten:
-   * the incident's fail ledger rows stay exactly as recorded — the heal is a
-   * new fact, not a revision of history.
-   *
-   * Skipped and left abandoned: records already healed once, records whose
-   * abandonment falls outside the window, and records whose target is no
-   * longer 'active' (retired/exhausted — nothing would ever work them), the
-   * latter counted in `skippedUnworkable`. Records with NO target are
-   * workable (the churn queue is target-agnostic) and heal normally. `cap`
-   * bounds the batch (best-scored first, mirroring queue order); a window
-   * claiming more than the cap is pathological and the remainder stays put.
+   * Requeue `abandoned` records whose abandonment fell inside a CLOSED
+   * systemic-incident window — the recovery healer's store half. Each record
+   * heals at most once, ever; see {@link FollowRecordRepo.healAbandonedInWindow}.
    */
   healAbandonedInWindow(opts: {
     windowStartMs: number;
     windowEndMs: number;
     cap: number;
     now: number;
-  }): { healed: number; toQueued: number; toUnfollowQueued: number; skippedUnworkable: number } {
-    const abandonedAtSignal = `COALESCE(
-      fr.abandoned_at,
-      (SELECT MAX(al.at) FROM action_ledger al
-        WHERE al.account_pk = fr.account_pk AND al.result = 'fail')
-    )`;
-    const inWindow = `fr.state = 'abandoned'
-      AND fr.healed_at IS NULL
-      AND ${abandonedAtSignal} BETWEEN @start AND @end`;
-    const targetWorkable = `(fr.target_pk IS NULL OR EXISTS (
-      SELECT 1 FROM targets t
-      WHERE t.account_pk = fr.target_pk AND t.status = 'active'))`;
-
-    let result = { healed: 0, toQueued: 0, toUnfollowQueued: 0, skippedUnworkable: 0 };
-    const tx = this.db.transaction(() => {
-      const args = { start: opts.windowStartMs, end: opts.windowEndMs };
-      const skippedUnworkable = (
-        this.db
-          .prepare(
-            `SELECT COUNT(*) AS c FROM follow_records fr
-             WHERE ${inWindow} AND NOT ${targetWorkable}`,
-          )
-          .get(args) as { c: number }
-      ).c;
-      const rows = this.db
-        .prepare(
-          `SELECT fr.account_pk, fr.followed_at FROM follow_records fr
-           WHERE ${inWindow} AND ${targetWorkable}
-           ORDER BY fr.score DESC, fr.account_pk
-           LIMIT @cap`,
-        )
-        .all({ ...args, cap: opts.cap }) as Array<{
-        account_pk: string;
-        followed_at: number | null;
-      }>;
-      const heal = this.db.prepare(
-        `UPDATE follow_records
-         SET state = @state, retry_count = 0, healed_at = @now
-         WHERE account_pk = @pk`,
-      );
-      let toQueued = 0;
-      let toUnfollowQueued = 0;
-      for (const row of rows) {
-        const state: FollowState = row.followed_at === null ? 'queued' : 'unfollow_queued';
-        heal.run({ pk: row.account_pk, state, now: opts.now });
-        if (state === 'queued') toQueued += 1;
-        else toUnfollowQueued += 1;
-      }
-      result = { healed: rows.length, toQueued, toUnfollowQueued, skippedUnworkable };
-    });
-    tx();
-    if (result.healed > 0) this.changed();
-    return result;
+  }): HealResult {
+    return this.followRecords.healAbandonedInWindow(opts);
   }
 
   /** src_pk of active `follows` edges pointing at the target (accounts that follow it). */
   followersOf(targetPk: string): string[] {
-    const rows = this.db
-      .prepare(
-        `SELECT src_pk FROM edges
-         WHERE dst_pk = ? AND type = 'follows' AND status = 'active'`,
-      )
-      .all(targetPk) as Array<{ src_pk: string }>;
-    return rows.map((r) => r.src_pk);
+    return this.relationships.followersOf(targetPk);
   }
 
   /** How many followers of `targetPk` we have observed so far (active edges into it). */
   observedFollowerCount(targetPk: string): number {
-    const row = this.db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM edges
-         WHERE dst_pk = ? AND type = 'follows' AND status = 'active'`,
-      )
-      .get(targetPk) as { n: number };
-    return row.n;
-  }
-
-  /** All account_pks the Scanner has rejected (`role = 'skipped'`) — pool exclusion. */
-  private skippedPks(): Set<string> {
-    const rows = this.db
-      .prepare(`SELECT pk FROM accounts WHERE role = 'skipped'`)
-      .all() as Array<{ pk: string }>;
-    return new Set(rows.map((r) => r.pk));
+    return this.relationships.observedFollowerCount(targetPk);
   }
 
   /**
@@ -765,850 +293,246 @@ export class KnowledgeStore {
    * externally) currently follow. Empty set when the own pk is unset.
    */
   accountsWeFollow(): Set<string> {
-    if (this.ownPk === null) return new Set();
-    const rows = this.db
-      .prepare(
-        `SELECT dst_pk FROM edges
-         WHERE src_pk = ? AND type = 'follows' AND status = 'active'`,
-      )
-      .all(this.ownPk) as Array<{ dst_pk: string }>;
-    return new Set(rows.map((r) => r.dst_pk));
+    return this.ownPk === null ? new Set() : this.relationships.accountsWeFollow(this.ownPk);
   }
 
   /**
    * Raw candidate pool for poaching a target: its active followers MINUS accounts
-   * already in a follow_record MINUS accounts the Scanner rejected (`role='skipped'`,
-   * R1.4 — the pool genuinely shrinks as candidates are evaluated, so the chain can
-   * advance) MINUS accounts we already follow (never queue a relationship an external
-   * actor — or we — already own) MINUS the target itself MINUS our OWN account (we
-   * appear in the followers list of any target we follow — never a candidate).
-   * The Scorer ranks these.
+   * already in a follow_record MINUS accounts the Scanner rejected (`role='skipped'`
+   * — the pool genuinely shrinks as candidates are evaluated, so the chain can
+   * advance) MINUS accounts we already follow (never queue a relationship an
+   * external actor — or we — already own) MINUS the target itself MINUS our OWN
+   * account (we appear in the followers list of any target we follow). The
+   * Scorer ranks these.
    */
   candidatePksForTarget(targetPk: string): string[] {
-    const excluded = this.followRecordPks();
-    const skipped = this.skippedPks();
+    const excluded = this.followRecords.pks();
+    const skipped = this.accounts.skippedPks();
     const followed = this.accountsWeFollow();
-    return this.followersOf(targetPk).filter(
-      (pk) =>
-        pk !== targetPk &&
-        pk !== this.ownPk &&
-        !excluded.has(pk) &&
-        !skipped.has(pk) &&
-        !followed.has(pk),
-    );
+    return this.relationships
+      .followersOf(targetPk)
+      .filter(
+        (pk) =>
+          pk !== targetPk &&
+          pk !== this.ownPk &&
+          !excluded.has(pk) &&
+          !skipped.has(pk) &&
+          !followed.has(pk),
+      );
   }
 
   /**
-   * Reconcile our OWN follow-status toward `pk` against a fresh observation, healing
-   * divergence caused by an external actor (leave-alone policy). Never writes an
-   * action_ledger row (reconciliation is not our action). Requires {@link setOwnPk};
-   * no-ops with a one-time warn otherwise. Returns what it did (for logging/tests).
+   * Reconcile our OWN follow-status toward `pk` against a fresh observation,
+   * healing divergence an external actor caused (leave-alone policy). Requires
+   * {@link setOwnPk}; no-ops with a one-time warn otherwise.
    */
-  reconcileOwnFollow(
-    pk: string,
-    weFollow: boolean,
-    at: number,
-  ): 'noop' | 'dropped-queued' | 'dropped-held' | 'edge-only' {
-    if (this.ownPk === null) {
-      if (!this.warnedOwnPkUnset) {
-        this.warnedOwnPkUnset = true;
-        logger.warn('store.reconcileOwnFollow: ownPk unset, skipping');
-      }
-      return 'noop';
-    }
-    if (pk === this.ownPk) return 'noop'; // never reconcile self
-
-    // Record the observed truth first — the edge is the ground state either way.
-    this.observeEdge(this.ownPk, pk, 'follows', weFollow, at);
-
-    const rec = this.getFollowRecord(pk);
-    const held: readonly FollowState[] = ['pending_followback', 'followed_back', 'unfollow_queued'];
-    if (rec !== null && held.includes(rec.state) && !weFollow) {
-      // We believed we followed them, but we no longer do: an external actor
-      // reverted the follow — back off rather than phantom-unfollow later.
-      this.upsertFollowRecord({ ...rec, state: 'external' });
-      this.setRole(pk, 'skipped');
-      logger.info('store.reconcileOwnFollow: external unfollow detected, dropping held record', {
-        pk,
-        priorState: rec.state,
-      });
-      return 'dropped-held';
-    }
-    if (rec !== null && rec.state === 'queued' && weFollow) {
-      // A queued candidate is already followed: the relationship belongs to an
-      // external actor — never claim it (we would later unfollow THEIR follow).
-      this.upsertFollowRecord({ ...rec, state: 'external' });
-      this.setRole(pk, 'skipped');
-      logger.info('store.reconcileOwnFollow: external follow detected, dropping queued candidate', {
-        pk,
-      });
-      return 'dropped-queued';
-    }
-    return 'edge-only';
+  reconcileOwnFollow(pk: string, weFollow: boolean, at: number): ReconcileOutcome {
+    if (this.ownPk === null) return this.warnOwnPkUnset('reconcileOwnFollow');
+    return this.census.reconcileOwnFollow(this.ownPk, pk, weFollow, at);
   }
 
-  // --- Durable meta (migration 5) -------------------------------------------------
+  // --- Durable meta (migration 5, via MetaRepo) ------------------------------------
 
-  private getMeta(key: string): string | null {
-    const row = this.db.prepare(`SELECT value FROM meta WHERE key = ?`).get(key) as
-      | { value: string }
-      | undefined;
-    return row?.value ?? null;
-  }
-
-  /** Set-once write: an existing value is never overwritten (baseline semantics). */
-  private setMetaOnce(key: string, value: string): void {
-    this.db.prepare(`INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)`).run(key, value);
-  }
-
-  /** Mutable meta write (upsert); `null` deletes the key. */
-  private setMeta(key: string, value: string | null): void {
-    if (value === null) {
-      this.db.prepare(`DELETE FROM meta WHERE key = ?`).run(key);
-      return;
-    }
-    this.db
-      .prepare(
-        `INSERT INTO meta (key, value) VALUES (?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      )
-      .run(key, value);
-  }
-
-  /**
-   * Persist the inter-action paced-delay deadline (epoch ms) so the pacing
-   * survives an app restart: a relaunch resumes the remaining wait instead of
-   * acting immediately (same contract as pause/resume, but durable). `null`
-   * clears it (the delay fully elapsed).
-   */
+  /** The inter-action delay deadline (epoch ms), durable so a relaunch serves the remaining wait; `null` clears it. */
   setActionDelayDeadline(at: number | null): void {
-    this.setMeta('action_delay_deadline_at', at === null ? null : String(at));
+    this.meta.setNumber('actionDelayDeadlineAt', at);
   }
 
   /** The persisted inter-action delay deadline, or `null` when none is owed. */
   getActionDelayDeadline(): number | null {
-    const raw = this.getMeta('action_delay_deadline_at');
-    if (raw === null) return null;
-    const at = Number(raw);
-    return Number.isFinite(at) ? at : null;
+    return this.meta.number('actionDelayDeadlineAt');
   }
 
-  /**
-   * Persist the SessionPlanner's durable snapshot (raw JSON) so the organic pacing
-   * model resumes exactly across a restart (§3): the current day's target, session
-   * plan, owed within-session state, and the trailing-hour action ring all survive.
-   * `null` clears it. Opaque to the store — the planner owns the shape.
-   */
+  /** The retired planner's snapshot (raw JSON): the plan wiring clears it once the day plan migrated its phase. */
   setPacingState(raw: string | null): void {
-    this.setMeta('pacing_state', raw);
+    this.meta.set('pacingState', raw);
   }
 
-  /** The persisted SessionPlanner snapshot JSON, or `null` when none exists. */
+  /** The retired planner's snapshot JSON, read once to migrate the plan's phase; `null` when none exists. */
   getPacingState(): string | null {
-    return this.getMeta('pacing_state');
+    return this.meta.get('pacingState');
   }
 
   /**
-   * The per-install noise entropy (meta `install_entropy`): one random 32-bit
-   * value drawn ON FIRST ACCESS and persisted, so every timing-noise seed
-   * derived from it (daily-boundary wake offsets, the engines' noise rngs) is
-   * different per install but stable across relaunches (§3 — a mid-park
-   * restart re-derives the same jittered wake). Upgraded installs with no
-   * stored value draw-and-persist cleanly here; a corrupted value is replaced
-   * with a fresh draw, loudly.
+   * The per-install noise entropy: one 32-bit value drawn on first access and persisted, so every
+   * seed derived from it differs per install but holds across relaunches; a corrupt value is redrawn, loudly.
    */
   installEntropy(): number {
-    const raw = this.getMeta('install_entropy');
+    const raw = this.meta.get('installEntropy');
     if (raw !== null) {
       const n = Number(raw);
       if (Number.isFinite(n)) return n >>> 0;
       logger.warn('store: install_entropy corrupted, redrawing', { raw });
     }
-    const drawn = Math.floor(Math.random() * 0x1_0000_0000) >>> 0;
-    this.setMeta('install_entropy', String(drawn));
+    const drawn = Math.floor(this.rng() * 0x1_0000_0000) >>> 0;
+    this.meta.setNumber('installEntropy', drawn);
     logger.info('store: install entropy established', { value: drawn });
     return drawn;
   }
 
-  /**
-   * Persist the recovery ladder's durable state (raw JSON: attempt, holdUntil,
-   * enteredAt, kindTally) so a relaunch mid-hold serves the REMAINDER of the
-   * absolute deadline instead of forgetting the wall it was backing off from
-   * (§3 — schedules are durable). `null` clears it (ladder inactive). Opaque to
-   * the store — the RecoverySupervisor owns the shape.
-   */
+  /** The recovery ladder's durable state (raw JSON; a relaunch mid-hold serves the remainder); `null` clears it. */
   setRecoveryState(raw: string | null): void {
-    this.setMeta('recovery_state', raw);
+    this.meta.set('recoveryState', raw);
   }
 
   /** The persisted recovery-ladder state JSON, or `null` when none exists. */
   getRecoveryState(): string | null {
-    return this.getMeta('recovery_state');
+    return this.meta.get('recoveryState');
   }
 
-  /**
-   * Persist the last CLOSED recovery incident (raw JSON: the window
-   * [enteredAt, resolvedAt], attempts, kind tally, and — once the engine's
-   * requeue-healer has run — the heal outcome). Written by the
-   * RecoverySupervisor at ladder reset, the proof moment that the failure
-   * window was systemic-and-over; amended by the engine after healing. `null`
-   * clears it. Opaque to the store — recovery.ts owns the shape.
-   */
+  /** The last CLOSED recovery incident (raw JSON, owned by recovery.ts; the healer amends it); `null` clears it. */
   setRecoveryLastIncident(raw: string | null): void {
-    this.setMeta('recovery_last_incident', raw);
+    this.meta.set('recoveryLastIncident', raw);
   }
 
   /** The persisted last-closed-incident JSON, or `null` when none exists. */
   getRecoveryLastIncident(): string | null {
-    return this.getMeta('recovery_last_incident');
+    return this.meta.get('recoveryLastIncident');
   }
 
-  /**
-   * The moment follower measurement began — the first follow-back sweep or the
-   * first complete census, whichever ran first — or `null` before either.
-   * Everything first seen AT or BEFORE this moment is pre-existing STOCK — the
-   * net-growth series only counts edge events strictly after it.
-   */
+  /** The moment follower measurement began (null before it); everything at or before it is stock. */
   followersBaselineAt(): number | null {
-    const raw = this.getMeta('followers_baseline_at');
-    if (raw === null) return null;
-    const at = Number(raw);
-    return Number.isFinite(at) ? at : null;
+    return this.relationships.baselineAt();
   }
 
   /**
-   * Establish the followers baseline at `at` if none exists yet (set-once; a
-   * later call never moves it). Called at the top of every follow-back sweep
-   * (`FollowbackWatcher.check`) and by every {@link observeOwnFollowerEvent},
-   * so the FIRST moment follower collection begins stamps the stock/growth
-   * boundary — without this, weeks of event-observed followers would be
-   * erased retroactively by a late first prune scan (whose census would stamp
-   * the baseline after the fact and re-classify every prior gain as stock).
-   * When a census genuinely IS the first collection, {@link ingestScanCensus}
-   * stamps the baseline itself.
+   * Establish the followers baseline at `at` if none exists (set-once): the first moment collection
+   * begins stamps the stock/growth boundary, so a late first census never re-classifies earlier gains.
    */
   ensureFollowersBaseline(at: number): void {
-    if (this.followersBaselineAt() !== null) return;
-    this.setMetaOnce('followers_baseline_at', String(at));
-    logger.info('store: followers baseline established', { at });
-    this.changed();
+    this.relationships.ensureBaseline(at);
   }
 
   /**
    * Record a dated "they follow us" EVENT — a notifications follow entry or an
-   * accepted follow request. Ensures the growth baseline exists FIRST: an
-   * event stream is measurement, and measurement must be anchored before its
-   * facts land, or a late first census would re-classify them as pre-existing
-   * stock. The sweep loop also stamps the baseline up front
-   * (`FollowbackWatcher.check`), so under normal wiring the ensure here is an
-   * idempotent no-op — it exists so any event-recording path is safe by
-   * construction. When an event IS the first-ever observation, it becomes the
-   * boundary itself: it lands exactly at the baseline and counts as stock.
-   *
-   * List-walk observations (a followers-list row proves present membership,
-   * not when the follow happened) must NOT come through here — they use plain
-   * {@link observeEdge} and the census's stock accounting.
+   * accepted follow request; anchors the growth baseline first. List-walk
+   * observations (membership, not timing) must NOT come through here.
    */
-  observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number): void {
-    this.ensureFollowersBaseline(at);
-    this.observeEdge(srcPk, ownPk, 'follows', true, at);
+  observeOwnFollowerEvent(srcPk: string, ownPk: string, at: number, source?: 'feed' | 'accept'): void {
+    this.relationships.observeOwnFollowerEvent(srcPk, ownPk, at, source);
   }
 
   /**
-   * Ingest a full auto-prune scan census into the shared graph so a scan also
-   * ENRICHES the growth engine (Phase 5 — the two systems share one graph):
-   *
-   *  - every FOLLOWING pk is reconciled as one we currently follow, through the
-   *    same leave-alone sink as {@link reconcileOwnFollow} (records the us→them
-   *    edge and heals drift — e.g. drops a queued candidate an external actor
-   *    already followed), and
-   *  - every FOLLOWER pk gets a fresh `follows-us` edge, so follow-back detection
-   *    (`getEdge(pk, ownPk, 'follows')`) and net-growth see the whole census the
-   *    scan already paid to fetch.
-   *
-   * FACTS STREAM (docs/PRINCIPLES.md §1): the scan SOURCES already write each
-   * row's profile + positive edge the moment it is parsed, so by the time this
-   * runs the additive half below is an idempotent re-confirmation — it stays
-   * because fake/alternate sources may not stream, and re-observing is free.
-   * What genuinely BELONGS here is the absence-based half: verdicts drawn from
-   * what a COMPLETE census did NOT contain.
-   *
-   * ADDITIVE by default: it records the positive edges the scan observed and
-   * never marks an absent account as removed. When `authoritative` is true —
-   * callers pass it ONLY for a census whose walks both reported genuine
-   * completion — absence IS evidence, and the census also heals the negative
-   * side of the graph:
-   *
-   *  - an active `pk → own` edge whose pk is NOT in the followers census is a
-   *    follower we LOST → marked removed (this is what makes the net-growth
-   *    series' loss branch live at all), and
-   *  - an active `own → pk` edge whose pk is NOT in the following census is a
-   *    follow that no longer exists → reconciled as not-following — EXCEPT
-   *    accounts whose follow record is `pending_followback`: an outstanding
-   *    request to a private account never appears in the following list, and
-   *    treating that as "unfollowed" would destroy the record.
-   *
-   * One transaction; self is always skipped; a no-op with the standard warn
-   * when the own pk is unset.
+   * Ingest a full prune-scan census into the shared graph; `authoritative` (per side) also heals the
+   * negative side ({@link CensusRepo.ingest}). One transaction; a warned no-op while the own pk is unset.
    */
   ingestScanCensus(
     followingPks: string[],
     followerPks: string[],
     at: number,
-    opts?: { authoritative?: boolean },
+    opts?: { authoritative?: CensusAuthority; planDay?: { startsAt: number; endsAt: number } },
   ): void {
     if (this.ownPk === null) {
-      if (!this.warnedOwnPkUnset) {
-        this.warnedOwnPkUnset = true;
-        logger.warn('store.ingestScanCensus: ownPk unset, skipping');
-      }
+      this.warnOwnPkUnset('ingestScanCensus');
       return;
     }
-    const own = this.ownPk;
-    const tx = this.db.transaction(() => {
-      for (const pk of followingPks) {
-        if (pk === own) continue;
-        this.reconcileOwnFollow(pk, true, at);
-      }
-      for (const pk of followerPks) {
-        if (pk === own) continue;
-        this.observeEdge(pk, own, 'follows', true, at);
-      }
-
-      if (opts?.authoritative === true) {
-        const followerSet = new Set(followerPks);
-        const followingSet = new Set(followingPks);
-        // Followers we lost: active pk→own edges absent from the complete census.
-        const lost = this.db
-          .prepare(
-            `SELECT src_pk FROM edges
-             WHERE dst_pk = ? AND type = 'follows' AND status = 'active'`,
-          )
-          .all(own) as Array<{ src_pk: string }>;
-        for (const { src_pk } of lost) {
-          if (src_pk === own || followerSet.has(src_pk)) continue;
-          this.observeEdge(src_pk, own, 'follows', false, at);
-        }
-        // Follows that no longer exist: active own→pk edges absent from the
-        // complete census — skipping outstanding private-account requests.
-        const gone = this.db
-          .prepare(
-            `SELECT dst_pk FROM edges
-             WHERE src_pk = ? AND type = 'follows' AND status = 'active'`,
-          )
-          .all(own) as Array<{ dst_pk: string }>;
-        for (const { dst_pk } of gone) {
-          if (dst_pk === own || followingSet.has(dst_pk)) continue;
-          if (this.getFollowRecord(dst_pk)?.state === 'pending_followback') continue;
-          this.reconcileOwnFollow(dst_pk, false, at);
-        }
-      }
-      // The FIRST complete census draws the stock/growth boundary WITHOUT
-      // erasing growth observed before it (follow events stream in from the
-      // notifications feed long before a user's first scan — see
-      // {@link ensureFollowersBaseline}), same tx, set-once marker:
-      //
-      //  - The BASELINE, when none exists yet, lands at the census time — but
-      //    never above growth already observed: any own-follower edge first
-      //    seen BEFORE this census's own walk window pushes the baseline to
-      //    just below that edge (defense in depth for a collection path that
-      //    forgot ensureFollowersBaseline — pre-census event-time gains
-      //    survive instead of being re-classified as stock).
-      //  - The census's own discoveries — edges first seen inside the walk
-      //    window, whether streamed by the walk or bulk-written above — are
-      //    pre-existing STOCK wherever the baseline sits: they are re-dated
-      //    onto the baseline so the strictly-after growth filter can never
-      //    chart the initial stock as a one-day cliff.
-      //
-      // Later censuses skip all of this: the baseline is set-once, and a new
-      // follower a later census discovers is a genuine (event-less) gain,
-      // charted on its census day.
-      if (this.getMeta('followers_census_at') === null) {
-        const stockWindowStart = at - FIRST_CENSUS_STOCK_WINDOW_MS;
-        let baselineAt = this.followersBaselineAt();
-        if (baselineAt === null) {
-          const earliest = this.db
-            .prepare(
-              `SELECT MIN(first_seen_at) AS m FROM edges
-               WHERE dst_pk = ? AND type = 'follows' AND first_seen_at < ?`,
-            )
-            .get(own, stockWindowStart) as { m: number | null };
-          baselineAt = earliest.m === null ? at : Math.min(at, earliest.m - 1);
-          this.setMetaOnce('followers_baseline_at', String(baselineAt));
-          logger.info('store: followers baseline established by first census', {
-            baselineAt,
-            censusAt: at,
-            followers: followerPks.length,
-          });
-        }
-        this.db
-          .prepare(
-            `UPDATE edges SET first_seen_at = ?
-             WHERE dst_pk = ? AND type = 'follows' AND status = 'active'
-               AND first_seen_at >= ? AND first_seen_at <= ? AND first_seen_at > ?`,
-          )
-          .run(baselineAt, own, stockWindowStart, at, baselineAt);
-        this.setMetaOnce('followers_census_at', String(at));
-      }
-    });
-    tx();
+    this.census.ingest(this.ownPk, followingPks, followerPks, at, opts);
   }
 
-  // --- Chain targets: targets table (§3.5) ---------------------------------------
+  // --- Chain targets (via TargetRepo) --------------------------------------------
 
   /** Insert or replace a chain target, keyed on account_pk. */
   addTarget(t: Target): void {
-    this.db
-      .prepare(
-        `INSERT INTO targets (account_pk, source, status, chain_index, exhausted_at)
-         VALUES (@account_pk, @source, @status, @chain_index, @exhausted_at)
-         ON CONFLICT(account_pk) DO UPDATE SET
-           source = excluded.source,
-           status = excluded.status,
-           chain_index = excluded.chain_index,
-           exhausted_at = excluded.exhausted_at`,
-      )
-      .run({
-        account_pk: t.accountPk,
-        source: t.source,
-        status: t.status,
-        chain_index: orNull(t.chainIndex ?? undefined),
-        exhausted_at: orNull(t.exhaustedAt),
-      });
-    this.changed();
+    this.targets.add(t);
   }
 
   getTarget(accountPk: string): Target | null {
-    const row = this.db
-      .prepare(`SELECT * FROM targets WHERE account_pk = ?`)
-      .get(accountPk) as TargetRow | undefined;
-    return row ? rowToTarget(row) : null;
+    return this.targets.get(accountPk);
   }
 
   /**
-   * Update a target's lifecycle status. Marking 'exhausted' WITH `at` stamps
-   * `exhausted_at` — the evidence time the chain concluded the pool was
-   * drained, which keeps the verdict REVERSIBLE (the engine's dead-end
-   * self-heal only reconsiders recently stamped targets, see
-   * {@link exhaustedTargetsSince}). Marking 'exhausted' WITHOUT `at` is a
-   * deliberate retirement (restart-from-seed): no stamp, never auto-revived.
-   * Any other status clears the stamp — an active/retained target is not
-   * exhausted.
+   * Update a target's lifecycle status. 'exhausted' WITH `at` stamps the
+   * evidence time, keeping the verdict reversible; WITHOUT `at` it is a
+   * deliberate retirement that is never auto-revived.
    */
   setTargetStatus(accountPk: string, status: Target['status'], at?: number): void {
-    this.db
-      .prepare(`UPDATE targets SET status = ?, exhausted_at = ? WHERE account_pk = ?`)
-      .run(status, status === 'exhausted' ? orNull(at) : null, accountPk);
-    this.changed();
+    this.targets.setStatus(accountPk, status, at);
   }
 
   /** All chain targets ordered by chain_index (nulls last), then account_pk. */
   listTargets(): Target[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM targets
-         ORDER BY chain_index IS NULL, chain_index ASC, account_pk ASC`,
-      )
-      .all() as TargetRow[];
-    return rows.map(rowToTarget);
+    return this.targets.list();
   }
 
   /**
    * Chain targets currently 'exhausted' whose evidence stamp is at/after
-   * `cutoff`, most recently exhausted first — the chain dead-end self-heal's
-   * re-verify candidates. Unstamped exhaustions (deliberate retirements via
-   * restart-from-seed) never appear here.
+   * `cutoff` — the dead-end self-heal's re-verify candidates.
    */
   exhaustedTargetsSince(cutoff: number): Target[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM targets
-         WHERE status = 'exhausted' AND exhausted_at IS NOT NULL AND exhausted_at >= ?
-         ORDER BY exhausted_at DESC, account_pk ASC`,
-      )
-      .all(cutoff) as TargetRow[];
-    return rows.map(rowToTarget);
+    return this.targets.exhaustedSince(cutoff);
   }
 
   /** The next chain position: `(MAX(chain_index) ?? -1) + 1`. */
   nextChainIndex(): number {
-    const row = this.db
-      .prepare(`SELECT MAX(chain_index) AS m FROM targets`)
-      .get() as { m: number | null };
-    return (row.m ?? -1) + 1;
+    return this.targets.nextChainIndex();
   }
 
-  /**
-   * Yield statistics for a poaching session against `targetPk` (§3.5), computed on
-   * demand from follow_records + edges — the "analysis is an emergent query" principle.
-   *
-   * - `total`: follow_records aimed at the target that reached at least the
-   *   pending-followback stage (i.e. we actually followed the candidate).
-   * - `followedBack`: of those, the ones that reciprocated (non-null followed_back_at).
-   * - `followBackRate`: followedBack / total (0 when total is 0).
-   * - `poolSize`: active followers of the target (the raw poaching pool).
-   * - `mutualOverlap`: target-followers we ALREADY actively follow (ownPk -> pk edge).
-   */
-  targetYield(
-    targetPk: string,
-    ownPk: string,
-  ): {
-    total: number;
-    followedBack: number;
-    followBackRate: number;
-    poolSize: number;
-    mutualOverlap: number;
-  } {
-    const counts = this.db
-      .prepare(
-        `SELECT
-           COUNT(*) AS total,
-           COUNT(followed_back_at) AS followed_back
-         FROM follow_records
-         WHERE target_pk = ?
-           AND state IN ('pending_followback', 'followed_back', 'unfollow_queued', 'unfollowed')`,
-      )
-      .get(targetPk) as { total: number; followed_back: number };
+  // --- Emergent analysis (via AnalyticsRepo) --------------------------------------
 
-    const total = counts.total;
-    const followedBack = counts.followed_back;
-    const followBackRate = total === 0 ? 0 : followedBack / total;
-
-    const followers = this.followersOf(targetPk);
-    const poolSize = followers.length;
-    const mutualOverlap = followers.filter((pk) => {
-      const edge = this.getEdge(ownPk, pk, 'follows');
-      return edge !== null && edge.status === 'active';
-    }).length;
-
-    return { total, followedBack, followBackRate, poolSize, mutualOverlap };
+  /** A target's yield; without a window the classifier reads all-time outcomes (an unbounded horizon). */
+  targetYield(targetPk: string, ownPk: string, outcome?: OutcomeWindow): TargetYield {
+    return this.analytics.targetYield(targetPk, ownPk, outcome ?? { windowMs: Number.POSITIVE_INFINITY, now: this.now() });
   }
 
-  /**
-   * The Targets console's funnel read for one chain target, in three cheap
-   * COUNT queries (safe in projection position — no Sets or per-pk loops):
-   *
-   *  - `states`: follow_records aimed at the target, grouped by lifecycle
-   *    state and zero-filled across the WHOLE {@link FOLLOW_STATES} union, so
-   *    `abandoned`/`external` can never be silently absent from the funnel.
-   *  - `observed`: followers of the target seen so far (active edges — what
-   *    the walk has scanned, never the audience size).
-   *  - `candidates`: COUNT-only twin of {@link candidatePksForTarget} — the
-   *    same exclusions (already recorded, Scanner-skipped, already followed,
-   *    self, the target itself) expressed in SQL instead of materialized Sets.
-   */
+  /** The Targets console's funnel read for one chain target, in cheap COUNTs. */
   targetFunnel(targetPk: string): TargetFunnelRead {
-    const rows = this.db
-      .prepare(
-        `SELECT state, COUNT(*) AS c FROM follow_records WHERE target_pk = ? GROUP BY state`,
-      )
-      .all(targetPk) as Array<{ state: string; c: number }>;
-    const states = Object.fromEntries(FOLLOW_STATES.map((s) => [s, 0])) as Record<
-      FollowState,
-      number
-    >;
-    for (const row of rows) {
-      if ((FOLLOW_STATES as readonly string[]).includes(row.state)) {
-        states[row.state as FollowState] = row.c;
-      } else {
-        // Shape drift, loudly — never silently fold an unknown state away.
-        logger.warn('store.targetFunnel: unknown follow state', { state: row.state });
-      }
-    }
-
-    const candidates = (
-      this.db
-        .prepare(
-          `SELECT COUNT(*) AS c FROM edges e
-           WHERE e.dst_pk = @target AND e.type = 'follows' AND e.status = 'active'
-             AND e.src_pk <> @target
-             AND (@own IS NULL OR e.src_pk <> @own)
-             AND NOT EXISTS (SELECT 1 FROM follow_records fr WHERE fr.account_pk = e.src_pk)
-             AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.pk = e.src_pk AND a.role = 'skipped')
-             AND (@own IS NULL OR NOT EXISTS (
-               SELECT 1 FROM edges w
-               WHERE w.src_pk = @own AND w.dst_pk = e.src_pk
-                 AND w.type = 'follows' AND w.status = 'active'))`,
-        )
-        .get({ target: targetPk, own: this.ownPk }) as { c: number }
-    ).c;
-
-    return { states, observed: this.observedFollowerCount(targetPk), candidates };
+    return this.analytics.targetFunnel(targetPk, this.ownPk);
   }
 
-  /**
-   * Follow-back latency sample for one target: how many records carry BOTH
-   * stamps (`followed_at` and `followed_back_at`) and the median of their
-   * deltas — the ORDER BY/LIMIT/OFFSET median (averaging the two middle rows
-   * on an even count), so no row set is ever materialized in JS.
-   */
+  /** Follow-back latency sample (count + median delta) for one target. */
   followbackTimingFor(targetPk: string): FollowbackTiming {
-    const resolved = (
-      this.db
-        .prepare(
-          `SELECT COUNT(*) AS c FROM follow_records
-           WHERE target_pk = ? AND followed_back_at IS NOT NULL AND followed_at IS NOT NULL`,
-        )
-        .get(targetPk) as { c: number }
-    ).c;
-    if (resolved === 0) return { resolved: 0, medianMs: null };
-    // LIMIT/OFFSET bound as plain integers (SQLite refuses arithmetic ON a
-    // parameter in the OFFSET clause with a datatype mismatch).
-    const limit = 2 - (resolved % 2);
-    const offset = Math.floor((resolved - 1) / 2);
-    const row = this.db
-      .prepare(
-        `SELECT AVG(d) AS m FROM (
-           SELECT followed_back_at - followed_at AS d FROM follow_records
-           WHERE target_pk = @t AND followed_back_at IS NOT NULL AND followed_at IS NOT NULL
-           ORDER BY d LIMIT @limit OFFSET @offset
-         )`,
-      )
-      .get({ t: targetPk, limit, offset }) as { m: number | null };
-    return { resolved, medianMs: row.m };
+    return this.analytics.followbackTimingFor(targetPk);
   }
 
-  /**
-   * Cumulative net own-follower growth per day for the last `days` days.
-   * gained = own-follower edges bucketed by first_seen_at; lost = removed
-   * own-follower edges bucketed by last_confirmed_at. One entry per day,
-   * oldest→newest, cumulativeNet running from 0. Epo-visible (from sweeps),
-   * not Instagram's ground-truth total.
-   *
-   * Baseline-aware: once a followers baseline exists (measurement start — the
-   * first sweep or first census, see {@link followersBaselineAt}), only events
-   * STRICTLY AFTER it count. The first census's own discoveries sit AT the
-   * baseline (re-dated stock — see {@link ingestScanCensus}), so initializing
-   * the app never charts a one-day cliff, while event-time gains observed
-   * before that census keep charting on the days they actually happened.
-   */
-  netGrowthSeries(days: number, ownPk: string): { dayStartMs: number; cumulativeNet: number }[] {
-    if (days <= 0) return [];
-    if (ownPk.length === 0) return [];
-
-    // Local-midnight boundary of each day in the window, oldest→newest, with
-    // today's local midnight last. Generated via Date arithmetic (not fixed ms
-    // steps) so DST day-length changes never skew a bucket.
-    const dayStarts: number[] = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - i);
-      d.setHours(0, 0, 0, 0);
-      dayStarts.push(d.getTime());
-    }
-    const windowStart = dayStarts[0];
-
-    // Events at or before the baseline are stock, not growth (−1 keeps the
-    // strict `>` inclusive-of-everything when no baseline exists yet).
-    const baselineAt = this.followersBaselineAt() ?? -1;
-    const rows = this.db
-      .prepare(
-        `SELECT first_seen_at AS at, 1 AS delta FROM edges
-           WHERE dst_pk = ? AND type = 'follows' AND first_seen_at >= ?
-             AND first_seen_at > ?
-         UNION ALL
-         SELECT last_confirmed_at AS at, -1 AS delta FROM edges
-           WHERE dst_pk = ? AND type = 'follows' AND status = 'removed'
-             AND last_confirmed_at >= ? AND last_confirmed_at > ?`,
-      )
-      .all(ownPk, windowStart, baselineAt, ownPk, windowStart, baselineAt) as {
-      at: number;
-      delta: number;
-    }[];
-
-    // Sum deltas into their local-day slot (keyed by that day's local midnight).
-    const perDay = new Map<number, number>();
-    for (const row of rows) {
-      const key = startOfLocalDay(row.at);
-      perDay.set(key, (perDay.get(key) ?? 0) + row.delta);
-    }
-
-    // Emit one point per day, carrying the running cumulative across empty days.
-    let cumulativeNet = 0;
-    return dayStarts.map((dayStartMs) => {
-      cumulativeNet += perDay.get(dayStartMs) ?? 0;
-      return { dayStartMs, cumulativeNet };
-    });
+  /** Cumulative net own-follower growth per local day for the last `days` days (the edge read, baseline-aware). */
+  netGrowthSeries(days: number, ownPk: string, now: number = this.now()): GrowthPoint[] {
+    return this.growth.netGrowthSeries(days, ownPk, now);
   }
 
-  /**
-   * TRUE net own-follower delta since `sinceMs`: followers gained (own-follower
-   * edges first seen in the window) minus followers lost (own-follower edges
-   * marked removed in the window). Baseline-aware like {@link netGrowthSeries},
-   * so pre-existing stock never counts as a gain. 0 when the own pk is unset.
-   */
+  /** The net own-follower delta since `sinceMs` over the edges, baseline-aware; 0 while the own pk is unset. */
   netFollowersSince(sinceMs: number): number {
-    if (this.ownPk === null) return 0;
-    const baselineAt = this.followersBaselineAt() ?? -1;
-    const row = this.db
-      .prepare(
-        `SELECT
-           (SELECT COUNT(*) FROM edges
-              WHERE dst_pk = @own AND type = 'follows'
-                AND first_seen_at >= @since AND first_seen_at > @baseline)
-           -
-           (SELECT COUNT(*) FROM edges
-              WHERE dst_pk = @own AND type = 'follows' AND status = 'removed'
-                AND last_confirmed_at >= @since AND last_confirmed_at > @baseline)
-           AS n`,
-      )
-      .get({ own: this.ownPk, since: sinceMs, baseline: baselineAt }) as { n: number };
-    return row.n;
+    return this.ownPk === null ? 0 : this.growth.netFollowersSince(sinceMs, this.ownPk);
   }
 
-  /** account_pks of every chain target (any status) — prune must never touch
-   *  the chain's own anchors, followed deliberately and retained. */
-  /**
-   * LIVE relationship counts from the graph as it stands right now (docs/
-   * PRINCIPLES.md §2 — the UI mirrors the graph). Because scan sources stream
-   * every row's edge as it parses, these tick DURING a prune scan: `following`
-   * / `followers` grow page by page, and `notFollowingBack` moves live as
-   * reciprocation knowledge lands. Zeroes until {@link setOwnPk}.
-   */
-  relationshipCounts(): { following: number; followers: number; notFollowingBack: number } {
-    if (this.ownPk === null) return { following: 0, followers: 0, notFollowingBack: 0 };
-    const following = (
-      this.db
-        .prepare(
-          `SELECT COUNT(*) AS c FROM edges
-           WHERE src_pk = ? AND type = 'follows' AND status = 'active'`,
-        )
-        .get(this.ownPk) as { c: number }
-    ).c;
-    const followers = (
-      this.db
-        .prepare(
-          `SELECT COUNT(*) AS c FROM edges
-           WHERE dst_pk = ? AND type = 'follows' AND status = 'active'`,
-        )
-        .get(this.ownPk) as { c: number }
-    ).c;
-    const notFollowingBack = (
-      this.db
-        .prepare(
-          `SELECT COUNT(*) AS c FROM edges e
-           WHERE e.src_pk = ? AND e.type = 'follows' AND e.status = 'active'
-             AND NOT EXISTS (
-               SELECT 1 FROM edges b
-               WHERE b.src_pk = e.dst_pk AND b.dst_pk = e.src_pk
-                 AND b.type = 'follows' AND b.status = 'active'
-             )`,
-        )
-        .get(this.ownPk) as { c: number }
-    ).c;
-    return { following, followers, notFollowingBack };
+  /** LIVE relationship counts (PRINCIPLES §2: they tick during a scan as rows stream); zeroes until setOwnPk. */
+  relationshipCounts(): RelationshipCounts {
+    return this.ownPk === null
+      ? { following: 0, followers: 0, notFollowingBack: 0 }
+      : this.relationships.counts(this.ownPk);
   }
 
   /**
-   * Everything the Graph view's snapshot shaper reads, in one call: the chain
-   * targets (the cluster hubs), every follow_record, every observed follower
-   * of a chain target, and both sides of our own relationship edges — each
-   * joined to its account row for username/followers. Bulk JOINed reads on
-   * purpose: the view holds tens of thousands of nodes, so per-pk lookups
-   * would dominate. Row order of `hubs`/`crowd` is CHAIN order, which the
-   * shaper relies on ("first hub wins" when an account follows several
-   * targets). Null until {@link setOwnPk} (pre-login there is no graph to
-   * anchor).
+   * Everything the Graph view's snapshot shaper reads, in one call. Null until
+   * {@link setOwnPk} — pre-login there is no graph to anchor.
    */
   graphSnapshotRows(): GraphSourceRows | null {
     if (this.ownPk === null) return null;
-    const hubs = this.db
-      .prepare(
-        `SELECT t.account_pk AS pk, a.username AS username, t.status AS status,
-                t.chain_index AS chainIndex
-         FROM targets t LEFT JOIN accounts a ON a.pk = t.account_pk
-         ORDER BY t.chain_index IS NULL, t.chain_index ASC, t.account_pk ASC`,
-      )
-      .all() as GraphHubRow[];
-    const records = this.db
-      .prepare(
-        `SELECT fr.account_pk AS pk, fr.state AS state, fr.followed_at AS followedAt,
-                fr.followed_back_at AS followedBackAt, fr.hold_until AS holdUntil,
-                fr.target_pk AS targetPk, a.username AS username, a.followers AS followers
-         FROM follow_records fr LEFT JOIN accounts a ON a.pk = fr.account_pk`,
-      )
-      .all() as GraphRecordRow[];
-    const crowd = this.db
-      .prepare(
-        `SELECT e.src_pk AS pk, e.dst_pk AS hubPk, a.username AS username,
-                a.followers AS followers
-         FROM edges e
-         JOIN targets t ON t.account_pk = e.dst_pk
-         LEFT JOIN accounts a ON a.pk = e.src_pk
-         WHERE e.type = 'follows' AND e.status = 'active'
-         ORDER BY t.chain_index IS NULL, t.chain_index ASC, t.account_pk ASC`,
-      )
-      .all() as GraphCrowdRow[];
-    const ownFollowers = this.db
-      .prepare(
-        `SELECT e.src_pk AS pk, a.username AS username, a.followers AS followers
-         FROM edges e LEFT JOIN accounts a ON a.pk = e.src_pk
-         WHERE e.dst_pk = ? AND e.type = 'follows' AND e.status = 'active'`,
-      )
-      .all(this.ownPk) as GraphAccountRow[];
-    const ownFollowing = this.db
-      .prepare(
-        `SELECT e.dst_pk AS pk, a.username AS username, a.followers AS followers
-         FROM edges e LEFT JOIN accounts a ON a.pk = e.dst_pk
-         WHERE e.src_pk = ? AND e.type = 'follows' AND e.status = 'active'`,
-      )
-      .all(this.ownPk) as GraphAccountRow[];
     return {
       ownPk: this.ownPk,
-      ownUsername: this.getAccount(this.ownPk)?.username ?? null,
-      hubs,
-      records,
-      crowd,
-      ownFollowers,
-      ownFollowing,
+      ownUsername: this.accounts.get(this.ownPk)?.username ?? null,
+      ...this.analytics.graphSourceRows(this.ownPk),
     };
   }
 
   targetPks(): Set<string> {
-    const rows = this.db
-      .prepare(`SELECT account_pk FROM targets`)
-      .all() as Array<{ account_pk: string }>;
-    return new Set(rows.map((r) => r.account_pk));
+    return this.targets.pks();
   }
 
-  /** Assign a role to an account (e.g. 'target', 'me'); the accounts row must exist. */
-  setRole(pk: string, role: string): void {
-    this.db.prepare(`UPDATE accounts SET role = ? WHERE pk = ?`).run(role, pk);
-    this.changed();
-  }
+  // --- Scrape cursors (via CursorRepo) -------------------------------------------
 
-  // --- Scrape cursors: per-target pagination resume (R4) -------------------------
-
-  /**
-   * Upsert the followers-list resume cursor (`next_max_id`) for a target. A `null`
-   * cursor is stored verbatim (the last page had no next cursor), so a later read
-   * distinguishes "exhausted" from "never scraped" only by row presence.
-   *
-   * `at` is required (f8): callers pass their injected clock's time, so this write
-   * can never silently bypass a FakeClock via a `Date.now()` default.
-   */
+  /** Upsert a target's followers-list resume cursor; `at` comes from the caller's clock. */
   setScrapeCursor(targetPk: string, cursor: string | null, at: number): void {
-    this.db
-      .prepare(
-        `INSERT INTO scrape_cursors (target_pk, cursor, updated_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(target_pk) DO UPDATE SET
-           cursor = excluded.cursor,
-           updated_at = excluded.updated_at`,
-      )
-      .run(targetPk, cursor, at);
+    this.cursors.set(targetPk, cursor, at);
   }
 
   /** The stored resume cursor for a target, or `null` when absent or itself null. */
   getScrapeCursor(targetPk: string): string | null {
-    const row = this.db
-      .prepare(`SELECT cursor FROM scrape_cursors WHERE target_pk = ?`)
-      .get(targetPk) as { cursor: string | null } | undefined;
-    return row ? row.cursor : null;
+    return this.cursors.get(targetPk);
   }
 
-  close(): void {
-    this.db.close();
+  getScrapeCursorState(targetPk: string): { cursor: string | null; updatedAt: number } | null {
+    return this.cursors.state(targetPk);
   }
+
+  clearScrapeCursor(targetPk: string): void { this.cursors.clear(targetPk); }
 }

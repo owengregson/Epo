@@ -1,6 +1,6 @@
-import { DelayManager } from '@/timing/delay-manager';
-import { jittered } from '@/timing/primitives';
 import { FakeClock } from '@/governors/clock';
+import { DelayManager } from '@/timing/delay-manager';
+import { uniform } from '@/timing/primitives';
 
 /** A controllable sleep: records calls, resolves when released or aborted. */
 function makeSleepHarness() {
@@ -46,9 +46,9 @@ describe('DelayManager', () => {
   test('a policy wait samples with the injected rng', async () => {
     const clock = new FakeClock(0);
     const h = makeSleepHarness();
-    const rngValues = [0.5, 0.5]; // jittered midpoint, zero jitter term
+    const rngValues = [0.5]; // the uniform band's midpoint
     const dm = new DelayManager({ clock, sleep: h.sleep, rng: () => rngValues.shift() ?? 0.5 });
-    const p = dm.wait('k', jittered(60_000, 120_000, 30));
+    const p = dm.wait('k', uniform(60_000, 120_000));
     expect(h.calls).toEqual([90_000]);
     h.releases[0]();
     await p;
@@ -100,22 +100,6 @@ describe('DelayManager', () => {
     expect(dm.pending()).toHaveLength(1);
     h.releases.at(-1)?.();
     await expect(second).resolves.toEqual({ completed: true });
-  });
-
-  test('onChange fires on register and settle; unsubscribe stops it', async () => {
-    const h = makeSleepHarness();
-    const dm = new DelayManager({ clock: new FakeClock(0), sleep: h.sleep });
-    const snapshots: number[] = [];
-    const off = dm.onChange((pending) => snapshots.push(pending.length));
-    const p = dm.wait('k', 1000);
-    h.releases[0]();
-    await p;
-    expect(snapshots).toEqual([1, 0]);
-    off();
-    const p2 = dm.wait('k', 1000);
-    h.releases[1]();
-    await p2;
-    expect(snapshots).toEqual([1, 0]); // no further notifications
   });
 
   test('dispose cancels everything', async () => {

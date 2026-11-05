@@ -4,7 +4,7 @@
  * The engine is NOT the only actor on the account's follow graph: the user (or
  * another tool) can follow/unfollow outside Epo, silently diverging
  * `follow_records`/`edges` from reality. Instagram's own responses already
- * carry the truth — `show_many` / `friendships/show` / `web_profile_info`
+ * carry the truth — `show_many` / `friendships/show` / the profile query
  * bodies report whether WE currently follow each account — so this subscribes
  * to the tab's response pipeline and feeds every such fact into the store's
  * single policy sink (`reconcileOwnFollow`, leave-alone policy: Epo only ever
@@ -19,7 +19,9 @@
 import type { Reader } from '@/adapter/reader';
 import type { Clock } from '@/governors/clock';
 import type { RimTab } from '@/rim/types';
+import type { ObservedRelation } from '@/shared/observed-relation';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { SurfaceRead } from '@/surface/read/types';
 import type { TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
 
@@ -42,8 +44,13 @@ export class RelationshipReconciler {
    * full CDP body read + JSON.parse for every followers/following page a
    * 200-page walk fetched — all of which parse to zero facts here.
    */
-  matches(url: string): boolean {
-    return this.reader.relationshipBearing(url);
+  matches(resp: { url: string; requestHeaders?: Record<string, string> }): boolean {
+    return this.reader.relationshipBearing(resp.url, this.friendlyNameOf(resp));
+  }
+
+  /** The GraphQL operation name an observed request carried, if any. */
+  private friendlyNameOf(resp: { requestHeaders?: Record<string, string> }): string | undefined {
+    return this.reader.friendlyName(resp.requestHeaders);
   }
 
   /**
@@ -52,27 +59,32 @@ export class RelationshipReconciler {
    * WARN-and-skip — a missed observation, never an error state.
    */
   async ingest(resp: TabResponse): Promise<void> {
-    let body: string;
+    const at = this.clock.now();
+    // One read per response, shared with every other consumer of the body; facts are minted from it.
+    const observed = this.reader.observed.read(resp, at);
+    if (observed === null) return;
+    let read: SurfaceRead;
     try {
-      body = await resp.getBody();
+      read = (await observed).read;
     } catch (e) {
-      logger.warn('rim.relationship-reconciler: body unavailable, skipping', {
-        url: resp.url,
-        error: String(e),
-      });
+      logger.warn('rim.relationship-reconciler: body unavailable, skipping', { url: resp.url, error: String(e) });
       return;
     }
     try {
-      const at = this.clock.now();
-      for (const { pk, weFollow } of this.reader.relationshipFacts(resp.url, body, at)) {
-        if (pk === this.ownPk) continue; // never reconcile our own account
-        this.store.reconcileOwnFollow(pk, weFollow, at);
-      }
+      this.apply(this.reader.relationshipFacts(read), at);
     } catch (e) {
-      logger.warn('rim.relationship-reconciler: reconciliation failed', {
-        url: resp.url,
-        error: String(e),
-      });
+      logger.warn('rim.relationship-reconciler: reconciliation failed', { url: resp.url, error: String(e) });
+    }
+  }
+
+  /**
+   * Feed minted relationship facts to the store's policy sink. Only an `ObservedRelation` is
+   * accepted, so an absent key can never reach `reconcileOwnFollow(pk, false)`.
+   */
+  private apply(facts: readonly ObservedRelation[], at: number): void {
+    for (const { pk, weFollow } of facts) {
+      if (pk === this.ownPk) continue; // never reconcile our own account
+      this.store.reconcileOwnFollow(pk, weFollow, at);
     }
   }
 }
@@ -87,7 +99,7 @@ export function installRelationshipReconciler(
 ): Unsubscribe {
   const unsubscribe = tab.onResponse((resp) => {
     // Only pay the async body read for URLs the Reader recognizes.
-    if (reconciler.matches(resp.url)) void reconciler.ingest(resp);
+    if (reconciler.matches(resp)) void reconciler.ingest(resp);
   });
   logger.debug('rim.relationship-reconciler installed');
   return unsubscribe;

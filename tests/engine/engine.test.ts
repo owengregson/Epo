@@ -1,359 +1,44 @@
 /**
- * Engine runtime tests (§3.1 loop, §3.3 interruptible sleep, §5 halt/status, E1).
+ * Engine runtime tests (the loop's precedence, interruptible waits, halt/status).
  *
- * Real `:memory:` KnowledgeStore + real governors beneath a FakeClock; scripted
- * fakes for every live-edge collaborator; an injected fake sleep that advances the
- * FakeClock and resolves immediately (unless deliberately hung to test abort).
- * A shared `events` log proves ordering — most importantly that the loop can NEVER
- * perform two actions without an interposed paced delay.
+ * Real `:memory:` KnowledgeStore + real governors beneath a FakeClock; the shared
+ * engine kit supplies every fake port and the one fake-time contract (a sleep
+ * advances the clock unless deliberately hung). A shared `events` log proves
+ * ordering — most importantly that the loop can NEVER perform two actions
+ * without an interposed paced delay.
  */
-import { KnowledgeStore } from '@/store/knowledge-store';
-import { FakeClock } from '@/governors/clock';
-import { RateGovernor, type RateGovernorConfig } from '@/governors/rate-governor';
+
+import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
 import {
-  Engine,
-  ENGINE_IDLE_MS,
+  ACTIONS_FAILING_HALT,
   ENRICH_BATCH_SIZE,
-  MAX_ENRICH_PASSES_PER_CYCLE,
-  REFILL_PACING_MAX_MS,
-  REFILL_PACING_MIN_MS,
-  type EngineAcquisition,
-  type EngineChain,
-  type EngineChurn,
-  type EngineEnricher,
-  type EngineFollowback,
-  type EnginePacing,
-  type EngineTabDiagnostics,
+  Engine,
   type EngineUnfollowFeed,
-  type EngineScanner,
-  type EngineStatus,
-  type SleepFn,
+  MAX_ENRICH_PASSES_PER_CYCLE,
 } from '@/engine/engine';
-import { ENGINE, NOISE, RECOVERY } from '@/timing/config';
-import type { AdvanceResult } from '@/engine/chain-controller';
-import { Scanner, type ScanPlan } from '@/engine/scanner';
-import type { AcquireEndReason } from '@/rim/follower-acquisition';
-import type { SentinelStatus } from '@/adapter/sentinel';
-import { DEFAULT_SETTINGS, type Settings } from '@/settings/settings';
+import { FakeClock } from '@/governors/clock';
+import { referenceTempoSource } from '@/kernel/tempo';
 import type { AccountFields, FollowRecord } from '@/store/types';
-import { setLevel } from '@/utils/logger';
-
-beforeAll(() => setLevel('error'));
-
-const T0 = Date.parse('2026-08-12T12:00:00'); // local noon
-const DELAY_MS = 240_000; // fixed paced delay (min=max, jitter 0)
-const HOUR = 3_600_000;
-
-const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({
-  targetPk: null,
-  state: 'queued',
-  retryCount: 0,
-  ...over,
-});
-
-// --- Fakes -------------------------------------------------------------------------
-
-class FakeSentinel {
-  checks = 0;
-  /** f9: while > 0, check() REJECTS (a transient evaluate failure), decrementing. */
-  failNext = 0;
-  private readonly queue: SentinelStatus[];
-  constructor(statuses: SentinelStatus[] = []) {
-    this.queue = [...statuses];
-  }
-  async check(): Promise<SentinelStatus> {
-    this.checks += 1;
-    if (this.failNext > 0) {
-      this.failNext -= 1;
-      throw new Error('evaluate failed: tab navigated mid-call');
-    }
-    return this.queue.shift() ?? 'ok';
-  }
-}
-
-/**
- * R1 fake enricher: `enrich(usernames)` writes a scripted profile observation
- * (counts) into the store for every username it has a profile for — exactly what
- * the real adapter-backed ProfileEnricher does via web_profile_info.
- */
-class FakeEnricher implements EngineEnricher {
-  calls: string[][] = [];
-  /** username → the pk + profile fields to observe when enriched. */
-  profiles = new Map<string, { pk: string; fields: AccountFields }>();
-  constructor(
-    private readonly store: KnowledgeStore,
-    private readonly clock: FakeClock,
-  ) {}
-  async enrich(usernames: string[]): Promise<number> {
-    this.calls.push([...usernames]);
-    let enriched = 0;
-    for (const u of usernames) {
-      const p = this.profiles.get(u);
-      if (p === undefined) continue;
-      this.store.observe({
-        accountPk: p.pk,
-        observedAt: this.clock.now(),
-        source: 'profile',
-        fields: { username: u, ...p.fields },
-      });
-      enriched += 1;
-    }
-    return enriched;
-  }
-}
-
-class FakeChurn implements EngineChurn {
-  due: FollowRecord[] = [];
-  advanceCalls = 0;
-  executed: FollowRecord[] = [];
-  /** Scripted outcome execute reports (default 'ok'). */
-  outcome: 'ok' | 'failed' | 'blocked' | 'simulated' | 'noop' = 'ok';
-  /** Scripted consecutive-failure readout (the systemic-breakage breaker). */
-  failStreak = 0;
-  /** Scripted consecutive-blocked readout (the rate-wall streak). */
-  blockedStreak = 0;
-  /** Scripted drift-caused share of the failure window. */
-  driftStreak = 0;
-  resetCalls = 0;
-  resetBlockedCalls = 0;
-  constructor(private readonly events: string[]) {}
-  advanceTimers(): void {
-    this.advanceCalls += 1;
-  }
-  nextDue(): FollowRecord | null {
-    return this.due[0] ?? null;
-  }
-  async execute(r: FollowRecord): Promise<'ok' | 'failed' | 'blocked' | 'simulated' | 'noop'> {
-    // A blocked outcome leaves the record completely untouched (still due),
-    // exactly like the real scheduler.
-    if (this.outcome !== 'blocked') {
-      this.due = this.due.filter((d) => d.accountPk !== r.accountPk);
-    }
-    this.executed.push(r);
-    this.events.push(`execute:${r.accountPk}`);
-    return this.outcome;
-  }
-  consecutiveFailureCount(): number {
-    return this.failStreak;
-  }
-  resetConsecutiveFailures(): void {
-    this.resetCalls += 1;
-    this.failStreak = 0;
-  }
-  consecutiveBlockedCount(): number {
-    return this.blockedStreak;
-  }
-  resetConsecutiveBlocked(): void {
-    this.resetBlockedCalls += 1;
-    this.blockedStreak = 0;
-  }
-  consecutiveDriftFailureCount(): number {
-    return this.driftStreak;
-  }
-}
-
-/** Scripted scanner: each planTarget call enqueues the next pk-list into the store. */
-class FakeScanner implements EngineScanner {
-  planCalls: string[] = [];
-  script: string[][] = [];
-  constructor(private readonly store: KnowledgeStore) {}
-  planTarget(targetPk: string): ScanPlan {
-    this.planCalls.push(targetPk);
-    const pks = this.script.shift() ?? [];
-    for (const pk of pks) {
-      this.store.upsertFollowRecord(rec({ accountPk: pk, targetPk, state: 'queued' }));
-    }
-    return { targetPk, queued: pks, considered: pks.length, eligible: pks.length };
-  }
-}
-
-class FakeChain implements EngineChain {
-  advanceCalls: string[] = [];
-  script: AdvanceResult[] = [];
-  advance(currentTargetPk: string): Promise<AdvanceResult> {
-    this.advanceCalls.push(currentTargetPk);
-    const next = this.script.shift() ?? {
-      nextTargetPk: null,
-      source: 'none' as const,
-      reason: 'unscripted',
-    };
-    return Promise.resolve(next);
-  }
-}
-
-class FakeFollowback implements EngineFollowback {
-  checks = 0;
-  async check(): Promise<{ detected: string[] }> {
-    this.checks += 1;
-    return { detected: [] };
-  }
-}
-
-class FakeAcquisition implements EngineAcquisition {
-  calls: string[] = [];
-  /** Scripted results; an omitted endReason defaults to the VERIFIED list end
-   *  ('no-more-pages') so legacy scripts keep exercising the genuine path. */
-  script: Array<{ observed: number; targetPk: string | null; endReason?: AcquireEndReason }> = [];
-  async acquire(
-    targetUsername: string,
-  ): Promise<{ observed: number; targetPk: string | null; endReason: AcquireEndReason }> {
-    this.calls.push(targetUsername);
-    const next = this.script.shift() ?? { observed: 0, targetPk: null };
-    return { endReason: 'no-more-pages', ...next };
-  }
-}
-
-/**
- * The injected fake sleep: records every duration, advances the FakeClock by `ms`
- * and resolves immediately — unless `hang` is set, in which case it resolves only
- * when the Engine aborts it (proving E1 interruptibility with real control flow).
- */
-class SleepRecorder {
-  calls: number[] = [];
-  hang = false;
-  aborted = 0;
-  constructor(
-    private readonly clock: FakeClock,
-    private readonly events: string[],
-  ) {}
-  fn: SleepFn = (ms, signal) => {
-    this.calls.push(ms);
-    this.events.push(`sleep:${ms}`);
-    if (signal?.aborted) {
-      this.aborted += 1;
-      return Promise.resolve();
-    }
-    if (!this.hang) {
-      this.clock.advance(ms);
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      signal?.addEventListener(
-        'abort',
-        () => {
-          this.aborted += 1;
-          resolve();
-        },
-        { once: true },
-      );
-    });
-  };
-}
-
-// --- Harness -----------------------------------------------------------------------
-
-interface HarnessOpts {
-  startAt?: number;
-  ceiling?: number;
-  activeHours?: { start: number; end: number };
-  settings?: Partial<Settings>;
-  seedTarget?: boolean; // default true: t1/'targetone' active at chainIndex 0
-  sentinel?: SentinelStatus[]; // scripted statuses, then 'ok'
-  useRealScanner?: boolean; // wire the REAL Scanner over the store (R1 pipeline tests)
-  rng?: () => number; // injected randomness for the pacing draw
-  pacing?: EnginePacing; // organic pacing model (absent → legacy metronome)
-  unfollowFeed?: EngineUnfollowFeed; // woven prune feed
-  sweepCadence?: { isDue(now: number, everyMs: number): boolean; markRun(now: number): void };
-  /** The recovery ladder's tab-diagnostics port (absent → presumed healthy). */
-  tabDiag?: EngineTabDiagnostics;
-  /** Seed the store BEFORE engine construction (e.g. a persisted action-delay deadline). */
-  preseedStore?: (store: KnowledgeStore) => void;
-}
-
-interface Harness {
-  store: KnowledgeStore;
-  clock: FakeClock;
-  sentinel: FakeSentinel;
-  churn: FakeChurn;
-  scanner: FakeScanner;
-  chain: FakeChain;
-  followback: FakeFollowback;
-  acquisition: FakeAcquisition;
-  enricher: FakeEnricher;
-  sleep: SleepRecorder;
-  events: string[];
-  statuses: EngineStatus[];
-  halts: string[];
-  engine: Engine;
-}
-
-const makeHarness = (opts: HarnessOpts = {}): Harness => {
-  const startAt = opts.startAt ?? T0;
-  const hours = opts.activeHours ?? { start: 0, end: 24 };
-  const store = new KnowledgeStore(':memory:');
-  const clock = new FakeClock(startAt);
-  const events: string[] = [];
-  const statuses: EngineStatus[] = [];
-  const halts: string[] = [];
-
-  const rateCfg: RateGovernorConfig = {
-    dailyHardCeiling: opts.ceiling ?? 1000,
-    dailyOperatingRate: opts.ceiling ?? 1000,
-    minDelayMs: DELAY_MS,
-    maxDelayMs: DELAY_MS,
-    jitterPercent: 0,
-    activeHoursStart: hours.start,
-    activeHoursEnd: hours.end,
-  };
-  const settings: Settings = {
-    ...DEFAULT_SETTINGS,
-    seed: 'seeduser',
-    activeHoursStart: hours.start,
-    activeHoursEnd: hours.end,
-    followbackSweepHours: Number.POSITIVE_INFINITY, // sweeps off unless a test opts in
-    lowWaterCandidates: 0, // refills off unless a test opts in
-    ...opts.settings,
-  };
-
-  const sentinel = new FakeSentinel(opts.sentinel ?? []);
-  const churn = new FakeChurn(events);
-  const scanner = new FakeScanner(store);
-  const chain = new FakeChain();
-  const followback = new FakeFollowback();
-  const acquisition = new FakeAcquisition();
-  const enricher = new FakeEnricher(store, clock);
-  const sleep = new SleepRecorder(clock, events);
-
-  if (opts.seedTarget !== false) {
-    store.observe({
-      accountPk: 't1',
-      observedAt: startAt,
-      source: 'profile',
-      fields: { username: 'targetone' },
-    });
-    store.addTarget({ accountPk: 't1', source: 'seed', status: 'active', chainIndex: 0 });
-  }
-  opts.preseedStore?.(store);
-
-  const engine = new Engine({
-    store,
-    clock,
-    rate: new RateGovernor(store, clock, rateCfg),
-    sentinel,
-    churn,
-    scanner: opts.useRealScanner === true ? new Scanner({ store }) : scanner,
-    chain,
-    followback,
-    acquisition,
-    enricher,
-    settings,
-    sleep: sleep.fn,
-    rng: opts.rng,
-    pacing: opts.pacing,
-    unfollowFeed: opts.unfollowFeed,
-    sweepCadence: opts.sweepCadence,
-    tabDiag: opts.tabDiag,
-    onStatus: (s) => statuses.push(s),
-    onHalt: (reason) => halts.push(reason),
-  });
-
-  return {
-    store, clock, sentinel, churn, scanner, chain,
-    followback, acquisition, enricher, sleep, events, statuses, halts, engine,
-  };
-};
+import { ENGINE, NOISE, RECOVERY } from '@/timing/config';
+import { DelayManager } from '@/timing/delay-manager';
+import {
+  DELAY_MS,
+  FakeChurn,
+  FakeSentinel,
+  type EngineHarness as Harness,
+  HOUR,
+  makeEngineHarness as makeHarness,
+  rec,
+  T0,
+  testDeps,
+} from '../kit/engine-harness';
+import { FakePlan as FakePacing } from '../kit/harness-plan';
+import { fixedTempo } from '../kit/tempo';
 
 // --- Tests ---------------------------------------------------------------------------
+
+/** The idle beat's bound: the `beat.transient` base at the reference tempo (today's 30 s). */
+const ENGINE_IDLE_MS = referenceTempoSource().base('beat.transient');
 
 describe('Engine.stepOnce — one major thing per iteration', () => {
   test("an 'acted' step executes exactly ONE churn action then sleeps nextDelayMs", async () => {
@@ -388,15 +73,15 @@ describe('Engine.stepOnce — one major thing per iteration', () => {
     ]);
   });
 
-  test('a failing streak of 8 routes to a recovery HOLD, not a terminal halt', async () => {
+  test('a failing streak at the cold breaker routes to a recovery HOLD, not a terminal halt', async () => {
     const h = makeHarness();
     h.churn.due = [rec({ accountPk: 'a' })];
     h.churn.outcome = 'failed';
-    h.churn.failStreak = 7; // one below the breaker → keeps going
+    h.churn.failStreak = ACTIONS_FAILING_HALT - 1; // one below the breaker → keeps going
     expect(await h.engine.stepOnce()).toBe('acted');
 
     h.churn.due = [rec({ accountPk: 'b' })];
-    h.churn.failStreak = 8; // ACTIONS_FAILING_HALT → enter the recovery ladder
+    h.churn.failStreak = ACTIONS_FAILING_HALT; // the D5 cold threshold (7) → enter the recovery ladder
     expect(await h.engine.stepOnce()).toBe('recovering');
     expect(h.halts).toEqual([]); // no terminal halt
     expect(h.engine.status().state).not.toBe('halted');
@@ -473,31 +158,29 @@ describe('Engine — sentinel gate (precedence 2)', () => {
   });
 });
 
-describe('Engine — active-hours and ceiling gates (precedence 3–4)', () => {
-  test('outside active hours: waits until the window opens, no action', async () => {
-    const h = makeHarness({
-      startAt: Date.parse('2026-08-12T02:00:00'),
-      activeHours: { start: 8, end: 22 },
-    });
+describe('Engine — the plan\'s session and ceiling gates (precedence 3–4)', () => {
+  test('between sessions: waits exactly until the next session opens, no action', async () => {
+    const pacing = new FakePacing(T0 + 6 * HOUR);
+    pacing.open = false;
+    const h = makeHarness({ pacing });
     h.churn.due = [rec({ accountPk: 'a' })];
 
     const result = await h.engine.stepOnce();
 
-    expect(result).toBe('waited-active-hours');
-    // The park is the exact 02:00→08:00 base plus the POSITIVE-ONLY boundary
-    // jitter — a wake never precedes the window and never lands exactly on it.
-    expect(h.sleep.calls.length).toBe(1);
-    expect(h.sleep.calls[0]).toBeGreaterThan(6 * HOUR);
-    expect(h.sleep.calls[0]).toBeLessThanOrEqual(6 * HOUR + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
+    expect(result).toBe('waited-session');
+    // The plan's park is exact (spec §5.16): no jitter, the next session's start.
+    expect(h.sleep.calls).toEqual([6 * HOUR]);
     expect(h.churn.executed).toEqual([]);
     expect(h.churn.advanceCalls).toBe(0); // gate fires before timers
 
-    // The fake sleep advanced the clock into the window: the next step acts.
+    // The session opened while the loop slept: the next step acts.
+    pacing.open = true;
     expect(await h.engine.stepOnce()).toBe('acted');
   });
 
-  test('at the hard ceiling: waits until local midnight, no action', async () => {
-    const h = makeHarness({ ceiling: 2 });
+  test("at the hard ceiling: waits exactly to the plan-day's boundary, no action", async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    const h = makeHarness({ ceiling: 2, pacing });
     h.store.recordAction('x', 'follow', 'ok', T0 - HOUR);
     h.store.recordAction('y', 'follow', 'ok', T0 - HOUR / 2);
     h.churn.due = [rec({ accountPk: 'a' })];
@@ -505,22 +188,17 @@ describe('Engine — active-hours and ceiling gates (precedence 3–4)', () => {
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('waited-ceiling');
-    // noon → midnight, plus the positive-only daily-boundary jitter.
-    expect(h.sleep.calls.length).toBe(1);
-    expect(h.sleep.calls[0]).toBeGreaterThan(12 * HOUR);
-    expect(h.sleep.calls[0]).toBeLessThanOrEqual(12 * HOUR + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
+    expect(h.sleep.calls).toEqual([pacing.view(T0).window.endsAt - T0]);
     expect(h.churn.executed).toEqual([]);
-    expect(h.engine.status().atHardCeiling).toBe(false); // ledger rolled over at midnight
   });
 });
 
 describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)', () => {
-  test('a fresh start outside active hours pushes the park BEFORE it elapses', async () => {
-    const h = makeHarness({
-      startAt: Date.parse('2026-08-12T23:00:00'),
-      activeHours: { start: 8, end: 22 },
-    });
-    h.sleep.hang = true; // the active-hours park blocks until aborted
+  test('a fresh start between sessions pushes the park BEFORE it elapses', async () => {
+    const pacing = new FakePacing(T0 + 9 * HOUR);
+    pacing.open = false;
+    const h = makeHarness({ pacing });
+    h.sleep.hang = true; // the session park blocks until aborted
 
     const started = h.engine.start();
     await new Promise((r) => setTimeout(r, 0)); // let the loop reach the park
@@ -530,14 +208,10 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
     // without these fields this state was indistinguishable from a dead run.
     const pushed = h.statuses[h.statuses.length - 1];
     expect(pushed.state).toBe('running');
-    expect(pushed.parkReason).toBe('active-hours');
-    // parkedUntil carries the REAL jittered deadline: past the window open,
-    // within the boundary-jitter band.
-    const windowOpen = Date.parse('2026-08-13T08:00:00');
-    expect(pushed.parkedUntil!).toBeGreaterThan(windowOpen);
-    expect(pushed.parkedUntil!).toBeLessThanOrEqual(windowOpen + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
+    expect(pushed.parkReason).toBe('session');
+    expect(pushed.parkedUntil).toBe(T0 + 9 * HOUR);
     expect(pushed.lastStep).toBeNull();
-    expect(h.engine.status().parkReason).toBe('active-hours');
+    expect(h.engine.status().parkReason).toBe('session');
 
     h.engine.stop();
     await started;
@@ -547,24 +221,21 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
   });
 
   test('the park clears once the wait elapses (resume shows unparked)', async () => {
-    const h = makeHarness({
-      startAt: Date.parse('2026-08-12T02:00:00'),
-      activeHours: { start: 8, end: 22 },
-    });
+    const pacing = new FakePacing(T0 + 6 * HOUR);
+    pacing.open = false;
+    const h = makeHarness({ pacing });
 
     const result = await h.engine.stepOnce(); // the fake sleep advances through the park
 
-    expect(result).toBe('waited-active-hours');
-    // A mid-park push carried the hold with its REAL (jittered) deadline...
-    const mid = h.statuses.find((s) => s.parkReason === 'active-hours');
-    const windowOpen = Date.parse('2026-08-12T08:00:00');
-    expect(mid?.parkedUntil ?? 0).toBeGreaterThan(windowOpen);
-    expect(mid?.parkedUntil ?? 0).toBeLessThanOrEqual(windowOpen + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS);
+    expect(result).toBe('waited-session');
+    // A mid-park push carried the hold with its exact deadline...
+    const mid = h.statuses.find((s) => s.parkReason === 'session');
+    expect(mid?.parkedUntil).toBe(T0 + 6 * HOUR);
     // ...and the post-step push (and the live read) show it cleared.
     const last = h.statuses[h.statuses.length - 1];
     expect(last.parkReason).toBeNull();
     expect(last.parkedUntil).toBeNull();
-    expect(last.lastStep).toBe('waited-active-hours');
+    expect(last.lastStep).toBe('waited-session');
     expect(h.engine.status().parkReason).toBeNull();
   });
 
@@ -586,8 +257,9 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
     expect(h.engine.status().parkReason).toBeNull();
   });
 
-  test('a daily-ceiling park surfaces reason "daily-ceiling" until the cycle reset', async () => {
-    const h = makeHarness({ ceiling: 2 });
+  test('a daily-ceiling park surfaces reason "daily-ceiling" until the plan-day boundary, exactly', async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    const h = makeHarness({ ceiling: 2, pacing });
     h.store.recordAction('x', 'follow', 'ok', T0 - HOUR);
     h.store.recordAction('y', 'follow', 'ok', T0 - HOUR / 2);
     h.churn.due = [rec({ accountPk: 'a' })];
@@ -597,12 +269,8 @@ describe('Engine — long parks surface parkedUntil/parkReason (§2 live status)
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.engine.status().parkReason).toBe('daily-ceiling');
-    // noon → midnight plus the positive-only boundary jitter.
-    const cycleReset = T0 + 12 * HOUR;
-    expect(h.engine.status().parkedUntil!).toBeGreaterThan(cycleReset);
-    expect(h.engine.status().parkedUntil!).toBeLessThanOrEqual(
-      cycleReset + NOISE.DAILY_BOUNDARY_JITTER_MAX_MS,
-    );
+    // The plan's park is exact (spec §5.16): the plan-day boundary, no jitter.
+    expect(h.engine.status().parkedUntil).toBe(pacing.view(T0).window.endsAt);
 
     h.engine.stop();
     expect(await stepping).toBe('waited-ceiling');
@@ -629,9 +297,8 @@ describe('Engine — follow-back sweep cadence (precedence 6)', () => {
     expect(await h.engine.stepOnce()).toBe('idle');
     expect(h.followback.checks).toBe(1);
 
-    // Drive the FakeClock past the cadence — including the widest interval
-    // factor the noise layer can draw (≤ CADENCE_MAX_FACTOR): due again.
-    h.clock.advance(4 * HOUR * NOISE.CADENCE_MAX_FACTOR);
+    // Drive the FakeClock well past the cadence: due again.
+    h.clock.advance(2 * 4 * HOUR);
     expect(await h.engine.stepOnce()).toBe('swept-followback');
     expect(h.followback.checks).toBe(2);
   });
@@ -950,7 +617,9 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
   test("a step that outlives its generation (stop()+start() mid-action) reports 'aborted' and leaves pacing to the new run", async () => {
     const pacing = new FakePacing(T0 + 3600_000);
     const h = makeHarness({ pacing });
-    h.churn.due = [rec({ accountPk: 'a' })];
+    // Two due records: the stale generation consumes the first (its click DID
+    // land), so the new generation has its own action to perform.
+    h.churn.due = [rec({ accountPk: 'a' }), rec({ accountPk: 'b' })];
 
     // Gate churn.execute so the step can be caught mid-action (a non-signal-
     // linked await — exactly where a stale generation can wake up).
@@ -963,10 +632,10 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
       reached = r;
     });
     const orig = h.churn.execute.bind(h.churn);
-    h.churn.execute = async (r: FollowRecord) => {
+    h.churn.execute = async (r: FollowRecord, actAt: number) => {
       reached();
       await gate;
-      await orig(r);
+      return orig(r, actAt);
     };
 
     const stale = h.engine.stepOnce(); // old generation, parked inside the action
@@ -981,9 +650,10 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     expect(await stale).toBe('aborted');
 
     await new Promise((r) => setTimeout(r, 0));
-    // Exactly ONE recorded action: the new generation's own. A stale step that
-    // also recorded would double-drive the planner and clobber the deadline.
-    expect(pacing.recorded.filter((x) => x.kind === 'follow')).toHaveLength(1);
+    // Both clicks landed and each dispatch armed its own deadline; the stale step armed nothing of its own,
+    // so the deadline owed is the new generation's dispatch gap.
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a', 'b']);
+    expect(h.store.getActionDelayDeadline()).toBeGreaterThanOrEqual(T0 + DELAY_MS);
 
     h.engine.stop();
     await started;
@@ -1058,9 +728,9 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
 
     expect(await h.engine.stepOnce()).toBe('acted');
 
-    // The remainder wait came BEFORE the action, and the owed slot then cleared.
+    // The remainder wait came BEFORE the action; the action's own dispatch then armed the next one.
     expect(h.events.slice(0, 2)).toEqual([`sleep:${DELAY_MS}`, 'execute:a']);
-    expect(h.store.getActionDelayDeadline()).toBeNull(); // consumed, then re-armed…
+    expect(h.store.getActionDelayDeadline()).toBe(T0 + DELAY_MS + DELAY_MS);
   });
 
   test('an ELAPSED persisted deadline (long app closure) acts immediately', async () => {
@@ -1089,13 +759,18 @@ describe('Engine — lifecycle: start/stop/pause (E1)', () => {
     expect(h.store.getActionDelayDeadline()).toBe(T0 + DELAY_MS);
   });
 
-  test('a fully-elapsed delay clears the persisted deadline', async () => {
+  test('a fully-elapsed delay owes nothing: the countdown clears and the next action needs no wait', async () => {
     const h = makeHarness();
-    h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.due = [rec({ accountPk: 'a' }), rec({ accountPk: 'b' })];
 
     await h.engine.stepOnce(); // fake sleep advances the clock — the delay completes
 
-    expect(h.store.getActionDelayDeadline()).toBeNull();
+    expect(h.store.getActionDelayDeadline()).toBeLessThanOrEqual(h.clock.now());
+    expect(h.engine.status().nextActionAt).toBeNull();
+    h.sleep.calls = [];
+    h.events.length = 0;
+    await h.engine.stepOnce();
+    expect(h.events[0]).toBe('execute:b');
   });
 
   test('awaitParked resolves once the paused loop quiesces at the gate (prune hand-off)', async () => {
@@ -1280,9 +955,8 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     expect(h.acquisition.calls).toEqual(['targetone']);
     expect(h.enricher.calls).toEqual([['fone', 'ftwo', 'ffour']]);
 
-    // Step 2: everything has counts now → plan: eligible enqueued, rejected SKIPPED.
-    expect(await h.engine.stepOnce()).toBe('acquired');
-    expect(h.acquisition.calls).toEqual(['targetone']); // no re-acquire mid-cycle
+    // The same step plans the returned profiles before any later action can choose.
+    expect(h.acquisition.calls).toEqual(['targetone']);
     expect(h.store.getFollowRecord('f1')!.state).toBe('queued');
     expect(h.store.getFollowRecord('f2')!.state).toBe('queued');
     expect(h.store.getAccount('f3')!.role).toBe('skipped');
@@ -1290,13 +964,13 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     expect(h.store.candidatePksForTarget('t1')).toEqual([]); // the pool genuinely shrank
     expect(h.engine.status().queued).toBe(2);
 
-    // Step 3: still under low-water, but progress opened a NEW cycle: one more
+    // Step 2: still under low-water, but progress opened a NEW cycle: one more
     // acquisition, nothing left to enrich, and the final plan enqueues 0 → EXHAUSTED.
     expect(await h.engine.stepOnce()).toBe('acquired');
     expect(h.acquisition.calls).toEqual(['targetone', 'targetone']);
     expect(h.enricher.calls.length).toBe(1);
 
-    // Steps 4..8: step 7 is latched off — the refill can NEVER fire again for this
+    // Subsequent steps: the refill can NEVER fire again for this
     // target. No acquisition, no enrichment: the livelock is structurally impossible.
     for (let i = 0; i < 5; i += 1) expect(await h.engine.stepOnce()).toBe('idle');
     expect(h.acquisition.calls.length).toBe(2);
@@ -1357,8 +1031,8 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
       fields: { followers: 500, following: 550, isVerified: true },
     });
 
-    expect(await h.engine.stepOnce()).toBe('acquired'); // acquire + enrich pass
-    expect(await h.engine.stepOnce()).toBe('acquired'); // plan: f1 scored → rejected → skipped
+    expect(await h.engine.stepOnce()).toBe('acquired'); // acquire + enrich + plan
+    expect(h.store.getAccount('f1')?.role).toBe('skipped');
 
     // Every candidate is now scored-and-skipped: the target is exhausted and
     // the chain advances (none left → halt).
@@ -1376,15 +1050,51 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     expect(h.enricher.calls[0]!.length).toBe(ENRICH_BATCH_SIZE);
   });
 
-  test('f10: refill traffic ends with a short jittered pacing sleep', async () => {
+  test("an enrichment pass is the smaller of a slice and the open session's explore reads (spec §5.16)", async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    pacing.exploreLeft = 3;
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true, pacing });
+    for (let i = 0; i < ENRICH_BATCH_SIZE; i += 1) follower(h, `f${i}`, { username: `user${i}` });
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.enricher.calls[0]).toHaveLength(3);
+  });
+
+  test('a session with no explore reads leaves enrichment to the next session — never a walled pass', async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    pacing.exploreLeft = 0;
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true, pacing });
+    follower(h, 'f1', { username: 'fone' });
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(h.enricher.calls).toEqual([]);
+    expect(h.statuses.some((s) => s.parkReason === 'enrich-backoff')).toBe(false);
+    // Reads wait for the session that has explore reads: the end of today's plan-day here.
+    expect(h.engine.status().state).not.toBe('halted');
+    expect(h.acquisition.calls).toEqual(['targetone']);
+    await h.engine.stepOnce();
+    expect(h.acquisition.calls).toEqual(['targetone']);
+  });
+
+  test('a profile read before the weekly cycle of plan-days is read again; one inside it is still fresh', async () => {
+    const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
+    const DAY = 24 * HOUR;
+    const profiled = (pk: string, username: string, at: number): void => {
+      h.store.observe({ accountPk: pk, observedAt: at, source: 'profile', fields: { username, followers: 10, following: 11 } });
+      h.store.observeEdge(pk, 't1', 'follows', true, T0);
+    };
+    profiled('f6', 'inside', T0 - 6 * DAY - 11 * HOUR); // the sixth plan-day back, 01:00: fresh
+    profiled('f7', 'before', T0 - 6 * DAY - 13 * HOUR); // the seventh plan-day back, 23:00: stale
+    expect(await h.engine.stepOnce()).toBe('acquired');
+    expect(h.enricher.calls[0]).toEqual(['before']);
+  });
+
+  test('refill traffic ends without a beat of its own: the next entry is the activity clock\'s (spec §5.16)', async () => {
     const h = makeHarness({ settings: { lowWaterCandidates: 5 }, useRealScanner: true });
     follower(h, 'f1', { username: 'fone' });
     h.enricher.profiles.set('fone', { pk: 'f1', fields: { followers: 1000, following: 1100 } });
 
-    await h.engine.stepOnce(); // acquire + enrich: IG traffic → must be paced
-    expect(h.sleep.calls.length).toBe(1);
-    expect(h.sleep.calls[0]).toBeGreaterThanOrEqual(REFILL_PACING_MIN_MS);
-    expect(h.sleep.calls[0]).toBeLessThanOrEqual(REFILL_PACING_MAX_MS);
+    expect(await h.engine.stepOnce()).toBe('acquired'); // acquire + enrich: Instagram traffic
+    expect(h.enricher.calls).toHaveLength(1);
+    expect(h.sleep.calls).toEqual([]);
   });
 });
 
@@ -1445,6 +1155,27 @@ describe('Engine — f9: per-step resilience', () => {
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
   });
 
+  test("a brisk session never shortens the transient backoff below today's band (beat.transient is pace-up)", async () => {
+    const clock = new FakeClock(T0);
+    const sentinel = new FakeSentinel();
+    const churn = new FakeChurn([]);
+    const sleeps: number[] = [];
+    const engine = new Engine({ ...testDeps({ clock, sentinel, churn,
+      delays: new DelayManager({ clock, sleep: async (ms) => { sleeps.push(ms); } }) }), tempo: fixedTempo(0.7) });
+    const backoffs: number[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      churn.due = [rec({ accountPk: `a${i}` })];
+      sentinel.failNext = 1;
+      const before = sleeps.length;
+      expect(await engine.stepOnce()).toBe('idle');
+      backoffs.push(...sleeps.slice(before));
+      // A healthy step between failures: a run of failures is the runtime-error halt, not a backoff.
+      await engine.stepOnce();
+    }
+    expect(backoffs).toHaveLength(40);
+    expect(Math.min(...backoffs)).toBeGreaterThanOrEqual(ENGINE_IDLE_MS * NOISE.BEAT_MIN_FACTOR);
+  });
+
   test('a VERIFIED sentinel block still halts — resilience does not mask real blocks', async () => {
     const h = makeHarness({ sentinel: ['challenge'] });
     expect(await h.engine.stepOnce()).toBe('halted');
@@ -1459,7 +1190,7 @@ describe('Engine — injectable sweep cadence (persisted by the composition root
     const h = makeHarness({
       settings: { followbackSweepHours: 4 },
       sweepCadence: {
-        isDue: () => true,
+        lastSweepEndedAt: () => null,
         markRun: (now) => marked.push(now),
       },
     });
@@ -1472,7 +1203,7 @@ describe('Engine — injectable sweep cadence (persisted by the composition root
   test('a not-due cadence skips the sweep', async () => {
     const h = makeHarness({
       settings: { followbackSweepHours: 4 },
-      sweepCadence: { isDue: () => false, markRun: () => {} },
+      sweepCadence: { lastSweepEndedAt: () => T0, markRun: () => {} },
     });
 
     expect(await h.engine.stepOnce()).not.toBe('swept-followback');
@@ -1494,21 +1225,11 @@ describe('Engine — DelayManager integration', () => {
     expect(h.engine.status().nextActionAt).toBeNull();
   });
 
-  test('refill pacing draws through the injected rng (no raw Math.random)', async () => {
-    let draws = 0;
-    const h = makeHarness({
-      settings: { followbackSweepHours: 4 }, // the sweep branch ends in pacingSleep
-      rng: () => {
-        draws += 1;
-        return 0.5;
-      },
-    });
+  test('a sweep ends without a beat of its own: the step waits nothing after its reads', async () => {
+    const h = makeHarness({ settings: { followbackSweepHours: 4 } });
 
     expect(await h.engine.stepOnce()).toBe('swept-followback');
-
-    expect(draws).toBeGreaterThan(0);
-    // rng 0.5 → the exact uniform midpoint of the pacing band.
-    expect(h.sleep.calls).toEqual([(REFILL_PACING_MIN_MS + REFILL_PACING_MAX_MS) / 2]);
+    expect(h.sleep.calls).toEqual([]);
   });
 });
 
@@ -1528,53 +1249,17 @@ describe('Engine — status projection', () => {
     expect(s.followedBackHeld).toBe(1);
     expect(s.unfollowDue).toBe(1);
     expect(s.actionsToday).toBe(1);
-    // The cycle plan fluctuates under the rate; remaining derives from it.
-    expect(s.plannedToday).toBeLessThan(100);
-    expect(s.remainingToday).toBe(s.plannedToday - 1);
+    // The day's volume and what is left of it are the plan's (spec §5.7).
+    const view = (h.engine as unknown as { pacing: FakePacing }).pacing.view(h.clock.now());
+    expect(s.plannedToday).toBe(view.plan.volume.planned);
+    expect(s.remainingToday).toBe(view.remaining);
     expect(s.atHardCeiling).toBe(false);
     expect(s.state).toBe('idle');
     expect(s.lastStep).toBeNull();
   });
 });
 
-// --- Organic pacing model (SessionPlanner-driven) ---------------------------------
-
-class FakePacing implements EnginePacing {
-  open = true;
-  gapMs = 4 * 60_000;
-  target = 25;
-  sessions = 1;
-  recorded: Array<{ at: number; kind: string }> = [];
-  advanceCalls = 0;
-  constructor(private readonly nextStart: number) {}
-  advance(): void {
-    this.advanceCalls += 1;
-  }
-  isSessionOpen(): boolean {
-    return this.open;
-  }
-  sessionEndsAt(now: number): number | null {
-    return this.open ? now + this.gapMs : null;
-  }
-  nextSessionStartAt(): number {
-    return this.nextStart;
-  }
-  nextActionGapMs(): number {
-    return this.gapMs;
-  }
-  recordAction(now: number, kind: 'follow' | 'unfollow' | 'read-burst'): void {
-    this.recorded.push({ at: now, kind });
-  }
-  dailyTarget(): number {
-    return this.target;
-  }
-  sessionsToday(): number {
-    return this.sessions;
-  }
-  serialize(): unknown {
-    return { fake: true, recorded: this.recorded.length };
-  }
-}
+// --- The plan model (the plan service paces the organic model) -----------------------
 
 describe('Engine — organic pacing model', () => {
   test('parks with waited-session when no session is open, taking no action', async () => {
@@ -1586,59 +1271,80 @@ describe('Engine — organic pacing model', () => {
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('waited-session');
-    expect(pacing.advanceCalls).toBeGreaterThan(0);
+    expect(pacing.ensures).toBeGreaterThan(0);
     expect(h.churn.executed).toEqual([]); // the gate returns before any action
   });
 
-  test('acts inside a session, records a follow, and arms the planner gap (not nextDelayMs)', async () => {
+  test('acts inside a session, then waits on the deadline its dispatch armed — no gap of its own', async () => {
     const pacing = new FakePacing(T0);
-    pacing.gapMs = 4 * 60_000;
     const h = makeHarness({ pacing });
+    const gap = 4 * 60_000;
+    h.churn.onDispatch = (at) => h.store.setActionDelayDeadline(at + gap);
     h.churn.due = [rec({ accountPk: 'a', state: 'queued' })];
 
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('acted');
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['a']);
-    expect(pacing.recorded).toEqual([{ at: T0, kind: 'follow' }]);
-    expect(h.sleep.calls).toEqual([4 * 60_000]); // the planner's gap, not the legacy DELAY_MS
+    expect(h.sleep.calls).toEqual([gap]); // the dispatch's deadline, not a draw of the loop's
   });
 
-  test('records an unfollow kind for a due unfollow_queued record', async () => {
+  test('a write that dispatched nothing (blocked before any press) arms nothing and owes nothing', async () => {
     const pacing = new FakePacing(T0);
     const h = makeHarness({ pacing });
+    h.churn.outcome = 'blocked';
+    h.churn.lastCause = 'tab-unhealthy';
     h.churn.due = [rec({ accountPk: 'u', state: 'unfollow_queued' })];
 
     await h.engine.stepOnce();
 
-    expect(pacing.recorded).toEqual([{ at: T0, kind: 'unfollow' }]);
+    expect(h.store.getActionDelayDeadline()).toBeNull();
   });
 
-  test('velocity backstop parks the loop when the trailing-hour ledger is at the cap', async () => {
+  test('a practice-mode write owes the gap a dispatch would (practice works as usual)', async () => {
     const pacing = new FakePacing(T0);
-    const h = makeHarness({ pacing, settings: { hourlyVelocityCap: 3 } });
-    h.store.recordAction('x', 'follow', 'ok', T0 - 10 * 60_000);
-    h.store.recordAction('y', 'follow', 'ok', T0 - 20 * 60_000);
-    h.store.recordAction('z', 'follow', 'ok', T0 - 30 * 60_000);
+    const h = makeHarness({ pacing });
+    h.churn.outcome = 'simulated';
+    h.churn.due = [rec({ accountPk: 'a', state: 'queued' })];
+
+    expect(await h.engine.stepOnce()).toBe('acted');
+    expect(pacing.practices).toEqual([T0]);
+  });
+
+  test('a full rolling hour parks exactly to its window, taking no action', async () => {
+    const pacing = new FakePacing(T0);
+    pacing.velocityUntil = T0 + 7 * 60_000;
+    const h = makeHarness({ pacing });
     h.churn.due = [rec({ accountPk: 'a' })];
 
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('waited-session');
+    expect(h.sleep.calls).toEqual([7 * 60_000]);
     expect(h.churn.executed).toEqual([]);
   });
 
-  test('persists the planner snapshot to store meta after a step', async () => {
+  test('writes no planner snapshot: the plan service is the one writer of the day', async () => {
     const pacing = new FakePacing(T0);
     const h = makeHarness({ pacing });
     h.churn.due = [rec({ accountPk: 'a' })];
 
     await h.engine.stepOnce();
 
-    expect(h.store.getPacingState()).not.toBeNull();
+    expect(h.store.getPacingState()).toBeNull();
   });
 
-  test('status carries the pacing projection in organic mode', () => {
+  test("the day's volume spent parks to the next plan-day, not the next session", async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    pacing.usedAuto = pacing.target;
+    const h = makeHarness({ pacing });
+    h.churn.due = [rec({ accountPk: 'a' })];
+
+    expect(await h.engine.stepOnce()).toBe('waited-ceiling');
+    expect(h.churn.executed).toEqual([]);
+  });
+
+  test("status carries the plan's current daily target", () => {
     const pacing = new FakePacing(T0 + 1000);
     pacing.open = false;
     pacing.target = 30;
@@ -1646,32 +1352,31 @@ describe('Engine — organic pacing model', () => {
 
     const s = h.engine.status();
 
-    expect(s.pacing).not.toBeNull();
-    expect(s.pacing?.dailyTarget).toBe(30);
-    expect(s.pacing?.nextSessionAt).toBe(T0 + 1000);
+    expect(s.plannedToday).toBe(30);
   });
 
-  test('legacy mode leaves status.pacing null', () => {
-    const h = makeHarness();
-    expect(h.engine.status().pacing).toBeNull();
-  });
 });
 
 // --- Woven prune feed (organic model) ---------------------------------------------
 
 class FakeFeed implements EngineUnfollowFeed {
+  details: ChurnActionOutcome | null = null;
+  lastActionOutcome(): ChurnActionOutcome | null { return this.details; }
   candidates: Array<{ pk: string; username: string }> = [];
   cap = false;
   executed: Array<{ pk: string; username: string }> = [];
-  outcome: 'ok' | 'failed' | 'simulated' | 'blocked' | 'skipped' = 'ok';
+  outcome: 'ok' | 'failed' | 'simulated' | 'blocked' = 'ok';
+  /** The dispatch closure's arm (the cadence in production), when the write dispatched. */
+  onDispatch: ((at: number) => void) | null = null;
   nextCandidate(): { pk: string; username: string } | null {
     return this.cap ? null : (this.candidates[0] ?? null);
   }
-  async executeUnfollow(cand: { pk: string; username: string }): Promise<
-    'ok' | 'failed' | 'simulated' | 'blocked' | 'skipped'
+  async executeUnfollow(cand: { pk: string; username: string }, now: number): Promise<
+    'ok' | 'failed' | 'simulated' | 'blocked'
   > {
     this.executed.push(cand);
     if (this.outcome !== 'blocked') this.candidates = this.candidates.filter((c) => c.pk !== cand.pk);
+    if (this.outcome === 'ok' || this.outcome === 'failed') this.onDispatch?.(now);
     return this.outcome;
   }
   atDailyCap(): boolean {
@@ -1680,20 +1385,30 @@ class FakeFeed implements EngineUnfollowFeed {
 }
 
 describe('Engine — woven prune feed', () => {
-  test('weaves a prune unfollow when no lifecycle action is due, paced by the planner', async () => {
+  test('a woven server refusal enters the same account-wide recovery as growth', async () => {
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    feed.outcome = 'blocked';
+    feed.details = { status: 'blocked', cause: 'rate-limited' };
+    const h = makeHarness({ pacing: new FakePacing(T0), unfollowFeed: feed });
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(h.engine.status().recovery?.phase).toBe('probing');
+    expect(h.churn.executed).toEqual([]);
+    expect(feed.candidates).toHaveLength(1);
+  });
+  test('weaves a prune unfollow when no lifecycle action is due, paced by the deadline its dispatch armed', async () => {
     const pacing = new FakePacing(T0);
-    pacing.gapMs = 4 * 60_000;
     const feed = new FakeFeed();
     feed.candidates = [{ pk: 'p1', username: 'prunee' }];
     const h = makeHarness({ pacing, unfollowFeed: feed });
+    feed.onDispatch = (at) => h.store.setActionDelayDeadline(at + 4 * 60_000);
     // no churn.due → no lifecycle action
 
     const result = await h.engine.stepOnce();
 
     expect(result).toBe('acted');
     expect(feed.executed).toEqual([{ pk: 'p1', username: 'prunee' }]);
-    expect(pacing.recorded).toEqual([{ at: T0, kind: 'unfollow' }]);
-    expect(h.sleep.calls).toEqual([4 * 60_000]); // the planner gap
+    expect(h.sleep.calls).toEqual([4 * 60_000]); // the dispatch's deadline
   });
 
   test('does not weave when weaveEnabled is false', async () => {
@@ -1720,20 +1435,6 @@ describe('Engine — woven prune feed', () => {
     expect(feed.executed).toEqual([]);
   });
 
-  test('a bio-filter skip records no action and does not park (candidate was consumed)', async () => {
-    const pacing = new FakePacing(T0);
-    const feed = new FakeFeed();
-    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
-    feed.outcome = 'skipped';
-    const h = makeHarness({ pacing, unfollowFeed: feed });
-
-    const result = await h.engine.stepOnce();
-
-    expect(result).toBe('idle');
-    expect(pacing.recorded).toEqual([]); // nothing acted, nothing to pace
-    expect(h.sleep.calls).not.toContain(30_000); // no blocked-style park either
-  });
-
   test('a blocked woven unfollow parks and records no action', async () => {
     const pacing = new FakePacing(T0);
     const feed = new FakeFeed();
@@ -1745,33 +1446,80 @@ describe('Engine — woven prune feed', () => {
 
     expect(result).toBe('idle');
     expect(feed.executed.length).toBe(1); // attempted
-    expect(pacing.recorded).toEqual([]); // nothing recorded on a block
+    expect(h.store.getActionDelayDeadline()).toBeNull(); // nothing dispatched, nothing owed
   });
 
-  test('interleaves: both available and rng below the cap picks the prune unfollow', async () => {
+  test.each([
+    [0.1, 'the woven unfollow'],
+    [0.9, 'the follow'],
+  ] as const)('the plan mix: with both kinds available a draw of %s against the session share picks %s', async (draw, picked) => {
     const pacing = new FakePacing(T0);
+    pacing.mixDrawValue = draw; // the session's shares are one follow and one unfollow: an unfollow share of 0.5
     const feed = new FakeFeed();
     feed.candidates = [{ pk: 'p1', username: 'prunee' }];
-    const h = makeHarness({ pacing, unfollowFeed: feed, rng: () => 0 }); // 0 < maxUnfollowFraction
+    const h = makeHarness({ pacing, unfollowFeed: feed });
     h.churn.due = [rec({ accountPk: 'f1', state: 'queued' })];
 
     await h.engine.stepOnce();
 
-    expect(feed.executed.length).toBe(1);
-    expect(h.churn.executed).toEqual([]); // the follow was NOT taken this step
+    expect(feed.executed.length).toBe(picked === 'the follow' ? 0 : 1);
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(picked === 'the follow' ? ['f1'] : []);
   });
 
-  test('interleave never displaces a due lifecycle unfollow', async () => {
+  test('the mix never lets a woven candidate displace a due lifecycle unfollow', async () => {
     const pacing = new FakePacing(T0);
     const feed = new FakeFeed();
     feed.candidates = [{ pk: 'p1', username: 'prunee' }];
-    const h = makeHarness({ pacing, unfollowFeed: feed, rng: () => 0 });
+    const h = makeHarness({ pacing, unfollowFeed: feed });
     h.churn.due = [rec({ accountPk: 'u1', state: 'unfollow_queued' })];
 
     await h.engine.stepOnce();
 
     expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['u1']); // lifecycle wins
     expect(feed.executed).toEqual([]);
+  });
+
+  test.each([
+    ['a paused relationship surface', (p: FakePacing) => { p.pausedActivities.add('unfollows'); }],
+    ["a spent session unfollow share (the follow takes it)", (p: FakePacing) => { p.unfollowsLeft = 0; }],
+  ] as const)('unfollow work is unavailable under %s: the follow is chosen', async (_name, set) => {
+    const pacing = new FakePacing(T0);
+    set(pacing);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    const h = makeHarness({ pacing, unfollowFeed: feed });
+    h.churn.due = [rec({ accountPk: 'u1', state: 'unfollow_queued' }), rec({ accountPk: 'f1', state: 'queued' })];
+
+    await h.engine.stepOnce();
+
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['f1']);
+    expect(feed.executed).toEqual([]);
+  });
+
+  test('woven cleanup waits out the cool-down after a rate wall; the follow goes on', async () => {
+    const pacing = new FakePacing(T0);
+    const feed = new FakeFeed();
+    feed.candidates = [{ pk: 'p1', username: 'prunee' }];
+    const h = makeHarness({ pacing, unfollowFeed: feed });
+    (h.engine as unknown as { lastHalt: { reason: string; at: number } }).lastHalt = { reason: 'rate-limited', at: T0 - 1 };
+    h.churn.due = [rec({ accountPk: 'f1', state: 'queued' })];
+
+    await h.engine.stepOnce();
+
+    expect(feed.executed).toEqual([]);
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['f1']);
+  });
+
+  test('finding new people waits while the list surface is paused: no refill, queued follows go on', async () => {
+    const pacing = new FakePacing(T0);
+    pacing.pausedActivities.add('exploration');
+    const h = makeHarness({ pacing, settings: { lowWaterCandidates: 5 } });
+    h.churn.due = [rec({ accountPk: 'f1', state: 'queued' })];
+
+    await h.engine.stepOnce();
+
+    expect(h.acquisition.calls).toEqual([]);
+    expect(h.churn.executed.map((r) => r.accountPk)).toEqual(['f1']);
   });
 });
 
@@ -1792,6 +1540,19 @@ describe('Engine — recovery ladder', () => {
     expect(h.sleep.calls[0]).toBeLessThanOrEqual(30_000 * NOISE.BACKOFF_MAX_FACTOR);
     expect(h.churn.due.map((r) => r.accountPk)).toEqual(['a']); // record untouched
     expect(h.engine.status().recovery).toBeNull(); // below the streak: no ladder
+  });
+
+  test('a DEFINITIVE rate limit (the server refused the mutation) enters recovery on the FIRST block', async () => {
+    const h = makeHarness();
+    h.churn.due = [rec({ accountPk: 'a' })];
+    h.churn.outcome = 'blocked';
+    h.churn.blockedStreak = 1; // far below the streak threshold…
+    h.churn.lastCause = 'rate-limited'; // …but Instagram said so in the response body
+
+    expect(await h.engine.stepOnce()).toBe('recovering');
+    expect(h.churn.due.map((r) => r.accountPk)).toEqual(['a']); // record untouched
+    expect(h.halts).toEqual([]);
+    expect(h.engine.status().recovery?.phase).toBe('probing'); // hold served by fake sleep
   });
 
   test('a blocked streak of BLOCKED_STREAK_ENTRY enters recovery without touching records', async () => {
@@ -2105,5 +1866,56 @@ describe('Engine — requeue-healer (closed incident windows)', () => {
     expect(incident.healed.count).toBe(1);
     h.engine.stop();
     await started;
+  });
+});
+
+describe('Engine — the unconfirmed-actions breaker (spec §11.1 F7)', () => {
+  /** A lifecycle unfollow Instagram answers with nothing: dispatched, unverified. */
+  const unverified = (h: Harness): void => {
+    h.churn.outcome = 'blocked';
+    (h.churn as { lastActionOutcome?: () => ChurnActionOutcome }).lastActionOutcome = () =>
+      ({ status: 'blocked', cause: 'unverified', unverifiedClick: true });
+  };
+
+  test('two unverified unfollows park (no rate-wall signal) and hold unfollows; the third enters the ladder', async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    const h = makeHarness({ pacing });
+    unverified(h);
+    h.churn.due = [rec({ accountPk: 'u', state: 'unfollow_queued' })];
+
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(await h.engine.stepOnce()).toBe('idle');
+    expect(pacing.breaker.held(h.clock.now())).toEqual({ kind: 'unfollow', streak: 2 });
+    expect(h.engine.status().recovery).toBeNull();
+    // The next session's one attempt: unverified again, so the kind enters the ladder.
+    h.clock.set(T0 + HOUR);
+    await h.engine.stepOnce();
+    expect(h.engine.status().recovery).not.toBeNull();
+  });
+
+  test('a confirmed unfollow resets the streak', async () => {
+    const pacing = new FakePacing(T0 + HOUR);
+    const h = makeHarness({ pacing });
+    unverified(h);
+    h.churn.due = [rec({ accountPk: 'u', state: 'unfollow_queued' })];
+    await h.engine.stepOnce();
+    h.churn.outcome = 'ok';
+    (h.churn as { lastActionOutcome?: () => ChurnActionOutcome }).lastActionOutcome = () => ({ status: 'ok' });
+    await h.engine.stepOnce();
+    expect(pacing.noteOutcome('unfollow', true, h.clock.now())).toBe(1);
+  });
+});
+
+describe('Engine — lastActionAt survives a relaunch (spec §15.3)', () => {
+  test("before this run acts, the status shows the store's last settled write", async () => {
+    const h = makeHarness();
+    expect(h.engine.status().lastActionAt).toBeNull();
+    const intent = h.store.beginEffectIntent({ accountPk: 'a', username: 'a', action: 'follow', channel: 'growth', at: T0 - HOUR });
+    h.store.markEffectDispatched(intent.id, T0 - HOUR);
+    h.store.settleEffectIntent(intent.id, { at: T0 - HOUR, result: 'ok', ledger: 'growth' });
+    expect(h.engine.status().lastActionAt).toBe(T0 - HOUR);
+    h.churn.due = [rec({ accountPk: 'b' })];
+    await h.engine.stepOnce();
+    expect(h.engine.status().lastActionAt).toBe(T0);
   });
 });

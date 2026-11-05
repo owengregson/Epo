@@ -1,0 +1,69 @@
+/*
+ * The dev gallery's own chrome (`?gallery=1`) — the scenario/surface rail that
+ * replaces the stage pane. Deliberately minimal: everything to the LEFT of it
+ * is the real console drawing on the real tokens, and this file must never
+ * influence it. Nothing here is reachable without the query flag.
+ *
+ * The direction boards bring their own sheets; every rule targets board-only
+ * classes (`db-*`, `dx-*`), so the app's own markup never matches them.
+ */
+
+@import "../gallery/direction/board.css";
+@import "../gallery/direction/sidebar.css";
+@import "../gallery/direction/stage.css";
+@import "../gallery/direction/launch.css";
+
+.gallery-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  height: 100%;
+  overflow: auto;
+  padding: var(--sp-4);
+  background: var(--bg);
+}
+
+.gallery-rail__h {
+  margin-top: var(--sp-3);
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--faint);
+}
+
+.gallery-rail__h:first-child {
+  margin-top: 0;
+}
+
+.gallery-rail__note {
+  margin-top: auto;
+  padding-top: var(--sp-4);
+  max-width: 34ch;
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.gallery-rail__note code {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+/* The gallery's view stage stands in for the console's .stage (shell.css): an
+   absolutely placed view fills it, never the whole column over the masthead. */
+.gallery .viewstage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gallery-rail[hidden] {
+  display: none;
+}
+.gallery-show {
+  position: fixed;
+  z-index: 100;
+  bottom: var(--sp-4);
+  right: var(--sp-4);
+}

@@ -1,0 +1,14 @@
+/*
+ * The one bundled typeface (ADR 0405): Inter Variable, Latin subset, SIL OFL 1.1
+ * (src/renderer/fonts/OFL.txt). First in the cascade; esbuild emits the woff2 beside
+ * index.css ('.woff2': 'file') and the CSP's font-src 'self' allows it. `block`
+ * keeps text from painting in a fallback face and reflowing; the splash covers
+ * the wait, and `document.fonts.ready` is a reveal criterion.
+ */
+@font-face {
+  font-family: "Inter";
+  src: url("../fonts/InterVariable-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}

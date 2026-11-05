@@ -1,0 +1,346 @@
+{
+  "measuredAt": "2026-09-21T20:37:09.122Z",
+  "passed": true,
+  "bundleSha256": "237bc7ec3643474bee06a509ffff48b80514b52d2967a98996acce61c52178d2",
+  "runtime": {
+    "electron": "44.1.1",
+    "chrome": "152.0.7977.65",
+    "node": "24.19.0",
+    "platform": "darwin",
+    "osRelease": "25.3.0",
+    "arch": "arm64"
+  },
+  "isolation": {
+    "temporaryProfile": true,
+    "network": "loopback only",
+    "productionTabAndDriver": true
+  },
+  "configuration": {
+    "only": "",
+    "soakMs": 330000,
+    "conceal": "native",
+    "refreshThrottling": false,
+    "renderRefresh": "none",
+    "frameRateLimitDisabled": true
+  },
+  "identity": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.65 Safari/537.36",
+    "platform": "MacIntel",
+    "languages": [
+      "en-US",
+      "zh-Hans-US"
+    ],
+    "webdriver": false,
+    "userAgentData": {
+      "brands": [
+        {
+          "brand": "Not?A_Brand",
+          "version": "24"
+        },
+        {
+          "brand": "Chromium",
+          "version": "152"
+        }
+      ],
+      "mobile": false,
+      "platform": "macOS"
+    },
+    "highEntropy": {
+      "architecture": "arm",
+      "bitness": "64",
+      "brands": [
+        {
+          "brand": "Not?A_Brand",
+          "version": "24"
+        },
+        {
+          "brand": "Chromium",
+          "version": "152"
+        }
+      ],
+      "fullVersionList": [
+        {
+          "brand": "Not?A_Brand",
+          "version": "24.0.0.0"
+        },
+        {
+          "brand": "Chromium",
+          "version": "152.0.7977.65"
+        }
+      ],
+      "mobile": false,
+      "platform": "macOS",
+      "platformVersion": "26.3.0"
+    },
+    "headers": {
+      "host": "127.0.0.1:64417",
+      "connection": "keep-alive",
+      "sec-ch-ua-platform": "\"macOS\"",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.65 Safari/537.36",
+      "sec-ch-ua": "\"Not?A_Brand\";v=\"24\", \"Chromium\";v=\"152\"",
+      "sec-ch-ua-mobile": "?0",
+      "accept": "*/*",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-dest": "empty",
+      "referer": "http://127.0.0.1:64417/",
+      "accept-encoding": "gzip, deflate, br, zstd",
+      "accept-language": "en-US,zh-Hans-US;q=0.9"
+    }
+  },
+  "clickGuards": {
+    "originalTargetAccepted": true,
+    "samePositionReplacementRejected": true,
+    "coveredTargetRejected": true
+  },
+  "results": [
+    {
+      "name": "foreground",
+      "passed": true,
+      "elapsedMs": 7400,
+      "window": {
+        "visible": true,
+        "minimized": false,
+        "focused": true,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 450,
+      "timerTicks": 296,
+      "maximumRendererTimerGapMs": 35.69999998807907,
+      "maximumMainTimerGapMs": 36.821750000000065,
+      "longestInputDispatchMs": 36.86566599999969,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 223,
+      "trustedPointerMoves": 223,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 387
+    },
+    {
+      "name": "occluded-unfocused",
+      "passed": true,
+      "elapsedMs": 7138,
+      "window": {
+        "visible": true,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 440,
+      "timerTicks": 285,
+      "maximumRendererTimerGapMs": 35.69999998807907,
+      "maximumMainTimerGapMs": 29.16925000000083,
+      "longestInputDispatchMs": 37.230625000000146,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 222,
+      "trustedPointerMoves": 222,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 5,
+      "scrollDelta": 400
+    },
+    {
+      "name": "minimized",
+      "passed": true,
+      "elapsedMs": 8203,
+      "window": {
+        "visible": false,
+        "minimized": true,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 492,
+      "timerTicks": 328,
+      "maximumRendererTimerGapMs": 37.20000000298023,
+      "maximumMainTimerGapMs": 30.112709000000905,
+      "longestInputDispatchMs": 37.61595800000214,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 254,
+      "trustedPointerMoves": 254,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 394
+    },
+    {
+      "name": "window-hidden",
+      "passed": true,
+      "elapsedMs": 7364,
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 446,
+      "timerTicks": 295,
+      "maximumRendererTimerGapMs": 37.29999999701977,
+      "maximumMainTimerGapMs": 27.92804099999921,
+      "longestInputDispatchMs": 37.27216700000281,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 255,
+      "trustedPointerMoves": 255,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 5,
+      "scrollDelta": 407
+    },
+    {
+      "name": "app-hidden",
+      "passed": true,
+      "elapsedMs": 7736,
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": true
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 476,
+      "timerTicks": 310,
+      "maximumRendererTimerGapMs": 38.900000005960464,
+      "maximumMainTimerGapMs": 27.982916999993904,
+      "longestInputDispatchMs": 37.62916699999914,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 241,
+      "trustedPointerMoves": 241,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 396
+    },
+    {
+      "name": "stage-hidden",
+      "passed": true,
+      "elapsedMs": 7751,
+      "window": {
+        "visible": true,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 468,
+      "timerTicks": 310,
+      "maximumRendererTimerGapMs": 38.900000005960464,
+      "maximumMainTimerGapMs": 28.067166999993788,
+      "longestInputDispatchMs": 36.20112499999959,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 226,
+      "trustedPointerMoves": 226,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 5,
+      "scrollDelta": 397
+    },
+    {
+      "name": "hidden-after-navigation",
+      "passed": true,
+      "elapsedMs": 8029,
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 486,
+      "timerTicks": 321,
+      "maximumRendererTimerGapMs": 39.70000000298023,
+      "maximumMainTimerGapMs": 32.31058299999859,
+      "longestInputDispatchMs": 37.0625,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 304,
+      "trustedPointerMoves": 304,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 411
+    },
+    {
+      "name": "hidden-after-recovery",
+      "passed": true,
+      "elapsedMs": 8349,
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 502,
+      "timerTicks": 334,
+      "maximumRendererTimerGapMs": 42.599999994039536,
+      "maximumMainTimerGapMs": 27.905417000001762,
+      "longestInputDispatchMs": 36.433499999999185,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 261,
+      "trustedPointerMoves": 261,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 402
+    },
+    {
+      "name": "hidden-long-soak",
+      "passed": true,
+      "elapsedMs": 333404,
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 18947,
+      "timerTicks": 13336,
+      "maximumRendererTimerGapMs": 42.599999994039536,
+      "maximumMainTimerGapMs": 32.12850000002072,
+      "longestInputDispatchMs": 36.223540999999386,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 218,
+      "trustedPointerMoves": 218,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 407
+    }
+  ],
+  "unhealthy": [],
+  "limitations": [
+    "No forced OS sleep, lid close, display-off, network outage, Windows or Linux measurement.",
+    "Local fixture verifies page progress and input transport; it does not validate Instagram behavior or detection."
+  ]
+}

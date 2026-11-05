@@ -1,5 +1,4 @@
-/** @jsx h */
-import { type ComponentChildren, h } from 'preact';
+import { type ComponentChildren, type JSX } from 'preact';
 
 export interface StatProps {
   /** Uppercase micro-label. */
@@ -13,7 +12,7 @@ export interface StatProps {
 }
 
 /** A boxed inset statistic cell (`.stat`). */
-export function Stat({ label, children, sub, small }: StatProps): h.JSX.Element {
+export function Stat({ label, children, sub, small }: StatProps): JSX.Element {
   return (
     <div class="stat">
       <div class="k">{label}</div>

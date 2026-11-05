@@ -1,21 +1,18 @@
-/** @jsx h */
-import { type ComponentChildren, h } from 'preact';
-import { Icon } from './Icon';
+import { type ComponentChildren, type JSX } from 'preact';
+import { Icon } from '@/renderer/ui/Icon';
 
 export interface CardProps {
   /** Elevated variant (brighter surface + stronger shadow). */
   raised?: boolean;
-  /** Entrance-stagger index; sets the `--i` custom property the stagger reads. */
-  index?: number;
   class?: string;
   children: ComponentChildren;
 }
 
 /** A console card surface. Compose with {@link CardHeader} / {@link CardBody}. */
-export function Card({ raised, index, class: cls, children }: CardProps): h.JSX.Element {
+export function Card({ raised, class: cls, children }: CardProps): JSX.Element {
   const classes = ['card', raised ? 'raised' : null, cls || null].filter(Boolean).join(' ');
   return (
-    <div class={classes} style={index != null ? `--i:${index}` : undefined}>
+    <div class={classes}>
       {children}
     </div>
   );
@@ -34,7 +31,7 @@ export interface CardHeaderProps {
 }
 
 /** A card's eyebrow header: icon + label, with optional right-aligned aux text. */
-export function CardHeader({ icon, brand, aux, controls, children }: CardHeaderProps): h.JSX.Element {
+export function CardHeader({ icon, brand, aux, controls, children }: CardHeaderProps): JSX.Element {
   return (
     <div class="card-h">
       {icon ? <Icon name={icon} brand={brand} /> : null}
@@ -52,6 +49,6 @@ export interface CardBodyProps {
 }
 
 /** A card's padded body region. */
-export function CardBody({ class: cls, children }: CardBodyProps): h.JSX.Element {
+export function CardBody({ class: cls, children }: CardBodyProps): JSX.Element {
   return <div class={cls ? `card-b ${cls}` : 'card-b'}>{children}</div>;
 }

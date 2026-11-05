@@ -1,21 +1,20 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { SCORER_DEFAULTS } from '@/engine/scorer';
+import { effectiveFromV1 } from '@/settings/effective';
 import {
   DEFAULT_SETTINGS,
-  type Settings,
   loadSettings,
+  type Settings,
   saveSettings,
-  toScorerConfig,
-  toChurnConfig,
-  toRateGovernorConfig,
-  toFollowbackConfig,
-  toScannerConfig,
   toChainConfig,
+  toChurnConfig,
+  toFollowbackConfig,
   toPruneConfig,
-  toPacingConfig,
+  toRateGovernorConfig,
+  toScannerConfig,
+  toScorerConfig,
 } from '@/settings/settings';
 
 let dir: string;
@@ -29,30 +28,6 @@ afterEach(() => {
 });
 
 describe('organic pacing settings', () => {
-  test('toPacingConfig maps display units to the planner config', () => {
-    const s: Settings = {
-      ...DEFAULT_SETTINGS,
-      dailyOperatingRate: 30,
-      dailyVolumeVariancePct: 20,
-      restDayChancePct: 10,
-      sessionsPerDayMin: 2,
-      sessionsPerDayMax: 5,
-      gapMedianSeconds: 100,
-      gapFloorSeconds: 50,
-      hourlyVelocityCap: 18,
-    };
-    const c = toPacingConfig(s);
-    expect(c.dailyMeanActions).toBe(30);
-    expect(c.dailyHardCeiling).toBe(s.dailyHardCeiling);
-    expect(c.dayVolumeSigma).toBeCloseTo(0.2, 6);
-    expect(c.restDayProbability).toBeCloseTo(0.1, 6);
-    expect(c.sessionsPerDayMin).toBe(2);
-    expect(c.sessionsPerDayMax).toBe(5);
-    expect(c.gapMedianMs).toBe(100_000);
-    expect(c.gapFloorMs).toBe(50_000);
-    expect(c.maxActionsPerRollingHour).toBe(18);
-  });
-
   test('sanitize clamps and orders the new knobs, and degrades a bad pacingModel to the default', () => {
     const file = path.join(dir, 's.json');
     saveSettings(file, {
@@ -163,7 +138,7 @@ describe('persistence', () => {
 
 describe('projections from DEFAULT_SETTINGS', () => {
   test('toScorerConfig carries ratio + size bounds and the non-tunable bandEdgeScore', () => {
-    expect(toScorerConfig(DEFAULT_SETTINGS)).toEqual({
+    expect(toScorerConfig(effectiveFromV1(DEFAULT_SETTINGS))).toEqual({
       bandLow: 0.9,
       bandHigh: 1.5,
       peakLow: 1.0,
@@ -179,25 +154,20 @@ describe('projections from DEFAULT_SETTINGS', () => {
     });
   });
 
-  test('toChurnConfig converts days → ms (4 days → 345600000 ms); the hold belongs to followback', () => {
-    expect(toChurnConfig(DEFAULT_SETTINGS)).toEqual({
+  test('toChurnConfig converts days → ms (4 days → 345600000 ms); a click re-hold earns the follow-back hold', () => {
+    // No bio list here: protection is the predicate's, on every path (spec §7); the intent's mutuals choice rides.
+    expect(toChurnConfig({ ...DEFAULT_SETTINGS, rotateMutuals: true })).toEqual({
       maxWaitForFollowbackMs: 345_600_000,
+      holdAfterFollowbackMs: toFollowbackConfig(DEFAULT_SETTINGS).holdAfterFollowbackMs,
       maxRetries: 3,
+      rotateMutuals: true,
     });
-    expect(toChurnConfig(DEFAULT_SETTINGS).maxWaitForFollowbackMs).toBe(4 * 24 * 3600 * 1000);
+    expect(toChurnConfig({ ...DEFAULT_SETTINGS, rotateMutuals: false }).rotateMutuals).toBe(false);
+    expect(toChurnConfig({ ...DEFAULT_SETTINGS, rotateMutuals: true }).maxWaitForFollowbackMs).toBe(4 * 24 * 3600 * 1000);
   });
 
-  test('toRateGovernorConfig converts minutes → ms (3 min → 180000 ms) and carries caps', () => {
-    expect(toRateGovernorConfig(DEFAULT_SETTINGS)).toEqual({
-      dailyHardCeiling: 65,
-      dailyOperatingRate: 50,
-      minDelayMs: 180_000,
-      maxDelayMs: 420_000,
-      jitterPercent: 30,
-      activeHoursStart: 8,
-      activeHoursEnd: 22,
-    });
-    expect(toRateGovernorConfig(DEFAULT_SETTINGS).minDelayMs).toBe(3 * 60_000);
+  test('toRateGovernorConfig carries the hard ceiling only (the plan paces, spec §5.13 S2)', () => {
+    expect(toRateGovernorConfig(DEFAULT_SETTINGS)).toEqual({ dailyHardCeiling: 65 });
   });
 
   test('toFollowbackConfig converts hold days → ms and carries auto-accept', () => {
@@ -219,62 +189,9 @@ describe('projections from DEFAULT_SETTINGS', () => {
     expect(toChainConfig(DEFAULT_SETTINGS)).toEqual({ minFollowBackRate: 0.15, minPoolSize: 300 });
   });
 
-  test('toPruneConfig carries the prune cap/whitelist and shares the delay knobs (minutes → ms)', () => {
-    expect(toPruneConfig(DEFAULT_SETTINGS)).toEqual({
-      dailyLimit: 50,
-      whitelist: [],
-      bioFilterWords: [],
-      minDelayMs: 180_000,
-      maxDelayMs: 420_000,
-      jitterPercent: 30,
-      scanMinMs: 1_000,
-      scanMaxMs: 3_000,
-    });
-    expect(
-      toPruneConfig({
-        ...DEFAULT_SETTINGS,
-        pruneWhitelist: ['Keep_Me'],
-        pruneDailyLimit: 5,
-        pruneBioFilterWords: ['dog mom'],
-      }),
-    ).toEqual({
-      dailyLimit: 5,
-      whitelist: ['Keep_Me'],
-      bioFilterWords: ['dog mom'],
-      minDelayMs: 180_000,
-      maxDelayMs: 420_000,
-      jitterPercent: 30,
-      scanMinMs: 1_000,
-      scanMaxMs: 3_000,
-    });
-  });
-
-  test('toPruneConfig maps the scan pacing knobs (seconds → ms) and clamps max ≥ min ≥ 0', () => {
-    const custom = toPruneConfig({
-      ...DEFAULT_SETTINGS,
-      pruneScanMinSeconds: 3,
-      pruneScanMaxSeconds: 8,
-    });
-    expect(custom.scanMinMs).toBe(3_000);
-    expect(custom.scanMaxMs).toBe(8_000);
-
-    // An inverted pair clamps max up to min (never a max below the min).
-    const inverted = toPruneConfig({
-      ...DEFAULT_SETTINGS,
-      pruneScanMinSeconds: 10,
-      pruneScanMaxSeconds: 3,
-    });
-    expect(inverted.scanMinMs).toBe(10_000);
-    expect(inverted.scanMaxMs).toBe(10_000);
-
-    // A negative min clamps to 0 (a wait can never be negative).
-    const negative = toPruneConfig({
-      ...DEFAULT_SETTINGS,
-      pruneScanMinSeconds: -4,
-      pruneScanMaxSeconds: 2,
-    });
-    expect(negative.scanMinMs).toBe(0);
-    expect(negative.scanMaxMs).toBe(2_000);
+  test('toPruneConfig reads the shared ceiling; scan pacing belongs to the plan tempo', () => {
+    expect(toPruneConfig(DEFAULT_SETTINGS)).toEqual({ dailyLimit: DEFAULT_SETTINGS.dailyHardCeiling });
+    expect(toPruneConfig({ dailyHardCeiling: 5 })).toEqual({ dailyLimit: 5 });
   });
 
   test('prune knobs round-trip through save → load and merge over defaults', () => {
@@ -293,8 +210,7 @@ describe('projections from DEFAULT_SETTINGS', () => {
       maxWaitForFollowbackDays: 1,
       minDelayMinutes: 5,
     };
-    expect(toChurnConfig(custom).maxWaitForFollowbackMs).toBe(24 * 3600 * 1000);
-    expect(toRateGovernorConfig(custom).minDelayMs).toBe(5 * 60_000);
+    expect(toChurnConfig({ ...custom, rotateMutuals: true }).maxWaitForFollowbackMs).toBe(24 * 3600 * 1000);
   });
 });
 

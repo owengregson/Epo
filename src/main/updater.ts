@@ -13,15 +13,18 @@
  *   the installer before quitting, immune to the app's
  *   `before-quit → preventDefault → app.exit(0)` shutdown dance.
  *   `autoInstallOnAppQuit` stays on as a bonus, not the contract.
- * - Benign feed outcomes (private repo 404, zero releases, offline) collapse
- *   to a quiet `idle`; only a real download failure surfaces as `error`.
+ * - Benign feed outcomes (private repo 404, zero releases, offline) read as a
+ *   quiet `unavailable`, never as "up to date"; a real failure surfaces as `error`.
+ * - It starts `unchecked`, and every finished check stamps `checkedAt` (spec §13).
  */
 
 import { app, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
-import { initialStatus, isBenignFeedError, resolveUpdateMode } from '@/main/update-core';
+import {
+  initialStatus, isBenignFeedError, nextUpdateStatus, resolveAppVersion, resolveUpdateMode, type UpdateEvent,
+} from '@/main/update-core';
+import type { UpdateStatus } from '@/shared/update-status';
 import { UPDATER } from '@/timing/config';
-import type { UpdateStatus } from '@/types';
 import * as logger from '@/utils/logger';
 
 const LATEST_RELEASE_URL = 'https://github.com/owengregson/Epo/releases/latest';
@@ -41,45 +44,38 @@ export class EpoUpdater {
     const mode = resolveUpdateMode({
       platform: process.platform,
       isPackaged: app.isPackaged,
+      defaultApp: process.defaultApp,
       portableDir: process.env.PORTABLE_EXECUTABLE_DIR,
     });
-    this.status = initialStatus(mode, app.getVersion());
+    this.status = initialStatus(mode, resolveAppVersion(app.isPackaged, app.getVersion(), process.defaultApp));
     if (mode === 'off') return;
 
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.logger = null; // our structured logger below, not its console one
 
-    autoUpdater.on('checking-for-update', () => this.set({ state: 'checking', error: null }));
-    autoUpdater.on('update-not-available', () =>
-      this.set({ state: 'idle', version: null, percent: null, error: null }),
-    );
+    autoUpdater.on('checking-for-update', () => this.apply({ kind: 'checking' }));
+    autoUpdater.on('update-not-available', () => this.apply({ kind: 'none' }));
     autoUpdater.on('update-available', (info) => {
       logger.info('updater: update available', { version: info.version, mode });
-      this.set({ state: 'available', version: info.version, error: null });
+      this.apply({ kind: 'available', version: info.version });
       if (mode === 'full') {
         // NSIS installs only — notify mode never starts a download it cannot
         // apply. Failures surface through the 'error' listener below.
         autoUpdater.downloadUpdate().catch(() => {});
       }
     });
-    autoUpdater.on('download-progress', (p) =>
-      this.set({ state: 'downloading', percent: Math.round(p.percent) }),
-    );
+    autoUpdater.on('download-progress', (p) => this.apply({ kind: 'progress', percent: p.percent }));
     autoUpdater.on('update-downloaded', (info) => {
       logger.info('updater: downloaded, installs on restart', { version: info.version });
-      this.set({ state: 'ready', version: info.version, percent: 100, error: null });
+      this.apply({ kind: 'downloaded', version: info.version });
     });
     autoUpdater.on('error', (err) => {
       const message = err instanceof Error ? err.message : String(err);
-      if (this.status.state !== 'downloading' && isBenignFeedError(message)) {
-        // Private repo today, no releases yet, or offline — quiet, not red.
-        logger.info('updater: no update feed', { message });
-        this.set({ state: 'idle', error: null });
-        return;
-      }
-      logger.warn('updater: failed', { message });
-      this.set({ state: 'error', percent: null, error: message });
+      // Private repo today, no releases yet, or offline: quiet and unavailable, not red.
+      if (this.status.state !== 'downloading' && isBenignFeedError(message)) logger.info('updater: no update feed', { message });
+      else logger.warn('updater: failed', { message });
+      this.apply({ kind: 'error', message });
     });
   }
 
@@ -126,8 +122,8 @@ export class EpoUpdater {
     autoUpdater.removeAllListeners();
   }
 
-  private set(partial: Partial<UpdateStatus>): void {
-    this.status = { ...this.status, ...partial };
+  private apply(event: UpdateEvent): void {
+    this.status = nextUpdateStatus(this.status, event, Date.now());
     this.deps.onStatus(this.status);
   }
 }

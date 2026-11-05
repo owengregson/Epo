@@ -3,17 +3,17 @@
  *
  * Every engine wait goes through `wait(key, policy, { signal })`: the wait is
  * REGISTERED (key, startedAt, deadline) while pending, LINKED to the caller's
- * abort signal (replacing the per-engine `interruptibleSleep` copies), and
- * OBSERVABLE — `pending()` / `nextDeadline()` / `onChange` give the main process
- * real deadlines to push to the renderer, so the countdown shows the actual
- * next-action time instead of estimating.
+ * abort signal, and OBSERVABLE — `pending()` / `nextDeadline()` give the main
+ * process real deadlines to push to the renderer, so the countdown shows the
+ * actual next-action time instead of estimating.
  *
- * Waits resolve `{ completed: false }` on abort/cancel — they NEVER reject (E1).
+ * Waits resolve `{ completed: false }` on abort/cancel — they NEVER reject.
  * Registration happens synchronously (before the first internal await), so a
  * caller may start a wait, then read its deadline, then await it.
  */
 
 import type { Clock } from '../governors/clock';
+import { launchStream } from '../utils/entropy';
 import {
   type DelayPolicy,
   type Rng,
@@ -25,7 +25,6 @@ import {
 /** One registered in-flight wait — why we're waiting and until when. */
 export interface PendingDelay {
   key: string;
-  label: string | undefined;
   startedAt: number;
   deadline: number;
   ms: number;
@@ -38,8 +37,6 @@ export interface WaitResult {
 export interface WaitOpts {
   /** External abort (an engine's run-generation token): aborting resolves the wait. */
   signal?: AbortSignal;
-  /** Optional readable annotation surfaced through `pending()`. */
-  label?: string;
 }
 
 export interface DelayManagerDeps {
@@ -60,11 +57,10 @@ export class DelayManager {
   private readonly rng: Rng;
   private readonly sleepFn: SleepFn;
   private readonly waits = new Map<string, ActiveWait>();
-  private readonly listeners = new Set<(pending: PendingDelay[]) => void>();
 
   constructor(deps: DelayManagerDeps) {
     this.clock = deps.clock;
-    this.rng = deps.rng ?? Math.random;
+    this.rng = deps.rng ?? launchStream('timing/delay-manager');
     this.sleepFn = deps.sleep ?? realSleep;
   }
 
@@ -91,9 +87,8 @@ export class DelayManager {
     }
 
     const startedAt = this.clock.now();
-    const entry: PendingDelay = { key, label: opts.label, startedAt, deadline: startedAt + ms, ms };
+    const entry: PendingDelay = { key, startedAt, deadline: startedAt + ms, ms };
     this.waits.set(key, { controller, entry });
-    this.emitChange();
 
     try {
       await this.sleepFn(ms, controller.signal);
@@ -103,7 +98,6 @@ export class DelayManager {
       // not delete its successor's entry (mirrors the engines' R2 guard).
       if (this.waits.get(key)?.controller === controller) {
         this.waits.delete(key);
-        this.emitChange();
       }
       external?.removeEventListener('abort', onExternalAbort);
     }
@@ -138,21 +132,8 @@ export class DelayManager {
     return this.waits.get(key)?.entry.deadline ?? null;
   }
 
-  /** Subscribe to pending-set changes; returns the unsubscriber. */
-  onChange(listener: (pending: PendingDelay[]) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  /** Cancel everything and drop all listeners. Idempotent. */
+  /** Cancel everything. Idempotent. */
   dispose(): void {
     this.cancelAll();
-    this.listeners.clear();
-  }
-
-  private emitChange(): void {
-    if (this.listeners.size === 0) return;
-    const snapshot = this.pending();
-    for (const listener of this.listeners) listener(snapshot);
   }
 }

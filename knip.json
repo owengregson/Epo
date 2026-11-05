@@ -1,0 +1,41 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/main/main.ts",
+    "src/main/preload.ts",
+    "src/capture/capture-main.ts",
+    "src/livetest/livetest-main.ts",
+    "src/inspect/inspect-main.ts",
+    "src/probe/probe-main.ts",
+    "src/renderer/index.tsx",
+    "src/adapter/page/index.ts",
+    "src/tools/readme/render-live-charts.ts",
+    "tests/**/*.test.{ts,tsx}",
+    "tests/kit/*.ts",
+    "esbuild.config.mjs",
+    "esbuild.page.mjs",
+    "jest.config.js",
+    ".dependency-cruiser.mjs",
+    "scripts/*.{mjs,cjs}"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}", "scripts/*.{mjs,cjs}"],
+  "ignore": ["**/*.generated.ts", "src/renderer/styles/**"],
+  "ignoreDependencies": [
+    "electron-updater",
+    "@electron/rebuild",
+    "@swc/core",
+    "@types/jest",
+    "@types/better-sqlite3",
+    "@types/node"
+  ],
+  "ignoreBinaries": [
+    "electron-rebuild",
+    "electron-builder",
+    "biome",
+    "depcruise",
+    "ffmpeg",
+    "sips",
+    "iconutil"
+  ],
+  "jest": { "config": "jest.config.js" }
+}

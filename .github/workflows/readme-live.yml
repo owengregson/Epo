@@ -1,13 +1,9 @@
-# The README's live panels. Every night this renders the two chart pairs the
-# README embeds from the `readme-live` branch:
+# The README's pace chart. Every night this renders the light/dark pair
+# (charts/pace.svg + pace-dark.svg) from one real day drawn by the kernel's
+# day planner on the default settings.
 #
-#   charts/growth.svg + growth-dark.svg — 30 days simulated by the app's own
-#     growth model (src/renderer/charts/growth-model.ts) on the default settings
-#   charts/pace.svg + pace-dark.svg — one real day planned by the shipping
-#     SessionPlanner (src/timing) on the default settings
-#
-# The renderer (src/readme/render-live-charts.ts) imports the real app code —
-# the honesty of the panels is the point; the data is never faked. The branch
+# The renderer (src/tools/readme/render-live-charts.ts) imports the real app code —
+# the honesty of the chart is the point; the data is never faked. The branch
 # stays a single orphan commit (force-pushed) so nightly art never bloats
 # history. raw.githubusercontent.com caches ~5 min, plenty for a nightly
 # cadence. Electron's binary and native builds are skipped: the renderer is
@@ -41,7 +37,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '25.x'
+          node-version-file: .node-version
           cache: npm
 
       # No lifecycle scripts: the renderer needs esbuild (platform binary ships
@@ -54,7 +50,7 @@ jobs:
 
       - name: Render the four chart SVGs
         run: |
-          npx esbuild src/readme/render-live-charts.ts --bundle --platform=node \
+          npx esbuild src/tools/readme/render-live-charts.ts --bundle --platform=node \
             --outfile=dist/readme/render-live-charts.cjs
           node dist/readme/render-live-charts.cjs out/charts
 

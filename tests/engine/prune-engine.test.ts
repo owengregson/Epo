@@ -1,218 +1,57 @@
 /**
- * PruneEngine tests (Phase 5 — auto-prune).
+ * PruneEngine tests (auto-prune).
  *
- * Real `:memory:` KnowledgeStore beneath a FakeClock; scripted fakes for every
- * live-edge port (own-following, own-followers, churn actions,
- * sentinel); an injected fake sleep so nothing waits on real timers. Covers the
- * candidate set-diff (whitelist case-insensitive on username AND pk, self
+ * Real `:memory:` KnowledgeStore beneath a FakeClock; the shared engine kit
+ * supplies every live-edge port fake and the prune harness. Covers the
+ * candidate set-diff (self
  * excluded), the prune-own daily cap, the dry-run path (simulated, no
  * reconcile), the ok path (reconcile + ledger), blocked (untouched + park), the
  * sentinel halt, and instant interruptibility via `stop()`.
  */
-import { KnowledgeStore } from '@/store/knowledge-store';
-import { FakeClock } from '@/governors/clock';
+
+import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
+import type { SleepFn } from '@/engine/engine';
 import {
-  PruneEngine,
   PRUNE_CONSECUTIVE_FAIL_HALT,
-  PRUNE_PARK_MS,
   PRUNE_PROGRESS_EMIT_MS,
-  PRUNE_SCAN_FRESH_MS,
-  pruneDue,
-  type PruneConfig,
-  type PruneEngineDeps,
+  PruneEngine,
   type PruneScanFetch,
   type PruneScanOpts,
   type PruneStatus,
 } from '@/engine/prune-engine';
-
-const DAY = 24 * 3600 * 1000;
-
-describe('pruneDue (scheduled auto-run predicate)', () => {
-  test('disabled schedule (0 or negative) is never due', () => {
-    expect(pruneDue(0, null, 1_000)).toBe(false);
-    expect(pruneDue(0, 0, Number.MAX_SAFE_INTEGER)).toBe(false);
-    expect(pruneDue(-3, null, 1_000)).toBe(false);
-  });
-
-  test('due immediately when it has never run and a schedule is set', () => {
-    expect(pruneDue(7, null, 1_000)).toBe(true);
-  });
-
-  test('due only once the cadence has elapsed since the last run', () => {
-    const last = 10 * DAY;
-    expect(pruneDue(7, last, last + 6 * DAY)).toBe(false);
-    expect(pruneDue(7, last, last + 7 * DAY)).toBe(true);
-    expect(pruneDue(7, last, last + 8 * DAY)).toBe(true);
-  });
-
-  test('a non-finite cadence is never due (defensive)', () => {
-    expect(pruneDue(Number.NaN, null, 1_000)).toBe(false);
-    expect(pruneDue(Number.POSITIVE_INFINITY, 0, 10 * DAY)).toBe(false);
-  });
-});
-import type { SleepFn } from '@/engine/engine';
-import type { ChurnActionOutcome } from '@/engine/churn-scheduler';
-import type { SentinelStatus } from '@/adapter/sentinel';
-import { NOISE } from '@/timing/config';
-import { cyclePlan } from '@/timing/cycle-plan';
-import { setLevel } from '@/utils/logger';
-
-beforeAll(() => setLevel('error'));
-
-const T0 = Date.parse('2026-08-12T12:00:00'); // local noon
-const OWN_PK = 'ME';
-
-// --- Fakes -------------------------------------------------------------------------
-
-class FakeOwnFollowing {
-  calls = 0;
-  lastOpts: PruneScanOpts | undefined;
-  constructor(private readonly pks: string[]) {}
-  async fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch> {
-    this.calls += 1;
-    this.lastOpts = opts;
-    return { pks: [...this.pks], complete: true, reason: 'no-more-pages' };
-  }
-}
-
-/** The prune own-followers scan port: one whole-list scrape (mirrors following). */
-class FakeOwnFollowers {
-  calls = 0;
-  lastOpts: PruneScanOpts | undefined;
-  constructor(private readonly pks: string[]) {}
-  async fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch> {
-    this.calls += 1;
-    this.lastOpts = opts;
-    return { pks: [...this.pks], complete: true, reason: 'no-more-pages' };
-  }
-}
-
-/** Scripted churn actions: per-username outcomes, defaulting to a verified ok. */
-class FakeChurnActions {
-  unfollows: string[] = [];
-  outcomes = new Map<string, ChurnActionOutcome>();
-  async unfollow(username: string): Promise<ChurnActionOutcome> {
-    this.unfollows.push(username);
-    return this.outcomes.get(username) ?? { status: 'ok' };
-  }
-}
-
-class FakeSentinel {
-  checks = 0;
-  private readonly queue: SentinelStatus[];
-  constructor(statuses: SentinelStatus[] = []) {
-    this.queue = [...statuses];
-  }
-  async check(): Promise<SentinelStatus> {
-    this.checks += 1;
-    return this.queue.shift() ?? 'ok';
-  }
-}
-
-// --- Harness -----------------------------------------------------------------------
-
-const CFG: PruneConfig = {
-  dailyLimit: 50,
-  whitelist: [],
-  bioFilterWords: [],
-  minDelayMs: 60_000,
-  maxDelayMs: 60_000, // min = max → deterministic base delay
-  jitterPercent: 0,
-  scanMinMs: 1_000,
-  scanMaxMs: 3_000,
-};
-
-interface Harness {
-  engine: PruneEngine;
-  store: KnowledgeStore;
-  clock: FakeClock;
-  ownFollowing: FakeOwnFollowing;
-  ownFollowers: FakeOwnFollowers;
-  churn: FakeChurnActions;
-  sentinel: FakeSentinel;
-  sleeps: number[];
-  statuses: PruneStatus[];
-  completedAt: number[];
-}
-
-const build = (over: {
-  following: string[];
-  followers: string[];
-  cfg?: Partial<PruneConfig>;
-  sentinel?: FakeSentinel;
-  sleep?: SleepFn;
-  refreshOwnStats?: () => Promise<void>;
-  cycleStartMs?: (now: number) => number;
-  enrichProfile?: (username: string) => Promise<number>;
-}): Harness => {
-  const store = new KnowledgeStore(':memory:');
-  store.setOwnPk(OWN_PK);
-  const clock = new FakeClock(T0);
-  const ownFollowing = new FakeOwnFollowing(over.following);
-  const ownFollowers = new FakeOwnFollowers(over.followers);
-  const churn = new FakeChurnActions();
-  const sentinel = over.sentinel ?? new FakeSentinel();
-  const sleeps: number[] = [];
-  const statuses: PruneStatus[] = [];
-  const completedAt: number[] = [];
-
-  // Give every non-self pk a stored username (u<pk>), as the live sources do.
-  for (const pk of over.following) {
-    if (pk === OWN_PK) continue;
-    store.observe({ accountPk: pk, observedAt: T0, source: 'followers-list', fields: { username: `u${pk}` } });
-  }
-
-  const deps: PruneEngineDeps = {
-    store,
-    clock,
-    ownPk: OWN_PK,
-    ownFollowing,
-    ownFollowers,
-    churnActions: churn,
-    sentinel,
-    cfg: { ...CFG, ...over.cfg },
-    sleep:
-      over.sleep ??
-      (async (ms) => {
-        sleeps.push(ms);
-      }),
-    rng: () => 0.5,
-    onStatus: (s) => statuses.push(s),
-    onRunComplete: (at) => completedAt.push(at),
-    refreshOwnStats: over.refreshOwnStats,
-    cycleStartMs: over.cycleStartMs,
-    enrichProfile: over.enrichProfile,
-  };
-  return {
-    engine: new PruneEngine(deps),
-    store,
-    clock,
-    ownFollowing,
-    ownFollowers,
-    churn,
-    sentinel,
-    sleeps,
-    statuses,
-    completedAt,
-  };
-};
+import { FakeClock } from '@/governors/clock';
+import { referenceTempoSource } from '@/kernel/tempo';
+import { NOISE, PRUNE } from '@/timing/config';
+import {
+  makePruneHarness as build,
+  PRUNE_CFG as CFG,
+  FakeListSource,
+  FakePruneActions,
+  FakeSentinel,
+  kitStore,
+  OWN_PK,
+  PRUNE_GAP_MS,
+  T0,
+} from '../kit/engine-harness';
+import { CENSUS_FRESH_MS, fakePrunePlan } from '../kit/harness-plan';
+import { openTestStore } from '../kit/store';
+import { recordingTempo } from '../kit/tempo';
 
 // --- scan() ------------------------------------------------------------------------
 
 describe('PruneEngine.scan', () => {
-  test('scan census is RAW (following − followers − self); whitelist derives the counts', async () => {
+  test('scan census is RAW (following − followers − self); protection derives the counts elsewhere', async () => {
     const h = build({
       following: [OWN_PK, '1', '2', '3', '4'],
       followers: ['2', '9'], // '2' follows back; '9' is a non-followed follower
-      cfg: { whitelist: ['U3', '4'] }, // 'U3' hits username u3 (ci); '4' hits the pk
     });
 
     const result = await h.engine.scan();
 
     expect(result.following).toBe(5);
     expect(result.followers).toBe(2);
-    // The census carries EVERY non-follower (whitelist NOT applied) so a later
-    // whitelist edit can hide or restore rows without a re-scan…
+    // The census carries EVERY non-follower (protection NOT applied) so a later
+    // rule edit can hide or restore rows without a re-scan (prune-protection.test.ts).
     expect(result.candidates).toEqual([
       { pk: '1', username: 'u1' },
       { pk: '3', username: 'u3' },
@@ -225,12 +64,10 @@ describe('PruneEngine.scan', () => {
     expect(h.statuses[0].state).toBe('scanning');
     expect(h.statuses[h.statuses.length - 1].state).toBe('idle');
     expect(h.engine.status().state).toBe('idle');
-    // …while the status counts reflect the ACTIONABLE subset (whitelist applied).
-    expect(h.engine.status().candidates).toBe(1);
-
-    // A run consumes only the actionable subset — whitelisted accounts survive.
+    // No rule configured: every census row is actionable, and a run consumes them all.
+    expect(h.engine.status().candidates).toBe(3);
     await h.engine.run();
-    expect(h.churn.unfollows).toEqual(['u1']);
+    expect(h.churn.unfollows).toEqual(['u1', 'u3', 'u4']);
     h.store.close();
   });
 
@@ -286,7 +123,7 @@ describe('PruneEngine.scan', () => {
     expect(phases).toContainEqual(['following', { following: 20, followers: 30 }]);
   });
 
-  test('a rejecting own-stats refresh degrades to a bar-less scan, never a failed one', async () => {
+  test('a rejecting own-stats refresh preserves relationship evidence and never starts a census', async () => {
     const h = build({
       following: [OWN_PK, '1'],
       followers: ['9'],
@@ -295,38 +132,33 @@ describe('PruneEngine.scan', () => {
       },
     });
 
-    const result = await h.engine.scan();
-
-    expect(result.following).toBe(2);
-    // Every phase-carrying projection has empty (null-halved) estimates — the
-    // scan ran to completion without them, and never surfaced the rejection.
-    const phased = h.statuses.filter((s) => s.scanPhase !== null);
-    expect(phased.length).toBeGreaterThan(0);
-    for (const s of phased) {
-      expect(s.scanEstimates).toEqual({ following: null, followers: null });
-    }
+    h.store.observeEdge('existing', OWN_PK, 'follows', true, T0 - 1);
+    await expect(h.engine.scan()).rejects.toThrow('tab gone');
+    expect(h.ownFollowing.calls).toBe(0);
+    expect(h.ownFollowers.calls).toBe(0);
+    expect(h.store.getEdge('existing', OWN_PK, 'follows')).toMatchObject({ status: 'active', lastConfirmedAt: T0 - 1 });
+    expect(h.store.getPruneCensus()).toBeNull();
     expect(h.engine.status().state).toBe('idle');
   });
 
-  test('scan threads the configured pacing + a live shouldStop into BOTH sources', async () => {
+  test('scan threads a live shouldStop into BOTH sources without overriding plan tempo', async () => {
     const h = build({
       following: [OWN_PK, '1'],
       followers: [],
-      cfg: { scanMinMs: 4_000, scanMaxMs: 9_000 },
     });
 
     await h.engine.scan();
 
     for (const opts of [h.ownFollowing.lastOpts, h.ownFollowers.lastOpts]) {
-      expect(opts?.scrollMinMs).toBe(4_000);
-      expect(opts?.scrollMaxMs).toBe(9_000);
+      expect(opts).not.toHaveProperty('scrollMinMs');
+      expect(opts).not.toHaveProperty('scrollMaxMs');
       expect(opts?.shouldStop?.()).toBe(false); // live, and not aborted
     }
     h.store.close();
   });
 
   test('scan surfaces LIVE mid-scrape counts, throttled to one emission per PRUNE_PROGRESS_EMIT_MS', async () => {
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     store.setOwnPk(OWN_PK);
     const clock = new FakeClock(T0);
     const statuses: PruneStatus[] = [];
@@ -364,7 +196,7 @@ describe('PruneEngine.scan', () => {
       ownPk: OWN_PK,
       ownFollowing: following,
       ownFollowers: followers,
-      churnActions: new FakeChurnActions(),
+      churnActions: new FakePruneActions(),
       sentinel: new FakeSentinel(),
       cfg: CFG,
       sleep: async () => {},
@@ -404,8 +236,8 @@ describe('PruneEngine.scan', () => {
         });
       },
     };
-    const followers = new FakeOwnFollowers(['9']);
-    const store = new KnowledgeStore(':memory:');
+    const followers = new FakeListSource(['9']);
+    const store = openTestStore(':memory:');
     store.setOwnPk(OWN_PK);
     const engine = new PruneEngine({
       store,
@@ -413,7 +245,7 @@ describe('PruneEngine.scan', () => {
       ownPk: OWN_PK,
       ownFollowing: gated,
       ownFollowers: followers,
-      churnActions: new FakeChurnActions(),
+      churnActions: new FakePruneActions(),
       sentinel: new FakeSentinel(),
       cfg: CFG,
       sleep: async () => {},
@@ -456,9 +288,8 @@ describe('PruneEngine.run', () => {
     // Both actions in the prune-own ledger; growth's action ledger untouched.
     expect(h.store.pruneCountSince(0)).toBe(2);
     expect(h.store.actionCountSince(0)).toBe(0);
-    // One inter-action delay per action: 60s base (min = max, jitter 0) scaled
-    // to a third by PRUNE_DELAY_FACTOR → 20s.
-    expect(h.sleeps).toEqual([20_000, 20_000]);
+    // Between unfollows the run waits the deadline each dispatch armed (the shared gap; no prune pace).
+    expect(h.sleeps).toEqual([PRUNE_GAP_MS, PRUNE_GAP_MS]);
     // Completed: done + lastRunAt reported exactly once.
     const status = h.engine.status();
     expect(status.state).toBe('done');
@@ -477,25 +308,25 @@ describe('PruneEngine.run', () => {
 
     await h.engine.run();
 
-    // The mid-wait emission carried the REAL deadline: 60s base ×1/3 = 20s out.
+    // The mid-wait emission carries the deadline the dispatch armed.
     const midWait = h.statuses.find((s) => s.nextActionAt !== null);
     expect(midWait).toBeDefined();
-    expect(midWait!.nextActionAt).toBe(T0 + 20_000);
+    expect(midWait!.nextActionAt).toBe(T0 + PRUNE_GAP_MS);
     expect(h.engine.status().nextActionAt).toBeNull();
     h.store.close();
   });
 
-  test('inter-action delay runs at a THIRD of the paced pace (PRUNE_DELAY_FACTOR)', async () => {
-    const h = build({
-      following: [OWN_PK, '1'],
-      followers: [],
-      cfg: { minDelayMs: 90_000, maxDelayMs: 90_000, jitterPercent: 0 }, // deterministic 90s base
-    });
+  test("a cleanup run's spacing is the deadline its dispatch armed, whatever the plan drew (no pace of its own)", async () => {
+    const h = build({ following: [OWN_PK, '1'], followers: [] });
+    h.churn.unfollow = async (username: string): Promise<ChurnActionOutcome> => {
+      h.churn.unfollows.push(username);
+      h.store.setActionDelayDeadline(h.clock.now() + 90_000);
+      return { status: 'ok' };
+    };
 
     await h.engine.run();
 
-    // 90s base scaled to a third → 30s between unfollows (one action here).
-    expect(h.sleeps).toEqual([30_000]);
+    expect(h.sleeps).toEqual([90_000]);
     h.store.close();
   });
 
@@ -583,6 +414,7 @@ describe('PruneEngine.run', () => {
         u1Blocks -= 1;
         return { status: 'blocked' };
       }
+      h.store.setActionDelayDeadline(h.clock.now() + PRUNE_GAP_MS);
       return { status: 'ok' };
     };
     h.store.observeEdge(OWN_PK, '1', 'follows', true, T0 - 1000);
@@ -591,12 +423,13 @@ describe('PruneEngine.run', () => {
 
     expect(h.churn.unfollows).toEqual(['u1', 'u1', 'u2']); // retried, then moved on
     expect(h.store.pruneCountSince(0)).toBe(2); // both eventually reached the ledger
-    // The brief park (a retry backoff — jittered around PRUNE_PARK_MS, bounded),
-    // then u1's inter-action delay, then u2's (60s base ×1/3 = 20s, exact).
+    // The brief park (a retry backoff jittered around the park.blocked base, bounded),
+    // then the deadline u1's dispatch armed, then u2's.
+    const park = referenceTempoSource().base('park.blocked');
     expect(h.sleeps.length).toBe(3);
-    expect(h.sleeps[0]).toBeGreaterThanOrEqual(PRUNE_PARK_MS * NOISE.BACKOFF_MIN_FACTOR);
-    expect(h.sleeps[0]).toBeLessThanOrEqual(PRUNE_PARK_MS * NOISE.BACKOFF_MAX_FACTOR);
-    expect(h.sleeps.slice(1)).toEqual([20_000, 20_000]);
+    expect(h.sleeps[0]).toBeGreaterThanOrEqual(park * NOISE.BACKOFF_MIN_FACTOR);
+    expect(h.sleeps[0]).toBeLessThanOrEqual(park * NOISE.BACKOFF_MAX_FACTOR);
+    expect(h.sleeps.slice(1)).toEqual([PRUNE_GAP_MS, PRUNE_GAP_MS]);
     expect(h.engine.status().state).toBe('done');
     h.store.close();
   });
@@ -615,6 +448,24 @@ describe('PruneEngine.run', () => {
     expect(h.engine.status().state).toBe('halted');
     // The candidate was never visited: the durable remaining set still holds it.
     expect(h.store.getPruneScan()?.remaining.map((c) => c.pk)).toContain('1');
+    h.store.close();
+  });
+
+  test('a DEFINITIVE rate limit halts the run at once with the reason, remainder runnable', async () => {
+    const h = build({
+      following: [OWN_PK, '1', '2'],
+      followers: [],
+    });
+    h.churn.outcomes.set('u1', { status: 'blocked', cause: 'rate-limited' });
+
+    await h.engine.run();
+
+    expect(h.churn.unfollows).toEqual(['u1']); // one refusal is enough — no park-and-retry
+    expect(h.store.pruneCountSince(0)).toBe(0);
+    const status = h.engine.status();
+    expect(status.state).toBe('halted');
+    expect(status.haltReason).toBe('rate-limited');
+    expect(h.store.getPruneScan()?.remaining.map((c) => c.pk)).toEqual(['1', '2']);
     h.store.close();
   });
 
@@ -677,10 +528,10 @@ describe('PruneEngine.run', () => {
         });
       },
     };
-    const followers = new FakeOwnFollowers([]);
-    const store = new KnowledgeStore(':memory:');
+    const followers = new FakeListSource([]);
+    const store = openTestStore(':memory:');
     store.setOwnPk(OWN_PK);
-    const churn = new FakeChurnActions();
+    const churn = new FakePruneActions();
     const engine = new PruneEngine({
       store,
       clock: new FakeClock(T0),
@@ -708,15 +559,15 @@ describe('PruneEngine.run', () => {
   test('a candidate without a known username is skipped with a typed warn (no unfollow, no ledger)', async () => {
     // Built by hand (not via the harness) so the store genuinely lacks an
     // account row — and hence a username — for the candidate pk.
-    const store = new KnowledgeStore(':memory:');
+    const store = openTestStore(':memory:');
     store.setOwnPk(OWN_PK);
-    const churn = new FakeChurnActions();
+    const churn = new FakePruneActions();
     const engine = new PruneEngine({
       store,
       clock: new FakeClock(T0),
       ownPk: OWN_PK,
-      ownFollowing: new FakeOwnFollowing(['ghost']),
-      ownFollowers: new FakeOwnFollowers([]),
+      ownFollowing: new FakeListSource(['ghost']),
+      ownFollowers: new FakeListSource([]),
       churnActions: churn,
       sentinel: new FakeSentinel(),
       cfg: CFG,
@@ -774,36 +625,11 @@ describe('PruneEngine — 2-step run (scan then consume)', () => {
     await h.engine.scan();
     expect(h.engine.status().scanReady).toBe(true);
 
-    h.clock.advance(PRUNE_SCAN_FRESH_MS + 1); // age the cache out
+    h.clock.advance(CENSUS_FRESH_MS + 1); // age the cache out (the plan's census freshness)
     expect(h.engine.status().scanReady).toBe(false);
 
     await h.engine.run();
     expect(h.ownFollowing.calls).toBe(2); // re-scanned rather than consuming stale
-    h.store.close();
-  });
-
-  test('a whitelist edit re-derives the cached scan live (no re-lock, no re-scan)', async () => {
-    const h = build({ following: [OWN_PK, '1', '2'], followers: [] });
-
-    await h.engine.scan();
-    expect(h.engine.status().scanReady).toBe(true);
-    expect(h.engine.status().candidates).toBe(2);
-
-    // Adding to the whitelist hides that candidate immediately — Run stays
-    // unlocked over the reduced set.
-    h.engine.applyConfig({ ...CFG, whitelist: ['u1'] });
-    expect(h.engine.status().scanReady).toBe(true);
-    expect(h.engine.status().candidates).toBe(1);
-    expect(h.engine.status().remaining).toBe(1);
-
-    // Removing them from the whitelist restores the candidate.
-    h.engine.applyConfig({ ...CFG, whitelist: [] });
-    expect(h.engine.status().candidates).toBe(2);
-
-    // The run honors the whitelist AS IT STANDS at run time.
-    h.engine.applyConfig({ ...CFG, whitelist: ['u2'] });
-    await h.engine.run();
-    expect(h.churn.unfollows).toEqual(['u1']);
     h.store.close();
   });
 });
@@ -892,6 +718,52 @@ describe('live-graph guard and remainder handback', () => {
     expect(h.churn.unfollows.length).toBe(3);
     expect(h.completedAt.length).toBe(1); // only the finishing run stamps lastRunAt
   });
+
+  test('a SUPERSEDED run never clobbers the generation that replaced it', async () => {
+    const h = build({ following: [OWN_PK, '1', '2', '3'], followers: [] });
+    await h.engine.scan();
+
+    // Gate each generation's first unfollow separately, so the stale loop
+    // unwinds WHILE the new one is still mid-action.
+    const gates: Array<() => void> = [];
+    const hold = (): Promise<void> =>
+      new Promise<void>((resolve) => {
+        gates.push(resolve);
+      });
+    const orig = h.churn.unfollow.bind(h.churn);
+    let held = 0;
+    h.churn.unfollow = async (username: string) => {
+      if (held < 2) {
+        held += 1;
+        await hold();
+      }
+      return orig(username);
+    };
+    const pump = async (): Promise<void> => {
+      for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    };
+
+    const stale = h.engine.run();
+    await pump(); // the first run is parked inside its unfollow
+    h.engine.stop();
+    const current = h.engine.run(); // a NEW generation takes over
+    await pump(); // …and parks inside ITS unfollow
+    gates[0](); // the stale loop wakes and unwinds
+    await stale;
+
+    // The new generation is still running: the stale loop neither reset the
+    // state nor handed its own remainder back over the live candidate set.
+    expect(h.engine.status().state).toBe('running');
+
+    gates[1]();
+    await current;
+    expect(h.engine.status().state).toBe('done');
+    expect(h.engine.status().remaining).toBe(0);
+    // Only the current generation stamped a completion; the stale loop's own
+    // dispatched unfollow was still RECORDED as a fact (§1).
+    expect(h.completedAt.length).toBe(1);
+    expect(h.store.pruneCountSince(0)).toBeGreaterThanOrEqual(3);
+  });
 });
 
 test('consecutive FAILED unfollows halt the run (actions-failing) with the remainder runnable', async () => {
@@ -915,176 +787,45 @@ test('consecutive FAILED unfollows halt the run (actions-failing) with the remai
   expect(h.completedAt.length).toBe(0); // never stamped as a clean run
 });
 
-describe('PruneEngine — daily cap counts from the active-hours cycle start', () => {
-  test('prune work recorded BEFORE the current cycle opened does not spend the cap', async () => {
-    const h = build({
-      following: ['a', 'b'],
-      followers: [],
-      cfg: { dailyLimit: 1 },
-      // The current cycle opened 30 minutes ago (same calendar day).
-      cycleStartMs: (now) => now - 30 * 60_000,
-    });
-    // An unfollow from an hour ago: same day, but the PREVIOUS cycle's work.
+describe("PruneEngine — the day's cleanup is the plan's", () => {
+  test("the cap trips at the plan's unfollow budget for the day, counted from its plan-day start", async () => {
+    const h = build({ following: ['a', 'b'], followers: [] });
+    const plan = fakePrunePlan(h.store, { limit: 1 });
+    const engine = build({ following: ['a', 'b'], followers: [], plan }).engine;
+    expect(engine.atDailyCap(h.clock.now())).toBe(false);
     h.store.recordPruneAction('x', 'ok', h.clock.now());
-    h.clock.advance(3_600_000);
-    expect(h.engine.atDailyCap(h.clock.now())).toBe(false);
-    expect(h.engine.status().dailyDone).toBe(0);
+    expect(engine.atDailyCap(h.clock.now())).toBe(true);
+    expect(engine.status()).toMatchObject({ dailyDone: 1, dailyLimit: 1 });
   });
 
-  test('without an injected cycle boundary the cap falls back to local midnight', async () => {
-    const h = build({ following: ['a', 'b'], followers: [], cfg: { dailyLimit: 1 } });
-    h.store.recordPruneAction('x', 'ok', h.clock.now());
-    h.clock.advance(3_600_000); // same local day
-    expect(h.engine.atDailyCap(h.clock.now())).toBe(true);
-  });
-});
-
-describe('PruneEngine — bio filter (protected words in the profile bio)', () => {
-  const bioObs = (h: Harness, pk: string, bio: string): void =>
-    h.store.observe({ accountPk: pk, observedAt: h.clock.now(), source: 'profile', fields: { bio } });
-
-  test('a candidate whose stored bio matches is skipped; others are unfollowed', async () => {
-    const h = build({
-      following: [OWN_PK, '1', '2'],
-      followers: [],
-      cfg: { bioFilterWords: ['dog'] },
-    });
-    bioObs(h, '1', 'Dog mom 🐶');
-    bioObs(h, '2', 'photographer');
-
-    await h.engine.run();
-
-    expect(h.churn.unfollows).toEqual(['u2']);
-    expect(h.store.pruneCountSince(0)).toBe(1); // the skip spends no cap
-    h.store.close();
-  });
-
-  test('an unknown bio is fetched via the enricher before deciding; a match protects', async () => {
-    const enriched: string[] = [];
-    const h: Harness = build({
-      following: [OWN_PK, '1'],
-      followers: [],
-      cfg: { bioFilterWords: ['dog'] },
-      enrichProfile: async (username) => {
-        enriched.push(username);
-        bioObs(h, '1', 'proud DOG dad');
-        return 1;
-      },
-    });
-
-    await h.engine.run();
-
-    expect(enriched).toEqual(['u1']);
-    expect(h.churn.unfollows).toEqual([]);
-    h.store.close();
-  });
-
-  test('a fetched-and-empty bio is a fact, not a failure: the unfollow proceeds', async () => {
-    const h: Harness = build({
-      following: [OWN_PK, '1'],
-      followers: [],
-      cfg: { bioFilterWords: ['dog'] },
-      enrichProfile: async () => {
-        bioObs(h, '1', '');
-        return 1;
-      },
-    });
-
-    await h.engine.run();
-
-    expect(h.churn.unfollows).toEqual(['u1']);
-    h.store.close();
-  });
-
-  test('a bio fetch failing repeatedly halts the run loudly (never unfollows blind)', async () => {
-    const h = build({
-      following: [OWN_PK, '1'],
-      followers: [],
-      cfg: { bioFilterWords: ['dog'] },
-      enrichProfile: async () => 0,
-    });
-
-    await h.engine.run();
-
-    expect(h.churn.unfollows).toEqual([]);
-    expect(h.engine.status().state).toBe('halted');
-    h.store.close();
-  });
-
-  test('with no filter words configured the enricher is never consulted', async () => {
-    let enrichCalls = 0;
-    const h = build({
-      following: [OWN_PK, '1'],
-      followers: [],
-      enrichProfile: async () => {
-        enrichCalls += 1;
-        return 1;
-      },
-    });
-
-    await h.engine.run();
-
-    expect(enrichCalls).toBe(0);
-    expect(h.churn.unfollows).toEqual(['u1']);
-    h.store.close();
-  });
-
-  test('woven feed: nextCandidate consumes a stored-bio match; executeUnfollow skips a fresh one', async () => {
-    const h: Harness = build({
-      following: [OWN_PK, '1', '2'],
-      followers: [],
-      cfg: { bioFilterWords: ['dog'] },
-      enrichProfile: async () => {
-        bioObs(h, '2', 'dog walker'); // '2' only becomes known at check time
-        return 1;
-      },
-    });
-    bioObs(h, '1', 'dog mom'); // '1' is known before selection
-
+  test("a run ends with the plan's typed refusal before any visit, the remainder runnable", async () => {
+    const plan = fakePrunePlan({ pruneCountSince: () => 0 }, { refuse: () => ({ ok: false, reason: 'day-done', until: null }) });
+    const h = build({ following: ['a', 'b'], followers: [], plan });
     await h.engine.scan();
-    const cand = h.engine.nextCandidate(h.clock.now());
-    expect(cand).toEqual({ pk: '2', username: 'u2' }); // '1' consumed at selection
-
-    const status = await h.engine.executeUnfollow(cand!, h.clock.now());
-    expect(status).toBe('skipped');
+    await h.engine.run();
     expect(h.churn.unfollows).toEqual([]);
-    expect(h.store.pruneCountSince(0)).toBe(0); // no ledger row for either skip
-    expect(h.engine.nextCandidate(h.clock.now())).toBeNull(); // census fully consumed
-    h.store.close();
+    expect(h.engine.status()).toMatchObject({ state: 'done', remaining: 2 });
+  });
+
+  test('an owed deadline before a candidate is served exactly, then the same candidate goes', async () => {
+    let first = true;
+    const plan = fakePrunePlan({ pruneCountSince: () => 0 }, { refuse: (_pk, now) => {
+      if (!first) return null;
+      first = false;
+      return { ok: false, reason: 'deadline', until: now + 45_000 };
+    } });
+    const h = build({ following: ['a'], followers: [], plan });
+    await h.engine.scan();
+    await h.engine.run();
+    expect(h.sleeps).toContain(45_000);
+    expect(h.churn.unfollows).toEqual(['ua']);
   });
 });
 
-describe('PruneEngine — per-cycle plan (fluctuates just under the daily limit)', () => {
-  const CYCLE_START = T0 - 30 * 60_000;
+// Bio words, people and verified accounts shield a prune candidate now (spec §7): see prune-protection.test.ts.
 
-  test('the cap trips at the cycle plan, before the configured limit', async () => {
-    const h = build({
-      following: ['a', 'b'],
-      followers: [],
-      cfg: { dailyLimit: 50 },
-      cycleStartMs: () => CYCLE_START,
-    });
-    const plan = cyclePlan(50, CYCLE_START);
-    expect(plan).toBeLessThan(50);
-    for (let i = 0; i < plan - 1; i += 1) h.store.recordPruneAction(`p${i}`, 'ok', h.clock.now());
-    expect(h.engine.atDailyCap(h.clock.now())).toBe(false);
-    h.store.recordPruneAction('last', 'ok', h.clock.now());
-    expect(h.engine.atDailyCap(h.clock.now())).toBe(true);
-  });
-
-  test('status reports the plan as the daily limit so the meter can complete', async () => {
-    const h = build({
-      following: ['a', 'b'],
-      followers: [],
-      cfg: { dailyLimit: 50 },
-      cycleStartMs: () => CYCLE_START,
-    });
-    expect(h.engine.status().dailyLimit).toBe(cyclePlan(50, CYCLE_START));
-  });
-});
-
-describe('PruneEngine — scan freshness window', () => {
-  test('a completed scan stays runnable for 4 days, then expires', async () => {
+describe('PruneEngine — scan freshness window (the plan\'s census freshness)', () => {
+  test('a completed scan stays runnable for the patience wait (4 days at the defaults), then expires', async () => {
     const h = build({ following: ['a', 'b'], followers: [] });
     await h.engine.scan();
     h.clock.advance(3 * 24 * 3_600_000); // 3 days on — still fresh
@@ -1101,7 +842,6 @@ describe('PruneEngine — last complete census', () => {
     const h = build({
       following: [OWN_PK, '1', '2', '3', '4'],
       followers: ['2'],
-      cfg: { whitelist: ['u4'] },
     });
     // '1' is growth-managed: excluded from the prune census but still a
     // scraped non-reciprocal follow — the census must carry both figures.
@@ -1127,15 +867,14 @@ describe('PruneEngine — last complete census', () => {
       following: 6, // display = header figure (scraped + ghost buffer)
       followers: 2,
       scrapedFollowing: 5, // what the list walk actually returned
-      scrapedFollowers: 1,
+      scrapedFollowers: 1, rowsPerPage: null,
       notFollowingBack: 3, // '1', '3', '4' (self and the follower excluded)
-      candidates: 2, // growth-managed '1' exempt; whitelist NOT applied
+      candidates: 2, // growth-managed '1' exempt; protection NOT applied
     });
     expect(s.scanAt).toBe(T0);
-    // The projection also carries the raw unvisited row count (whitelisted
-    // '4' included) next to the actionable count (whitelist applied).
+    // The projection carries the raw unvisited row count next to the actionable count (equal: no rule).
     expect(s.rawRemaining).toBe(2);
-    expect(s.candidates).toBe(1);
+    expect(s.candidates).toBe(2);
     h.store.close();
   });
 
@@ -1257,24 +996,6 @@ describe('PruneEngine — last complete census', () => {
 });
 
 describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {
-  test('nextCandidate returns the first actionable candidate, skipping whitelisted ones', async () => {
-    const h = build({ following: ['a', 'b'], followers: [], cfg: { whitelist: ['ua'] } });
-    await h.engine.scan();
-    expect(h.engine.nextCandidate(h.clock.now())).toEqual({ pk: 'b', username: 'ub' });
-  });
-
-  test('a whitelisted skip does not decrement remaining (it was never in the actionable count)', async () => {
-    const h = build({ following: ['a', 'b'], followers: [], cfg: { whitelist: ['ua'] } });
-    await h.engine.scan();
-    // The actionable census is exactly [b]: the whitelisted a is excluded up front.
-    expect(h.engine.status().remaining).toBe(1);
-    // Walking the feed skips a permanently — but must not spend b's slot doing so.
-    expect(h.engine.nextCandidate(h.clock.now())).toEqual({ pk: 'b', username: 'ub' });
-    expect(h.engine.status().remaining).toBe(1);
-    // The skip is still durable: a is consumed from the snapshot's remaining set.
-    expect(h.store.getPruneScan()?.remaining.map((c) => c.pk)).not.toContain('a');
-  });
-
   test('atDailyCap and nextCandidate honor the prune daily cap', async () => {
     const h = build({ following: ['a', 'b', 'c'], followers: [], cfg: { dailyLimit: 2 } });
     await h.engine.scan();
@@ -1307,6 +1028,41 @@ describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {
     expect(h.engine.nextCandidate(h.clock.now())).toBeNull(); // suspended after 3 blocks
   });
 
+  test('a candidate with its own unsettled write is passed over, kept, and offered once it settles', async () => {
+    const h = build({ following: ['a', 'b'], followers: [] });
+    await h.engine.scan();
+    const first = h.engine.nextCandidate(h.clock.now()) as { pk: string; username: string };
+    const intent = h.store.beginEffectIntent({ accountPk: first.pk, username: first.username, action: 'unfollow',
+      channel: 'manual', at: h.clock.now() });
+    h.store.markEffectUncertain(intent.id, h.clock.now());
+    expect(h.engine.nextCandidate(h.clock.now())?.pk).not.toBe(first.pk);
+    expect(h.store.getPruneScan()?.remaining.map((x) => x.pk)).toContain(first.pk);
+    h.store.settleEffectIntent(intent.id, { at: h.clock.now(), result: 'cancelled' });
+    expect(h.engine.nextCandidate(h.clock.now())?.pk).toBe(first.pk);
+  });
+
+  test('a rate-limited woven unfollow suspends the feed at once (candidate kept)', async () => {
+    const h = build({ following: ['a', 'b', 'c'], followers: [] });
+    await h.engine.scan();
+    const c = h.engine.nextCandidate(h.clock.now()) as { pk: string; username: string };
+    h.churn.outcomes.set(c.username, { status: 'blocked', cause: 'rate-limited' });
+    expect(await h.engine.executeUnfollow(c, h.clock.now())).toBe('blocked');
+    expect(h.engine.lastActionOutcome()).toMatchObject({ status: 'blocked', cause: 'rate-limited' });
+    expect(h.engine.nextCandidate(h.clock.now())).toBeNull(); // suspended on the first refusal
+    expect(h.store.getPruneScan()?.remaining.map((x) => x.pk)).toContain(c.pk); // not consumed
+  });
+
+  test('an already-absent woven candidate is reconciled without claiming a new mutation', async () => {
+    const h = build({ following: ['a'], followers: [] });
+    await h.engine.scan();
+    const c = h.engine.nextCandidate(h.clock.now()) as { pk: string; username: string };
+    h.churn.outcomes.set(c.username, { status: 'ok', alreadyInState: true });
+    expect(await h.engine.executeUnfollow(c, h.clock.now())).toBe('ok');
+    expect(h.engine.lastActionOutcome()).toMatchObject({ status: 'ok', alreadyInState: true });
+    expect(h.engine.status().unfollowed).toBe(0);
+    expect(h.store.pruneCountSince(0)).toBe(0);
+  });
+
   test('consecutive failures suspend the feed (growth is unaffected)', async () => {
     const many = ['a', 'b', 'c', 'd', 'e'];
     const h = build({ following: many, followers: [] });
@@ -1333,5 +1089,176 @@ describe('PruneEngine — woven feed (EngineUnfollowFeed)', () => {
     h.churn.outcomes.clear();
     await h.engine.scan();
     expect(h.engine.nextCandidate(h.clock.now())).not.toBeNull();
+  });
+});
+
+// --- pause()/resume() — the unified-transport controls -----------------------------
+
+describe('PruneEngine — pause/resume (unified transport)', () => {
+  /** A sleep that parks until its abort signal fires — so a run can be caught
+   *  mid-delay and driven by pause()/resume()/stop() like the real engine. */
+  class HangingSleep {
+    calls: number[] = [];
+    aborted = 0;
+    hang = false;
+    sleep: SleepFn = (ms, signal) => {
+      this.calls.push(ms);
+      if (!this.hang || signal === undefined || signal.aborted) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            this.aborted += 1;
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    };
+  }
+
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  };
+  const DELAY = PRUNE_GAP_MS; // the deadline each dispatch arms (the shared gap)
+
+  test('pause parks the run between unfollows; resume serves the owed remainder first', async () => {
+    const hs = new HangingSleep();
+    const h = build({ following: [OWN_PK, '1', '2'], followers: [], sleep: hs.sleep });
+    await h.engine.scan(); // 2-step: the run consumes this census
+    hs.hang = true;
+
+    const run = h.engine.run();
+    await settle();
+    // Acted on u1, now parked in the inter-unfollow delay.
+    expect(h.churn.unfollows).toEqual(['u1']);
+    expect(hs.calls).toEqual([DELAY]);
+
+    h.engine.pause();
+    await settle();
+    expect(h.engine.status().state).toBe('paused');
+    // The owed deadline survives the pause (the countdown keeps pointing at
+    // it) and nothing acts while parked.
+    expect(h.engine.status().nextActionAt).toBe(T0 + DELAY);
+    expect(h.churn.unfollows).toEqual(['u1']);
+
+    // Resume 5s in: the remainder (19.5s) is served BEFORE u2 — resume is not
+    // a way to act instantly.
+    h.clock.advance(5_000);
+    h.engine.resume();
+    await settle();
+    expect(h.engine.status().state).toBe('running');
+    expect(hs.calls).toEqual([DELAY, DELAY - 5_000]);
+    expect(h.churn.unfollows).toEqual(['u1']); // u2 NOT acted early
+
+    h.engine.stop();
+    await run;
+    expect(h.engine.status().state).toBe('idle');
+    h.store.close();
+  });
+
+  test('stop while paused lands idle and hands the remainder back as runnable', async () => {
+    const hs = new HangingSleep();
+    const h = build({ following: [OWN_PK, '1', '2'], followers: [], sleep: hs.sleep });
+    await h.engine.scan();
+    hs.hang = true;
+
+    const run = h.engine.run();
+    await settle();
+    h.engine.pause();
+    await settle();
+    expect(h.engine.status().state).toBe('paused');
+
+    h.engine.stop();
+    await run;
+    expect(h.engine.status().state).toBe('idle');
+    // u2 was never visited: it stays the runnable remainder.
+    expect(h.engine.status().remaining).toBe(1);
+    expect(h.engine.status().scanReady).toBe(true);
+    h.store.close();
+  });
+
+  test('pause outside a running run is a no-op; so is resume outside paused', () => {
+    const h = build({ following: [OWN_PK, '1'], followers: [] });
+    h.engine.pause();
+    expect(h.engine.status().state).toBe('idle');
+    h.engine.resume();
+    expect(h.engine.status().state).toBe('idle');
+    h.store.close();
+  });
+
+  test('the run projects its NEXT candidate as the countdown subject', async () => {
+    const hs = new HangingSleep();
+    const h = build({ following: [OWN_PK, '1', '2'], followers: [], sleep: hs.sleep });
+    await h.engine.scan();
+    hs.hang = true;
+
+    const run = h.engine.run();
+    await settle();
+    // Parked between u1 (acted) and u2 — the projection names what fires NEXT.
+    expect(h.engine.status().upNext).toBe('u2');
+    h.engine.stop();
+    await run;
+    expect(h.engine.status().upNext).toBeNull();
+    h.store.close();
+  });
+});
+
+describe('PruneEngine — the blocked park reads the tempo (park.blocked, pace-up)', () => {
+  const blockedOnce = async (tempo: ReturnType<typeof recordingTempo>) => {
+    const store = kitStore();
+    store.setOwnPk(OWN_PK);
+    store.observe({ accountPk: '1', observedAt: T0, source: 'followers-list', fields: { username: 'u1' } });
+    const churn = new FakePruneActions();
+    let blocks = 1;
+    churn.unfollow = async (username: string): Promise<ChurnActionOutcome> => {
+      churn.unfollows.push(username);
+      return blocks-- > 0 ? { status: 'blocked' } : { status: 'ok' };
+    };
+    const engine = new PruneEngine({ store, clock: new FakeClock(T0), ownPk: OWN_PK, ownFollowing: new FakeListSource([OWN_PK, '1']),
+      ownFollowers: new FakeListSource([]), churnActions: churn, sentinel: new FakeSentinel(), cfg: CFG,
+      sleep: async () => {}, rng: () => 0.5, tempo });
+    await engine.run();
+    return churn.unfollows;
+  };
+
+  test('the park asks the injected tempo for its base, and the retry then goes ahead', async () => {
+    const tempo = recordingTempo();
+    expect(await blockedOnce(tempo)).toEqual(['u1', 'u1']);
+    expect(tempo.keys).toContain('park.blocked');
+  });
+
+  test('at the reference tempo the base is today\'s value (identity)', () => {
+    expect(referenceTempoSource().base('park.blocked')).toBe(PRUNE.PARK_MS);
+  });
+});
+
+// --- Parse stream (spec §10.4): the census answers to the header refreshed for the scan ----------
+
+describe('PruneEngine.scan — coverage against the refreshed header', () => {
+  const header = (followers: number, following: number) =>
+    (async () => ({ followers, following, observedAt: T0 })) as unknown as () => Promise<void>;
+
+  test('the header the refresh resolves is the one the census must cover', async () => {
+    const followers = Array.from({ length: 38 }, (_, i) => `f${i}`);
+    const h = build({ following: [OWN_PK, '1'], followers, refreshOwnStats: header(3200, 2) });
+    await expect(h.engine.scan()).rejects.toThrow(/followers scan incomplete/);
+    expect(h.store.getPruneCensus()).toBeNull();
+    h.store.close();
+  });
+
+  test('a refreshed scan with no header to answer to fails closed', async () => {
+    const h = build({ following: [OWN_PK, '1'], followers: ['9'], refreshOwnStats: async () => {} });
+    await expect(h.engine.scan()).rejects.toThrow(/Couldn't confirm your following count/);
+    expect(h.store.getPruneCensus()).toBeNull();
+    h.store.close();
+  });
+
+  test('a census walk that skipped unreadable rows is refused', async () => {
+    const h = build({ following: [OWN_PK, '1'], followers: ['9'] });
+    h.ownFollowers.fetchAllPks = async () => ({ pks: ['9'], complete: true, reason: 'no-more-pages', quarantined: 1 });
+    await expect(h.engine.scan()).rejects.toThrow(/row-issues/);
+    expect(h.store.getPruneCensus()).toBeNull();
+    h.store.close();
   });
 });

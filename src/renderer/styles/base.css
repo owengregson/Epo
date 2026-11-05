@@ -21,7 +21,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: var(--fs-lg);
+  font-size: var(--fs-body);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow: hidden; /* the console scrolls inside itself, never the document */
@@ -31,10 +31,30 @@ body {
   height: 100%;
 }
 
+/* ---------- icons ----------
+   Inline SVG sized in `em`, so every `.icon` rule elsewhere tunes an icon with
+   font-size alone; the baseline nudge matches how a text glyph used to sit. */
+.icon {
+  display: inline-block;
+  vertical-align: -0.125em;
+  flex: 0 0 auto;
+}
+.icon-spin {
+  animation: icon-settle var(--dur-3) var(--ease-out);
+}
+@keyframes icon-settle {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* Tabular figures for every counter/readout. */
 .num {
   font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
+  font-feature-settings: "tnum";
 }
 
 /* Thin graphite scrollbars everywhere. */
@@ -56,7 +76,7 @@ body {
   cursor: help;
 }
 [data-tip]::after {
-  content: '?';
+  content: "?";
   display: inline-block;
   width: 12px;
   height: 12px;
@@ -66,22 +86,26 @@ body {
   border: 1px solid var(--border-strong);
   background: rgba(255, 255, 255, 0.04);
   color: var(--faint);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-micro);
   font-weight: 700;
   text-align: center;
   vertical-align: 1px;
-  transition: color 0.15s, border-color 0.15s;
+  transition:
+    color var(--dur-1),
+    border-color var(--dur-1);
 }
 [data-tip]:hover::after {
   color: var(--silver);
   border-color: #45454e;
 }
-/* Controls that carry their own affordance (the card minimize chevron) get the hover
-   tooltip but NOT the "?" help badge. */
-.card-collapse {
+/* Controls that carry their own affordance (the card minimize chevron, the nav
+   rail's view buttons) get the hover tooltip but NOT the "?" help badge. */
+.card-collapse,
+.nav button {
   cursor: pointer;
 }
-.card-collapse::after {
+.card-collapse::after,
+.nav button::after {
   content: none;
 }
 .tip {
@@ -95,7 +119,7 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: var(--r);
   box-shadow: var(--elev-5);
-  font-size: var(--fs-md);
+  font-size: var(--fs-label);
   line-height: 1.55;
   color: var(--silver);
   font-weight: 500;
@@ -104,8 +128,8 @@ body {
   transform: translateY(6px) scale(0.96);
   transform-origin: top center;
   transition:
-    opacity 0.18s ease,
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity var(--dur-1) ease,
+    transform var(--dur-2) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .tip.show {
   opacity: 1;

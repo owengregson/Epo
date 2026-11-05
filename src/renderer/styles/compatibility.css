@@ -1,0 +1,118 @@
+/*
+ * compatibility.css — the Instagram compatibility panel (Settings › Advanced), its Easy one-liner and the
+ * sidebar notice, on the semantic type ladder and the shared palette tokens.
+ */
+
+.compat-panel {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.compat-panel__title {
+  margin: 0;
+  font-size: var(--fs-title);
+  color: var(--text);
+}
+
+.compat-panel__lead,
+.compat-panel__empty,
+.compat-area__why {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.compat-panel__sub {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-small);
+  color: var(--text);
+}
+
+.compat-areas,
+.compat-changes,
+.compat-tech ul {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compat-area {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--sp-1) var(--sp-3);
+  align-items: center;
+}
+
+.compat-area__why {
+  grid-column: 1 / -1;
+}
+
+.compat-pill {
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--chip-bg);
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}
+
+.compat-pill--ok {
+  color: var(--ok);
+}
+
+.compat-pill--adapting,
+.compat-pill--limited {
+  color: var(--warn);
+}
+
+.compat-pill--paused,
+.compat-pill--unreadable {
+  border-color: var(--danger-border-soft);
+  color: var(--danger-text);
+}
+
+.compat-changes li {
+  font-size: var(--fs-small);
+  color: var(--text);
+}
+
+.compat-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.compat-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--silver);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.compat-tech {
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}
+
+.compat-line,
+.compat-notice {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.compat-notice--attention {
+  color: var(--danger-text);
+}

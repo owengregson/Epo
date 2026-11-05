@@ -1,7 +1,6 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
-import type { ConfirmState } from '../hooks/useConfirm';
+import type { ConfirmState } from '@/renderer/hooks/useConfirm';
 
 export interface ConfirmHostProps extends ConfirmState {
   onClose(result: boolean): void;
@@ -15,7 +14,7 @@ export interface ConfirmHostProps extends ConfirmState {
  * focus returns to whatever had it. The closed scrim is `visibility:hidden`
  * (see `.scrim`), so its buttons also drop out of the tab order.
  */
-export function ConfirmHost({ open, title, body, confirm, dismiss, danger, onClose }: ConfirmHostProps): h.JSX.Element {
+export function ConfirmHost({ open, title, body, confirm, dismiss, danger, onClose }: ConfirmHostProps): JSX.Element {
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Focus into the dialog on open; restore to the prior element on close.

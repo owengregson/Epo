@@ -1,45 +1,28 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 /**
- * Lifecycle races (audit 2026-08-15). `clearData()` tears the graph down, deletes
- * the DB files, and clears the IG session — but a BUILD already in flight when the
- * wipe starts used to keep running and execute `this.graph = this.build(...)`
- * afterwards, re-opening a fresh store over the just-deleted path (SQLite happily
- * recreates the file) with the OLD account identity. The teardown lock must refuse
- * that resurrection: the in-flight build settles to `false` and no DB reappears.
- *
- * Electron is mocked at module scope: `app.getPath` → a temp dir, and the IG
- * partition serves a fixed `ds_user_id` cookie (the pk resolve reads only this).
+ * Lifecycle races. `clearData()` tears the graph down, deletes the DB files,
+ * and clears the IG session — but a BUILD already in flight when the wipe
+ * starts used to keep running and re-open a fresh store over the just-deleted
+ * path (SQLite happily recreates the file) with the OLD account identity. The
+ * teardown lock must refuse that resurrection: the in-flight build settles to
+ * `false` and no DB reappears.
  */
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'epo-foundation-'));
+import {
+  cleanupMainHarness,
+  foundationStore,
+  makeFakeTab,
+  makeIgSession,
+  newFoundation,
+} from '../kit/main-harness';
 
-/** Mutable session identity: tests flip this to simulate an in-tab account switch. */
-const cookieState = { value: '4242' };
-
-jest.mock('electron', () => ({
-  app: { getPath: () => tmp },
-  session: {
-    fromPartition: () => ({
-      cookies: { get: async () => [{ name: 'ds_user_id', value: cookieState.value }] },
-      clearStorageData: async () => {},
-      clearCache: async () => {},
-    }),
-  },
-}));
-
-import { Foundation } from '@/main/foundation-wiring';
-import type { InstagramTab } from '@/adapter/tab';
-import { setLevel } from '@/utils/logger';
-
-beforeAll(() => setLevel('error'));
-afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
+afterAll(cleanupMainHarness);
 
 test('clearData while a build is in flight never resurrects a graph over the deleted DB', async () => {
-  // Gate the FIRST identity evaluate so the build can be caught in flight; every
-  // evaluate answers with the nav profile-link href (identity strategy 1).
+  // Gate the FIRST identity cookie read so the store-first open can be caught
+  // in flight; every read answers with the same account pk.
   let release!: () => void;
   const gate = new Promise<void>((r) => {
     release = r;
@@ -48,25 +31,21 @@ test('clearData while a build is in flight never resurrects a graph over the del
   const reachedGate = new Promise<void>((r) => {
     reached = r;
   });
-  let evaluates = 0;
-  const tab = {
-    show: () => {},
-    hide: () => {},
-    goto: async () => {},
-    currentUrl: () => 'https://www.instagram.com/',
-    evaluate: async () => {
-      evaluates += 1;
-      if (evaluates === 1) {
+  let reads = 0;
+  const igSession = {
+    ...makeIgSession('4242'),
+    readCookie: async (name: string): Promise<string | null> => {
+      reads += 1;
+      if (reads === 1) {
         reached();
         await gate;
       }
-      return '/myself/';
+      return name === 'ds_user_id' ? '4242' : null;
     },
-    onResponse: () => () => {},
-  } as unknown as InstagramTab;
+  };
 
-  const f = new Foundation({ tab });
-  const building = f.ensureBuilt(); // parked inside username resolution
+  const { foundation: f, userDataDir } = newFoundation({ igSession });
+  const building = f.ensureBuilt(); // parked inside the identity read
   await reachedGate;
 
   const clearing = f.clearData(); // the wipe starts while the build is mid-flight
@@ -78,38 +57,26 @@ test('clearData while a build is in flight never resurrects a graph over the del
   // The superseded build must have refused, and no store may have been re-opened
   // over the wiped path.
   expect(built).toBe(false);
-  expect(fs.existsSync(path.join(tmp, 'epo.db'))).toBe(false);
+  expect(fs.existsSync(path.join(userDataDir, 'epo.db'))).toBe(false);
 
   await f.dispose();
 });
 
 test('an in-tab account switch (ds_user_id change) tears down the stale graph and rebuilds', async () => {
-  cookieState.value = '4242';
-  let evaluates = 0;
-  const tab = {
-    show: () => {},
-    hide: () => {},
-    goto: async () => {},
-    currentUrl: () => 'https://www.instagram.com/',
-    evaluate: async () => {
-      evaluates += 1;
-      return '/myself/';
-    },
-    onResponse: () => () => {},
-  } as unknown as InstagramTab;
-
-  const f = new Foundation({ tab });
+  const igSession = makeIgSession('4242');
+  const { foundation: f } = newFoundation({ tab: makeFakeTab(), igSession });
   expect(await f.ensureBuilt()).toBe(true); // graph anchored to pk 4242
-  const evaluatesAfterFirstBuild = evaluates;
+  const first = foundationStore(f);
 
   // The user logs out and back in as a DIFFERENT account inside the tab.
-  cookieState.value = '9999';
+  igSession.setDsUserId('9999');
   await f.isLoggedIn(); // any routine pk resolve must notice the switch
 
-  // The stale graph (anchored to 4242) is gone; the next ensureBuilt rebuilds —
-  // observable as a fresh identity resolution against the tab.
+  // The stale graph (anchored to 4242) is gone; the next ensureBuilt opens the new account's store.
   expect(await f.ensureBuilt()).toBe(true);
-  expect(evaluates).toBeGreaterThan(evaluatesAfterFirstBuild);
+  expect(foundationStore(f)).not.toBe(first);
+  const session = (f as unknown as { session: { current(): { ownPk: string } | null } }).session;
+  expect(session.current()?.ownPk).toBe('9999');
 
   await f.dispose();
 });

@@ -1,220 +1,120 @@
-import {
-  FollowbackWatcher,
-  FOLLOWBACK_DEFAULTS,
-  type FollowbackEvent,
-  type FollowbackNotifications,
-} from '@/engine/followback-watcher';
-import { KnowledgeStore } from '@/store/knowledge-store';
+import { type ChannelEvidence, FollowbackWatcher } from '@/engine/followback-watcher';
 import { FakeClock } from '@/governors/clock';
-import type { FollowRecord } from '@/store/types';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import { setLevel } from '@/utils/logger';
+import { rec } from '../kit/engine-harness';
+import { openTestStore } from '../kit/store';
 
-beforeAll(() => setLevel('error'));
-
-const OWN = 'me';
-const NOW = 1_000_000;
-
-type FetchResult = { ok: boolean; events: FollowbackEvent[]; reason?: string };
-
-/** A scripted notifications source that counts how many reads happened. */
-class FakeNotifications implements FollowbackNotifications {
-  calls = 0;
-  constructor(private readonly result: FetchResult) {}
-  async fetchRecent(): Promise<FetchResult> {
-    this.calls += 1;
-    return this.result;
-  }
-}
-
-const follow = (pk: string, atMs: number | null = null): FollowbackEvent => ({
-  pk,
-  username: `u${pk}`,
-  atMs,
-});
-
+const DAY = 86_400_000;
+const HOLD = 2 * DAY;
+const NOW = Date.UTC(2026, 10, 3, 12);
 let store: KnowledgeStore;
 let clock: FakeClock;
+let heard: ChannelEvidence[];
+
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  setLevel('error');
+  store = openTestStore(':memory:');
+  store.setOwnPk('ME');
+  store.ensureFollowersBaseline(NOW - 30 * DAY);
   clock = new FakeClock(NOW);
+  heard = [];
 });
 afterEach(() => store.close());
 
-const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({
-  targetPk: null,
-  state: 'pending_followback',
-  followedAt: NOW - 5000,
-  retryCount: 0,
-  ...over,
-});
+const watcher = () => new FollowbackWatcher({ store, clock, ownPk: 'ME', cfg: { holdAfterFollowbackMs: HOLD, autoAcceptRequests: true },
+  settleChannels: (e) => heard.push(e) });
+const pending = (pk: string, followedAt = NOW - 3 * DAY) =>
+  store.upsertFollowRecord(rec({ accountPk: pk, state: 'pending_followback', followedAt }));
 
-const watcher = (notifications: FollowbackNotifications): FollowbackWatcher =>
-  new FollowbackWatcher({ store, clock, ownPk: OWN, notifications });
-
-test('a pending follow seen in the notifications feed transitions to followed_back', async () => {
-  store.upsertFollowRecord(rec({ accountPk: 'A' }));
-  store.upsertFollowRecord(rec({ accountPk: 'B' }));
-
-  const src = new FakeNotifications({ ok: true, events: [follow('A'), follow('X')] });
-  const { detected } = await watcher(src).check();
-
-  expect(detected).toEqual(['A']);
-  const a = store.getFollowRecord('A')!;
-  expect(a.state).toBe('followed_back');
-  expect(a.followedBackAt).toBe(NOW);
-  expect(a.holdUntil).toBe(NOW + FOLLOWBACK_DEFAULTS.holdAfterFollowbackMs);
-
-  // Their follow-of-us edge is recorded active (X's too — free data).
-  expect(store.getEdge('A', OWN, 'follows')!.status).toBe('active');
-  expect(store.getEdge('X', OWN, 'follows')!.status).toBe('active');
-
-  // B remains pending.
-  expect(store.getFollowRecord('B')!.state).toBe('pending_followback');
-});
-
-test('empty pending → does not read notifications at all (request-minimal)', async () => {
-  store.upsertFollowRecord(rec({ accountPk: 'Z', state: 'queued' }));
-
-  const src = new FakeNotifications({ ok: true, events: [follow('A')] });
-  const { detected } = await watcher(src).check();
-
-  expect(detected).toEqual([]);
-  expect(src.calls).toBe(0);
-});
-
-test('a follow-back already recorded in the graph resolves with ZERO requests', async () => {
-  store.upsertFollowRecord(rec({ accountPk: 'A' }));
-  store.observeEdge('A', OWN, 'follows', true, NOW - 10_000);
-
-  const src = new FakeNotifications({ ok: true, events: [] });
-  const { detected } = await watcher(src).check();
-
-  expect(detected).toEqual(['A']);
-  expect(store.getFollowRecord('A')!.state).toBe('followed_back');
-  expect(src.calls).toBe(0); // resolved from knowledge already paid for
-});
-
-test('an event timestamp anchors the edge AND the hold at the event time', async () => {
-  const followedAt = NOW - 3 * 24 * 3600 * 1000;
-  const eventAt = NOW - 2 * 24 * 3600 * 1000; // they followed back 2 days ago
-  store.upsertFollowRecord(rec({ accountPk: 'A', followedAt }));
-
-  const src = new FakeNotifications({ ok: true, events: [follow('A', eventAt)] });
-  await watcher(src).check();
-
-  const a = store.getFollowRecord('A')!;
-  // The hold anchors at the EVENT time — they have already served 2 days.
-  expect(a.followedBackAt).toBe(eventAt);
-  expect(a.holdUntil).toBe(eventAt + FOLLOWBACK_DEFAULTS.holdAfterFollowbackMs);
-  // The edge is first seen at the event's own day (net-growth truthfulness).
-  expect(store.getEdge('A', OWN, 'follows')!.firstSeenAt).toBe(eventAt);
-});
-
-test('an event that PREDATES our follow anchors the hold at our follow, never before', async () => {
-  const followedAt = NOW - 1000;
-  const eventAt = NOW - 10 * 24 * 3600 * 1000; // they followed us long before we followed them
-  store.upsertFollowRecord(rec({ accountPk: 'A', followedAt }));
-
-  const src = new FakeNotifications({ ok: true, events: [follow('A', eventAt)] });
-  await watcher(src).check();
-
-  const a = store.getFollowRecord('A')!;
-  expect(a.followedBackAt).toBe(followedAt);
-  expect(a.holdUntil).toBe(followedAt + FOLLOWBACK_DEFAULTS.holdAfterFollowbackMs);
-});
-
-test('a FUTURE/garbage feed timestamp is clamped to now', async () => {
-  store.upsertFollowRecord(rec({ accountPk: 'A' }));
-
-  const src = new FakeNotifications({ ok: true, events: [follow('A', NOW + 999_999)] });
-  await watcher(src).check();
-
-  expect(store.getFollowRecord('A')!.followedBackAt).toBe(NOW);
-});
-
-test('a failed notifications read changes NOTHING (pending stays pending)', async () => {
-  store.upsertFollowRecord(rec({ accountPk: 'A' }));
-
-  const src = new FakeNotifications({ ok: false, events: [], reason: 'no-response' });
-  const { detected } = await watcher(src).check();
-
-  expect(detected).toEqual([]);
-  expect(store.getFollowRecord('A')!.state).toBe('pending_followback');
-  expect(store.getEdge('A', OWN, 'follows')).toBeNull();
-});
-
-test('a fetchRecent rejection propagates (no silent catch) and leaves records untouched', async () => {
-  store.upsertFollowRecord(rec({ accountPk: 'A' }));
-
-  const boom: FollowbackNotifications = {
-    fetchRecent: async () => {
-      throw new Error('tab gone');
-    },
-  };
-  await expect(watcher(boom).check()).rejects.toThrow('tab gone');
-  expect(store.getFollowRecord('A')!.state).toBe('pending_followback');
-});
-
-test('an ACCEPTED follow request counts as a follow-back (private-account path)', async () => {
-  store.upsertFollowRecord(rec({ accountPk: 'R' }));
-
-  const src: FollowbackNotifications = {
-    fetchRecent: async (opts) => {
-      expect(opts?.acceptRequests).toBe(true); // defaults pass auto-accept through
-      return { ok: true, events: [], accepted: [{ pk: 'R', username: 'req_r' }] };
-    },
-  };
-  const { detected } = await watcher(src).check();
-
-  expect(detected).toEqual(['R']);
-  const r = store.getFollowRecord('R')!;
-  expect(r.state).toBe('followed_back');
-  expect(store.getEdge('R', OWN, 'follows')!.status).toBe('active');
-  expect(store.getAccount('R')?.username).toBe('req_r');
-});
-
-test('the FIRST check anchors the followers baseline: backlog is stock, later events chart', async () => {
-  store.setOwnPk(OWN);
-  store.upsertFollowRecord(rec({ accountPk: 'A' }));
-
-  // First sweep: the feed's backlog carries events from before measurement.
-  const first = new FakeNotifications({
-    ok: true,
-    events: [follow('A', NOW - 5000), follow('X', NOW - 9000)],
+describe('the appliers write each fact the moment it arrives', () => {
+  test('a dated event: an exact change row, the managed record at the exact time, the accept channel told', () => {
+    pending('a');
+    watcher().applyEvent({ pk: 'a', username: 'alice', atMs: NOW - DAY });
+    expect(store.getFollowRecord('a')).toMatchObject({ state: 'followed_back', followedBackAt: NOW - DAY,
+      followbackObservedAt: NOW, holdUntil: NOW - DAY + HOLD });
+    expect(store.growth.latestGain('a')).toMatchObject({ lo: NOW - DAY, hi: NOW - DAY, source: 'feed' });
+    expect(store.getAccount('a')?.username).toBe('alice');
+    expect(heard).toEqual([{ follower: { pk: 'a', atMs: NOW - DAY } }]);
   });
-  await watcher(first).check();
-  expect(store.followersBaselineAt()).toBe(NOW);
-  expect(store.netFollowersSince(0)).toBe(0); // backlog = pre-existing stock
 
-  // A later sweep observes a genuinely new event → it charts as growth.
-  store.upsertFollowRecord(rec({ accountPk: 'B' }));
-  clock.advance(3_600_000);
-  const second = new FakeNotifications({ ok: true, events: [follow('B', NOW + 1_800_000)] });
-  await watcher(second).check();
-  expect(store.followersBaselineAt()).toBe(NOW); // set-once: never moved
-  expect(store.netFollowersSince(0)).toBe(1);
+  test('an event that predates our follow holds from our follow, never before', () => {
+    pending('a', NOW - DAY);
+    watcher().applyEvent({ pk: 'a', username: null, atMs: NOW - 2 * DAY });
+    expect(store.getFollowRecord('a')?.holdUntil).toBe(NOW - DAY + HOLD);
+  });
+
+  test('an old event cannot reverse a newer absence', () => {
+    pending('a');
+    store.observeEdge('a', 'ME', 'follows', false, NOW);
+    watcher().applyEvent({ pk: 'a', username: null, atMs: NOW - DAY });
+    expect(store.getFollowRecord('a')?.state).toBe('pending_followback');
+    expect(store.getEdge('a', 'ME', 'follows')?.status).toBe('removed');
+  });
+
+  test('an undated event writes its name; a record moves only without a seen removal, with no fabricated time', () => {
+    pending('a');
+    pending('b');
+    store.observeEdge('b', 'ME', 'follows', false, NOW - 1);
+    const w = watcher();
+    w.applyUndated({ pk: 'a', username: 'alice', atMs: null });
+    w.applyUndated({ pk: 'b', username: 'bob', atMs: null });
+    expect(store.getFollowRecord('a')).toMatchObject({ state: 'followed_back', followbackObservedAt: NOW, holdUntil: NOW + HOLD });
+    expect(store.getFollowRecord('a')?.followedBackAt).toBeUndefined();
+    expect(store.getFollowRecord('b')?.state).toBe('pending_followback');
+    expect(store.getAccount('a')?.username).toBe('alice');
+  });
+
+  test('a requester row opens its requests edge and tells the accept channel it is still listed', () => {
+    watcher().applyRequester({ pk: 'r', observation: { accountPk: 'r', observedAt: NOW, source: 'friend-requests',
+      fields: { username: 'req' } } }, NOW);
+    expect(store.hasActiveRequest('r')).toBe(true);
+    expect(store.getAccount('r')?.username).toBe('req');
+    expect(heard).toEqual([{ stillRequesting: { pk: 'r', at: NOW } }]);
+  });
+
+  test('an accepted request: an exact accept row, the requester followed back at the accept', () => {
+    pending('r');
+    store.observeEdge('r', 'ME', 'requests', true, NOW - 10);
+    watcher().applyAccepted({ pk: 'r', username: 'req', at: NOW });
+    expect(store.growth.latestGain('r')).toMatchObject({ lo: NOW, hi: NOW, source: 'accept' });
+    expect(store.hasActiveRequest('r')).toBe(false);
+    expect(store.getFollowRecord('r')).toMatchObject({ state: 'followed_back', followedBackAt: NOW });
+  });
+
+  test('an accepted request with no resolved pk writes nothing', () => {
+    watcher().applyAccepted({ pk: null, username: 'ghost', at: NOW });
+    expect(store.pkByUsername('ghost')).toBeNull();
+  });
 });
 
-test('a check with nothing pending still anchors the baseline (collection has begun)', async () => {
-  store.setOwnPk(OWN);
-  const src = new FakeNotifications({ ok: true, events: [follow('A')] });
-  await watcher(src).check();
-  expect(src.calls).toBe(0); // request-minimal path unchanged
-  expect(store.followersBaselineAt()).toBe(NOW);
-});
+describe('the consistency pass (store-only)', () => {
+  const gain = (pk: string, lo: number, at: number) => store.observeEdge(pk, 'ME', 'follows', true, at, { source: 'head-walk', lo });
 
-test('an accepted request with an unresolved pk is warned and skipped (no phantom record)', async () => {
-  store.upsertFollowRecord(rec({ accountPk: 'S' }));
+  test('a managed record whose follower edge and gain the graph holds moves, held from the gain\'s end', () => {
+    pending('a', NOW - 3 * DAY);
+    gain('a', NOW - 2 * DAY, NOW - DAY);
+    expect(watcher().consistencyPass(NOW)).toBe(1);
+    expect(store.getFollowRecord('a')).toMatchObject({ state: 'followed_back', followbackAfter: NOW - 2 * DAY,
+      followbackObservedAt: NOW, holdUntil: NOW - DAY + HOLD });
+  });
 
-  const src: FollowbackNotifications = {
-    fetchRecent: async () => ({
-      ok: true,
-      events: [],
-      accepted: [{ pk: null, username: 'mystery' }],
-    }),
-  };
-  const { detected } = await watcher(src).check();
+  test('a gain that ended before our follow, or no active edge, moves nothing', () => {
+    pending('a', NOW - DAY);
+    gain('a', NOW - 3 * DAY, NOW - 2 * DAY);
+    pending('b');
+    expect(watcher().consistencyPass(NOW)).toBe(0);
+    expect(store.getFollowRecord('a')?.state).toBe('pending_followback');
+  });
 
-  expect(detected).toEqual([]);
-  expect(store.getFollowRecord('S')!.state).toBe('pending_followback');
+  test('a no-follow-back queue moves back; a hold-expired one and a kept one are not re-held (kept is only stamped)', () => {
+    store.upsertFollowRecord(rec({ accountPk: 'q', state: 'unfollow_queued', unfollowReason: 'no-followback', followedAt: NOW - 5 * DAY }));
+    store.upsertFollowRecord(rec({ accountPk: 'h', state: 'unfollow_queued', unfollowReason: 'hold-expired', followedAt: NOW - 5 * DAY }));
+    store.upsertFollowRecord(rec({ accountPk: 'k', state: 'kept', followedAt: NOW - 5 * DAY }));
+    for (const pk of ['q', 'h', 'k']) store.observeOwnFollowerEvent(pk, 'ME', NOW - DAY);
+    watcher().consistencyPass(NOW);
+    expect(store.getFollowRecord('q')?.state).toBe('followed_back');
+    expect(store.getFollowRecord('h')?.state).toBe('unfollow_queued');
+    expect(store.getFollowRecord('k')).toMatchObject({ state: 'kept', followedBackAt: NOW - DAY, followbackObservedAt: NOW });
+  });
 });

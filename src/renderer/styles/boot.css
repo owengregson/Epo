@@ -1,0 +1,28 @@
+/*
+ * boot.css — the Live placeholder (spec §12.8): what the Live stage shows while Instagram is not on screen
+ * yet. The splash itself is inline in index.html (it shows before this sheet could load).
+ */
+
+.live-placeholder {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  padding: var(--sp-6);
+  text-align: center;
+  background: var(--bg);
+}
+
+.live-placeholder p {
+  max-width: 420px;
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.live-placeholder__retry {
+  flex: 0 0 auto;
+  min-width: 140px;
+}

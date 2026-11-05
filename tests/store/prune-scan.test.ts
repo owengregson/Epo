@@ -3,11 +3,9 @@
  * the consumable remaining-candidates set that restores the prune panel across
  * restarts.
  */
-import { KnowledgeStore, type PruneCensusRecord } from '@/store/knowledge-store';
+import type { KnowledgeStore, PruneCensusRecord } from '@/store/knowledge-store';
 import type { PruneScanSnapshot } from '@/store/types';
-import { setLevel } from '@/utils/logger';
-
-beforeAll(() => setLevel('error'));
+import { memoryStore } from '../kit/store';
 
 const SNAP: PruneScanSnapshot = {
   at: 1_000,
@@ -24,7 +22,7 @@ const SNAP: PruneScanSnapshot = {
 describe('KnowledgeStore prune scan snapshot', () => {
   let store: KnowledgeStore;
   beforeEach(() => {
-    store = new KnowledgeStore(':memory:');
+    store = memoryStore();
   });
   afterEach(() => store.close());
 
@@ -98,7 +96,7 @@ describe('KnowledgeStore last-complete prune census (meta-backed)', () => {
 
   let store: KnowledgeStore;
   beforeEach(() => {
-    store = new KnowledgeStore(':memory:');
+    store = memoryStore();
   });
   afterEach(() => store.close());
 

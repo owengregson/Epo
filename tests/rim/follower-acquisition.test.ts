@@ -1,18 +1,20 @@
-import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
-import { FollowersPageReader } from '@/rim/followers-page-reader';
-import { ListPageWalker } from '@/rim/list-page-walker';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
-import { FakeTab, FakeSentinel, FakeActor, followersUrl, followersBody, mkResp } from './fakes';
+import { ACQUISITION_DEFAULTS, AdapterBackedAcquisition } from '@/rim/follower-acquisition';
+import { FollowersPageReader } from '@/rim/followers-page-reader';
+import { ListPageWalker } from '@/rim/list-page-walker';
+import type { ProfileVisit, ProfileVisitor } from '@/rim/profile-visit-port';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import { FakeActor, FakeSentinel, FakeTab, followersBody, followersUrl, mkResp } from '../kit/fakes';
+import { openTestStore } from '../kit/store';
 
 const reader = new Reader();
 const clock = new FakeClock(2_000_000);
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 
@@ -24,41 +26,50 @@ const okEnv = (body: unknown): unknown => ({
   json: body,
 });
 
-/** A web_profile_info body carrying the target's own pk + counts. */
-const profileBody = (pk: string, username: string): unknown => ({
-  data: {
-    user: {
-      id: pk,
-      username,
-      edge_followed_by: { count: 500 },
-      edge_follow: { count: 480 },
-      edge_mutual_followed_by: { count: 4 },
-      is_private: false,
-      is_verified: false,
-    },
-  },
-});
+/**
+ * Stands in for a profile VISIT plus the ProfileObserver behind it: writes
+ * what the page's own profile body would (the target's pk and counts) — the
+ * observer's write lands before the visit resolves — then answers. Unscripted
+ * usernames answer `unanswered`.
+ */
+class StubVisitor implements ProfileVisitor {
+  visited: string[] = [];
+  constructor(private readonly pages: Record<string, string> = { target: '999' }) {}
+  async visit(username: string): Promise<ProfileVisit> {
+    this.visited.push(username);
+    const pk = this.pages[username];
+    if (pk === undefined) return { ok: false, kind: 'unanswered', detail: {} };
+    const obs = {
+      accountPk: pk,
+      observedAt: 1,
+      source: 'profile' as const,
+      fields: { username, followers: 500, following: 480, mutuals: 4 },
+    };
+    store.observe(obs);
+    return { ok: true, obs, viewer: { following: null, requested: null, followsUs: null } };
+  }
+}
 
 describe('direct API walk (the request-efficient path)', () => {
   test('resolves pk via one profile fetch, pages the API directly, writes edges + cursor', async () => {
     const tab = new FakeTab();
     tab.onEvaluate = (script) => {
-      if (script.includes('web_profile_info')) return okEnv(profileBody('999', 'target'));
       // Two followers pages, then the API says the list is done. The built
       // script embeds the cursor as encodeURIComponent("C1"), so match on "C1".
-      if (script.includes('"C1"')) return okEnv(followersBody(['c', 'd'], null, false));
-      return okEnv(followersBody(['a', 'b'], 'C1', true));
+      if (script.includes('"C1"')) return okEnv(followersBody(['13', '14'], null, false));
+      return okEnv(followersBody(['11', '12'], 'C1', true));
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
+      cfg: { ...ACQUISITION_DEFAULTS, maxPages: 3 },
     });
 
     const result = await acquisition.acquire('target');
@@ -67,12 +78,12 @@ describe('direct API walk (the request-efficient path)', () => {
     expect(result.observed).toBe(4);
     // The list's end was VERIFIED — a genuine completion reason.
     expect(result.endReason).toBe('no-more-pages');
-    for (const pk of ['a', 'b', 'c', 'd']) {
+    for (const pk of ['11', '12', '13', '14']) {
       const edge = store.getEdge(pk, '999', 'follows');
       expect(edge).not.toBeNull();
       expect(edge!.status).toBe('active');
     }
-    // The target's own counts were enriched for free by the resolve fetch.
+    // The target's own counts were enriched for free by the resolve visit.
     expect(store.getAccount('999')!.followers).toBe(500);
     expect(store.getAccount('999')!.mutuals).toBe(4);
     // A completed list leaves no resume cursor.
@@ -88,25 +99,25 @@ describe('direct API walk (the request-efficient path)', () => {
     tab.onEvaluate = (script) => {
       seenUrls.push(script);
       // The walk must START at C1; that page ends the list.
-      return okEnv(followersBody(['c', 'd'], null, false));
+      return okEnv(followersBody(['13', '14'], null, false));
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
     });
 
     const result = await acquisition.acquire('target');
 
     expect(result.targetPk).toBe('999');
-    // No profile-info fetch (pk was already known) — only list-page scripts.
-    expect(seenUrls.every((s) => !s.includes('web_profile_info'))).toBe(true);
+    // The known fresh source resumes without an unnecessary profile navigation.
+    expect(visitor.visited).toEqual([]);
     // The first (and only) fetched page carried the resume cursor (embedded as
     // encodeURIComponent("C1")).
     expect(seenUrls[0]).toContain('max_id');
@@ -123,17 +134,17 @@ describe('direct API walk (the request-efficient path)', () => {
       // Each page yields 2 fresh pks and always claims more pages exist.
       const base = page * 2;
       page += 1;
-      return okEnv(followersBody([`p${base}`, `p${base + 1}`], `C${page}`, true));
+      return okEnv(followersBody([`${1_000 + base}`, `${1_000 + base + 1}`], `C${page}`, true));
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
       cfg: { targetNewPks: 5, maxPages: 100, maxCoverageFraction: 0.5, maxRounds: 5, noNewStop: 2 },
     });
@@ -163,17 +174,17 @@ describe('direct API walk (the request-efficient path)', () => {
     tab.onEvaluate = () => {
       const base = page * 2;
       page += 1;
-      return okEnv(followersBody([`n${base}`, `n${base + 1}`], `K${page}`, true));
+      return okEnv(followersBody([`${2_000 + base}`, `${2_000 + base + 1}`], `K${page}`, true));
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
       cfg: { targetNewPks: 250, maxPages: 100, maxCoverageFraction: 0.5, maxRounds: 5, noNewStop: 2 },
     });
@@ -199,26 +210,26 @@ describe('direct API walk (the request-efficient path)', () => {
     tab.onEvaluate = () => {
       calls += 1;
       // First page parses; the second no longer matches the extractor (drift).
-      if (calls === 1) return okEnv(followersBody(['a', 'b'], 'C1', true));
+      if (calls === 1) return okEnv(followersBody(['11', '12'], 'C1', true));
       return okEnv({ unexpected_new_shape: true });
     };
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const actor = new FakeActor();
     const pageReader = new FollowersPageReader({ tab, reader, actor, clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
     });
 
     const result = await acquisition.acquire('target');
 
     // Rows before the drift are kept; the end reason is the failure it is.
-    expect(result).toEqual({ observed: 2, targetPk: '999', endReason: 'shape-mismatch' });
+    expect(result).toEqual({ observed: 2, targetPk: '999', endReason: 'shape-mismatch', globallyNew: 2 });
     // The dialog fallback was NOT attempted — it parses through the same
     // drifted extractor and would only fabricate a second empty read.
     expect(actor.openCalls).toBe(0);
@@ -230,17 +241,17 @@ describe('direct API walk (the request-efficient path)', () => {
     store.observe({ accountPk: '999', observedAt: 1_000, source: 'profile', fields: { username: 'target' } });
 
     const tab = new FakeTab();
-    tab.onEvaluate = () => okEnv(followersBody(['a', 'b'], 'C1', true));
+    tab.onEvaluate = () => okEnv(followersBody(['11', '12'], 'C1', true));
     const walker = new ListPageWalker({ tab, reader, clock, sleep: async () => {}, rng: () => 0.5 });
     const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, scrollWaitMs: 1 });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       // Pre-check ok, page 1 ok, page 2's top-of-page check trips.
       sentinel: new FakeSentinel(['ok', 'ok', 'challenge']) as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
     });
 
@@ -268,13 +279,13 @@ describe('direct API walk (the request-efficient path)', () => {
       scrollWaitMs: 1,
       sleep: async () => {},
     });
+    const visitor = new StubVisitor();
     const acquisition = new AdapterBackedAcquisition({
       pageReader,
       store,
       sentinel: new FakeSentinel() as unknown as Sentinel,
       walker,
-      tab,
-      reader,
+      visitor,
       clock,
     });
 
@@ -292,8 +303,8 @@ describe('dialog-scroll fallback', () => {
     const tab = new FakeTab();
     const actor = new FakeActor();
     const pages = [
-      mkResp(followersUrl('999'), followersBody(['a', 'b'], 'C1', true)),
-      mkResp(followersUrl('999', 'C1'), followersBody(['c', 'd'], 'C2', false)),
+      mkResp(followersUrl('999'), followersBody(['11', '12'], 'C1', true)),
+      mkResp(followersUrl('999', 'C1'), followersBody(['13', '14'], 'C2', false)),
     ];
     let i = 0;
     actor.onOpen = () => tab.emit(pages[i++]);
@@ -327,12 +338,68 @@ describe('dialog-scroll fallback', () => {
     // The dialog stopped yielding new rows — its natural drain, a genuine
     // outcome (the last page still carried a cursor, so never 'no-more-pages').
     expect(result.endReason).toBe('stagnant');
-    for (const pk of ['a', 'b', 'c', 'd']) {
+    for (const pk of ['11', '12', '13', '14']) {
       const edge = store.getEdge(pk, '999', 'follows');
       expect(edge).not.toBeNull();
       expect(edge!.status).toBe('active');
     }
     expect(store.getScrapeCursor('999')).toBe('C2');
+  });
+
+  test('edges are written PER ROW — a scrape stopped mid-walk keeps every edge it paid for', async () => {
+    // docs/PRINCIPLES.md §1: an aborted collection must cost only the
+    // un-fetched remainder. The dialog path used to back-fill edges after the
+    // scrape, so a stop between pages threw away every edge already observed.
+    const tab = new FakeTab();
+    const actor = new FakeActor();
+    const ac = new AbortController();
+    const pages = [
+      mkResp(followersUrl('999'), followersBody(['11', '12'], 'C1', true)),
+      mkResp(followersUrl('999', 'C1'), followersBody(['13', '14'], 'C2', true)),
+    ];
+    let i = 0;
+    // The first page lands, then the driver is stopped before any scroll.
+    actor.onOpen = () => {
+      tab.emit(pages[i++]);
+      ac.abort();
+    };
+    actor.onScroll = () => {
+      if (i < pages.length) tab.emit(pages[i++]);
+    };
+
+    const pageReader = new FollowersPageReader({
+      tab,
+      reader,
+      actor,
+      clock,
+      scrollWaitMs: 1,
+      abortSignal: () => ac.signal,
+    });
+    const acquisition = new AdapterBackedAcquisition({
+      pageReader,
+      store,
+      sentinel: new FakeSentinel() as unknown as Sentinel,
+      clock,
+      cfg: {
+        targetNewPks: 60,
+        maxPages: 8,
+        maxCoverageFraction: 0.5,
+        maxRounds: 5,
+        noNewStop: 2,
+        scrollMinMs: 1,
+        scrollMaxMs: 1,
+      },
+    });
+
+    const result = await acquisition.acquire('target');
+
+    expect(result.endReason).toBe('stopped');
+    expect(actor.scrollCalls).toBe(0); // it really did stop before the next page
+    // The first page's edges survived the stop.
+    for (const pk of ['11', '12']) {
+      expect(store.getEdge(pk, '999', 'follows')).not.toBeNull();
+    }
+    expect(store.getEdge('13', '999', 'follows')).toBeNull();
   });
 });
 

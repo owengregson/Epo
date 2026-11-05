@@ -1,5 +1,546 @@
 # Peanut v3 — Overnight Build Handoff
 
+> **2026-11-04 (one planned follow verified; rebuilt app installed) —** Current source `ad6726b`
+> passes the full gate: **443 suites / 4,558 tests**, one suite/five tests skipped, boundaries
+> **0 errors / 55 warnings**. Slow child resources no longer block use of a ready main document
+> during startup, evaluation or recovery; failed and stale documents remain guarded. Load-failure
+> copy now reflects connectivity, and structured action diagnostics preserve the original timing.
+>
+> The authorized production sample completed **one normal planned public-profile follow**:
+> fresh review, a 4,263 ms requested / 4,287.496 ms observed dwell, one admission and armed deadline,
+> verified mutation response, and one settled `ok` intent/ledger row. Ordinary quit ended idle,
+> exited 0 and left durable run intent stopped. No UI Stop-button proof or repeated cadence interval
+> is claimed. The historical uncertain unfollow separately settled cancelled with no ledger action;
+> no new unsettled intent or Prune change remains. Unfollow/private/request-cancel variants and
+> remaining L4/L5 coverage are still unproved; eligibility and protections are not changed to supply them.
+>
+> The verified arm64 Epo **3.1.1** / Electron **44.1.1** bundle is installed at `/Applications/Epo.app`,
+> matching `release/local-overhaul/mac-arm64/Epo.app`. All 13 packaged production files match the
+> clean and root builds; strict signature verification passed. The Apple Development-signed bundle
+> is not notarized. The previous installed app is preserved outside Applications. The temporary
+> accept-requests change was restored after normal quit; every value from the owner's latest settings
+> snapshot and all protections are preserved. The final normal installed launch completed account
+> confirmation and catch-up with no new Start/admission or warning/error, and was left **open, stopped**.
+> Post-startup native inspection was limited, so no complete installed UI smoke or boot movie is claimed.
+> See the [current validation record](qa/plan-derived-overhaul-2026-11.md#startup-readiness-repair-and-local-package-2026-11-04)
+> and [planned follow evidence](qa/plan-derived-overhaul-2026-11.md#normal-planned-follow-sample-2026-11-04)
+> for exact hashes, private receipt paths and coverage limits. Historical stopped reports below are unchanged.
+
+> **2026-11-04 22:03 UTC (owner authorization; cleanup-scope correction) —** The owner explicitly
+> authorized cautious account actions and the necessary tests to finish and rebuild. No further
+> cleanup-preference question is needed: Prune can remain Off. Cleanup Off disables additional
+> cleanup of manually followed accounts, **not managed lifecycle unfollows**: `allocateKinds`
+> reserves lifecycle demand first, and `ChurnPick` does not gate it on `weaveEnabled`.
+> The 22:08 UTC closed-profile audit found zero due managed unfollows: 32 records remain protected
+> in `kept`, and 23 mutuals are held until November 6. All 17 old Prune remainder rows are explicitly
+> account-protected. Existing queued follows and the probation session open at that audit provide natural
+> work without enabling Prune or Boost; fresh production checks still decide each dispatch.
+> This corrects the earlier cleanup assumption, not the saved protections or historical raw reports.
+> No new live-action success is claimed here. Evidence and limits are in the
+> [current eligibility record](qa/plan-derived-overhaul-2026-11.md#remaining-live-sequence-and-actual-eligibility)
+> and private `results/live-action-readiness-2026-11-04/readiness.md`.
+
+> **2026-11-04 (capture fixed, production catch-up audited, S8 integrated) —** The interruption was
+> investigated through native/CDP request lifetimes and explicit bodyless-GET evidence. L1 qualifies
+> on retained live evidence; its original stopped report remains immutable. The first real production
+> reopen after roughly 32 hours completed profile, filtered notifications and exactly one followers
+> head page, with canonical clean reads and zero shadow disagreements. Its persisted frontier,
+> count conservation, settings migration and unchanged action ledgers were independently audited.
+> No Start, follow, unfollow or accept was performed. The production startup recorder missed the
+> dashboard; its repair was verified locally with network blocked, not credited as live visual proof.
+>
+> S8 is integrated separately at `be01c6c`, after the parser-specific live evidence and independent
+> review. The old extractors/comparators and endpoint mode switch are gone; parsing safeguards,
+> mutation handling and historical drift remain. The full integration gate passed **441 suites /
+> 4,537 tests**, one suite/five tests skipped, boundaries **0 errors / 55 warnings**. It also includes
+> the elapsed-session label fix from `63a3847`. The interactive browser gallery is rebuilt and served
+> at `http://127.0.0.1:4173/?gallery=1` while its local server is running.
+>
+> **Live validation remains partial:** no boot movie or post-Start production cadence was proved.
+> Cleanup correctly migrated as Off, and existing biography-word protections kept all seven queued
+> unfollows (32 records kept total). The uncertain journal entry remains unchanged. Do not undo
+> protection, fabricate due records, reset frontiers or alter the clock to satisfy the old L5 queue
+> assumptions. The earlier question about enabling cleanup is superseded by the authorization and
+> scope correction above; managed work does not require it. Epo was stopped at this checkpoint.
+> See the [production evidence](qa/plan-derived-overhaul-2026-11.md#production-reopen-and-persisted-catch-up-2026-11-04),
+> [S8 gate](qa/plan-derived-overhaul-2026-11.md#s8-comparator-retirement-and-integration-review), and
+> [remaining eligibility](qa/plan-derived-overhaul-2026-11.md#remaining-live-sequence-and-actual-eligibility).
+> Private final ref/profile receipt: `results/codex-design-cleanup/final-s8-ref-state.json`.
+
+> **2026-11-04 (capture repaired; L1 qualified on retained live evidence) —** The native/CDP repair
+> records complete ownership and transport evidence. The run at `61ff085` finished all L1 steps;
+> its only stop was a new GET-upload classification bug, fixed at `0fed42b`. Thirteen local controls
+> verified the fix. A separate offline qualification preserves the original stopped report and proves
+> 100 matched requests: 99 safe 200 completions plus one evidenced navigation cancellation, six
+> canonical/non-partial required bodies, 29 clear sentinel checks, zero shadow disagreements or
+> scripted mutations. No extra account requests were made for requalification. The full gate passes
+> **442 suites / 4,557 tests**, boundaries **0 errors / 56 warnings**. Epo is stopped; critical profile
+> hashes are unchanged. L4/L5 and comparator deletion remain pending. See the
+> [current evidence](qa/plan-derived-overhaul-2026-11.md#native-capture-repair-and-qualified-l1-evidence-2026-11-04).
+
+> **2026-11-04 (repaired L1 follow-up; capture retrieval stopped the run) —** The authorized follow-up
+> at `5d83f35` stopped during the nonexistent-profile visit when CDP could no longer retrieve request
+> metadata for an auxiliary AJAX exchange; response-body retrieval also failed. Of 56 exchanges,
+> 55 returned 200 and 54 have saved bodies. Own/target profiles parsed canonically and completely,
+> nine sentinel checks were `ok`, and no shadow disagreement or account mutation was observed.
+> The drawer and repaired final navigation step were not reached, so **L1 remains unqualified**.
+> All 15 critical profile hashes remain unchanged; Epo is closed and desired run state is stopped.
+> Evidence: `results/live-l1-repaired-2026-11-04T093428Z/`. The reporting fix at `36c492a` preserves
+> the first exchange failure instead of allowing a later failure to overwrite it. Its full gate passed
+> **438 suites / 4,503 tests**, boundaries **0 errors / 56 warnings**. A nine-case loopback-only
+> experiment reproduced late capture loss after measured renderer process changes. Durable storage
+> retained the response body in that synthetic case, but late POST metadata still failed and pagehide
+> beacons were received by the server without matching CDP events. This does not establish the live
+> failure's cause or justify a complete fix; production capture settings are unchanged. Continue with
+> capture lifecycle diagnosis before more account traffic; do not exempt incomplete responses or
+> remove comparators. See the [follow-up record](qa/plan-derived-overhaul-2026-11.md#repaired-live-follow-up-2026-11-04)
+> and [local experiment](qa/plan-derived-overhaul-2026-11.md#local-capture-lifecycle-experiment).
+> The final private checkpoint is `results/codex-design-cleanup/post-live-ref-state.json`.
+
+> **2026-11-04 (authorized second L1 attempt; parsing observed, navigation step stopped) —** After the
+> owner explicitly overrode the same-day restriction, one verify run at `7cb5cdf` used the replacement
+> public, followed target. Own/target profiles, nonexistent-profile detection, notifications feed,
+> follow requests and drawer closure succeeded. The final own-profile navigation raised
+> `input:document-changed-after-press`; **L1 still did not pass**. There were 27 `ok` sentinel checks,
+> six canonical/non-partial profile/feed/requests bodies and zero shadow disagreements. Of 94 API
+> exchanges, 92 returned 200 with saved bodies; two remained incomplete. One auxiliary posts response
+> carried a server field error without an account-wall signature. No account mutation was observed.
+> Epo exited; all 15 critical store/settings/runtime hashes remain unchanged and run intent is stopped.
+> Evidence: `results/live-l1-second-2026-11-04T092100Z/`. See the
+> [second-attempt record](qa/plan-derived-overhaul-2026-11.md#second-live-attempt-2026-11-04).
+
+> **2026-11-04 (first authorized L1 attempt; stopped at target eligibility) —** The owner supplied a
+> target and authorized live testing. One verify run at `4760f43` stopped because that account is
+> private; it was followed and mutual. Own and target profiles parsed canonically and completely,
+> with no drift or shadow disagreement. Of 45 recorded API exchanges, 38 returned 200 with saved
+> decoded bodies; seven were still pending at the deliberate stop. No mutation operation was observed.
+> The nonexistent-profile and drawer steps did not run, so **L1 did not pass**. The real store/settings
+> hashes remain identical to the verified backup, saved run intent remains stopped, and Epo is closed.
+> Private evidence: `results/live-l1-2026-11-04T090943Z/` in the durable handoff folder.
+> The owner has supplied a replacement target, saved in that folder's `next-target.json`.
+> The owner subsequently explicitly authorized one same-day attempt against that replacement,
+> overriding the handoff's default restriction. L4/L5 and comparator deletion remain unqualified.
+> See the [validation record](qa/plan-derived-overhaul-2026-11.md#first-live-attempt-2026-11-04).
+
+> **2026-11-03 (owner accepts the interactive preview) —** The owner reviewed the browser preview and
+> said, "looks good. continue." This closes the requested owner visual review for the UI cleanup.
+> The localhost gallery now replays the real startup animation and includes the real tooltip and
+> popover hosts. Its default shows a populated working day; the gallery toggle no longer covers
+> stage navigation. The full gate after these preview changes passed **435 suites / 4,445 tests**,
+> with **0 boundary errors / 56 warnings**. Evidence: `results/codex-design-cleanup/browser-preview-gate.log`.
+> The preview is synthetic: settings saves and engine actions do not operate the account.
+> Phase L preparation found that the old verify probe could continue after a failed step. The repair
+> at `abc0724` captures the initial load, stops on the first unsafe observation and preserves partial
+> evidence. Its integration gate passed **437 suites / 4,464 tests**, boundaries **0 errors / 56 warnings**.
+> A real Electron launch in a fresh profile with all requests blocked stopped at initial navigation,
+> wrote its evidence and exited cleanly. A fresh full-profile backup is verified; its private path
+> and hashes are in `results/codex-design-cleanup/pre-live-backup.json`.
+> The target was subsequently provided; the first attempt and its stop are recorded in the newer
+> entry above. The checkpoint and backup remain preserved.
+
+> **2026-11-03 (UI cleanup after owner review; offline verification complete) —** The owner rejected
+> the previous overhaul's spacing and composition; the seven screenshots were examples, not the
+> full scope. The interface now uses a stable spacing scale, content-sized cards, a compact
+> Easy/Advanced switch, plain Settings navigation, bounded schedules and an attached Boost row.
+> People, Prune, Graph, Diagnostics, dialogs and tour received rendered review at narrow, short,
+> standard and wide sizes. Follow-up fixes cover chart resize/reveal, Graph legend clipping,
+> Diagnostics section tracking, retained entrance-animation overflow and native tour focus.
+> Boost previews flip fully above their trigger when needed, preserving its click target.
+>
+> Final source `17d2d01`: **435 suites / 4,445 tests passed**, one suite and five tests skipped,
+> boundaries **0 errors / 56 warnings**, all other gates green. Final normal/reduced surface checks
+> passed **62 each**, with no errors or unexpected requests. The combined main-screen follow-up
+> passed **30 checks across five sizes**; broader earlier matrices and their exact revisions are
+> retained. Native keyboard QA completed all eight tour steps, both Tab boundaries, Settings search
+> and clean quit in a disposable profile. The independent image review closed with no unresolved
+> defect in its inspected scope. See [the cleanup QA record](qa/ui-cleanup-2026-11.md) for exact
+> evidence and limits; screenshots and logs are in the durable handoff folder under
+> `results/codex-design-cleanup/`.
+>
+> Owner visual acceptance is recorded in the newer entry above. Live account tests remain paused;
+> the original sequential test and mutation-consent rules still apply.
+
+> **2026-11-03 (plan-derived overhaul; technical offline verification complete, owner/live review pending) —** Owner:
+> "Read docs/superpowers/plans/2026-11-03-plan-derived-overhaul-handoff.md and continue the overhaul from it until completion."
+> The final retirement stream is merged, including the Cautious floor change to 70 s. The integration now uses the day
+> plan for action spacing and interaction timing, with durable Boost, bounded reopen checks, Settings Easy/Advanced,
+> Prune, the new sidebar and the store-first launch. Review reproduced these remaining causes:
+>
+> 1. Session boundaries lost planned actions, while repeated re-plans could count used work twice or reclaim discarded
+>    work. Prune also needed the ledger's per-session unfollow share.
+> 2. The first following list mixed existing stock with today's outside activity; later Epo follows and delayed private
+>    acceptances could be charged again as manual follows.
+> 3. Recovery, mutation arbitration and list completion had paths around transport or partial-evidence checks. Stored
+>    profile counts could substitute for missing fresh follow proof.
+> 4. Protection and Practice edits during a visit or between confirmation layers could arrive after the last policy
+>    check. An already-open accept pass could likewise keep a stale allowance.
+> 5. Delayed renderer reads could overwrite pushes; derived Settings views can change without a document revision;
+>    initial queued or parked work could show an incorrect posture.
+> 6. Numeric cleanup-share overrides did not reach plan allocation. Refused v1 migration lost schedule constraints,
+>    and failed bookkeeping consumption or backup restoration could reuse another account's freshness stamp.
+> 7. Probation slowed sessions after placement without respecting the quiet-hours wall, leaving planned actions
+>    that could never run.
+>
+> FIXES (ADR 0105, 0607, 0608, 0213, 0214, 0308, 0806, 0904, 1010, 1011):
+>
+> - Realize session budgets at their exact boundaries; preserve used and forfeited work through re-plans, respect the
+>   quiet-hours wall, and apply the ledger's kind budgets to Prune.
+> - Separate following stock from dated outside gains and exclude successful Epo/manual writes from duplicate charges.
+> - Require transport-qualified, complete evidence for destructive verdicts and current count proof before a follow.
+> - Recheck current protection and Practice at each press using the action's existing visit, with one admission and
+>   journal dispatch. Revalidate accept passes against the current plan.
+> - Retire the v1 runtime bridge, fixed scan timing and obsolete renderer state; preserve frozen migration inputs and
+>   raw protection. Keep current pushed state authoritative through bootstrap and Settings changes.
+> - Apply numeric cleanup-share overrides to the plan and its digest. Preserve refused-v1 quiet hours, slower reads,
+>   lower caps, slower motion and tour state; bind migration bookkeeping durably to its account before consumption.
+> - Fit probation inside the same quiet-aware close as normal sessions, reduce its kind allocations to fit, and carry
+>   probation to the next viable session when the current slot cannot hold one slower action.
+>
+> The final source gate at `4a2bbcc` passed **427 suites / 4,417 tests**, one suite and five tests skipped, zero TODO,
+> and boundaries **0 errors / 56 warnings** (97 at the original overhaul start). Plan QC passed **1,260 days / zero breaches**,
+> all three lifecycle reachability tests passed, and the generated catalog is current. The cleanup audit found no new
+> blocker: pending wiring is empty, static timing contains only reasoned GEOM/HARNESS entries, and the saved Knip
+> comparison has no added findings (remaining advisory findings are recorded, not claimed to be zero).
+> The isolated normal-motion gallery at `44ea8d4` passed **756 checks**. At `04f5688`, the full reduced-motion matrix
+> passed **756 checks** and the three populated normal-motion scenarios passed **36 settled checks**. The final background
+> probe passed **11/11 scenarios**. A targeted rerun with added native-focus assertions passed the new dashboard-focused
+> scenario: focus was true before and after while eight trusted clicks and their acknowledgments arrived. The runs used
+> different recorded bundles; the full run's soak was ten seconds. Native QA at `86a716d` exercised the intro, offline
+> placeholder, stage shortcuts, Settings save/Undo, Practice persistence, Protection navigation and clean quit.
+> It found the Electron version in the footer,
+> a tour step that did not scroll to the seed field, and search results underneath the plan summary.
+> The branded-runtime fix at `aa31274` passed its full gate and native check: Epo 3.1.1 is displayed, updates stay off
+> for the development runtime, and its developer menu remains available. Maximized restoration, Practice persistence,
+> tour-completion persistence and native stage shortcuts also passed. At `d80c5dd`, normal-motion native checks
+> confirmed visible search results and the seed field remaining visible during a cached-Settings tour replay.
+> The stage scroll reset now runs during layout, before the tour reveals its target, avoiding the later reset race.
+> At `d80c5dd`, the final changed-scenario normal gallery passed **144 checks** and the full reduced-motion matrix
+> passed **756 checks**, with no failures, errors or blocked requests. All six renderer artifacts are byte-identical
+> at `4a2bbcc`, so that gallery evidence still applies. The first reduced-motion native run exposed a native focus gap:
+> restacking the dashboard and focusing its window did not focus its web content. The final shell repair hands focus
+> to the dashboard when it owns the visible, active stage, including after the initial blocked page load settles.
+> A fresh reduced-motion run at `4a2bbcc` used **zero mouse clicks**: the first Right advanced the tour, all eight steps
+> completed, the seed field stayed visible with Next focused, Return finished, and stage shortcuts plus immediate
+> Settings search worked. Epo 3.1.1 and clean quit were verified. Initial splash frames were not captured; no real
+> Instagram page loaded. Technical offline verification is complete. Pre-live checkpoint:
+> `refs/backups/pre-live-plan-overhaul-2026-11`; exact checkpoint and branch state:
+> `results/codex-final-qa/final-ref-state.json` in the durable handoff folder.
+> Owner visual confirmation (I.4.6) is separate from the lead/agent
+> review and remains pending. Exact revisions, artifacts and upgrade notes are in the
+> [validation record](qa/plan-derived-overhaul-2026-11.md).
+> No live-account check has run in this continuation. The integration has not opened the real Epo profile. Phase L
+> remains sequential and supervised; back up the full profile again before L1, mutations require explicit target
+> consent, and L4 requires a night away. Empty/null biography semantics still need live evidence; null remains absent
+> and fail safe. Legacy parser comparators stay until L1 and L4 show zero disagreements.
+
+> **2026-11-02 (read allowance derived, not hardcoded) —** Owner: "it
+> shouldnt be hardcoded everything should be via our dynamic limit system."
+> `ReadBudget`'s 80/40/200/24/24 defaults are gone. Kernel D6
+> (`src/kernel/derive-reads.ts`, ADR 0211 amended) derives every ceiling from
+> the live `Settings` limits: daily ceiling, plan size, sweep cadence and
+> sessions. The governor reads `limits()` on every check, so settings changes
+> apply at once. `EXPLORATION_POLICY` moved into the kernel (the engine file
+> is a shim). Tests build budgets with `tests/kit/read-limits.ts`. Live
+> install: 415 profile visits a day (189 exploration), 227 list pages, 28
+> notification reads. That covers the 98-a-day ceiling, which 80 never could.
+
+> **2026-11-02 (latest — "it didn't do anything all day") —** The log showed
+> two return checks (25 profile visits each), then `holding {reason:
+> reconcile-backoff}` until the next morning, and no follows all day. The live
+> `lifecycle_state` showed `phase: reconcile, reason: absence`, with the epoch
+> stamped at the 14:16 session resume, although the engine had run all night.
+> Three defects compounded:
+>
+> 1. **The engine's own holds counted as absence.** `lastActiveAt` moved only
+>    on progress, so any park over 1 h looked like the owner had left. That
+>    covers the overnight session park, active hours, ceilings and long idle
+>    beats. Every resume re-ran the return check and reset return probation,
+>    so probation could never finish.
+> 2. **Every return was a census.** `requireFresh` re-read EVERY managed
+>    record, one visit each (55 here), against an 80-visit rolling allowance
+>    that per-follow verification also draws from. Two returns spent the day.
+> 3. **A known reopen time was noised as a retry.** The budget wait went
+>    through `retry-backoff` (0.5–2×), so 11.5 h became 19.9 h, and the
+>    caption said "couldn't read follow-backs".
+>
+> FIXES (ADR 0212 amended):
+>
+> - Every engine wait brackets `reentry.holdUntil(deadline)` /
+>   `endHold(now)`. A hold is presence up to its deadline. Time slept PAST
+>   the deadline, a stop, or a restart mid-hold is still away. This is
+>   in-process only.
+> - `reentry.requiresCensus()` is true only for `clock-change` /
+>   `legacy-state`, and a later absence cannot downgrade an owed census. An
+>   absence reconciles what its timers made due.
+> - A budget deferral parks as `engine:read-budget-park` (`daily-boundary`:
+>   never before the reopen, ≤ 40 min after), reason `read-budget`, caption
+>   "profile-read allowance used · resumes …".
+>
+> On the live DB the next start needs 0 visits: all 32 due records carry
+> evidence from the last day. The spent allowance reopens from ~01:52 local
+> as the morning's debits age out.
+
+> **2026-11-02 (later — relationship checks burst through profiles) —** During
+> "checking relationships after N days away" the follow-back reconciliation
+> visited ten profiles back to back with no gap, parked ~30 s, reopened the
+> notifications drawer and repeated (owner: "going so fast through the profiles
+> it could get flagged … do it more human like"). FIXES (ADR 0307 amended):
+> the ONE shared `TabProfileVisitor` rests a log-normal dwell (median 9 s,
+> 5–30 s, `MOTION.profileDwell*`) since the previous visit ended — every caller
+> is paced, none can burst; a reconciliation batch that made progress
+> continues at the next step instead of parking (`ReconciliationRunner` →
+> `progress`); a continuation batch skips the feed it already read. Verified
+> live: consecutive profile navigations ~9–11 s apart. Note: the 10-21 read
+> budget still caps reconciliation at 80 profile / 24 notification reads per
+> rolling day — a large cohort pauses there by design.
+
+> **2026-11-02 (the notifications drawer moved to GraphQL; its close X is half-covered) —**
+> Symptom (`npm run start`): `rim.follow-notifications: no activity-feed response
+> after click`, then `engine: holding {reason: enrich-backoff}`. One cause, found
+> live with the read-only `EPO_PROBE=verify` (traffic recorder attached): the
+> drawer's client stopped calling `news/inbox` / `friendships/pending` and reads
+> the same stories / request rows through GraphQL
+> (`PolarisActivityFeedStoriesViewQuery` on `/api/graphql`,
+> `PolarisActivityFeedFollowRequestsViewQuery` on `/graphql/query`). The
+> `enrich-backoff` hold was the follow-back reconciliation's wait wearing the
+> enrichment key. FIXES (ADR 0307 amended): GraphQL endpoint definitions for
+> the `activity-feed` / `friend-requests` kinds, matched by operation name,
+> schemas accepting either container and unwrapping to the REST shape;
+> extractors unwrap (`adapter/versions/2026-08-12.notifications.ts`);
+> `follow-notifications` routes by URL + operation name; the reconciliation
+> wait parks as `reconcile-backoff` ("couldn't read follow-backs"). Found on
+> the way: the drawer's header now covers the lower half of the close X in
+> every view, so every drawer close was refused (the drawer stayed open until
+> the next navigation) — `locateLabeled` reports the exposed sub-region as
+> `aim` (8×8 hit-test grid) and the Interactor presses inside it. Verified
+> live: profiles read, drawer open → Follows → requests → close, feed 24/100
+> follow events, requests 5 rows (none confirmed), no shadow disagreement.
+> `surface.ts` split (`projectors.ts`) and left the line-budget list; the
+> literals (+19) and the adapter façade (+2) ceilings re-seeded — new IG facts
+> must live there.
+
+> **2026-10-21 (autonomous lifecycle architecture) —** Durable run intent and bounded device/process recovery; account-isolated graphs; journaled growth/prune/manual/request mutations; shared admission and read budgets; resumable source frontier; evidence-based return reconciliation and probation. See [ADR 0210](adr/0210-runtime-intent-and-device-recovery.md), [ADR 0211](adr/0211-resumable-source-frontier-and-read-budgets.md), [ADR 0212](adr/0212-journaled-mutations-and-return-reconciliation.md), and the [validation record](qa/lifecycle-2026-10-21.md). This supersedes the old deferred discovery/cursor/manual-identity notes below. Existing user changes and the verified rendering-lag fix are preserved. The running production account was not restarted or exercised by the lifecycle implementation.
+
+> **2026-10-09 (prune unfollow refused: the unfollow menu animates) —** A live
+> prune stopped on its first candidate: `adapter stale … control moved, disabled
+> or covered` with the cursor resting on the menu's Unfollow row. Measured
+> (`EPO_PROBE=unfollow-hover`, opens the menu, never confirms): the header
+> button is stable (hover and hydration), but the menu SCALES IN over ~100 ms —
+> the confirm row is first found at 672×64.8 and settles at 560×54. The 250 ms
+> poll pinned a mid-animation rect and the click guard correctly refused the
+> press after the row shrank under the cursor. Fix: `confirmUnfollow` uses
+> `settleAndPress` (ADR 0307 amended). Intermittent before (a poll landing
+> after the animation pressed fine — why the @instagram check passed).
+
+> **2026-10-08 (dead endpoints — live probes, profile reads by VISIT, settle-then-press) —**
+> Symptom: no observation of any kind since ~2026-09-20. Diagnosed with live,
+> account-safe probes (`npm run probe`; the owner asked that nothing risk
+> flagging the account, so the passive `traffic` phase came first — it records
+> only what Instagram's OWN client requests — and every composed read was asked
+> ONCE, stopping at the first wall). Findings: `GET /api/v1/users/<pk>/info/`
+> answers **429 with an empty body** and `accounts/current_user/` a **200 HTML
+> page redirected to `/`** (the envelope classifier read that as a rate
+> limit); the web client calls neither. `topsearch`, followers/following,
+> show_many and friendships/pending answer JSON; the news inbox is now a
+> **POST**. A two-request header experiment ruled out a request-contract
+> change (Epo's `x-ig-app-id`-only request = the client's full header set).
+> Separately, the nav rail is now a hover-expanding icon rail that
+> **re-renders its nodes when the cursor arrives**, so the click guard refused
+> every rail press — the notifications drawer never opened (follow-back
+> detection + follow-request handling blind). FIXES (ADR 0307): profiles are
+> **visited** — `rim/profile-visit.ts` (`TabProfileVisitor`) navigates and
+> `rim/profile-observer.ts` (`ProfileObserver`, now the single always-on
+> profile reader that replaced graph-builder's inline harvester) hands it the
+> page's own `PolarisProfilePageContentQuery` body after writing it to the
+> store; outcomes `ok | gone | walled | unanswered | tab`; `gone` = the page's
+> "Sorry, this page isn't available" (`profile-unavailable` control, a span in
+> `main`; document is 200, no profile query fires). Enricher, acquisition pk
+> resolution, seed check (private-seed visibility now from the body's
+> `friendship_status`, no `friendships/show`), livetest, capture and the probe
+> all read profiles this way. `profileInfoScript` / `currentUserScript` /
+> `friendshipShowScript` and the topsearch/current_user literals are deleted
+> (a test pins it) — Epo now composes ONLY the list-page reads. Rail and
+> drawer controls use `settleAndPress` (`adapter/settle-press.ts`: hover with
+> `MOTION.hoverSettleMs`, locate again, press). The own-profile rail link
+> navigates same-document, which the input queue reports as post-click
+> uncertainty — the landing and identity now verify it by URL. The identity
+> resolver no longer asks `current_user`. Surface: activity feed declared
+> POST; mutation notes updated; `CONTROLS` split into
+> `versions/2026-08-12/controls.ts` (surface.ts 532 → 393). Verified live
+> (`EPO_PROBE=verify`): own + followed profile `ok` with counts/flags,
+> nonexistent `gone`, drawer open/Follows/requests/close, POST inbox parsed
+> (55/100 follow events), pending parsed (9, none confirmed); one follow +
+> unfollow of @instagram: `usePolarisFollowMutation` /
+> `usePolarisUnfollowMutation` observed and arbitrated `ok`. Probe kept:
+> `traffic` (start here next time) and `verify`; the one-off diagnosis phases
+> were removed (evidence lives in ADR 0307). Behaviour notes: a profile read
+> is now a page load (slower passes); the enricher's wall streak also counts
+> visits that never answer; a tab that cannot navigate ends the pass.
+> Suite: 1869 tests; `npm run check` green; boundaries 0 error / 132 warn
+> (was 133). Checkpoint before the change: `refs/backups/pre-endpoint-fix-2026-10-09`.
+
+> **2026-09-18 (Instagram retired `web_profile_info` — profile read rebuilt) —**
+> Symptom: every seed check failed with `kind: rate-limited, status: 429`, and
+> the tab logged `body was not valid JSON … Unexpected token '<'`. Not a rate
+> wall and not the account: `/api/v1/users/web_profile_info/` now answers a
+> 21,600-byte HTML shell under HTTP 429 for EVERY request shape (no headers,
+> the full app-id/csrf/www-claim/asbd set, Chrome 128 and Chrome 152 alike)
+> while, on the SAME session and minute, profile pages return 200 and
+> followers-list / following-list / friendship-show / news-inbox /
+> friendships-pending all return healthy JSON. Instagram's own web client no
+> longer calls it — a recorded profile load fires `POST /api/graphql` with
+> `x-fb-friendly-name: PolarisProfilePageContentQuery`. So: a retirement, not
+> a throttle. REPLACEMENT (verified live, `2026-08-12` amended in place, no
+> `doc_id` and no `fb_dtsg`/`lsd` scraping — those rotate every IG release):
+> a profile read is now two plain `x-ig-app-id` GETs in ONE in-page script —
+> `topsearch` (`/api/v1/web/search/topsearch/?context=blended&query=<u>`)
+> resolves username → pk on an EXACT case-insensitive username match, then
+> `/api/v1/users/<pk>/info/` returns the counts. No exact match is reported as
+> a synthetic 404 so `classifyEnvelope` reads it as `gone`, exactly like the
+> real 404 a dead pk returns. `/users/<pk>/info/` carries NO
+> `friendship_status`, so `checkSeed` pays one extra `friendships/show/<pk>/`
+> read for a PRIVATE seed only (`Foundation.viewerFollows`). PASSIVE harvest
+> kept (PRINCIPLES §1): the Reader routes the GraphQL profile body by its
+> operation name — endpoint matchers gained an optional `friendlyName`, since
+> `/api/graphql` serves ~14 other Polaris queries per profile load and a
+> URL-only match would drift-log all of them — and the mime gate now accepts
+> `text/javascript`, which is how that body is served. Two endpoint kinds
+> replace `web-profile-info`: `profile-info` (fetched) and `profile-graphql`
+> (observed); both project through ONE shared user reader, because the field
+> names are identical (`follower_count`, not the retired `edge_followed_by.
+> count`) and only the container differs. The corpus body for the dead
+> endpoint left the manifest (kept on disk as `.retired`); `profile-info` and
+> `profile-graphql` are listed as documented blind spots until a fresh
+> `npm run capture` lands real bodies — unit tests cover them meanwhile. Line
+> budget re-seeded: the nine files this touched grew, and `store/schema.ts`
+> (+1) and `store/schema/tables.ts` (dropped, now 298) came from uncommitted
+> wave-B work already in the tree.
+
+> **2026-09-02 (Epo v4 framework — design + wave A landed, wave B pending) —**
+> Owner's ask: rebuild the framework so correctness, safety and
+> maintainability hold by DESIGN, constants derive from the codebase's
+> fundamentals, everything on latest runtimes. Design:
+> `docs/superpowers/specs/2026-09-02-epo-v4-framework-design.md` (§9 waves,
+> §10 six owner questions); rationale in 25 new ADRs (06xx kernel and
+> fundamentals, 07xx store v4, 08xx surface, 09xx runtime, 10xx toolchain,
+> renderer, shell). Frameworks REJECTED with reasons: Effect, xstate,
+> kysely/drizzle, Vite/Vitest, pnpm workspaces, Storybook, electron-trpc,
+> Playwright at runtime (a remote-debugging port is a security hole).
+> Landed in wave A (eight parallel owners): `src/kernel/` (brands, units,
+> ONE Outcome algebra, `Res`, Schedule, Scope, parse-with-zod, capabilities,
+> Module/Session, fundamentals → policy → derive → overrides with a golden
+> test: 49 constants derive exactly, 41 are policy dials, 18 are explained
+> overrides); `node:sqlite` is THE store driver (`src/store/driver/`, ADR
+> 0702; `better-sqlite3`, its types and `@electron/rebuild` are uninstalled,
+> the rebuild scripts and `asarUnpack` are gone, `npmRebuild: false`; a
+> test asserts none creeps back), migration 12 adds `timers` + `spans`
+> (user_version 13) behind Chronos (durable timers) and SpanSink; the tables
+> manifest; `src/surface/` holds the IG surface as a validated zod document
+> running in SHADOW mode beside the legacy adapter (0 disagreements over 36
+> captured bodies; scrubbed fixtures only under `tests/fixtures/surface/`,
+> real captures in `docs/adapter/fixtures/` stay git-ignored), plus Verdict /
+> Arbiter / ResponseWatch, a SurfaceMeter, the input-fallback hard stop and
+> a `surface-lab` Electron entry (`npm run surface`); shell/IPC gained the
+> PUSH contract, GUARDS that validate and never throw, the PROJECTIONS
+> registry, UpdaterModule and GraphSession; runtime gained Facts + eleven
+> pure rules with a precedence property test, `decidePruneCandidate`,
+> `EFFECT_POLICY` as data (`ACTIONS_FAILING_HALT` derives to 7, the shipped 8
+> is an override); renderer moved to `@preact/signals` in the shell context,
+> generated tokens (`npm run gen:tokens`), `GraphStage` split (149 lines), a
+> dev gallery route; toolchain truth is tests: `deps-verify` (types agree
+> with the Electron-bundled Node, esbuild targets derive from `.node-version`
+> via `gen:targets`), dependency-cruiser boundaries (`npm run boundaries`,
+> 0 errors / warnings are the wave-B backlog), a monotone 300-line budget
+> over `.ts/.tsx` (37 files / 9862 lines seeded), knip advisory,
+> `noImplicitOverride`. Integration fixes this pass: arrow icons that
+> `GrowthCard` rendered blank, the deprecated string overload of
+> `isRateLimitHalt` (use `isRateLimitHaltKey` for strings), the kernel barrel.
+> WAVE B (not started): Outcome algebra across adapter→rim→engine (delete
+> `ActionRateLimitedError` / `ActionBlockedError` / `action-result.ts`),
+> Chronos await + Scope + TabCap in the conductor, prune as a mode, the
+> events-log migration with rebuild + shadow diff, Foundation dismantled into
+> lifecycle / manual-ops / prune-control, legacy pacer deletion (ADR 0901),
+> surface ENFORCE per endpoint, `listEndProbeCursor` opaque cursor,
+> `esbuild.page.mjs` hardcoded chrome150 → derived targets, the `src/types.ts`
+> barrel split (34 cycles, 65 renderer allow-list warnings), `causeSpanId` on
+> status projections + `spans:chain` / `spanTail` / `timers` /
+> `surfaceHealth` / `operatingPlan` channels, delete the `engineStatus` alias
+> and `onPruneStatus/offPruneStatus`, SurfaceMeter persistence,
+> `npm run livetest` for every DOM-level surface change. Suite: 1725 tests /
+> 154 suites; `npm run check` green. Checkpoints (full tree, untracked
+> included): `refs/backups/v4-wave0-2026-09-02` (before),
+> `refs/backups/v4-waveA-2026-09-02` (after). Sidebar revamp runs in
+> parallel: the card-based visual direction was rejected by the owner; the
+> data model in `docs/superpowers/specs/2026-09-02-sidebar-revamp-design.md`
+> survives, five from-zero UI concepts are being produced with the design
+> skills (see `2026-09-02-sidebar-concepts.md` once written).
+
+> **2026-09-02 (maintainability refactor — five adversarial reviews, five
+> parallel implementation passes) —** Design + decisions in
+> `docs/superpowers/specs/2026-09-02-maintainability-refactor-design.md`;
+> rationale in 22 ADRs under `docs/adr/` (01xx main, 02xx engine, 03xx
+> adapter, 04xx renderer, 05xx store/tooling). Frameworks REJECTED with
+> measurements (Tailwind, CSS Modules, animation libs, xstate, kysely/drizzle,
+> vitest/tsup, electron-trpc, zod-for-settings); ADOPTED: jsdom render tests,
+> page scripts as real TypeScript, a Web Animations stagger helper, a typed IPC
+> contract, contexts over prop drilling. Headlines: `foundation-wiring.ts`
+> 2724→2208 (electron injected, `buildGraph()`/`TabLease`/`shell.ts`/
+> `bootstrap.ts` extracted — capture/inspect were running WITHOUT the
+> anti-throttling switches, fixed; single-instance lock); `engine.ts`
+> 2081→1125 (ordered `GATES` table, `Pacer` port, `target-pipeline.ts`,
+> `decisions.ts`, typed `HaltReason`, one `WaitRunner` for both engines, one
+> `applyOutcome`); `knowledge-store.ts` 1614→684 (nine repos behind the same
+> facade, column manifest, migrations as `{id,name,sql}`, `username_history`
+> change-check); `versions/2026-08-12.ts` 1450→992 (in-page logic now
+> `src/adapter/page/*.ts`, bundled into a committed, freshness-tested
+> `bundle.generated.ts`; JS-click fallback deleted — `Interactor` is required;
+> the livetest finally drives the production CDP input path); renderer CSS
+> bundle 489 KB→66 KB (FontAwesome replaced by `ui/icons.ts`), `App.tsx`
+> 402→207 across six hooks, `index` prop drilling gone, stylesheets re-cut by
+> feature, 4 render suites on a fake bridge — and a real bug: the one-shot
+> "Started" toast never fired (watch effect re-ran on its own arming render).
+> Cross-cutting: `tests/**` is now type-checked (`npm run typecheck`) and
+> linted (`biome ci src tests`); shared fakes in `tests/kit/`; `src/shared/`
+> for renderer+engine pure code; renderer→engine import removed. Deferred
+> (high risk / cross-layer): prune as a conductor mode, rim walk-engine
+> unification, tab split, `GraphStage` split, `observations` table decision,
+> the vestigial ABI rebuild scripts (need a two-platform proof — ADR 0503),
+> LICENSE (AGPL text vs MIT declaration — owner's call). NEEDS
+> `npm run livetest`: every DOM-level path (page bundle, interactor-only
+> Actor, harness scrolling). Suite: 1262 tests / 114 suites, typecheck + lint
+> + build + page-bundle check clean. Git checkpoints of the tree before/after:
+> `refs/backups/pre-refactor-2026-09-02`, `refs/backups/post-refactor-2026-09-02`.
+
+> **2026-09-02 (follow rate-limit detection — the response is the arbiter) —**
+> User report: after enough outgoing follows Instagram throttles ("you're
+> following too fast" on mobile); on the web the button clicks and the state
+> just doesn't change — no dialog. Root cause: the Actor's only success
+> arbiter was the header button's TEXT, but the web client flips it
+> optimistically and snaps it back when the server refuses, so a throttled
+> follow read as either a phantom `ok` (the flip was polled) or an anonymous
+> `failed` (the snap-back was) — and the tab already observed the mutation
+> response via CDP without anyone routing it. Now: `InstagramTab` also records
+> `Network.requestWillBeSent` (method + lower-cased headers → `TabResponse`);
+> the surface gained `matchMutation` (REST `…/web/friendships/<pk>/follow|unfollow/`,
+> `friendships/create|destroy/<pk>/`, and GraphQL by the `x-fb-friendly-name`
+> header), `extractMutationVerdict` (`status`/`message`/`spam`/feedback text,
+> GraphQL `errors`/`data`), and `mutationRefusalSignatures`;
+> `classifyMutationResponse` (ig-surface, version-agnostic numbers) yields
+> `ok | rate-limited | auth | refused | drift-suspect`. The Actor arms a
+> `MutationWatch` (new `src/adapter/mutation-watch.ts`) BEFORE every action
+> click and lets the response decide: `rate-limited` → new
+> `ActionRateLimitedError` → churn-actions `{blocked, cause:'rate-limited'}` →
+> the growth engine enters the recovery ladder on the FIRST one (no streak to
+> prove; `ChurnScheduler.lastBlockedCause`), the prune run halts with
+> `haltReason:'rate-limited'` (remainder runnable; PruneRunCard says so) and the
+> woven feed suspends. No response in `ADAPTER.MUTATION_RESPONSE_TIMEOUT_MS`
+> (12 s) → the DOM verification decides exactly as before (a warn names the
+> gap so a surface drift is diagnosable). NOT yet live-verified: the exact
+> mutation URL the current web client fires — if the log shows "no mutation
+> response observed" after clicks, capture the request and extend
+> `MUTATION_TABLE`/the friendly-name test in `versions/2026-08-12.ts`.
+> Suite: 1044 tests, tsc + lint + build clean.
+
 > **2026-08-15 (LIVE unfollow debug — verdict) —** Two live labs against real
 > Instagram (scratchpad `unfollow-lab*.ts` → `dist/lab/`, using the user's
 > session): 6/6 unfollows succeeded, 5 of them the EXACT usernames that failed

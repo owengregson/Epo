@@ -1,23 +1,29 @@
 /*
  * Epo v3 renderer — stylesheet entry.
- * esbuild bundles this graph into dist/renderer/index.css and embeds the
- * FontAwesome webfonts as data: URIs (offline + CSP-safe). Import order is the
- * cascade order: FontAwesome first, then tokens → base → layout → primitives → cards.
+ * esbuild bundles this graph into dist/renderer/index.css. Import order IS the
+ * cascade order; icons are inline SVG (ui/icons.ts), so no font is loaded.
  *
- * Ownership: tokens/base/layout are the shell foundation; primitives are the
- * data-agnostic design-system controls; cards are card-internal layouts.
+ * Ownership: tokens and base are the foundation, shell is the console/stage
+ * scaffolding, controls is the data-agnostic design system, and every file
+ * after it owns one feature's card internals. The order is final: streams add
+ * rules to their own file and never reorder this list.
  */
 
-/* Self-hosted FontAwesome 7 (solid + brands sets used by the console). */
-@import '@fortawesome/fontawesome-free/css/fontawesome.min.css';
-@import '@fortawesome/fontawesome-free/css/solid.min.css';
-@import '@fortawesome/fontawesome-free/css/brands.min.css';
-
-/* Design system, in cascade order. */
-@import './tokens.css';
-@import './base.css';
-@import './layout.css';
-@import './primitives.css';
-@import './graph.css';
-@import './cards.css';
-@import './tour.css';
+@import "./fonts.css";
+@import "./tokens.palette.css";
+@import "./tokens.generated.css";
+@import "./base.css";
+@import "./shell.css";
+@import "./controls.css";
+@import "./graph.css";
+@import "./chain.css";
+@import "./queues.css";
+@import "./prune.css";
+@import "./tour.css";
+@import "./gallery.css";
+@import "./sidebar.css";
+@import "./people.css";
+@import "./settings-stage.css";
+@import "./compatibility.css";
+@import "./boot.css";
+@import "./diagnostics.css";

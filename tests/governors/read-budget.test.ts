@@ -1,0 +1,180 @@
+import fc from 'fast-check';
+import { Reader } from '@/adapter/reader';
+import type { Sentinel } from '@/adapter/sentinel';
+import { FakeClock } from '@/governors/clock';
+import { ReadBudget } from '@/governors/read-budget';
+import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
+import { FollowersPageReader } from '@/rim/followers-page-reader';
+import { ListPageWalker } from '@/rim/list-page-walker';
+import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import { FakeActor, FakeSentinel, FakeTab, followersBody } from '../kit/fakes';
+import { readLimits } from '../kit/read-limits';
+import { openTestStore } from '../kit/store';
+
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+let store: KnowledgeStore;
+let clock: FakeClock;
+beforeEach(() => { store = openTestStore(':memory:'); clock = new FakeClock(1_000_000); });
+afterEach(() => store.close());
+
+test('read reservations survive a restart and expire only after the trailing 24 h backstop', () => {
+  let budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 2, verifyReserve: 0 }) });
+  expect(budget.consume('profile').allowed).toBe(true);
+  clock.advance(100);
+  expect(budget.consume('profile').allowed).toBe(true);
+  budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 2, verifyReserve: 0 }) });
+  expect(budget.consume('profile')).toEqual({ allowed: false, resumeAt: 1_000_000 + DAY });
+  clock.advance(DAY - 100);
+  expect(budget.consume('profile').allowed).toBe(true);
+  expect(budget.consume('profile')).toEqual({ allowed: false, resumeAt: 1_000_100 + DAY });
+});
+
+describe('the plan-day window and the trailing backstop (spec §5.8 layer 1, §3 deviation 3)', () => {
+  const window = { startsAt: 1_000_000 - HOUR, endsAt: 1_000_000 + 2 * HOUR };
+
+  test("a spent plan-day total reopens at the boundary, not one read's expiry later", () => {
+    const budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 2, verifyReserve: 0, window }) });
+    expect(budget.consume('profile', 'reconciliation', 2).allowed).toBe(true);
+    expect(budget.consume('profile', 'reconciliation')).toEqual({ allowed: false, resumeAt: 1_000_000 + DAY });
+  });
+
+  test('a new plan-day resets its total, but the trailing 24 h still binds around the boundary', () => {
+    let current = window;
+    const budget = new ReadBudget({ store, clock, limits: () => readLimits({ profiles: 2, verifyReserve: 0, window: current })() });
+    expect(budget.consume('profile', 'reconciliation', 2).allowed).toBe(true);
+    clock.advance(3 * HOUR);
+    current = { startsAt: window.endsAt, endsAt: window.endsAt + DAY };
+    // The day reset, yet two reads spent three hours ago keep the trailing window full.
+    expect(budget.consume('profile', 'reconciliation')).toEqual({ allowed: false, resumeAt: 1_000_000 + DAY });
+  });
+
+  test('click-time verification always fits: other profile reads stop at the verify reserve', () => {
+    const budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 3, verifyReserve: 2, explorationProfiles: 3 }) });
+    expect(budget.consume('profile', 'exploration').allowed).toBe(true);
+    expect(budget.consume('profile', 'exploration').allowed).toBe(false);
+    expect(budget.consume('profile', 'reconciliation', 2, 'verify').allowed).toBe(true);
+    expect(budget.snapshot().debits.map((d) => d.use ?? null)).toEqual([null, 'verify']);
+  });
+
+  test("the plan's explore sub-limit binds inside D6's exploration share", () => {
+    const budget = new ReadBudget({ store, clock, limits: readLimits({ explore: { profiles: 1, pages: 1 } }) });
+    expect(budget.consume('profile', 'exploration').allowed).toBe(true);
+    expect(budget.consume('profile', 'exploration').allowed).toBe(false);
+    expect(budget.consume('list-page', 'exploration').allowed).toBe(true);
+    expect(budget.consume('list-page', 'exploration').allowed).toBe(false);
+  });
+});
+
+test('optional exploration cannot consume the reconciliation reserve or bypass the global ceiling', () => {
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ listPages: 4, explorationPages: 2 }) });
+  expect(budget.consume('list-page', 'exploration', 2).allowed).toBe(true);
+  expect(budget.consume('list-page', 'exploration').allowed).toBe(false);
+  expect(budget.consume('list-page', 'reconciliation', 2).allowed).toBe(true);
+  expect(budget.consume('list-page', 'reconciliation').allowed).toBe(false);
+  expect(budget.snapshot().debits.reduce((sum, d) => sum + d.count, 0)).toBe(4);
+});
+
+test('enrichment cannot spend profiles reserved for fresh mutation identity and recovery, even after restart', () => {
+  const { profiles, explorationProfiles, verifyReserve } = readLimits()();
+  let budget = new ReadBudget({ store, clock, limits: readLimits() });
+  expect(budget.consume('profile', 'exploration', explorationProfiles).allowed).toBe(true);
+  budget = new ReadBudget({ store, clock, limits: readLimits() });
+  expect(budget.consume('profile', 'exploration').allowed).toBe(false);
+  expect(budget.consume('profile', 'reconciliation', profiles - verifyReserve - explorationProfiles).allowed).toBe(true);
+  expect(budget.consume('profile', 'reconciliation').allowed).toBe(false);
+  // The verify reserve is the click's: only a verification spends it.
+  expect(budget.consume('profile', 'reconciliation', verifyReserve, 'verify').allowed).toBe(true);
+  expect(budget.consume('profile', 'reconciliation', 1, 'verify').allowed).toBe(false);
+});
+
+test('the allowance is read live: a settings change moves the ceiling without a restart', () => {
+  let ceiling = 1;
+  const budget = new ReadBudget({ store, clock, limits: () => readLimits({ profiles: ceiling, verifyReserve: 0 })() });
+  expect(budget.consume('profile', 'reconciliation').allowed).toBe(true);
+  expect(budget.consume('profile', 'reconciliation').allowed).toBe(false);
+  ceiling = 2;
+  expect(budget.consume('profile', 'reconciliation').allowed).toBe(true);
+});
+
+test('generated attempted reservations never exceed the same finite budget after arbitrary restarts', () => {
+  fc.assert(fc.property(fc.array(fc.integer({ min: 1, max: 5 }), { maxLength: 100 }), (counts) => {
+    store.setReadBudgetState(null);
+    let permitted = 0;
+    for (const count of counts) {
+      const budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 20 }) });
+      if (budget.consume('profile', 'exploration', count).allowed) permitted += count;
+    }
+    expect(permitted).toBeLessThanOrEqual(20);
+  }));
+});
+
+test('enrichment reserves before visiting and a spent budget stops without claiming a wall', async () => {
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ profiles: 1, verifyReserve: 0 }) });
+  const visited: string[] = [];
+  const enricher = new AdapterBackedProfileEnricher({ store, clock, readBudget: budget,
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+    visitor: { visit: async (username) => {
+      expect(budget.snapshot().debits).toHaveLength(1);
+      visited.push(username);
+      return { ok: true, obs: { accountPk: username, observedAt: clock.now(), source: 'profile', fields: { username, followers: 10, following: 10 } },
+        viewer: { following: null, requested: null, followsUs: null } };
+    } },
+  });
+  expect(await enricher.enrich(['one', 'two'])).toBe(1);
+  expect(visited).toEqual(['one']);
+  expect(enricher.budgetResumeAt()).toBeGreaterThan(clock.now());
+});
+
+test('list budget exhaustion streams paid-for rows, preserves resume cursor, and never falls back', async () => {
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ explorationPages: 1 }) });
+  const tab = new FakeTab();
+  let calls = 0;
+  tab.onEvaluate = () => {
+    calls += 1;
+    return { ok: true, status: 200, contentType: 'application/json', json: followersBody(['101', '102'], 'C1', true) };
+  };
+  const reader = new Reader();
+  const actor = new FakeActor();
+  const sentinel = new FakeSentinel() as unknown as Sentinel;
+  const pageReader = new FollowersPageReader({ tab, reader, actor, clock, readBudget: budget, sleep: async () => {} });
+  const walker = new ListPageWalker({ tab, reader, clock, readBudget: budget, sleep: async () => {} });
+  store.observe({ accountPk: 'target', observedAt: clock.now(), source: 'profile', fields: { username: 'target', followers: 1000, following: 1000 } });
+  const acquisition = new AdapterBackedAcquisition({ pageReader, walker, store, sentinel, clock, readBudget: budget });
+  const result = await acquisition.acquire('target');
+  expect(result.endReason).toBe('read-budget');
+  expect(result.retryAt).toBeGreaterThan(clock.now());
+  expect(calls).toBe(1);
+  expect(actor.openCalls).toBe(0);
+  expect(store.getEdge('101', 'target', 'follows')).not.toBeNull();
+  expect(store.getScrapeCursor('target')).toBe('C1');
+});
+
+test('dialog transport uses the same budget and cannot bypass a spent direct-read allowance', async () => {
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ explorationPages: 1 }) });
+  budget.consume('list-page', 'exploration');
+  const actor = new FakeActor();
+  const reader = new FollowersPageReader({ tab: new FakeTab(), reader: new Reader(), actor, clock, readBudget: budget });
+  const result = await reader.collect({ targetUsername: 'target', readPurpose: 'exploration', onObservation: () => {},
+    sentinel: new FakeSentinel() as unknown as Sentinel, maxRounds: 2, noNewStop: 1 });
+  expect(result.endReason).toBe('read-budget');
+  expect(actor.openCalls).toBe(0);
+  expect(result.observedPks).toEqual([]);
+});
+
+test('a zero-read refusal does not erase or refresh an aged source cursor', async () => {
+  const budget = new ReadBudget({ store, clock, limits: readLimits({ explorationPages: 1 }) });
+  budget.consume('list-page', 'exploration');
+  const tab = new FakeTab();
+  const reader = new Reader();
+  const sentinel = new FakeSentinel() as unknown as Sentinel;
+  const pageReader = new FollowersPageReader({ tab, reader, actor: new FakeActor(), clock, readBudget: budget });
+  const walker = new ListPageWalker({ tab, reader, clock, readBudget: budget });
+  store.observe({ accountPk: 'target', observedAt: clock.now(), source: 'profile', fields: { username: 'target', followers: 1000 } });
+  const saved = { cursor: 'deep-cursor', updatedAt: clock.now() - 8 * 86_400_000 };
+  store.setScrapeCursor('target', saved.cursor, saved.updatedAt);
+  const acquisition = new AdapterBackedAcquisition({ pageReader, walker, store, sentinel, clock, readBudget: budget });
+  expect((await acquisition.acquire('target')).endReason).toBe('read-budget');
+  expect(store.getScrapeCursorState('target')).toEqual(saved);
+});

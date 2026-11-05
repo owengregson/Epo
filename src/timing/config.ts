@@ -1,302 +1,72 @@
 /**
  * The timing constant registry — every fixed operational timing value in one
- * place, grouped by subsystem, each with a one-line rationale. USER-configurable
- * timing stays in `settings/settings.ts` (one home per kind of value); renderer
- * PRESENTATIONAL timing stays in `renderer/lib/motion.ts`.
+ * place, grouped by subsystem.
+ *
+ * This file is now a SHIM. Since the fundamentals refactor (ADR 0605) the values
+ * are not written here: they are DERIVED in `src/kernel/derive.ts` from twelve
+ * empirical quantities (`src/kernel/fundamentals.ts`) and a handful of policy
+ * dials (`src/kernel/policy.ts`), with the residue that refuses to derive named
+ * one-by-one in `src/kernel/overrides.ts`. Each key's rationale moved next to
+ * its derivation; `tests/kernel/derive-golden.test.ts` pins the whole registry
+ * against a frozen copy of what the app shipped before the change.
+ *
+ * The PUBLIC API is unchanged — same group names, same key names, same values
+ * (the one exception is documented in ADR 0606). Twenty-seven files import from
+ * here across every layer, so keep it that way.
+ *
+ * To change a timing constant: change the fundamental or the policy dial it
+ * derives from. If it genuinely does not derive, add an `OVERRIDES` entry with
+ * a reason. Do not add a literal here.
+ *
+ * USER-configurable timing stays in `settings/settings.ts` (one home per kind of
+ * value); renderer PRESENTATIONAL timing stays in `renderer/lib/motion.ts`.
  *
  * Node-free by design: the renderer imports `POLL` from here too.
  */
 
-export const ENGINE = {
-  /** How long an iteration idles when nothing is due yet (§3.1, final branch). */
-  IDLE_MS: 30_000,
-  /** f10: bounds of the short jittered pause ending every branch that issued IG traffic. */
-  REFILL_PACING_MIN_MS: 2_000,
-  REFILL_PACING_MAX_MS: 5_000,
+export {
+  /** Adapter: control polling, mutation-response arbitration, identity ladders. */
+  ADAPTER,
+  /** The circadian field: bumps, overnight floor, weekly weights, phase jitter. */
+  CIRCADIAN,
+  /** Connectivity probe cadence and per-probe deadline. */
+  CONNECTIVITY,
+  /** Growth loop: idle beats and candidate bounds. */
+  ENGINE,
+  /** Timing-noise layer (timing/noise.ts): jitter ceilings, sigmas, clamp bands. */
+  NOISE,
+  /** Daily-pattern bounds: rest-day depth, cycle-plan band, unfollow mix cap. */
+  PATTERN,
+  /** Renderer keep-alive and the graph-mutation push throttle. */
+  POLL,
+  /** Prune loop: failure bounds and hand-off timeout. */
+  PRUNE,
+  /** Recovery: step watchdog, the hold ladder, breaker streaks, healer bounds. */
+  RECOVERY,
+  /** Rim: walk bounds and notification drawer deadlines. */
+  RIM,
+  /** Prune hand-off, username resolution/recovery, teardown drain. */
+  SCHEDULER,
   /**
-   * Park after an enrichment-starved refill cycle (a plan that queued nothing
-   * while un-enriched candidates remain — a rate wall / sentinel window, not a
-   * dry target). Long, so repeated walled cycles cannot hammer the profile
-   * endpoint; the target is retried, never burned.
+   * Level-INDEPENDENT session structure. The per-level pacing values (sessions/
+   * day, gap median/floor, rolling-hour cap, day-volume variance, rest-day
+   * probability) vary by qualitative knob and live in `settings/pattern-map.ts`.
    */
-  ENRICH_BACKOFF_MS: 10 * 60_000,
-  /** Velocity-backstop park (organic mode): log-normal pause when the ledger-backed
-   *  rolling-hour cap trips — long enough to drain the window, jittered so repeated
-   *  parks never tick at a fixed period. */
-  VELOCITY_PARK_MEDIAN_MS: 8 * 60_000,
-  VELOCITY_PARK_SIGMA: 0.3,
-  VELOCITY_PARK_MIN_MS: 5 * 60_000,
-  VELOCITY_PARK_MAX_MS: 15 * 60_000,
-} as const;
-
-export const PRUNE = {
-  /** Prune unfollows run at a THIRD of growth's inter-action pace (deliberate bulk cleanup). */
-  DELAY_FACTOR: 1 / 3,
-  /** Brief park after a blocked action before continuing. */
-  PARK_MS: 30_000,
-  /**
-   * How long a completed scan's candidate set stays runnable for a 2-step run.
-   * Generous — 4 days (was 15 min, then 6 h; both expired while users reviewed
-   * the list or let the weave drain it, graying Run and blanking candidates):
-   * the run's LIVE-GRAPH guard skips any candidate whose follows-us edge
-   * appeared after the scan, so staleness in the dangerous direction is caught
-   * per candidate, not by expiry.
-   */
-  SCAN_FRESH_MS: 4 * 24 * 3600_000,
-  /** How long the prune hand-off waits for the growth loop to park before aborting. */
-  PARK_TIMEOUT_MS: 90_000,
-} as const;
-
-export const CONNECTIVITY = {
-  /** Probe cadence — cheap 204 endpoint, frequent enough to park the engine promptly. */
-  PROBE_INTERVAL_MS: 20_000,
-  /** Per-probe deadline; `net.request` has no built-in timeout. */
-  REQUEST_TIMEOUT_MS: 5_000,
-} as const;
-
-export const SCHEDULER = {
-  /** How often the opt-in scheduled-prune watcher re-checks `pruneDue`. */
-  AUTO_PRUNE_CHECK_MS: 30 * 60_000,
-  /** R5: wait between own-username resolution attempts. */
-  USERNAME_RESOLVE_RETRY_MS: 1_500,
-  /** R5: how many username resolution attempts before degrading. */
-  USERNAME_RESOLVE_ATTEMPTS: 4,
-  /**
-   * Backoff between username-recovery attempts once a graph is built DEGRADED:
-   * each attempt costs real tab navigations + `current_user` fetches, so it
-   * must never run on every routine IPC read.
-   */
-  USERNAME_REBUILD_BACKOFF_MS: 5 * 60_000,
-  /** teardownGraph: bounded wait for in-flight manual ops (scrapes, single
-   *  follow/unfollow clicks) to drain before the store closes under them. */
-  MANUAL_OP_DRAIN_TIMEOUT_MS: 15_000,
-} as const;
-
-export const ADAPTER = {
-  /** Poll interval while waiting for a dialog / confirm control. */
-  POLL_INTERVAL_MS: 250,
-  /** Total wait before declaring a control absent. */
-  POLL_TIMEOUT_MS: 8_000,
-  /** identity.ts: attempts × retry wait for own-username resolution. */
-  IDENTITY_ATTEMPTS: 4,
-  IDENTITY_RETRY_MS: 1_200,
-  /** identity.ts: nav-settle poll — rounds × per-round wait ≈ 4.5 s ceiling. */
-  NAV_SETTLE_ROUNDS: 15,
-  NAV_SETTLE_MS: 300,
-  /**
-   * identity.ts `landOnOwnProfile`: how long startup polls for the nav profile
-   * link before giving up (~30 s covers a slow session-restore hydration; a
-   * logged-out tab just quietly stays on the login page).
-   */
-  PROFILE_LAND_ATTEMPTS: 20,
-  PROFILE_LAND_RETRY_MS: 1_500,
-} as const;
-
-export const TAB = {
-  /** goto: deadline on `webContents.loadURL` — a wedged renderer must never park the caller forever. */
-  GOTO_TIMEOUT_MS: 30_000,
-  /** evaluate: deadline on `executeJavaScript` — in-page scripts settle sub-second when the page is alive. */
-  EVALUATE_TIMEOUT_MS: 15_000,
-  /** getBody: deadline on CDP `Network.getResponseBody` — a resource-cache read, normally instant. */
-  GET_BODY_TIMEOUT_MS: 10_000,
-  /** In-page envelope fetch abort budget. Inlined as a literal in the versions
-   *  file (page scripts can't import) — keep `envelopeFetchScript` in sync. */
-  FETCH_ABORT_MS: 20_000,
-  /** Teardown/restart: bounded wait for the engine loop's exit — quit must never hang behind a wedged loop. */
-  TEARDOWN_ENGINE_WAIT_MS: 15_000,
-} as const;
-
-export const RECOVERY = {
-  /** engine:step-watchdog — a 'running' engine that has emitted no status AND holds
-   *  no pending `engine:` wait for this long is wedged, not parked. */
-  STEP_WATCHDOG_MS: 8 * 60_000,
-  /** How often the step watchdog evaluates its fire predicate (cheap in-memory checks). */
-  STEP_WATCHDOG_CHECK_MS: 60_000,
-  /** Ladder hold medians (rungs 1..3): escalating long backoffs sized to outlast
-   *  the observed soft rate-limit windows rather than hammer through them. */
-  HOLD_MEDIANS_MS: [60 * 60_000, 90 * 60_000, 120 * 60_000],
-  /** Log-space spread of each hold draw — enough jitter that retries never tick
-   *  at a fixed period, small enough that a rung stays near its median. */
-  HOLD_SIGMA: 0.25,
-  /** Hold-draw floor as a factor of the rung's median (bounded re-draw clamp). */
-  HOLD_MIN_FACTOR: 0.6,
-  /** Hold-draw ceiling as a factor of the rung's median. */
-  HOLD_MAX_FACTOR: 1.6,
-  /** Failed holds tolerated before the terminal `recovery-exhausted` halt. */
-  MAX_HOLDS: 3,
-  /** Consecutive failed outcomes that re-enter recovery AFTER a hold — each
-   *  failed rung burns ~2 ledger rows, not another full cold window of 8. */
-  REENTRY_FAILS: 2,
-  /** Consecutive blocked outcomes that enter recovery (mirrors the prune
-   *  engine's PRUNE_CONSECUTIVE_BLOCK_HALT — three blocks is a wall, not luck). */
-  BLOCKED_STREAK_ENTRY: 3,
-  /** Consecutive walled enrichment cycles that enter recovery instead of
-   *  looping the flat enrich-backoff park forever. */
-  WALLED_CYCLES_ENTRY: 3,
-  /** rAF-canary observation window for the tab-health check — a live renderer
-   *  ticks many frames in this span; a throttled/dead one ticks none. */
-  CANARY_WINDOW_MS: 500,
-  /** Scheduled prune stays off the tab this long after a rate-limit-classified
-   *  halt — a census walk into the same wall would deepen the block. */
-  PRUNE_COOLDOWN_AFTER_RATE_HALT_MS: 2 * 3600_000,
-  /** Tab health events (debugger detach, renderer gone/unresponsive, input
-   *  fallback) coalesce into at most ONE recovery attempt per this window: a
-   *  crashing renderer emits a burst of events, and each recovery is itself a
-   *  reload + debugger re-attach that must never stack on the previous one. */
-  TAB_EVENT_DEBOUNCE_MS: 60_000,
-  /** Post-wake settle band (uniform draw): after a system resume the network
-   *  stack and the tab's renderer take a few seconds to re-establish — probing
-   *  instantly reads a half-dead system and burns spurious failures. Jittered
-   *  so post-wake work never lands at a fixed offset after every lid-open. */
-  RESUME_SETTLE_MIN_MS: 3_000,
-  RESUME_SETTLE_MAX_MS: 10_000,
-  /**
-   * Chain self-heal window: when the chain would otherwise dead-end in the
-   * terminal `chain-exhausted` halt, a target whose evidence-stamped
-   * `exhaustedAt` is younger than this is re-activated and its acquisition
-   * retried ONCE — an exhaustion latched during a rate-wall/drift outage is
-   * absence of evidence, and burning the lineage over it used to require a
-   * manual re-seed. 48 h comfortably outlasts the observed soft-wall windows
-   * AND a full run of the ladder's holds (≤ ~3×2 h + probes), while stamps
-   * older than that predate any current outage and stay final.
-   */
-  EXHAUSTED_REVERIFY_WINDOW_MS: 48 * 3600_000,
-  /**
-   * Requeue-healer batch cap: the most `abandoned` records one closed incident
-   * window may requeue. A healed incident window is bounded by construction
-   * (ladder entry costs ~8 fails cold / ~2 per rung, and abandoning one record
-   * costs 4 of them), so a genuine window abandons at most a handful of
-   * records; a window that claims hundreds means the timestamps are wrong
-   * (clock skew, a corrupted snapshot) and mass-mutating history on it would
-   * repeat the very damage class the healer exists to repair. 200 is far
-   * above any honest window, far below "the whole table".
-   */
-  HEAL_MAX_RECORDS: 200,
-  /**
-   * Requeue-healer pre-entry grace: the incident window opens this much BEFORE
-   * the ladder's `enteredAt`, because entering the ladder costs a streak of
-   * failed actions (ACTIONS_FAILING_HALT cold) and the records those fails
-   * abandoned are the systemic burn's FIRST victims — stamped minutes before
-   * the ladder woke up. One hour covers a full entry streak at within-session
-   * pacing; wider would start claiming records abandoned by unrelated,
-   * earlier causes.
-   */
-  HEAL_GRACE_MS: 3600_000,
-} as const;
-
-export const RIM = {
-  /** Fixed pause after each scroll so the paginated response can land (growth path). */
-  SCROLL_WAIT_MS: 2_000,
-  /**
-   * Jittered pause between profile-info fetches. An enrichment pass is the
-   * app's largest read burst (up to a batch of fetches back-to-back); pacing
-   * each one 2.5–4.5 s keeps a full pass around a minute instead of a
-   * 20-requests-in-20-seconds spike.
-   */
-  ENRICH_PACE_MIN_MS: 2_500,
-  ENRICH_PACE_MAX_MS: 4_500,
-  /** Whole-list scrape bounds (prune census): generous but always finite —
-   *  pages carry ~12 accounts, so thousands of followers need hundreds of
-   *  rounds; `hasMore`/stagnation are the real terminators. */
-  FETCH_ALL_MAX_ROUNDS: 400,
-  FETCH_ALL_NO_NEW_STOP: 5,
-  /** Follower-acquisition scrape bounds (one refill slice). */
-  ACQUIRE_MAX_ROUNDS: 5,
-  ACQUIRE_NO_NEW_STOP: 2,
-  /** Growth-acquisition DIALOG-FALLBACK scroll pacing band (uniform draw) —
-   *  replaces the fixed SCROLL_WAIT_MS metronome on the one bound-less path. */
-  ACQUIRE_SCROLL_MIN_MS: 1_400,
-  ACQUIRE_SCROLL_MAX_MS: 3_600,
-  /**
-   * Direct list-page walk (prune census): runaway page bound (~200 × 50-user
-   * pages = 10k accounts) and default per-page pacing when the caller supplies
-   * none. `hasMore === false` is the real terminator.
-   */
-  LIST_WALK_MAX_PAGES: 200,
-  LIST_WALK_PAGE_MIN_MS: 1_000,
-  LIST_WALK_PAGE_MAX_MS: 3_000,
-  /** Long jittered rest duration between page bursts (anti-throttle breather);
-   *  the STRIDE between rests is drawn per rest — NOISE.LIST_WALK_REST_EVERY_*. */
-  LIST_WALK_REST_MIN_MS: 5_000,
-  LIST_WALK_REST_MAX_MS: 15_000,
-  /** Consecutive zero-new-pk pages tolerated (duplicate windows) before stopping. */
-  LIST_WALK_STAGNANT_STOP: 3,
-  /**
-   * How long the follow-back watcher's notifications source waits for the
-   * news-inbox response after clicking the bell before declaring the read
-   * failed (the drawer fetch normally lands within a second or two).
-   */
-  NOTIFICATIONS_WAIT_MS: 10_000,
-  /** Brief settle band (uniform draw) before closing the notifications drawer —
-   *  a fixed settle closed the drawer the same beat after every check. */
-  NOTIFICATIONS_CLOSE_DELAY_MIN_MS: 500,
-  NOTIFICATIONS_CLOSE_DELAY_MAX_MS: 1_200,
-  /** Max follow requests auto-accepted per notifications check (bounded write burst). */
-  REQUEST_ACCEPT_CAP: 20,
-  /** Max drawer-scroll rounds per check (each may load an older feed page). */
-  NOTIFICATIONS_SCROLL_ROUNDS: 2,
-  /** Post-scroll wait band (uniform draw) for an older feed page to land —
-   *  jittered so drawer deepening never scrolls on a fixed 2 s metronome. */
-  NOTIFICATIONS_SCROLL_WAIT_MIN_MS: 1_400,
-  NOTIFICATIONS_SCROLL_WAIT_MAX_MS: 2_800,
-  /** Poll interval while waiting for the captured inbox response to parse. */
-  NOTIFICATIONS_POLL_MS: 150,
-  /** Deadline + poll interval for verifying an accept click consumed its row. */
-  ACCEPT_VERIFY_MS: 4_000,
-  ACCEPT_VERIFY_POLL_MS: 200,
-  /** Jittered pause between Confirm clicks while accepting follow requests. */
-  ACCEPT_PACE_MIN_MS: 1_500,
-  ACCEPT_PACE_MAX_MS: 3_000,
-} as const;
+  SESSION,
+  /** Tab: navigation, evaluate, response-body and envelope-fetch deadlines. */
+  TAB,
+  /** Update-feed check cadence. */
+  UPDATER,
+} from '../kernel/derive';
+/** Tab: the input probe's poll count and interval (derived from the display frame). */
+export { INPUT_PROBE } from '../kernel/input-probe';
 
 /**
- * Timing-noise layer (timing/noise.ts) — the fix for deterministic default-
- * config scheduling: without these, every install woke at exactly
- * activeHoursStart:00:00.000, resumed ceiling parks on the same o'clock
- * instant, and swept notifications on a bare hourly grid.
+ * Dev harnesses only (livetest / capture / inspect). NOT derived and not
+ * intended to be: these are the timings of a human watching a debug run, not of
+ * the shipped product. The v4 design cuts this group from the production
+ * registry entirely once the harnesses move behind `surface-lab`.
  */
-export const NOISE = {
-  /** Ceiling of the positive-only wake offset PAST a daily boundary (active-hours
-   *  open / cycle reset): spreads every install's "morning" across ~40 min. */
-  DAILY_BOUNDARY_JITTER_MAX_MS: 40 * 60_000,
-  /** Log-space spread of the per-run watcher-cadence factor (follow-back sweep). */
-  CADENCE_SIGMA: 0.3,
-  /** Cadence-factor floor — a drawn interval never shrinks below half the configured one. */
-  CADENCE_MIN_FACTOR: 0.5,
-  /** Cadence-factor ceiling — a drawn interval never exceeds double the configured one. */
-  CADENCE_MAX_FACTOR: 2.0,
-  /** Ceiling of the uniform hold between "scheduled prune due" and its launch —
-   *  kills the 30-min-aligned start grid (the poll tick itself is local, no IG traffic). */
-  PRUNE_LAUNCH_JITTER_MAX_MS: 20 * 60_000,
-  /** Log-space spread of a retry-backoff park draw (enrich backoff, blocked/prune parks). */
-  BACKOFF_SIGMA: 0.3,
-  /** Backoff draw floor as a factor of its base — a park always stays a real park. */
-  BACKOFF_MIN_FACTOR: 0.5,
-  /** Backoff draw ceiling as a factor of its base — the tail stays bounded. */
-  BACKOFF_MAX_FACTOR: 2.0,
-  /** Local-beat band floor (idle beat, transient backoff) as a factor of the base. */
-  BEAT_MIN_FACTOR: 0.7,
-  /** Local-beat band ceiling — asymmetric (0.7–1.45×) so the mean drifts long, never a fixed beat. */
-  BEAT_MAX_FACTOR: 1.45,
-  /** List-walk long-rest stride band (pages): the breather lands every 5–10 pages,
-   *  redrawn after each rest — was a fixed every-7th-page metronome. */
-  LIST_WALK_REST_EVERY_MIN: 5,
-  LIST_WALK_REST_EVERY_MAX: 10,
-} as const;
-
-export const POLL = {
-  /** Renderer keep-alive: pull only when the push stream has gone this quiet (§4). */
-  KEEPALIVE_MS: 10_000,
-  /**
-   * Trailing throttle for graph-mutation-driven status pushes (docs/
-   * PRINCIPLES.md §2): facts stream into the store per row during scans/
-   * sweeps, and every burst of writes coalesces into one fresh projection
-   * push at most this often — live enough that counts visibly tick, cheap
-   * enough that a thousand-row walk doesn't emit a thousand statuses.
-   */
-  GRAPH_PUSH_THROTTLE_MS: 300,
-} as const;
-
 export const HARNESS = {
   /** Dev harnesses (livetest / capture / inspect): login-state poll cadence. */
   LOGIN_POLL_MS: 2_000,
@@ -311,77 +81,6 @@ export const HARNESS = {
   /** livetest defaults (env-overridable in steps.ts): paced op delay band. */
   OP_DELAY_MIN_MS: 4_000,
   OP_DELAY_MAX_MS: 9_000,
-  /** livetest defaults: enrichment pacing band. */
-  ENRICH_PACE_MIN_MS: 3_000,
-  ENRICH_PACE_MAX_MS: 5_000,
   /** livetest default: follow→unfollow gap before the multiplicative jitter. */
   FOLLOW_UNFOLLOW_GAP_MS: 45_000,
-} as const;
-
-// ---------------------------------------------------------------------------------
-// Organic macro-timing model (docs/superpowers/plans/2026-08-15-macro-timing-realism.md).
-// The circadian field, session structure, and daily-pattern parameters that make the
-// emitted action/read timeline look like organic data instead of a flat metronome.
-// Every value carries a one-line "why", cited to the research or the IG safety envelope.
-// ---------------------------------------------------------------------------------
-
-export const CIRCADIAN = {
-  /** Sum-of-Gaussians daily shape: morning-commute, lunch, dominant evening peak. */
-  BUMPS: [
-    { centerHour: 8.0, amplitude: 0.45, widthHours: 1.6 }, // morning-commute peak (~7:30–9:00)
-    { centerHour: 13.0, amplitude: 0.5, widthHours: 2.0 }, // lunch bump (~12:00–13:00)
-    { centerHour: 18.0, amplitude: 1.0, widthHours: 3.0 }, // dominant evening peak (~17:00–18:30)
-  ],
-  /** λ never fully zero — real traces have rare 3am actions; an exact-zero night is a machine edge. */
-  OVERNIGHT_FLOOR: 0.015,
-  /** Sun..Sat weekly seasonality: mid-week hot, Fri resurgence, weekend dip (diurnal-corpus studies). */
-  DAY_OF_WEEK_WEIGHTS: [0.9, 1.0, 1.08, 1.08, 1.0, 1.02, 0.92],
-  /** On Sat/Sun the whole curve shifts this many hours later. */
-  WEEKEND_SHIFT_HOURS: 1.4,
-  /** Per-install horizontal jitter (hours) so no two installs share an identical curve. */
-  PHASE_JITTER_MAX_HOURS: 1.5,
-} as const;
-
-/**
- * NB: the PER-LEVEL pacing values (sessions/day, gap median/floor, rolling-hour
- * cap, day-volume variance, rest-day probability) are NOT here — they vary by
- * qualitative knob and live in their single home, the level tables of
- * `settings/pattern-map.ts` (RHYTHM / CAUTION / VARIANCE_PCT / REST_DAY_PCT).
- * SESSION/PATTERN hold only the level-independent constants.
- */
-export const SESSION = {
-  /** Within-session gap log-space spread; larger = heavier tail (WWW-2015 cluster shape). */
-  GAP_SIGMA: 0.75,
-  /** Cap keeps the within-session log-normal tail sane. */
-  GAP_CAP_MS: 8 * 60_000,
-  /** A gap larger than this counts as a new session (Catledge & Pitkow 1995 / GA4 default). */
-  SESSION_BOUNDARY_MS: 30 * 60_000,
-  /** Exponential self-excitation kernel: effective branching ratio n≈α<1 (sub-critical/stable),
-   *  decaying over ~1.5 min — creates within-session clustering that winds down (Hawkes). */
-  HAWKES_ALPHA: 0.35,
-  HAWKES_TAU_MS: 90_000,
-} as const;
-
-export const PATTERN = {
-  /** A rest day is near-zero, not exactly zero. */
-  REST_DAY_MAX_FRACTION: 0.15,
-  /**
-   * Band for the per-cycle volume plan (timing/cycle-plan.ts): each active-hours
-   * cycle draws its day plan uniformly in [MIN, MAX] × the configured cap, so
-   * the amount done per day fluctuates just under the cap instead of hitting
-   * the exact same number every day. The cap itself stays the hard limit.
-   */
-  CYCLE_PLAN_MIN_FRACTION: 0.85,
-  CYCLE_PLAN_MAX_FRACTION: 0.97,
-  /** Below this cap the rounding granularity makes an under-shoot either a
-   *  no-op or brutal (a cap of 2 would halve) — tiny caps pass through. */
-  CYCLE_PLAN_MIN_CAP: 10,
-  /** Keep any single session from being unfollow-dominated (mix within a burst — NOT an
-   *  aggregate follow:unfollow ratio; the churn lifecycle legitimately runs ~1:1). */
-  MAX_UNFOLLOW_FRACTION_PER_SESSION: 0.5,
-} as const;
-
-export const UPDATER = {
-  /** Update-feed check cadence; the launch check covers work due while closed. */
-  CHECK_INTERVAL_MS: 6 * 3600_000,
 } as const;

@@ -1,0 +1,43 @@
+/*
+ * GENERATED — do not edit. Edit `src/renderer/design/scale.ts` and run
+ * `npm run gen:tokens`. `tests/renderer/tokens.test.ts` fails the gate when
+ * this file drifts from the scale module.
+ *
+ * The derived half of the Epo design tokens (ADR 0405): the spacing ramp, the
+ * semantic type ladder and the control-size ramp. The palette, radii, motion
+ * and every other judgement call stay in `tokens.palette.css`.
+ */
+
+:root {
+  /* ============ TYPE (semantic ladder) ============
+     Text rungs 15px + [-4, -3, -2, -1, 0, 2]; display rungs
+     2·round(16·1.25ⁿ/2) for n ∈ {1, 2, 3, 5}. No fluid type. */
+  --fs-micro: 11px; /* axis ticks, badge counts — never a sentence */
+  --fs-caption: 12px; /* timestamps, group headers, meta */
+  --fs-small: 13px; /* secondary lines, hints, chips, the next line */
+  --fs-label: 14px; /* control labels, stage tabs, feed sentences */
+  --fs-body: 15px; /* body, inputs, buttons, zone titles */
+  --fs-lead: 17px; /* the now line, the wordmark, section leads */
+  --fs-title: 20px; /* section and column titles */
+  --fs-heading: 26px; /* page titles, the compact posture word */
+  --fs-state: 32px; /* the posture word */
+  --fs-hero: 48px; /* the one hero number */
+
+  /* ============ SPACING (derived — 4px × [0.5, 1, 2, 3, 4, 5, 6, 8, 10]) ============
+     Stable across panes and nested cards; responsiveness belongs to layout. */
+  --sp-0: 2px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+
+  /* ============ CONTROL SIZES (derived — 32 + 4n) ============ */
+  --h-xs: 32px; /* chips, small buttons — the smallest hit target */
+  --h-sm: 36px; /* segments, stage tabs */
+  --h-md: 40px; /* inputs, steppers, rows */
+  --h-lg: 44px; /* the primary action */
+}

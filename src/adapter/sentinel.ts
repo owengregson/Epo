@@ -14,16 +14,14 @@
 
 import type { SentinelStatus } from '@/adapter/ig-surface';
 import { SURFACE } from '@/adapter/ig-surface';
+import type { ProbeTab } from '@/adapter/tab-ports';
 import * as logger from '@/utils/logger';
 
 // Re-export so existing consumers keep importing the status from here.
 export type { SentinelStatus } from '@/adapter/ig-surface';
 
-/** Minimal structural view of the tab the Sentinel inspects. */
-export interface SentinelTab {
-  evaluate<T>(fnOrString: string | (() => T | Promise<T>)): Promise<T>;
-  currentUrl(): string;
-}
+/** The tab slice the Sentinel inspects: the URL plus an in-page text probe. */
+export type SentinelTab = ProbeTab;
 
 export class Sentinel {
   private readonly tab: SentinelTab;

@@ -1,4 +1,4 @@
-import { classify, isInterestingJson } from '@/capture/classify';
+import { classify, classifyRequest, isInterestingJson } from '@/capture/classify';
 
 describe('classify', () => {
   test('friendships/show_many → show-many (checked before followers)', () => {
@@ -113,5 +113,28 @@ describe('isInterestingJson', () => {
     expect(
       isInterestingJson('https://www.instagram.com/manifest.json', 'application/json'),
     ).toBe(false);
+  });
+});
+
+describe('the capture gate sees where Instagram’s GraphQL actually lives', () => {
+  // `/api/graphql` answers `text/javascript`. A json-only gate dropped EVERY
+  // GraphQL body, so no capture run could ever have recorded the follow
+  // mutation — the one request the mutation table was guessing at.
+  test('a text/javascript body on /api/graphql is interesting', () => {
+    expect(isInterestingJson('https://www.instagram.com/api/graphql', 'text/javascript')).toBe(true);
+    expect(isInterestingJson('https://www.instagram.com/api/graphql', 'text/html')).toBe(false);
+  });
+
+  test('a mutation request classifies by what the surface recognises, else as a suspect', () => {
+    const post = (friendly: string): { url: string; method: string; requestHeaders: Record<string, string> } => ({
+      url: 'https://www.instagram.com/api/graphql',
+      method: 'POST',
+      requestHeaders: { 'x-fb-friendly-name': friendly },
+    });
+    expect(classifyRequest(post('usePolarisFollowMutation'))).toBe('mutation-follow');
+    expect(classifyRequest(post('usePolarisUnfollowMutation'))).toBe('mutation-unfollow');
+    // A renamed operation the table does not know yet is still SAVED, labelled.
+    expect(classifyRequest(post('PolarisFriendshipCreateOperation'))).toBe('mutation-suspect');
+    expect(classifyRequest(post('PolarisProfilePageContentQuery'))).toBe('profile-info');
   });
 });

@@ -1,8 +1,7 @@
-/** @jsx h */
-import { Fragment, h } from 'preact';
-import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import type { NetGrowthPoint } from '@/types';
-import { shortDate } from '../lib/format';
+import { Fragment, type JSX } from 'preact';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { smoothPath } from '@/renderer/charts/catmull-rom';
+import { shortDate } from '@/renderer/lib/format';
 import {
   accumulateFrame,
   EASE,
@@ -11,25 +10,15 @@ import {
   GROWTH_REVEAL_DUR_MS,
   GROWTH_REVEAL_FADE_MS,
   prefersReducedMotion,
-} from '../lib/motion';
-import { smoothPath } from './catmull-rom';
-import type { GrowthOverlay } from './growth-overlay';
+} from '@/renderer/lib/motion';
+import type { NetGrowthPoint } from '@/types';
 
 const X0 = 8;
-const X1 = 362;
-const Y0 = 104;
+const Y0 = 164;
 const Y1 = 12;
 
 export interface GrowthChartProps {
   points: NetGrowthPoint[];
-  /**
-   * Optional projection continuation: the model's three re-anchored scenario
-   * paths, drawn PAST the realized endpoint as a subtle band (cautious→
-   * optimistic) with a dashed expected line. Ignored until the realized series
-   * carries data — a projection with nothing real under it belongs to the
-   * Settings simulator, not here.
-   */
-  overlay?: GrowthOverlay | null;
   /**
    * Dataset tag from the caller (the window selection these points answer).
    * Joins the first day + point count as the reveal's identity: the draw-in
@@ -64,20 +53,31 @@ interface RevealState {
  * The net-follower-growth trendline. Smooth Catmull-Rom line that draws in with a
  * leading dot riding the tip and the fill revealing underneath (clip grows with
  * the tip). Empty until the store has at least two days of own-follower data.
- * With an overlay, the x-domain extends `horizonDays` past today and the
- * projection band continues from the realized endpoint.
  */
 export function GrowthChart({
   points,
-  overlay,
   revealKey,
   baselineAt,
-}: GrowthChartProps): h.JSX.Element {
+}: GrowthChartProps): JSX.Element {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(400);
+  // Measure the plot in CSS pixels so widening a page never enlarges its labels.
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const measure = (): void => {
+      if (host.clientWidth > 0) setWidth(host.clientWidth);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+  const X1 = width - 48;
   const lineRef = useRef<SVGPathElement>(null);
   const areaRef = useRef<SVGPathElement>(null);
   const dotRef = useRef<SVGCircleElement>(null);
   const clipRef = useRef<SVGRectElement>(null);
-  const projRef = useRef<SVGGElement>(null);
   const anim = useRef<RevealState | null>(null);
   const endPtRef = useRef<[number, number]>([X1, Y0]);
 
@@ -85,22 +85,12 @@ export function GrowthChart({
   // A window the store measured that simply recorded zero net movement is NOT
   // absent data — misattributing it as "awaiting" would deny a real reading.
   const measuredFlat = points.length >= 2 && !hasData && baselineAt != null;
-  const proj = hasData && overlay ? overlay : null;
   const n = points.length;
-  const horizon = proj ? proj.horizonDays : 0;
-  // The x-domain spans realized days plus the projection horizon (in days).
-  const totalSpan = Math.max(1, n - 1 + horizon);
+  const totalSpan = Math.max(1, n - 1);
   const xAt = (dayIdx: number): number => X0 + (X1 - X0) * (dayIdx / totalSpan);
 
-  // Domain covers LOSSES too: a churn-heavy day genuinely produces a negative
-  // cumulative net, and a gain-only [0, vmax] scale used to fling the line far
-  // below the viewBox (the chart just disappeared). The projection's ceiling
-  // (optimistic endpoint) joins the domain so the band always fits.
-  const vmax = Math.max(
-    1,
-    ...points.map((p) => p.cumulativeNet),
-    ...(proj ? [proj.optimistic[proj.optimistic.length - 1]] : []),
-  );
+  // Include losses so a net-negative series remains inside the chart.
+  const vmax = Math.max(1, ...points.map((p) => p.cumulativeNet));
   const vmin = Math.min(0, ...points.map((p) => p.cumulativeNet));
   const span = vmax - vmin;
   const yOf = (v: number): number => Y0 - (Y0 - Y1) * ((v - vmin) / span);
@@ -112,26 +102,12 @@ export function GrowthChart({
   const lineD = hasData ? smoothPath(coords) : '';
   const endPt: [number, number] = coords.length ? coords[coords.length - 1] : [X1, yZero];
   // The area fills between the line and the ZERO baseline (not the frame
-  // floor), closing at the REALIZED endpoint — never under the projection.
+  // floor), closing at the measured endpoint.
   const areaD = hasData ? `${lineD}L${endPt[0].toFixed(1)},${yZero} L${X0},${yZero} Z` : '';
-  const signed = (v: number): string => (v > 0 ? `+${Math.round(v)}` : String(Math.round(v)));
+  const signed = (v: number): string => (v > 0 ? `+${Number(v.toFixed(1))}` : String(Number(v.toFixed(1))));
   // Announce the trend's CURRENT value, signed — a churn-heavy net-negative
   // series must not read as growth.
   const latestNet = points.length ? points[points.length - 1].cumulativeNet : 0;
-
-  // Projection geometry: band between cautious and optimistic, dashed expected
-  // line — the same polygon construction as the README pipeline's band. All
-  // three paths start exactly at the realized endpoint (re-anchored model).
-  const xJ = xAt(Math.max(0, n - 1));
-  const projPt = (t: number, v: number): string =>
-    `${xAt(n - 1 + t).toFixed(1)},${yOf(v).toFixed(1)}`;
-  const bandPts = proj
-    ? [
-        ...proj.cautious.map((v, t) => projPt(t, v)),
-        ...proj.optimistic.map((v, t) => projPt(t, v)).reverse(),
-      ].join(' ')
-    : '';
-  const expectedPts = proj ? proj.expected.map((v, t) => projPt(t, v)).join(' ') : '';
 
   // The reveal's dataset identity: replay only when the SELECTION or the
   // series' span genuinely changes — never on an in-place value tick.
@@ -152,10 +128,7 @@ export function GrowthChart({
         : line.getPointAtLength(st.len * e);
     dot.setAttribute('cx', tip.x.toFixed(1));
     dot.setAttribute('cy', tip.y.toFixed(1));
-    clip.setAttribute('width', (e >= 1 ? X1 + 2 : tip.x + 1).toFixed(1));
-    // The projection overlay reads as a continuation of the realized line, so
-    // it holds hidden until the reveal delivers the endpoint it extends.
-    if (e >= 1) projRef.current?.classList.add('on');
+    clip.setAttribute('width', (e >= 1 ? endPtRef.current[0] + 2 : tip.x + 1).toFixed(1));
   };
 
   // Arm the ~200ms opacity fade for the hold's end. Listing ONLY opacity keeps
@@ -201,7 +174,6 @@ export function GrowthChart({
     // New dataset: reset, and hide everything before this frame paints.
     const st: RevealState = { identity, len, elapsed: 0, e: 0, faded: false, done: false };
     anim.current = st;
-    projRef.current?.classList.remove('on');
     line.style.strokeDasharray = String(len);
     line.style.transition = 'none';
     dot.style.transition = 'none';
@@ -254,16 +226,14 @@ export function GrowthChart({
     return () => cancelAnimationFrame(raf);
   }, [identity, hasData]);
 
-  return (
-    <div>
+  return !hasData && !measuredFlat ? (
+    <div ref={hostRef} class="growth-empty">No follower history yet. Your daily changes will appear here once Epo has measured them.</div>
+  ) : (
+    <div ref={hostRef}>
       <svg
         class="growth-svg"
-        viewBox="0 0 400 118"
-        aria-label={
-          proj
-            ? `Cumulative net follower growth, ${signed(latestNet)}, with a ${horizon}-day projection band continuing from today`
-            : `Cumulative net follower growth, ${signed(latestNet)}`
-        }
+        viewBox={`0 0 ${width} 180`}
+        aria-label={`Cumulative net follower growth, ${signed(latestNet)}`}
       >
         <defs>
           <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
@@ -271,34 +241,24 @@ export function GrowthChart({
             <stop offset="100%" stop-color="rgba(201,204,209,0)" />
           </linearGradient>
           <clipPath id="growthClip">
-            <rect ref={clipRef} x="0" y="0" width="0" height="118" />
+            <rect ref={clipRef} x="0" y="0" width="0" height="180" />
           </clipPath>
         </defs>
-        <line class="growth-grid dash" x1="8" y1="12" x2="362" y2="12" />
-        <line class="growth-grid dash" x1="8" y1="58" x2="362" y2="58" />
-        <line class="growth-grid" x1="8" y1="104" x2="362" y2="104" />
+        <line class="growth-grid dash" x1="8" y1={Y1} x2={X1} y2={Y1} />
+        <line class="growth-grid dash" x1="8" y1={(Y0 + Y1) / 2} x2={X1} y2={(Y0 + Y1) / 2} />
+        <line class="growth-grid" x1="8" y1={Y0} x2={X1} y2={Y0} />
         {vmin < 0 ? (
-          <line class="growth-grid" x1="8" y1={yZero} x2="362" y2={yZero} />
+          <line class="growth-grid" x1="8" y1={yZero} x2={X1} y2={yZero} />
         ) : null}
-        <text class="growth-ylab" x="398" y="15" text-anchor="end">
+        <text class="growth-ylab" x={width - 2} y={Y1 + 3} text-anchor="end">
           {signed(vmax)}
         </text>
-        <text class="growth-ylab" x="398" y="61" text-anchor="end">
+        <text class="growth-ylab" x={width - 2} y={(Y0 + Y1) / 2 + 3} text-anchor="end">
           {signed((vmax + vmin) / 2)}
         </text>
-        <text class="growth-ylab" x="398" y="107" text-anchor="end">
+        <text class="growth-ylab" x={width - 2} y={Y0 + 3} text-anchor="end">
           {signed(vmin)}
         </text>
-        {proj ? (
-          <g class="growth-proj-g" ref={projRef}>
-            <line class="growth-grid dash" x1={xJ.toFixed(1)} y1={Y1} x2={xJ.toFixed(1)} y2={Y0} />
-            <text class="growth-ylab" x={xJ.toFixed(1)} y="115" text-anchor="middle">
-              today
-            </text>
-            <polygon class="growth-proj-band" points={bandPts} />
-            <polyline class="growth-proj-line" points={expectedPts} />
-          </g>
-        ) : null}
         {hasData ? (
           <Fragment>
             <path class="growth-area" ref={areaRef} clip-path="url(#growthClip)" d={areaD} />
@@ -306,20 +266,14 @@ export function GrowthChart({
             <circle class="growth-dot" ref={dotRef} r="3" />
           </Fragment>
         ) : (
-          <text class="growth-ylab" x="185" y="60" text-anchor="middle">
-            {measuredFlat ? 'No net change in this window' : 'Awaiting follower data…'}
+          <text class="growth-ylab" x={(X0 + X1) / 2} y={(Y0 + Y1) / 2} text-anchor="middle">
+            No change in this range
           </text>
         )}
       </svg>
       <div class="growth-x num">
         <span>{points.length ? shortDate(points[0].dayStartMs) : '—'}</span>
-        <span>
-          {proj
-            ? `+${horizon}d projected`
-            : points.length
-              ? shortDate(points[points.length - 1].dayStartMs)
-              : '—'}
-        </span>
+        <span>{points.length ? shortDate(points[points.length - 1].dayStartMs) : '—'}</span>
       </div>
     </div>
   );

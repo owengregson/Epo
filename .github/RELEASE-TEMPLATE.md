@@ -54,9 +54,10 @@
   Privacy & Security → Open Anyway** (needed once). **Windows** — More
   info → Run anyway. A no-install build, `Epo-{{VERSION_NUMBER}}-portable.exe`,
   is in the assets below.
-- Your database, settings, and Instagram session carry over — updating is a
-  drop-in replacement. Installed apps update themselves from the
-  `latest*.yml` / `.blockmap` assets below.
+- Your database, settings, account protections and Instagram session carry over.
+  Windows installer builds download the update in the app; use **Restart & update**
+  when it is ready. Mac and Windows portable users download and replace the app
+  manually. Older versions cannot be forced to update remotely.
 - Epo acts on your Instagram account; use it at your own risk (see the
   README).
 

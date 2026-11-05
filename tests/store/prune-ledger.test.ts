@@ -1,13 +1,14 @@
 /**
- * Prune ledger (Phase 5): the migration applies on a fresh `:memory:` db and
+ * Prune ledger: the migration applies on a fresh `:memory:` db and
  * `recordPruneAction`/`pruneCountSince` mirror `recordAction`/`actionCountSince`
  * over the prune-own table — independent of growth's action_ledger.
  */
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import { memoryStore } from '../kit/store';
 
 let s: KnowledgeStore;
 beforeEach(() => {
-  s = new KnowledgeStore(':memory:');
+  s = memoryStore();
 });
 afterEach(() => s.close());
 

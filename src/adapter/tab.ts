@@ -1,21 +1,7 @@
 /**
- * InstagramTab — the embedded, visible Instagram browsing surface.
- *
- * Wraps an Electron `WebContentsView` on a PERSISTENT partitioned session
- * (`persist:ig`) so cookies/login survive app restarts. This is the single
- * place that owns the tab's lifecycle; the Adapter (Reader/Actor/Sentinel,
- * Tasks 7-8) drives Instagram exclusively through the methods exposed here.
- *
- * Network observation
- * -------------------
- * `onResponse` is implemented with the Chrome DevTools Protocol via
- * `webContents.debugger` (`Network.responseReceived` + `Network.getResponseBody`),
- * NOT `session.webRequest`. Rationale: Electron's `webRequest` API exposes
- * request/response *metadata* only and cannot read response BODIES, which the
- * Reader needs to parse Instagram's JSON/GraphQL payloads. CDP is the only
- * in-process mechanism that yields decoded bodies. We emit each response on
- * `Network.loadingFinished` (rather than `responseReceived`) so the body is
- * reliably available in the CDP resource cache when `getBody()` is called.
+ * Own the persistent Instagram WebContentsView, acknowledged input and health.
+ * Observe CDP Network responses on loadingFinished so getResponseBody is ready.
+ * Electron webRequest exposes metadata only; CDP supplies decoded bodies.
  */
 
 import type {
@@ -24,12 +10,22 @@ import type {
   Event as ElectronEvent,
   WebContents,
 } from 'electron';
-import { session, WebContentsView } from 'electron';
-import { TabUnresponsiveError } from '@/adapter/errors';
+import { app, session, WebContentsView } from 'electron';
+import { browserUserAgent } from '@/adapter/browser-identity';
+import { prepareClickGuard } from '@/adapter/click-guard';
+import { ActionAbortedError, TabUnavailableError, TabUnresponsiveError } from '@/adapter/errors';
 import { SURFACE } from '@/adapter/ig-surface';
+import { InputDispatch } from '@/adapter/input-dispatch';
+import { pageCall } from '@/adapter/page-call';
+import { assessRendererCanary, rendererCanaryScript } from '@/adapter/renderer-canary';
+import { evaluateMainDocument, loadMainDocument, reloadMainDocument } from '@/adapter/tab-document';
+import { TabPlacement } from '@/adapter/tab-placement';
 import { toCdpMouseParams } from '@/interaction/cdp-input';
 import type { PointerInputEvent } from '@/interaction/input-driver';
-import { RECOVERY, TAB } from '@/timing/config';
+import type { ClickGuard } from '@/interaction/interactor';
+import type { ElementRect, Point } from '@/interaction/motion-profile';
+import { SURFACE_METER } from '@/surface/meter';
+import { INPUT_PROBE, RECOVERY, TAB } from '@/timing/config';
 import { TIMED_OUT, withTimeout } from '@/timing/primitives';
 import type { ResponseHandler, TabResponse, Unsubscribe } from '@/types';
 import * as logger from '@/utils/logger';
@@ -40,14 +36,7 @@ export const IG_PARTITION = 'persist:ig';
 /** Instagram home; the login flow is completed by the user in the tab. */
 export const IG_HOME_URL = `${SURFACE.origin}/`;
 
-/**
- * The genuine desktop Chrome User-Agent the active surface version pins.
- *
- * Electron's default UA advertises `Electron/<version>`, which Instagram's
- * private JSON endpoints reject with "useragent mismatch". We pin a real Chrome
- * UA on the persistent session so the intercepted API calls the Reader depends
- * on are accepted. It is re-verified (and bumped) with the surface version.
- */
+/** Historical capture identity; runtime identity comes from native Chromium. */
 export const IG_USER_AGENT = SURFACE.userAgent;
 
 interface Rectangle {
@@ -57,11 +46,19 @@ interface Rectangle {
   height: number;
 }
 
+/** Metadata captured at `Network.requestWillBeSent`, keyed by CDP requestId. */
+interface PendingRequest {
+  method: string;
+  /** Header names lower-cased — consumers never depend on the page's casing. */
+  headers: Record<string, string>;
+}
+
 /** Metadata captured at `Network.responseReceived`, keyed by CDP requestId. */
 interface PendingResponse {
   url: string;
   status: number;
   mimeType: string;
+  request?: PendingRequest;
 }
 
 /**
@@ -75,6 +72,7 @@ export interface TabTimeouts {
   gotoMs: number;
   evaluateMs: number;
   getBodyMs: number;
+  inputMs: number;
 }
 
 export interface InstagramTabOptions {
@@ -84,12 +82,18 @@ export interface InstagramTabOptions {
 
 export class InstagramTab {
   private readonly view: WebContentsView;
+  private readonly contents: WebContents;
+  private readonly placement: TabPlacement;
   private readonly responseHandlers = new Set<ResponseHandler>();
   private readonly pending = new Map<string, PendingResponse>();
+  /** Requests seen going out, awaiting their response (released on finish/fail). */
+  private readonly requests = new Map<string, PendingRequest>();
   private readonly timeouts: TabTimeouts;
   private debuggerReady = false;
-  /** Serializes CDP input dispatches so move/down/up order is guaranteed. */
-  private inputChain: Promise<void> = Promise.resolve();
+  private readonly input: InputDispatch;
+  private debuggerSetup: Promise<void> = Promise.resolve();
+  private debuggerEpoch = 0;
+  private bounds: Rectangle | null = null;
   /**
    * Set when a health event fires (debugger detach, renderer gone/unresponsive,
    * input-dispatch fallback); cleared only by a completed {@link recoverTab}.
@@ -99,20 +103,29 @@ export class InstagramTab {
   private unhealthyReason: string | null = null;
   /** Health-event policy callback — the composition root owns recovery. */
   private onUnhealthyCb: ((reason: string) => void) | null = null;
-  /** The CDP→sendInputEvent fallback fires ONE health event per attach epoch. */
-  private inputFallbackReported = false;
+  /** A refused input dispatch fires ONE health event per attach epoch. */
+  private inputUnavailableReported = false;
 
   constructor(opts: InstagramTabOptions = {}) {
     this.timeouts = {
       gotoMs: opts.timeouts?.gotoMs ?? TAB.GOTO_TIMEOUT_MS,
       evaluateMs: opts.timeouts?.evaluateMs ?? TAB.EVALUATE_TIMEOUT_MS,
       getBodyMs: opts.timeouts?.getBodyMs ?? TAB.GET_BODY_TIMEOUT_MS,
+      inputMs: opts.timeouts?.inputMs ?? TAB.EVALUATE_TIMEOUT_MS,
     };
+    this.input = new InputDispatch(
+      (event, isCurrent) => this.dispatchInput(event, isCurrent),
+      this.timeouts.inputMs,
+      (error) => {
+        if (!this.inputUnavailableReported) {
+          this.inputUnavailableReported = true;
+          this.markUnhealthy(error instanceof TabUnavailableError ? 'input-unavailable' : 'input-dispatch-failed');
+        }
+      },
+    );
     const igSession = session.fromPartition(IG_PARTITION);
-    // Present as real desktop Chrome so IG's private JSON API doesn't reject
-    // requests with "useragent mismatch". Set on the session (covers all
-    // network requests) and on the webContents once it exists (below).
-    igSession.setUserAgent(IG_USER_AGENT);
+    const userAgent = browserUserAgent(igSession.getUserAgent());
+    igSession.setUserAgent(userAgent, app.getPreferredSystemLanguages().join(','));
     this.view = new WebContentsView({
       webPreferences: {
         // Persistent, partitioned session: the whole point of Task 6.
@@ -120,44 +133,48 @@ export class InstagramTab {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        // Background-run survival (measured, 2026-08-14 input lab): without
-        // this, a blurred/occluded/hidden/minimized window stops the page's
-        // rAF entirely and clamps its timers ~15× — Instagram's SPA then
-        // cannot hydrate or advance its UI, and every action times out even
-        // though CDP input arrives. Together with the app-level switches in
-        // `main.ts` this keeps the tab fully alive in every window state.
+        // Keep timers/input alive when hidden. On macOS the renderer needs a
+        // local frame source after hidden navigation (otherwise CDP ACKs take
+        // ~1 s). Scope that switch HERE: setting it on app.commandLine also
+        // disables shared GPU vsync and uncaps the dashboard/veil, causing lag.
+        additionalArguments: process.platform === 'darwin' ? ['--disable-frame-rate-limit'] : [],
         backgroundThrottling: false,
       },
     });
-    this.view.webContents.setUserAgent(IG_USER_AGENT);
+    this.contents = this.view.webContents;
+    this.contents.setUserAgent(userAgent);
+    this.placement = new TabPlacement(this.view);
   }
 
   /** Attach the tab to a host window and begin observing network traffic. */
   attach(win: BaseWindow): void {
-    win.contentView.addChildView(this.view);
+    this.placement.attach(win);
     // Health eventing — registered ONCE per webContents (a reload keeps the
     // same webContents, so recoverTab never needs to re-register these). A
     // crashed or hung renderer must surface as an EVENT the composition root
     // routes to recovery, never as a silently-dead onResponse stream.
-    const wc = this.view.webContents;
+    const wc = this.contents;
     wc.on('render-process-gone', (_event, details) => {
       this.debuggerReady = false;
+      this.debuggerEpoch += 1;
+      this.input.invalidate();
       this.markUnhealthy(`render-process-gone:${details.reason}`);
     });
     wc.on('unresponsive', () => {
       this.markUnhealthy('unresponsive');
     });
+    wc.on('did-start-navigation', (details) => {
+      if (details.isMainFrame) this.input.invalidate();
+    });
     this.attachDebugger();
   }
 
   /**
-   * Health-event callback (settable like the response observer): fired when
-   * the tab detects its own machinery is compromised — the CDP debugger
-   * detached (onResponse consumers observe NOTHING from then on), the renderer
-   * process crashed or hung, or input dispatch fell back to the
-   * focus-dependent `webContents.sendInputEvent` transport. The tab only
-   * REPORTS; recovery policy (when to call {@link recoverTab}) belongs to the
-   * caller — an event here must never trigger a reload on its own.
+   * Health-event callback: fired when the tab detects its own machinery is
+   * compromised — the CDP debugger detached (onResponse consumers observe
+   * NOTHING from then on), the renderer crashed or hung, or an input dispatch
+   * was REFUSED because the debugger (the only click path — ADR 0305/0805) is
+   * gone. The tab only REPORTS; recovery policy belongs to the caller.
    */
   onUnhealthy(cb: (reason: string) => void): void {
     this.onUnhealthyCb = cb;
@@ -169,6 +186,7 @@ export class InstagramTab {
   }
 
   private markUnhealthy(reason: string): void {
+    this.input.invalidate();
     this.unhealthyReason = reason;
     logger.error('tab: unhealthy', { reason });
     try {
@@ -180,59 +198,44 @@ export class InstagramTab {
 
   /** Position the tab within the host window. */
   setBounds(bounds: Rectangle): void {
+    if (this.bounds?.width !== bounds.width || this.bounds?.height !== bounds.height) this.input.invalidate();
+    this.bounds = { ...bounds };
     this.view.setBounds(bounds);
   }
 
   /** Reveal the tab. */
   show(): void {
-    this.view.setVisible(true);
+    this.placement.show();
   }
 
-  /** Hide the tab (keeps the session and page alive). */
+  /** Conceal below the opaque dashboard, keeping native input dispatch alive. */
   hide(): void {
-    this.view.setVisible(false);
+    this.placement.hide();
   }
 
   /**
-   * The tab's LIVE webContents, guarded. Throws a clear, catchable error when the
-   * webContents was destroyed or never initialized — so callers log a meaningful
-   * reason instead of a cryptic `Cannot read properties of undefined (reading
-   * 'executeJavaScript')` when the tab is torn down (e.g. after a hard navigation
-   * failure or during shutdown).
+   * The tab's LIVE webContents, guarded. Throws {@link TabUnavailableError}
+   * when the webContents was destroyed or never initialized, so callers
+   * classify a torn-down tab by TYPE instead of a cryptic `Cannot read
+   * properties of undefined` (or a string match on the message).
    */
   private liveContents(): WebContents {
-    const wc = this.view?.webContents;
-    if (!wc || wc.isDestroyed()) {
-      throw new Error('instagram-tab: webContents unavailable (destroyed or not initialized)');
-    }
+    const wc = this.contents;
+    if (!wc || wc.isDestroyed()) throw new TabUnavailableError('instagram-tab');
     return wc;
   }
 
   /**
    * Navigate the tab to a URL (e.g. Instagram home for login). Deadline-bounded:
-   * a navigation that never settles (wedged renderer) throws
+   * a navigation whose main document never becomes ready throws
    * `TabUnresponsiveError` instead of parking the caller forever.
    */
   async goto(url: string): Promise<void> {
     logger.info('tab.goto', { url });
-    try {
-      const settled = await withTimeout(this.liveContents().loadURL(url), this.timeouts.gotoMs);
-      if (settled === TIMED_OUT) {
-        throw new TabUnresponsiveError('goto', this.timeouts.gotoMs);
-      }
-    } catch (e) {
-      // ERR_ABORTED (-3) means the navigation was superseded — a concurrent
-      // loadURL (e.g. the startup nav racing the build-flow's username resolve)
-      // or an Instagram client-side redirect. The winning navigation is the one
-      // that matters, so this is benign; rethrow anything else (a timeout falls
-      // through here unmatched and stays a loud TabUnresponsiveError).
-      const err = e as { code?: string; errno?: number };
-      if (err && (err.code === 'ERR_ABORTED' || err.errno === -3)) {
-        logger.debug('tab.goto: navigation superseded (ERR_ABORTED), ignoring', { url });
-        return;
-      }
-      throw e;
-    }
+    this.input.invalidate();
+    // Start the first renderer before awaiting CDP setup (cold views have none).
+    await loadMainDocument(this.liveContents(), url, this.timeouts.gotoMs);
+    await this.debuggerSetup;
   }
 
   /**
@@ -259,63 +262,42 @@ export class InstagramTab {
       typeof fnOrString === 'function'
         ? `(${fnOrString.toString()})()`
         : fnOrString;
-    const result = await withTimeout(
-      this.liveContents().executeJavaScript(code, true) as Promise<T>,
-      this.timeouts.evaluateMs,
-    );
-    if (result === TIMED_OUT) {
-      throw new TabUnresponsiveError('evaluate', this.timeouts.evaluateMs);
-    }
-    return result;
+    return evaluateMainDocument<T>(this.liveContents(), code, this.timeouts.evaluateMs, () => this.input.version());
   }
 
-  /**
-   * Dispatch an input event (mouse move / down / up / wheel) into the tab's
-   * webContents. The Interactor (`src/interaction/`) routes all of its gestures
-   * through this single seam, and the tab stays the only Electron-touching layer.
-   *
-   * Transport is CDP `Input.dispatchMouseEvent` on the already-attached
-   * debugger — NOT `webContents.sendInputEvent`, which Electron documents as
-   * working only while the host window is FOCUSED. An unattended overnight run
-   * keeps the window in the background, so under `sendInputEvent` every click
-   * was silently dropped (the 2026-08-13 all-night run: every follow reported
-   * `clicked: true` while the page never received a thing). CDP injection is
-   * the Puppeteer/Playwright mechanism: trusted events, focus-independent, and
-   * unaffected by the veil view stacked above the tab.
-   *
-   * Fire-and-forget by contract (the driver seam is synchronous), but events
-   * are SERIALIZED through a promise chain so down/up ordering is preserved,
-   * with failures logged. Falls back to `sendInputEvent` (focus-dependent) only
-   * if the debugger is unavailable — in which case the Reader is dead anyway.
-   */
-  sendInputEvent(event: PointerInputEvent): void {
-    this.inputChain = this.inputChain
-      .then(async () => {
-        const wc = this.liveContents();
-        const dbg = wc.debugger;
-        if (this.debuggerReady && dbg.isAttached()) {
-          await dbg.sendCommand('Input.dispatchMouseEvent', toCdpMouseParams(event));
-          return;
-        }
-        logger.warn('tab.sendInputEvent: debugger unavailable, falling back to sendInputEvent', {
-          type: event.type,
-        });
-        wc.sendInputEvent(event);
-        // One fallback means EVERY subsequent input rides the focus-dependent
-        // transport (documented to drop all background clicks) — a session-
-        // level health event, not a per-event warn. Fired once per attach
-        // epoch; recoverTab re-arms it along with the debugger.
-        if (!this.inputFallbackReported) {
-          this.inputFallbackReported = true;
-          this.markUnhealthy('input-fallback');
-        }
-      })
-      .catch((e: unknown) => {
-        logger.error('tab.sendInputEvent: input dispatch failed', {
-          type: event.type,
-          error: String(e),
-        });
-      });
+  /** Acknowledged CDP input; never fall back to focus-dependent Electron input. */
+  sendInputEvent(event: PointerInputEvent): Promise<void> {
+    return this.input.send(event);
+  }
+
+  /** Captured by each gesture; navigation/recovery invalidates its coordinates. */
+  inputVersion(): number {
+    return this.input.version();
+  }
+
+  canClick(target: ElementRect, point: Point): Promise<boolean> {
+    return this.evaluate<boolean>(pageCall('canClick', { target, point }));
+  }
+
+  prepareClick(target: ElementRect, point: Point): Promise<ClickGuard> {
+    const version = this.input.version();
+    return prepareClickGuard(async (method, params) => {
+      await this.debuggerSetup;
+      if (method !== 'Runtime.releaseObject' && version !== this.input.version()) throw new ActionAbortedError('input:stale-document');
+      const result = await withTimeout(this.liveContents().debugger.sendCommand(method, params), this.timeouts.evaluateMs);
+      if (result === TIMED_OUT) throw new TabUnresponsiveError('click-target', this.timeouts.evaluateMs);
+      return result;
+    }, target, point);
+  }
+
+  private async dispatchInput(event: PointerInputEvent, isCurrent: () => boolean): Promise<void> {
+    await this.debuggerSetup;
+    if (!isCurrent()) throw new ActionAbortedError('input:stale-document');
+    const dbg = this.liveContents().debugger;
+    if (!this.debuggerReady || !dbg.isAttached() || this.unhealthyReason !== null) {
+      throw new TabUnavailableError('input');
+    }
+    await dbg.sendCommand('Input.dispatchMouseEvent', toCdpMouseParams(event));
   }
 
   /**
@@ -328,17 +310,10 @@ export class InstagramTab {
     return image.toPNG();
   }
 
-  /**
-   * Diagnostic: verify the input pipeline end-to-end. Installs a one-shot
-   * mousemove listener in the page, dispatches a real input event through the
-   * same seam the Interactor uses, and reports whether the page received it.
-   * Called when the engine halts with `actions-failing` so the log states
-   * decisively whether the machinery is broken (events not arriving) or the
-   * failure is at the page/selector layer (events arrive, page won't react).
-   */
+  /** Diagnostic round-trip through the same input pipeline as the Interactor. */
   async probeInput(): Promise<boolean> {
     try {
-      await this.liveContents().executeJavaScript(
+      await this.evaluate(
         `(() => {
           window.__epoInputProbe = false;
           document.addEventListener(
@@ -348,14 +323,12 @@ export class InstagramTab {
           );
           return true;
         })()`,
-        true,
       );
-      this.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
-      for (let i = 0; i < 10; i++) {
-        await new Promise((r) => setTimeout(r, 50));
-        const got = await this.liveContents().executeJavaScript(
+      await this.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
+      for (let i = 0; i < INPUT_PROBE.ROUNDS; i++) {
+        await new Promise((r) => setTimeout(r, INPUT_PROBE.INTERVAL_MS));
+        const got = await this.evaluate(
           'window.__epoInputProbe === true',
-          true,
         );
         if (got === true) return true;
       }
@@ -366,45 +339,21 @@ export class InstagramTab {
     }
   }
 
-  /**
-   * Diagnostic: the tab-health canary. Runs a trivial evaluate round-trip, then
-   * counts requestAnimationFrame ticks over a short observation window — a live,
-   * unthrottled renderer (backgroundThrottling is off) ticks many frames; a dead
-   * or wedged one ticks zero. No Instagram literals involved: this probes the
-   * RENDERER, not the page's DOM. Never throws — every failure mode resolves
-   * `healthy: false` so callers route to tab recovery instead of crashing.
-   */
+  /** Renderer canary: bounded evaluate + rAF progress and standing health marks. */
   async checkHealth(
-    windowMs = RECOVERY.CANARY_WINDOW_MS,
+    windowMs: number = RECOVERY.CANARY_WINDOW_MS,
   ): Promise<{ healthy: boolean; evaluateOk: boolean; rafTicks: number }> {
     try {
       const echo = await this.evaluate<number>('1 + 1');
       if (echo !== 2) return { healthy: false, evaluateOk: false, rafTicks: 0 };
-      // The rAF canary self-resolves: after `windowMs` of frames it reports the
-      // tick count; a backstop timeout resolves with whatever ticked (possibly
-      // zero) so a fully-stalled rAF never rides out the evaluate deadline.
-      const ticks = await this.evaluate<number>(
-        `(() => new Promise((resolve) => {
-          let ticks = 0;
-          const start = Date.now();
-          const step = () => {
-            ticks += 1;
-            if (Date.now() - start >= ${windowMs}) resolve(ticks);
-            else requestAnimationFrame(step);
-          };
-          requestAnimationFrame(step);
-          setTimeout(() => resolve(ticks), ${windowMs * 4});
-        }))()`,
-      );
-      const rafTicks = typeof ticks === 'number' ? ticks : 0;
-      // A standing health mark (debugger detached, renderer gone, input on the
-      // focus-dependent fallback) is unhealthy even while rAF still ticks: the
-      // CDP layer the Reader and input dispatch ride is gone until recoverTab
-      // re-arms it — so every checkHealth caller routes to recovery.
+      const canary = assessRendererCanary(await this.evaluate<unknown>(rendererCanaryScript(windowMs)));
+      // A standing health mark (debugger detached, renderer gone, input
+      // refused) is unhealthy even while rAF still ticks: the CDP layer the
+      // Reader and input dispatch ride is gone until recoverTab re-arms it.
       return {
-        healthy: rafTicks > 0 && this.unhealthyReason === null,
+        healthy: canary.healthy && this.unhealthyReason === null,
         evaluateOk: true,
-        rafTicks,
+        rafTicks: canary.rafTicks,
       };
     } catch (e) {
       logger.warn('tab.checkHealth failed', { error: String(e) });
@@ -424,6 +373,11 @@ export class InstagramTab {
     };
   }
 
+  /** Diagnostic: requests observed going out that have not finished or failed yet. */
+  pendingRequestCount(): number {
+    return this.requests.size;
+  }
+
   /**
    * Recover a wedged tab: drop the CDP session, reload the page, and re-attach
    * the debugger (Network domain + focus emulation) so network observation and
@@ -433,8 +387,11 @@ export class InstagramTab {
    */
   async recoverTab(): Promise<void> {
     const wc = this.liveContents();
+    this.input.invalidate();
+    this.debuggerEpoch += 1;
     logger.warn('tab.recoverTab: reloading webContents and re-attaching debugger');
     this.pending.clear();
+    this.requests.clear();
     const dbg = wc.debugger;
     // A DELIBERATE detach must not fire the unhealthy event this recovery is
     // here to repair — drop the detach listener before detaching.
@@ -452,40 +409,36 @@ export class InstagramTab {
     dbg.removeListener('message', this.onDebuggerMessage);
     this.debuggerReady = false;
 
-    // Reload, waiting (bounded) for the load to settle. `did-stop-loading`
-    // fires on success AND failure; a renderer too wedged to emit even that
-    // just runs out the deadline and we re-attach anyway.
-    const onLoadStop = { fn: (): void => {} };
-    const loaded = new Promise<void>((resolve) => {
-      onLoadStop.fn = (): void => resolve();
-      wc.once('did-stop-loading', onLoadStop.fn);
-    });
-    wc.reload();
-    const settled = await withTimeout(loaded, this.timeouts.gotoMs);
-    if (settled === TIMED_OUT) {
-      wc.removeListener('did-stop-loading', onLoadStop.fn);
-      logger.warn('tab.recoverTab: reload did not settle in time; re-attaching anyway', {
-        timeoutMs: this.timeouts.gotoMs,
-      });
+    try {
+      await reloadMainDocument(wc, this.timeouts.gotoMs);
+    } catch (error) {
+      this.markUnhealthy(error instanceof TabUnresponsiveError ? 'recovery-reload-timeout' : 'recovery-reload-failed');
+      throw error;
     }
     this.attachDebugger();
+    await this.debuggerSetup;
     // Re-armed: attachDebugger re-registered the detach + message listeners
     // and re-enabled Network + focus emulation on the fresh session. Clear the
     // health marks so the NEXT event (including a fresh input fallback in the
     // new epoch) reports again instead of being swallowed as already-known.
     this.unhealthyReason = null;
-    this.inputFallbackReported = false;
+    this.inputUnavailableReported = false;
   }
 
   /** Detach the debugger and release the network observer. Idempotent. */
   dispose(): void {
+    this.placement.dispose();
+    this.input.invalidate();
+    this.debuggerEpoch += 1;
     this.responseHandlers.clear();
     this.pending.clear();
+    this.requests.clear();
     // Teardown detach is deliberate — never a health event.
     this.onUnhealthyCb = null;
-    const dbg = this.view.webContents.debugger;
+    if (this.contents.isDestroyed()) return;
+    const dbg = this.contents.debugger;
     dbg.removeListener('detach', this.onDebuggerDetach);
-    if (this.debuggerReady && dbg.isAttached()) {
+    if (dbg.isAttached()) {
       try {
         dbg.detach();
       } catch (e) {
@@ -500,13 +453,18 @@ export class InstagramTab {
   // -------------------------------------------------------------------------
 
   private attachDebugger(): void {
-    const dbg = this.view.webContents.debugger;
+    const epoch = ++this.debuggerEpoch;
+    this.debuggerReady = false;
+    const dbg = this.contents.debugger;
     if (!dbg.isAttached()) {
       try {
         dbg.attach('1.3');
       } catch (e) {
         // Loud, never silent: without CDP the Reader has no data source.
         logger.error('tab.debugger.attach failed', { error: String(e) });
+        this.markUnhealthy('debugger-attach-failed');
+        this.debuggerSetup = Promise.reject(e);
+        void this.debuggerSetup.catch(() => {});
         return;
       }
     }
@@ -520,36 +478,40 @@ export class InstagramTab {
     dbg.removeListener('detach', this.onDebuggerDetach);
     dbg.on('detach', this.onDebuggerDetach);
     dbg.on('message', this.onDebuggerMessage);
-    dbg
-      .sendCommand('Network.enable')
-      .then(() => {
-        this.debuggerReady = true;
-        logger.debug('tab.debugger attached; Network domain enabled');
-      })
-      .catch((e: unknown) => {
-        logger.error('tab.Network.enable failed', { error: String(e) });
-      });
     // The page always believes it is focused (Playwright's default): an
     // unfocused window otherwise fires window blur handlers that some SPAs
     // use to pause work. Best-effort — input and reads work without it.
     // Re-applied on every (re-)attach, so a debugger re-creation restores it.
-    dbg
-      .sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
-      .catch((e: unknown) => {
-        logger.warn('tab.focus-state enable failed', { error: String(e) });
-      });
+    this.debuggerSetup = (async () => {
+      try {
+        const result = await withTimeout(Promise.all([
+          dbg.sendCommand('Network.enable'),
+          dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }),
+        ]), this.timeouts.evaluateMs);
+        if (result === TIMED_OUT) throw new TabUnresponsiveError('debugger-setup', this.timeouts.evaluateMs);
+        if (epoch !== this.debuggerEpoch || !dbg.isAttached()) throw new TabUnavailableError('debugger-setup');
+        this.debuggerReady = true;
+        logger.debug('tab.debugger attached; Network and focus enabled');
+      } catch (error) {
+        if (epoch === this.debuggerEpoch) this.markUnhealthy('debugger-setup-failed');
+        throw error;
+      }
+    })();
+    void this.debuggerSetup.catch(() => {});
   }
 
   /**
-   * Chromium terminated the CDP session out from under us. From this moment
+   * Chromium terminated the CDP session out from under us: from this moment
    * onResponse consumers observe NOTHING (no error — the stream just goes
-   * quiet) and every input dispatch silently falls back to the
-   * focus-dependent transport, so this is a health EVENT, never a debug log.
+   * quiet) and every input dispatch is REFUSED, so this is a health EVENT.
    * Deliberate detaches (recoverTab / dispose) remove this listener first.
    */
   private readonly onDebuggerDetach = (_event: ElectronEvent, reason: string): void => {
     this.debuggerReady = false;
+    this.debuggerEpoch += 1;
+    this.input.invalidate();
     this.pending.clear();
+    this.requests.clear();
     this.markUnhealthy(`debugger-detach:${reason}`);
   };
 
@@ -558,15 +520,34 @@ export class InstagramTab {
     method: string,
     params: unknown,
   ): void => {
+    if (method === 'Network.requestWillBeSent') {
+      // The request side: method + headers, so a response can be attributed
+      // to the kind of request that produced it (a POST mutation vs a GET
+      // read; a GraphQL mutation vs a query by its friendly-name header).
+      const p = params as {
+        requestId: string;
+        request: { method?: string; headers?: Record<string, string> };
+      };
+      const headers: Record<string, string> = {};
+      for (const [k, v] of Object.entries(p.request.headers ?? {})) {
+        headers[k.toLowerCase()] = String(v);
+      }
+      this.requests.set(p.requestId, { method: p.request.method ?? 'GET', headers });
+      return;
+    }
+
     if (method === 'Network.responseReceived') {
       const p = params as {
         requestId: string;
         response: { url: string; status: number; mimeType: string };
       };
+      const request = this.requests.get(p.requestId);
+      this.requests.delete(p.requestId);
       this.pending.set(p.requestId, {
         url: p.response.url,
         status: p.response.status,
         mimeType: p.response.mimeType,
+        request,
       });
       return;
     }
@@ -583,20 +564,24 @@ export class InstagramTab {
     if (method === 'Network.loadingFailed') {
       const p = params as { requestId: string };
       this.pending.delete(p.requestId);
+      this.requests.delete(p.requestId);
     }
   };
 
   private emitResponse(requestId: string, meta: PendingResponse): void {
     if (this.responseHandlers.size === 0) return;
-    const dbg = this.view.webContents.debugger;
+    const dbg = this.contents.debugger;
     const response: TabResponse = {
       requestId,
       url: meta.url,
       status: meta.status,
       mimeType: meta.mimeType,
+      method: meta.request?.method,
+      requestHeaders: meta.request?.headers,
       getBody: async () => {
         // Deadline-bounded: a CDP call against a wedged debugger session can
         // stay pending forever — surface that as `TabUnresponsiveError`.
+        const startedAt = Date.now();
         const res = await withTimeout(
           dbg.sendCommand('Network.getResponseBody', { requestId }) as Promise<{
             body: string;
@@ -604,9 +589,9 @@ export class InstagramTab {
           }>,
           this.timeouts.getBodyMs,
         );
-        if (res === TIMED_OUT) {
-          throw new TabUnresponsiveError('getBody', this.timeouts.getBodyMs);
-        }
+        // Successful samples only: a timeout measures the deadline, not the trip.
+        if (res === TIMED_OUT) throw new TabUnresponsiveError('getBody', this.timeouts.getBodyMs);
+        SURFACE_METER.record('body-read', Date.now() - startedAt);
         return res.base64Encoded
           ? Buffer.from(res.body, 'base64').toString('utf8')
           : res.body;

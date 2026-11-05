@@ -27,31 +27,34 @@
 
 import { appendFileSync, mkdirSync } from 'node:fs';
 import * as path from 'node:path';
-import { app, BaseWindow, session } from 'electron';
+import { app } from 'electron';
 import { resolveOwnUsername } from '@/adapter/identity';
-import { IG_HOME_URL, IG_PARTITION, InstagramTab } from '@/adapter/tab';
+import type { InstagramTab } from '@/adapter/tab';
+import { createTabInteractor } from '@/adapter/tab-interactor';
 import {
   buildInspectTickScript,
   buildPreLoginBannerScript,
   INSPECT_BANNER_TEXT,
   type InspectRecord,
 } from '@/inspect/injection';
-import { claimAppIdentity } from '@/main/app-identity';
+import {
+  awaitLogin,
+  bootstrapApp,
+  ensureInstagramOrigin,
+  openToolWindow,
+} from '@/main/bootstrap';
 import { HARNESS } from '@/timing/config';
 import { sleep } from '@/timing/primitives';
 import * as logger from '@/utils/logger';
 
-// Identity first (name + userData path) — same reasoning as in `main.ts`; the
-// inspect harness shares the production userData directory and login partition.
-claimAppIdentity();
-
-/** Poll interval while waiting for login. */
-const LOGIN_POLL_MS = HARNESS.LOGIN_POLL_MS;
+// Identity + the background-survival switches — the inspect harness must run in
+// the SAME renderer environment production does. It shares the production
+// userData directory and login partition.
+bootstrapApp();
 
 /** Inspection poll interval — how often we drain buffered click records. */
 const INSPECT_POLL_MS = HARNESS.INSPECT_POLL_MS;
 
-let mainWindow: BaseWindow | null = null;
 let instagramTab: InstagramTab | null = null;
 let finished = false;
 let recordCount = 0;
@@ -64,19 +67,6 @@ function resolveOutFile(): string {
   return path.join(dir, 'clicks.jsonl');
 }
 
-
-/** True once the persistent IG session holds a non-empty `sessionid` cookie. */
-async function isLoggedIn(): Promise<boolean> {
-  try {
-    const cookies = await session
-      .fromPartition(IG_PARTITION)
-      .cookies.get({ name: 'sessionid' });
-    return cookies.some((c) => c.value && c.value.length > 0);
-  } catch (e) {
-    logger.warn('inspect.isLoggedIn cookie check failed', { error: String(e) });
-    return false;
-  }
-}
 
 /** Quote a value for an attribute selector, escaping any embedded double quote. */
 function quoteAttr(value: string): string {
@@ -164,7 +154,7 @@ async function landAfterLogin(tab: InstagramTab): Promise<string> {
     return `@${target}`;
   }
 
-  const own = await resolveOwnUsername(tab);
+  const own = await resolveOwnUsername(tab, { interactor: createTabInteractor(tab) });
   if (own) {
     await tab.goto(`https://www.instagram.com/${own}/`);
     await sleep(3000);
@@ -174,41 +164,22 @@ async function landAfterLogin(tab: InstagramTab): Promise<string> {
   logger.warn(
     'inspect: no EPO_INSPECT_TARGET and own username not resolved; staying on home',
   );
-  if (!tab.currentUrl().includes('instagram.com')) {
-    await tab.goto(IG_HOME_URL);
-    await sleep(2000);
-  }
+  await ensureInstagramOrigin(tab);
   return 'home';
 }
 
 async function run(): Promise<void> {
   outFile = resolveOutFile();
 
-  const win = new BaseWindow({
-    width: 1400,
-    height: 900,
-    title: 'Epo — DOM Inspect',
-    backgroundColor: '#0e0e10',
-  });
-  mainWindow = win;
-
-  const tab = new InstagramTab();
+  const tool = openToolWindow({ title: 'Epo — DOM Inspect' });
+  const { win, tab } = tool;
   instagramTab = tab;
-  tab.attach(win);
-  tab.show();
-
-  const layout = (): void => {
-    const { width, height } = win.getContentBounds();
-    tab.setBounds({ x: 0, y: 0, width, height });
-  };
-  win.on('resize', layout);
-  layout();
 
   win.on('closed', () => {
     void finish();
   });
 
-  await tab.goto(IG_HOME_URL);
+  await tool.ready;
   // Pre-login banner only — NO click interception yet, so the login form works.
   try {
     await tab.evaluate<boolean>(
@@ -220,17 +191,9 @@ async function run(): Promise<void> {
     logger.warn('inspect.preLoginBanner failed', { error: String(e) });
   }
 
-  // Poll for login.
-  while (mainWindow && !(await isLoggedIn())) {
-    await sleep(LOGIN_POLL_MS);
-  }
-  if (!mainWindow) return; // window closed during login wait
+  if (!(await awaitLogin(tool.isOpen))) return; // window closed during login wait
 
-  // Ensure an instagram.com origin (identity resolution + our injected fetches).
-  if (!tab.currentUrl().includes('instagram.com')) {
-    await tab.goto(IG_HOME_URL);
-    await sleep(2000);
-  }
+  await ensureInstagramOrigin(tab);
 
   const landed = await landAfterLogin(tab);
   logger.info('inspect: logged in — inspection loop starting', {
@@ -244,7 +207,7 @@ async function run(): Promise<void> {
   const tickScript = buildInspectTickScript(INSPECT_BANNER_TEXT);
 
   // Inspection poll loop: install-if-missing, then drain buffered records.
-  while (mainWindow) {
+  while (tool.isOpen()) {
     try {
       const recs = await tab.evaluate<InspectRecord[]>(tickScript);
       if (Array.isArray(recs)) {
@@ -274,7 +237,6 @@ async function finish(): Promise<void> {
     logger.warn('inspect.dispose tab failed', { error: String(e) });
   }
   instagramTab = null;
-  mainWindow = null;
   app.quit();
 }
 

@@ -1,16 +1,16 @@
 import {
+  type ChainReadStore,
+  QUEUE_ROW_CAP,
+  type QueueReadStore,
+  RUNWAY_RATE_WINDOW_DAYS,
   shapeChainList,
   shapeQueueList,
   shapeTargetDetail,
-  QUEUE_ROW_CAP,
-  RUNWAY_RATE_WINDOW_DAYS,
-  type ChainReadStore,
-  type QueueReadStore,
   type TargetDetailReadStore,
 } from '@/main/foundation-reads';
 import type { AccountState, FollowRecord, FollowState, Target } from '@/store/types';
-import { CONVERSION_VERDICT_MIN, RUNWAY_CAP_DAYS, type TargetYield } from '@/types';
 import { MS_PER_DAY } from '@/timing/units';
+import { CONVERSION_VERDICT_MIN, RUNWAY_CAP_DAYS, type TargetYield } from '@/types';
 
 /**
  * The read-shaping helpers behind `chain:list` / `queue:list` (§5). They are pure —
@@ -27,6 +27,9 @@ function account(pk: string, over: Partial<AccountState> = {}): AccountState {
     ...over,
   };
 }
+
+/** The follow-back window the yields classify in (law L7: the store's one classifier, the configured wait). */
+const WINDOW = { windowMs: 4 * MS_PER_DAY, now: 1_000 };
 
 const ZERO_YIELD: TargetYield = {
   total: 0,
@@ -53,13 +56,14 @@ describe('shapeChainList', () => {
     const store: ChainReadStore = {
       listTargets: () => targets,
       getAccount: (pk) => accounts[pk] ?? null,
-      targetYield: (pk, ownPk) => {
+      targetYield: (pk, ownPk, outcome) => {
         expect(ownPk).toBe('own');
+        expect(outcome).toEqual(WINDOW);
         return yields[pk];
       },
     };
 
-    const rows = shapeChainList(store, 'own');
+    const rows = shapeChainList(store, 'own', WINDOW);
 
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
@@ -78,7 +82,7 @@ describe('shapeChainList', () => {
       getAccount: () => null,
       targetYield: () => ZERO_YIELD,
     };
-    expect(shapeChainList(store, 'own')).toEqual([]);
+    expect(shapeChainList(store, 'own', WINDOW)).toEqual([]);
   });
 });
 
@@ -93,6 +97,7 @@ describe('shapeTargetDetail', () => {
     unfollowed: 0,
     abandoned: 0,
     external: 0,
+    kept: 0,
     ...over,
   });
 
@@ -117,8 +122,9 @@ describe('shapeTargetDetail', () => {
           ? over.target
           : { accountPk: pk, source: 'seed', status: 'active', chainIndex: 0 },
       getAccount: () => (over.account !== undefined ? over.account : account('T')),
-      targetYield: (_pk, ownPk) => {
+      targetYield: (_pk, ownPk, outcome) => {
         expect(ownPk).toBe('own');
+        expect(outcome).toEqual({ windowMs: WINDOW.windowMs, now: NOW });
         return { ...ZERO_YIELD, ...over.yield };
       },
       targetFunnel: () => ({
@@ -135,7 +141,7 @@ describe('shapeTargetDetail', () => {
   }
 
   const shape = (store: TargetDetailReadStore, plannedToday = 0) =>
-    shapeTargetDetail(store, 'own', 'T', { now: NOW, plannedToday });
+    shapeTargetDetail(store, 'own', 'T', { now: NOW, plannedToday, followbackWindowMs: WINDOW.windowMs });
 
   test('null for a pk that is not a chain target', () => {
     expect(shape(detailStore({ target: null }))).toBeNull();

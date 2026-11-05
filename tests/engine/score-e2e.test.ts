@@ -1,11 +1,12 @@
-import { KnowledgeStore } from '@/store/knowledge-store';
+import { ChurnScheduler } from '@/engine/churn-scheduler';
 import { Scanner } from '@/engine/scanner';
-import { ChurnScheduler, CHURN_DEFAULTS } from '@/engine/churn-scheduler';
-import { RateGovernor } from '@/governors/rate-governor';
 import { FakeClock } from '@/governors/clock';
+import { RateGovernor } from '@/governors/rate-governor';
+import { DEFAULT_CONFIGS } from '../kit/configs';
+import { openTestStore } from '../kit/store';
 
 test('E2E: Scanner ranking → persisted score → nextDue picks the best candidate', async () => {
-  const store = new KnowledgeStore(':memory:');
+  const store = openTestStore(':memory:');
   const clock = new FakeClock(1_000_000);
   store.setOwnPk('me');
 
@@ -14,7 +15,7 @@ test('E2E: Scanner ranking → persisted score → nextDue picks the best candid
   const mk = (pk: string, followers: number, following: number, mutuals: number) => {
     store.observe({
       accountPk: pk, observedAt: 1_000, source: 'profile',
-      fields: { username: 'u' + pk, followers, following, mutuals },
+      fields: { username: `u${pk}`, followers, following, mutuals },
     });
     store.observeEdge(pk, 'T', 'follows', true, 1_000);
   };
@@ -29,12 +30,9 @@ test('E2E: Scanner ranking → persisted score → nextDue picks the best candid
 
   const sched = new ChurnScheduler({
     store, clock,
-    rate: new RateGovernor(store, clock, {
-      dailyHardCeiling: 100, dailyOperatingRate: 100, minDelayMs: 0, maxDelayMs: 0,
-      jitterPercent: 0, activeHoursStart: 0, activeHoursEnd: 24,
-    }),
+    rate: new RateGovernor(store, clock, { dailyHardCeiling: 100 }),
     actions: { follow: async () => ({ status: 'ok' as const }), unfollow: async () => ({ status: 'ok' as const }) },
-    cfg: CHURN_DEFAULTS,
+    cfg: DEFAULT_CONFIGS.churn,
   });
 
   expect(sched.nextDue(clock.now())!.accountPk).toBe('zzz');

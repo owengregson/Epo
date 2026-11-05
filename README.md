@@ -19,18 +19,6 @@
 
 <br>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/growth-dark.svg">
-    <img src="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/growth.svg" width="820" alt="Followers gained over 30 days on the default settings, simulated by the app's own growth model">
-  </picture>
-</p>
-
-<p align="center">
-  <sub>Simulated by the same growth model that ships in the app, on the default settings.
-  Regenerated every night.</sub>
-</p>
-
 > **Before you start.** Tools like this one are against Instagram's terms of service.
 > An account that runs one can be restricted or banned. Epo is careful by design, but
 > the risk never reaches zero. Do not run it on an account you cannot afford to lose.
@@ -113,27 +101,6 @@ moves on. One pass looks like this:
 
 You can keep using Instagram on any device the whole time. Epo notices what you did by
 hand, fixes its own records to match, and never unfollows anyone you followed yourself.
-
-<br>
-
-<p align="center">
-  <img src="project/assets/headers/autopilot.svg" height="54" alt="A day on autopilot">
-</p>
-
-This chart is not a mock-up. A nightly job runs the same planner that ships in the app
-and draws one real planned day, so it changes every night.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/pace-dark.svg">
-    <img src="https://raw.githubusercontent.com/owengregson/Epo/readme-live/charts/pace.svg" width="820" alt="One planned day of Epo activity: paced actions inside the active-hours window, under the daily cap">
-  </picture>
-</p>
-
-<p align="center">
-  <sub>Each dot is one planned action. The band is the active-hours window. The dashed
-  line is the daily cap.</sub>
-</p>
 
 <br>
 

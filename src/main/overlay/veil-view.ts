@@ -12,14 +12,15 @@
 
 import * as path from 'node:path';
 import { type BaseWindow, type Rectangle, WebContentsView } from 'electron';
-import type { ActivityInfo } from '@/adapter/activity-reporter';
+import { BOOT } from '@/kernel/boot-policy';
+import { type ActivityInfo, toVeilInfo } from '@/shared/live-op';
 import * as logger from '@/utils/logger';
 
-/** Must match the veil page's opacity transition (`veil.html`). */
-const FADE_MS = 400;
+/** The veil page's opacity transition (`veil.html`; a kernel law pins the two equal). */
+const FADE_MS = BOOT.VEIL_FADE_MS;
 
-/** Cursor pushes are coalesced to ~one frame; the page interpolates between them. */
-const CURSOR_FLUSH_MS = 16;
+/** Cursor pushes are coalesced to one frame; the page interpolates between them. */
+const CURSOR_FLUSH_MS = BOOT.VEIL_CURSOR_FLUSH_MS;
 
 export class OverlayVeil {
   private readonly view: WebContentsView;
@@ -33,6 +34,8 @@ export class OverlayVeil {
   private cursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
   /** Last activity pushed (dedupe key), so identical re-reports are dropped. */
   private lastActivity: string | null = null;
+  /** True while the stage curtain owns the view: visible over the tab, whatever the activity. */
+  private curtainOn = false;
 
   constructor() {
     this.view = new WebContentsView({
@@ -79,11 +82,29 @@ export class OverlayVeil {
         clearTimeout(this.hideTimer);
         this.hideTimer = null;
       }
-      this.view.setVisible(false);
+      if (!this.curtainOn) this.view.setVisible(false);
     } else if (this.active) {
       this.view.setVisible(true);
       this.run('window.__veil && window.__veil(true)');
     }
+  }
+
+  /**
+   * The stage curtain (spec §12.4): `'opaque'` shows an opaque layer over the tab region and resolves once the
+   * page painted it (two frames); `'clear'` fades it over BOOT.CURTAIN_FADE_MS; `'off'` hands the view back to
+   * the activity rule. Resolves false when the page could not confirm.
+   */
+  curtain(state: 'opaque' | 'clear' | 'off'): Promise<boolean> {
+    if (!this.ready || this.view.webContents.isDestroyed()) return Promise.resolve(false);
+    this.curtainOn = state !== 'off';
+    this.view.setVisible(this.curtainOn || (this.active && !this.obscured));
+    const ms = state === 'clear' ? BOOT.CURTAIN_FADE_MS : 0;
+    return this.view.webContents
+      .executeJavaScript(`window.__curtain ? window.__curtain(${JSON.stringify(state)}, ${ms}) : false`, true)
+      .then((done: unknown) => done === true, (e: unknown) => {
+        logger.error('veil.curtain failed', { state, error: String(e) });
+        return false;
+      });
   }
 
   /**
@@ -92,12 +113,13 @@ export class OverlayVeil {
    * composition root, so the chip distinguishes direct JSON-API work ("Reading
    * follower list") from real page driving ("Scrolling follower list").
    */
-  setActivity(info: ActivityInfo | null): void {
-    if (info === null) {
+  setActivity(activity: ActivityInfo | null): void {
+    if (activity === null) {
       this.lastActivity = null;
       this.run('window.__veilActivity && window.__veilActivity(null)');
       return;
     }
+    const info = toVeilInfo(activity);
     // Drop redundant pushes (the same phase re-reported with nothing changed).
     const key = `${info.kind}|${info.label}|${info.count ?? ''}|${info.total ?? ''}|${info.detail ?? ''}`;
     if (key === this.lastActivity) return;
@@ -124,7 +146,7 @@ export class OverlayVeil {
       this.setActivity(null);
       // stay visible through the fade-out, then hide so the tab is interactive again
       this.hideTimer = setTimeout(() => {
-        this.view.setVisible(false);
+        if (!this.curtainOn) this.view.setVisible(false);
         this.hideTimer = null;
       }, FADE_MS);
     }

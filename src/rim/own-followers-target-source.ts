@@ -11,21 +11,19 @@
  * live Instagram traffic — so it stays deterministic and unit-testable.
  */
 
-import type { OwnFollowersTargetSource } from '@/engine/chain-controller';
+import type { OwnFollowersTargetSource, SourcePreparationOptions } from '@/engine/chain-controller';
+import { EXPLORATION_POLICY, explorationDayClock, weeklyCycleSince } from '@/engine/exploration-policy';
+import { type Clock, SystemClock } from '@/governors/clock';
+import type { PlanDayClock } from '@/kernel/plan';
+import { SETTINGS_POLICY } from '@/kernel/settings-policy';
 import type { ProfileEnricher } from '@/rim/profile-enricher';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { EnrichmentLevel } from '@/store/types';
 import * as logger from '@/utils/logger';
 
-/** Profile-completeness ordering for tie-breaks (higher is more complete). */
-const ENRICHMENT_RANK: Record<EnrichmentLevel, number> = {
-  stub: 0,
-  listed: 1,
-  profiled: 2,
-};
-
-/** How many un-profiled own followers one pick() may enrich before ranking. */
-const PICK_ENRICH_CAP = 15;
+/** Profile completeness, least to most: a tie on count goes to the more complete profile. */
+const ENRICHMENT_ORDER: readonly EnrichmentLevel[] = ['stub', 'listed', 'profiled'];
+const completeness = (level: EnrichmentLevel): number => ENRICHMENT_ORDER.indexOf(level);
 
 export interface OwnFollowersTargetSourceDeps {
   store: KnowledgeStore;
@@ -40,70 +38,66 @@ export interface OwnFollowersTargetSourceDeps {
    * enrichment pass here is cheap relative to picking a dead-end target.
    */
   enricher?: ProfileEnricher;
+  clock?: Clock;
+  planDay?: Pick<PlanDayClock, 'window'>;
+  minPoolSize?: number;
 }
 
 export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTargetSource {
   private readonly store: KnowledgeStore;
   private readonly ownPk: string;
   private readonly enricher?: ProfileEnricher;
+  private readonly clock: Clock;
+  private readonly planDay: Pick<PlanDayClock, 'window'>;
+  private readonly minPoolSize: number;
+  private preparation = { pending: false, retryAt: null as number | null };
 
   constructor(deps: OwnFollowersTargetSourceDeps) {
     this.store = deps.store;
     this.ownPk = deps.ownPk;
     this.enricher = deps.enricher;
+    this.clock = deps.clock ?? new SystemClock();
+    this.planDay = deps.planDay ?? explorationDayClock();
+    this.minPoolSize = deps.minPoolSize ?? SETTINGS_POLICY.RECOMMENDED.minPoolSize;
   }
 
-  async pick(): Promise<string | null> {
+  preparationState(): { pending: boolean; retryAt: number | null } { return { ...this.preparation }; }
+
+  async pick(minPoolSize?: number, options?: SourcePreparationOptions): Promise<string | null> {
+    return (await this.candidates(minPoolSize, options))[0] ?? null;
+  }
+
+  async candidates(minPoolSize: number = this.minPoolSize, options?: SourcePreparationOptions): Promise<string[]> {
     let candidates = this.eligibleFollowers();
+    this.preparation = { pending: false, retryAt: null };
 
     // No candidate carries a follower count → the ranking below would be a
     // pk-order coin flip. Enrich a bounded sample first (real IG traffic, but
     // a chain advance happens once per exhausted target).
-    if (this.enricher && !candidates.some((c) => c.followers !== undefined)) {
+    if (this.enricher && !candidates.some((c) => c.followers !== undefined && c.followers >= minPoolSize)) {
       const usernames: string[] = [];
       for (const c of candidates) {
-        if (usernames.length >= PICK_ENRICH_CAP) break;
-        if (c.username === undefined || c.enrichFailedAt !== undefined) continue;
+        if (usernames.length >= Math.min(options?.profileLimit ?? EXPLORATION_POLICY.ownFollowersPickMax, EXPLORATION_POLICY.ownFollowersPickMax)) break;
+        if (c.followers !== undefined || c.username === undefined || (c.enrichFailedAt !== undefined &&
+          c.enrichFailedAt >= weeklyCycleSince((t) => this.planDay.window(t), this.clock.now()))) continue;
         usernames.push(c.username);
       }
       if (usernames.length > 0) {
         logger.info('rim.own-followers-target-source: enriching sample before ranking', {
           sample: usernames.length,
         });
-        await this.enricher.enrich(usernames);
+        const enriched = await this.enricher.enrich(usernames);
         candidates = this.eligibleFollowers(); // re-read with fresh counts
+        this.preparation = { retryAt: this.enricher.budgetResumeAt?.() ?? null,
+          pending: enriched > 0 && candidates.some((c) => c.username !== undefined && c.followers === undefined &&
+            (c.enrichFailedAt === undefined || c.enrichFailedAt < weeklyCycleSince((t) => this.planDay.window(t), this.clock.now()))) };
       }
     }
 
-    let best: { pk: string; followers: number; enrichmentRank: number } | null = null;
-    for (const account of candidates) {
-      const pk = account.pk;
-      const followerCount = account.followers ?? -1;
-      const enrichmentRank = ENRICHMENT_RANK[account.enrichment];
-
-      if (
-        best === null ||
-        followerCount > best.followers ||
-        (followerCount === best.followers && enrichmentRank > best.enrichmentRank) ||
-        (followerCount === best.followers &&
-          enrichmentRank === best.enrichmentRank &&
-          pk < best.pk)
-      ) {
-        best = { pk, followers: followerCount, enrichmentRank };
-      }
-    }
-
-    if (best === null) {
-      logger.info('rim.own-followers-target-source: no eligible follower to promote', {
-        ownPk: this.ownPk,
-      });
-      return null;
-    }
-    logger.info('rim.own-followers-target-source: picked fallback target', {
-      pk: best.pk,
-      followers: best.followers,
-    });
-    return best.pk;
+    candidates = candidates.filter((c) => c.username !== undefined && c.followers !== undefined && c.followers >= minPoolSize);
+    candidates.sort((a, b) => (b.followers ?? -1) - (a.followers ?? -1) ||
+      completeness(b.enrichment) - completeness(a.enrichment) || a.pk.localeCompare(b.pk));
+    return candidates.slice(0, EXPLORATION_POLICY.maxSources).map((c) => c.pk);
   }
 
   /** Own followers not already promoted into the chain, as account states. */
@@ -119,6 +113,8 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
     for (const pk of this.store.followersOf(this.ownPk)) {
       if (targets.has(pk)) continue; // already promoted into the chain
       const account = this.store.getAccount(pk);
+      if (pk === this.ownPk) continue;
+      if (account?.isPrivate === true && this.store.getEdge(this.ownPk, pk, 'follows')?.status !== 'active') continue;
       out.push({
         pk,
         username: account?.username,

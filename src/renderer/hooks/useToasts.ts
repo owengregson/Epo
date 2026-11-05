@@ -2,15 +2,22 @@ import { useCallback, useRef, useState } from 'preact/hooks';
 
 export type ToastKind = 'error' | 'info' | 'success';
 
+/** One button on a toast (Stop's Undo): pressing it runs `run` and dismisses the toast. */
+export interface ToastAction {
+  readonly label: string;
+  run(): void;
+}
+
 export interface Toast {
   id: number;
   kind: ToastKind;
   message: string;
+  action?: ToastAction;
 }
 
 export interface ToastControls {
   toasts: Toast[];
-  push: (kind: ToastKind, message: string) => void;
+  push: (kind: ToastKind, message: string, action?: ToastAction) => void;
   dismiss: (id: number) => void;
 }
 
@@ -18,7 +25,7 @@ export interface ToastControls {
 const TOAST_TTL_MS = 6_000;
 
 /** Most toasts shown at once — a failure burst drops the OLDEST first, so the
- * stack never climbs past the console top into the overflow clip (layout.css
+ * stack never climbs past the console top into the overflow clip (shell.css
  * `.toasts`), where extras would be unreadable and undismissable. */
 export const TOAST_CAP = 5;
 
@@ -34,7 +41,7 @@ export function appendCapped(
 }
 
 /**
- * In-VDOM toasts (§4 — no imperative DOM). Every async control surfaces its typed
+ * In-VDOM toasts — no imperative DOM. Every async control surfaces its typed
  * failure through `push('error', …)`; the shell renders `toasts` declaratively. Timers
  * are tracked and cleared on dismiss so nothing fires against an unmounted tree.
  * The stack is capped at TOAST_CAP (drop-oldest) so a failure burst stays readable.
@@ -54,10 +61,10 @@ export function useToasts(): ToastControls {
   }, []);
 
   const push = useCallback(
-    (kind: ToastKind, message: string): void => {
+    (kind: ToastKind, message: string, action?: ToastAction): void => {
       const id = nextId.current++;
       setToasts((prev) => {
-        const { toasts: next, dropped } = appendCapped(prev, { id, kind, message });
+        const { toasts: next, dropped } = appendCapped(prev, action === undefined ? { id, kind, message } : { id, kind, message, action });
         // Silence the auto-dismiss timers of anything the cap dropped
         // (clearTimeout is idempotent, so a re-run updater is harmless).
         for (const t of dropped) {

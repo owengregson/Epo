@@ -1,3 +1,4 @@
+import { SETTINGS_POLICY } from '../kernel/settings-policy';
 import { type AccountState, ratioOf } from '../store/types';
 
 /**
@@ -40,20 +41,15 @@ export interface ScorerConfig {
   mutualWeight: number;
 }
 
-/** Design defaults (v3 §3.2/§3.3). */
+/** The one declaration of the scorer's defaults: the settings policy's recommendations (spec §17.8). */
 export const SCORER_DEFAULTS: ScorerConfig = {
-  bandLow: 0.9,
-  bandHigh: 1.5,
-  peakLow: 1.0,
-  peakHigh: 1.2,
-  hardLow: 0.5,
-  hardHigh: 3.0,
-  minFollowers: 50,
-  maxFollowers: 20000,
-  privateBoost: 0.15,
-  bandEdgeScore: 0.6,
-  mutualCap: 20,
-  mutualWeight: 1.5,
+  ...SETTINGS_POLICY.RATIO_CURVE,
+  minFollowers: SETTINGS_POLICY.AUDIENCE_SIZE.everyday.min,
+  maxFollowers: SETTINGS_POLICY.AUDIENCE_SIZE.everyday.max,
+  privateBoost: SETTINGS_POLICY.PRIVATE_EDGE,
+  bandEdgeScore: SETTINGS_POLICY.RECOMMENDED.bandEdgeScore,
+  mutualCap: SETTINGS_POLICY.RECOMMENDED.mutualCap,
+  mutualWeight: SETTINGS_POLICY.RECOMMENDED.mutualWeight,
 };
 
 /** Clamp a number into the closed unit interval [0, 1]. */
@@ -130,13 +126,17 @@ export interface CandidateScore {
  * and shared followers dominate the ranking: mutuals are the strongest
  * follow-back predictor, saturating at `mutualCap` (20+ mutuals score alike).
  */
-export function scoreCandidate(a: AccountState, cfg: ScorerConfig = SCORER_DEFAULTS): CandidateScore {
+export type CandidateProfile = Pick<AccountState, 'followers' | 'following' | 'ratio' | 'mutuals' | 'isPrivate' | 'isVerified'>;
+
+export function scoreCandidate(a: CandidateProfile, cfg: ScorerConfig = SCORER_DEFAULTS): CandidateScore {
   // Counts-known FIRST: 'no-counts' means "await enrichment" to the Scanner
   // (the record is left in the pool), so it must only ever fire when counts
   // are genuinely missing. An enriched account with 0 followers used to fall
   // through here (its ratio is undefined) and sit in the pool forever as a
   // zombie — enriched, unscorable, never skipped.
-  if (a.followers === undefined || a.following === undefined) {
+  if (a.followers === undefined || a.following === undefined || !Number.isSafeInteger(a.followers)
+    || !Number.isSafeInteger(a.following) || a.followers < 0 || a.following < 0
+    || (a.mutuals !== undefined && (!Number.isSafeInteger(a.mutuals) || a.mutuals < 0))) {
     return { score: 0, eligible: false, reasons: ['no-counts'] };
   }
   if (a.isVerified === true) return { score: 0, eligible: false, reasons: ['verified'] };
@@ -145,7 +145,7 @@ export function scoreCandidate(a: AccountState, cfg: ScorerConfig = SCORER_DEFAU
   if (followers < cfg.minFollowers) return { score: 0, eligible: false, reasons: ['too-small'] };
   if (followers > cfg.maxFollowers) return { score: 0, eligible: false, reasons: ['too-large'] };
 
-  const r = a.ratio ?? ratioOf(a.followers, a.following);
+  const r = Number.isFinite(a.ratio) ? a.ratio : ratioOf(a.followers, a.following);
   // Counts are known, so an undefined ratio means followers === 0 — which the
   // min-followers gate normally catches; a 0-minimum config still excludes it.
   if (r === undefined) return { score: 0, eligible: false, reasons: ['ratio-excluded'] };

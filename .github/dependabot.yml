@@ -7,6 +7,13 @@
 # Electron major changes the bundled Node ABI, and better-sqlite3 majors can
 # change the native build requirements — both are exactly the "own PR, own
 # CI run" case the major/minor split exists for.
+#
+# The `electron-toolchain` group exists because those packages are COUPLED:
+# `@types/node` must stay on the Node major Electron bundles, `.node-version`
+# and `build/targets.generated.json` are derived from the same binary, and
+# `electron-builder`/`@electron/rebuild` package against that ABI. Splitting
+# them across PRs guarantees a red `deps:verify` in between (ADR 1001), so
+# they move together — including majors.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -16,9 +23,19 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     groups:
+      electron-toolchain:
+        applies-to: version-updates
+        patterns:
+          - electron
+          - electron-builder
+          - "@types/node"
       npm-minor-patch:
         applies-to: version-updates
         update-types: [minor, patch]
+        exclude-patterns:
+          - electron
+          - electron-builder
+          - "@types/node"
     commit-message:
       prefix: "chore(deps)"
 

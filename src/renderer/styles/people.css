@@ -1,0 +1,268 @@
+/*
+ * people.css — the People stage page (spec §12.5), drawn on the approved
+ * direction board: measured growth on top, then "Where Epo finds people" and
+ * "In progress" side by side once the stage is wide enough. Also the two small
+ * shell layers the stage pages and the live column share: skeletons (shapes,
+ * never digits, while a projection is unknown) and the one popover.
+ */
+
+/* ---------- the page ---------- */
+.people-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: var(--sp-6);
+}
+
+.stage-page__head h1 {
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--chrome);
+}
+
+.stage-page__head p {
+  margin-top: var(--sp-1);
+  color: var(--muted);
+}
+
+.people-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+.people-panel > h2,
+.people-panel__head h2 {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--chrome);
+}
+
+.people-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.people-panel__head h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Two useful columns when each can hold complete labels; one below. */
+.people-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-6);
+  align-items: start;
+}
+
+@container (min-width: 900px) {
+  .people-cols {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  }
+}
+
+/* ---------- your followers over time ---------- */
+.people-growth .seg button {
+  /* Keep each complete date-range label within the compact header control. */
+  flex: 1 0 auto;
+}
+
+.people-growth .seg {
+  margin-top: 0;
+}
+
+.people-growth__num {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-3);
+  min-height: calc(var(--fs-heading) * 1.1);
+  font-size: var(--fs-heading);
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--chrome);
+}
+
+.people-growth__delta {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.people-growth__delta.is-up {
+  color: var(--st-good);
+}
+
+.people-growth__note {
+  font-size: var(--fs-caption);
+  color: var(--faint);
+}
+
+/* The measured chart moved here from the retired Overview page. Paint only:
+   GrowthChart.tsx owns the reveal and its reduced-motion behavior. */
+.growth-svg {
+  display: block;
+  width: 100%;
+  height: 180px;
+}
+
+.growth-empty {
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+
+/* Source details share their parent surface; extra nested cards add no hierarchy. */
+.people-panel > .card {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.people-panel > .card > .card-h {
+  padding: var(--sp-4) 0 0;
+}
+
+.people-panel > .card > .card-b {
+  padding: var(--sp-3) 0 0;
+}
+
+.people-panel .t-stats:first-child,
+.people-panel .crumbs,
+.people-panel .qpipe {
+  margin: 0;
+}
+
+.people-panel > .qrows .qr {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.people-panel .qstage {
+  flex-basis: 88px;
+}
+
+.people-panel .qflow {
+  display: none;
+}
+.growth-grid {
+  stroke: rgba(255, 255, 255, 0.05);
+  stroke-width: 1;
+}
+.growth-grid.dash {
+  stroke-dasharray: 2 4;
+}
+.growth-ylab {
+  fill: var(--faint);
+  font-size: var(--fs-caption);
+  font-family: var(--mono);
+}
+.growth-line {
+  stroke: var(--silver);
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.growth-area {
+  fill: url(#growthGrad);
+  opacity: 0;
+}
+.growth-dot {
+  fill: var(--chrome);
+  stroke: var(--bg);
+  stroke-width: 2;
+  opacity: 0;
+}
+.growth-x {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--sp-2);
+  font-size: var(--fs-small);
+  color: var(--faint);
+  letter-spacing: 0.03em;
+}
+
+/* ---------- where Epo finds people ---------- */
+.people-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  color: var(--muted);
+}
+
+/* A lifecycle row drawn with a glyph (Kept's shield) instead of a dot. */
+.funnel .dot.glyph {
+  display: inline-grid;
+  place-items: center;
+  width: auto;
+  height: auto;
+  background: none;
+  font-size: var(--fs-caption);
+}
+
+/* ---------- in progress ---------- */
+.people-page .qpipe {
+  flex-wrap: wrap;
+  row-gap: var(--sp-2);
+}
+
+.people-lanes__hint {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+/* ---------- skeletons: final-size shapes while a number is unknown ---------- */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+}
+
+.skeleton-line {
+  display: block;
+  height: var(--fs-body);
+  border-radius: var(--r-sm);
+  background: var(--track-bg);
+}
+
+.skeleton-line:nth-child(2n) {
+  width: 72%;
+}
+
+/* ---------- the shell's one popover ---------- */
+.popover {
+  position: fixed;
+  z-index: 60;
+  max-width: min(360px, calc(100vw - 2 * var(--sp-4)));
+  padding: var(--sp-4);
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  box-shadow: var(--elev-3);
+}
+
+.popover:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}

@@ -7,19 +7,26 @@
  * `fetch-failed` (two consecutive failures) lets callers fall back to the
  * dialog-scroll scrape.
  */
-import { ListPageWalker } from '@/rim/list-page-walker';
+
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { FakeClock } from '@/governors/clock';
-import { RIM } from '@/timing/config';
+import { referenceTempoSource } from '@/kernel/tempo';
+import { ListPageWalker } from '@/rim/list-page-walker';
+import { toVeilInfo } from '@/shared/live-op';
+import { ADAPTER, RIM } from '@/timing/config';
 import { nextRestStride } from '@/timing/noise';
-import { FakeTab, FakeSentinel, followersBody } from './fakes';
 import { setLevel } from '@/utils/logger';
+import { FakeSentinel, FakeTab, followersBody } from '../kit/fakes';
 
 beforeAll(() => setLevel('error'));
 
 const reader = new Reader();
 const clock = new FakeClock(3_000_000);
+const tempo = referenceTempoSource();
+/** The retry wait at the harness's pinned rng: `pause.retry` around the walk's rest. */
+const RETRY_MS = tempo.policy('pause.retry', { baseMs: tempo.base('walk.rest'), pollMs: ADAPTER.NAV_SETTLE_MS })
+  .sample(() => 0.5);
 
 /** A 2xx JSON FetchEnvelope around a followers-list body. */
 const okEnv = (body: unknown): unknown => ({
@@ -70,7 +77,7 @@ const harness = (envelopes: unknown[]): Harness => {
     },
     rng: () => 0.5,
     reporter: {
-      report: (info) => activity.push(info),
+      report: (info) => activity.push(toVeilInfo(info)),
       clear: () => activity.push(null),
     },
   });
@@ -84,11 +91,11 @@ const baseArgs = {
   onObservation: (): void => {},
 };
 
-test('walks cursor to cursor, then VERIFIES the end with a past-the-end probe', async () => {
+test('walks offset cursor to cursor, then VERIFIES the end with a past-the-end probe', async () => {
   const { walker, sleeps, scripts } = harness([
-    okEnv(followersBody(['a', 'b'], 'C1', true)),
-    okEnv(followersBody(['c', 'd'], 'C2', true)),
-    okEnv(followersBody(['e'], null, false)), // claims end, no cursor left
+    okEnv(followersBody(['11', '12'], '2', true)),
+    okEnv(followersBody(['13', '14'], '4', true)),
+    okEnv(followersBody(['15'], null, false)), // claims end, no cursor left
     okEnv(followersBody([], null, false)), // the probe: nothing past the end
   ]);
   const seen: string[] = [];
@@ -102,10 +109,12 @@ test('walks cursor to cursor, then VERIFIES the end with a past-the-end probe', 
     pageMaxMs: 3_000,
   });
 
-  expect([...result.pks].sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+  expect([...result.pks].sort()).toEqual(['11', '12', '13', '14', '15']);
   expect(result.pages).toBe(4); // 3 data pages + the verification probe
   expect(result.complete).toBe(true);
   expect(result.endConfirmed).toBe(true);
+  expect(result.endEvidence).toBe('probe');
+  expect(result.quarantined).toBe(0);
   expect(result.reason).toBe('no-more-pages');
   expect(seen.length).toBe(5);
   expect(progress).toEqual([2, 4, 5]);
@@ -115,57 +124,109 @@ test('walks cursor to cursor, then VERIFIES the end with a past-the-end probe', 
   // the probe (no cursor handed back) synthesizes the row-offset "5".
   expect(scripts[0]).toContain('/followers/?count=');
   expect(scripts[0]).not.toContain('max_id');
-  expect(scripts[1]).toContain('"C1"');
-  expect(scripts[2]).toContain('"C2"');
+  expect(scripts[1]).toContain('"2"');
+  expect(scripts[2]).toContain('"4"');
   expect(scripts[3]).toContain('"5"');
+});
+
+describe('an OPAQUE cursor space is never probed with a synthesized offset', () => {
+  const opaque = (last: unknown): unknown[] => [
+    okEnv(followersBody(['11', '12'], 'QVFE1', true)),
+    okEnv(followersBody(['13'], 'QVFE2', true)),
+    okEnv(last),
+  ];
+
+  test("the server's own false flags end the walk: complete, no probe, endConfirmed false", async () => {
+    const { walker, scripts } = harness(opaque(followersBody(['14'], null, false)));
+    const result = await walker.walkAll(baseArgs);
+    expect(result).toMatchObject({ complete: true, endConfirmed: false, endEvidence: 'server-flags', reason: 'no-more-pages' });
+    expect(scripts).toHaveLength(3);
+  });
+
+  test('an end with no flags at all stops: no continuation evidence, rows kept', async () => {
+    const { walker, scripts } = harness(opaque({ users: [{ pk: '14', username: 'ud' }] }));
+    const result = await walker.walkAll(baseArgs);
+    expect(result).toMatchObject({ complete: false, reason: 'shape-mismatch', stopDetail: 'no-continuation-evidence' });
+    expect([...result.pks].sort()).toEqual(['11', '12', '13', '14']);
+    expect(scripts).toHaveLength(3);
+  });
+
+  test('an end beside an unexplained cursor-like key stops on the veto', async () => {
+    const { walker } = harness(opaque({ ...(followersBody(['14'], null, false) as object), next_cursor: 'QVFE3' }));
+    const result = await walker.walkAll(baseArgs);
+    expect(result).toMatchObject({ complete: false, reason: 'shape-mismatch', stopDetail: 'cursor-veto' });
+  });
+
+  test('a resumed opaque start cursor makes the walk opaque from its first page', async () => {
+    const { walker, scripts } = harness([okEnv(followersBody(['11'], null, false))]);
+    const result = await walker.walkAll({ ...baseArgs, startCursor: 'QVFE0' });
+    expect(result).toMatchObject({ complete: true, endEvidence: 'server-flags' });
+    expect(scripts).toHaveLength(1);
+  });
+});
+
+test('a more-flag without a cursor is drift: the walk stops with its rows kept', async () => {
+  const { walker } = harness([okEnv(followersBody(['11'], '1', true)), okEnv({ users: [{ pk: '12' }], has_more: true })]);
+  const result = await walker.walkAll(baseArgs);
+  expect(result).toMatchObject({ complete: false, reason: 'shape-mismatch', stopDetail: 'more-without-cursor' });
+  expect([...result.pks].sort()).toEqual(['11', '12']);
+});
+
+test('unreadable rows are quarantined and counted; a mostly unreadable page stops the walk', async () => {
+  const rows = [...Array.from({ length: 10 }, (_, i) => ({ pk: `${i + 1}` })), { id: 'x' }];
+  const some = harness([okEnv({ users: rows, has_more: false }), okEnv(followersBody([], null, false))]);
+  expect(await some.walker.walkAll(baseArgs)).toMatchObject({ complete: true, quarantined: 1 });
+  const most = harness([okEnv({ users: [{ pk: '11' }, { id: 'x' }, { id: 'y' }], has_more: false })]);
+  expect(await most.walker.walkAll(baseArgs)).toMatchObject({ complete: false, stopDetail: 'rows-unreadable', quarantined: 2 });
 });
 
 test('has_more:false with a leftover cursor is NOT an end — the walk follows the cursor', async () => {
   // The extractor infers more-pages from cursor presence, so a lying has_more
   // flag can never truncate the walk; the tail is fetched, then end-verified.
   const { walker, scripts } = harness([
-    okEnv(followersBody(['a'], 'C9', false)), // has_more false but a cursor remains
-    okEnv(followersBody(['b'], null, false)), // the tail the flag tried to hide
+    okEnv(followersBody(['11'], '9', false)), // has_more false but a cursor remains
+    okEnv(followersBody(['12'], null, false)), // the tail the flag tried to hide
     okEnv(followersBody([], null, false)), // end probe
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect([...result.pks].sort()).toEqual(['a', 'b']);
+  expect([...result.pks].sort()).toEqual(['11', '12']);
   expect(result.endConfirmed).toBe(true);
-  expect(scripts[1]).toContain('"C9"');
+  expect(scripts[1]).toContain('"9"');
 });
 
 test('a REJECTED past-the-end probe (JSON 400 past the limit) CONFIRMS the end — never a fallback', async () => {
   const { walker, sleeps } = harness([
-    okEnv(followersBody(['a', 'b'], 'C1', true)),
-    okEnv(followersBody(['c'], null, false)), // end claim
+    okEnv(followersBody(['11', '12'], '2', true)),
+    okEnv(followersBody(['13'], null, false)), // end claim
     rejectEnv(400), // IG rejects the past-the-limit offset — that IS the end
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect([...result.pks].sort()).toEqual(['a', 'b', 'c']);
+  expect([...result.pks].sort()).toEqual(['11', '12', '13']);
   expect(result.complete).toBe(true);
   expect(result.endConfirmed).toBe(true);
   expect(result.reason).toBe('no-more-pages');
-  // The rejection was NOT retried (no long-rest backoff draw was slept).
-  expect(sleeps.every((ms) => ms !== 10_000)).toBe(true);
+  expect(result.endEvidence).toBe('probe-rejected');
+  // The rejection was NOT retried (no retry wait was slept).
+  expect(sleeps).not.toContain(RETRY_MS);
 });
 
 test('a 429 on the past-the-end probe is a FETCH FAILURE, never an end confirmation', async () => {
   // Getting throttled while verifying the end must not read as "the list is
   // complete" — that would fabricate a verified-complete census downstream.
   const { walker } = harness([
-    okEnv(followersBody(['a', 'b'], 'C1', true)),
-    okEnv(followersBody(['c'], null, false)), // end claim
+    okEnv(followersBody(['11', '12'], '2', true)),
+    okEnv(followersBody(['13'], null, false)), // end claim
     failEnv(429), // throttled probe — retried once…
     failEnv(429), // …still throttled
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect([...result.pks].sort()).toEqual(['a', 'b', 'c']);
+  expect([...result.pks].sort()).toEqual(['11', '12', '13']);
   expect(result.complete).toBe(false);
   expect(result.endConfirmed).toBe(false);
   expect(result.reason).toBe('fetch-failed');
@@ -173,14 +234,14 @@ test('a 429 on the past-the-end probe is a FETCH FAILURE, never an end confirmat
 
 test('a transiently throttled probe recovers on retry and still verifies honestly', async () => {
   const { walker } = harness([
-    okEnv(followersBody(['a'], null, false)), // end claim
+    okEnv(followersBody(['11'], null, false)), // end claim
     failEnv(429), // probe throttled once…
     okEnv(followersBody([], null, false)), // …the retried probe confirms
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect(result.pks).toEqual(['a']);
+  expect(result.pks).toEqual(['11']);
   expect(result.complete).toBe(true);
   expect(result.endConfirmed).toBe(true);
   expect(result.reason).toBe('no-more-pages');
@@ -190,7 +251,7 @@ test('an HTML-wall 400 on the probe is a wall, not a past-the-limit rejection', 
   // `classifyEnvelope` reads an HTML body on an API URL as a soft wall
   // (rate-limited) — only the JSON past-the-limit 400 confirms an end.
   const { walker } = harness([
-    okEnv(followersBody(['a'], null, false)), // end claim
+    okEnv(followersBody(['11'], null, false)), // end claim
     failEnv(400), // 400 but text/html — a wall, retried…
     failEnv(400), // …persistently walled
   ]);
@@ -204,30 +265,42 @@ test('an HTML-wall 400 on the probe is a wall, not a past-the-limit rejection', 
 
 test('a FALSE end claim is caught by the probe and the walk continues', async () => {
   const { walker, scripts } = harness([
-    okEnv(followersBody(['a', 'b'], null, false)), // premature end claim
-    okEnv(followersBody(['c'], 'C3', true)), // the probe finds MORE — keep walking
+    okEnv(followersBody(['11', '12'], null, false)), // premature end claim
+    okEnv(followersBody(['13'], '3', true)), // the probe finds MORE — keep walking
     okEnv(followersBody([], null, false)), // next end claim…
     okEnv(followersBody([], null, false)), // …verified by its own probe
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect([...result.pks].sort()).toEqual(['a', 'b', 'c']);
+  expect([...result.pks].sort()).toEqual(['11', '12', '13']);
   expect(result.complete).toBe(true);
   expect(result.endConfirmed).toBe(true);
   expect(scripts[1]).toContain('"2"'); // probe = rows fetched so far
-  expect(scripts[2]).toContain('"C3"'); // continued from the recovered cursor
+  expect(scripts[2]).toContain('"3"'); // continued from the server's cursor
+});
+
+test('new rows past a claimed end with no server cursor stop the walk — never a second synthesized offset', async () => {
+  const { walker, scripts } = harness([
+    okEnv(followersBody(['11', '12'], null, false)), // end claim
+    okEnv(followersBody(['13'], null, false)), // the probe finds MORE, but hands back no cursor
+    okEnv(followersBody([], null, false)), // never requested
+  ]);
+  const result = await walker.walkAll(baseArgs);
+  expect(result).toMatchObject({ complete: false, reason: 'shape-mismatch', stopDetail: 'end-claim-false' });
+  expect([...result.pks].sort()).toEqual(['11', '12', '13']);
+  expect(scripts).toHaveLength(2);
 });
 
 test('the FOLLOWING list pages the following endpoint', async () => {
   const { walker, scripts } = harness([
-    okEnv(followersBody(['a'], null, false)),
+    okEnv(followersBody(['11'], null, false)),
     okEnv(followersBody([], null, false)),
   ]);
 
   const result = await walker.walkAll({ ...baseArgs, which: 'following' });
 
-  expect(result.pks).toEqual(['a']);
+  expect(result.pks).toEqual(['11']);
   expect(scripts[0]).toContain('/following/?count=');
 });
 
@@ -243,39 +316,40 @@ test('TWO consecutive failures on the first page end the walk as fetch-failed (f
     endConfirmed: false,
     reason: 'fetch-failed',
     cursor: null,
+    quarantined: 0,
   });
-  // The retry backed off on a long-rest draw before the second attempt.
-  expect(sleeps).toEqual([10_000]);
+  // The retry waited one `pause.retry` draw before the second attempt.
+  expect(sleeps).toEqual([RETRY_MS]);
 });
 
 test('ONE transient failure is retried on the same cursor and the walk recovers', async () => {
   const { walker, scripts } = harness([
-    okEnv(followersBody(['a'], 'C1', true)),
-    failEnv(429), // transient blip fetching C1's page…
-    okEnv(followersBody(['b'], null, false)), // …the retry lands it
+    okEnv(followersBody(['11'], '1', true)),
+    failEnv(429), // transient blip fetching page 2…
+    okEnv(followersBody(['12'], null, false)), // …the retry lands it
     okEnv(followersBody([], null, false)), // end probe
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect([...result.pks].sort()).toEqual(['a', 'b']);
+  expect([...result.pks].sort()).toEqual(['11', '12']);
   expect(result.complete).toBe(true);
   expect(result.endConfirmed).toBe(true);
   // The retry re-requested the SAME cursor.
-  expect(scripts[1]).toContain('"C1"');
-  expect(scripts[2]).toContain('"C1"');
+  expect(scripts[1]).toContain('"1"');
+  expect(scripts[2]).toContain('"1"');
 });
 
 test('a mid-walk double failure keeps the pages already parsed but is NOT complete', async () => {
   const { walker } = harness([
-    okEnv(followersBody(['a', 'b'], 'C1', true)),
+    okEnv(followersBody(['11', '12'], 'C1', true)),
     failEnv(429),
     failEnv(429),
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect([...result.pks].sort()).toEqual(['a', 'b']);
+  expect([...result.pks].sort()).toEqual(['11', '12']);
   expect(result.pages).toBe(1);
   expect(result.complete).toBe(false);
   expect(result.reason).toBe('fetch-failed');
@@ -283,7 +357,7 @@ test('a mid-walk double failure keeps the pages already parsed but is NOT comple
 
 test('a SHAPE_MISMATCH page ends the walk shape-mismatch, incomplete — never a typed-empty end', async () => {
   const { walker } = harness([
-    okEnv(followersBody(['a', 'b'], 'C1', true)),
+    okEnv(followersBody(['11', '12'], 'C1', true)),
     okEnv({ unexpected_new_shape: true }), // IG shipped a list-shape change
   ]);
 
@@ -292,7 +366,7 @@ test('a SHAPE_MISMATCH page ends the walk shape-mismatch, incomplete — never a
   // The rows already parsed are kept; the drifted page adds NOTHING and the
   // walk ends as the failure it is — a drifted extractor must never turn into
   // a verified-complete empty walk (the fabricated-census laundering).
-  expect([...result.pks].sort()).toEqual(['a', 'b']);
+  expect([...result.pks].sort()).toEqual(['11', '12']);
   expect(result.complete).toBe(false);
   expect(result.endConfirmed).toBe(false);
   expect(result.reason).toBe('shape-mismatch');
@@ -314,13 +388,13 @@ test('a drifted FIRST page ends the walk immediately — no fabricated empty cen
 
 test('a drifted past-the-end PROBE page never confirms the end claim', async () => {
   const { walker } = harness([
-    okEnv(followersBody(['a'], null, false)), // end claim…
+    okEnv(followersBody(['11'], null, false)), // end claim…
     okEnv({ unexpected_new_shape: true }), // …but the probe no longer parses
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect(result.pks).toEqual(['a']);
+  expect(result.pks).toEqual(['11']);
   expect(result.complete).toBe(false);
   expect(result.endConfirmed).toBe(false);
   expect(result.reason).toBe('shape-mismatch');
@@ -348,8 +422,8 @@ test('persistent evaluate throws are fetch-failed, never an unhandled rejection'
 
 test('cooperative stop ends the walk before the next page fetch', async () => {
   const { walker, scripts } = harness([
-    okEnv(followersBody(['a'], 'C1', true)),
-    okEnv(followersBody(['b'], 'C2', true)),
+    okEnv(followersBody(['11'], 'C1', true)),
+    okEnv(followersBody(['12'], 'C2', true)),
   ]);
   let fetched = 0;
   const result = await walker.walkAll({
@@ -360,20 +434,20 @@ test('cooperative stop ends the walk before the next page fetch', async () => {
     shouldStop: () => fetched >= 1,
   });
 
-  expect(result.pks).toEqual(['a']);
+  expect(result.pks).toEqual(['11']);
   expect(result.reason).toBe('stop-requested');
   expect(scripts.length).toBe(1); // page 2 was never requested
 });
 
 test('a non-ok sentinel at the top of a page halts the walk', async () => {
-  const tabEnvs = [okEnv(followersBody(['a'], 'C1', true))];
+  const tabEnvs = [okEnv(followersBody(['11'], 'C1', true))];
   const { walker } = harness(tabEnvs);
   const result = await walker.walkAll({
     ...baseArgs,
     sentinel: new FakeSentinel(['ok', 'challenge']) as unknown as Sentinel,
   });
 
-  expect(result.pks).toEqual(['a']);
+  expect(result.pks).toEqual(['11']);
   expect(result.reason).toBe('sentinel:challenge');
 });
 
@@ -384,7 +458,7 @@ test('the drawn rest stride triggers a LONG jittered rest on top of the pace', a
   const n = nextRestStride(() => 0.5);
   const envs = [
     ...Array.from({ length: n + 1 }, (_, i) =>
-      okEnv(followersBody([`p${i}`], i === n ? null : `C${i}`, i !== n)),
+      okEnv(followersBody([`${100 + i}`], i === n ? null : String(i + 1), i !== n)),
     ),
     okEnv(followersBody([], null, false)), // the end probe
   ];
@@ -403,15 +477,15 @@ test('the drawn rest stride triggers a LONG jittered rest on top of the pace', a
 });
 
 test('stagnation tolerates duplicate-window pages, then stops after the cap (never loops)', async () => {
-  const dup = (): unknown => okEnv(followersBody(['a'], 'C1', true));
+  const dup = (): unknown => okEnv(followersBody(['11'], 'C1', true));
   const { walker } = harness([
-    okEnv(followersBody(['a'], 'C1', true)),
+    okEnv(followersBody(['11'], 'C1', true)),
     ...Array.from({ length: RIM.LIST_WALK_STAGNANT_STOP }, dup),
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect(result.pks).toEqual(['a']);
+  expect(result.pks).toEqual(['11']);
   expect(result.reason).toBe('stagnant');
   expect(result.complete).toBe(false);
   expect(result.pages).toBe(1 + RIM.LIST_WALK_STAGNANT_STOP);
@@ -419,23 +493,23 @@ test('stagnation tolerates duplicate-window pages, then stops after the cap (nev
 
 test('a duplicate page mid-walk does NOT abort — fresh pages reset the counter', async () => {
   const { walker } = harness([
-    okEnv(followersBody(['a'], 'C1', true)),
-    okEnv(followersBody(['a'], 'C2', true)), // overlapping window: nothing new
-    okEnv(followersBody(['b'], null, false)), // fresh data resumes
+    okEnv(followersBody(['11'], 'C1', true)),
+    okEnv(followersBody(['11'], 'C2', true)), // overlapping window: nothing new
+    okEnv(followersBody(['12'], null, false)), // fresh data resumes
     okEnv(followersBody([], null, false)), // end probe
   ]);
 
   const result = await walker.walkAll(baseArgs);
 
-  expect([...result.pks].sort()).toEqual(['a', 'b']);
+  expect([...result.pks].sort()).toEqual(['11', '12']);
   expect(result.complete).toBe(true);
   expect(result.reason).toBe('no-more-pages');
 });
 
 test('reports live API activity for the veil, with counts, then clears', async () => {
   const { walker, activity } = harness([
-    okEnv(followersBody(['a', 'b'], 'C1', true)),
-    okEnv(followersBody(['c'], null, false)),
+    okEnv(followersBody(['11', '12'], 'C1', true)),
+    okEnv(followersBody(['13'], null, false)),
     okEnv(followersBody([], null, false)), // end probe
   ]);
 
@@ -443,7 +517,7 @@ test('reports live API activity for the veil, with counts, then clears', async (
 
   // The direct walk is API traffic, never page driving.
   expect(activity.filter(Boolean).every((a) => a!.kind === 'api')).toBe(true);
-  expect(activity[0]).toEqual({ kind: 'api', label: 'Reading follower list', count: 0 });
+  expect(activity[0]).toEqual({ kind: 'api', label: 'Reading your followers', count: 0 });
   // Counts climb as pages land (2 then 3), and the phase clears at the end.
   expect(activity.filter(Boolean).map((a) => a!.count)).toEqual([0, 2, 3]);
   expect(activity[activity.length - 1]).toBeNull();
@@ -451,19 +525,25 @@ test('reports live API activity for the veil, with counts, then clears', async (
 
 test('a FOLLOWING walk labels its activity accordingly', async () => {
   const { walker, activity } = harness([
-    okEnv(followersBody(['a'], null, false)),
+    okEnv(followersBody(['11'], null, false)),
     okEnv(followersBody([], null, false)),
   ]);
 
   await walker.walkAll({ ...baseArgs, which: 'following' });
 
-  expect(activity[0]).toMatchObject({ kind: 'api', label: 'Reading following list' });
+  expect(activity[0]).toMatchObject({ kind: 'api', label: 'Reading your following' });
+});
+
+test("a walk of someone else's list names whose list it reads", async () => {
+  const { walker, activity } = harness([okEnv(followersBody(['a'], null, false)), okEnv(followersBody([], null, false))]);
+  await walker.walkAll({ ...baseArgs, ofUsername: 'studio.lumen' });
+  expect(activity[0]).toMatchObject({ kind: 'api', label: "Reading @studio.lumen's followers" });
 });
 
 test('a demand-bounded walk reports its total, so the overlay bar is determinate', async () => {
   const { walker, activity } = harness([
-    okEnv(followersBody(['a', 'b'], 'C1', true)),
-    okEnv(followersBody(['c', 'd'], 'C2', true)),
+    okEnv(followersBody(['11', '12'], 'C1', true)),
+    okEnv(followersBody(['13', '14'], 'C2', true)),
   ]);
 
   await walker.walkAll({ ...baseArgs, maxNewPks: 4 });
@@ -476,7 +556,7 @@ test('a demand-bounded walk reports its total, so the overlay bar is determinate
 
 test('an UNBOUNDED census reports no total (honest indeterminate progress)', async () => {
   const { walker, activity } = harness([
-    okEnv(followersBody(['a'], null, false)),
+    okEnv(followersBody(['11'], null, false)),
     okEnv(followersBody([], null, false)),
   ]);
 
@@ -484,4 +564,37 @@ test('an UNBOUNDED census reports no total (honest indeterminate progress)', asy
 
   const reports = activity.filter(Boolean) as Array<{ total?: number }>;
   expect(reports.every((r) => r.total === undefined)).toBe(true);
+});
+
+test('the FOLLOWING walk asks for the deterministic order; its end probe asks in the plain form', async () => {
+  // Live 2026-09-20: the default following order is re-ranked per request (each
+  // page carries a fresh `follow_ranking_token`), so offset paging repeated 405
+  // of 3,447 rows and never returned 404 accounts. `order=date_followed_earliest`
+  // answers the WHOLE list at once, ignoring `max_id` — so the past-the-end
+  // probe must NOT carry it, or it re-downloads the entire list to learn nothing.
+  const h = harness([
+    okEnv(followersBody(['11', '12', '13'], null, false)),
+    okEnv(followersBody([], null, false)),
+  ]);
+  const result = await h.walker.walkAll({
+    pk: '42',
+    which: 'following',
+    onObservation: () => {},
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+  });
+  expect(result).toMatchObject({ complete: true, endConfirmed: true, pks: ['11', '12', '13'] });
+  expect(h.scripts[0]).toContain('order=date_followed_earliest');
+  expect(h.scripts[1]).not.toContain('order=');
+  expect(h.scripts[1]).toContain('max_id');
+});
+
+test('the FOLLOWERS walk carries no order parameter', async () => {
+  const h = harness([okEnv(followersBody(['11'], null, false)), okEnv(followersBody([], null, false))]);
+  await h.walker.walkAll({
+    pk: '42',
+    which: 'followers',
+    onObservation: () => {},
+    sentinel: new FakeSentinel() as unknown as Sentinel,
+  });
+  expect(h.scripts.join('\n')).not.toContain('order=');
 });

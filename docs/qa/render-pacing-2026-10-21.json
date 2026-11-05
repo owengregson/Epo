@@ -1,0 +1,404 @@
+{
+  "measuredAt": "2026-10-21T22:54:53.993Z",
+  "passed": true,
+  "bundleSha256": "7da5fbf7c6af30b9b719f88b4b1bf7939bb17e52c628d4209f54c5ba040db745",
+  "runtime": {
+    "electron": "44.1.1",
+    "chrome": "152.0.7977.65",
+    "node": "24.19.0",
+    "platform": "darwin",
+    "osRelease": "25.3.0",
+    "arch": "arm64"
+  },
+  "isolation": {
+    "temporaryProfile": true,
+    "network": "loopback only",
+    "productionTabAndDriver": true
+  },
+  "configuration": {
+    "only": "",
+    "soakMs": 0,
+    "frameRateLimitDisabled": false
+  },
+  "identity": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.65 Safari/537.36",
+    "platform": "MacIntel",
+    "languages": [
+      "en-US",
+      "zh-Hans-US"
+    ],
+    "webdriver": false,
+    "userAgentData": {
+      "brands": [
+        {
+          "brand": "Not?A_Brand",
+          "version": "24"
+        },
+        {
+          "brand": "Chromium",
+          "version": "152"
+        }
+      ],
+      "mobile": false,
+      "platform": "macOS"
+    },
+    "highEntropy": {
+      "architecture": "arm",
+      "bitness": "64",
+      "brands": [
+        {
+          "brand": "Not?A_Brand",
+          "version": "24"
+        },
+        {
+          "brand": "Chromium",
+          "version": "152"
+        }
+      ],
+      "fullVersionList": [
+        {
+          "brand": "Not?A_Brand",
+          "version": "24.0.0.0"
+        },
+        {
+          "brand": "Chromium",
+          "version": "152.0.7977.65"
+        }
+      ],
+      "mobile": false,
+      "platform": "macOS",
+      "platformVersion": "26.3.0"
+    },
+    "headers": {
+      "host": "127.0.0.1:64692",
+      "connection": "keep-alive",
+      "sec-ch-ua-platform": "\"macOS\"",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.65 Safari/537.36",
+      "sec-ch-ua": "\"Not?A_Brand\";v=\"24\", \"Chromium\";v=\"152\"",
+      "sec-ch-ua-mobile": "?0",
+      "accept": "*/*",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-dest": "empty",
+      "referer": "http://127.0.0.1:64692/",
+      "accept-encoding": "gzip, deflate, br, zstd",
+      "accept-language": "en-US,zh-Hans-US;q=0.9"
+    }
+  },
+  "clickGuards": {
+    "originalTargetAccepted": true,
+    "samePositionReplacementRejected": true,
+    "coveredTargetRejected": true
+  },
+  "dashboardPacing": {
+    "frames": 181,
+    "elapsedMs": 1504.9,
+    "fps": 120.27377234367731,
+    "refreshHz": 120.0006103515625,
+    "maximumFps": 150.00076293945312,
+    "passed": true
+  },
+  "results": [
+    {
+      "name": "foreground",
+      "passed": true,
+      "elapsedMs": 6336,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 30
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 38
+      },
+      "window": {
+        "visible": true,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 399,
+      "timerTicks": 253,
+      "maximumRendererTimerGapMs": 39.1000000089407,
+      "maximumMainTimerGapMs": 29.33245899999929,
+      "longestInputDispatchMs": 35.648583000000144,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 210,
+      "trustedPointerMoves": 210,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 404
+    },
+    {
+      "name": "occluded-unfocused",
+      "passed": true,
+      "elapsedMs": 7376,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 30
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 36
+      },
+      "window": {
+        "visible": true,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 480,
+      "timerTicks": 295,
+      "maximumRendererTimerGapMs": 39.1000000089407,
+      "maximumMainTimerGapMs": 31.44275000000016,
+      "longestInputDispatchMs": 35.51445899999999,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 246,
+      "trustedPointerMoves": 246,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 5,
+      "scrollDelta": 402
+    },
+    {
+      "name": "minimized",
+      "passed": true,
+      "elapsedMs": 6517,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 30
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 36
+      },
+      "window": {
+        "visible": false,
+        "minimized": true,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 426,
+      "timerTicks": 261,
+      "maximumRendererTimerGapMs": 40.70000000298023,
+      "maximumMainTimerGapMs": 28.915208000002167,
+      "longestInputDispatchMs": 35.025916999999026,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 252,
+      "trustedPointerMoves": 252,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 395
+    },
+    {
+      "name": "window-hidden",
+      "passed": true,
+      "elapsedMs": 7147,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 30
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 38
+      },
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 443,
+      "timerTicks": 286,
+      "maximumRendererTimerGapMs": 40.70000000298023,
+      "maximumMainTimerGapMs": 26.970375000000786,
+      "longestInputDispatchMs": 34.936125000000175,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 237,
+      "trustedPointerMoves": 237,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 403
+    },
+    {
+      "name": "app-hidden",
+      "passed": true,
+      "elapsedMs": 7559,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 29
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 39
+      },
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": true
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 470,
+      "timerTicks": 302,
+      "maximumRendererTimerGapMs": 40.70000000298023,
+      "maximumMainTimerGapMs": 46.949249999997846,
+      "longestInputDispatchMs": 34.95233300000109,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 263,
+      "trustedPointerMoves": 263,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 6,
+      "scrollDelta": 401
+    },
+    {
+      "name": "stage-hidden",
+      "passed": true,
+      "elapsedMs": 7115,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 29
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 39
+      },
+      "window": {
+        "visible": true,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 445,
+      "timerTicks": 285,
+      "maximumRendererTimerGapMs": 40.70000000298023,
+      "maximumMainTimerGapMs": 26.876750000003085,
+      "longestInputDispatchMs": 35.35070799999812,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 255,
+      "trustedPointerMoves": 255,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 4,
+      "scrollDelta": 405
+    },
+    {
+      "name": "hidden-after-navigation",
+      "passed": true,
+      "elapsedMs": 6476,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 29
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 37
+      },
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 408,
+      "timerTicks": 259,
+      "maximumRendererTimerGapMs": 39.29999999701977,
+      "maximumMainTimerGapMs": 46.389791999994486,
+      "longestInputDispatchMs": 35.111707999996725,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 202,
+      "trustedPointerMoves": 202,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 5,
+      "scrollDelta": 389
+    },
+    {
+      "name": "hidden-after-recovery",
+      "passed": true,
+      "elapsedMs": 6964,
+      "healthBefore": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 29
+      },
+      "healthAfter": {
+        "healthy": true,
+        "evaluateOk": true,
+        "rafTicks": 36
+      },
+      "window": {
+        "visible": false,
+        "minimized": false,
+        "focused": false,
+        "appHidden": false
+      },
+      "page": {
+        "visibility": "visible",
+        "focused": true
+      },
+      "frames": 436,
+      "timerTicks": 278,
+      "maximumRendererTimerGapMs": 36.1000000089407,
+      "maximumMainTimerGapMs": 27.06066699999792,
+      "longestInputDispatchMs": 34.85345799999777,
+      "clicks": 8,
+      "trustedClicks": 8,
+      "pointerMoves": 222,
+      "trustedPointerMoves": 222,
+      "asyncAcknowledgments": 8,
+      "trustedWheels": 5,
+      "scrollDelta": 416
+    }
+  ],
+  "unhealthy": [],
+  "limitations": [
+    "No forced OS sleep, lid close, display-off, network outage, Windows or Linux measurement.",
+    "Local fixture verifies page progress and input transport; it does not validate Instagram behavior or detection."
+  ]
+}

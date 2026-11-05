@@ -1,29 +1,33 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type ComponentChildren, type JSX } from 'preact';
 import type { ConfirmOptions } from '@/renderer/hooks/useConfirm';
 import { commas } from '@/renderer/lib/format';
+import { sentinelLabel } from '@/renderer/lib/labels';
+import { fill } from '@/renderer/settings/format';
 import { Badge, type BadgeTone } from '@/renderer/ui/Badge';
 import { Button } from '@/renderer/ui/Button';
 import { Card, CardBody, CardHeader } from '@/renderer/ui/Card';
-import { Field } from '@/renderer/ui/Field';
 import { KeyValue } from '@/renderer/ui/KeyValue';
 import { Meter } from '@/renderer/ui/Meter';
-import { Stepper } from '@/renderer/ui/Stepper';
-import type { PruneStatus, Settings } from '@/types';
+import type { PruneStatus } from '@/types';
+import { PRUNE_COPY } from './prune-copy';
 
 type PruneSentinel = NonNullable<PruneStatus['lastSentinel']>;
 
-/** Short sentinel readout (mirrors the Live Status card's vocabulary). */
-function sentinelLabel(s: PruneSentinel): string {
-  switch (s) {
-    case 'ok':
-      return 'ok';
-    case 'action-blocked':
-      return 'blocked';
-    case 'challenge':
-      return 'challenge';
+/** The halt alert's copy: the engine's reason first, the sentinel as context. */
+export function haltText(reason: string | null, sentinel: PruneSentinel | null): string {
+  switch (reason) {
+    case 'rate-limited':
+      return 'Halted — Instagram refused an unfollow as too fast (rate-limited). Wait an hour or two before running again.';
+    case 'actions-failing':
+      return 'Halted — unfollows kept failing to confirm. Check the Instagram tab before running again.';
+    case 'blocked-repeatedly':
+      return 'Halted — actions were blocked repeatedly. Check the Instagram tab before running again.';
+    case 'scan-failed':
+      return 'Halted — the census scan could not complete (a list walk failed or was cut short). Scan again.';
+    case 'run-failed':
+      return 'Halted — the run stopped on an unexpected error. Check the log, then run again.';
     default:
-      return 'logged out';
+      return `Halted${sentinel !== null ? ` — sentinel ${sentinelLabel(sentinel)}` : ''}. Check the Instagram tab before running again.`;
   }
 }
 
@@ -35,6 +39,8 @@ export function stateChip(state: PruneStatus['state'] | undefined): { label: str
       return { label: 'Scanning', tone: 'live' };
     case 'running':
       return { label: 'Running', tone: 'live' };
+    case 'paused':
+      return { label: 'Paused', tone: 'warn' };
     case 'done':
       return { label: 'Done', tone: 'default' };
     case 'halted':
@@ -63,10 +69,8 @@ export interface PruneRunCardProps {
   onStop(): void;
   /** The shell's confirm modal — gates every stop. */
   confirm(options: ConfirmOptions): Promise<boolean>;
-  /** Persisted settings (for the daily-unfollow cap); null while loading. */
-  settings: Settings | null;
-  /** Persist a partial settings change (the view saves + relays onSaved). */
-  onSave(part: Partial<Settings>): void;
+  /** The "Unfollow these gradually" control or its on-line (the view owns the settings change). */
+  gradual?: ComponentChildren;
 }
 
 /**
@@ -84,11 +88,10 @@ export function PruneRunCard({
   onRun,
   onStop,
   confirm,
-  settings,
-  onSave,
-}: PruneRunCardProps): h.JSX.Element {
+  gradual,
+}: PruneRunCardProps): JSX.Element {
   const state = prune?.state ?? 'idle';
-  const active = state === 'scanning' || state === 'running';
+  const active = state === 'scanning' || state === 'running' || state === 'paused';
   const chip = stateChip(prune?.state);
 
   const total = prune !== null && prune.candidates > 0 ? prune.candidates : candidates;
@@ -118,14 +121,11 @@ export function PruneRunCard({
   };
 
   return (
-    <Card index={2}>
-      <CardHeader icon="user-minus" aux={active ? `${commas(remaining)} remaining` : undefined}>
+    <Card>
+      <CardHeader icon="user-minus" aux={<Badge tone={chip.tone}>{chip.label}</Badge>}>
         Prune · Run
       </CardHeader>
       <CardBody>
-        <KeyValue k="State">
-          <Badge tone={chip.tone}>{chip.label}</Badge>
-        </KeyValue>
         <div class="hero-today num">
           <div class="ht-top">
             <span class="k">This run</span>
@@ -138,15 +138,17 @@ export function PruneRunCard({
             <span>
               <b>{commas(remaining)}</b> remaining
             </span>
-            <span>
-              today <b>{commas(dailyDone)}</b> / {dailyLimit > 0 ? commas(dailyLimit) : '—'}
-            </span>
           </div>
         </div>
+        <KeyValue k={PRUNE_COPY.allowance}>
+          <span class="num">
+            {dailyLimit > 0 ? fill(PRUNE_COPY.allowanceLine, { used: dailyDone, n: dailyLimit }) : PRUNE_COPY.allowanceUnknown}
+          </span>
+        </KeyValue>
         {/* Stop here means stop the RUN — a live scan's stop (with its own
             confirm copy) lives on PruneScanCard, so mid-scan this card keeps
             its (locked) Run affordance instead of a second, mislabeled stop. */}
-        {state === 'running' ? (
+        {state === 'running' || state === 'paused' ? (
           <Button
             wide
             icon="stop"
@@ -167,11 +169,11 @@ export function PruneRunCard({
             disabled={!readyToRun || active || pending !== null}
             onClick={onRun}
           >
-            Run prune
+            {PRUNE_COPY.pruneNow}
           </Button>
         )}
         <div class="hint" hidden={!readyToRun || active}>
-          Unfollows run one at a time with paced delays; the daily limit and whitelist always apply.
+          Unfollows run one at a time at the plan’s pace; today’s allowance and your protection list always apply.
         </div>
         <div class="hint" hidden={readyToRun || active}>
           Run a scan first — it unlocks pruning and shows exactly who a run would drop.
@@ -183,24 +185,9 @@ export function PruneRunCard({
           Daily prune limit reached — the next run resumes tomorrow.
         </div>
         <div class="hint alarm" role="alert" hidden={!halted}>
-          Halted{lastSentinel !== null ? ` — sentinel ${sentinelLabel(lastSentinel)}` : ''}. Check the
-          Instagram tab before running again.
+          {haltText(prune?.haltReason ?? null, lastSentinel)}
         </div>
-        {settings !== null ? (
-          <Field
-            label="Daily unfollow limit"
-            tip="Hard cap on prune unfollows per local day. Prune keeps its own ledger, independent of the growth engine's daily ceiling."
-          >
-            <Stepper
-              min={5}
-              max={500}
-              step={5}
-              value={settings.pruneDailyLimit}
-              onChange={(v) => onSave({ pruneDailyLimit: v })}
-              ariaLabel="Daily prune unfollow limit"
-            />
-          </Field>
-        ) : null}
+        {gradual ? <div class="prune-gradual">{gradual}</div> : null}
       </CardBody>
     </Card>
   );

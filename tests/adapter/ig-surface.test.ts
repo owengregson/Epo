@@ -3,13 +3,15 @@
  * enricher branch on) and the labelled signature / endpoint-id tables.
  */
 import {
-  SURFACE,
   asFetchEnvelope,
   classifyEnvelope,
   envelopeLooksLikeHtml,
   type FetchEnvelope,
+  SURFACE,
 } from '@/adapter/ig-surface';
+import { Reader } from '@/adapter/reader';
 import { TAB } from '@/timing/config';
+import { readAs } from '../kit/surface';
 
 describe('asFetchEnvelope', () => {
   test('accepts a well-formed envelope', () => {
@@ -96,13 +98,21 @@ describe('SURFACE envelope fetch scripts are abort-bounded', () => {
     // The literal is inlined in the versions file (page scripts cannot
     // import); this pins it to the registry value so the two never drift.
     const scripts = [
-      SURFACE.profileInfoScript('someone'),
-      SURFACE.currentUserScript(),
-      SURFACE.friendshipShowScript('17841400000'),
       SURFACE.listPageScript('17841400000', 'followers', null),
+      SURFACE.listPageScript('17841400000', 'following', 'C1'),
+      SURFACE.listPageScript('17841400000', 'following', '50', true),
     ];
     for (const script of scripts) {
       expect(script).toContain(`AbortSignal.timeout(${TAB.FETCH_ABORT_MS})`);
+    }
+  });
+
+  test('the walled reads are never composed again (live 2026-10-08)', () => {
+    // `/users/<pk>/info/` answers 429, `current_user` a 200 HTML page at `/`;
+    // profiles are VISITED (`rim/profile-visit.ts`). The list pages — which
+    // Instagram's own client calls too — are the only reads Epo composes.
+    for (const gone of ['profileInfoScript', 'currentUserScript', 'friendshipShowScript']) {
+      expect(gone in SURFACE).toBe(false);
     }
   });
 });
@@ -144,11 +154,47 @@ describe('classifyEnvelope — the recovery ladder’s read-side failure familie
     ).toBe('rate-limited');
   });
 
+  test('a refusal BODY on a read is a wall whatever its status — never an unknown refusal', () => {
+    // The list walker reads an unclassified 400 on its past-the-end probe as
+    // "end confirmed": a throttle that classified as drift-suspect laundered
+    // itself into a verified-complete census.
+    const throttled = '{"message":"feedback_required","spam":true,"feedback_title":"Try Again Later"';
+    expect(classifyEnvelope(env({ status: 400, textHead: throttled }))).toEqual({
+      kind: 'rate-limited',
+      wall: 'action-blocked',
+    });
+    expect(
+      classifyEnvelope(
+        env({ status: 401, textHead: '{"message":"Please wait a few minutes before you try again."' }),
+      ),
+    ).toEqual({ kind: 'rate-limited', wall: 'action-blocked' });
+    expect(
+      classifyEnvelope(env({ status: 403, textHead: '{"message":"login_required"' })),
+    ).toEqual({ kind: 'auth', wall: 'logged-out' });
+    // The genuine past-the-limit rejection stays what it was.
+    expect(
+      classifyEnvelope(env({ status: 400, textHead: '{"message":"unable to fetch followers"' })).kind,
+    ).toBe('drift-suspect');
+  });
+
   test('a JSON 404 is gone; status 0 is network; an unknown refusal is drift-suspect', () => {
     expect(classifyEnvelope(env({ status: 404 })).kind).toBe('gone');
     expect(classifyEnvelope(env({ status: 0, contentType: '', textHead: 'TypeError: failed' })).kind).toBe(
       'network',
     );
     expect(classifyEnvelope(env({ status: 403 })).kind).toBe('drift-suspect');
+  });
+});
+
+describe('an unreadable body is never an empty fact', () => {
+  const reader = new Reader();
+  // A failed body must not invent an end-of-list or absence of relationships.
+  test.each(['followers-list', 'show-many'] as const)('%s refuses non-record bodies', (kind) => {
+    for (const body of [undefined, '<!DOCTYPE html>']) {
+      const read = readAs(reader, kind, body, { at: 1 });
+      expect(read).toMatchObject({ ok: false, kind: 'mismatch' });
+      expect('projection' in read).toBe(false);
+      expect(reader.relationshipFacts(read)).toEqual([]);
+    }
   });
 });

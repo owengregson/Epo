@@ -13,35 +13,25 @@ export function prefersReducedMotion(): boolean {
   );
 }
 
+/** The presentation timings, one rule over perception (design/motion-scale.ts). */
+export {
+  BOOT_UI,
+  BREATH_MS,
+  CHART_DEFAULT_DAYS,
+  DUR,
+  PERCEPTION_MS,
+  STAGGER_MS,
+} from '@/renderer/design/motion-scale';
+
 /** Canonical easing curve (matches the CSS `--ease` token). */
 export const EASE = 'cubic-bezier(0.22, 0.9, 0.28, 1)';
 
-/**
- * Card entrance stagger — the single source for the `.view.entering .card`
- * animation in primitives.css. The App root publishes these as CSS custom
- * properties (--card-in-dur / --card-stagger-step / --card-stagger-base /
- * --card-stagger-cap), so the CSS delay math and the entering hold below can
- * never drift apart. CAP bounds the delay so a long page's tail still finishes
- * inside the hold.
- */
-export const CARD_STAGGER = {
-  /** Per-card delay step (ms). */
-  STEP_MS: 65,
-  /** Base delay before the first card (ms). */
-  BASE_MS: 60,
-  /** The cardIn animation's duration (ms). */
-  DUR_MS: 450,
-  /** Stagger index cap (indices beyond this share the last slot). */
-  CAP: 8,
-} as const;
+/** Arrivals and settles (matches `--ease-out`). */
+export const EASE_OUT = 'cubic-bezier(0.16, 1, 0.3, 1)';
 
-/**
- * How long the `.entering` class is held after a view swap — derived from the
- * stagger table so the LAST staggered card (start CAP·STEP + BASE, plus DUR)
- * fully completes before the class is cleared, with a small settle margin.
- */
-export const VIEW_ENTER_HOLD_MS =
-  CARD_STAGGER.CAP * CARD_STAGGER.STEP_MS + CARD_STAGGER.BASE_MS + CARD_STAGGER.DUR_MS + 70;
+/** Loops and slides (matches `--ease-in-out`). */
+export const EASE_IN_OUT = 'cubic-bezier(0.65, 0, 0.35, 1)';
+
 
 /** Growth-chart reveal timings (ms) — match the mockup's draw-in. */
 export const GROWTH_REVEAL_DELAY_MS = 300;

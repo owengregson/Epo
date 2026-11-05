@@ -1,15 +1,12 @@
-import { KnowledgeStore } from '@/store/knowledge-store';
+import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { FollowRecord } from '@/store/types';
-import { setLevel } from '@/utils/logger';
-
-// Keep test output quiet; reconciliation logs info/warn on every drop.
-beforeAll(() => setLevel('error'));
+import { memoryStore } from '../kit/store';
 
 const OWN = 'ME';
 const AT = 1_700_000_000_000;
 
 let s: KnowledgeStore;
-beforeEach(() => { s = new KnowledgeStore(':memory:'); });
+beforeEach(() => { s = memoryStore(); });
 afterEach(() => s.close());
 
 const rec = (over: Partial<FollowRecord> & { accountPk: string }): FollowRecord => ({

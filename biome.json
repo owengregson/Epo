@@ -1,9 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
-  "files": { "includes": ["src/**/*.ts", "src/**/*.tsx"] },
+  "files": {
+    "includes": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.css", "tests/**/*.ts", "tests/**/*.tsx"]
+  },
   "formatter": { "enabled": false },
-  "javascript": { "jsxRuntime": "reactClassic" },
+  "javascript": { "jsxRuntime": "transparent" },
+  "css": {
+    "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2 },
+    "linter": { "enabled": true }
+  },
   "linter": {
     "enabled": true,
     "rules": {
@@ -23,7 +29,7 @@
           "level": "error",
           "options": {
             "paths": {
-              "better-sqlite3": "Only src/store/* may import better-sqlite3 (the DB stays behind the knowledge store)."
+              "node:sqlite": "Only src/store/driver/* may import node:sqlite (the DB stays behind the knowledge store)."
             }
           }
         }
@@ -32,8 +38,37 @@
   },
   "overrides": [
     {
-      "includes": ["src/store/**/*.ts"],
+      "includes": ["src/**/*.css"],
+      "linter": {
+        "rules": {
+          "style": { "noDescendingSpecificity": "off" },
+          "complexity": { "noImportantStyles": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["src/store/driver/**/*.ts"],
       "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
+    },
+    {
+      "includes": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/engine/**", "@/main/**"],
+                    "message": "The renderer talks to main ONLY through the window.epo bridge (src/ipc/contract.ts). Pure code both sides need lives in src/shared/*; engine and main modules must never enter the browser bundle."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
     },
     {
       "includes": ["src/engine/**/*.ts", "src/rim/**/*.ts", "src/governors/**/*.ts"],
@@ -54,8 +89,22 @@
       }
     },
     {
-      "includes": ["src/**/*.tsx"],
+      "includes": ["src/**/*.tsx", "tests/**/*.tsx"],
       "linter": { "rules": { "style": { "useImportType": "off" } } }
+    },
+    {
+      "includes": ["tests/**/*.ts", "tests/**/*.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off",
+            "noRestrictedImports": "off"
+          },
+          "suspicious": {
+            "noAssignInExpressions": "off"
+          }
+        }
+      }
     }
   ]
 }

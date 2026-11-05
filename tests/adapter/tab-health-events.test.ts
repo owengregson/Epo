@@ -1,15 +1,4 @@
-/**
- * Tab health eventing (cdp-detach-undetected fix). A Chromium-side debugger
- * detach, a renderer crash, or a hung renderer used to be observed by NOTHING:
- * onResponse consumers just went quiet forever and input silently fell back to
- * the focus-dependent transport. The tab must now mark itself unhealthy and
- * fire the `onUnhealthy` callback on every such event — and `recoverTab()`
- * must clear the mark and RE-ARM the listeners so the next event reports too.
- *
- * Electron is mocked at module scope with a small event-keyed emitter so tests
- * can fire `detach` / `render-process-gone` / `unresponsive` like Chromium
- * would, and flip the debugger's attached state to force the input fallback.
- */
+/** Tab health remains fail-closed across detach, renderer failure and recovery. */
 
 jest.mock('electron', () => {
   type Handler = (...args: unknown[]) => void;
@@ -46,6 +35,7 @@ jest.mock('electron', () => {
     attached: false,
     inputEvents: [] as unknown[],
     reloads: 0,
+    reloadFails: false,
     wcEvents,
     dbgEvents,
   };
@@ -65,8 +55,12 @@ jest.mock('electron', () => {
     setUserAgent: (): void => {},
     isDestroyed: (): boolean => false,
     loadURL: async (): Promise<void> => {},
-    executeJavaScript: async (code: string): Promise<unknown> =>
-      code.includes('1 + 1') ? 2 : 7, // canary: echo ok, then 7 rAF ticks
+    mainFrame: {
+      isDestroyed: (): boolean => false,
+      detached: false,
+      executeJavaScript: async (code: string): Promise<unknown> =>
+        code.includes('1 + 1') ? 2 : { rafTicks: 7, elapsedMs: 100 },
+    },
     on: (event: string, fn: Handler): void => wcEvents.add(event, fn),
     once: (event: string, fn: Handler): void => {
       const wrapped: Handler = (...args) => {
@@ -79,7 +73,11 @@ jest.mock('electron', () => {
     reload: (): void => {
       state.reloads += 1;
       // A real reload settles asynchronously; recoverTab waits (bounded) on it.
-      setTimeout(() => wcEvents.emit('did-stop-loading'), 0);
+      setTimeout(() => {
+        wcEvents.emit('did-frame-navigate', {}, 'https://fixture.invalid/', 200, '', true);
+        if (state.reloadFails) wcEvents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://fixture.invalid/', true);
+        else wcEvents.emit('dom-ready');
+      }, 0);
     },
     sendInputEvent: (event: unknown): void => {
       state.inputEvents.push(event);
@@ -90,7 +88,8 @@ jest.mock('electron', () => {
     webContents = webContents;
   }
   return {
-    session: { fromPartition: () => ({ setUserAgent: (): void => {} }) },
+    app: { getPreferredSystemLanguages: () => ['en-US'] },
+    session: { fromPartition: () => ({ setUserAgent: (): void => {}, getUserAgent: () => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Epo/3.1.1 Chrome/148.0.0.0 Electron/44.1.1 Safari/537.36' }) },
     WebContentsView,
     __tabMock: state,
   };
@@ -109,6 +108,7 @@ interface TabMockState {
   attached: boolean;
   inputEvents: unknown[];
   reloads: number;
+  reloadFails: boolean;
   wcEvents: Emitter;
   dbgEvents: Emitter;
 }
@@ -136,6 +136,7 @@ beforeEach(() => {
   mock.attached = false;
   mock.inputEvents.length = 0;
   mock.reloads = 0;
+  mock.reloadFails = false;
   // Each test builds a fresh tab over the one shared mock — drop the previous
   // tab's listeners so events (and listener counts) stay per-test.
   mock.wcEvents.reset();
@@ -143,6 +144,15 @@ beforeEach(() => {
 });
 
 describe('health events mark the tab unhealthy and fire onUnhealthy', () => {
+  test('main-frame navigations invalidate gestures while iframe activity does not', async () => {
+    const { tab } = await makeAttachedTab();
+    const initial = tab.inputVersion();
+    mock.wcEvents.emit('did-start-navigation', { isMainFrame: false });
+    expect(tab.inputVersion()).toBe(initial);
+    mock.wcEvents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true });
+    expect(tab.inputVersion()).toBeGreaterThan(initial);
+  });
+
   test('a Chromium-side debugger detach fires onUnhealthy with the reason', async () => {
     const { tab, reasons } = await makeAttachedTab();
     expect(tab.isMarkedUnhealthy()).toBe(false);
@@ -186,26 +196,40 @@ describe('health events mark the tab unhealthy and fire onUnhealthy', () => {
   });
 });
 
-describe('input fallback is a health event, once per attach epoch', () => {
-  test('first CDP→webContents fallback fires onUnhealthy(input-fallback); repeats do not', async () => {
+describe('a refused input dispatch is a hard stop, reported once per attach epoch', () => {
+  test('a refused input dispatch fires onUnhealthy(input-unavailable) once; repeats do not', async () => {
     const { tab, reasons } = await makeAttachedTab();
     // Kill the CDP transport out from under the input path.
     mock.attached = false;
 
-    tab.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 } as never);
+    await expect(tab.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 } as never)).rejects.toThrow();
     await flush();
-    tab.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 } as never);
+    await expect(tab.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 } as never)).rejects.toThrow();
     await flush();
 
-    // Both events were still dispatched through the fallback transport…
-    expect(mock.inputEvents).toHaveLength(2);
-    // …but the health event fired exactly ONCE for the whole session.
-    expect(reasons).toEqual(['input-fallback']);
+    // NOTHING was dispatched: the focus-dependent transport is measured to
+    // drop every background click, so a fallback would turn a loud failure into
+    // an invisible one (ADR 0805).
+    expect(mock.inputEvents).toHaveLength(0);
+    // The health event fired exactly ONCE for the whole attach epoch.
+    expect(reasons).toEqual(['input-unavailable']);
     expect(tab.isMarkedUnhealthy()).toBe(true);
   });
 });
 
 describe('recoverTab clears the mark and re-arms everything', () => {
+  test('a failed main reload stays unhealthy and does not reattach a ready transport', async () => {
+    const { tab, reasons } = await makeAttachedTab();
+    mock.reloadFails = true;
+    await expect(tab.recoverTab()).rejects.toMatchObject({ errno: -105 });
+    expect(tab.isMarkedUnhealthy()).toBe(true);
+    expect(mock.attached).toBe(false);
+    expect(reasons).toEqual(['recovery-reload-failed']);
+    expect(mock.wcEvents.count('dom-ready')).toBe(0);
+    expect(mock.wcEvents.count('did-fail-load')).toBe(0);
+    tab.dispose();
+  });
+
   test('recovery clears the unhealthy mark without firing a deliberate-detach event', async () => {
     const { tab, reasons } = await makeAttachedTab();
     mock.dbgEvents.emit('detach', null, 'target closed');
@@ -238,19 +262,19 @@ describe('recoverTab clears the mark and re-arms everything', () => {
     expect(mock.dbgEvents.count('detach')).toBe(1);
   });
 
-  test('the input-fallback event re-arms too: a fresh epoch reports again', async () => {
+  test('the input-unavailable event re-arms too: a fresh epoch reports again', async () => {
     const { tab, reasons } = await makeAttachedTab();
     mock.attached = false;
-    tab.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 } as never);
+    await expect(tab.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 } as never)).rejects.toThrow();
     await flush();
-    expect(reasons).toEqual(['input-fallback']);
+    expect(reasons).toEqual(['input-unavailable']);
 
     await tab.recoverTab();
     await flush(); // Network.enable → debuggerReady on the fresh session
     mock.attached = false; // the new epoch's transport dies as well
-    tab.sendInputEvent({ type: 'mouseMove', x: 3, y: 3 } as never);
+    await expect(tab.sendInputEvent({ type: 'mouseMove', x: 3, y: 3 } as never)).rejects.toThrow();
     await flush();
 
-    expect(reasons).toEqual(['input-fallback', 'input-fallback']);
+    expect(reasons).toEqual(['input-unavailable', 'input-unavailable']);
   });
 });

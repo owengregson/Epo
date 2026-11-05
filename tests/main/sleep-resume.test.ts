@@ -1,12 +1,8 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-
 /**
- * System sleep/resume + tab-health-event routing (sleep-resume-unobserved /
- * cdp-detach-undetected fixes). Main wires `powerMonitor` events straight to
- * `suspendForSleep` / `resumeFromSleep` and the tab's `onUnhealthy` callback
- * into the Foundation — the POLICY under test lives entirely here:
+ * System sleep/resume + tab-health-event routing. Main wires `powerMonitor`
+ * events straight to `suspendForSleep` / `resumeFromSleep` and the tab's
+ * `onUnhealthy` callback into the Foundation — the POLICY under test lives
+ * entirely here:
  *
  *  - repeated tab health events coalesce into ONE recovery attempt per
  *    `RECOVERY.TAB_EVENT_DEBOUNCE_MS` window;
@@ -14,31 +10,13 @@ import * as path from 'path';
  *  - resume runs the ordered wake sequence (settle → connectivity re-probe →
  *    tab canary → recovery if unhealthy → sentinel) and restarts the engine
  *    ONLY when it was running at suspend.
- *
- * Electron is mocked at module scope (temp userData + a fixed `ds_user_id`
- * cookie) per the foundation test harness pattern; the tab is a fake whose
- * evaluate answers the identity/sentinel probes.
  */
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'epo-sleep-resume-'));
-
-jest.mock('electron', () => ({
-  app: { getPath: () => tmp },
-  session: {
-    fromPartition: () => ({
-      cookies: { get: async () => [{ name: 'ds_user_id', value: '4242' }] },
-      clearStorageData: async () => {},
-      clearCache: async () => {},
-    }),
-  },
-}));
-
-import { Foundation } from '@/main/foundation-wiring';
 import type { InstagramTab } from '@/adapter/tab';
-import { setLevel } from '@/utils/logger';
+import type { Foundation } from '@/main/foundation-wiring';
+import { cleanupMainHarness, makeFakeTab, newFoundation, parkedForTheDay } from '../kit/main-harness';
 
-beforeAll(() => setLevel('error'));
-afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
+afterAll(cleanupMainHarness);
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -50,22 +28,15 @@ interface FakeTabHarness {
 }
 
 /**
- * A fake tab that resolves identity ('/myself/'), answers the sentinel's
- * probes benignly, records the wake sequence's tab calls in order, and exposes
- * the registered onUnhealthy callback so tests fire health events like the
- * real tab would.
+ * A fake tab that records the wake sequence's tab calls in order and exposes
+ * the registered onUnhealthy callback so tests fire health events like the real
+ * tab would.
  */
 function makeTab(): FakeTabHarness {
   const calls: string[] = [];
   let unhealthyCb: ((reason: string) => void) | null = null;
   let healthy = true;
-  const tab = {
-    show: () => {},
-    hide: () => {},
-    goto: async () => {},
-    currentUrl: () => 'https://www.instagram.com/',
-    evaluate: async () => '/myself/',
-    onResponse: () => () => {},
+  const tab = makeFakeTab({
     onUnhealthy: (cb: (reason: string) => void) => {
       unhealthyCb = cb;
     },
@@ -77,13 +48,13 @@ function makeTab(): FakeTabHarness {
       calls.push('recoverTab');
       healthy = true;
     },
-  } as unknown as InstagramTab;
+  });
   return {
     tab,
     calls,
     fireUnhealthy: (reason: string): void => {
       if (unhealthyCb === null) throw new Error('onUnhealthy was never wired');
-      unhealthyCb(reason);
+      (unhealthyCb as (r: string) => void)(reason);
     },
     setHealthy: (h: boolean): void => {
       healthy = h;
@@ -94,7 +65,7 @@ function makeTab(): FakeTabHarness {
 describe('tab health events route into ONE debounced recovery', () => {
   test('two events inside the window -> a single recoverTab', async () => {
     const { tab, calls, fireUnhealthy } = makeTab();
-    const f = new Foundation({ tab });
+    const { foundation: f } = newFoundation({ tab });
 
     fireUnhealthy('debugger-detach:target closed');
     fireUnhealthy('render-process-gone:oom'); // burst: same crash, second event
@@ -110,17 +81,20 @@ describe('tab health events route into ONE debounced recovery', () => {
 
 describe('suspend freezes cleanly; resume runs the ordered wake sequence', () => {
   /** Build a foundation whose engine parks (running) at the active-hours gate. */
-  async function runningFoundation(harness: FakeTabHarness, connectivity: string[]): Promise<Foundation> {
-    const f = new Foundation({
+  async function runningFoundation(
+    harness: FakeTabHarness,
+    connectivity: string[],
+  ): Promise<Foundation> {
+    const { foundation: f } = newFoundation({
       tab: harness.tab,
       requestConnectivityCheck: () => {
         harness.calls.push('connectivity');
         connectivity.push('probe');
       },
     });
-    // A zero-width active-hours window parks the legacy loop immediately —
-    // state stays 'running' on a long `engine:` wait, with no tab traffic.
-    await f.updateSettings({ activeHoursStart: 8, activeHoursEnd: 8, pacingModel: 'legacy' });
+    // The plan parks the loop for the day (its ceiling reached) — state stays
+    // 'running' on a long `engine:` wait, with no tab traffic.
+    await parkedForTheDay(f);
     return f;
   }
 

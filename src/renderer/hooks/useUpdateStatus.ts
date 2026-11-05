@@ -1,17 +1,27 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { UpdateStatus } from '@/types';
+import type { Res } from '@/ipc/contract';
+import { useBridgeEvent } from '@/renderer/hooks/useBridgeEvent';
+
+type UpdateStatus = Res<'updateStatus'>;
 
 /**
- * Live self-updater status, pushed from the main process ('updateStatus').
- * Null until the first push lands — main replays the current status on every
- * renderer load, so that window is one frame, not one check interval.
+ * The self-updater's status (spec §13): pushed by main as it changes, and pulled once at mount, so the
+ * footer and Settings know the truth from the first frame (main no longer replays it on load). A push that
+ * lands before the pull wins.
  */
 export function useUpdateStatus(): UpdateStatus | null {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
+  useBridgeEvent('updateStatus', setStatus);
   useEffect(() => {
-    const cb = (s: UpdateStatus): void => setStatus(s);
-    window.epo.on('updateStatus', cb);
-    return () => window.epo.off('updateStatus', cb);
+    let alive = true;
+    // Main answers a typed fallback, so a rejected pull means the bridge went away: the push stays the source.
+    window.epo.updateStatus().then(
+      (s) => alive && setStatus((current) => current ?? s),
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
   }, []);
   return status;
 }

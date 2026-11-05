@@ -1,5 +1,5 @@
-import { ScheduleManager } from '@/timing/schedule-manager';
 import { FakeClock, SystemClock } from '@/governors/clock';
+import { ScheduleManager } from '@/timing/schedule-manager';
 
 describe('ScheduleManager.every', () => {
   beforeEach(() => jest.useFakeTimers());
@@ -109,5 +109,49 @@ describe('ScheduleManager.cadence', () => {
     expect(c.lastRunAt()).toBe(1_000);
     expect(c.isDue(1_000 + 4 * 3_600_000 - 1, 4 * 3_600_000)).toBe(false);
     expect(c.isDue(1_000 + 4 * 3_600_000, 4 * 3_600_000)).toBe(true);
+  });
+});
+
+describe('ScheduleManager.after', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 3; i += 1) await Promise.resolve();
+  };
+
+  test('runs once after the delay; a re-arm under the same key replaces the pending run', async () => {
+    const sm = new ScheduleManager();
+    const runs: string[] = [];
+    sm.after('edge', 1000, () => {
+      runs.push('first');
+    });
+    sm.after('edge', 3000, () => {
+      runs.push('second');
+    });
+    jest.advanceTimersByTime(2000);
+    await settle();
+    expect(runs).toEqual([]);
+    jest.advanceTimersByTime(1000);
+    await settle();
+    expect(runs).toEqual(['second']);
+    jest.advanceTimersByTime(10_000);
+    await settle();
+    expect(runs).toEqual(['second']);
+  });
+
+  test('stop cancels a pending run; a failing run is logged, never thrown', async () => {
+    const sm = new ScheduleManager();
+    let runs = 0;
+    sm.after('edge', 1000, () => {
+      runs += 1;
+    });
+    sm.stop('edge');
+    sm.after('boom', 0, () => {
+      throw new Error('boom');
+    });
+    jest.advanceTimersByTime(2000);
+    await settle();
+    expect(runs).toBe(0);
+    sm.dispose();
   });
 });

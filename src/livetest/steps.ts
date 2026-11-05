@@ -1,48 +1,37 @@
 /**
  * LiveTestHarness — the engine of the live action smoke-test.
- *
- * It attaches to a live, logged-in `InstagramTab` and drives EVERY real action
- * the app performs — acquire → enrich → score/plan → follow → follow-back check →
- * unfollow → sentinel — against real Instagram, then prints a PASS/FAIL report.
- * It reuses the exact production rim/adapter/store (no reimplementation); this
- * file is only the glue + reporting on top of them.
- *
- * SAFETY (this runs on the user's REAL account — it must never look like a burst):
- *  - Every real Instagram operation is separated by a jittered, jittered delay
- *    (reads/profile-fetches ~4–9s; the follow→unfollow gap ~30–75s).
- *  - Counts are TINY and bounded: acquire scrolls at most a few pages, enrich
- *    touches at most 5 profiles, and there is EXACTLY one follow + one unfollow.
- *    STOPS and reports — it never bypasses the safety net.
- *  - The Sentinel is checked immediately BEFORE the follow and BEFORE the unfollow;
- *    any non-`ok` result ABORTS the sequence right there (no more clicks/navigation).
- *  - No silent `catch {}`: every caught error is logged and surfaces as a FAIL.
+ * Reuses the production rim/adapter/store and prints a PASS/FAIL report.
+ * Reads are paced; acquireMaxRounds bounds both direct pages and fallback
+ * scroll rounds, and enrichCap bounds profile reads. Follow/unfollow require
+ * a configured test target and non-dry mode. Sentinel checks before each
+ * account action can abort the sequence. Errors surface as failed steps.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app, session } from 'electron';
 import { resolveOwnUsername as resolveUsernameFromTab } from '@/adapter/identity';
-import { asFetchEnvelope, SURFACE } from '@/adapter/ig-surface';
 import { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Reader } from '@/adapter/reader';
 import type { Sentinel } from '@/adapter/sentinel';
 import { IG_PARTITION, type InstagramTab } from '@/adapter/tab';
+import { createTabInteractor } from '@/adapter/tab-interactor';
 import { Scanner } from '@/engine/scanner';
 import { type ScorerConfig, scoreCandidate } from '@/engine/scorer';
 import { SystemClock } from '@/governors/clock';
 import { RateGovernor } from '@/governors/rate-governor';
+import { STORE_POLICY } from '@/kernel/store-policy';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { ACQUISITION_DEFAULTS, AdapterBackedAcquisition } from '@/rim/follower-acquisition';
 import { FollowersPageReader } from '@/rim/followers-page-reader';
 import { ListPageWalker } from '@/rim/list-page-walker';
 import { AdapterBackedProfileEnricher } from '@/rim/profile-enricher';
+import { ProfileObserver } from '@/rim/profile-observer';
+import { TabProfileVisitor } from '@/rim/profile-visit';
+import type { ProfileVisitor } from '@/rim/profile-visit-port';
 import type { FollowerAcquisition } from '@/rim/types';
-import {
-  DEFAULT_SETTINGS,
-  toRateGovernorConfig,
-  toScannerConfig,
-  toScorerConfig,
-} from '@/settings/settings';
+import { effectiveFromV1 } from '@/settings/effective';
+import { DEFAULT_SETTINGS, toRateGovernorConfig, toScannerConfig, toScorerConfig } from '@/settings/settings';
 import { KnowledgeStore } from '@/store/knowledge-store';
 import { HARNESS, SCHEDULER } from '@/timing/config';
 import { sample, sleep, uniform } from '@/timing/primitives';
@@ -99,8 +88,6 @@ interface LiveTestConfig {
   dryRun: boolean;
   opDelayMinMs: number;
   opDelayMaxMs: number;
-  enrichPaceMinMs: number;
-  enrichPaceMaxMs: number;
   followUnfollowGapMs: number;
   acquireMaxRounds: number;
   enrichCap: number;
@@ -113,6 +100,8 @@ interface Graph {
   sentinel: Sentinel;
   acquisition: FollowerAcquisition;
   enricher: AdapterBackedProfileEnricher;
+  /** Profiles are read by VISITING them (production parity, 2026-10-08). */
+  profiles: ProfileVisitor;
   churnActions: AdapterBackedChurnActions;
   scanner: Scanner;
   scorerCfg: ScorerConfig;
@@ -126,6 +115,8 @@ export class LiveTestHarness {
   private readonly results: StepResult[] = [];
 
   private store: KnowledgeStore | null = null;
+  /** Disposer for the graph's always-on profile observer. */
+  private profileUnsub: (() => void) | null = null;
 
   private aborted = false;
   private abortReason = '';
@@ -139,8 +130,6 @@ export class LiveTestHarness {
       dryRun: process.env.EPO_TEST_DRY === '1',
       opDelayMinMs: envInt('EPO_TEST_OP_DELAY_MIN_MS', HARNESS.OP_DELAY_MIN_MS),
       opDelayMaxMs: envInt('EPO_TEST_OP_DELAY_MAX_MS', HARNESS.OP_DELAY_MAX_MS),
-      enrichPaceMinMs: envInt('EPO_TEST_ENRICH_PACE_MIN_MS', HARNESS.ENRICH_PACE_MIN_MS),
-      enrichPaceMaxMs: envInt('EPO_TEST_ENRICH_PACE_MAX_MS', HARNESS.ENRICH_PACE_MAX_MS),
       followUnfollowGapMs: envInt('EPO_TEST_FOLLOW_UNFOLLOW_GAP_MS', HARNESS.FOLLOW_UNFOLLOW_GAP_MS),
       acquireMaxRounds: envInt('EPO_TEST_ACQUIRE_ROUNDS', 3),
       enrichCap: envInt('EPO_TEST_ENRICH_CAP', 5),
@@ -182,7 +171,6 @@ export class LiveTestHarness {
 
     // Carried across steps.
     let targetPk: string | null = null;
-    let followUserPk: string | null = null;
     let didFollowClick = false;
     let followClickAt = 0;
 
@@ -338,17 +326,11 @@ export class LiveTestHarness {
         await this.setStatus(`Checking follow-back state for @${followUser}…`);
         await this.pacedDelay();
         try {
-          followUserPk = await this.resolveUserPk(graph.reader, followUser);
-          if (!followUserPk) {
-            this.record('6. Follow-back check', 'FAIL', `could not resolve pk for @${followUser} (web_profile_info)`);
+          const rel = await this.relationship(graph, followUser);
+          if (rel === null) {
+            this.record('6. Follow-back check', 'FAIL', `profile visit did not read @${followUser}`);
           } else {
-            await this.pacedDelay();
-            const show = await this.fetchFriendshipShow(graph.reader, followUserPk);
-            if (!show.parsed) {
-              this.record('6. Follow-back check', 'FAIL', `friendships/show did not parse for pk ${followUserPk}`);
-            } else {
-              this.record('6. Follow-back check', 'PASS', `following=${show.following} followed_by=${show.followedBy}`);
-            }
+            this.record('6. Follow-back check', 'PASS', `following=${rel.following} followed_by=${rel.followsUs}`);
           }
         } catch (e) {
           logger.error('livetest: follow-back check threw', { error: String(e) });
@@ -390,13 +372,11 @@ export class LiveTestHarness {
               if (outcome.status === 'ok') {
                 this.realActions += 1;
                 let post = '';
-                if (followUserPk) {
-                  try {
-                    const s = await this.fetchFriendshipShow(graph.reader, followUserPk);
-                    post = ` following=${s.following}`;
-                  } catch (e) {
-                    logger.warn('livetest: post-unfollow friendship-show failed', { error: String(e) });
-                  }
+                try {
+                  const rel = await this.relationship(graph, followUser);
+                  if (rel !== null) post = ` following=${rel.following}`;
+                } catch (e) {
+                  logger.warn('livetest: post-unfollow profile visit failed', { error: String(e) });
                 }
                 this.record('7. Unfollow', 'PASS', `outcome=ok (restored to Follow)${post}`);
               } else if (outcome.status === 'simulated') {
@@ -432,6 +412,8 @@ export class LiveTestHarness {
 
   /** Close the temp store. Idempotent. */
   dispose(): void {
+    this.profileUnsub?.();
+    this.profileUnsub = null;
     if (this.store) {
       try {
         this.store.close();
@@ -456,18 +438,19 @@ export class LiveTestHarness {
         logger.warn('livetest: could not remove temp db file', { file: dbPath + suffix, error: String(e) });
       }
     }
-    const store = new KnowledgeStore(dbPath);
+    const store = new KnowledgeStore(dbPath, { policy: STORE_POLICY });
     const clock = new SystemClock();
 
-    // Active hours 0–24 so wall-clock hours never gate; constructed for parity only.
-    const rate = new RateGovernor(store, clock, {
-      ...toRateGovernorConfig(DEFAULT_SETTINGS),
-      activeHoursStart: 0,
-      activeHoursEnd: 24,
-    });
+    // Constructed for parity only: the hard ceiling of the default settings.
+    const rate = new RateGovernor(store, clock, toRateGovernorConfig(DEFAULT_SETTINGS));
 
     const reader = new Reader();
-    const adapter = new InstagramAdapter(this.tab);
+    // Production parity: the Actor clicks/scrolls through native input events,
+    // exactly as `foundation-wiring.ts` composes it. Without this the smoke
+    // test would exercise an input path production never takes — and a CDP
+    // input regression would pass it.
+    const interactor = createTabInteractor(this.tab);
+    const adapter = new InstagramAdapter(this.tab, { interactor });
 
     // Reads/scrolls are paced (a single jittered wait, bounded by maxRounds).
     const pageReader = new FollowersPageReader({
@@ -477,6 +460,12 @@ export class LiveTestHarness {
       scrollWaitMs: jittered(this.cfg.opDelayMinMs, this.cfg.opDelayMaxMs),
     });
 
+    // Production parity: a profile is read by visiting it; the observer stores
+    // every profile body the tab loads and hands each visit its own.
+    const observer = new ProfileObserver({ tab: this.tab, reader, store, clock });
+    this.profileUnsub = observer.start();
+    const profiles = new TabProfileVisitor({ tab: this.tab, observer, sentinel: adapter.sentinel });
+
     // Production parity: the direct cursor-resumed walk first, dialog fallback.
     const listWalker = new ListPageWalker({ tab: this.tab, reader });
     const acquisition = new AdapterBackedAcquisition({
@@ -484,25 +473,21 @@ export class LiveTestHarness {
       store,
       sentinel: adapter.sentinel,
       walker: listWalker,
-      tab: this.tab,
-      reader,
+      visitor: profiles,
       ownPk,
       cfg: {
         ...ACQUISITION_DEFAULTS,
+        maxPages: this.cfg.acquireMaxRounds,
         maxRounds: this.cfg.acquireMaxRounds,
         noNewStop: 2,
       },
     });
 
     const enricher = new AdapterBackedProfileEnricher({
-      tab: this.tab,
-      reader,
+      visitor: profiles,
       store,
       sentinel: adapter.sentinel,
       batchCap: this.cfg.enrichCap,
-      paceMs: this.cfg.enrichPaceMinMs,
-      // Jittered inter-fetch pace (~3–5s), overriding the enricher's fixed pace.
-      sleep: () => sleep(jittered(this.cfg.enrichPaceMinMs, this.cfg.enrichPaceMaxMs)),
     });
 
     const churnActions = new AdapterBackedChurnActions({
@@ -512,18 +497,19 @@ export class LiveTestHarness {
       dryRun: this.cfg.dryRun,
     });
 
-    const scorerCfg = toScorerConfig(DEFAULT_SETTINGS);
+    const scorerCfg = toScorerConfig(effectiveFromV1(DEFAULT_SETTINGS));
     const scanner = new Scanner({ store, scorerCfg, cfg: toScannerConfig(DEFAULT_SETTINGS) });
 
     logger.info('livetest: graph built', {
       ownPk,
       ownUsername: ownUsername ?? '(unknown)',
       acquireMaxRounds: this.cfg.acquireMaxRounds,
+      acquireMaxPages: this.cfg.acquireMaxRounds,
       enrichCap: this.cfg.enrichCap,
       dryRun: this.cfg.dryRun,
     });
 
-    return { store, reader, sentinel: adapter.sentinel, acquisition, enricher, churnActions, scanner, scorerCfg, rate };
+    return { store, reader, sentinel: adapter.sentinel, acquisition, enricher, profiles, churnActions, scanner, scorerCfg, rate };
   }
 
   // -------------------------------------------------------------------------
@@ -586,60 +572,33 @@ export class LiveTestHarness {
   }
 
   /**
-   * Own username, resolved robustly: the nav profile-link href / profile
-   * navigation (reliable), with `current_user` only as a last resort — see
+   * Own username, resolved robustly from the page itself — the nav
+   * profile-link href, the avatar alt, a profile navigation — see
    * `@/adapter/identity`.
    */
   private async resolveOwnUsername(): Promise<string | undefined> {
     return resolveUsernameFromTab(this.tab, {
+      interactor: createTabInteractor(this.tab),
       attempts: SCHEDULER.USERNAME_RESOLVE_ATTEMPTS,
       retryMs: SCHEDULER.USERNAME_RESOLVE_RETRY_MS,
     });
   }
 
   // -------------------------------------------------------------------------
-  // Live JSON fetch helpers (same session, x-ig-app-id header)
+  // Live profile reads — a VISIT, exactly as production reads a profile
   // -------------------------------------------------------------------------
 
-  /** Resolve a username → pk via `web_profile_info`, parsed by the real Reader. */
-  private async resolveUserPk(reader: Reader, username: string): Promise<string | null> {
-    try {
-      const raw = await this.tab.evaluate<unknown>(SURFACE.profileInfoScript(username));
-      const env = asFetchEnvelope(raw);
-      if (env === null || !env.ok) {
-        logger.warn('livetest.resolveUserPk: non-ok profile response', {
-          username,
-          status: env?.status,
-          contentType: env?.contentType,
-        });
-        return null;
-      }
-      const obs = reader.parseProfileInfo(env.json, Date.now());
-      return obs ? obs.accountPk : null;
-    } catch (e) {
-      logger.error('livetest.resolveUserPk: failed', { username, error: String(e) });
+  /** Both relationship directions, from the visited profile's own body; `null` when unread. */
+  private async relationship(
+    graph: Graph,
+    username: string,
+  ): Promise<{ following: boolean | null; followsUs: boolean | null } | null> {
+    const visit = await graph.profiles.visit(username);
+    if (!visit.ok) {
+      logger.warn('livetest.relationship: profile visit failed', { kind: visit.kind, ...visit.detail });
       return null;
     }
-  }
-
-  /** Fetch `friendships/show/<pk>` and parse it via the real Reader. */
-  private async fetchFriendshipShow(
-    reader: Reader,
-    pk: string,
-  ): Promise<{ parsed: boolean; following: boolean; followedBy: boolean }> {
-    const raw = await this.tab.evaluate<unknown>(SURFACE.friendshipShowScript(pk));
-    const env = asFetchEnvelope(raw);
-    const body = env?.ok ? (env.json as Record<string, unknown> | null) : null;
-    const parsed =
-      body !== null &&
-      typeof body === 'object' &&
-      ('following' in body || 'followed_by' in body || body.status === 'ok');
-    const res = reader.parseFriendshipShow(body, Date.now(), pk);
-    return {
-      parsed: parsed && res !== null,
-      following: res?.following ?? false,
-      followedBy: res?.followedBy ?? false,
-    };
+    return { following: visit.viewer.following, followsUs: visit.viewer.followsUs };
   }
 
   // -------------------------------------------------------------------------

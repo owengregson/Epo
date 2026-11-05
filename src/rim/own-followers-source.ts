@@ -2,20 +2,19 @@
  * AdapterBackedOwnFollowersSource — the prune scan's whole-followers-list
  * scraper (the {@link PruneOwnFollowers} port).
  *
- * Historical note: this class also used to serve the Follow-back Watcher's
- * paged head-first sweep (`nextPage`). The watcher now reads the NOTIFICATIONS
- * feed instead (`src/rim/follow-notifications.ts` — one click, one request),
- * so only the prune census path remains here.
+ * A thin binding: {@link walkOwnList} runs the census (sentinel gate → direct
+ * API walk → dialog fallback → completeness verdict); this class supplies which
+ * list to walk and what each row means to the store.
  */
 
 import type { Sentinel } from '@/adapter/sentinel';
 import type { PruneOwnFollowers, PruneScanFetch, PruneScanOpts } from '@/engine/prune-engine';
 import type { FollowersPageReader } from '@/rim/followers-page-reader';
 import type { ListPageWalker } from '@/rim/list-page-walker';
+import { walkOwnList } from '@/rim/walk-own-list';
 import type { KnowledgeStore } from '@/store/knowledge-store';
 import type { Observation } from '@/store/types';
 import { RIM } from '@/timing/config';
-import * as logger from '@/utils/logger';
 
 /**
  * Bounds for {@link AdapterBackedOwnFollowersSource.fetchAllPks} — the prune
@@ -36,7 +35,7 @@ export interface OwnFollowersSourceDeps {
   ownUsername: string;
   sentinel: Sentinel;
   /**
-   * When supplied, every parsed follower profile from the scrape is stored (f11):
+   * When supplied, every parsed follower profile from the scrape is stored:
    * the pages were parsed anyway, so this free data becomes real `accounts` rows
    * the chain's own-followers fallback target-source can rank. Optional so the
    * composition root can wire it without breaking construction; when omitted the
@@ -71,63 +70,26 @@ export class AdapterBackedOwnFollowersSource implements PruneOwnFollowers {
   }
 
   /**
-   * Phase 5 — the prune scan's whole-list scrape (the {@link PruneOwnFollowers}
-   * port): one bounded walk of our ENTIRE followers list through the shared
-   * page reader, with the engine's scan opts (cooperative `shouldStop` +
-   * jittered inter-round pacing) threaded straight into the scroll loop.
+   * The prune scan's whole-list census (the {@link PruneOwnFollowers} port):
+   * one bounded walk of our ENTIRE followers list, with the engine's scan opts
+   * (cooperative `shouldStop`, jittered pacing, live progress) threaded through.
    * Generous bounds ({@link OWN_FOLLOWERS_FETCH_ALL_BOUNDS}) and interruptible
-   * between rounds. A blocked sentinel yields an empty, warned result — never
-   * a throw.
+   * between rounds. A blocked sentinel yields an INCOMPLETE, warned result —
+   * never a throw and never a "complete" empty list.
    */
   async fetchAllPks(opts?: PruneScanOpts): Promise<PruneScanFetch> {
-    const status = await this.sentinel.check();
-    if (status !== 'ok') {
-      // THE dangerous direction: an empty followers list read as complete
-      // would make every account we follow an unfollow candidate. Incomplete.
-      logger.warn('rim.own-followers-source: sentinel blocked, incomplete scrape', { status });
-      return { pks: [], complete: false, reason: `sentinel:${status}` };
-    }
-    // Fast path: direct API pagination (full page size); the dialog-scroll
-    // scrape below remains the fallback when the direct walk can't fetch.
-    if (this.walker !== undefined && this.ownPk !== undefined) {
-      const walk = await this.walker.walkAll({
-        pk: this.ownPk,
-        which: 'followers',
-        onObservation: (obs) => this.ingestRow(obs),
-        sentinel: this.sentinel,
-        pageMinMs: opts?.scrollMinMs,
-        pageMaxMs: opts?.scrollMaxMs,
-        shouldStop: opts?.shouldStop,
-        onProgress: opts?.onProgress,
-      });
-      if (walk.reason !== 'fetch-failed') {
-        return { pks: walk.pks, complete: walk.complete, reason: walk.reason };
-      }
-      logger.warn('rim.own-followers-source: direct page walk failed, falling back to dialog', {
-        pages: walk.pages,
-        observed: walk.pks.length,
-      });
-    }
-    const result = await this.pageReader.collect({
-      dialog: 'followers',
-      targetUsername: this.ownUsername,
-      onObservation: (obs) => this.ingestRow(obs),
+    return walkOwnList({
+      which: 'followers',
+      label: 'rim.own-followers-source',
+      ownUsername: this.ownUsername,
       sentinel: this.sentinel,
-      maxRounds: OWN_FOLLOWERS_FETCH_ALL_BOUNDS.maxRounds,
-      noNewStop: OWN_FOLLOWERS_FETCH_ALL_BOUNDS.noNewStop,
-      shouldStop: opts?.shouldStop,
-      scrollMinMs: opts?.scrollMinMs,
-      scrollMaxMs: opts?.scrollMaxMs,
-      onProgress: opts?.onProgress,
-      // Prune semantics: an unopened dialog must FAIL the scan — an empty
-      // followers read would mark every followed account a candidate.
-      throwOnOpenFailure: true,
+      pageReader: this.pageReader,
+      walker: this.walker,
+      ownPk: this.ownPk,
+      bounds: OWN_FOLLOWERS_FETCH_ALL_BOUNDS,
+      onRow: (obs) => this.ingestRow(obs),
+      opts, census: opts?.census,
     });
-    return {
-      pks: result.observedPks,
-      complete: result.endReason === 'no-more-pages',
-      reason: result.endReason,
-    };
   }
 
   /**

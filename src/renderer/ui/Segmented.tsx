@@ -1,5 +1,4 @@
-/** @jsx h */
-import { h } from 'preact';
+import { type JSX } from 'preact';
 
 export interface SegmentedOption<T extends string> {
   value: T;
@@ -27,7 +26,7 @@ export function Segmented<T extends string>({
   onChange,
   ariaLabel,
   disabled,
-}: SegmentedProps<T>): h.JSX.Element {
+}: SegmentedProps<T>): JSX.Element {
   const idx = Math.max(0, options.findIndex((o) => o.value === value));
 
   const onKeyDown = (e: KeyboardEvent): void => {

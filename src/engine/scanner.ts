@@ -1,5 +1,7 @@
+import type { PlanDayClock } from '../kernel/plan';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import * as logger from '../utils/logger';
+import { EXPLORATION_POLICY, explorationDayClock, weeklyCycleSince } from './exploration-policy';
 import { type ScorerConfig, scoreCandidate } from './scorer';
 
 /**
@@ -9,10 +11,8 @@ import { type ScorerConfig, scoreCandidate } from './scorer';
 export interface ScannerConfig {
   /** Maximum number of candidates to enqueue for one target in a single plan. */
   dailyPlanSize: number;
+  maxQueuedPerSource?: number;
 }
-
-/** Design defaults (v3 §3.5). */
-export const SCANNER_DEFAULTS: ScannerConfig = { dailyPlanSize: 25 };
 
 /** Outcome of planning one target: what was enqueued and how the pool narrowed. */
 export interface ScanPlan {
@@ -45,17 +45,36 @@ export class Scanner {
   private readonly store: KnowledgeStore;
   private scorerCfg?: ScorerConfig;
   private cfg: ScannerConfig;
+  private readonly planDay: Pick<PlanDayClock, 'window'>;
+  private readonly quality?: { floor(): number | null; prepare(): void; usableCount?(pk: string): number };
 
-  constructor(deps: { store: KnowledgeStore; scorerCfg?: ScorerConfig; cfg?: ScannerConfig }) {
+  constructor(deps: { store: KnowledgeStore; scorerCfg?: ScorerConfig; cfg?: ScannerConfig; planDay?: Pick<PlanDayClock, 'window'>;
+    quality?: { floor(): number | null; prepare(): void; usableCount?(pk: string): number } }) {
     this.store = deps.store;
+    this.planDay = deps.planDay ?? explorationDayClock();
     this.scorerCfg = deps.scorerCfg;
-    this.cfg = deps.cfg ?? SCANNER_DEFAULTS;
+    this.quality = deps.quality;
+    // Unconfigured, a target yields at most what one source may queue (the cap applied below anyway).
+    this.cfg = deps.cfg ?? { dailyPlanSize: EXPLORATION_POLICY.queuedPerSource };
   }
 
   /** Swap the live config (scanner + scorer) in place when Settings change at runtime. */
   applyConfig(cfg: ScannerConfig, scorerCfg?: ScorerConfig): void {
     this.cfg = cfg;
     if (scorerCfg !== undefined) this.scorerCfg = scorerCfg;
+    for (const target of this.store.listTargets()) this.reconsiderTarget(target.accountPk);
+    this.rescoreQueued();
+  }
+
+  /** A rejection is a decision under a policy, not a permanent fact about a person. */
+  reconsiderTarget(targetPk: string, now = 0): void {
+    for (const pk of this.store.followersOf(targetPk)) {
+      const acc = this.store.getAccount(pk);
+      if (acc?.role !== 'skipped') continue;
+      const stale = now > 0 && acc.statsObservedAt !== undefined &&
+        acc.statsObservedAt < weeklyCycleSince((t) => this.planDay.window(t), now);
+      if (stale || scoreCandidate(acc, this.scorerCfg).eligible) this.store.setRole(pk, 'observed');
+    }
   }
 
   /**
@@ -63,6 +82,9 @@ export class Scanner {
    * `queued` follow-records (role → `candidate`). Returns a summary of the pass.
    */
   planTarget(targetPk: string): ScanPlan {
+    this.reconsiderTarget(targetPk);
+    this.quality?.prepare();
+    const floor = this.quality?.floor() ?? 0;
     const pks = this.store.candidatePksForTarget(targetPk);
 
     const ranked: RankedCandidate[] = [];
@@ -74,16 +96,26 @@ export class Scanner {
         // R1.3: counts ARE known but the account is ineligible → mark it 'skipped'
         // so `candidatePksForTarget` drops it and the pool genuinely shrinks.
         // `no-counts` candidates are left alone — they await an enrichment pass.
-        if (!s.reasons.includes('no-counts')) this.store.setRole(pk, 'skipped');
+        if (!s.reasons.includes('no-counts') && acc.role !== 'retained_target') this.store.setRole(pk, 'skipped');
         continue;
       }
-      ranked.push({ pk, score: s.score });
+      // Weak profiles remain facts, not permanent rejects. They cannot fill the prepared batch.
+      if (s.score >= floor) ranked.push({ pk, score: s.score });
     }
 
     // Descending by score; ascending pk as a deterministic tie-break.
     ranked.sort((a, b) => (b.score - a.score) || (a.pk < b.pk ? -1 : a.pk > b.pk ? 1 : 0));
 
-    const selected = ranked.slice(0, this.cfg.dailyPlanSize);
+    const alreadyQueued = this.quality?.usableCount?.(targetPk) ?? this.store.followRecordsByState('queued').filter((r) => {
+      if (r.targetPk !== targetPk) return false;
+      if (this.quality === undefined) return true;
+      const a = this.store.getAccount(r.accountPk);
+      if (a === null) return false;
+      const s = scoreCandidate(a, this.scorerCfg);
+      return s.eligible && s.score >= floor;
+    }).length;
+    const cap = this.cfg.maxQueuedPerSource ?? EXPLORATION_POLICY.queuedPerSource;
+    const selected = ranked.slice(0, Math.max(0, Math.min(this.cfg.dailyPlanSize, cap - alreadyQueued)));
     for (const c of selected) {
       this.store.upsertFollowRecord({
         accountPk: c.pk,
@@ -94,9 +126,10 @@ export class Scanner {
         // and display order both follow the ranking — the best candidate first.
         score: c.score,
       });
-      this.store.setRole(c.pk, 'candidate');
+      if (this.store.getAccount(c.pk)?.role !== 'retained_target') this.store.setRole(c.pk, 'candidate');
     }
 
+    this.quality?.prepare();
     return {
       targetPk,
       queued: selected.map((c) => c.pk),
@@ -106,28 +139,24 @@ export class Scanner {
   }
 
   /**
-   * Backfill scores for `queued` records that have none. Records queued before
-   * the score column existed (migration 7) carry NULL forever, and a NULL
-   * score makes both `nextDue` and the queue display fall back to meaningless
-   * pk order — the queue then neither acts nor shows best-first. Idempotent
-   * and store-only; a record whose account still lacks counts stays unscored
-   * (it sorts last, exactly as an unknown should). Returns how many were
-   * scored.
+   * Refresh every queued score under current settings. Missing counts stay
+   * unscored; ineligible records remain durable and must pass the action gate.
    */
   rescoreQueued(): number {
     let scored = 0;
     for (const rec of this.store.followRecordsByState('queued')) {
-      if (rec.score !== undefined) continue;
       const acc = this.store.getAccount(rec.accountPk);
       if (acc === null) continue;
       const s = scoreCandidate(acc, this.scorerCfg);
-      if (!s.eligible) continue;
+      if (s.reasons.includes('no-counts')) continue;
+      if (rec.score === s.score) continue;
       this.store.upsertFollowRecord({ ...rec, score: s.score });
       scored += 1;
     }
     if (scored > 0) {
-      logger.info('scanner: backfilled scores for legacy queued records', { scored });
+      logger.info('scanner: refreshed queued scores', { scored });
     }
+    this.quality?.prepare();
     return scored;
   }
 }

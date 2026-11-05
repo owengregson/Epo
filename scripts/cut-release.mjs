@@ -44,5 +44,5 @@ Cut v${version}. Next:
   1. Edit .github/release-highlights.md (2-5 user-facing bullets).
   2. git add -A && git commit -m "release: v${version}"
   3. git push
-The release workflow takes it from there: four gates, macOS/Windows
+The release workflow takes it from there: full checks, macOS/Windows
 packaging, the Linux boot smoke, then tag + publish — no tag by hand.`);

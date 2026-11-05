@@ -1,5 +1,4 @@
-/** @jsx h */
-import { type ComponentChildren, h } from 'preact';
+import { type ComponentChildren, type JSX } from 'preact';
 
 export interface KeyValueProps {
   /** Left label. */
@@ -11,7 +10,7 @@ export interface KeyValueProps {
 }
 
 /** A single label→value row with a hairline divider (`.kv`). */
-export function KeyValue({ k, children, live }: KeyValueProps): h.JSX.Element {
+export function KeyValue({ k, children, live }: KeyValueProps): JSX.Element {
   return (
     <div class="kv">
       <span class="k">{k}</span>

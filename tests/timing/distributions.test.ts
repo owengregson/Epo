@@ -1,11 +1,4 @@
-import {
-  clamp,
-  logNormal,
-  logNormalMixture,
-  normal01,
-  pareto,
-  weibull,
-} from '@/timing/distributions';
+import { clamp, logNormal, normal01 } from '@/timing/distributions';
 import { sample } from '@/timing/primitives';
 
 /** A deterministic rng that replays the given values in order (cycling). */
@@ -79,77 +72,6 @@ describe('distributions/logNormal', () => {
     );
     const median = xs[Math.floor(xs.length / 2)];
     expect(Math.abs(median - 95_000) / 95_000).toBeLessThan(0.04);
-  });
-});
-
-describe('distributions/logNormalMixture', () => {
-  const comps = [
-    { weight: 4, medianMs: 90_000, sigma: 0.5 }, // normalizes to 0.8
-    { weight: 1, medianMs: 6 * 3600_000, sigma: 0.5 }, // normalizes to 0.2
-  ];
-
-  test('picks the first component when the selector draw is below its cumulative weight', () => {
-    // selector 0.1 < 0.8 → comp0; then Z=0 → comp0 median
-    expect(sample(logNormalMixture(comps), seq(0.1, 0, 0))).toBe(90_000);
-  });
-
-  test('picks the second component when the selector draw is above the first weight', () => {
-    expect(sample(logNormalMixture(comps), seq(0.9, 0, 0))).toBe(6 * 3600_000);
-  });
-
-  test('an all-zero weight set falls back to the FIRST component (documented contract)', () => {
-    const comps = [
-      { weight: 0, medianMs: 1_000, sigma: 0 },
-      { weight: 0, medianMs: 9_000, sigma: 0 },
-    ];
-    expect(sample(logNormalMixture(comps), seq(0.5, 0, 0))).toBe(1_000);
-  });
-
-  test('two well-separated components produce a bimodal sample set', () => {
-    const rng = mulberry32(4);
-    const xs = Array.from({ length: 10000 }, () => sample(logNormalMixture(comps), rng));
-    const lowShare = xs.filter((x) => x < 30 * 60_000).length / xs.length; // < 30 min
-    expect(lowShare).toBeGreaterThan(0.72);
-    expect(lowShare).toBeLessThan(0.88);
-  });
-});
-
-describe('distributions/weibull', () => {
-  test('shape 1 reduces to the exponential inverse-CDF', () => {
-    // X = scale * (-ln(1-u))^(1/1); u=0.5 → -ln(0.5)=0.6931 → 693
-    expect(sample(weibull(1000, 1), seq(0.5))).toBe(693);
-  });
-
-  test('P(X < scale) ~ 1 - e^-1 for shape 1', () => {
-    const rng = mulberry32(5);
-    const xs = Array.from({ length: 20000 }, () => sample(weibull(7000, 1), rng));
-    const share = xs.filter((x) => x < 7000).length / xs.length;
-    expect(Math.abs(share - (1 - Math.exp(-1)))).toBeLessThan(0.02);
-  });
-
-  test('every draw is a positive integer', () => {
-    const rng = mulberry32(6);
-    for (let i = 0; i < 300; i++) {
-      const v = sample(weibull(7000, 0.85), rng);
-      expect(Number.isInteger(v)).toBe(true);
-      expect(v).toBeGreaterThanOrEqual(0);
-    }
-  });
-});
-
-describe('distributions/pareto — bounded power law', () => {
-  test('u=0 returns xMin, u=1 returns xMax', () => {
-    expect(sample(pareto(1000, 1.2, 60_000), seq(0))).toBe(1000);
-    expect(sample(pareto(1000, 1.2, 60_000), seq(1))).toBe(60_000);
-  });
-
-  test('all draws stay within [xMin, xMax]', () => {
-    const rng = mulberry32(7);
-    for (let i = 0; i < 1000; i++) {
-      const v = sample(pareto(1000, 1.2, 60_000), rng);
-      expect(v).toBeGreaterThanOrEqual(1000);
-      expect(v).toBeLessThanOrEqual(60_000);
-    }
   });
 });
 

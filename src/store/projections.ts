@@ -30,7 +30,7 @@ export const enrichmentFor = (state: AccountState): EnrichmentLevel => {
 /**
  * Pure per-field merge of one observation onto the current projected state.
  *
- * Merge policy (§4.5.3 — "per-field, newest-sufficient-confidence-wins"): a field is
+ * Merge policy — per-field, newest-sufficient-confidence-wins: a field is
  * updated when the incoming observation is NEWER than the field's current provenance,
  * OR carries EQUAL-OR-HIGHER confidence — so a cheap, older list read never clobbers a
  * richer, newer profile value. An observation may always FILL a field that is currently

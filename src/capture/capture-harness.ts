@@ -16,9 +16,13 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { Actor } from '@/adapter/actor';
 import { SURFACE } from '@/adapter/ig-surface';
 import type { InstagramTab } from '@/adapter/tab';
-import { type Classification, classify, isInterestingJson } from '@/capture/classify';
+import { createTabInteractor } from '@/adapter/tab-interactor';
+import { CAPTURE_PATTERNS } from '@/adapter/versions/2026-08-12';
+import { type Classification, classifyRequest, isInterestingJson } from '@/capture/classify';
+import { jsonForScript } from '@/shared/script-json';
 import { HARNESS } from '@/timing/config';
 import { sleep } from '@/timing/primitives';
 import type { TabResponse, Unsubscribe } from '@/types';
@@ -30,6 +34,9 @@ export interface ManifestEntry {
   url: string;
   status: number;
   classification: Classification;
+  /** Request method + GraphQL operation name — what identifies a mutation. */
+  method?: string;
+  friendlyName?: string;
   /** Relative path of the saved body, or null when the body was not saved. */
   file: string | null;
   at: number;
@@ -43,17 +50,16 @@ export interface DomSnapshotEntry {
   at: number;
 }
 
-/** Instagram web app id — required header for the private JSON API. */
-const IG_APP_ID = SURFACE.appId;
-
 /** Max bodies persisted per classification; observations beyond this are counted only. */
 const MAX_SAVED_PER_CLASS = 10;
 
-/** How often the harness sweeps for a newly-opened `[role="dialog"]`. */
+/** How often the harness sweeps for a newly-opened dialog. */
 const DIALOG_SWEEP_MS = HARNESS.DIALOG_SWEEP_MS;
 
 export class CaptureHarness {
   private readonly tab: InstagramTab;
+  /** The production Actor — the harness scrolls the dialog exactly as the app does. */
+  private readonly actor: Actor;
   private readonly outDir: string;
   private readonly rawDir: string;
   private readonly domDir: string;
@@ -72,6 +78,9 @@ export class CaptureHarness {
 
   constructor(tab: InstagramTab, outDir: string) {
     this.tab = tab;
+    this.actor = new Actor(tab, {
+      interactor: createTabInteractor(tab),
+    });
     this.outDir = outDir;
     this.rawDir = path.join(outDir, 'raw');
     this.domDir = path.join(outDir, 'dom');
@@ -113,8 +122,10 @@ export class CaptureHarness {
     try {
       if (!isInterestingJson(res.url, res.mimeType)) return;
 
-      const classification = classify(res.url);
+      const classification = classifyRequest(res);
       const seq = ++this.seq;
+      const friendlyName = SURFACE.friendlyName(res.requestHeaders);
+      const entry = { seq, url: res.url, status: res.status, classification, method: res.method, friendlyName };
 
       // Fetch the body PROMPTLY — CDP can evict it after navigation.
       let body: string;
@@ -125,14 +136,7 @@ export class CaptureHarness {
           url: res.url,
           error: String(e),
         });
-        this.manifest.push({
-          seq,
-          url: res.url,
-          status: res.status,
-          classification,
-          file: null,
-          at: Date.now(),
-        });
+        this.manifest.push({ ...entry, file: null, at: Date.now() });
         return;
       }
 
@@ -174,14 +178,7 @@ export class CaptureHarness {
         });
       }
 
-      this.manifest.push({
-        seq,
-        url: res.url,
-        status: res.status,
-        classification,
-        file,
-        at: Date.now(),
-      });
+      this.manifest.push({ ...entry, file, at: Date.now() });
     } catch (e) {
       // Absolutely never throw out of the response handler.
       logger.error('capture.handleResponse unexpected error', {
@@ -191,51 +188,6 @@ export class CaptureHarness {
     }
   }
 
-  /**
-   * Persist a parsed body captured DIRECTLY (not via the passive observer) and
-   * record it in the manifest. Used by {@link captureProfileShapes} for the
-   * shapes that Instagram will not fire on its own (web_profile_info via the
-   * page's own session, and the single `friendships/show/<pk>/` endpoint).
-   * Deterministic captures always write (they bypass MAX_SAVED_PER_CLASS).
-   */
-  private saveRaw(
-    classification: Classification,
-    parsed: unknown,
-    url: string,
-    status: number,
-  ): string | null {
-    const seq = ++this.seq;
-    const name = `${String(seq).padStart(4, '0')}-${classification}.json`;
-    let file: string | null = null;
-    try {
-      writeFileSync(
-        path.join(this.rawDir, name),
-        JSON.stringify(parsed, null, 2),
-        'utf8',
-      );
-      file = path.join('raw', name);
-      this.savedPerClass.set(
-        classification,
-        (this.savedPerClass.get(classification) ?? 0) + 1,
-      );
-      logger.info('capture.saved body (direct)', { classification, file, url });
-    } catch (e) {
-      logger.error('capture.write body failed (direct)', {
-        url,
-        error: String(e),
-      });
-    }
-    this.manifest.push({
-      seq,
-      url,
-      status,
-      classification,
-      file,
-      at: Date.now(),
-    });
-    return file;
-  }
-
   // -------------------------------------------------------------------------
   // DOM snapshots
   // -------------------------------------------------------------------------
@@ -243,9 +195,7 @@ export class CaptureHarness {
   private async captureOuterHtml(selector: string): Promise<string | null> {
     try {
       return await this.tab.evaluate<string | null>(
-        `(() => { const el = document.querySelector(${JSON.stringify(
-          selector,
-        )}); return el ? el.outerHTML : null; })()`,
+        `(() => { const el = document.querySelector(${jsonForScript(selector)}); return el ? el.outerHTML : null; })()`,
       );
     } catch (e) {
       logger.warn('capture.evaluate outerHTML failed', {
@@ -290,23 +240,23 @@ export class CaptureHarness {
       });
   }
 
-  /** Save the first `[role="dialog"]` (e.g. the followers dialog) if present. */
+  /** Save the first dialog (e.g. the followers modal) if one is present. */
   async snapshotDialog(): Promise<void> {
-    const html = await this.captureOuterHtml('[role="dialog"]');
+    const html = await this.captureOuterHtml(CAPTURE_PATTERNS.dialogSelector);
     if (html) this.writeDom('dialog', html);
-    else logger.warn('capture.snapshotDialog: no [role="dialog"] found');
+    else logger.warn('capture.snapshotDialog: no dialog found');
   }
 
   /**
-   * Save a `[role="dialog"]` only when its text content differs from the last
-   * saved dialog. Runs on an interval so manually-opened dialogs (e.g. the
-   * unfollow-confirm) get captured without any orchestration.
+   * Save a dialog only when its text content differs from the last saved one.
+   * Runs on an interval so manually-opened dialogs (e.g. the unfollow-confirm)
+   * get captured without any orchestration.
    */
   async snapshotAnyDialog(): Promise<void> {
     let probe: { html: string; text: string } | null;
     try {
       probe = await this.tab.evaluate<{ html: string; text: string } | null>(
-        `(() => { const el = document.querySelector('[role="dialog"]'); return el ? { html: el.outerHTML, text: (el.textContent || '').trim() } : null; })()`,
+        `(() => { const el = document.querySelector(${jsonForScript(CAPTURE_PATTERNS.dialogSelector)}); return el ? { html: el.outerHTML, text: (el.textContent || '').trim() } : null; })()`,
       );
     } catch (e) {
       logger.warn('capture.snapshotAnyDialog evaluate failed', {
@@ -346,8 +296,8 @@ export class CaptureHarness {
           ].join(';');
           (document.body || document.documentElement).appendChild(el);
         }
-        var title = ${JSON.stringify(`Epo capture: ${text}`)};
-        var instr = ${JSON.stringify(instruction)};
+        var title = ${jsonForScript(`Epo capture: ${text}`)};
+        var instr = ${jsonForScript(instruction)};
         el.innerHTML = '<span>' + title + '</span>' +
           (instr ? '<span style="opacity:0.7;font-weight:400;margin-left:10px">' + instr + '</span>' : '');
         return true;
@@ -378,13 +328,13 @@ export class CaptureHarness {
 
     // (a) Profile
     await this.setStatus('Capturing profile…', `target: @${target}`);
-    await this.tab.goto(`https://www.instagram.com/${target}/`);
+    await this.tab.goto(SURFACE.profileUrl(target));
     await sleep(HARNESS.CAPTURE_NAV_SETTLE_MS);
     await this.snapshotHeader();
 
     // (b) Followers dialog
     await this.setStatus('Opening followers…', FALLBACK);
-    await this.tab.goto(`https://www.instagram.com/${target}/followers/`);
+    await this.tab.goto(CAPTURE_PATTERNS.listDialogUrl(target, 'followers'));
     await sleep(HARNESS.CAPTURE_NAV_SETTLE_MS);
     await this.snapshotDialog();
 
@@ -408,17 +358,21 @@ export class CaptureHarness {
   }
 
   /**
-   * Deterministically capture the three shapes the passive-only flow misses for
-   * each sample username: (1) web_profile_info (follower/following COUNTS),
-   * (2) the profile HEADER DOM (where the Follow/Following/Unfollow button
-   * lives), and (3) the single `friendships/show/<pk>/` shape (returns BOTH
-   * `following` and `followed_by`, unlike show_many). Every step is best-effort:
-   * a failure is logged and the flow continues to the next sample.
+   * Capture what the passive flow alone misses for each sample username: the
+   * profile header DOM (where the Follow/Following/Unfollow button lives). The
+   * NAVIGATION is the profile read — Instagram's own client fires its GraphQL
+   * profile query (counts, bio, and `friendship_status` in BOTH directions),
+   * which passive capture saves. Epo composes no profile request since
+   * 2026-10-08 (`/users/<pk>/info/` and `friendships/show/` reads retired with
+   * it). Every step is best-effort: a failure is logged and the flow continues.
    */
   async captureProfileShapes(samples: string[]): Promise<void> {
     for (const u of samples) {
       try {
-        await this.captureOneProfileShape(u);
+        await this.setStatus(`Capturing profile shape for @${u}…`);
+        await this.tab.goto(SURFACE.profileUrl(u));
+        await sleep(HARNESS.CAPTURE_NAV_SETTLE_MS);
+        await this.snapshotHeader(u);
       } catch (e) {
         logger.error('capture.captureProfileShapes: sample failed', {
           username: u,
@@ -429,111 +383,16 @@ export class CaptureHarness {
     }
   }
 
-  private async captureOneProfileShape(u: string): Promise<void> {
-    await this.setStatus(`Capturing profile shape for @${u}…`);
-    const uJson = JSON.stringify(u);
-
-    // (1) web_profile_info via the page's own session (same technique as
-    //     detectOwnUsername). May fail with "useragent mismatch" — that's fine;
-    //     the profile NAVIGATION in step (2) makes Instagram fire its own count
-    //     queries which passive capture saves regardless.
-    let pk: string | null = null;
-    try {
-      const wpiUrl =
-        `/api/v1/users/web_profile_info/?username=${encodeURIComponent(u)}`;
-      const data = await this.tab.evaluate<Record<string, unknown> | null>(
-        `fetch('/api/v1/users/web_profile_info/?username=' + encodeURIComponent(${uJson}), { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })
-          .then(function(r){ return r.json(); })
-          .catch(function(){ return null; })`,
-      );
-      const user = extractProfileUser(data);
-      if (user) {
-        this.saveRaw('profile-info', data, wpiUrl, 200);
-        pk = extractPk(user);
-      } else {
-        logger.warn('capture.captureProfileShapes: web_profile_info had no user', {
-          username: u,
-        });
-      }
-    } catch (e) {
-      logger.warn('capture.captureProfileShapes: web_profile_info fetch failed', {
-        username: u,
-        error: String(e),
-      });
-    }
-
-    // (2) Navigate to the profile so Instagram fires its own profile/count
-    //     queries (passively captured), then snapshot the header DOM.
-    try {
-      await this.tab.goto(`https://www.instagram.com/${u}/`);
-      await sleep(HARNESS.CAPTURE_NAV_SETTLE_MS);
-      await this.snapshotHeader(u);
-    } catch (e) {
-      logger.warn('capture.captureProfileShapes: profile navigation failed', {
-        username: u,
-        error: String(e),
-      });
-    }
-
-    // (3) Single friendships/show/<pk>/ — the only shape with `followed_by`.
-    if (pk) {
-      try {
-        const showUrl = `/api/v1/friendships/show/${pk}/`;
-        const show = await this.tab.evaluate<Record<string, unknown> | null>(
-          `fetch(${JSON.stringify(showUrl)}, { headers: { 'x-ig-app-id': '${IG_APP_ID}' }, credentials: 'include' })
-            .then(function(r){ return r.json(); })
-            .catch(function(){ return null; })`,
-        );
-        if (
-          show &&
-          ('following' in show || 'followed_by' in show || show.status === 'ok')
-        ) {
-          this.saveRaw('friendship-show', show, showUrl, 200);
-        } else {
-          logger.warn(
-            'capture.captureProfileShapes: friendships/show had no relationship fields',
-            { username: u, pk },
-          );
-        }
-      } catch (e) {
-        logger.warn('capture.captureProfileShapes: friendships/show fetch failed', {
-          username: u,
-          pk,
-          error: String(e),
-        });
-      }
-    } else {
-      logger.warn(
-        'capture.captureProfileShapes: no pk resolved; skipping friendships/show',
-        { username: u },
-      );
-    }
-  }
-
   /**
-   * Scroll the followers dialog's own scrollable descendant to its bottom to
-   * page in the next batch. Finds, within `[role="dialog"]`, the largest
-   * element whose content overflows vertically with an auto/scroll overflowY.
+   * Page in the next batch of followers by scrolling the dialog — through the
+   * production Actor, so the harness exercises the SAME container heuristic and
+   * the same native-input wheel the app uses. A private copy of that heuristic
+   * used to live here and could silently diverge from the surface it exists to
+   * verify.
    */
   private async scrollFollowersDialog(): Promise<void> {
     try {
-      await this.tab.evaluate<boolean>(`(() => {
-        var dialog = document.querySelector('[role="dialog"]');
-        if (!dialog) return false;
-        var best = null; var bestArea = 0;
-        var nodes = dialog.querySelectorAll('*');
-        for (var i = 0; i < nodes.length; i++) {
-          var n = nodes[i];
-          if (n.scrollHeight <= n.clientHeight) continue;
-          var oy = getComputedStyle(n).overflowY;
-          if (oy !== 'auto' && oy !== 'scroll') continue;
-          var area = n.clientHeight * n.clientWidth;
-          if (area > bestArea) { bestArea = area; best = n; }
-        }
-        if (!best) return false;
-        best.scrollTop = best.scrollHeight;
-        return true;
-      })()`);
+      await this.actor.scrollFollowers();
     } catch (e) {
       logger.warn('capture.scrollFollowersDialog failed', { error: String(e) });
     }
@@ -641,7 +500,7 @@ export class CaptureHarness {
     lines.push('## TODO — Endpoints (distil into src/adapter/versions/*)');
     lines.push('');
     lines.push('- [ ] followers-list: URL pattern + pagination cursor in/out + JSON path to pk/username/is_private/is_verified');
-    lines.push('- [ ] show-many: request batching (form vs query) + response map pk → { following, followed_by } + SHOW_MANY_MAX_BATCH');
+    lines.push('- [ ] show-many: request batching (form vs query) + response map pk → { following, followed_by }');
     lines.push('- [ ] profile-info: JSON path to pk / follower_count / following_count');
     lines.push('- [ ] activity-feed: JSON path to new-follower pks');
     lines.push('');
@@ -674,34 +533,4 @@ export class CaptureHarness {
       logger.error('capture.write draft notes failed', { error: String(e) });
     }
   }
-}
-
-/** Promise-based delay helper (no foreground blocking). */
-
-/** Narrow an unknown value to a plain object, else null. */
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return v !== null && typeof v === 'object'
-    ? (v as Record<string, unknown>)
-    : null;
-}
-
-/**
- * Pull the `user` object out of a web_profile_info body. The private API wraps
- * it as `{ data: { user } }`; some variants expose `{ user }` at the top level.
- */
-function extractProfileUser(body: unknown): Record<string, unknown> | null {
-  const root = asRecord(body);
-  if (!root) return null;
-  const nested = asRecord(root.data);
-  return (nested && asRecord(nested.user)) ?? asRecord(root.user);
-}
-
-/** Extract the numeric pk (as a string) from a user object, if present. */
-function extractPk(user: Record<string, unknown>): string | null {
-  for (const key of ['id', 'pk', 'pk_id']) {
-    const v = user[key];
-    if (typeof v === 'string' && v.length > 0) return v;
-    if (typeof v === 'number') return String(v);
-  }
-  return null;
 }

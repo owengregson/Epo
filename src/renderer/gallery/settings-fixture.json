@@ -1,0 +1,1785 @@
+{
+ "rev": 7,
+ "health": {
+  "kind": "ok"
+ },
+ "capabilities": {
+  "plan": true,
+  "tempo": true,
+  "boost": true,
+  "protectionEverywhere": true
+ },
+ "mode": "easy",
+ "intent": {
+  "activity": "moderate",
+  "caution": "standard",
+  "rhythm": "sessions",
+  "consistency": "natural",
+  "dayShape": "balanced",
+  "weeklyShape": "realistic",
+  "quietHours": {
+   "kind": "derived"
+  },
+  "daysOff": [],
+  "patience": "normal",
+  "mutuals": "rotate",
+  "cleanup": "off",
+  "audienceFocus": "likely",
+  "audienceSize": "everyday",
+  "preferPrivate": true
+ },
+ "seed": "studio.lumen",
+ "protection": {
+  "accounts": [
+   {
+    "pk": "2001",
+    "username": "theo.park",
+    "linkedAt": 1793610000000,
+    "formerUsernames": [
+     "theo.parks"
+    ],
+    "addedAt": 1793610000000,
+    "source": "you",
+    "valid": true
+   },
+   {
+    "pk": null,
+    "username": "nora.h",
+    "linkedAt": null,
+    "formerUsernames": [],
+    "addedAt": 1793610000000,
+    "source": "migrated",
+    "valid": true
+   },
+   {
+    "pk": null,
+    "username": "not a handle!",
+    "linkedAt": null,
+    "formerUsernames": [],
+    "addedAt": 1793610000000,
+    "source": "migrated",
+    "valid": false
+   }
+  ],
+  "words": [
+   {
+    "text": "photographer",
+    "addedAt": 1793610000000
+   },
+   {
+    "text": "family",
+    "addedAt": 1793610000000
+   }
+  ],
+  "wordMatch": "anywhere",
+  "keepVerified": true
+ },
+ "protectionState": "ready",
+ "prefs": {
+  "practice": false,
+  "acceptRequests": true,
+  "boost": {
+   "hours": 12,
+   "acceptRequests": true
+  }
+ },
+ "easy": {
+  "pace": "balanced",
+  "size": "everyday",
+  "focus": "likely",
+  "quietHours": {
+   "startMinute": 1410,
+   "endMinute": 360
+  }
+ },
+ "options": {
+  "paceCards": [
+   {
+    "id": "gentle",
+    "perDay": {
+     "low": 17,
+     "typical": 26,
+     "high": 28
+    },
+    "perHourMax": 14,
+    "shareOfLowWall": 0.29,
+    "risk": "low",
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 160
+    }
+   },
+   {
+    "id": "balanced",
+    "perDay": {
+     "low": 29,
+     "typical": 44,
+     "high": 47
+    },
+    "perHourMax": 22,
+    "shareOfLowWall": 0.48,
+    "risk": "standard",
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 251
+    }
+   },
+   {
+    "id": "faster",
+    "perDay": {
+     "low": 43,
+     "typical": 66,
+     "high": 71
+    },
+    "perHourMax": 22,
+    "shareOfLowWall": 0.73,
+    "risk": "elevated",
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 251
+    }
+   }
+  ],
+  "activity": {
+   "minimal": {
+    "id": "minimal",
+    "perDay": {
+     "low": 9,
+     "typical": 13,
+     "high": 14
+    },
+    "perHourMax": 22,
+    "shareOfLowWall": 0.14,
+    "risk": "standard",
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 251
+    }
+   },
+   "light": {
+    "id": "light",
+    "perDay": {
+     "low": 17,
+     "typical": 26,
+     "high": 28
+    },
+    "perHourMax": 22,
+    "shareOfLowWall": 0.29,
+    "risk": "standard",
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 251
+    }
+   },
+   "moderate": {
+    "id": "moderate",
+    "perDay": {
+     "low": 29,
+     "typical": 44,
+     "high": 47
+    },
+    "perHourMax": 22,
+    "shareOfLowWall": 0.48,
+    "risk": "standard",
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 251
+    }
+   },
+   "active": {
+    "id": "active",
+    "perDay": {
+     "low": 43,
+     "typical": 66,
+     "high": 71
+    },
+    "perHourMax": 22,
+    "shareOfLowWall": 0.73,
+    "risk": "elevated",
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 251
+    }
+   },
+   "aggressive": {
+    "id": "aggressive",
+    "perDay": {
+     "low": 57,
+     "typical": 88,
+     "high": 95
+    },
+    "perHourMax": 22,
+    "shareOfLowWall": 0.97,
+    "risk": "at-limit",
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 251
+    }
+   }
+  },
+  "caution": {
+   "cautious": {
+    "hourlyCap": 14,
+    "minGapSeconds": 70
+   },
+   "standard": {
+    "hourlyCap": 22,
+    "minGapSeconds": 45
+   },
+   "bold": {
+    "hourlyCap": 30,
+    "minGapSeconds": 35
+   }
+  },
+  "rhythm": {
+   "trickle": {
+    "sessions": {
+     "min": 5,
+     "max": 9
+    },
+    "gapSeconds": 180
+   },
+   "sessions": {
+    "sessions": {
+     "min": 3,
+     "max": 6
+    },
+    "gapSeconds": 95
+   },
+   "bursts": {
+    "sessions": {
+     "min": 2,
+     "max": 4
+    },
+    "gapSeconds": 55
+   }
+  },
+  "consistency": {
+   "clockwork": {
+    "variationPct": 12,
+    "restDayPct": 0
+   },
+   "natural": {
+    "variationPct": 28,
+    "restDayPct": 8
+   },
+   "erratic": {
+    "variationPct": 45,
+    "restDayPct": 18
+   }
+  },
+  "schedule": [
+   {
+    "dayShape": "balanced",
+    "intensity": [
+     0.124416475712,
+     0.0666396190901,
+     0.038568873216,
+     0.0336659645487,
+     0.0634576866431,
+     0.158428387244,
+     0.324852911454,
+     0.48344529584,
+     0.52573591201,
+     0.470507147228,
+     0.457977884393,
+     0.567444801625,
+     0.741191643329,
+     0.884183632965,
+     0.967279455981,
+     0.999901131396,
+     1,
+     1,
+     1,
+     0.966561574383,
+     0.787608048746,
+     0.572834438826,
+     0.376157618476,
+     0.224725768287
+    ],
+    "quiet": {
+     "startMinute": 1410,
+     "endMinute": 360
+    },
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 251
+    }
+   },
+   {
+    "dayShape": "morning",
+    "intensity": [
+     0.0704863179039,
+     0.0428764315678,
+     0.0361079899499,
+     0.063194416375,
+     0.163086939258,
+     0.380967194803,
+     0.693903972273,
+     0.954088744905,
+     0.998254913486,
+     0.895007724403,
+     0.747138304471,
+     0.693875231209,
+     0.697896709,
+     0.677350259887,
+     0.621668639791,
+     0.576122192338,
+     0.566288173259,
+     0.571439360804,
+     0.554457853763,
+     0.495762515088,
+     0.401838742501,
+     0.294504245713,
+     0.196178044666,
+     0.12047866422
+    ],
+    "quiet": {
+     "startMinute": 1350,
+     "endMinute": 300
+    },
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 222
+    }
+   },
+   {
+    "dayShape": "evening",
+    "intensity": [
+     0.270278725913,
+     0.158948722917,
+     0.0898512605118,
+     0.056267122675,
+     0.0601006988509,
+     0.115996070832,
+     0.224021081591,
+     0.330713704745,
+     0.366036161218,
+     0.346078330149,
+     0.367357567179,
+     0.477383838883,
+     0.623020435313,
+     0.72917568384,
+     0.783143529866,
+     0.831610601701,
+     0.914061171616,
+     0.994575997478,
+     1,
+     1,
+     0.975857161676,
+     0.818966170138,
+     0.618893125844,
+     0.426934517103
+    ],
+    "quiet": {
+     "startMinute": 60,
+     "endMinute": 390
+    },
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 245
+    }
+   },
+   {
+    "dayShape": "nightowl",
+    "intensity": [
+     0.869380131231,
+     0.667949607674,
+     0.475684671897,
+     0.319291532808,
+     0.209729115312,
+     0.14752473136,
+     0.133029071249,
+     0.172641575568,
+     0.270052648384,
+     0.404563693754,
+     0.526461158757,
+     0.591721622111,
+     0.606699733548,
+     0.622334636252,
+     0.676746559341,
+     0.761810294461,
+     0.846586161914,
+     0.916996593122,
+     0.981315007903,
+     1,
+     1,
+     1,
+     1,
+     0.996298466562
+    ],
+    "quiet": {
+     "startMinute": 270,
+     "endMinute": 480
+    },
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 302
+    }
+   },
+   {
+    "dayShape": "business",
+    "intensity": [
+     0.0322196096554,
+     0.023186813611,
+     0.0268763767739,
+     0.0461410366721,
+     0.0943057460616,
+     0.191063555392,
+     0.352468790929,
+     0.573865047771,
+     0.819418518588,
+     0.990474590801,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     1,
+     0.959569706579,
+     0.829481400324,
+     0.653423930531,
+     0.451187368195,
+     0.266617647502,
+     0.135626432137,
+     0.0632937978531
+    ],
+    "quiet": {
+     "startMinute": 1320,
+     "endMinute": 330
+    },
+    "feasibility": {
+     "kind": "ok",
+     "reachablePerDay": 271
+    }
+   }
+  ],
+  "patience": {
+   "quick": {
+    "waitDays": 2,
+    "holdDays": 1
+   },
+   "normal": {
+    "waitDays": 4,
+    "holdDays": 2
+   },
+   "patient": {
+    "waitDays": 7,
+    "holdDays": 4
+   }
+  },
+  "cleanup": {
+   "off": {
+    "share": 0
+   },
+   "trickle": {
+    "share": 0.25
+   },
+   "steady": {
+    "share": 0.5
+   }
+  },
+  "size": {
+   "small": {
+    "min": 50,
+    "max": 2000
+   },
+   "everyday": {
+    "min": 50,
+    "max": 20000
+   },
+   "larger": {
+    "min": 50,
+    "max": 100000
+   }
+  },
+  "focus": {
+   "likely": {
+    "hardLow": 0.5,
+    "bandLow": 0.9,
+    "peakLow": 1,
+    "peakHigh": 1.2,
+    "bandHigh": 1.5,
+    "hardHigh": 3
+   },
+   "wide": {
+    "hardLow": 0.3378000387017586,
+    "bandLow": 0.8157713572863274,
+    "peakLow": 1,
+    "peakHigh": 1.2,
+    "bandHigh": 1.7552604894905368,
+    "hardHigh": 4.964626379470309
+   }
+  },
+  "boostHours": {
+   "choices": [
+    2,
+    4,
+    8,
+    12,
+    24
+   ],
+   "min": 1,
+   "max": 24
+  }
+ },
+ "typical": {
+  "perDay": {
+   "low": 29,
+   "typical": 44,
+   "high": 47
+  },
+  "automaticMax": 48,
+  "ceiling": 65,
+  "perHourMax": 22,
+  "sessions": {
+   "min": 3,
+   "max": 6
+  },
+  "shareOfLowWall": 0.48,
+  "risk": "standard",
+  "feasibility": {
+   "kind": "ok",
+   "reachablePerDay": 251
+  },
+  "week": null
+ },
+ "params": [
+  {
+   "key": "pace.dailyVolume",
+   "section": "pace",
+   "kind": "int",
+   "unit": "per-day",
+   "step": 1,
+   "value": 50,
+   "recommended": 50,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 100
+   },
+   "risk": "higher-is-riskier",
+   "applies": "replan",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "activity",
+     "value": "moderate"
+    }
+   ]
+  },
+  {
+   "key": "pace.dailyCeiling",
+   "section": "pace",
+   "kind": "int",
+   "unit": "per-day",
+   "step": 1,
+   "value": 65,
+   "recommended": 65,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 50,
+    "max": 130
+   },
+   "risk": "higher-is-riskier",
+   "applies": "now",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "param",
+     "key": "pace.dailyVolume",
+     "value": 50
+    }
+   ]
+  },
+  {
+   "key": "pace.hourlyCap",
+   "section": "pace",
+   "kind": "int",
+   "unit": "per-hour",
+   "step": 1,
+   "value": 22,
+   "recommended": 22,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 30
+   },
+   "risk": "higher-is-riskier",
+   "applies": "now",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "caution",
+     "value": "standard"
+    }
+   ]
+  },
+  {
+   "key": "pace.dayVariation",
+   "section": "pace",
+   "kind": "int",
+   "unit": "percent",
+   "step": 1,
+   "value": 28,
+   "recommended": 28,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 45
+   },
+   "risk": "neutral",
+   "applies": "replan",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "consistency",
+     "value": "natural"
+    }
+   ]
+  },
+  {
+   "key": "pace.restDayChance",
+   "section": "pace",
+   "kind": "int",
+   "unit": "percent",
+   "step": 1,
+   "value": 8,
+   "recommended": 8,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 18
+   },
+   "risk": "neutral",
+   "applies": "replan",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "consistency",
+     "value": "natural"
+    }
+   ]
+  },
+  {
+   "key": "pace.candidateBuffer",
+   "section": "pace",
+   "kind": "int",
+   "unit": "count",
+   "step": 1,
+   "value": 60,
+   "recommended": 60,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 120
+   },
+   "risk": "higher-is-riskier",
+   "applies": "now",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "param",
+     "key": "pace.dailyVolume",
+     "value": 50
+    }
+   ]
+  },
+  {
+   "key": "sessions.perDayMin",
+   "section": "schedule",
+   "kind": "int",
+   "unit": "count",
+   "step": 1,
+   "value": 3,
+   "recommended": 3,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 2,
+    "max": 9
+   },
+   "risk": "neutral",
+   "applies": "replan",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "rhythm",
+     "value": "sessions"
+    }
+   ]
+  },
+  {
+   "key": "sessions.perDayMax",
+   "section": "schedule",
+   "kind": "int",
+   "unit": "count",
+   "step": 1,
+   "value": 6,
+   "recommended": 6,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 3,
+    "max": 9
+   },
+   "risk": "neutral",
+   "applies": "replan",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "rhythm",
+     "value": "sessions"
+    },
+    {
+     "kind": "param",
+     "key": "sessions.perDayMin",
+     "value": 3
+    }
+   ]
+  },
+  {
+   "key": "sessions.gapTypical",
+   "section": "timing",
+   "kind": "int",
+   "unit": "seconds",
+   "step": 1,
+   "value": 304,
+   "recommended": 304,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 304,
+    "max": 912
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "caution",
+     "value": "standard"
+    },
+    {
+     "kind": "param",
+     "key": "pace.hourlyCap",
+     "value": 22
+    },
+    {
+     "kind": "param",
+     "key": "pace.dailyVolume",
+     "value": 50
+    },
+    {
+     "kind": "param",
+     "key": "sessions.perDayMin",
+     "value": 3
+    },
+    {
+     "kind": "param",
+     "key": "sessions.perDayMax",
+     "value": 6
+    }
+   ]
+  },
+  {
+   "key": "sessions.gapMinimum",
+   "section": "timing",
+   "kind": "int",
+   "unit": "seconds",
+   "step": 1,
+   "value": 131,
+   "recommended": 131,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 131,
+    "max": 304
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "caution",
+     "value": "standard"
+    },
+    {
+     "kind": "param",
+     "key": "pace.hourlyCap",
+     "value": 22
+    },
+    {
+     "kind": "param",
+     "key": "pace.dailyVolume",
+     "value": 50
+    },
+    {
+     "kind": "param",
+     "key": "sessions.perDayMin",
+     "value": 3
+    },
+    {
+     "kind": "param",
+     "key": "sessions.perDayMax",
+     "value": 6
+    },
+    {
+     "kind": "param",
+     "key": "sessions.gapTypical",
+     "value": 304
+    }
+   ]
+  },
+  {
+   "key": "unfollow.waitDays",
+   "section": "unfollow",
+   "kind": "int",
+   "unit": "days",
+   "step": 1,
+   "value": 4,
+   "recommended": 4,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 2,
+    "max": 60
+   },
+   "risk": "lower-is-riskier",
+   "applies": "now",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "patience",
+     "value": "normal"
+    }
+   ]
+  },
+  {
+   "key": "unfollow.holdDays",
+   "section": "unfollow",
+   "kind": "int",
+   "unit": "days",
+   "step": 1,
+   "value": 2,
+   "recommended": 2,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 60
+   },
+   "risk": "lower-is-riskier",
+   "applies": "now",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "patience",
+     "value": "normal"
+    }
+   ]
+  },
+  {
+   "key": "unfollow.cleanupShare",
+   "section": "unfollow",
+   "kind": "number",
+   "unit": "share",
+   "step": 0.01,
+   "value": 0,
+   "recommended": 0,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 0.5
+   },
+   "risk": "higher-is-riskier",
+   "applies": "replan",
+   "source": "derived",
+   "inactive": "cleanup-off",
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "cleanup",
+     "value": "off"
+    }
+   ]
+  },
+  {
+   "key": "unfollow.cleanupPerDay",
+   "section": "unfollow",
+   "kind": "int",
+   "unit": "per-day",
+   "step": 1,
+   "value": 65,
+   "recommended": 65,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 65
+   },
+   "risk": "higher-is-riskier",
+   "applies": "replan",
+   "source": "plan",
+   "inactive": "cleanup-off",
+   "provenance": [
+    {
+     "kind": "param",
+     "key": "pace.dailyCeiling",
+     "value": 65
+    }
+   ]
+  },
+  {
+   "key": "unfollow.censusEveryDays",
+   "section": "unfollow",
+   "kind": "int",
+   "unit": "days",
+   "step": 1,
+   "value": 4,
+   "recommended": 4,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 30
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "plan",
+   "inactive": "cleanup-off",
+   "provenance": [
+    {
+     "kind": "param",
+     "key": "unfollow.waitDays",
+     "value": 4
+    }
+   ]
+  },
+  {
+   "key": "unfollow.attempts",
+   "section": "unfollow",
+   "kind": "int",
+   "unit": "count",
+   "step": 1,
+   "value": 3,
+   "recommended": 3,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 10
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "checks.everyHours",
+   "section": "unfollow",
+   "kind": "number",
+   "unit": "hours",
+   "step": 0.05,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0.85,
+    "max": 24
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "plan",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "audience.followerRange",
+   "section": "audience",
+   "kind": "range",
+   "unit": "followers",
+   "step": 1,
+   "value": {
+    "min": 50,
+    "max": 20000
+   },
+   "recommended": {
+    "min": 50,
+    "max": 20000
+   },
+   "override": null,
+   "bounds": {
+    "kind": "range",
+    "min": 0,
+    "max": 100000000
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "audienceSize",
+     "value": "everyday"
+    }
+   ]
+  },
+  {
+   "key": "audience.ratioCurve",
+   "section": "audience",
+   "kind": "curve",
+   "unit": "ratio",
+   "step": 0.01,
+   "value": {
+    "hardLow": 0.5,
+    "bandLow": 0.9,
+    "peakLow": 1,
+    "peakHigh": 1.2,
+    "bandHigh": 1.5,
+    "hardHigh": 3
+   },
+   "recommended": {
+    "hardLow": 0.5,
+    "bandLow": 0.9,
+    "peakLow": 1,
+    "peakHigh": 1.2,
+    "bandHigh": 1.5,
+    "hardHigh": 3
+   },
+   "override": null,
+   "bounds": {
+    "kind": "curve",
+    "min": 0,
+    "max": 100
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "audienceFocus",
+     "value": "likely"
+    }
+   ]
+  },
+  {
+   "key": "audience.privateBoost",
+   "section": "audience",
+   "kind": "number",
+   "unit": "share",
+   "step": 0.01,
+   "value": 0.15,
+   "recommended": 0.15,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 0.5
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "derived",
+   "inactive": null,
+   "provenance": [
+    {
+     "kind": "choice",
+     "intent": "preferPrivate",
+     "value": "true"
+    }
+   ]
+  },
+  {
+   "key": "audience.mutualWeight",
+   "section": "audience",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.01,
+   "value": 1.5,
+   "recommended": 1.5,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 5
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "audience.mutualCap",
+   "section": "audience",
+   "kind": "int",
+   "unit": "count",
+   "step": 1,
+   "value": 20,
+   "recommended": 20,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 100
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "audience.bandEdgeScore",
+   "section": "audience",
+   "kind": "number",
+   "unit": "share",
+   "step": 0.01,
+   "value": 0.6,
+   "recommended": 0.6,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 1
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "explore.moveOnRate",
+   "section": "explore",
+   "kind": "number",
+   "unit": "share",
+   "step": 0.01,
+   "value": 0.15,
+   "recommended": 0.15,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 1
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "explore.moveOnPool",
+   "section": "explore",
+   "kind": "int",
+   "unit": "followers",
+   "step": 1,
+   "value": 300,
+   "recommended": 300,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 5000
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "explore.refillBelow",
+   "section": "explore",
+   "kind": "int",
+   "unit": "count",
+   "step": 1,
+   "value": 5,
+   "recommended": 5,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 0,
+    "max": 10
+   },
+   "risk": "neutral",
+   "applies": "now",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.gap.accept",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.dwell.visit",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.dwell.before-press",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.ui.step-pause",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.drawer.close-settle",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.scroll.wait.drawer",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.scroll.wait.dialog",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.scroll.wait.acquire",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.scroll.depth.drawer",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.scroll.depth.dialog",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.walk.page",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.walk.rest",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.walk.rest-every",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.pause.retry",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.pause.wake-settle",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.park.blocked",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.backoff.walled",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.beat.transient",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.motion.travel",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.motion.press",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.motion.pre-press",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.motion.hover-settle",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.wheel.tick-pause",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.wheel.micro-pause",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  },
+  {
+   "key": "tempo.wheel.correction-pause",
+   "section": "timing",
+   "kind": "number",
+   "unit": "factor",
+   "step": 0.1,
+   "value": 1,
+   "recommended": 1,
+   "override": null,
+   "bounds": {
+    "kind": "number",
+    "min": 1,
+    "max": 3
+   },
+   "risk": "lower-is-riskier",
+   "applies": "replan",
+   "source": "recommended",
+   "inactive": null,
+   "provenance": []
+  }
+ ],
+ "reads": {
+  "profiles": 276,
+  "verifyReserve": 65,
+  "explorationProfiles": 126,
+  "listPages": 255,
+  "explorationPages": 18,
+  "notifications": 17,
+  "window": "plan-day",
+  "backstop": "trailing-24h"
+ },
+ "overrides": {
+  "count": 0,
+  "stale": 0,
+  "bySection": {}
+ },
+ "effective": {
+  "seed": "studio.lumen",
+  "practice": false,
+  "acceptRequests": true,
+  "waitDays": 4,
+  "holdDays": 2,
+  "dailyVolume": 50,
+  "dailyCeiling": 65,
+  "hourlyCap": 22,
+  "quietHours": {
+   "startMinute": 1410,
+   "endMinute": 360
+  },
+  "daysOff": [],
+  "cleanup": "off",
+  "boostDefaultHours": 12
+ },
+ "notices": [],
+ "app": {
+  "tourCompletedAt": 1793610000000,
+  "tourVersionSeen": "plan-derived"
+ }
+}

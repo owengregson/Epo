@@ -1,10 +1,19 @@
-import { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import {
+  ActionBlockedError,
+  ActionDeferredError,
+  ActionRateLimitedError,
+  ActionReviewedError,
+  AdapterStaleError,
+  TabUnavailableError,
+  TabUnresponsiveError,
+} from '@/adapter/errors';
 import type { InstagramAdapter } from '@/adapter/instagram-adapter';
-import { ActionBlockedError, AdapterStaleError, TabUnresponsiveError } from '@/adapter/errors';
-import { KnowledgeStore } from '@/store/knowledge-store';
 import { FakeClock } from '@/governors/clock';
-import { ok, err, type Result } from '@/utils/result';
-import { FakeSentinel } from './fakes';
+import { AdapterBackedChurnActions } from '@/rim/churn-actions';
+import type { KnowledgeStore } from '@/store/knowledge-store';
+import { err, ok, type Result } from '@/utils/result';
+import { FakeSentinel } from '../kit/fakes';
+import { openTestStore } from '../kit/store';
 
 /** A fake action-actor recording calls and returning a scripted Result. */
 class FakeActionActor {
@@ -28,7 +37,7 @@ const clock = new FakeClock(3_000_000);
 
 let store: KnowledgeStore;
 beforeEach(() => {
-  store = new KnowledgeStore(':memory:');
+  store = openTestStore(':memory:');
 });
 afterEach(() => store.close());
 
@@ -95,6 +104,23 @@ test('a failed Actor Result is reported as failed', async () => {
   expect(actor.followCalls).toEqual(['bob']);
 });
 
+test.each(['failed', 'thrown', 'drift'] as const)('a %s result after dispatch reports uncertainty, never a retryable failure', async (failure) => {
+  const { actions, actor } = build({});
+  actor.follow = async (_username: string, _pk?: string, dispatched?: () => void) => {
+    dispatched?.();
+    if (failure === 'thrown') throw new Error('lost acknowledgement');
+    if (failure === 'drift') throw new AdapterStaleError('actor.follow', 'post-state');
+    return err('post-click state not confirmed');
+  };
+  const dispatched = jest.fn();
+  // After a dispatched press the Actor's err means Instagram showed nothing: unverified (spec §11.1 F7);
+  // a throw is the tab's, not Instagram's.
+  expect(await actions.follow('bob', 'pk', dispatched)).toMatchObject({
+    status: 'blocked', cause: failure === 'failed' ? 'unverified' : 'tab-unhealthy', unverifiedClick: true,
+  });
+  expect(dispatched).toHaveBeenCalledTimes(1);
+});
+
 test('a thrown Actor error is caught and reported as failed', async () => {
   const { actions, actor } = build({});
   actor.followThrows = true;
@@ -149,12 +175,19 @@ test('a POST-CLICK tab stall additionally flags the unverified click (amendment 
 });
 
 test('a destroyed webContents maps to blocked/tab-unhealthy', async () => {
-  const { actions } = buildThrowing(
-    new Error('instagram-tab: webContents unavailable (destroyed or not initialized)'),
-  );
+  const { actions } = buildThrowing(new TabUnavailableError('instagram-tab'));
   const r = await actions.follow('bob');
   expect(r.status).toBe('blocked');
   expect(r.cause).toBe('tab-unhealthy');
+});
+
+test('an ActionRateLimitedError (the server REFUSED the mutation) maps to blocked/rate-limited', async () => {
+  const { actions } = buildThrowing(
+    new ActionRateLimitedError('actor.follow', 400, 'feedback_required: Try Again Later'),
+  );
+  // Record-neutral like every block (nothing landed), but the cause is a
+  // DEFINITIVE rate wall — the engine ladders on it at once, no streak needed.
+  expect(await actions.follow('bob')).toEqual({ status: 'blocked', cause: 'rate-limited' });
 });
 
 test('an AdapterStaleError maps to failed/drift (retry burned; drift evidence tallied)', async () => {
@@ -169,4 +202,23 @@ test('an unclassified throw stays a plain failed (no cause)', async () => {
   const r = await actions.follow('bob');
   expect(r.status).toBe('failed');
   expect(r.cause).toBeUndefined();
+});
+
+test('a click review that consumed the work maps to reviewed, carrying its verdict (spec §9.7)', async () => {
+  const { actions, actor } = build({});
+  const verdict = { kind: 'protected', by: 'bio-word', match: 'cafe' } as const;
+  actor.unfollow = async () => {
+    throw new ActionReviewedError(verdict);
+  };
+  // Neither a deferral (which retries the same work) nor a failure: the scheduler settles the record.
+  expect(await actions.unfollow('bob')).toEqual({ status: 'reviewed', verdict });
+});
+
+test('a deferral before the visit is a local-policy block that carries its reason and until (spec §9.7)', async () => {
+  const { actions, actor } = build({});
+  actor.unfollow = async () => {
+    throw new ActionDeferredError('plan refused: hourly-cap', { reason: 'hourly-cap', until: 7_000 });
+  };
+  expect(await actions.unfollow('bob')).toEqual({ status: 'blocked', cause: 'local-policy',
+    verdict: { kind: 'deferred', reason: 'hourly-cap', until: 7_000 } });
 });

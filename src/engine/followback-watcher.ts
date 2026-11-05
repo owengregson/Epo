@@ -1,102 +1,47 @@
+/**
+ * The follow-back appliers (spec §9.3–9.4): every fact a sweep step reads is applied the moment it
+ * arrives — a dated follow event, an undated one, a requester row, an accepted request — and the
+ * store-only consistency pass moves a managed record whose follow-back the graph already holds.
+ * Nothing here reads Instagram; the frontier sweep feeds it.
+ */
+
 import type { Clock } from '../governors/clock';
 import type { KnowledgeStore } from '../store/knowledge-store';
-import { MS_PER_DAY } from '../timing/units';
+import type { FollowRecord, Observation } from '../store/types';
 import { info, warn } from '../utils/logger';
+import type { FollowbackAccepted, FollowbackConfig, FollowbackEvent } from './followback-types';
 
-/** One "started following you" event, as the notifications source reports it. */
-export interface FollowbackEvent {
-  pk: string;
-  username: string | null;
-  /** Event time in epoch ms when the feed carried one; `null` otherwise. */
-  atMs: number | null;
+export type { FollowbackAccepted, FollowbackConfig, FollowbackEvent } from './followback-types';
+
+/** Channel evidence for an open accept intent: the journal's zero-read settlement (spec §9.8). */
+export interface ChannelEvidence {
+  readonly follower?: { readonly pk: string; readonly atMs: number };
+  readonly stillRequesting?: { readonly pk: string; readonly at: number };
 }
-
-/** One follow request the source ACCEPTED (they follow us as of the accept). */
-export interface FollowbackAccepted {
-  pk: string | null;
-  username: string;
-}
-
-/**
- * The follow-back watcher's Instagram source: one bounded read of the RECENT
- * "started following you" events (the live implementation clicks the
- * notifications drawer and parses the observed news-inbox response), plus —
- * when `acceptRequests` is passed — the drawer's "Follow requests" subtab,
- * auto-accepting pending requests (a PRIVATE account's follow-backs arrive as
- * requests and never surface as follow events until accepted). A failed read
- * is `ok: false` — never an empty success, so "nobody followed back" and
- * "could not read" stay distinguishable. Tests inject a scripted fake.
- */
-export interface FollowbackNotifications {
-  fetchRecent(opts?: { acceptRequests?: boolean }): Promise<{
-    ok: boolean;
-    events: FollowbackEvent[];
-    accepted?: FollowbackAccepted[];
-    reason?: string;
-  }>;
-}
-
-/** Tunable knobs for the Follow-back Watcher. Exposed in Settings. */
-export interface FollowbackConfig {
-  /** How long to hold a reciprocated follow before it can be unfollowed. Sets `holdUntil`. */
-  holdAfterFollowbackMs: number;
-  /**
-   * Auto-accept incoming follow requests during each check (private accounts:
-   * a requester is a follow-back the moment we accept). The source soft-skips
-   * when no requests entry exists, so this is free for public accounts.
-   */
-  autoAcceptRequests: boolean;
-}
-
-/** Design defaults: 2-day hold; requests auto-accepted. */
-export const FOLLOWBACK_DEFAULTS: FollowbackConfig = {
-  holdAfterFollowbackMs: 2 * MS_PER_DAY,
-  autoAcceptRequests: true,
-};
 
 interface FollowbackDeps {
   store: KnowledgeStore;
   clock: Clock;
   /** Our own account PK — the destination of every "follows us" edge. */
   ownPk: string;
-  notifications: FollowbackNotifications;
-  cfg?: FollowbackConfig;
+  cfg: FollowbackConfig;
+  /** Settle an open accept intent from channel evidence (the journal's `settleFromChannels`). */
+  settleChannels?: (e: ChannelEvidence) => void;
 }
 
-/**
- * Follow-back detection via the NOTIFICATIONS feed (v4): reading "who followed
- * me?" from the notifications drawer — one click on the bell, one observed news-inbox
- * response — instead of paging the whole own-followers list. One request per
- * check makes an hourly cadence affordable (the old paged sweep budgeted for
- * multi-hour gaps).
- *
- * Order of resolution per check:
- *  1. Nothing pending → no request at all (request-minimal).
- *  2. ZERO-REQUEST pass: knowledge already in the graph decides first — a
- *     prune census (or any observed source) may have recorded the follow-back
- *     edge since the last check.
- *  3. One notifications read. Every follow event records a follows-us edge at
- *     the EVENT's own timestamp (an old notification must not chart as
- *     today's gain), and pending records seen in the feed transition to
- *     `followed_back` with the hold anchored at the event time — a follow
- *     that happened days ago has already served that much of its hold.
- *
- * Misses are covered by the layers around this: the census pass above, and the
- * scheduler's `maxWaitForFollowback` timeout reclaiming non-reciprocated slots.
- */
 export class FollowbackWatcher {
   private readonly store: KnowledgeStore;
   private readonly clock: Clock;
   private readonly ownPk: string;
-  private readonly notifications: FollowbackNotifications;
   private cfg: FollowbackConfig;
+  private readonly settleChannels?: (e: ChannelEvidence) => void;
 
   constructor(deps: FollowbackDeps) {
     this.store = deps.store;
     this.clock = deps.clock;
     this.ownPk = deps.ownPk;
-    this.notifications = deps.notifications;
-    this.cfg = deps.cfg ?? FOLLOWBACK_DEFAULTS;
+    this.cfg = deps.cfg;
+    this.settleChannels = deps.settleChannels;
   }
 
   /** Swap the live config in place (used when Settings are updated at runtime). */
@@ -104,122 +49,98 @@ export class FollowbackWatcher {
     this.cfg = cfg;
   }
 
-  /** Transition one pending record to followed_back, holding from `at`. */
-  private markFollowedBack(pk: string, at: number, detected: string[]): void {
-    const rec = this.store.getFollowRecord(pk);
-    if (rec === null) return;
-    // The hold never anchors before OUR follow: a feed event can predate it
-    // (they followed us first, we followed them later) and an unfollow moments
-    // after our own follow reads as churn to any observer.
-    const anchor = Math.max(at, rec.followedAt ?? at);
-    this.store.upsertFollowRecord({
-      ...rec,
-      state: 'followed_back',
-      followedBackAt: anchor,
-      holdUntil: anchor + this.cfg.holdAfterFollowbackMs,
-    });
-    detected.push(pk);
+  /** A record a follow-back can still move: waiting, or queued for no follow-back with none seen. */
+  private canDetect(r: FollowRecord): boolean {
+    return r.state === 'pending_followback' || (r.state === 'unfollow_queued' && r.unfollowReason === 'no-followback'
+      && r.followedBackAt === undefined && r.followbackObservedAt === undefined);
   }
 
   /**
-   * Detect which of our pending follows have followed us back, transitioning each to
-   * `followed_back` with a hold timer. Returns the PKs newly detected this run.
+   * Move one record to `followed_back`: exact at `at`, else after `after` (the interval's lower bound);
+   * the hold runs from `holdFrom`, never before our own follow. A kept record only gets the stamp.
    */
-  async check(): Promise<{ detected: string[] }> {
-    const detected: string[] = [];
-
-    // Growth measurement anchors HERE: the first check of a freshly started
-    // engine stamps the followers baseline (set-once — an overdue sweep is the
-    // first thing a started engine runs, docs/PRINCIPLES.md §3), so every
-    // follow event observed from now on charts as growth, and a later first
-    // prune census can no longer re-classify those gains as pre-existing
-    // stock. Organic follows already sitting in the feed's backlog predate
-    // measurement and stay stock.
-    this.store.ensureFollowersBaseline(this.clock.now());
-
-    // 1. Nothing pending → don't fetch anything (request-minimal).
-    const pending = new Set(
-      this.store.followRecordsByState('pending_followback').map((r) => r.accountPk),
-    );
-    if (pending.size === 0) return { detected };
-
-    // 2. ZERO-REQUEST pass: knowledge already in the graph decides first.
-    {
-      const now = this.clock.now();
-      for (const pk of [...pending]) {
-        const edge = this.store.getEdge(pk, this.ownPk, 'follows');
-        if (edge !== null && edge.status === 'active') {
-          this.markFollowedBack(pk, now, detected);
-          pending.delete(pk);
-        }
-      }
-      if (pending.size === 0) return { detected };
+  private markFollowedBack(rec: FollowRecord, at: number | null, observedAt: number, after: number | null,
+    holdFrom: number = at ?? observedAt): void {
+    if (rec.state === 'kept') {
+      this.store.upsertFollowRecord({ ...rec, followedBackAt: at ?? rec.followedBackAt, followbackObservedAt: observedAt });
+      return;
     }
-
-    // 3. One notifications pass (inbox events + optional request-accepting).
-    const result = await this.notifications.fetchRecent({
-      acceptRequests: this.cfg.autoAcceptRequests,
+    const anchor = Math.max(holdFrom, rec.followedAt ?? 0);
+    this.store.upsertFollowRecord({
+      ...rec,
+      state: 'followed_back',
+      followedBackAt: at ?? rec.followedBackAt,
+      followbackAfter: at === null ? after ?? rec.followbackAfter : rec.followbackAfter,
+      followbackObservedAt: observedAt,
+      reconciledAt: observedAt,
+      holdUntil: anchor + this.cfg.holdAfterFollowbackMs,
+      unfollowDueAt: undefined,
+      unfollowReason: undefined,
     });
-    if (!result.ok) {
-      warn('followback: notifications read failed, skipping check', {
-        reason: result.reason,
-      });
-      return { detected };
-    }
+  }
 
+  private observeName(pk: string, username: string | null, at: number): void {
+    if (username !== null) this.store.observe({ accountPk: pk, observedAt: at, source: 'activity-feed', fields: { username } });
+  }
+
+  /** A fresh dated follow event: an exact change row, the managed record at the exact time, an accept settled. */
+  applyEvent(e: FollowbackEvent & { readonly atMs: number }): void {
+    this.observeName(e.pk, e.username, e.atMs);
+    this.store.observeOwnFollowerEvent(e.pk, this.ownPk, e.atMs);
+    const rec = this.store.getFollowRecord(e.pk);
+    // A historical event enriches history but never contradicts a later negative observation.
+    if (rec !== null && this.canDetect(rec) && this.store.getEdge(e.pk, this.ownPk, 'follows')?.status === 'active') {
+      this.markFollowedBack(rec, e.atMs, this.clock.now(), null);
+    }
+    this.settleChannels?.({ follower: { pk: e.pk, atMs: e.atMs } });
+  }
+
+  /** An undated event: its name only; a managed record moves unless its edge was seen removed. */
+  applyUndated(e: FollowbackEvent): void {
     const now = this.clock.now();
-    for (const event of result.events) {
-      // Clamp future/garbage feed timestamps; an absent one means "recently".
-      const at = event.atMs !== null && event.atMs <= now ? event.atMs : now;
-      // FACTS STREAM (docs/PRINCIPLES.md §1): everything this event carries is
-      // stored per event — the username the feed named (a real accounts row for
-      // free) and the follows-us edge at the EVENT time (idempotent; the store
-      // preserves first_seen_at) so net-growth charts the follow on the day it
-      // actually happened, not the day we read the feed.
-      if (event.username !== null) {
-        this.store.observe({
-          accountPk: event.pk,
-          observedAt: at,
-          source: 'activity-feed',
-          fields: { username: event.username },
-        });
-      }
-      this.store.observeOwnFollowerEvent(event.pk, this.ownPk, at);
-      if (pending.has(event.pk)) {
-        this.markFollowedBack(event.pk, at, detected);
-        pending.delete(event.pk);
-      }
+    this.observeName(e.pk, e.username, now);
+    const rec = this.store.getFollowRecord(e.pk);
+    if (rec !== null && this.canDetect(rec) && this.store.getEdge(e.pk, this.ownPk, 'follows')?.status !== 'removed') {
+      this.markFollowedBack(rec, null, now, null);
     }
-    // 4. ACCEPTED follow requests: the requester follows us the moment the
-    //    accept landed — record the fact and resolve any pending record. A
-    //    request needs no feed event to count (private-account oversight fix).
-    for (const acc of result.accepted ?? []) {
-      if (acc.pk === null) {
-        warn('followback: accepted a request but its pk is unresolved', {
-          username: acc.username,
-        });
-        continue;
-      }
-      this.store.observe({
-        accountPk: acc.pk,
-        observedAt: now,
-        source: 'friend-requests',
-        fields: { username: acc.username },
-      });
-      this.store.observeOwnFollowerEvent(acc.pk, this.ownPk, now);
-      if (pending.has(acc.pk)) {
-        this.markFollowedBack(acc.pk, now, detected);
-        pending.delete(acc.pk);
-      }
-    }
+  }
 
-    if (detected.length > 0) {
-      info('followback: detected follow-backs from notifications', {
-        detected: detected.length,
-        stillPending: pending.size,
-      });
-    }
+  /** A requester row: its account facts and an open `requests` edge; an accept still listed did not land. */
+  applyRequester(r: { readonly pk: string; readonly observation: Observation }, at: number): void {
+    this.store.observe(r.observation);
+    this.store.observeEdge(r.pk, this.ownPk, 'requests', true, at);
+    this.settleChannels?.({ stillRequesting: { pk: r.pk, at } });
+  }
 
-    return { detected };
+  /** An accepted request: they follow us from the accept (an exact row); a managed requester followed back. */
+  applyAccepted(a: FollowbackAccepted & { readonly at: number }): void {
+    if (a.pk === null) {
+      warn('followback: accepted request has no resolved pk', { username: a.username });
+      return;
+    }
+    this.store.observe({ accountPk: a.pk, observedAt: a.at, source: 'friend-requests', fields: { username: a.username } });
+    this.store.observeOwnFollowerEvent(a.pk, this.ownPk, a.at, 'accept');
+    const rec = this.store.getFollowRecord(a.pk);
+    if (rec !== null && this.canDetect(rec)) this.markFollowedBack(rec, a.at, a.at, null);
+  }
+
+  /**
+   * Store-only (spec §9.3): a managed record whose follower edge is active with a gain ending at or after
+   * our follow moves to `followed_back` with that gain's interval. Returns how many moved.
+   */
+  consistencyPass(now: number): number {
+    let moved = 0;
+    for (const rec of this.store.activeFollowRecords()) {
+      if (!this.canDetect(rec) && rec.state !== 'kept') continue;
+      if (rec.state === 'kept' && rec.followbackObservedAt !== undefined) continue;
+      if (this.store.getEdge(rec.accountPk, this.ownPk, 'follows')?.status !== 'active') continue;
+      const gain = this.store.growth.latestGain(rec.accountPk);
+      if (gain === null || gain.hi < (rec.followedAt ?? 0)) continue;
+      const exact = gain.lo === gain.hi ? gain.hi : null;
+      this.markFollowedBack(rec, exact, now, exact === null ? Math.max(gain.lo, rec.followedAt ?? 0) : null, gain.hi);
+      moved += 1;
+    }
+    if (moved > 0) info('followback: the graph already held follow-backs', { moved });
+    return moved;
   }
 }

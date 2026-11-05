@@ -1,0 +1,246 @@
+/*
+ * Targets — the chain lineage nodes, the breadcrumb strip, and the funnel rows.
+ * Card-internal layouts for the Targets console.
+ */
+
+/* ============ CHAIN ============ */
+.t-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+@container console (max-width: 320px) {
+  .t-stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chain-node {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  position: relative;
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  background-image: var(--sheen);
+  box-shadow: var(--elev-2);
+}
+.chain-node.current {
+  background: var(--elevated);
+  background-image: var(--sheen);
+  border-color: var(--border-hover);
+  box-shadow:
+    var(--elev-4),
+    0 0 0 1px rgba(238, 241, 244, 0.05);
+}
+.chain-link {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-6);
+  color: var(--faint);
+}
+.chain-link .stem {
+  width: 1px;
+  height: 22px;
+  background: linear-gradient(180deg, var(--border-strong), var(--border));
+}
+.chain-link span {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+}
+.cn-body {
+  flex: 1;
+  min-width: 0;
+}
+.cn-body .h {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.cn-body .h .handle {
+  font-weight: 700;
+  font-size: var(--fs-body);
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.cn-body .sub {
+  font-size: var(--fs-label);
+  color: var(--muted);
+  margin-top: var(--sp-0);
+}
+.cn-body .sub .sep {
+  color: var(--faint);
+  margin: 0 var(--sp-1);
+}
+.view-h {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-0) var(--sp-3);
+  font-size: var(--fs-small);
+  font-weight: 700;
+  color: var(--faint);
+}
+.view-h .icon {
+  flex: 0 0 auto;
+  font-size: var(--fs-label);
+}
+
+/* ============ TARGETS · lineage breadcrumb ============ */
+/* Tier 1: the chain as one compact horizontal strip of chips (chain-node
+   vocabulary — monogram avatar, badge — at pill scale). Day 0 it costs one
+   row; the full .chain-node trail renders beneath only when expanded. */
+.crumbs {
+  display: grid;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-label);
+  color: var(--muted);
+  min-width: 0;
+  max-width: 100%;
+}
+.crumb .handle {
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crumb .avatar.small {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  box-shadow: none;
+}
+.crumb .badge {
+  margin-left: auto;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+}
+.crumb.current {
+  color: var(--silver);
+}
+.crumb.next {
+  background: transparent;
+  color: var(--faint);
+  font-size: var(--fs-small);
+}
+.crumb-sep {
+  display: none;
+}
+.crumb-sep .icon {
+  font-size: var(--fs-caption);
+}
+.crumbs__toggle {
+  justify-self: start;
+}
+
+/* ============ TARGETS · funnel ============ */
+/* Tier 2: one row per lifecycle segment — palette dot, graph-legend label,
+   proportional bar (colors are injected inline from graph/palette.ts so the
+   funnel and the GraphStage legend always agree). Bar geometry mirrors .qbar
+   (3px/2px); dot geometry mirrors .pcomp-legend .dot (9px). */
+.funnel-status {
+  margin-bottom: var(--sp-2);
+}
+/* Pool context header: the observed crowd is what the stages draw FROM, not a
+   stage — it sits above the rows as a stat line, outside the shared track. */
+.funnel-pool {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.funnel-pool .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.funnel-pool .fl {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.funnel-pool .fn {
+  flex: 0 0 auto;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+}
+.funnel {
+  display: flex;
+  flex-direction: column;
+}
+/* Fixed columns (dot · label · track · count) so every row's track shares the
+   same origin AND length — cross-row bar widths stay comparable magnitudes. */
+.frow {
+  display: grid;
+  grid-template-columns: 9px 140px 1fr 6ch; /* 6ch: five digits + comma */
+  align-items: center;
+  column-gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+}
+.frow + .frow {
+  border-top: 1px solid var(--divider);
+}
+.frow .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.frow .fl {
+  min-width: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+  white-space: normal;
+}
+.frow.hazard .fl {
+  color: var(--danger-text);
+}
+.frow .fbar {
+  height: 3px;
+  border-radius: 2px; /* 3px/2px: meter geometry (as .qbar) */
+  background: var(--track-bg);
+  overflow: hidden;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.5);
+}
+/* min-width keeps any nonzero segment visible; zero rows render no fill. */
+.frow .fbar i {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 2px;
+}
+.frow .fn {
+  text-align: right;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ---------- responsive: funnel rows keep their text ---------- */
+@container console (max-width: 360px) {
+  .frow .fbar {
+    display: none;
+  }
+}

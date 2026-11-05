@@ -44,7 +44,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '25.x'
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
@@ -84,6 +84,9 @@ jobs:
             release/*.dmg
             release/*.zip
             release/*.exe
+            release/*.zip.blockmap
+            release/*.exe.blockmap
+            release/latest*.yml
           if-no-files-found: error
           retention-days: 3
 
@@ -100,37 +103,21 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '25.x'
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Rebuild native modules for Electron
-        run: npm run rebuild:electron
-
       - name: Build
         run: npm run build
 
-      # Launch the real app under a virtual display and require the main
-      # process to still be alive 25 s later. First run in a fresh userData:
-      # settings default, the intro tour is pending, and the offline hold
-      # covers any network wobble — a healthy build idles; a broken native
-      # module or startup crash exits early and fails the check.
-      - name: Boot the app and verify it stays up
+      # The shared smoke runner owns a temporary profile, blocks IG traffic,
+      # observes 25 s of uptime, then quits and removes the profile.
+      - name: Boot the app in an isolated offline profile
         run: |
           sudo apt-get update -q && sudo apt-get install -yq xvfb
-          xvfb-run --auto-servernum npx electron dist/main/main.js --no-sandbox \
-            > boot.log 2>&1 &
-          APP_PID=$!
-          sleep 25
-          if ! kill -0 "$APP_PID" 2>/dev/null; then
-            echo '::error::Electron main process exited during the 25s boot window'
-            cat boot.log
-            exit 1
-          fi
-          echo 'App is alive after 25s — boot smoke passed.'
-          kill "$APP_PID" || true
+          xvfb-run --auto-servernum node scripts/ci-boot-smoke.mjs
 
       - name: Attach the boot log
         if: always()
