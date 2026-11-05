@@ -37,6 +37,12 @@ export interface QualityEvaluation {
 }
 type ScoredRecord = FollowRecord & { score: number };
 
+export function anchoredQuality(state: CandidateQualitySnapshot | null, cfg: ScorerConfig): Pick<CandidateQualityView, 'floor' | 'needsReset'> {
+  const scores = state?.anchors.map((a) => scoreCandidate(a, cfg)) ?? [];
+  const needsReset = state !== null && (scores.length === 0 || scores.some((s) => !s.eligible));
+  return { needsReset, floor: state === null || needsReset ? null : Math.max(cfg.bandEdgeScore, Math.min(...scores.map((s) => s.score))) };
+}
+
 /** Only executable, freshly scoreable records can prove that a source is prepared. */
 export function scoreQueue(store: QualityStore, records: readonly FollowRecord[], cfg: ScorerConfig, now: number): ScoredRecord[] {
   const unsettled = store.effectIntents.pending();
@@ -62,7 +68,7 @@ function groups(records: readonly ScoredRecord[]): Map<string, ScoredRecord[]> {
 function anchor(store: QualityStore, r: FollowRecord): CandidateProfile {
   const a = store.getAccount(r.accountPk);
   if (a === null) throw new Error('Quality anchor disappeared during preparation');
-  return { followers: a.followers, following: a.following, ratio: a.ratio,
+  return { followers: a.followers, following: a.following, ratio: Number.isFinite(a.ratio) ? a.ratio : undefined,
     mutuals: a.mutuals, isPrivate: a.isPrivate, isVerified: a.isVerified };
 }
 
@@ -70,7 +76,7 @@ function anchor(store: QualityStore, r: FollowRecord): CandidateProfile {
 export function evaluateQuality(store: QualityStore, state: CandidateQualitySnapshot | null,
   config: CandidateQualityConfig, now: number): QualityEvaluation {
   const cfg = config.scorer();
-  const readyCount = Math.max(0, Math.min(config.readyCount(), config.capacity()));
+  const readyCount = Math.max(0, Math.min(config.readyCount(), config.capacity(), EXPLORATION_POLICY.queuedPerSource));
   const records = scoreQueue(store, store.followRecordsByState('queued'), cfg, now);
   let next = state;
   if (next === null && readyCount > 0) {
@@ -83,9 +89,7 @@ export function evaluateQuality(store: QualityStore, state: CandidateQualitySnap
     const best = batches[0];
     if (best !== undefined) next = { anchors: best.batch.map((r) => anchor(store, r)), qualifiedSources: [] };
   }
-  const scores = next?.anchors.map((a) => scoreCandidate(a, cfg)) ?? [];
-  const needsReset = next !== null && (scores.length === 0 || scores.some((s) => !s.eligible));
-  const floor = next === null || needsReset ? null : Math.max(cfg.bandEdgeScore, Math.min(...scores.map((s) => s.score)));
+  const { floor, needsReset } = anchoredQuality(next, cfg);
   const good = floor === null || readyCount === 0 ? [] : records.filter((r) => r.score >= floor);
   const bySource = groups(good);
   if (next !== null && !needsReset && readyCount > 0) {

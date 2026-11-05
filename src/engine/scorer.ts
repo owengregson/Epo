@@ -134,7 +134,8 @@ export function scoreCandidate(a: CandidateProfile, cfg: ScorerConfig = SCORER_D
   // are genuinely missing. An enriched account with 0 followers used to fall
   // through here (its ratio is undefined) and sit in the pool forever as a
   // zombie — enriched, unscorable, never skipped.
-  if (a.followers === undefined || a.following === undefined) {
+  if (a.followers === undefined || a.following === undefined || !Number.isSafeInteger(a.followers)
+    || !Number.isSafeInteger(a.following) || a.followers < 0 || a.following < 0) {
     return { score: 0, eligible: false, reasons: ['no-counts'] };
   }
   if (a.isVerified === true) return { score: 0, eligible: false, reasons: ['verified'] };
@@ -143,7 +144,7 @@ export function scoreCandidate(a: CandidateProfile, cfg: ScorerConfig = SCORER_D
   if (followers < cfg.minFollowers) return { score: 0, eligible: false, reasons: ['too-small'] };
   if (followers > cfg.maxFollowers) return { score: 0, eligible: false, reasons: ['too-large'] };
 
-  const r = a.ratio ?? ratioOf(a.followers, a.following);
+  const r = Number.isFinite(a.ratio) ? a.ratio : ratioOf(a.followers, a.following);
   // Counts are known, so an undefined ratio means followers === 0 — which the
   // min-followers gate normally catches; a 0-minimum config still excludes it.
   if (r === undefined) return { score: 0, eligible: false, reasons: ['ratio-excluded'] };

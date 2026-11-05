@@ -505,10 +505,10 @@ export class Foundation {
     // A seed that did not save would restart the chain from the old one: refuse instead (the service logged why).
     if (this.settings.apply([{ op: 'seed', handle: clean }], 'system').kind !== 'saved') return { ...this.builtStatus(), refusal: 'settings-not-saved' };
     if (!this.runtime.current(token) || !this.runtime.ready()) return { ...this.builtStatus(), refusal: 'runtime-intent-changed' };
-    // Scrap the current session: every active target is retired ("Set aside when
-    // you restarted"); queued records against them stop refilling.
+    // Explicit reset retires the entire old portfolio, including exhausted sources with queued leftovers.
+    // Their facts and follow obligations remain; they cannot re-establish the new source's quality bar.
     for (const t of graph.store.listTargets()) {
-      if (t.status === 'active') graph.store.setTargetStatus(t.accountPk, 'retired');
+      if (t.status !== 'retired') graph.store.setTargetStatus(t.accountPk, 'retired');
     }
     graph.store.setSourceFrontierState(null);
     // A seed the graph has already seen re-enters DELIBERATELY at the next

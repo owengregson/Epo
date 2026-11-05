@@ -46,11 +46,14 @@ export class Scanner {
   private scorerCfg?: ScorerConfig;
   private cfg: ScannerConfig;
   private readonly planDay: Pick<PlanDayClock, 'window'>;
+  private readonly quality?: { floor(): number | null; prepare(): void };
 
-  constructor(deps: { store: KnowledgeStore; scorerCfg?: ScorerConfig; cfg?: ScannerConfig; planDay?: Pick<PlanDayClock, 'window'> }) {
+  constructor(deps: { store: KnowledgeStore; scorerCfg?: ScorerConfig; cfg?: ScannerConfig; planDay?: Pick<PlanDayClock, 'window'>;
+    quality?: { floor(): number | null; prepare(): void } }) {
     this.store = deps.store;
     this.planDay = deps.planDay ?? explorationDayClock();
     this.scorerCfg = deps.scorerCfg;
+    this.quality = deps.quality;
     // Unconfigured, a target yields at most what one source may queue (the cap applied below anyway).
     this.cfg = deps.cfg ?? { dailyPlanSize: EXPLORATION_POLICY.queuedPerSource };
   }
@@ -80,6 +83,8 @@ export class Scanner {
    */
   planTarget(targetPk: string): ScanPlan {
     this.reconsiderTarget(targetPk);
+    this.quality?.prepare();
+    const floor = this.quality?.floor() ?? 0;
     const pks = this.store.candidatePksForTarget(targetPk);
 
     const ranked: RankedCandidate[] = [];
@@ -94,13 +99,21 @@ export class Scanner {
         if (!s.reasons.includes('no-counts') && acc.role !== 'retained_target') this.store.setRole(pk, 'skipped');
         continue;
       }
-      ranked.push({ pk, score: s.score });
+      // Weak profiles remain facts, not permanent rejects. They cannot fill the prepared batch.
+      if (s.score >= floor) ranked.push({ pk, score: s.score });
     }
 
     // Descending by score; ascending pk as a deterministic tie-break.
     ranked.sort((a, b) => (b.score - a.score) || (a.pk < b.pk ? -1 : a.pk > b.pk ? 1 : 0));
 
-    const alreadyQueued = this.store.followRecordsByState('queued').filter((r) => r.targetPk === targetPk).length;
+    const alreadyQueued = this.store.followRecordsByState('queued').filter((r) => {
+      if (r.targetPk !== targetPk) return false;
+      if (this.quality === undefined) return true;
+      const a = this.store.getAccount(r.accountPk);
+      if (a === null) return false;
+      const s = scoreCandidate(a, this.scorerCfg);
+      return s.eligible && s.score >= floor;
+    }).length;
     const cap = this.cfg.maxQueuedPerSource ?? EXPLORATION_POLICY.queuedPerSource;
     const selected = ranked.slice(0, Math.max(0, Math.min(this.cfg.dailyPlanSize, cap - alreadyQueued)));
     for (const c of selected) {
@@ -116,6 +129,7 @@ export class Scanner {
       if (this.store.getAccount(c.pk)?.role !== 'retained_target') this.store.setRole(c.pk, 'candidate');
     }
 
+    this.quality?.prepare();
     return {
       targetPk,
       queued: selected.map((c) => c.pk),
@@ -142,6 +156,7 @@ export class Scanner {
     if (scored > 0) {
       logger.info('scanner: refreshed queued scores', { scored });
     }
+    this.quality?.prepare();
     return scored;
   }
 }

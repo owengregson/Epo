@@ -308,6 +308,7 @@ export class Engine {
     // persistence so nextDue (and the queue display) rank instead of falling
     // back to pk order. Store-only, idempotent, no IG traffic.
     this.deps.scanner.rescoreQueued?.();
+    this.deps.frontier?.refreshQuality();
     log.info('engine: started');
     this.emitStatus();
 

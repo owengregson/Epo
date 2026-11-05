@@ -3,7 +3,7 @@ import type { PlanDayClock } from '../kernel/plan';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { compareByScoreDesc, type FollowRecord, type Target } from '../store/types';
 import * as log from '../utils/logger';
-import { type CandidateQualityConfig, type CandidateQualitySnapshot, type CandidateQualityView,
+import { anchoredQuality, type CandidateQualityConfig, type CandidateQualitySnapshot, type CandidateQualityView,
   evaluateQuality, type QualityStore, scoreQueue, validQuality } from './candidate-quality';
 import { explorationDayClock, EXPLORATION_POLICY as POLICY, planDayStartAfter } from './exploration-policy';
 import { scoreCandidate } from './scorer';
@@ -120,11 +120,12 @@ export class SourceFrontier {
     if (record.targetPk === null || this.deps.store.getTarget(record.targetPk)?.status === 'retired') return false;
     const state = this.snapshot().quality;
     if (!state?.qualifiedSources.includes(record.targetPk)) return false;
-    const view = this.qualityView();
+    const cfg = this.deps.quality.scorer();
+    const { floor } = anchoredQuality(state, cfg);
     const account = this.deps.store.getAccount(record.accountPk);
-    if (view.floor === null || view.readyCount === 0 || account === null) return false;
-    const s = scoreCandidate(account, this.deps.quality.scorer());
-    return s.eligible && s.score >= view.floor;
+    if (floor === null || this.deps.quality.readyCount() === 0 || account === null) return false;
+    const s = scoreCandidate(account, cfg);
+    return s.eligible && s.score >= floor;
   }
 
   /** Overlapping evidence is a lower bound on lifetime use, never three additive counts. */
@@ -261,8 +262,12 @@ export class SourceFrontier {
   /** Called only for fresh follows. Cleanup and safety precedence remain with the conductor. */
   pickQueued(records: readonly FollowRecord[]): FollowRecord | null {
     if (this.deps.quality !== undefined) {
-      records = scoreQueue(this.deps.store, records, this.deps.quality.scorer(), this.deps.clock.now())
-        .filter((r) => this.allowsFollow(r));
+      const quality = this.snapshot().quality;
+      const cfg = this.deps.quality.scorer();
+      const { floor } = anchoredQuality(quality ?? null, cfg);
+      if (quality === undefined || quality === null || floor === null || this.deps.quality.readyCount() === 0) return null;
+      records = scoreQueue(this.deps.store, records, cfg, this.deps.clock.now())
+        .filter((r) => r.score >= floor && r.targetPk !== null && quality.qualifiedSources.includes(r.targetPk));
     }
     if (records.length === 0) return null;
     const state = this.snapshot();

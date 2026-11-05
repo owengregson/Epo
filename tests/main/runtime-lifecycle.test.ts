@@ -109,11 +109,19 @@ test('restart from a seed discards the old durable source portfolio', async () =
   await foundation.ensureBuilt();
   const graph = internal(foundation).session.current();
   const status = await foundation.status();
+  for (const state of ['active', 'exhausted', 'retained'] as const) {
+    graph.store.addTarget({ accountPk: state, source: 'seed', status: state, chainIndex: 0 });
+    graph.store.upsertFollowRecord({ accountPk: `queued-${state}`, targetPk: state, state: 'queued', score: 1, retryCount: 0 });
+  }
   graph.store.setSourceFrontierState(JSON.stringify({ version: 1, currentTargetPk: null,
     sources: [], recentFollowSources: ['old'], totalFollows: 12 }));
   jest.spyOn(foundation, 'startEngine').mockResolvedValue(status);
   await foundation.restartFromSeed('newseed');
   expect(graph.store.getSourceFrontierState()).toBeNull();
+  for (const state of ['active', 'exhausted', 'retained'] as const) {
+    expect(graph.store.getTarget(state)?.status).toBe('retired');
+    expect(graph.store.getFollowRecord(`queued-${state}`)?.state).toBe('queued');
+  }
   await foundation.dispose();
 });
 
