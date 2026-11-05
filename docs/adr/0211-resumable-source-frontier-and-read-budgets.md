@@ -2,6 +2,11 @@
 
 Status: accepted; policy values are provisional
 
+The automatic follow-selection policy below is amended by
+[ADR 0215](0215-quality-preserving-source-handoffs.md): source fairness applies
+only to prepared cohorts above a durable quality floor. Read-source visits can
+advance while good candidates from earlier sources remain available.
+
 The previous chain mined one audience until exhaustion or cumulative coverage,
 then selected a replacement. Large raw follower counts could keep the bot in one
 neighborhood for many days. Rejecting a sufficient local candidate pool could

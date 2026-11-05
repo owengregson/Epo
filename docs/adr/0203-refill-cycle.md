@@ -2,6 +2,10 @@
 
 **Status:** accepted · **Area:** engine (`src/engine/target-pipeline.ts`)
 
+[ADR 0215](0215-quality-preserving-source-handoffs.md) adds quality-aware queue
+occupancy and bounded preparation between actions. New observations are planned
+before yielding; partial preparation never authorizes lower-quality follows.
+
 ## Context
 
 The growth loop works one chain target at a time. Keeping its candidate queue
