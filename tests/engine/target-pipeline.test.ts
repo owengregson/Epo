@@ -4,7 +4,7 @@
  */
 
 import type { EngineAcquisition, EngineEnricher, EngineScanner } from '@/engine/ports';
-import type { SourceFrontier } from '@/engine/source-frontier';
+import { SourceFrontier } from '@/engine/source-frontier';
 import { TargetPipeline, type TargetPipelineDeps } from '@/engine/target-pipeline';
 import { FakeClock } from '@/governors/clock';
 import { calendarPlanDayClock } from '@/governors/plan-day-clock';
@@ -25,10 +25,13 @@ afterEach(() => store.close());
 function pipeline(over: { frontierResumeAt?: number | null; acquisition?: EngineAcquisition }) {
   const clock = new FakeClock(T0);
   const idles: number[][] = [];
-  const frontier = over.frontierResumeAt === undefined ? undefined : ({
-    snapshot: () => ({ sources: [{ pk: 'src' }] }),
-    nextResumeAt: () => over.frontierResumeAt ?? null,
-  } as unknown as SourceFrontier);
+  const frontier = over.frontierResumeAt === undefined ? undefined : new SourceFrontier({ store, clock });
+  if (frontier !== undefined) {
+    frontier.offer('src', 'seed');
+    const state = frontier.snapshot();
+    state.sources[0].resumeAt = over.frontierResumeAt ?? T0;
+    store.setSourceFrontierState(JSON.stringify(state));
+  }
   const view = stubPlanView(T0, { open: true, nextSessionAt: null, target: 25 });
   const deps: TargetPipelineDeps = {
     store, clock, frontier,

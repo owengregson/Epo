@@ -9,7 +9,7 @@ import type { InstagramAdapter } from '@/adapter/instagram-adapter';
 import { Engine } from '@/engine/engine';
 import { FollowbackWatcher } from '@/engine/followback-watcher';
 import { UNCONFIGURED_PROTECTION } from '@/engine/protection-port';
-import type { SourceFrontier } from '@/engine/source-frontier';
+import { SourceFrontier } from '@/engine/source-frontier';
 import { FakeClock, type SystemClock } from '@/governors/clock';
 import { ReadBudget } from '@/governors/read-budget';
 import type { GraphBuildDeps } from '@/main/services/graph-types';
@@ -87,7 +87,7 @@ function rig(accounts: Record<string, { pk: string; page: Page; record?: boolean
   };
   const adapter = { sentinel: new FakeSentinel(), actor } as unknown as InstagramAdapter;
   const churnActions = new AdapterBackedChurnActions({ adapter, store, ownPk: 'me', dryRun: false, clock });
-  const churn = wireChurn(d, { frontier: { pickQueued: () => null } as unknown as SourceFrontier, store,
+  const churn = wireChurn(d, { frontier: new SourceFrontier({ store, clock, planDay: dayClock }), store,
     clock: clock as unknown as SystemClock, rate, churnActions, ownPk: 'me', settings: effectiveFromV1(settings), dayClock });
   const engine = new Engine(testDeps({ store, clock, rate, churn, followback: sweep, settings,
     delays: new DelayManager({ clock, sleep: async (ms) => { clock.advance(ms); } }),
