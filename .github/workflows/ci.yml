@@ -128,10 +128,12 @@ jobs:
 
       - name: Publish coverage summary
         if: always()
+        env:
+          COVERAGE_NODE_VERSION: ${{ matrix.node-version }}
         run: |
           if [ -f coverage/coverage-summary.json ]; then
             {
-              echo '## Coverage (node ${{ matrix.node-version }})'
+              printf '## Coverage (node %s)\n' "$COVERAGE_NODE_VERSION"
               echo '| Metric | % |'
               echo '|---|---|'
               for m in lines statements branches functions; do
