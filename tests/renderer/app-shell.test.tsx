@@ -74,6 +74,19 @@ describe('App — five stages behind one bar', () => {
     expect(stageCalls()).toContainEqual(['setStage', 'tab', false, false]);
   });
 
+  it('keeps the top strip exclusively for navigation when Live ownership changes', async () => {
+    await mountApp();
+    const bar = document.querySelector('.stagebar') as HTMLElement;
+    for (const busy of [true, false]) {
+      await act(async () => {
+        bridge.emit('activity', { activity: null, busy, holds: [] });
+        bridge.emit('status', idleStatus({ state: 'running', nextActionAt: Date.now() + 60_000 }));
+      });
+      expect(within(bar).getAllByRole('radio')).toHaveLength(5);
+      expect(bar.textContent).toBe('LivePeopleGraphPruneSettings');
+    }
+  });
+
   it('keeps Live covered until the boot reveal', async () => {
     liveRevealedSignal.value = false;
     await mountApp();

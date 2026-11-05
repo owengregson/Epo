@@ -178,9 +178,10 @@
 .stagebar {
   flex: 0 0 44px;
   height: 44px;
+  container-type: inline-size;
   display: flex;
   align-items: center;
-  padding: 0 10px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--border);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent), var(--bg);
@@ -259,16 +260,7 @@
 .stageseg button.active .stageseg-aux {
   color: var(--silver);
 }
-/* Equal tabs use the available stage width. Live context shares the bar only
-   when there is room to read it; the native pane still begins at 44 px. */
-.stagebar {
-  container-type: inline-size;
-  gap: 16px;
-  padding: 0 16px;
-}
-.stagebar .stageseg {
-  flex: 1 1 auto;
-}
+/* Equal tabs use the full available stage width at every window size. */
 .stagebar .stageseg button {
   flex: 1 1 0;
   font-size: var(--fs-label);
@@ -287,21 +279,6 @@
   border-radius: 50%;
   background: var(--st-live);
   animation: beaconBreath 2.2s var(--ease-in-out) infinite;
-}
-.stagebar-context {
-  flex: 0 1 280px;
-  margin-left: auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-small);
-  color: var(--muted);
-}
-@container (max-width: 760px) {
-  .stagebar-context {
-    display: none;
-  }
 }
 /* The graph repeats its total in its own legend. Secondary counts yield before
    navigation labels when the stage cannot give each tab enough room. */
