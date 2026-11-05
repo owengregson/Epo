@@ -3,6 +3,12 @@
 // type-checking is a separate gate (`tsc --noEmit`). Two transforms so `.ts`
 // angle-bracket casts and `.tsx` JSX (Preact automatic runtime, `preact/jsx-runtime`)
 // each parse under the correct parser flags.
+
+// Set the real process timezone before Jest creates its workers. Mutating TZ
+// inside a test's sandbox does not update Date's timezone on UTC CI runners.
+// A DST-observing zone keeps local plan-day fixtures deterministic everywhere.
+process.env.TZ = 'America/Los_Angeles';
+
 /** @type {import('jest').Config} */
 const swc = (tsx) => [
   '@swc/jest',

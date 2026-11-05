@@ -20,14 +20,6 @@ import {
 import type { CircadianShape } from '@/kernel/plan/types';
 import { MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE } from '@/kernel/units';
 
-const TZ = process.env.TZ;
-beforeAll(() => {
-  process.env.TZ = 'America/Los_Angeles';
-});
-afterAll(() => {
-  process.env.TZ = TZ;
-});
-
 const shapeOf = (day: 'balanced' | 'nightowl' | 'morning'): CircadianShape => ({
   bumps: dayShapeBumps(day),
   overnightFloor: overnightFloor(day),
