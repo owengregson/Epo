@@ -135,7 +135,8 @@ export function scoreCandidate(a: CandidateProfile, cfg: ScorerConfig = SCORER_D
   // through here (its ratio is undefined) and sit in the pool forever as a
   // zombie — enriched, unscorable, never skipped.
   if (a.followers === undefined || a.following === undefined || !Number.isSafeInteger(a.followers)
-    || !Number.isSafeInteger(a.following) || a.followers < 0 || a.following < 0) {
+    || !Number.isSafeInteger(a.following) || a.followers < 0 || a.following < 0
+    || (a.mutuals !== undefined && (!Number.isSafeInteger(a.mutuals) || a.mutuals < 0))) {
     return { score: 0, eligible: false, reasons: ['no-counts'] };
   }
   if (a.isVerified === true) return { score: 0, eligible: false, reasons: ['verified'] };

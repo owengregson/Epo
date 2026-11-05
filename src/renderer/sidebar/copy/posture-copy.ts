@@ -96,6 +96,11 @@ export function sentenceOf(p: Posture, f: NowFacts): string {
     case 'resting': return 'Between sessions.';
     case 'working': {
       if (p.overlay.careful) return 'Checking that Instagram’s limit has lifted';
+      const quality = s?.candidateQuality;
+      if (quality?.needsReset) return 'Your audience criteria changed. Restart from a source to prepare a new candidate pool.';
+      if (quality !== undefined && quality.readyCandidates === 0 && quality.requiredCandidates > 0) {
+        return `Preparing good candidates · ${count(quality.preparingCandidates)} of ${count(quality.requiredCandidates)} ready`;
+      }
       if (p.overlay.boost) return 'Finding and following new people';
       const source = s?.currentTargetUsername ?? null;
       return source === null ? 'Finding new people' : `Finding people through @${source}’s followers`;

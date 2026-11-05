@@ -90,7 +90,8 @@ export function evaluateQuality(store: QualityStore, state: CandidateQualitySnap
     if (best !== undefined) next = { anchors: best.batch.map((r) => anchor(store, r)), qualifiedSources: [] };
   }
   const { floor, needsReset } = anchoredQuality(next, cfg);
-  const good = floor === null || readyCount === 0 ? [] : records.filter((r) => r.score >= floor);
+  const preparingFloor = floor ?? (next === null ? cfg.bandEdgeScore : null);
+  const good = preparingFloor === null || readyCount === 0 ? [] : records.filter((r) => r.score >= preparingFloor);
   const bySource = groups(good);
   if (next !== null && !needsReset && readyCount > 0) {
     const qualified = new Set(next.qualifiedSources.filter((pk) => store.getTarget(pk)?.status !== 'retired'));

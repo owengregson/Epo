@@ -46,10 +46,10 @@ export class Scanner {
   private scorerCfg?: ScorerConfig;
   private cfg: ScannerConfig;
   private readonly planDay: Pick<PlanDayClock, 'window'>;
-  private readonly quality?: { floor(): number | null; prepare(): void };
+  private readonly quality?: { floor(): number | null; prepare(): void; usableCount?(pk: string): number };
 
   constructor(deps: { store: KnowledgeStore; scorerCfg?: ScorerConfig; cfg?: ScannerConfig; planDay?: Pick<PlanDayClock, 'window'>;
-    quality?: { floor(): number | null; prepare(): void } }) {
+    quality?: { floor(): number | null; prepare(): void; usableCount?(pk: string): number } }) {
     this.store = deps.store;
     this.planDay = deps.planDay ?? explorationDayClock();
     this.scorerCfg = deps.scorerCfg;
@@ -106,7 +106,7 @@ export class Scanner {
     // Descending by score; ascending pk as a deterministic tie-break.
     ranked.sort((a, b) => (b.score - a.score) || (a.pk < b.pk ? -1 : a.pk > b.pk ? 1 : 0));
 
-    const alreadyQueued = this.store.followRecordsByState('queued').filter((r) => {
+    const alreadyQueued = this.quality?.usableCount?.(targetPk) ?? this.store.followRecordsByState('queued').filter((r) => {
       if (r.targetPk !== targetPk) return false;
       if (this.quality === undefined) return true;
       const a = this.store.getAccount(r.accountPk);

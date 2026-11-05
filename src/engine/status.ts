@@ -8,6 +8,12 @@ import type { SourceFrontierSnapshot } from './source-frontier';
 export interface EngineStatus {
   health?: RuntimeHealthSnapshot;
   frontier?: SourceFrontierSnapshot;
+  candidateQuality?: {
+    readyCandidates: number;
+    requiredCandidates: number;
+    preparingCandidates: number;
+    needsReset: boolean;
+  };
   state: EngineState;
   currentTargetPk: string | null;
   currentTargetUsername: string | null;

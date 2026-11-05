@@ -17,9 +17,16 @@ export function projectEngineStatus(deps: EngineDeps, target: CurrentTarget | nu
         ? null
         : (store.getTarget(target.pk)?.chainIndex ?? null);
     const view = plan.view(clock.now());
+    const quality = deps.frontier?.qualityEnabled() ? deps.frontier.qualityView() : null;
     return {
       health: health.snapshot(),
       frontier: deps.frontier?.snapshot(),
+      candidateQuality: quality === null ? undefined : {
+        readyCandidates: quality.qualifiedSources.reduce((sum, pk) => sum + (quality.counts.get(pk) ?? 0), 0),
+        requiredCandidates: quality.readyCount,
+        preparingCandidates: target === null ? 0 : (quality.counts.get(target.pk) ?? 0),
+        needsReset: quality.needsReset,
+      },
       currentTargetPk: target?.pk ?? null,
       currentTargetUsername: target?.username ?? null,
       chainIndex,

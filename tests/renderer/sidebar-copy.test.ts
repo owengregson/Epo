@@ -79,6 +79,8 @@ function posture(kind: PostureKind, over: Partial<Posture> = {}): Posture {
 
 const statuses: EpoStatus[] = [
   idleStatus(),
+  idleStatus({ candidateQuality: { readyCandidates: 0, requiredCandidates: 5, preparingCandidates: 3, needsReset: false } }),
+  idleStatus({ candidateQuality: { readyCandidates: 0, requiredCandidates: 5, preparingCandidates: 0, needsReset: true } }),
   idleStatus({ lastActionAt: T - HOUR, plan, currentTargetUsername: 'studio.lumen' }),
   idleStatus({
     state: 'running', parkReason: 'read-budget', parkedUntil: T + HOUR, plan: { ...plan, totals: { ...plan.totals, planned: 0 }, day: { ...plan.day, lateStart: true } },
@@ -88,6 +90,12 @@ const statuses: EpoStatus[] = [
   }),
   idleStatus({ state: 'running', parkReason: 'daily-ceiling', plan: { ...plan, totals: { ...plan.totals, planned: 0 }, day: { ...plan.day, light: true } } }),
 ];
+
+test('quality preparation reports progress and an incompatible audience edit explains the reset', () => {
+  const facts = { status: statuses[1]!, prune: null, now: T };
+  expect(sentenceOf(posture('working'), facts)).toBe('Preparing good candidates · 3 of 5 ready');
+  expect(sentenceOf(posture('working'), { ...facts, status: statuses[2]! })).toContain('Restart from a source');
+});
 
 const ops: LiveOp[] = [
   { op: 'follow', username: 'jane' }, { op: 'unfollow', username: 'carl' }, { op: 'accept-request', username: 'dana' },
