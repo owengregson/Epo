@@ -9,7 +9,7 @@ import { explorationDayClock, EXPLORATION_POLICY as POLICY, planDayStartAfter } 
 import { scoreCandidate } from './scorer';
 import { matureYields, observedOverlap, priorYield } from './source-quality';
 
-export type SourceVisitEndReason = 'visit-budget' | 'low-yield' | 'verified-ended' | 'coverage-policy';
+export type SourceVisitEndReason = 'visit-budget' | 'queue-stocked' | 'low-yield' | 'verified-ended' | 'coverage-policy';
 export interface SourceVisit {
   startedAt: number;
   follows: number;

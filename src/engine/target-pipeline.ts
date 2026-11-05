@@ -1,7 +1,6 @@
 /**
- * The target pipeline: which chain target the loop works, and the bounded refill cycle that stocks its
- * queue — at most one acquisition, {@link MAX_ENRICH_PASSES_PER_CYCLE} enrichment passes, then a plan;
- * only a plan that enqueued something opens another cycle (`docs/adr/0203-refill-cycle.md`).
+ * Bounded acquisition and profile preparation for the current read source. Successful profiles
+ * are planned before yielding; separate quality cohorts admit follows (ADR 0203).
  */
 
 import type { Clock } from '../governors/clock';
@@ -66,6 +65,7 @@ export class TargetPipeline {
   private enrichPassesThisCycle = 0;
   /** Profiles enriched this cycle — "pool being worked through" vs "walled". */
   private enrichedThisCycle = 0;
+  private profilesThisSlice = 0;
   private exhausted = false;
   /** The latest GENUINE acquire end reason: the evidence the latch consults. */
   private lastAcquireEnd: AcquireEndReason | null = null;
@@ -76,6 +76,7 @@ export class TargetPipeline {
   /** Targets already granted their ONE dead-end re-verify this run. */
   private readonly revivedTargets = new Set<string>();
   private readDeferredUntil = 0;
+  private advanceDeferredUntil = 0;
 
   constructor(deps: TargetPipelineDeps) {
     this.deps = deps;
@@ -95,6 +96,11 @@ export class TargetPipeline {
   }
 
   refillAvailableAt(): number { return this.readDeferredUntil; }
+  advanceAvailableAt(): number { return this.advanceDeferredUntil; }
+  deferPreparation(retryAt: number, readRetryAt?: number): void {
+    this.advanceDeferredUntil = retryAt;
+    if (readRetryAt !== undefined) this.readDeferredUntil = Math.max(this.readDeferredUntil, readRetryAt);
+  }
 
   /** Optional reads wait until `retryAt`; a refusal naming no instant waits for the plan-day's end (spec §17.8). */
   private deferReads(retryAt: number | undefined, why = 'durable budget'): 'idle' {
@@ -113,18 +119,12 @@ export class TargetPipeline {
     this.revivedTargets.add(pk);
   }
 
-  /**
-   * Forget the in-memory target so the next start() re-adopts the store's
-   * ACTIVE front — store-side chain edits between runs then take effect.
-   */
+  /** Re-adopt durable source edits on the next start. */
   forget(): void {
     this.current = null;
   }
 
-  /**
-   * Adopt the store's active target with the highest chainIndex (the front of the
-   * chain), if any. Free — no IG traffic. Returns whether a target was adopted.
-   */
+  /** Adopt the durable read source without Instagram traffic. */
   adoptActiveTargetFromStore(): boolean {
     const pick = peekResumeTarget(this.deps);
     if (pick === null) return false;
@@ -162,9 +162,7 @@ export class TargetPipeline {
     const targetPk = acquired.targetPk;
     if (targetPk === null) return this.deps.halt({ kind: 'seed-unresolved' });
 
-    // NEVER silently resurrect a burned-out chain (re-adding an exhausted seed corrupts the lineage on
-    // every restart); a RECENT evidence-stamped exhaustion may be an outage artifact, so it is
-    // re-verified once before the terminal halt. Restart-from-seed is the sanctioned way back in.
+    // Restart-from-seed is explicit; only recent evidence-stamped exhaustion gets one recheck.
     if (this.deps.store.getTarget(targetPk)?.status === 'exhausted') {
       const revived = this.reviveRecentExhausted();
       if (revived === null) return this.deps.halt({ kind: 'chain-exhausted' });
@@ -183,15 +181,13 @@ export class TargetPipeline {
       username: this.deps.store.getAccount(targetPk)?.username ?? seed,
     };
     this.deps.frontier?.beginVisit(targetPk, 'seed');
-    // Only a GENUINELY completed read consumes the first cycle's acquisition
-    // (and records latch evidence) — a failed seed read (a rate wall at first
-    // contact) leaves step 7 free to retry instead of planning an empty pool
-    // straight into the exhaustion latch.
+    // Failed seed reads leave the acquisition opportunity open and cannot prove exhaustion.
     const failed = isAcquireFailure(acquired.endReason);
     this.acquiredThisCycle = !failed;
     this.lastAcquireEnd = failed ? null : acquired.endReason;
     this.enrichPassesThisCycle = 0;
     this.enrichedThisCycle = 0;
+    this.profilesThisSlice = 0;
     this.sliceReopens = 0;
     this.exhausted = false;
     const plan = this.deps.scanner.planTarget(targetPk);
@@ -207,11 +203,13 @@ export class TargetPipeline {
 
   /** Make `pk` the current target and reset the refill-cycle guards for it. */
   adoptTarget(pk: string): void {
+    this.advanceDeferredUntil = 0;
     this.current = { pk, username: this.deps.store.getAccount(pk)?.username ?? null };
     this.deps.frontier?.beginVisit(pk, this.deps.store.getTarget(pk)?.source ?? 'discovered');
     this.acquiredThisCycle = false;
     this.enrichPassesThisCycle = 0;
     this.enrichedThisCycle = 0;
+    this.profilesThisSlice = 0;
     this.walledCycles = 0;
     this.lastAcquireEnd = null;
     this.sliceReopens = 0;
@@ -225,11 +223,11 @@ export class TargetPipeline {
 
   /**
    * One bounded refill slice: acquire when stored prospects are insufficient,
-   * enrich at most one profile batch, then plan on the next firing. The frontier
+   * enrich at most one profile batch, then plan before yielding. The frontier
    * defers unproductive visits; only observed drain evidence closes the source.
    * Read-budget refusal records a deadline without blocking existing actions.
    */
-  async refillPool(current: CurrentTarget, token: AbortController): Promise<StepResult> {
+  async refillPool(current: CurrentTarget, token: AbortController, oneRead = false): Promise<StepResult> {
     this.deps.scanner.reconsiderTarget?.(current.pk, this.deps.clock.now());
 
     // (1) At most one acquisition per cycle — and NONE while the store holds several plans' worth of
@@ -256,36 +254,43 @@ export class TargetPipeline {
         if (acquired.endReason === 'read-budget') return this.deferReads(
           'retryAt' in acquired && typeof acquired.retryAt === 'number' ? acquired.retryAt : undefined);
         if (isAcquireFailure(acquired.endReason)) {
-          // A FAILED read yields no evidence about the audience: the cycle's
-          // acquisition opportunity stays UNCONSUMED (the retry after the
-          // backoff re-acquires) and the exhaustion latch is untouched.
+          // A failure keeps the acquisition opportunity and supplies no exhaustion evidence.
           return this.acquireFailedBackoff(current, acquired.endReason, token);
         }
-        // Consume the cycle's acquisition only NOW — on a genuine completion —
-        // and record its end reason as the latch's evidence.
+        // Only completed reads supply end evidence.
         this.acquiredThisCycle = true;
         this.lastAcquireEnd = acquired.endReason;
+        if (oneRead) {
+          const plan = this.deps.scanner.planTarget(current.pk);
+          if (plan.queued.length > 0) this.deps.frontier?.notePlan(current.pk, plan.queued.length);
+          return 'acquired';
+        }
       }
     }
 
     // (2) Up to one slice of candidates still lacking counts: the smaller of a slice and the open session's
     // explore reads (spec §5.16). A session with none leaves them to the next session — a zero slice is no wall.
     const freshSince = weeklyCycleSince((t) => this.deps.plan.dayWindow(t), now);
-    const slice = Math.min(ENRICH_BATCH_SIZE, view.open?.readsLeft.explore ?? 0);
+    const slice = Math.min(oneRead ? 1 : ENRICH_BATCH_SIZE - this.profilesThisSlice, view.open?.readsLeft.explore ?? 0);
     const usernames = unenrichedUsernames(this.deps.store, current.pk, slice, freshSince);
-    if (slice === 0 && unenrichedUsernames(this.deps.store, current.pk, 1, freshSince).length > 0) {
+    if ((view.open?.readsLeft.explore ?? 0) === 0 && unenrichedUsernames(this.deps.store, current.pk, 1, freshSince).length > 0) {
       return this.deferReads(view.nextSessionAt ?? view.window.endsAt, 'no explore reads this session');
     }
 
-    // (3) Enrich them (bounded per cycle); the next firing scores what came back.
+    // (3) Score newly observed profiles before yielding, so the next action sees the better queue.
+    let plan: ReturnType<EngineScanner['planTarget']> | undefined;
     if (usernames.length > 0 && this.enrichPassesThisCycle < MAX_ENRICH_PASSES_PER_CYCLE) {
       this.enrichPassesThisCycle += 1;
       const enriched = await this.deps.enricher.enrich(usernames);
       this.deps.frontier?.noteEnrichment(current.pk, usernames.length);
       this.enrichedThisCycle += enriched;
+      this.profilesThisSlice += usernames.length;
+      plan = this.deps.scanner.planTarget(current.pk);
       const resumeAt = this.deps.enricher.budgetResumeAt?.();
       if (resumeAt !== undefined && resumeAt !== null) {
         this.enrichPassesThisCycle = 0;
+        this.profilesThisSlice = 0;
+        if (plan.queued.length > 0) this.deps.frontier?.notePlan(current.pk, plan.queued.length);
         return this.deferReads(resumeAt);
       }
       log.info('engine: enriched candidates', {
@@ -294,19 +299,23 @@ export class TargetPipeline {
         enriched,
         pass: this.enrichPassesThisCycle,
       });
-      return 'acquired';
+      if (enriched === 0) return 'acquired';
+      if (oneRead && enriched > 0 && plan.queued.length === 0 && this.profilesThisSlice < ENRICH_BATCH_SIZE &&
+        unenrichedUsernames(this.deps.store, current.pk, 1, freshSince).length > 0) {
+        this.enrichPassesThisCycle = 0;
+        return 'acquired';
+      }
     }
 
     // (4) Plan — final for this cycle when it enqueues nothing.
-    const plan = this.deps.scanner.planTarget(current.pk);
+    plan ??= this.deps.scanner.planTarget(current.pk);
+    this.profilesThisSlice = 0;
     this.deps.frontier?.notePlan(current.pk, plan.queued.length);
     if (plan.queued.length > 0) {
-      this.acquiredThisCycle = false;
+      // A partial preparation step works the paid-for rows before opening another list.
+      this.acquiredThisCycle = oneRead && unenrichedUsernames(this.deps.store, current.pk, 1, freshSince).length > 0;
       this.enrichPassesThisCycle = 0;
-      // Reset with its sibling guards: a stale positive count from THIS cycle
-      // would otherwise make the NEXT cycle's rate wall read as "progressing"
-      // and skip the long backoff exactly when it is needed (walls typically
-      // land right after a burst of successful requests).
+      // Progress in this cycle must not mask a wall in the next one.
       this.enrichedThisCycle = 0;
       this.walledCycles = 0; // real progress — the read side is not walled
       this.sliceReopens = 0; // real progress — the list is still yielding
@@ -339,13 +348,7 @@ export class TargetPipeline {
         target: current.pk,
       });
     } else if (this.lastAcquireEnd !== null && !ACQUIRE_DRAIN_REASONS.has(this.lastAcquireEnd)) {
-      // The LOCAL pool is spent, but the latest acquire only BOUNDED A SLICE
-      // (demand met / page budget / known-rows window / stagnant) — the list
-      // was never verified done, so this zero is designed, not exhaustion
-      // evidence. Reopen the cycle's acquisition: the persisted cursor
-      // resumes exactly where the slice stopped. Bounded against a long
-      // known-only tail: from the walled-cycles threshold on, each reopen
-      // first takes the long backoff so zero-yield slices can never hot-loop.
+      // A bounded slice is not drain evidence. Resume its durable cursor, backing off repeated zeros.
       this.acquiredThisCycle = false;
       this.enrichPassesThisCycle = 0;
       this.enrichedThisCycle = 0;
@@ -366,11 +369,7 @@ export class TargetPipeline {
       this.enrichPassesThisCycle = 0;
       this.enrichedThisCycle = 0;
     } else {
-      // POSITIVE evidence only: nothing plannable remains locally AND the
-      // latest acquire either VERIFIED the list's end ('no-more-pages') or
-      // deliberately closed it ('coverage-cap') — or no acquisition is
-      // possible at all (username unknown / a wiring without one), where
-      // latching is the only way the cycle terminates.
+      // Drain evidence (or an unaddressable source), never a failed read, closes this source.
       this.exhausted = true;
     }
     log.info('engine: refill planned', {

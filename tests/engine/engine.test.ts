@@ -955,9 +955,8 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     expect(h.acquisition.calls).toEqual(['targetone']);
     expect(h.enricher.calls).toEqual([['fone', 'ftwo', 'ffour']]);
 
-    // Step 2: everything has counts now → plan: eligible enqueued, rejected SKIPPED.
-    expect(await h.engine.stepOnce()).toBe('acquired');
-    expect(h.acquisition.calls).toEqual(['targetone']); // no re-acquire mid-cycle
+    // The same step plans the returned profiles before any later action can choose.
+    expect(h.acquisition.calls).toEqual(['targetone']);
     expect(h.store.getFollowRecord('f1')!.state).toBe('queued');
     expect(h.store.getFollowRecord('f2')!.state).toBe('queued');
     expect(h.store.getAccount('f3')!.role).toBe('skipped');
@@ -965,13 +964,13 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
     expect(h.store.candidatePksForTarget('t1')).toEqual([]); // the pool genuinely shrank
     expect(h.engine.status().queued).toBe(2);
 
-    // Step 3: still under low-water, but progress opened a NEW cycle: one more
+    // Step 2: still under low-water, but progress opened a NEW cycle: one more
     // acquisition, nothing left to enrich, and the final plan enqueues 0 → EXHAUSTED.
     expect(await h.engine.stepOnce()).toBe('acquired');
     expect(h.acquisition.calls).toEqual(['targetone', 'targetone']);
     expect(h.enricher.calls.length).toBe(1);
 
-    // Steps 4..8: step 7 is latched off — the refill can NEVER fire again for this
+    // Subsequent steps: the refill can NEVER fire again for this
     // target. No acquisition, no enrichment: the livelock is structurally impossible.
     for (let i = 0; i < 5; i += 1) expect(await h.engine.stepOnce()).toBe('idle');
     expect(h.acquisition.calls.length).toBe(2);
@@ -1032,8 +1031,8 @@ describe('Engine — R1 candidate enrichment + livelock guard (real Scanner)', (
       fields: { followers: 500, following: 550, isVerified: true },
     });
 
-    expect(await h.engine.stepOnce()).toBe('acquired'); // acquire + enrich pass
-    expect(await h.engine.stepOnce()).toBe('acquired'); // plan: f1 scored → rejected → skipped
+    expect(await h.engine.stepOnce()).toBe('acquired'); // acquire + enrich + plan
+    expect(h.store.getAccount('f1')?.role).toBe('skipped');
 
     // Every candidate is now scored-and-skipped: the target is exhausted and
     // the chain advances (none left → halt).

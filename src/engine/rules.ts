@@ -53,10 +53,10 @@ export type EffectRef =
   | { id: 'bootstrap-seed-target' }
   | { id: 'settle-journal'; now: number }
   | { id: 'sweep-followback'; now: number }
-  | { id: 'refill-pool'; target: CurrentTarget }
+  | { id: 'refill-pool'; target: CurrentTarget; oneRead?: boolean }
   | { id: 'churn-action'; now: number; record: FollowRecord }
   | { id: 'woven-unfollow'; now: number; candidate: FeedCandidate }
-  | { id: 'advance-chain'; target: CurrentTarget }
+  | { id: 'advance-chain'; target: CurrentTarget; oneRead?: boolean; preparingReserve?: boolean }
   | { id: 'idle' };
 
 /**
@@ -187,10 +187,12 @@ const refillRule = defineRule({
     // Defensive: the target rule bootstraps rather than falling through, so a
     // null here would mean the table was reordered wrong.
     if (target === null) return null;
+    if (f.queue.canPrepare === false) return null;
     if ((f.queue.refillAvailableAt ?? 0) > f.clock.now) return null;
     if (f.queue.rotationReason || (f.queue.yieldToAction && (f.action.due !== null || f.action.pruneCandidate !== null))) return null;
     return f.queue.queuedForTarget < f.queue.lowWaterCandidates && !f.queue.targetExhausted
-      ? { do: 'run', effect: { id: 'refill-pool', target } }
+      ? { do: 'run', effect: { id: 'refill-pool', target,
+        ...(f.queue.qualityEnabled && (f.action.due !== null || f.action.pruneCandidate !== null) ? { oneRead: true } : {}) } }
       : null;
   },
 });
@@ -217,10 +219,11 @@ const actionRule = defineRule({
 const chainRule = defineRule({
   id: 'chain',
   modes: ['growth'],
-  needs: ['target', 'queue'],
+  needs: ['target', 'queue', 'clock'],
   decide: (f) => {
     const target = f.target.current;
     if (target === null) return null;
+    if (f.queue.canPrepare === false || Math.max(f.queue.refillAvailableAt ?? 0, f.queue.advanceAvailableAt ?? 0) > f.clock.now) return null;
     return f.queue.queuedForTarget === 0 && f.queue.targetExhausted
       ? { do: 'run', effect: { id: 'advance-chain', target } }
       : null;

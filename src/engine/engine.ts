@@ -304,9 +304,7 @@ export class Engine {
     // exhausted target re-earns its ONE dead-end re-verify for this run.
     this.targets.clearRevived();
     this.sessionStartedAt = this.deps.clock.now();
-    // Legacy-queue hygiene: score any queued records that predate score
-    // persistence so nextDue (and the queue display) rank instead of falling
-    // back to pk order. Store-only, idempotent, no IG traffic.
+    // Store-only queue hygiene and cohort preparation before the first selection.
     this.deps.scanner.rescoreQueued?.();
     this.deps.frontier?.refreshQuality();
     log.info('engine: started');
@@ -487,11 +485,7 @@ export class Engine {
     return claim === null ? 'idle' : this.perform(claim.verdict, token);
   }
 
-  /**
-   * Perform the single verdict a rule returned. A `halt` with a null reason is
-   * "this generation is superseded, or we already halted" — stop the step
-   * without minting a new halt; a `park` performs the one wait its key names.
-   */
+  /** Perform one verdict; a null halt means the generation was superseded. */
   private async perform(verdict: RuleVerdict, token: AbortController): Promise<StepResult> {
     switch (verdict.do) {
       case 'halt':
@@ -528,7 +522,7 @@ export class Engine {
         return runFollowbackSweep(this.ctx, token);
       case 'refill-pool': {
         this.refillSinceAction = true;
-        const result = await this.targets.refillPool(effect.target, token);
+        const result = await this.targets.refillPool(effect.target, token, effect.oneRead);
         return result;
       }
       case 'churn-action':
@@ -540,7 +534,8 @@ export class Engine {
           actWovenUnfollow(this.ctx, effect.candidate, actAt, token),
         );
       case 'advance-chain':
-        return this.advanceChain(effect.target);
+        this.refillSinceAction = true;
+        return this.advanceChain(effect.target, effect);
       case 'idle':
         await this.idleWait(this.deps.clock.now());
         return 'idle';
@@ -566,6 +561,9 @@ export class Engine {
       rotationReason: () => this.deps.frontier ? this.targets.rotationReason() : null,
       settlesJournal: this.deps.settleJournal !== undefined,
       refillAvailableAt: () => this.targets.refillAvailableAt(),
+      advanceAvailableAt: () => this.targets.advanceAvailableAt(),
+      frontier: this.deps.frontier,
+      prepareCandidates: () => this.deps.frontier?.refreshQuality(),
       settings: () => this.settings,
       aborted: () => this.superseded(this.stepToken),
       halted: () => this.engineState === 'halted',
@@ -577,14 +575,11 @@ export class Engine {
     });
   }
 
-  /**
-   * Advance past a spent target. On a dead end, one self-heal pass first:
-   * re-verify the most recently exhausted target — an exhaustion stamped during
-   * a rate-wall/drift window is absence of evidence. The CURRENT target just
-   * latched on fresh drain evidence, so it can never revive itself.
-   */
-  private async advanceChain(current: CurrentTarget): Promise<StepResult> {
-    const advance = await this.deps.chain.advance(current.pk, this.targets.rotationReason() ?? undefined);
+  /** Advance the read source; preserve actionable queues and defer unavailable preparation. */
+  private async advanceChain(current: CurrentTarget, options: { oneRead?: boolean; preparingReserve?: boolean }): Promise<StepResult> {
+    const advance = await this.deps.chain.advance(current.pk,
+      options.preparingReserve ? 'queue-stocked' : this.targets.rotationReason() ?? undefined,
+      { preparingReserve: options.preparingReserve, ...(options.oneRead ? { profileLimit: 1 } : {}) });
     if (advance.nextTargetPk !== null) {
       this.targets.adoptTarget(advance.nextTargetPk);
       this.noteProgress('source-rotated');
@@ -596,6 +591,8 @@ export class Engine {
       return 'advanced-chain';
     }
     if (advance.retryAt !== undefined) {
+      this.targets.deferPreparation(advance.retryAt, advance.readRetryAt);
+      if (options.oneRead) return 'idle';
       await this.idleWait(this.deps.clock.now(), [advance.retryAt]);
       return 'idle';
     }

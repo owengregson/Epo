@@ -91,6 +91,11 @@ export interface QueueFacts {
   yieldToAction?: boolean;
   rotationReason?: SourceVisitEndReason | null;
   refillAvailableAt?: number;
+  advanceAvailableAt?: number;
+  /** Quality-aware source preparation may continue while older good queues remain actionable. */
+  prepareReserve?: boolean;
+  qualityEnabled?: boolean;
+  canPrepare?: boolean;
 }
 
 /** A cadence that came due (persisted; §3 — evaluated at startup, not one interval later). */

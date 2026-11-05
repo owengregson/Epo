@@ -16,7 +16,7 @@ import type { AcquireEndReason } from '../rim/follower-acquisition';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import type { FollowRecord } from '../store/types';
 import type { DelayManager } from '../timing/delay-manager';
-import type { AdvanceResult } from './chain-controller';
+import type { AdvanceOptions, AdvanceResult } from './chain-controller';
 import type { ChurnActionOutcome } from './churn-scheduler';
 import type { EnginePacing, EngineRate } from './plan-port';
 import type { ScanPlan } from './scanner';
@@ -117,7 +117,7 @@ export interface EngineScanner {
 
 /** The Chain Controller's single verb: advance past an exhausted target. */
 export interface EngineChain {
-  advance(currentTargetPk: string, reason?: SourceVisitEndReason): Promise<AdvanceResult>;
+  advance(currentTargetPk: string, reason?: SourceVisitEndReason, options?: AdvanceOptions): Promise<AdvanceResult>;
 }
 
 /**

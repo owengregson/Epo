@@ -11,7 +11,7 @@
  * live Instagram traffic — so it stays deterministic and unit-testable.
  */
 
-import type { OwnFollowersTargetSource } from '@/engine/chain-controller';
+import type { OwnFollowersTargetSource, SourcePreparationOptions } from '@/engine/chain-controller';
 import { EXPLORATION_POLICY, explorationDayClock, weeklyCycleSince } from '@/engine/exploration-policy';
 import { type Clock, SystemClock } from '@/governors/clock';
 import type { PlanDayClock } from '@/kernel/plan';
@@ -50,6 +50,7 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
   private readonly clock: Clock;
   private readonly planDay: Pick<PlanDayClock, 'window'>;
   private readonly minPoolSize: number;
+  private preparation = { pending: false, retryAt: null as number | null };
 
   constructor(deps: OwnFollowersTargetSourceDeps) {
     this.store = deps.store;
@@ -60,12 +61,15 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
     this.minPoolSize = deps.minPoolSize ?? SETTINGS_POLICY.RECOMMENDED.minPoolSize;
   }
 
-  async pick(minPoolSize?: number): Promise<string | null> {
-    return (await this.candidates(minPoolSize))[0] ?? null;
+  preparationState(): { pending: boolean; retryAt: number | null } { return { ...this.preparation }; }
+
+  async pick(minPoolSize?: number, options?: SourcePreparationOptions): Promise<string | null> {
+    return (await this.candidates(minPoolSize, options))[0] ?? null;
   }
 
-  async candidates(minPoolSize: number = this.minPoolSize): Promise<string[]> {
+  async candidates(minPoolSize: number = this.minPoolSize, options?: SourcePreparationOptions): Promise<string[]> {
     let candidates = this.eligibleFollowers();
+    this.preparation = { pending: false, retryAt: null };
 
     // No candidate carries a follower count → the ranking below would be a
     // pk-order coin flip. Enrich a bounded sample first (real IG traffic, but
@@ -73,7 +77,7 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
     if (this.enricher && !candidates.some((c) => c.followers !== undefined && c.followers >= minPoolSize)) {
       const usernames: string[] = [];
       for (const c of candidates) {
-        if (usernames.length >= EXPLORATION_POLICY.ownFollowersPickMax) break;
+        if (usernames.length >= Math.min(options?.profileLimit ?? EXPLORATION_POLICY.ownFollowersPickMax, EXPLORATION_POLICY.ownFollowersPickMax)) break;
         if (c.followers !== undefined || c.username === undefined || (c.enrichFailedAt !== undefined &&
           c.enrichFailedAt >= weeklyCycleSince((t) => this.planDay.window(t), this.clock.now()))) continue;
         usernames.push(c.username);
@@ -82,8 +86,11 @@ export class AdapterBackedOwnFollowersTargetSource implements OwnFollowersTarget
         logger.info('rim.own-followers-target-source: enriching sample before ranking', {
           sample: usernames.length,
         });
-        await this.enricher.enrich(usernames);
+        const enriched = await this.enricher.enrich(usernames);
         candidates = this.eligibleFollowers(); // re-read with fresh counts
+        this.preparation = { retryAt: this.enricher.budgetResumeAt?.() ?? null,
+          pending: enriched > 0 && candidates.some((c) => c.username !== undefined && c.followers === undefined &&
+            (c.enrichFailedAt === undefined || c.enrichFailedAt < weeklyCycleSince((t) => this.planDay.window(t), this.clock.now()))) };
       }
     }
 

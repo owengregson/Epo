@@ -77,3 +77,25 @@ never revived.
 - An outage costs a long wait; it can no longer cost the chain.
 - The reversal path means a mis-stamped exhaustion is self-correcting once,
   without a manual re-seed.
+
+## Amendment — preparing quality-qualified reserves (2026-11-04)
+
+The current target owns exploration reads; it does not exclusively own follow
+actions. With quality cohorts enabled, the queue's low-water count includes only
+currently usable candidates meeting the anchored quality bar. A stocked read
+source may advance with `queue-stocked` to prepare a reserve while its old good
+queue remains actionable. This is scheduling evidence, never exhaustion.
+
+When an action is available, one preparation unit is either one bounded list
+acquisition or one profile enrichment, including an own-follower fallback.
+Successful observations are planned before that unit yields. The next iteration
+serves the available action, including its existing owed delay, before further
+preparation. Paid-for unprofiled rows are worked before another acquisition.
+Small profile units accumulate toward the existing slice limit; two individual
+rejected profiles cannot masquerade as two complete empty slices.
+
+A missing alternative preserves the current read source and records a retry
+deadline without parking an existing action. Read-budget deadlines remain
+authoritative. Paused exploration, exhausted exploration allowance, or incompatible
+quality anchors prevent optional preparation; cleanup and journal precedence are
+unchanged. No source switch lowers the quality bar or deletes an older queue.

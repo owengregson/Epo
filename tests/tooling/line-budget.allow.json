@@ -11,7 +11,7 @@
     },
     {
       "file": "src/engine/engine.ts",
-      "lines": 915
+      "lines": 913
     },
     {
       "file": "src/kernel/derive.ts",
@@ -51,7 +51,7 @@
     },
     {
       "file": "src/engine/target-pipeline.ts",
-      "lines": 390
+      "lines": 389
     },
     {
       "file": "src/engine/recovery.ts",

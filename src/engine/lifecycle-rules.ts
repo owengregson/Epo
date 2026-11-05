@@ -24,14 +24,21 @@ export const followbackRule: Rule<'clock' | 'cadence'> = {
       : null,
 };
 
-export const rotateRule: Rule<'target' | 'queue' | 'action'> = {
+export const rotateRule: Rule<'target' | 'queue' | 'action' | 'clock'> = {
   id: 'rotate',
   modes: ['growth'],
-  needs: ['target', 'queue', 'action'],
-  decide: (f) => f.queue.rotationReason && f.target.current !== null
-    && f.action.due?.state !== 'unfollow_queued'
-    ? { do: 'run', effect: { id: 'advance-chain', target: f.target.current } }
-    : null,
+  needs: ['target', 'queue', 'action', 'clock'],
+  decide: (f) => {
+    const hasAction = f.action.due !== null || f.action.pruneCandidate !== null;
+    if (f.target.current === null || f.action.due?.state === 'unfollow_queued' ||
+      f.queue.canPrepare === false || Math.max(f.queue.refillAvailableAt ?? 0, f.queue.advanceAvailableAt ?? 0) > f.clock.now ||
+      (f.queue.yieldToAction && hasAction)) return null;
+    return f.queue.rotationReason || f.queue.prepareReserve
+      ? { do: 'run', effect: { id: 'advance-chain', target: f.target.current,
+        ...(f.queue.qualityEnabled && hasAction ? { oneRead: true } : {}),
+        ...(f.queue.prepareReserve && !f.queue.rotationReason ? { preparingReserve: true } : {}) } }
+      : null;
+  },
 };
 
 /**

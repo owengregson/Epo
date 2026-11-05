@@ -32,7 +32,7 @@ import type {
   SweepCadence,
 } from './ports';
 import type { RecoveryPhase } from './recovery';
-import type { SourceVisitEndReason } from './source-frontier';
+import type { SourceFrontier, SourceVisitEndReason } from './source-frontier';
 
 /** The recovery-ladder slice the fact sources read (RecoverySupervisor satisfies it). */
 export interface FactRecovery {
@@ -78,6 +78,9 @@ export interface EngineFactDeps {
   /** Whether the journal step is wired (a settlement per due intent). */
   settlesJournal?: boolean;
   refillAvailableAt?(): number;
+  advanceAvailableAt?(): number;
+  frontier?: Pick<SourceFrontier, 'qualityEnabled' | 'refreshQuality' | 'qualityView'>;
+  prepareCandidates?(): void;
 }
 
 export function buildEngineFactSources(d: EngineFactDeps): FactSources {
@@ -119,6 +122,7 @@ export function buildEngineFactSources(d: EngineFactDeps): FactSources {
       staleAfterMs: 0,
       gather: async (read) => {
         const { now } = await read('clock');
+        d.prepareCandidates?.();
         // Cheap timer transitions first: no IG traffic, and the churn
         // scheduler's due set is what the action source reads below.
         d.churn.advanceTimers(now);
@@ -136,13 +140,25 @@ export function buildEngineFactSources(d: EngineFactDeps): FactSources {
         const target = (await read('target')).current;
         // Finding new people waits while the list surface is unconfirmed (spec §10.6); queued follows continue.
         const exploring = !d.pacing.paused('exploration');
+        const qualityEnabled = d.frontier?.qualityEnabled() ?? false;
+        if (qualityEnabled) d.frontier?.refreshQuality();
+        const quality = qualityEnabled ? d.frontier?.qualityView() : undefined;
+        const queuedForTarget = target === null ? 0 : quality?.counts.get(target.pk) ??
+          (quality === undefined ? queuedCountFor(store, target.pk) : 0);
+        const canPrepare = exploring && (d.pacing.view((await read('clock')).now).open?.readsLeft.explore ?? 0) > 0;
         return {
-          queuedForTarget: target === null ? 0 : queuedCountFor(store, target.pk),
-          lowWaterCandidates: exploring ? Math.min(d.settings().lowWaterCandidates, EXPLORATION_POLICY.queuedPerSource) : 0,
+          queuedForTarget,
+          lowWaterCandidates: exploring ? quality?.readyCount ?? Math.min(d.settings().lowWaterCandidates, EXPLORATION_POLICY.queuedPerSource) : 0,
+          qualityEnabled,
+          canPrepare: qualityEnabled ? canPrepare && !quality?.needsReset && (quality?.readyCount ?? 0) > 0 : undefined,
+          prepareReserve: quality !== undefined && !quality.needsReset && quality.readyCount > 0 &&
+            queuedForTarget >= quality.readyCount && !quality.qualifiedSources.some((pk) =>
+              pk !== target?.pk && (quality.counts.get(pk) ?? 0) >= quality.readyCount),
           targetExhausted: d.targets.isExhausted(),
           yieldToAction: d.yieldRefill?.() ?? false,
           rotationReason: d.rotationReason?.() ?? null,
           refillAvailableAt: d.refillAvailableAt?.() ?? 0,
+          advanceAvailableAt: d.advanceAvailableAt?.() ?? 0,
         };
       },
     },

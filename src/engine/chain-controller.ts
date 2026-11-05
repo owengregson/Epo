@@ -36,9 +36,13 @@ export interface TargetDiscovery {
  * the chain never dead-ends. Injected; the real impl reads via a browser tab + Reader.
  */
 export interface OwnFollowersTargetSource {
-  pick(minPoolSize?: number): Promise<string | null>;
-  candidates?(minPoolSize?: number): Promise<string[]>;
+  pick(minPoolSize?: number, options?: SourcePreparationOptions): Promise<string | null>;
+  candidates?(minPoolSize?: number, options?: SourcePreparationOptions): Promise<string[]>;
+  preparationState?(): { pending: boolean; retryAt: number | null };
 }
+
+export interface SourcePreparationOptions { profileLimit?: number; }
+export interface AdvanceOptions extends SourcePreparationOptions { preparingReserve?: boolean; }
 
 /** Minimum-yield gate for promoting a discovered target (§3.5). Exposed in Settings. */
 export interface ChainConfig {
@@ -57,6 +61,8 @@ export interface AdvanceResult {
   source: 'discovered' | 'own_followers' | 'none';
   reason: string;
   retryAt?: number;
+  /** A durable read refusal also blocks refill; lack of another source does not. */
+  readRetryAt?: number;
 }
 
 interface ChainDeps {
@@ -112,8 +118,8 @@ export class ChainController {
    *  3. Otherwise fall back to our own followers.
    *  4. Otherwise report that no target is available.
    */
-  async advance(currentTargetPk: string, reason: SourceVisitEndReason = 'verified-ended'): Promise<AdvanceResult> {
-    if (this.frontier !== undefined) return this.advanceFrontier(this.frontier, currentTargetPk, reason);
+  async advance(currentTargetPk: string, reason: SourceVisitEndReason = 'verified-ended', options?: AdvanceOptions): Promise<AdvanceResult> {
+    if (this.frontier !== undefined) return this.advanceFrontier(this.frontier, currentTargetPk, reason, options);
     // 1. The current target is poached out — EVIDENCE-stamped (`exhaustedAt`),
     //    so the verdict stays reversible: the engine's chain dead-end self-heal
     //    re-verifies recently stamped targets instead of halting terminally.
@@ -183,8 +189,8 @@ export class ChainController {
     return { nextTargetPk: null, source: 'none', reason: 'no-target-available' };
   }
 
-  private async advanceFrontier(frontier: SourceFrontier, currentPk: string, reason: SourceVisitEndReason): Promise<AdvanceResult> {
-    frontier.endVisit(currentPk, reason);
+  private async advanceFrontier(frontier: SourceFrontier, currentPk: string, reason: SourceVisitEndReason, options?: AdvanceOptions): Promise<AdvanceResult> {
+    if (!options?.preparingReserve) frontier.endVisit(currentPk, reason);
     // A spent visit is not an exhausted source. Keep all queued/pending obligations.
     if (reason === 'verified-ended' && this.store.getTarget(currentPk)?.status !== 'exhausted') {
       this.store.setTargetStatus(currentPk, 'exhausted', this.clock.now());
@@ -197,15 +203,22 @@ export class ChainController {
       frontier.offer(candidate.pk, 'discovered');
     }
     // A fallback is a second source of alternatives, not a choice made only once a chain dies.
-    if (frontier.snapshot().sources.filter((s) => s.status === 'ready' || s.status === 'working').length < EXPLORATION_POLICY.refillBelowLiveSources) {
-      const own = this.ownFollowers.candidates ? await this.ownFollowers.candidates(this.cfg.minPoolSize) : [await this.ownFollowers.pick(this.cfg.minPoolSize)];
+    let preparation: { pending: boolean; retryAt: number | null } | undefined;
+    if ((!options?.profileLimit || frontier.next(currentPk) === null) &&
+      frontier.snapshot().sources.filter((s) => s.status === 'ready' || s.status === 'working').length < EXPLORATION_POLICY.refillBelowLiveSources) {
+      const own = this.ownFollowers.candidates ? await this.ownFollowers.candidates(this.cfg.minPoolSize, options)
+        : [await this.ownFollowers.pick(this.cfg.minPoolSize, options)];
+      preparation = this.ownFollowers.preparationState?.();
       for (const pk of own) if (pk !== null) frontier.offer(pk, 'own_followers');
     }
-    const next = frontier.next(currentPk) ?? frontier.next();
+    const next = frontier.next(currentPk) ?? (options?.preparingReserve ? null : frontier.next());
     if (next === null) {
       return { nextTargetPk: null, source: 'none', reason: 'sources-deferred',
-        retryAt: frontier.nextResumeAt() ?? this.planDay.window(this.clock.now()).endsAt };
+        ...(preparation?.retryAt === null || preparation?.retryAt === undefined ? {} : { readRetryAt: preparation.retryAt }),
+        retryAt: preparation?.retryAt ?? (preparation?.pending ? this.clock.now() :
+          frontier.nextResumeAt() ?? this.planDay.window(this.clock.now()).endsAt) };
     }
+    if (options?.preparingReserve) frontier.endVisit(currentPk, reason);
     const previous = this.store.getTarget(next.pk);
     this.store.addTarget({ accountPk: next.pk, source: next.source, status: 'active',
       chainIndex: previous?.chainIndex ?? this.store.nextChainIndex() });
