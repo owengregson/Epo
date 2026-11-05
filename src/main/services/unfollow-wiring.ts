@@ -26,6 +26,7 @@ import { toChurnConfig, toPruneConfig, toScorerConfig } from '@/settings/mappers
 import type { StatusFields } from '@/shared/status-fields';
 import type { SurfaceGate } from '@/shared/surface-gate';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { FollowRecord } from '@/store/types';
 import type { GraphBuildDeps, WiringParts } from './graph-types';
 import type { MutationCadence } from './mutation-cadence';
 import { createMutationPolicy } from './mutation-policy';
@@ -60,13 +61,14 @@ export interface MutationPolicyWiring {
   cleanupRunning?(): boolean;
   profiles(): TabProfileVisitor;
   followback(): FollowbackWatcher;
+  validateFollow?(record: FollowRecord): boolean;
 }
 
 /** The click-boundary policy every writer passes (identity, the plan's admission, current relationship). */
 export function wireMutationPolicy(d: GraphBuildDeps, w: MutationPolicyWiring): MutationPolicy {
-  const { store, ownPk, ownUsername, clock, cadence, readBudget, dayClock, surfaceGate, cleanupRunning } = w;
+  const { store, ownPk, ownUsername, clock, cadence, readBudget, dayClock, surfaceGate, cleanupRunning, validateFollow } = w;
   const next = w.nextSessionAt ?? noNextSession;
-  return createMutationPolicy({ store, ownPk, ownUsername, clock, cadence, readBudget, surfaceGate, cleanupRunning,
+  return createMutationPolicy({ store, ownPk, ownUsername, clock, cadence, readBudget, surfaceGate, cleanupRunning, validateFollow,
     profiles: w.profiles, followback: w.followback, settings: d.resolveSettings,
     protection: () => d.protection.index(),
     parkSlots: () => planDaySlots(dayClock, clock.now(), next(clock.now())),
@@ -109,6 +111,7 @@ export function wireChurn(d: GraphBuildDeps, w: ChurnWiring): ChurnScheduler {
   const reconciler = new ProtectionReconciler({ store, port, clock, dayClock });
   const churn = new ChurnScheduler({
     pickQueued: (records) => frontier.pickQueued(records),
+    mayFollow: (record) => frontier.allowsFollow(record),
     validateFollow: (record) => {
       const account = store.getAccount(record.accountPk);
       return account !== null && scoreCandidate(account, toScorerConfig(d.resolveSettings())).eligible;

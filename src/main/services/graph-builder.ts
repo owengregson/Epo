@@ -11,6 +11,7 @@ import {
 import { Scanner } from '@/engine/scanner';
 import { SourceFrontier } from '@/engine/source-frontier';
 import { SystemClock } from '@/governors/clock';
+import { sourceCohortSize, sourceQueueCapacity } from '@/kernel/derive-source-quality';
 import { STORE_POLICY } from '@/kernel/store-policy';
 import { AdapterBackedChurnActions } from '@/rim/churn-actions';
 import { AdapterBackedAcquisition } from '@/rim/follower-acquisition';
@@ -51,7 +52,10 @@ export function buildGraph(
   const delays = new DelayManager({ clock });
   const { settings, driverSignal } = d;
   const plan = wirePlan(store, clock, ownPk, delays, d);
-  const frontier = new SourceFrontier({ store, clock, planDay: plan.dayClock, outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000 });
+  const frontier = new SourceFrontier({ store, clock, planDay: plan.dayClock,
+    outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000,
+    quality: { scorer: () => toScorerConfig(d.resolveSettings()), readyCount: () => sourceCohortSize(d.resolveSettings()),
+      capacity: () => sourceQueueCapacity(d.resolveSettings().dailyPlanSize) } });
   const readBudget = plan.readBudget;
   const rate = plan.rateGovernor(toRateGovernorConfig(settings));
 
@@ -61,6 +65,7 @@ export function buildGraph(
   });
 
   const policy = wireMutationPolicy(d, { store, ownPk, ownUsername, clock, cadence: plan.cadence, readBudget, dayClock: plan.dayClock,
+    validateFollow: (record) => frontier.allowsFollow(record),
     nextSessionAt: plan.nextSessionAt, surfaceGate: surfaceGateOf(store), cleanupRunning: () => pruneEngineRef?.status().state === 'running', profiles: () => profiles, followback: () => followback });
 
   const { reader, relationshipReconcilerUnsub, profileObserver, profileInfoUnsub, sink } = wireSurface({ tab: d.tab, store, ownPk, clock, day: plan.dayClock });
@@ -119,8 +124,7 @@ export function buildGraph(
     dryRun: settings.dryRun,
   });
 
-  // dialog fallback path; when it could not be resolved the prune port below
-  // degrades to a loud incomplete result.
+  // An unresolved dialog fallback makes the prune port report an incomplete result.
   const liveOwnFollowers = ownUsername
     ? new AdapterBackedOwnFollowersSource({
         pageReader,
@@ -132,12 +136,7 @@ export function buildGraph(
       })
     : null;
 
-  // The profile enricher: the engine's pool-refill step fetches
-  // follower/following counts for candidates the followers-list left
-  // count-less, so scoring can actually decide (without it every candidate
-  // scores `no-counts` and the pool never shrinks). Sentinel-gated and paced
-  // internally. Constructed before the chain pieces because the fallback
-  // target source also enriches a bounded sample before ranking.
+  // Both refill and fallback discovery use this sentinel-gated, paced profile enricher.
   const enricher = new AdapterBackedProfileEnricher({
     onProgress: d.onProgress,
     readBudget,
@@ -149,9 +148,7 @@ export function buildGraph(
     reporter: d.reporter,
   });
 
-  // The chain's fallback next-target chooser. The enricher is essential: own
-  // followers arrive from list pages with NO counts, and ranking "highest
-  // follower count" over all-unknowns promotes an arbitrary account.
+  // The fallback enriches count-less own followers before choosing a source.
   const ownFollowersTarget = new AdapterBackedOwnFollowersTargetSource({
     store,
     ownPk,
@@ -166,13 +163,15 @@ export function buildGraph(
     store,
     scorerCfg: toScorerConfig(settings), planDay: plan.dayClock,
     cfg: toScannerConfig(settings),
+    quality: { prepare: () => frontier.refreshQuality(), usableCount: (pk) => frontier.goodQueuedCount(pk), floor: () => {
+      const view = frontier.qualityView();
+      return view.needsReset ? Infinity : view.floor ?? toScorerConfig(d.resolveSettings()).bandEdgeScore;
+    } },
   });
   const { watcher: followback, sweep, cadence: sweepCadence, parts: reopenParts } = wireFollowback(d, { store, clock, ownPk, settings,
     readBudget, policy, adapter, reader, sentinel, walker: listWalker, plan, rate });
 
-  // Live discovery over the already-harvested graph: propose the biggest
-  // enriched PUBLIC hubs inside the exhausted target's audience, projected at
-  // that target's realized follow-back rate — zero extra requests.
+  // Discovery proposes observed sources; the frontier separately qualifies their candidate supply.
   const discovery: TargetDiscovery = new StoreBackedTargetDiscovery({
     store, ownPk, clock,
     outcomeWindowMs: () => d.resolveSettings().maxWaitForFollowbackDays * 86_400_000,

@@ -9,6 +9,7 @@ import type { EffectiveSettings } from '@/settings/effective';
 import type { SurfaceGate } from '@/shared/surface-gate';
 import type { ProtectionIndex } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { FollowRecord } from '@/store/types';
 import { createClickReview } from './click-review';
 import { createMutationAdmission, type ReviewedAction } from './mutation-admission';
 import type { MutationCadence } from './mutation-cadence';
@@ -38,6 +39,8 @@ interface MutationPolicyDeps {
   surfaceGate?: SurfaceGate;
   /** True while a cleanup run drives the tab (its writes are `cleanup-run`; otherwise prune writes are woven). */
   cleanupRunning?(): boolean;
+  /** Live quality admission for automatic queued follows, repeated after the profile and at dispatch. */
+  validateFollow?(record: FollowRecord): boolean;
 }
 
 /** Which loop a write belongs to, from the channel of the account's prepared journal intent. */

@@ -20,6 +20,7 @@ import { type ClickVerdict, protectionClickVerdict } from '@/shared/click-verdic
 import { NEVER_PAUSED, type SurfaceGate } from '@/shared/surface-gate';
 import { type ProtectionIndex, protectionVerdict } from '@/shared/unfollow-protection';
 import type { KnowledgeStore } from '@/store/knowledge-store';
+import type { FollowRecord } from '@/store/types';
 
 export interface ClickReviewDeps {
   store: KnowledgeStore;
@@ -40,6 +41,8 @@ export interface ClickReviewDeps {
   writer?(): Writer;
   /** Pauses unfollows while the relationship surface is unconfirmed (default: never paused). */
   surfaceGate?: SurfaceGate;
+  /** Automatic follows must still belong to the durable quality cohort. Manual writes keep their own policy. */
+  validateFollow?(record: FollowRecord): boolean;
 }
 
 /** With no plan wired, only the account's own journal refuses (the plan's preflight covers it otherwise). */
@@ -54,7 +57,8 @@ const deferred = (reason: string, until: number | null): ActionDeferredError =>
 /** The click-review half of the mutation policy (see `mutation-policy.ts`). */
 export function createClickReview(d: ClickReviewDeps) {
   const { store, clock, readBudget, ownPk, active } = d;
-  let dispatchReview: { username: string; pk: string; seen: ProfileSeen } | null = null;
+  let dispatchReview: { action: 'unfollow'; username: string; pk: string; seen: ProfileSeen }
+    | { action: 'follow'; pk: string; managed: boolean } | null = null;
 
   /** Steps 0a–0c: the plan with this account's journal, the surface gate, a paused index, the read. */
   const admit = (action: 'follow' | 'unfollow', pk: string): void => {
@@ -110,13 +114,31 @@ export function createClickReview(d: ClickReviewDeps) {
     if (rec?.state !== 'unfollow_queued' || (rec.holdUntil ?? Infinity) > now) throw reviewed({ kind: 'not-due' });
   };
 
+  /** Refresh the score without turning a quality-only deferral into permanent ineligibility. */
+  const followReview = (pk: string, managed: boolean): void => {
+    const rec = store.getFollowRecord(pk);
+    if (rec?.state !== 'queued') {
+      if (managed) throw new ActionDeferredError('follow no longer queued', { reason: 'source-quality', until: null });
+      return;
+    }
+    const account = store.getAccount(pk);
+    const scored = account ? scoreCandidate(account, toScorerConfig(d.settings())) : { score: 0, eligible: false };
+    const fresh = { ...rec, score: scored.score };
+    if (rec.score !== fresh.score) store.upsertFollowRecord(fresh);
+    if (!scored.eligible) throw new ActionDeferredError('profile no longer eligible');
+    if (managed && d.validateFollow && !d.validateFollow(fresh)) {
+      throw new ActionDeferredError('profile below saved source quality', { reason: 'source-quality', until: null });
+    }
+  };
+
   return {
-    /** A local guard for every press of this action: reuse its evidence against the latest protection rules. */
+    /** Every press rechecks the live quality/protection policy, with no additional profile read. */
     dispatchGuard: (): (() => void) => {
       const r = dispatchReview;
       dispatchReview = null;
       return () => {
         if (r === null) return;
+        if (r.action === 'follow') return followReview(r.pk, r.managed);
         if ((d.surfaceGate ?? NEVER_PAUSED).paused('unfollows')) throw deferred('surface-paused', null);
         protect(r.username, r.pk, r.seen);
         if (store.getEdge(r.pk, ownPk, 'requests')?.status === 'active') throw reviewed({ kind: 'request-pending' });
@@ -137,18 +159,16 @@ export function createClickReview(d: ClickReviewDeps) {
       if (seen.viewer.followsUs !== null) store.observeEdge(expectedPk, ownPk, 'follows', seen.viewer.followsUs, now, { source: 'visit' });
       if (action === 'unfollow') {
         unfollowReview(username, expectedPk, seen, now);
-        dispatchReview = { username, pk: expectedPk, seen };
+        dispatchReview = { action, username, pk: expectedPk, seen };
         return;
       }
-      const account = store.getAccount(expectedPk);
       const rec = store.getFollowRecord(expectedPk);
       const freshCounts = [seen.obs.fields.followers, seen.obs.fields.following]
         .every((n) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0);
       if (rec?.state === 'queued' && !freshCounts) throw reviewed({ kind: 'unavailable', evidence: 'unreadable' });
-      if (rec?.state === 'queued' && (!account || !scoreCandidate(account, toScorerConfig(d.settings())).eligible)) {
-        store.upsertFollowRecord({ ...rec, score: 0 });
-        throw new ActionDeferredError('profile no longer eligible');
-      }
+      const managed = d.validateFollow !== undefined && (d.writer?.() ?? 'growth') === 'growth';
+      followReview(expectedPk, managed);
+      dispatchReview = { action, pk: expectedPk, managed };
     },
   };
 }

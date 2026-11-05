@@ -33,6 +33,7 @@ export class ChurnScheduler {
   private readonly protection: ProtectionPort;
   private readonly reconciler?: ChurnDeps['reconciler'];
   private readonly validateFollow?: ChurnDeps['validateFollow'];
+  private readonly mayFollow?: ChurnDeps['mayFollow'];
   /** Where a click-time park lands: the plan-day boundary's slots. */
   private readonly parkSlots: () => ParkSlots;
   /**
@@ -102,6 +103,7 @@ export class ChurnScheduler {
       reviewBound: deps.reviewBound,
     });
     this.validateFollow = deps.validateFollow;
+    this.mayFollow = deps.mayFollow;
     const dayClock = calendarPlanDayClock({ now: () => deps.clock.now() });
     this.parkSlots = deps.parkSlots ?? ((): ParkSlots => planDaySlots(dayClock, deps.clock.now()));
   }
@@ -202,10 +204,7 @@ export class ChurnScheduler {
     },
   } as const satisfies Record<'follow' | 'unfollow', VerbSpec>;
 
-  /**
-   * Follow one `queued` record: resolve the username, perform the click, apply
-   * the outcome. Every outcome rule lives in {@link applyOutcome}.
-   */
+  /** Resolve one queued follow and apply its verified outcome through {@link applyOutcome}. */
   private async executeFollow(
     rec: FollowRecord,
     now: number,
@@ -214,6 +213,7 @@ export class ChurnScheduler {
       this.store.upsertFollowRecord({ ...rec, score: 0 });
       return 'noop';
     }
+    if (this.mayFollow && !this.mayFollow(rec, now)) return 'noop';
     const username = this.store.getAccount(rec.accountPk)?.username;
     if (username === undefined) {
       // MUST make progress: `nextDue` is a pure ranking with no memory, so a

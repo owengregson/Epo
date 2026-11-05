@@ -101,6 +101,8 @@ export interface ChurnDeps {
   cfg: ChurnConfig;
   pickQueued?: (records: FollowRecord[]) => FollowRecord | null;
   validateFollow?: (rec: FollowRecord, now: number) => Promise<boolean> | boolean;
+  /** Quality deferral preserves the queued record and its eligible score. */
+  mayFollow?: (rec: FollowRecord, now: number) => boolean;
   /** Whether `pk` has a follow request in flight (the requester seam); defaults to never. */
   hasActiveRequest?: (pk: string) => boolean;
   /** The protection port (spec §7.4); a rig without it runs unconfigured (main always wires it). */

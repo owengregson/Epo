@@ -2,6 +2,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as protection from '@/engine/protection-port';
+import type { SourceFrontier } from '@/engine/source-frontier';
 import type { PushMethod } from '@/ipc/contract';
 import { PENDING_CONSUMERS } from '@/kernel/tempo/pending';
 import type { Foundation } from '@/main/foundation-wiring';
@@ -162,6 +163,20 @@ test('the click review reads the live surface gate', () => {
   expect(review.surfaceGate?.paused('unfollows')).toBe(true);
   expect(gate).toHaveBeenCalledWith('unfollows');
   gate.mockRestore();
+});
+
+test('automatic follow quality reaches both the churn and the fresh-profile/dispatch review', async () => {
+  const frontier = (graph.chain as unknown as { frontier: SourceFrontier }).frontier;
+  const allowed = jest.spyOn(frontier, 'allowsFollow').mockReturnValue(false);
+  const record = { accountPk: 'quality-subject', targetPk: 'quality-source', state: 'queued' as const, retryCount: 0, score: 1 };
+  graph.store.observe({ accountPk: record.accountPk, observedAt: graph.clock.now(), source: 'profile',
+    fields: { username: 'quality-subject', followers: 500, following: 550, isPrivate: false, isVerified: false } });
+  graph.store.upsertFollowRecord(record);
+  expect(reviewSpy.mock.calls[0][0].validateFollow?.(record)).toBe(false);
+  await expect(graph.churn.execute(record)).resolves.toBe('noop');
+  expect(allowed).toHaveBeenCalledTimes(2);
+  expect(graph.store.getFollowRecord(record.accountPk)).toMatchObject({ state: 'queued', score: 1 });
+  allowed.mockRestore();
 });
 
 test('no unconnected module or tempo consumer remains', () => {
