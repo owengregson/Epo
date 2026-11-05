@@ -16,8 +16,8 @@
 # leg's result.
 #
 # Installs use `npm ci --ignore-scripts`: a transitive postinstall does not get
-# to run in CI. The three packages that legitimately need theirs are rebuilt by
-# name in the following step (see ADR 0503 for better-sqlite3).
+# to run in CI. The two packages that need theirs are rebuilt by name below;
+# SQLite uses the runtime builtin and has no addon rebuild (ADR 0702).
 name: ci
 
 on:
@@ -87,17 +87,10 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # esbuild and @swc/core stage a platform binary in their install script;
-      # better-sqlite3 is ADR 0503's rebuild, kept until the two-platform proof.
-      # Naming them is the point: nothing else in 900+ packages runs code here.
+      # esbuild and @swc/core stage a platform binary in their install script.
+      # Naming them is the point: nothing else runs install code here.
       - name: Run the install scripts we actually want
-        run: |
-          npm rebuild esbuild @swc/core
-          if [ "$(npm pkg get scripts.rebuild:node)" != "{}" ]; then
-            npm run rebuild:node
-          else
-            echo "No rebuild:node script — skipping native rebuild."
-          fi
+        run: npm rebuild esbuild @swc/core
 
       # Version truth (ADR 1001). Without the Electron binary (--ignore-scripts
       # never downloads it) this compares the recorded electronVersion against
@@ -188,13 +181,7 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
 
       - name: Run the install scripts we actually want
-        run: |
-          npm rebuild esbuild @swc/core
-          if [ "$(npm pkg get scripts.rebuild:node)" != "{}" ]; then
-            npm run rebuild:node
-          else
-            echo "No rebuild:node script — skipping native rebuild."
-          fi
+        run: npm rebuild esbuild @swc/core
 
       - name: Test
         run: npx jest

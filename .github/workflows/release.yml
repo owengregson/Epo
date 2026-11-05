@@ -3,7 +3,7 @@
 # been bumped past the last release (no tag v<version> yet)? If not, the run
 # ends at detect. If so, the full ladder must pass BEFORE any tag exists:
 #
-#   verify      the four gates: tsc · biome ci · jest · esbuild
+#   verify      the full npm run check gate, then the production build
 #   package     macOS (dmg+zip, arm64+x64) and Windows (NSIS+portable),
 #               including the self-updater feed files (latest*.yml, blockmaps)
 #   boot-smoke  the built app boots and survives 25 s on Linux under xvfb
@@ -97,7 +97,7 @@ jobs:
             echo "should_release=$should_release"
           } >> "$GITHUB_OUTPUT"
 
-  # The same four gates a local dev runs; nothing is tagged on a red gate.
+  # The same full gate a local dev runs; nothing is tagged on a red gate.
   verify:
     needs: detect
     if: needs.detect.outputs.should_release == 'true'
@@ -117,19 +117,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Rebuild native modules for Node (jest)
-        run: npm run rebuild:node
+      - name: Verify all required gates
+        run: npm run check
 
-      - name: Typecheck
-        run: npx tsc --noEmit
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Test
-        run: npx jest
-
-      - name: Build
+      - name: Build production bundle
         run: npm run build
 
   # Mirrors package-rehearsal.yml (keep the two in sync) — plus the updater
@@ -225,26 +216,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Rebuild native modules for Electron
-        run: npm run rebuild:electron
-
       - name: Build
         run: npm run build
 
-      - name: Boot the app and verify it stays up
+      - name: Boot the app in an isolated offline profile
         run: |
           sudo apt-get update -q && sudo apt-get install -yq xvfb
-          xvfb-run --auto-servernum npx electron dist/main/main.js --no-sandbox \
-            > boot.log 2>&1 &
-          APP_PID=$!
-          sleep 25
-          if ! kill -0 "$APP_PID" 2>/dev/null; then
-            echo '::error::Electron main process exited during the 25s boot window'
-            cat boot.log
-            exit 1
-          fi
-          echo 'App is alive after 25s — boot smoke passed.'
-          kill "$APP_PID" || true
+          xvfb-run --auto-servernum node scripts/ci-boot-smoke.mjs
+
+      - name: Attach the boot log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-boot-log
+          path: boot.log
+          if-no-files-found: ignore
+          retention-days: 3
 
   release:
     needs: [detect, verify, package, boot-smoke]
@@ -263,6 +250,7 @@ jobs:
       - name: Download all packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          pattern: epo-*
           path: release
           merge-multiple: true
 
