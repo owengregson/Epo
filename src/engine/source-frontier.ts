@@ -3,7 +3,10 @@ import type { PlanDayClock } from '../kernel/plan';
 import type { KnowledgeStore } from '../store/knowledge-store';
 import { compareByScoreDesc, type FollowRecord, type Target } from '../store/types';
 import * as log from '../utils/logger';
+import { type CandidateQualityConfig, type CandidateQualitySnapshot, type CandidateQualityView,
+  evaluateQuality, type QualityStore, scoreQueue, validQuality } from './candidate-quality';
 import { explorationDayClock, EXPLORATION_POLICY as POLICY, planDayStartAfter } from './exploration-policy';
+import { scoreCandidate } from './scorer';
 import { matureYields, observedOverlap, priorYield } from './source-quality';
 
 export type SourceVisitEndReason = 'visit-budget' | 'low-yield' | 'verified-ended' | 'coverage-policy';
@@ -33,17 +36,18 @@ export interface SourceFrontierSnapshot {
   sources: FrontierSource[];
   recentFollowSources: string[];
   totalFollows: number;
+  quality?: CandidateQualitySnapshot | null;
 }
 
 type FrontierStore = Pick<KnowledgeStore,
   'getSourceFrontierState' | 'setSourceFrontierState' | 'listTargets' | 'getAccount' |
-  'followRecordsByState' | 'followersOf' | 'followRecords'>;
+  'followRecordsByState' | 'followersOf' | 'followRecords'> & QualityStore;
 
 /** Durable source visits. Rotation is a scheduling decision, never a claim of absence. */
 export class SourceFrontier {
   private readonly planDay: Pick<PlanDayClock, 'window'>;
   constructor(private readonly deps: { store: FrontierStore; clock: Clock; outcomeWindowMs?: () => number;
-    planDay?: Pick<PlanDayClock, 'window'> }) { this.planDay = deps.planDay ?? explorationDayClock(); }
+    planDay?: Pick<PlanDayClock, 'window'>; quality?: CandidateQualityConfig }) { this.planDay = deps.planDay ?? explorationDayClock(); }
 
   snapshot(): SourceFrontierSnapshot {
     const raw = this.deps.store.getSourceFrontierState();
@@ -77,6 +81,7 @@ export class SourceFrontier {
     if (value === null || typeof value !== 'object') return false;
     const s = value as Partial<SourceFrontierSnapshot>;
     return s.version === 1 && Array.isArray(s.sources) && Array.isArray(s.recentFollowSources) &&
+      (s.quality === undefined || s.quality === null || validQuality(s.quality)) &&
       typeof s.totalFollows === 'number' && Number.isFinite(s.totalFollows) &&
       (s.currentTargetPk === null || typeof s.currentTargetPk === 'string') &&
       s.sources.every((source) => typeof source.pk === 'string' && Number.isFinite(source.resumeAt) &&
@@ -85,6 +90,41 @@ export class SourceFrontier {
 
   private save(state: SourceFrontierSnapshot): void {
     this.deps.store.setSourceFrontierState(JSON.stringify(state));
+  }
+
+  qualityEnabled(): boolean { return this.deps.quality !== undefined; }
+
+  /** Explicit store-only preparation; neither status reads nor picking silently change the quality bar. */
+  refreshQuality(): void {
+    if (this.deps.quality === undefined) return;
+    const state = this.snapshot();
+    const { next } = evaluateQuality(this.deps.store, state.quality ?? null, this.deps.quality, this.deps.clock.now());
+    if (JSON.stringify(next) !== JSON.stringify(state.quality ?? null)) this.save({ ...state, quality: next });
+  }
+
+  qualityView(): CandidateQualityView {
+    const state = this.snapshot();
+    if (this.deps.quality === undefined) return { floor: null, readyCount: 0, qualifiedSources: [], counts: new Map(), needsReset: false };
+    const { view } = evaluateQuality(this.deps.store, state.quality ?? null, this.deps.quality, this.deps.clock.now());
+    return { ...view, qualifiedSources: state.quality?.qualifiedSources ?? [] };
+  }
+
+  goodQueuedCount(pk: string): number {
+    if (this.deps.quality !== undefined) return this.qualityView().counts.get(pk) ?? 0;
+    return this.deps.store.followRecordsByState('queued').filter((r) => r.targetPk === pk && r.score !== 0).length;
+  }
+
+  /** Rechecked at the fresh profile and physical click; journal admission is owned by its existing guard. */
+  allowsFollow(record: FollowRecord): boolean {
+    if (this.deps.quality === undefined) return true;
+    if (record.targetPk === null || this.deps.store.getTarget(record.targetPk)?.status === 'retired') return false;
+    const state = this.snapshot().quality;
+    if (!state?.qualifiedSources.includes(record.targetPk)) return false;
+    const view = this.qualityView();
+    const account = this.deps.store.getAccount(record.accountPk);
+    if (view.floor === null || view.readyCount === 0 || account === null) return false;
+    const s = scoreCandidate(account, this.deps.quality.scorer());
+    return s.eligible && s.score >= view.floor;
   }
 
   /** Overlapping evidence is a lower bound on lifetime use, never three additive counts. */
@@ -220,6 +260,10 @@ export class SourceFrontier {
 
   /** Called only for fresh follows. Cleanup and safety precedence remain with the conductor. */
   pickQueued(records: readonly FollowRecord[]): FollowRecord | null {
+    if (this.deps.quality !== undefined) {
+      records = scoreQueue(this.deps.store, records, this.deps.quality.scorer(), this.deps.clock.now())
+        .filter((r) => this.allowsFollow(r));
+    }
     if (records.length === 0) return null;
     const state = this.snapshot();
     const bySource = new Map<string, FollowRecord[]>();

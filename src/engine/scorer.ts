@@ -126,7 +126,9 @@ export interface CandidateScore {
  * and shared followers dominate the ranking: mutuals are the strongest
  * follow-back predictor, saturating at `mutualCap` (20+ mutuals score alike).
  */
-export function scoreCandidate(a: AccountState, cfg: ScorerConfig = SCORER_DEFAULTS): CandidateScore {
+export type CandidateProfile = Pick<AccountState, 'followers' | 'following' | 'ratio' | 'mutuals' | 'isPrivate' | 'isVerified'>;
+
+export function scoreCandidate(a: CandidateProfile, cfg: ScorerConfig = SCORER_DEFAULTS): CandidateScore {
   // Counts-known FIRST: 'no-counts' means "await enrichment" to the Scanner
   // (the record is left in the pool), so it must only ever fire when counts
   // are genuinely missing. An enriched account with 0 followers used to fall
