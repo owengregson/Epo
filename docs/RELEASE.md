@@ -14,8 +14,9 @@ Semver in `package.json` — the single home of the version.
   would plan around.
 - **MINOR** (`3.1.0`): new capability, backward-compatible. Store migrations
   are allowed (the store runs them forward automatically).
-- **MAJOR** (`4.0.0`): breaking — a store reset, a settings reset, or an
-  Instagram-adapter overhaul that needs a fresh login.
+- **MAJOR** (`4.0.0`): a substantial change to the user workflow or compatibility
+  contract. A major number does not itself require a database reset, settings
+  reset or fresh login; the 4.0.0 overhaul preserves and migrates existing data.
 - A hyphenated version (`3.1.0-beta.1`) publishes as a GitHub **pre-release**,
   never takes the "latest" marker, and is therefore invisible to the
   self-updater (which follows the latest stable release only).
@@ -43,10 +44,10 @@ by the workflow, at the verified commit.
 push to main
   └─ detect      version unreleased? (no tag v<version>) → facts:
   │              version, tag, previous_tag, prerelease, should_release
-  ├─ verify      the four gates: tsc · biome ci · jest · esbuild
+  ├─ verify      npm run check (all local gates), then the production build
   ├─ package     macos-latest (dmg+zip) / windows-latest (nsis+portable),
   │              bash shell, artifacts INCLUDE latest*.yml + *.blockmap
-  ├─ boot-smoke  linux: the built app must survive 25 s under xvfb
+  ├─ boot-smoke  linux: isolated, network-blocked app must survive 25 s under xvfb
   └─ release     compose notes → tag + DRAFT release with every asset
                  attached → flip live (--latest only for stable)
 ```
@@ -104,6 +105,14 @@ graphite (§3.3): ONE file per asset, no theme twins.
   sections (Highlights / Changes / Install / Notes) → compare link.
 
 ## 5. The self-updater
+
+**A major version does not force existing installations to update.** Shipped
+3.1.1 clients have no minimum-version policy or remote engine lock. Publishing
+4.0.0 makes it available through their existing update flow: Windows NSIS can
+download it automatically, while macOS and portable Windows show a download
+link. Restart and replacement remain user actions. A future mandatory-update
+policy would first need to ship in a client that understands and enforces it;
+adding one to 4.0.0 cannot retrofit it into already-installed 3.x binaries.
 
 `electron-updater` (runtime dependency, pure JS), GitHub provider — the feed
 is the latest stable GitHub Release (`latest.yml` / `latest-mac.yml` +

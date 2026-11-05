@@ -17,6 +17,7 @@ import {
   type SurfaceReport,
 } from '@/shared/surface-health';
 import type { EpoBridge } from '@/types';
+import { version as packageVersion } from '../../../package.json';
 
 /** A day of healthy reads in every area, so the compatibility panel renders its full layout. */
 function gallerySurfaceReport(): SurfaceReport {
@@ -95,7 +96,7 @@ const RESPONSES: Record<string, unknown> = {
   applySettings: { kind: 'not-saved', view: GALLERY_SETTINGS_VIEW, detail: 'the gallery has no main process to save to' },
   previewSettings: { kind: 'unavailable' },
   suggestAccounts: { kind: 'ok', rows: [] },
-  updateStatus: { state: 'unchecked', mode: 'notify', current: '3.1.1', version: null, percent: null, error: null, checkedAt: null },
+  updateStatus: { state: 'unchecked', mode: 'notify', current: packageVersion, version: null, percent: null, error: null, checkedAt: null },
   // The live column's pulls: the Boost preview (a live scenario answers its own), the compatibility report, the log.
   previewBoost: null,
   surfaceReport: gallerySurfaceReport(),

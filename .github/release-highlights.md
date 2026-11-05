@@ -1,15 +1,12 @@
-<!-- v3.1.1 -->
+<!-- v4.0.0 -->
 
-- The growth chart draws in smoothly end to end: no more mid-animation
-  pop, the projection appears only after the actual line finishes
-  drawing, and the line and dot fade in instead of snapping.
-- The network graph animates only genuine newcomers — it no longer
-  re-pops every node during scans.
-- Three dozen display fixes across every view: target funnel bars are
-  readable, state chips carry their colors again, the queue list no
-  longer flashes "Loading…", parked cards release their extra height,
-  log lines trim with an ellipsis, and confirm dialogs block the whole
-  window while open.
-- The settings save indicator renders as a proper chip instead of a
-  collapsed sliver, and the release page itself is leaner — downloads
-  first, no instruction wall.
+- Epo now builds a day plan that drives sessions, action spacing, browsing
+  pauses and Boost, with shared limits across the whole day.
+- Choose your routine in Easy settings, or inspect and adjust it in Advanced.
+  Existing settings, account protections and Instagram sessions carry forward.
+- A redesigned Live view, session schedule, sidebar and Prune page make the
+  current plan and next action easier to understand.
+- Returning to Epo catches up on account activity and reconciles uncertain
+  actions before continuing, with fresh profile and protection checks before acting.
+- Instagram loading and parsing recover more reliably from slow page resources
+  and supported response changes, with clearer status when a load fails.
