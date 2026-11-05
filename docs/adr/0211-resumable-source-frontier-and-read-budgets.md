@@ -52,7 +52,8 @@ recent window and successful follow-ledger entries matching the retained record'
 failed follow or unfollow contributes nothing; an old cycle cannot be attributed
 to a newly queued source. This is a lower bound when historical source provenance
 is unavailable. One grouped store read per exploration selection supplies the
-counts; ordinary opportunities need no extra read. Frontier v1 remains unchanged.
+counts; ordinary opportunities need no extra read. The frontier remains version 1;
+ADR 0215 adds its backward-compatible optional quality record.
 
 Discovery applies source-size and mature-quality gates before truncating the
 five candidates. Raw audience size is a viability gate, not the optimization

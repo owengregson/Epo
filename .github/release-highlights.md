@@ -8,5 +8,7 @@
   current plan and next action easier to understand.
 - Returning to Epo catches up on account activity and reconciles uncertain
   actions before continuing, with fresh profile and protection checks before acting.
+- Epo prepares new sources while continuing with good candidates already found,
+  and keeps its saved quality standard when switching sources.
 - Instagram loading and parsing recover more reliably from slow page resources
   and supported response changes, with clearer status when a load fails.

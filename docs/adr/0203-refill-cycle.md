@@ -8,31 +8,31 @@ before yielding; partial preparation never authorizes lower-quality follows.
 
 ## Context
 
-The growth loop works one chain target at a time. Keeping its candidate queue
+The original growth loop worked one chain target at a time. Keeping its candidate queue
 stocked means scraping the target's followers, enriching the rows the list left
-count-less, and planning a batch. Every one of those steps is Instagram traffic,
-and every one of them can fail in a way that looks like "nothing to do here".
+count-less, and planning a batch. Acquisition and enrichment use Instagram;
+planning reads and writes only the local store. A failed read can look like
+"nothing to do here" unless its evidence is kept separate from the result count.
 
 Two failure modes had to be designed against:
 
 1. **Hammering.** A dry or rejected target must not be re-scraped every step.
-2. **Burning the chain.** `chain.advance` marks a target exhausted
-   IRREVERSIBLY. An outage that returns zero rows must never be read as "this
-   audience is used up" — that converted a transient rate wall into a
-   permanently dead chain.
+2. **Burning the chain.** An outage that returns zero rows must never be read as
+   "this audience is used up" or mark that target exhausted.
 
 ## Decision
 
 A **cycle** is one bounded attempt to refill the current target's queue:
 
 - at most **one** acquisition,
-- at most `MAX_ENRICH_PASSES_PER_CYCLE` enrichment passes
-  (`ENRICH_BATCH_SIZE` usernames each),
-- then a final plan.
+- at most `MAX_ENRICH_PASSES_PER_CYCLE` full enrichment slices
+  (`ENRICH_BATCH_SIZE` profile attempts each), which may be split into the
+  one-profile units described below,
+- a plan after each successful enrichment unit and at the end of the cycle.
 
-Only demonstrated progress — a plan that enqueued something — opens another
-cycle. So the traffic a cycle can spend is provably bounded, and a target that
-yields nothing cannot loop.
+Enqueued candidates open another cycle. An unread local pool or a bounded list
+slice can also reopen under the rules below; neither proves exhaustion.
+Repeated walls or empty slices back off instead of spinning.
 
 ### The evidence rule for exhaustion
 
@@ -88,14 +88,16 @@ queue remains actionable. This is scheduling evidence, never exhaustion.
 
 When an action is available, one preparation unit is either one bounded list
 acquisition or one profile enrichment, including an own-follower fallback.
-Successful observations are planned before that unit yields. The next iteration
-serves the available action, including its existing owed delay, before further
-preparation. Paid-for unprofiled rows are worked before another acquisition.
+Successful observations are planned before that unit yields. Further preparation
+yields to the available action, including its existing owed delay; safety,
+journal settlement and scheduled checks keep their earlier precedence.
+Paid-for unprofiled rows are worked before another acquisition.
 Small profile units accumulate toward the existing slice limit; two individual
 rejected profiles cannot masquerade as two complete empty slices.
 
-A missing alternative preserves the current read source and records a retry
-deadline without parking an existing action. Read-budget deadlines remain
-authoritative. Paused exploration, exhausted exploration allowance, or incompatible
+A missing reserve preserves the current read source and defers further advances;
+the same source can still refill when its good queue runs low. A real read-budget
+refusal defers both optional refill and source preparation. Neither parks an
+existing action. Paused exploration, exhausted exploration allowance, or incompatible
 quality anchors prevent optional preparation; cleanup and journal precedence are
 unchanged. No source switch lowers the quality bar or deletes an older queue.

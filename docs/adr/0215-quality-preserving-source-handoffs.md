@@ -61,16 +61,21 @@ follow/unfollow obligations remain intact.
 
 Once the current read source has a prepared batch and there is no other stocked
 qualified reserve, a bounded preparation step can look for another source.
+Stocked means at least K usable candidates now; a previously admitted source
+with fewer than K remaining still needs replenishment.
 This advances the read location, not permission to follow its candidates.
 Good earlier candidates remain available. A preparation step yields to an
-already-due action rather than repeatedly rotating sources ahead of it.
+already-due action rather than repeatedly rotating sources ahead of it, subject
+to the existing safety, pacing, journal and scheduled-check precedence.
 
 With good work already due, each refill unit performs one acquisition or one
 profile enrichment, then plans its observations before yielding. Small units
 accumulate toward the existing bounded slice's empty-yield evidence; one
 unproductive profile does not falsely end a source. Fallback source discovery
-uses the same bounded preparation mode. No alternative or a read-budget refusal
-preserves a retry deadline instead of immediately retrying the same source.
+uses the same bounded preparation mode. A missing alternative defers further
+source advances while allowing the current source to refill when its good queue
+runs low. A real read-budget refusal instead defers both optional refill and
+source preparation until its retry deadline. Neither parks an available action.
 Exploration pauses, missing session read allowance, and incompatible reference
 criteria stop optional preparation while existing safety, journal settlement
 and cleanup precedence remain in force.

@@ -99,7 +99,7 @@ export function sentenceOf(p: Posture, f: NowFacts): string {
       const quality = s?.candidateQuality;
       if (quality?.needsReset) return 'Your audience criteria changed. Restart from a source to prepare a new candidate pool.';
       if (quality !== undefined && quality.readyCandidates === 0 && quality.requiredCandidates > 0) {
-        return `Preparing good candidates · ${count(quality.preparingCandidates)} of ${count(quality.requiredCandidates)} ready`;
+        return `Good candidates · ${count(quality.preparingCandidates)} of ${count(quality.requiredCandidates)} ready`;
       }
       if (p.overlay.boost) return 'Finding and following new people';
       const source = s?.currentTargetUsername ?? null;

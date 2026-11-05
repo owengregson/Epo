@@ -93,8 +93,10 @@ const statuses: EpoStatus[] = [
 
 test('quality preparation reports progress and an incompatible audience edit explains the reset', () => {
   const facts = { status: statuses[1]!, prune: null, now: T };
-  expect(sentenceOf(posture('working'), facts)).toBe('Preparing good candidates · 3 of 5 ready');
+  expect(sentenceOf(posture('working'), facts)).toBe('Good candidates · 3 of 5 ready');
   expect(sentenceOf(posture('working'), { ...facts, status: statuses[2]! })).toContain('Restart from a source');
+  const ready = idleStatus({ candidateQuality: { readyCandidates: 1, requiredCandidates: 5, preparingCandidates: 3, needsReset: false } });
+  expect(sentenceOf(posture('working'), { ...facts, status: ready })).toBe('Finding new people');
 });
 
 const ops: LiveOp[] = [
